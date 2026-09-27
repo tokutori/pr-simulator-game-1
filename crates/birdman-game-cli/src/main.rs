@@ -2,11 +2,12 @@
 
 use birdman_game_core::{
     ActuatorConfig, AeroCoefficients, AerodynamicElement, AerodynamicModel, AerodynamicRole,
-    AircraftModel, BodyPoint, BodyVector, CoefficientLaw, CompositeCgLaunchConditions,
-    ControlCoefficientDerivatives, ControlMode, CourseAxis, ElementEnvelope, ElementOrientation,
-    ElementReference, FbwAuthority, FlightRunOutcome, FlightTickConfig, FlightTickInput,
-    FlightTickState, Gravity, InertiaTensor, NedPoint, NedVector, PHYSICS_HZ, PilotPositionTarget,
-    SurfaceCommands, UniformAerodynamicLoad, UniformAir, UnitQuaternion, WaterContactGeometry,
+    AircraftModel, BodyPoint, BodyRateFeedbackConfig, BodyVector, CoefficientLaw,
+    CompositeCgLaunchConditions, ControlCoefficientDerivatives, ControlMode, CourseAxis,
+    ElementEnvelope, ElementOrientation, ElementReference, FbwAuthority, FlightRunOutcome,
+    FlightTickConfig, FlightTickInput, FlightTickState, Gravity, InertiaTensor, NedPoint,
+    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UniformAerodynamicLoad,
+    UniformAir, UnitQuaternion, WaterContactGeometry, body_rate_feedback_commands,
     flight_state_from_composite_cg_launch, run_flight,
 };
 
@@ -62,11 +63,11 @@ fn run_verification(requested_mode: &str) -> Result<(), String> {
 
     let scenario = VerificationScenario::new(DEFAULT_TICK_LIMIT)?;
     println!(
-        "Synthetic verification scenario; coefficients and FBW inputs are not aircraft-tuned."
+        "Synthetic verification scenario; aerodynamic coefficients and FBW gains are not aircraft-tuned."
     );
     println!(
         "Physics: {PHYSICS_HZ} Hz, tick limit: {}",
-        scenario.inputs.len()
+        scenario.pilot_inputs.len()
     );
     for (name, mode) in modes {
         let first = scenario.run(mode)?;
@@ -101,10 +102,11 @@ fn print_outcome(name: &str, outcome: FlightRunOutcome) {
 struct VerificationScenario {
     aircraft: AircraftModel,
     initial: FlightTickState,
-    inputs: Vec<FlightTickInput>,
+    pilot_inputs: Vec<(SurfaceCommands, PilotPositionTarget)>,
     loads: UniformAerodynamicLoad,
     contact_geometry: [BodyPoint; 1],
     course_axis: CourseAxis,
+    feedback: BodyRateFeedbackConfig,
 }
 
 impl VerificationScenario {
@@ -140,7 +142,7 @@ impl VerificationScenario {
             birdman_game_core::ActuatorState::neutral(),
         )
         .map_err(display_error)?;
-        let inputs = (0..tick_limit)
+        let pilot_inputs = (0..tick_limit)
             .map(|tick| {
                 let roll = if tick % 80 < 40 { 0.04 } else { -0.04 };
                 let pilot_commands =
@@ -148,22 +150,23 @@ impl VerificationScenario {
                 let pilot_position = if tick % 160 < 80 { 0.12 } else { -0.12 };
                 let target = PilotPositionTarget::try_new(&aircraft, pilot_position)
                     .map_err(display_error)?;
-                let fbw_commands =
-                    SurfaceCommands::try_new(-roll, -0.01, 0.0).map_err(display_error)?;
-                Ok(FlightTickInput::new(pilot_commands, fbw_commands, target))
+                Ok((pilot_commands, target))
             })
             .collect::<Result<Vec<_>, String>>()?;
+        let feedback =
+            BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).map_err(display_error)?;
 
         Ok(Self {
             aircraft,
             initial,
-            inputs,
+            pilot_inputs,
             loads: UniformAerodynamicLoad::new(
                 aerodynamic_model()?,
                 UniformAir::try_new(NedVector::zero(), 1.225).map_err(display_error)?,
             ),
             contact_geometry: [BodyPoint::try_new(0.0, 0.0, 0.0).map_err(display_error)?],
             course_axis: CourseAxis::try_new(1.0, 0.0).map_err(display_error)?,
+            feedback,
         })
     }
 
@@ -173,13 +176,40 @@ impl VerificationScenario {
             [ActuatorConfig::try_new(0.35, 1.0).map_err(display_error)?; 3],
             Gravity::try_new(9.80665).map_err(display_error)?,
         );
+        let contact_geometry =
+            WaterContactGeometry::try_new(&self.contact_geometry).map_err(display_error)?;
+        let mut predicted = self.initial;
+        let mut inputs = Vec::with_capacity(self.pilot_inputs.len());
+        for (pilot_commands, pilot_position_target) in self.pilot_inputs.iter().copied() {
+            let fbw_commands = body_rate_feedback_commands(
+                self.feedback,
+                BodyVector::zero(),
+                predicted.flight_state().angular_velocity_body(),
+            )
+            .map_err(display_error)?;
+            let input = FlightTickInput::new(pilot_commands, fbw_commands, pilot_position_target);
+            inputs.push(input);
+            match birdman_game_core::advance_flight_tick_with_contact(
+                &self.aircraft,
+                predicted,
+                config,
+                input,
+                &self.loads,
+                contact_geometry,
+            )
+            .map_err(display_error)?
+            {
+                birdman_game_core::FlightTickOutcome::Advanced(next) => predicted = next,
+                birdman_game_core::FlightTickOutcome::WaterContact(_) => break,
+            }
+        }
         run_flight(
             &self.aircraft,
             self.initial,
             config,
-            &self.inputs,
+            &inputs,
             &self.loads,
-            WaterContactGeometry::try_new(&self.contact_geometry).map_err(display_error)?,
+            contact_geometry,
             self.course_axis,
         )
         .map_err(display_error)
