@@ -1,3 +1,4 @@
+use crate::aerodynamics_contract::AerodynamicEvaluationError;
 use crate::math::{
     BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
 };
@@ -313,6 +314,8 @@ pub enum LoadError {
     OutsideDomain,
     /// The load model cannot evaluate the requested state.
     Unavailable,
+    /// An aerodynamic evaluation failed with its source cause and element role.
+    Aerodynamic(AerodynamicEvaluationError),
 }
 
 /// Provides external non-gravitational loads at each integration stage.

@@ -1,32 +1,7 @@
+use crate::aerodynamics_contract::AerodynamicEvaluationError;
+pub use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
-
-/// The five fixed aerodynamic elements used by the initial aircraft model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AerodynamicRole {
-    /// Left half of the main wing.
-    LeftWing,
-    /// Right half of the main wing.
-    RightWing,
-    /// Horizontal tail.
-    HorizontalTail,
-    /// Vertical tail.
-    VerticalTail,
-    /// Fuselage.
-    Fuselage,
-}
-
-impl AerodynamicRole {
-    fn index(self) -> usize {
-        match self {
-            Self::LeftWing => 0,
-            Self::RightWing => 1,
-            Self::HorizontalTail => 2,
-            Self::VerticalTail => 3,
-            Self::Fuselage => 4,
-        }
-    }
-}
 
 /// A proper rotation from one element's local axes into the aircraft body axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -378,22 +353,44 @@ impl AerodynamicModel {
         self,
         state: &FlightState,
         air: UniformAir,
-    ) -> Result<AerodynamicEvaluation, AeroError> {
-        let mut evaluations = [AerodynamicWrench::zero(); 5];
+    ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
+        let mut evaluations = [
+            AerodynamicWrench::zero(AerodynamicRole::LeftWing),
+            AerodynamicWrench::zero(AerodynamicRole::RightWing),
+            AerodynamicWrench::zero(AerodynamicRole::HorizontalTail),
+            AerodynamicWrench::zero(AerodynamicRole::VerticalTail),
+            AerodynamicWrench::zero(AerodynamicRole::Fuselage),
+        ];
         let mut total_force = BodyVector::zero();
         let mut total_moment = BodyVector::zero();
-        for (index, element) in self.elements.into_iter().enumerate() {
-            let evaluation = evaluate_element(element, state, air)?;
+        for element in self.elements {
+            let evaluation = evaluate_element(element, state, air).map_err(|cause| {
+                AerodynamicEvaluationError::Element {
+                    role: element.role,
+                    cause,
+                }
+            })?;
             total_force = total_force
                 .plus(evaluation.force_body_newtons)
-                .map_err(map_math_error)?;
+                .map_err(map_math_error)
+                .map_err(|cause| AerodynamicEvaluationError::Element {
+                    role: element.role,
+                    cause,
+                })?;
             total_moment = total_moment
                 .plus(evaluation.moment_about_datum_body_newton_meters)
-                .map_err(map_math_error)?;
-            evaluations[index] = evaluation;
+                .map_err(map_math_error)
+                .map_err(|cause| AerodynamicEvaluationError::Element {
+                    role: element.role,
+                    cause,
+                })?;
+            evaluations[element.role.index()] = evaluation;
         }
-        let total_wrench =
-            Wrench::try_new(total_force, total_moment).map_err(|_| AeroError::NonFinite)?;
+        let total_wrench = Wrench::try_new(total_force, total_moment).map_err(|_| {
+            AerodynamicEvaluationError::Aggregate {
+                cause: AeroError::NonFinite,
+            }
+        })?;
         Ok(AerodynamicEvaluation {
             elements: evaluations,
             total_wrench,
@@ -427,12 +424,25 @@ impl UniformAir {
     }
 }
 
-/// Per-element local flow values; angles are absent at zero airspeed.
+/// The jointly defined angles of a local flow.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FlowAngles {
+    /// Both flow angles are undefined at zero airspeed.
+    Zero,
+    /// Angle of attack and sideslip for nonzero airspeed.
+    Defined {
+        /// Angle of attack in radians.
+        alpha_rad: f64,
+        /// Sideslip angle in radians.
+        beta_rad: f64,
+    },
+}
+
+/// Per-element local flow values.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ElementalFlow {
     speed_mps: f64,
-    alpha_rad: Option<f64>,
-    beta_rad: Option<f64>,
+    angles: FlowAngles,
     dynamic_pressure_pascal: f64,
 }
 
@@ -444,12 +454,23 @@ impl ElementalFlow {
 
     /// Returns angle of attack in radians, or `None` when airspeed is zero.
     pub const fn alpha_rad(self) -> Option<f64> {
-        self.alpha_rad
+        match self.angles {
+            FlowAngles::Zero => None,
+            FlowAngles::Defined { alpha_rad, .. } => Some(alpha_rad),
+        }
     }
 
     /// Returns sideslip angle in radians, or `None` when airspeed is zero.
     pub const fn beta_rad(self) -> Option<f64> {
-        self.beta_rad
+        match self.angles {
+            FlowAngles::Zero => None,
+            FlowAngles::Defined { beta_rad, .. } => Some(beta_rad),
+        }
+    }
+
+    /// Returns the jointly defined flow-angle state.
+    pub const fn angles(self) -> FlowAngles {
+        self.angles
     }
 
     /// Returns dynamic pressure in pascals.
@@ -461,20 +482,19 @@ impl ElementalFlow {
 /// Aerodynamic force and datum moment calculated for one element.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AerodynamicWrench {
-    role: Option<AerodynamicRole>,
+    role: AerodynamicRole,
     flow: ElementalFlow,
     force_body_newtons: BodyVector,
     moment_about_datum_body_newton_meters: BodyVector,
 }
 
 impl AerodynamicWrench {
-    const fn zero() -> Self {
+    const fn zero(role: AerodynamicRole) -> Self {
         Self {
-            role: None,
+            role,
             flow: ElementalFlow {
                 speed_mps: 0.0,
-                alpha_rad: None,
-                beta_rad: None,
+                angles: FlowAngles::Zero,
                 dynamic_pressure_pascal: 0.0,
             },
             force_body_newtons: BodyVector::zero(),
@@ -483,7 +503,7 @@ impl AerodynamicWrench {
     }
 
     /// Returns the element's role.
-    pub const fn role(self) -> Option<AerodynamicRole> {
+    pub const fn role(self) -> AerodynamicRole {
         self.role
     }
 
@@ -512,41 +532,14 @@ pub struct AerodynamicEvaluation {
 
 impl AerodynamicEvaluation {
     /// Returns the element result matching `role`.
-    pub fn element(self, role: AerodynamicRole) -> Option<AerodynamicWrench> {
-        self.elements
-            .into_iter()
-            .find(|element| element.role == Some(role))
+    pub fn element(self, role: AerodynamicRole) -> AerodynamicWrench {
+        self.elements[role.index()]
     }
 
     /// Returns the summed non-gravitational force and moment about datum O.
     pub const fn total_wrench(self) -> Wrench {
         self.total_wrench
     }
-}
-
-/// Failures returned by aerodynamic model validation and evaluation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AeroError {
-    /// A supplied or computed value is not finite.
-    NonFinite,
-    /// A validated math operation rejected a value for a more specific reason.
-    InvalidMathValue(MathError),
-    /// Air density is not positive.
-    InvalidAirDensity,
-    /// Reference area, span, or chord is not positive.
-    InvalidReferenceGeometry,
-    /// An element orientation is not a proper orthonormal rotation.
-    InvalidOrientation,
-    /// An angle or dynamic-pressure interval is invalid.
-    InvalidEnvelope,
-    /// A coefficient would imply negative drag within its declared envelope.
-    NegativeDragCoefficient,
-    /// The model does not contain exactly one of each required element role.
-    InvalidElementSet,
-    /// A nonzero flow has no defined angle of attack.
-    UndefinedFlowAngle,
-    /// A local flow is outside an element's declared coefficient envelope.
-    OutsideEnvelope,
 }
 
 /// A load provider using a fixed five-element model and uniform ambient air.
@@ -568,10 +561,7 @@ impl ExternalLoadProvider for UniformAerodynamicLoad {
         self.aerodynamics
             .evaluate(state, self.air)
             .map(|evaluation| evaluation.total_wrench())
-            .map_err(|error| match error {
-                AeroError::OutsideEnvelope => LoadError::OutsideDomain,
-                _ => LoadError::Unavailable,
-            })
+            .map_err(LoadError::Aerodynamic)
     }
 }
 
@@ -617,12 +607,11 @@ fn evaluate_element(
     if speed == 0.0 {
         let flow = ElementalFlow {
             speed_mps: 0.0,
-            alpha_rad: None,
-            beta_rad: None,
+            angles: FlowAngles::Zero,
             dynamic_pressure_pascal: dynamic_pressure,
         };
         return Ok(AerodynamicWrench {
-            role: Some(element.role),
+            role: element.role,
             flow,
             force_body_newtons: BodyVector::zero(),
             moment_about_datum_body_newton_meters: BodyVector::zero(),
@@ -655,14 +644,14 @@ fn evaluate_element(
 
     let projected_x = u / longitudinal_vertical_speed;
     let projected_z = w / longitudinal_vertical_speed;
-    let inverse_speed = 1.0 / speed;
+    let lateral_fraction = v / speed;
     let side_axis = [
-        -projected_x * v * inverse_speed,
-        longitudinal_vertical_speed * inverse_speed,
-        -projected_z * v * inverse_speed,
+        -projected_x * lateral_fraction,
+        longitudinal_vertical_speed / speed,
+        -projected_z * lateral_fraction,
     ];
     let lift_axis = [projected_z, 0.0, -projected_x];
-    let air_velocity_axis = [u * inverse_speed, v * inverse_speed, w * inverse_speed];
+    let air_velocity_axis = [u / speed, v / speed, w / speed];
     let dynamic_area = dynamic_pressure * element.reference.area_square_meters;
     let force_local = [
         dynamic_area
@@ -691,12 +680,14 @@ fn evaluate_element(
         .map_err(map_math_error)?;
     let flow = ElementalFlow {
         speed_mps: speed,
-        alpha_rad: Some(alpha),
-        beta_rad: Some(beta),
+        angles: FlowAngles::Defined {
+            alpha_rad: alpha,
+            beta_rad: beta,
+        },
         dynamic_pressure_pascal: dynamic_pressure,
     };
     Ok(AerodynamicWrench {
-        role: Some(element.role),
+        role: element.role,
         flow,
         force_body_newtons: force_body,
         moment_about_datum_body_newton_meters: moment_about_datum,
@@ -725,7 +716,7 @@ fn map_math_error(error: MathError) -> AeroError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamics::{Gravity, PilotAcceleration, advance};
+    use crate::dynamics::{DynamicsError, Gravity, PilotAcceleration, advance};
     use crate::math::{InertiaTensor, NedPoint, UnitQuaternion};
     use core::f64::consts::{FRAC_PI_2, PI};
 
@@ -875,7 +866,7 @@ mod tests {
                 air([0.0; 3], 2.0),
             )
             .unwrap();
-        let left_wing = evaluation.element(AerodynamicRole::LeftWing).unwrap();
+        let left_wing = evaluation.element(AerodynamicRole::LeftWing);
         near(left_wing.flow.speed_mps(), 10.0, 1.0e-12);
         near(left_wing.flow.alpha_rad().unwrap(), 0.0, 1.0e-12);
         near(left_wing.flow.beta_rad().unwrap(), 0.0, 1.0e-12);
@@ -905,13 +896,12 @@ mod tests {
                 air([0.0; 3], 1.0),
             )
             .unwrap();
-        let flow = evaluation.element(AerodynamicRole::LeftWing).unwrap().flow;
+        let flow = evaluation.element(AerodynamicRole::LeftWing).flow;
         let expected_coefficient =
             0.2 + 2.0 * flow.alpha_rad().unwrap() - 0.5 * flow.beta_rad().unwrap();
         let expected_lift_magnitude = flow.dynamic_pressure_pascal() * expected_coefficient;
         let force = evaluation
             .element(AerodynamicRole::LeftWing)
-            .unwrap()
             .force_body_newtons()
             .components();
         let expected_drag_z = -flow.dynamic_pressure_pascal() * 0.1 * 2.0 / 105.0_f64.sqrt();
@@ -936,7 +926,7 @@ mod tests {
                 air([2.0, 0.0, 0.0], 1.0),
             )
             .unwrap();
-        let left_wing = evaluation.element(AerodynamicRole::LeftWing).unwrap();
+        let left_wing = evaluation.element(AerodynamicRole::LeftWing);
         near(left_wing.flow.speed_mps(), 8.0, 1.0e-12);
         near(left_wing.flow.dynamic_pressure_pascal(), 32.0, 1.0e-12);
         near(
@@ -969,11 +959,8 @@ mod tests {
                 air([0.0; 3], 1.0),
             )
             .unwrap();
-        let base_flow = base.element(AerodynamicRole::LeftWing).unwrap().flow;
-        let moving_pilot_flow = moving_pilot
-            .element(AerodynamicRole::LeftWing)
-            .unwrap()
-            .flow;
+        let base_flow = base.element(AerodynamicRole::LeftWing).flow;
+        let moving_pilot_flow = moving_pilot.element(AerodynamicRole::LeftWing).flow;
         near(base_flow.speed_mps(), 101.0_f64.sqrt(), 1.0e-12);
         near(base_flow.beta_rad().unwrap(), atan2(1.0, 10.0), 1.0e-12);
         assert_eq!(base_flow, moving_pilot_flow);
@@ -998,7 +985,6 @@ mod tests {
             .unwrap();
         let [roll, pitch, yaw] = evaluation
             .element(AerodynamicRole::LeftWing)
-            .unwrap()
             .moment_about_datum_body_newton_meters()
             .components();
         near(roll, 150.0, 1.0e-12);
@@ -1023,7 +1009,7 @@ mod tests {
                 air([0.0; 3], 1.0),
             )
             .unwrap();
-        let element = evaluation.element(AerodynamicRole::LeftWing).unwrap();
+        let element = evaluation.element(AerodynamicRole::LeftWing);
         near(element.force_body_newtons().components()[1], 7.5, 1.0e-12);
         near(
             element.moment_about_datum_body_newton_meters().components()[0],
@@ -1143,11 +1129,10 @@ mod tests {
                 air([0.0; 3], 1.0),
             )
             .unwrap();
-        let local_flow = evaluation.element(AerodynamicRole::LeftWing).unwrap().flow;
+        let local_flow = evaluation.element(AerodynamicRole::LeftWing).flow;
         near(local_flow.alpha_rad().unwrap(), 0.0, 1.0e-12);
         let force = evaluation
             .element(AerodynamicRole::LeftWing)
-            .unwrap()
             .force_body_newtons()
             .components();
         near(force[0], 0.0, 1.0e-12);
@@ -1169,7 +1154,7 @@ mod tests {
         let evaluation = aerodynamics
             .evaluate(&state([0.0; 3], [0.0; 3], 0.0, 0.0), air([0.0; 3], 1.0))
             .unwrap();
-        let left_wing = evaluation.element(AerodynamicRole::LeftWing).unwrap();
+        let left_wing = evaluation.element(AerodynamicRole::LeftWing);
         assert_eq!(left_wing.flow.alpha_rad(), None);
         assert_eq!(left_wing.flow.beta_rad(), None);
         assert_eq!(left_wing.force_body_newtons(), BodyVector::zero());
@@ -1194,7 +1179,13 @@ mod tests {
             &state([0.0, 10.0, 0.0], [0.0; 3], 0.0, 0.0),
             air([0.0; 3], 1.0),
         );
-        assert_eq!(result, Err(AeroError::UndefinedFlowAngle));
+        assert_eq!(
+            result,
+            Err(AerodynamicEvaluationError::Element {
+                role: AerodynamicRole::LeftWing,
+                cause: AeroError::UndefinedFlowAngle,
+            })
+        );
     }
 
     #[test]
@@ -1213,7 +1204,186 @@ mod tests {
             &state([10.0, 0.0, 2.0], [0.0; 3], 0.0, 0.0),
             air([0.0; 3], 1.0),
         );
-        assert_eq!(result, Err(AeroError::OutsideEnvelope));
+        assert_eq!(
+            result,
+            Err(AerodynamicEvaluationError::Element {
+                role: AerodynamicRole::LeftWing,
+                cause: AeroError::OutsideEnvelope,
+            })
+        );
+    }
+
+    #[test]
+    fn envelope_comparison_accepts_interior_and_boundary_and_rejects_exterior() {
+        let envelope = ElementEnvelope::try_new(-0.2, 0.2, -0.1, 0.1, 0.0, 100.0).unwrap();
+        assert!(envelope.contains(0.199, 0.0, 50.0));
+        assert!(envelope.contains(0.2, 0.1, 100.0));
+        assert!(!envelope.contains(0.200_001, 0.0, 50.0));
+        assert!(!envelope.contains(0.0, 0.0, 100.001));
+    }
+
+    #[test]
+    fn atan2_precision_does_not_reject_a_flow_below_pi_over_eight() {
+        let maximum_alpha = core::f64::consts::PI / 8.0;
+        let limited =
+            ElementEnvelope::try_new(-maximum_alpha, maximum_alpha, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            limited,
+        );
+        let result = aerodynamics.evaluate(
+            &state([1.0, 0.0, 0.414_213_562_373], [0.0; 3], 0.0, 0.0),
+            air([0.0; 3], 1.0),
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn minimum_subnormal_nonzero_flow_has_finite_normalized_directions() {
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let minimum_subnormal = f64::from_bits(1);
+        let result = aerodynamics
+            .evaluate(
+                &state([minimum_subnormal; 3], [0.0; 3], 0.0, 0.0),
+                air([0.0; 3], 1.0),
+            )
+            .unwrap();
+        let flow = result.element(AerodynamicRole::LeftWing).flow;
+        assert!(flow.speed_mps().is_finite());
+        assert!(flow.speed_mps() > 0.0);
+        assert!(matches!(flow.angles(), FlowAngles::Defined { .. }));
+        assert_eq!(flow.dynamic_pressure_pascal(), 0.0);
+        assert!(
+            result
+                .element(AerodynamicRole::LeftWing)
+                .force_body_newtons()
+                .components()
+                .into_iter()
+                .all(f64::is_finite)
+        );
+    }
+
+    #[test]
+    fn load_boundary_preserves_aerodynamic_cause_and_element_role() {
+        let restricted = ElementEnvelope::try_new(-0.1, 0.1, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            restricted,
+        );
+        let provider = UniformAerodynamicLoad::new(aerodynamics, air([0.0; 3], 1.0));
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let error = advance(
+            &aircraft,
+            &state([10.0, 0.0, 2.0], [0.0; 3], 0.0, 0.0),
+            PilotAcceleration::try_new(0.0).unwrap(),
+            Gravity::try_new(0.0).unwrap(),
+            &provider,
+            0.01,
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            DynamicsError::Load(LoadError::Aerodynamic(
+                AerodynamicEvaluationError::Element {
+                    role: AerodynamicRole::LeftWing,
+                    cause: AeroError::OutsideEnvelope,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn quadratic_drag_rk4_converges_to_analytic_velocity_and_position() {
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let provider = UniformAerodynamicLoad::new(aerodynamics, air([0.0; 3], 1.0));
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let integrate = |step: f64, count: usize| {
+            let mut current = state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
+            for _ in 0..count {
+                current = advance(
+                    &aircraft,
+                    &current,
+                    PilotAcceleration::try_new(0.0).unwrap(),
+                    Gravity::try_new(0.0).unwrap(),
+                    &provider,
+                    step,
+                )
+                .unwrap();
+            }
+            current
+        };
+        let coarse = integrate(0.1, 10);
+        let fine = integrate(0.05, 20);
+        let drag_coefficient = 0.5 * 1.0 * 1.0 * 0.1 / 10.0;
+        let elapsed = 1.0;
+        let exact_velocity = 10.0 / (1.0 + drag_coefficient * 10.0 * elapsed);
+        let exact_position = libm::log(1.0 + drag_coefficient * 10.0 * elapsed) / drag_coefficient;
+        let velocity_error = |flight: FlightState| {
+            (flight.datum_velocity_ned().components()[0] - exact_velocity).abs()
+        };
+        let position_error = |flight: FlightState| {
+            (flight.datum_position_ned().components()[0] - exact_position).abs()
+        };
+        assert!(
+            velocity_error(fine) < velocity_error(coarse) / 10.0,
+            "coarse={}, fine={}",
+            velocity_error(coarse),
+            velocity_error(fine)
+        );
+        assert!(
+            position_error(fine) < position_error(coarse) / 10.0,
+            "coarse={}, fine={}",
+            position_error(coarse),
+            position_error(fine)
+        );
+        assert!(velocity_error(fine) < 1.0e-9);
+        assert!(position_error(fine) < 1.0e-9);
     }
 
     #[test]
@@ -1232,7 +1402,13 @@ mod tests {
             &state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0),
             air([0.0; 3], 1.0),
         );
-        assert_eq!(result, Err(AeroError::OutsideEnvelope));
+        assert_eq!(
+            result,
+            Err(AerodynamicEvaluationError::Element {
+                role: AerodynamicRole::LeftWing,
+                cause: AeroError::OutsideEnvelope,
+            })
+        );
     }
 
     #[test]
@@ -1303,7 +1479,13 @@ mod tests {
             &state([1.0e200, 0.0, 0.0], [0.0; 3], 0.0, 0.0),
             air([0.0; 3], 1.0),
         );
-        assert_eq!(result, Err(AeroError::NonFinite));
+        assert_eq!(
+            result,
+            Err(AerodynamicEvaluationError::Element {
+                role: AerodynamicRole::LeftWing,
+                cause: AeroError::NonFinite,
+            })
+        );
     }
 
     #[test]
@@ -1371,16 +1553,45 @@ mod tests {
 
     #[test]
     fn angle_and_hypotenuse_helpers_cover_quadrants_and_large_values() {
-        near(atan2(1.0, 1.0), core::f64::consts::FRAC_PI_4, 3.0e-12);
-        near(atan2(0.5, 1.0), 0.463_647_609_000_806_1, 3.0e-12);
+        near(atan2(1.0, 1.0), core::f64::consts::FRAC_PI_4, 2.0e-16);
+        near(atan2(0.5, 1.0), 0.463_647_609_000_806_1, 2.0e-16);
         near(
             atan2(0.414_213_562_373_095_03, 1.0),
             core::f64::consts::FRAC_PI_8,
-            3.0e-12,
+            2.0e-16,
         );
-        near(atan2(1.0, -1.0), 3.0 * PI / 4.0, 3.0e-12);
-        near(atan2(-1.0, -1.0), -3.0 * PI / 4.0, 3.0e-12);
-        near(atan2(1.0, 0.0), FRAC_PI_2, 3.0e-12);
+        near(atan2(1.0, -1.0), 3.0 * PI / 4.0, 2.0e-16);
+        near(atan2(-1.0, -1.0), -3.0 * PI / 4.0, 2.0e-16);
+        near(atan2(1.0, 0.0), FRAC_PI_2, 2.0e-16);
+        assert_eq!(atan2(0.0, -1.0), PI);
+        assert_eq!(atan2(-0.0, -1.0), -PI);
         near(hypot2(3.0e200, 4.0e200), 5.0e200, 1.0e185);
+    }
+
+    #[test]
+    fn evaluation_contains_each_role_once_independent_of_model_order() {
+        let elements = core::array::from_fn(|index| {
+            let role = ROLES[ROLES.len() - 1 - index];
+            AerodynamicElement::try_new(
+                role,
+                point(0.0, 0.0, 0.0),
+                point(0.0, 0.0, 0.0),
+                ElementOrientation::IDENTITY,
+                reference(1.0, 1.0, 1.0),
+                zero_coefficients(),
+                envelope(),
+            )
+            .unwrap()
+        });
+        let aerodynamics = AerodynamicModel::try_new(elements).unwrap();
+        let evaluation = aerodynamics
+            .evaluate(
+                &state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0),
+                air([0.0; 3], 1.0),
+            )
+            .unwrap();
+        for role in ROLES {
+            assert_eq!(evaluation.element(role).role(), role);
+        }
     }
 }

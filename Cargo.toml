@@ -12,6 +12,7 @@ repository = "https://github.com/tokutori/pr-simulator-game-1"
 [workspace.dependencies]
 birdman-game-core = { path = "crates/birdman-game-core" }
 birdman-game-format = { path = "crates/birdman-game-format" }
+libm = "=0.2.16"
 wasm-bindgen = "=0.2.129"
 
 [workspace.lints.rust]

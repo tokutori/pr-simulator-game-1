@@ -31,6 +31,14 @@ q_\infty=\frac12\rho V^2
 ゼロ対気速度で方向を定義しない。動圧0・荷重0とし、角度はundefinedを表す型で扱う。
 局所速度が非ゼロでも $u_a=w_a=0$ ならalphaを定義できず、型付きerrorを返す。
 後流・downwashの使用有無、低速・逆流・失速域の適用範囲は機体モデルごとに明記する。
+`FlowAngles`は`Zero`またはalpha/betaを同時に保持する`Defined`で表す。
+`AerodynamicEvaluation`は構築時に検証した5 roleを必ず1個ずつ返し、role lookupはtotalである。
+評価失敗は`AerodynamicEvaluationError`でcauseと要素roleを保持し、全機合成時の失敗はAggregateとして区別する。
+`ExternalLoadProvider`からdynamicsへ渡す場合も、load error内に元の空力causeとroleを保持する。
+
+角度計算にはno_std対応`libm::atan2`を使用する。独自近似誤差で閉区間の適用範囲判定を反転させない。
+envelope境界は包含し、内側・境界・外側を個別に検証する。速度方向の正規化は有限な非ゼロ速度成分を
+速度量で直接除算し、速度の逆数を先に計算しない。動圧のunderflowを伴う微小速度でも方向と荷重は有限である。
 
 ## BPG-003係数契約
 

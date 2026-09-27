@@ -95,7 +95,8 @@ Webは有効recordがあれば終了理由付きResultへ遷移し、boot等の�
 `flight-dynamics-core/src/lib.rs`、`dynamics.rs`、viewerの `coordinates.ts` を確認した。
 no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計参考とする。
 既存stateの並進速度はbody表現、本ゲームはNED表現を採用するため、式を直接転記しない。
-係数と検証ケースはBPG-002以降で適用範囲を再確認する。runtime dependencyは追加しない。
+係数と検証ケースはBPG-002以降で適用範囲を再確認する。coreの依存はno_std対応で役割の明確なものに限り、
+crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
 GameSession、record、metrics、analysis/replay queryとそのWASM commandは後続BPGで実装する。

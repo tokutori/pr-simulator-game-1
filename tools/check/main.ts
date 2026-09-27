@@ -9,7 +9,7 @@ const count = await checkAssets(process.cwd());
 const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { encoding: "utf8" })) as unknown);
 if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata");
 const allowed = new Map<string, readonly string[]>([
-  ["birdman-game-core", []],
+  ["birdman-game-core", ["libm"]],
   ["birdman-game-format", ["birdman-game-core"]],
   ["birdman-game-cli", ["birdman-game-core", "birdman-game-format"]],
   ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "wasm-bindgen"]]

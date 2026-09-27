@@ -446,42 +446,5 @@ pub(crate) fn hypot2(first: f64, second: f64) -> f64 {
 }
 
 pub(crate) fn atan2(y: f64, x: f64) -> f64 {
-    if y == 0.0 && x == 0.0 {
-        return 0.0;
-    }
-    let absolute_y = y.abs();
-    let absolute_x = x.abs();
-    let ratio = absolute_y.min(absolute_x) / absolute_y.max(absolute_x);
-    let acute_angle = if absolute_y > absolute_x {
-        core::f64::consts::FRAC_PI_2 - atan_unit(ratio)
-    } else {
-        atan_unit(ratio)
-    };
-    if x >= 0.0 {
-        if y >= 0.0 { acute_angle } else { -acute_angle }
-    } else if y >= 0.0 {
-        core::f64::consts::PI - acute_angle
-    } else {
-        acute_angle - core::f64::consts::PI
-    }
-}
-
-fn atan_unit(value: f64) -> f64 {
-    let reduced = if value > 0.414_213_562_373_095_03 {
-        (value - 1.0) / (value + 1.0)
-    } else {
-        value
-    };
-    let squared = reduced * reduced;
-    let mut term = reduced;
-    let mut result = reduced;
-    for denominator in (3..=25).step_by(2) {
-        term *= -squared;
-        result += term / denominator as f64;
-    }
-    if value > 0.414_213_562_373_095_03 {
-        core::f64::consts::FRAC_PI_4 + result
-    } else {
-        result
-    }
+    libm::atan2(y, x)
 }

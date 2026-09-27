@@ -5,14 +5,16 @@
 //! evaluates explicit state, model, load, and input values.
 
 mod aerodynamics;
+mod aerodynamics_contract;
 mod dynamics;
 mod math;
 
 pub use aerodynamics::{
-    AeroCoefficients, AeroError, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
-    AerodynamicRole, AerodynamicWrench, CoefficientLaw, ElementEnvelope, ElementOrientation,
-    ElementReference, ElementalFlow, UniformAerodynamicLoad, UniformAir,
+    AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
+    AerodynamicWrench, CoefficientLaw, ElementEnvelope, ElementOrientation, ElementReference,
+    ElementalFlow, FlowAngles, UniformAerodynamicLoad, UniformAir,
 };
+pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
 
 pub use dynamics::{
     AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightState, Gravity,

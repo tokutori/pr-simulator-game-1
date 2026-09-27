@@ -53,6 +53,17 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 | 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
 | RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
 
+### BPG-024 空力境界・error契約
+
+| ケース | 比較対象 | 受入条件 |
+|---|---|---|
+| 角度関数と迎角envelope | 監査で提示された$u=1$ m/s、$w=0.414213562373$ m/sと上限$pi/8$ | 内側入力を許可し、閉境界を許可し、直外を拒否する |
+| envelope境界 | alpha・beta・動圧の下限／上限 | 各閉境界を許可し、その外側を拒否する |
+| 微小・極小速度 | 正のsubnormalを含む局所速度 | 定義済みflow angleと有限な荷重を返し、逆数overflowやNaNを生成しない |
+| load error伝達 | 範囲外の翼要素をRK4 load providerへ接続 | `DynamicsError::Load`から元の`AeroError`と`AerodynamicRole`を取得できる |
+| 公開評価型 | 5 roleを持つ検証済みmodelとzero/nonzero flow | role lookupは必ず値を返し、角度は`Zero`またはalpha/beta両方の`Defined`で表す |
+| 二次抗力のRK4接続 | $\dot v=-kv^2$、$v(t)=v_0/(1+kv_0t)$、$x(t)=\ln(1+kv_0t)/k$ | velocity・positionが解析解に収束し、step半減で誤差が減少する |
+
 | BPG | 検証 |
 |---|---|
 | 002 | frame往復、quaternion不変量、機体・パイロットの運動量収支、一般3次元の内部移動、重力、刻み半減収束、参照case比較 |
