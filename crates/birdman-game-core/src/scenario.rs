@@ -247,9 +247,21 @@ fn map_math_error(error: MathError) -> DynamicsError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompositeCgLaunchConditions, flight_state_from_composite_cg_launch};
-    use crate::dynamics::{AircraftModel, DynamicsError, FlightState};
-    use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
+    use super::{
+        CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
+        flight_state_from_composite_cg_launch,
+    };
+    use crate::aerodynamics::{
+        AeroCoefficients, AerodynamicElement, AerodynamicModel, CoefficientLaw,
+        ControlCoefficientDerivatives, ElementEnvelope, ElementOrientation, ElementReference,
+    };
+    use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
+    use crate::contact::ContactError;
+    use crate::dynamics::{AircraftModel, DynamicsError, FlightState, Gravity};
+    use crate::flight_control::{ActuatorConfig, ActuatorState};
+    use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
+    use crate::scoring::CourseAxis;
+    use crate::wind_field::WindField;
 
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
@@ -263,6 +275,85 @@ mod tests {
             2.0,
         )
         .unwrap()
+    }
+
+    fn aerodynamics() -> AerodynamicModel {
+        let law = CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
+        let coefficients = AeroCoefficients::new(law, law, law, law, law, law)
+            .with_control_derivatives(
+                ControlCoefficientDerivatives::try_new(
+                    [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3],
+                )
+                .unwrap(),
+            );
+        let envelope = ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap();
+        let reference = ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
+        let roles = [
+            AerodynamicRole::LeftWing,
+            AerodynamicRole::RightWing,
+            AerodynamicRole::HorizontalTail,
+            AerodynamicRole::VerticalTail,
+            AerodynamicRole::Fuselage,
+        ];
+        AerodynamicModel::try_new(roles.map(|role| {
+            AerodynamicElement::try_new(
+                role,
+                BodyPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+                BodyPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+                ElementOrientation::IDENTITY,
+                reference,
+                coefficients,
+                envelope,
+            )
+            .unwrap()
+        }))
+        .unwrap()
+    }
+
+    fn scenario_definition<'a>(
+        air_density_kg_m3: f64,
+        contact_points_body: &'a [BodyPoint],
+    ) -> FlightScenarioDefinition<'a> {
+        FlightScenarioDefinition {
+            aircraft: aircraft(),
+            launch: CompositeCgLaunchConditions::try_new(
+                NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+                NedVector::try_new(10.0, 0.0, 0.0).unwrap(),
+                UnitQuaternion::IDENTITY,
+                BodyVector::zero(),
+                0.0,
+                0.0,
+            )
+            .unwrap(),
+            aerodynamics: aerodynamics(),
+            air_density_kg_m3,
+            wind_field: WindField::uniform(NedVector::zero()),
+            actuator_limits: [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
+            initial_actuator_state: ActuatorState::neutral(),
+            gravity: Gravity::try_new(9.80665).unwrap(),
+            contact_points_body,
+            course_axis: CourseAxis::try_new(1.0, 0.0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn scenario_preserves_aerodynamic_validation_error() {
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+
+        assert_eq!(
+            FlightScenario::try_new(scenario_definition(0.0, &contact_points)).err(),
+            Some(FlightScenarioError::Aerodynamic(
+                AeroError::InvalidAirDensity
+            ))
+        );
+    }
+
+    #[test]
+    fn scenario_preserves_contact_geometry_validation_error() {
+        assert_eq!(
+            FlightScenario::try_new(scenario_definition(1.225, &[])).err(),
+            Some(FlightScenarioError::Contact(ContactError::EmptyGeometry))
+        );
     }
 
     fn assert_vector_close(actual: [f64; 3], expected: [f64; 3], tolerance: f64) {
