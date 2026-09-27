@@ -8,10 +8,13 @@
 W=W(x,y,z),\qquad V_{air}=V_{ground}-W
 ```
 
-公開モデルはUniform、Analytic、Gridを網羅的enumで表現する。
+公開APIはUniform、Analytic linear gradient、Gridのvalidated constructorを提供する。
 APIは概念的に `velocity_at(Point3<NedFrame>) -> Result<Vector3<NedFrame>, WindError>` とする。
 coreでclockを参照しない。対地速度を積分stateに使用するため、風勾配に起因する別の加速度項を重複加算しない。
-空力要素ごとのsampleと回転速度は `aerodynamics.md` に従う。
+`WindField`はno_std coreにあり、linear gradientは基準NED位置・風速と、行を風速成分、列を位置成分とする$3\times3$勾配で定義する。
+Gridのvelocity sampleはimmutableなsliceを借用し、coreで確保・複製しない。
+`WindFieldAerodynamicLoad`は各RK4評価stageの全空力要素位置でfieldをqueryする。
+空力要素ごとの位置・回転速度は `aerodynamics.md` に従う。
 
 Gridは原点、N/E/D各軸の正の間隔、各軸2以上の点数、NED速度列を持つ。
 配列順はNが最速、次いでE、Dとし、indexは `((d * count_e) + e) * count_n + n` とする。

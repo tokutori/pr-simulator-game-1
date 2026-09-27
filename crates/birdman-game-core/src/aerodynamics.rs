@@ -2,6 +2,7 @@ use crate::aerodynamics_contract::AerodynamicEvaluationError;
 pub use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
+use crate::wind_field::WindField;
 
 /// A proper rotation from one element's local axes into the aircraft body axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -354,6 +355,19 @@ impl AerodynamicModel {
         state: &FlightState,
         air: UniformAir,
     ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
+        self.evaluate_in_wind_field(
+            state,
+            air.density_kg_m3,
+            WindField::uniform(air.wind_velocity_ned_mps),
+        )
+    }
+
+    fn evaluate_in_wind_field(
+        self,
+        state: &FlightState,
+        air_density_kg_m3: f64,
+        wind_field: WindField<'_>,
+    ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
         let mut evaluations = [
             AerodynamicWrench::zero(AerodynamicRole::LeftWing),
             AerodynamicWrench::zero(AerodynamicRole::RightWing),
@@ -364,12 +378,11 @@ impl AerodynamicModel {
         let mut total_force = BodyVector::zero();
         let mut total_moment = BodyVector::zero();
         for element in self.elements {
-            let evaluation = evaluate_element(element, state, air).map_err(|cause| {
-                AerodynamicEvaluationError::Element {
+            let evaluation = evaluate_element(element, state, air_density_kg_m3, wind_field)
+                .map_err(|cause| AerodynamicEvaluationError::Element {
                     role: element.role,
                     cause,
-                }
-            })?;
+                })?;
             total_force = total_force
                 .plus(evaluation.force_body_newtons)
                 .map_err(map_math_error)
@@ -549,6 +562,39 @@ pub struct UniformAerodynamicLoad {
     air: UniformAir,
 }
 
+/// A load provider sampling a stationary spatial wind field at each element.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WindFieldAerodynamicLoad<'a> {
+    aerodynamics: AerodynamicModel,
+    air_density_kg_m3: f64,
+    wind_field: WindField<'a>,
+}
+
+impl<'a> WindFieldAerodynamicLoad<'a> {
+    /// Creates a provider for a validated density and immutable wind field.
+    pub fn try_new(
+        aerodynamics: AerodynamicModel,
+        air_density_kg_m3: f64,
+        wind_field: WindField<'a>,
+    ) -> Result<Self, AeroError> {
+        UniformAir::try_new(NedVector::zero(), air_density_kg_m3)?;
+        Ok(Self {
+            aerodynamics,
+            air_density_kg_m3,
+            wind_field,
+        })
+    }
+}
+
+impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {
+    fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
+        self.aerodynamics
+            .evaluate_in_wind_field(state, self.air_density_kg_m3, self.wind_field)
+            .map(|evaluation| evaluation.total_wrench())
+            .map_err(LoadError::Aerodynamic)
+    }
+}
+
 impl UniformAerodynamicLoad {
     /// Creates an external-load provider for one aerodynamic model and air state.
     pub const fn new(aerodynamics: AerodynamicModel, air: UniformAir) -> Self {
@@ -568,7 +614,8 @@ impl ExternalLoadProvider for UniformAerodynamicLoad {
 fn evaluate_element(
     element: AerodynamicElement,
     state: &FlightState,
-    air: UniformAir,
+    air_density_kg_m3: f64,
+    wind_field: WindField<'_>,
 ) -> Result<AerodynamicWrench, AeroError> {
     let [flow_x, flow_y, flow_z] = element.flow_point_from_datum.components();
     let radius = BodyVector::try_new(flow_x, flow_y, flow_z).map_err(map_math_error)?;
@@ -576,6 +623,17 @@ fn evaluate_element(
         .angular_velocity_body()
         .cross(radius)
         .map_err(map_math_error)?;
+    let element_position_offset_ned = state
+        .attitude_body_to_ned()
+        .body_to_ned(radius)
+        .map_err(map_math_error)?;
+    let element_position_ned = state
+        .datum_position_ned()
+        .translated(element_position_offset_ned)
+        .map_err(map_math_error)?;
+    let wind_velocity_ned = wind_field
+        .velocity_at(element_position_ned)
+        .map_err(AeroError::Wind)?;
     let local_point_velocity_ned = state
         .attitude_body_to_ned()
         .body_to_ned(rotational_velocity)
@@ -583,7 +641,7 @@ fn evaluate_element(
         .plus(state.datum_velocity_ned())
         .map_err(map_math_error)?;
     let air_relative_velocity_ned = local_point_velocity_ned
-        .minus(air.wind_velocity_ned_mps)
+        .minus(wind_velocity_ned)
         .map_err(map_math_error)?;
     let air_relative_velocity_body = state
         .attitude_body_to_ned()
@@ -596,7 +654,7 @@ fn evaluate_element(
     if !speed.is_finite() {
         return Err(AeroError::NonFinite);
     }
-    let dynamic_pressure = 0.5 * air.density_kg_m3 * speed * speed;
+    let dynamic_pressure = 0.5 * air_density_kg_m3 * speed * speed;
     if !dynamic_pressure.is_finite() {
         return Err(AeroError::NonFinite);
     }
@@ -718,6 +776,7 @@ mod tests {
     use super::*;
     use crate::dynamics::{DynamicsError, Gravity, PilotAcceleration, advance};
     use crate::math::{InertiaTensor, NedPoint, UnitQuaternion};
+    use crate::wind_field::WindError;
     use core::f64::consts::{FRAC_PI_2, PI};
 
     const ROLES: [AerodynamicRole; 5] = [
@@ -786,6 +845,10 @@ mod tests {
 
     fn vector(x: f64, y: f64, z: f64) -> BodyVector {
         BodyVector::try_new(x, y, z).unwrap()
+    }
+
+    fn ned_vector(north: f64, east: f64, down: f64) -> NedVector {
+        NedVector::try_new(north, east, down).unwrap()
     }
 
     fn state(
@@ -934,6 +997,239 @@ mod tests {
             -32.0,
             1.0e-12,
         );
+    }
+
+    #[test]
+    fn head_cross_and_vertical_winds_change_the_air_relative_flow() {
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let state = state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
+        let headwind = aerodynamics
+            .evaluate_in_wind_field(&state, 1.0, WindField::uniform(ned_vector(-5.0, 0.0, 0.0)))
+            .unwrap()
+            .element(AerodynamicRole::LeftWing)
+            .flow;
+        near(headwind.speed_mps(), 15.0, 1.0e-12);
+        near(headwind.dynamic_pressure_pascal(), 112.5, 1.0e-12);
+
+        let crosswind = aerodynamics
+            .evaluate_in_wind_field(&state, 1.0, WindField::uniform(ned_vector(0.0, 4.0, 0.0)))
+            .unwrap()
+            .element(AerodynamicRole::LeftWing)
+            .flow;
+        near(crosswind.speed_mps(), 116.0_f64.sqrt(), 1.0e-12);
+        assert!(crosswind.beta_rad().unwrap() < 0.0);
+
+        let updraft = aerodynamics
+            .evaluate_in_wind_field(&state, 1.0, WindField::uniform(ned_vector(0.0, 0.0, -2.0)))
+            .unwrap()
+            .element(AerodynamicRole::LeftWing)
+            .flow;
+        near(updraft.speed_mps(), 104.0_f64.sqrt(), 1.0e-12);
+        assert!(updraft.alpha_rad().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn uniform_wind_preserves_galilean_relative_flow() {
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let still_air = aerodynamics
+            .evaluate(
+                &state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0),
+                air([0.0; 3], 1.0),
+            )
+            .unwrap();
+        let translating_air = aerodynamics
+            .evaluate_in_wind_field(
+                &state([15.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0),
+                1.0,
+                WindField::uniform(ned_vector(5.0, 0.0, 0.0)),
+            )
+            .unwrap();
+        assert_eq!(
+            still_air.element(AerodynamicRole::LeftWing).flow,
+            translating_air.element(AerodynamicRole::LeftWing).flow
+        );
+        assert_eq!(
+            still_air
+                .element(AerodynamicRole::LeftWing)
+                .force_body_newtons(),
+            translating_air
+                .element(AerodynamicRole::LeftWing)
+                .force_body_newtons()
+        );
+    }
+
+    #[test]
+    fn gradient_wind_is_sampled_at_each_aerodynamic_element_position() {
+        let elements = ROLES.map(|role| {
+            let east_offset = match role {
+                AerodynamicRole::LeftWing => -1.0,
+                AerodynamicRole::RightWing => 1.0,
+                _ => 0.0,
+            };
+            AerodynamicElement::try_new(
+                role,
+                point(0.0, east_offset, 0.0),
+                point(0.0, east_offset, 0.0),
+                ElementOrientation::IDENTITY,
+                reference(1.0, 1.0, 1.0),
+                zero_coefficients(),
+                envelope(),
+            )
+            .unwrap()
+        });
+        let aerodynamics = AerodynamicModel::try_new(elements).unwrap();
+        let wind = WindField::linear_gradient(
+            NedPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+            NedVector::zero(),
+            [[0.0, 1.0, 0.0], [0.0; 3], [0.0; 3]],
+        )
+        .unwrap();
+        let evaluation = aerodynamics
+            .evaluate_in_wind_field(&state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0), 1.0, wind)
+            .unwrap();
+        near(
+            evaluation
+                .element(AerodynamicRole::LeftWing)
+                .flow
+                .speed_mps(),
+            11.0,
+            1.0e-12,
+        );
+        near(
+            evaluation
+                .element(AerodynamicRole::RightWing)
+                .flow
+                .speed_mps(),
+            9.0,
+            1.0e-12,
+        );
+    }
+
+    #[test]
+    fn grid_range_failure_keeps_wind_error_and_element_role() {
+        let samples = [ned_vector(0.0, 0.0, 0.0); 8];
+        let wind = WindField::grid(
+            NedPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+            ned_vector(1.0, 1.0, 1.0),
+            [2, 2, 2],
+            &samples,
+        )
+        .unwrap();
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let provider = WindFieldAerodynamicLoad::try_new(aerodynamics, 1.0, wind).unwrap();
+        let state = FlightState::try_new(
+            NedPoint::try_new(2.0, 0.0, 0.0).unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::IDENTITY,
+            vector(0.0, 0.0, 0.0),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let result = advance(
+            &aircraft,
+            &state,
+            PilotAcceleration::try_new(0.0).unwrap(),
+            Gravity::try_new(0.0).unwrap(),
+            &provider,
+            0.01,
+        );
+        assert_eq!(
+            result,
+            Err(DynamicsError::Load(LoadError::Aerodynamic(
+                AerodynamicEvaluationError::Element {
+                    role: AerodynamicRole::LeftWing,
+                    cause: AeroError::Wind(WindError::OutsideGrid),
+                }
+            )))
+        );
+    }
+
+    #[test]
+    fn windfield_load_provider_evaluates_a_successful_rk4_step() {
+        let samples = [ned_vector(-2.0, 0.0, 0.0); 8];
+        let wind = WindField::grid(
+            NedPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+            ned_vector(1.0, 1.0, 1.0),
+            [2, 2, 2],
+            &samples,
+        )
+        .unwrap();
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let provider = WindFieldAerodynamicLoad::try_new(aerodynamics, 1.0, wind).unwrap();
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let initial = FlightState::try_new(
+            NedPoint::try_new(0.5, 0.5, 0.5).unwrap(),
+            ned_vector(10.0, 0.0, 0.0),
+            UnitQuaternion::IDENTITY,
+            vector(0.0, 0.0, 0.0),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let next = advance(
+            &aircraft,
+            &initial,
+            PilotAcceleration::try_new(0.0).unwrap(),
+            Gravity::try_new(0.0).unwrap(),
+            &provider,
+            0.01,
+        )
+        .unwrap();
+        assert!(next.datum_velocity_ned().components()[0] < 10.0);
     }
 
     #[test]

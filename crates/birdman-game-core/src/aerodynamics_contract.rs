@@ -1,4 +1,5 @@
 use crate::math::MathError;
+use crate::wind_field::WindError;
 
 /// The five fixed aerodynamic elements used by the initial aircraft model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +51,8 @@ pub enum AeroError {
     UndefinedFlowAngle,
     /// A local flow is outside an element's declared coefficient envelope.
     OutsideEnvelope,
+    /// The wind field could not provide a finite velocity at the element point.
+    Wind(WindError),
 }
 
 /// Identifies an element-scoped or model-wide aerodynamic evaluation failure.

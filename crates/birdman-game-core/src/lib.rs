@@ -8,13 +8,15 @@ mod aerodynamics;
 mod aerodynamics_contract;
 mod dynamics;
 mod math;
+mod wind_field;
 
 pub use aerodynamics::{
     AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
     AerodynamicWrench, CoefficientLaw, ElementEnvelope, ElementOrientation, ElementReference,
-    ElementalFlow, FlowAngles, UniformAerodynamicLoad, UniformAir,
+    ElementalFlow, FlowAngles, UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
 };
 pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
+pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{
     AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightState, Gravity,
