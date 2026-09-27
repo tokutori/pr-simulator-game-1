@@ -74,6 +74,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 | 026 | position targetの加速・制動・収束、最大速度・加速度・移動範囲、復帰不能境界のtyped error、同条件決定性、6DoF internal-mass接続 |
 | 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral互換、stage error時の状態不変 |
 | 028 | Manual / Shared / Automaticの統合tick、pilot target・actuator・6DoF一括更新、決定性、load error時の不変性、tick overflow |
+| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical/actuator補間、geometry・tick・actuator error |
 | 007 | native/WASM数値許容差、FPS独立性、pause/resume、keyboard/gamepadのbinding・切断・tick入力からsnapshotまでのbrowser試験 |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |

@@ -91,8 +91,11 @@ launchはdatum $O$ のground velocityと姿勢、構造datum高度、身体初�
 合成重心高度を指定する入力形式は、身体初期位置からdatum位置へ変換する。風をground velocityへ自動加算しない。
 trimから生成する場合はair-relative条件を明示し、ground条件によるlaunchと別の生成方法にする。
 静水面はNEDのD=0とする。初期版の接触判定は登録した機体接触点のいずれかがD>=0となる条件を用いる。
-接触点は構造datumからの固定offsetでモデルに記録する。stepを跨ぐ接触は位置の交差を検出し、
-score用の接触位置を補間する。終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
+接触点は構造datumからの固定offsetでモデルに記録する。接触検出は隣接する成功tick間のstateを補間し、
+各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態・actuatorは線形補間し、
+姿勢は短経路quaternion slerpを用いる。接触探索では補間経路を16区間で調べ、接触を含む区間のfractionを
+同じ補間state上で二分探索により確定する。
+終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
 接触後のtick状態を通常sampleとして保存しない。Result、graph、Replayは同じ終端sampleを参照する。
 水面波は初期版では描画のみであり、波頂による接触時刻の変動は計算しない。
 platform上の走行・拘束解除・複雑な陸地衝突は初期版の対象外である。

@@ -31,7 +31,9 @@ recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraか
 tick kの入力はstate k→k+1に適用する。tick 0の初期状態も保存する。
 時刻は整数tickを正本とし、浮動小数時刻の反復加算を避ける。
 接触がtick間にある場合はtickとfractionを持つ終端event/sampleを追加し、二重sampleを排除する。
-終端sampleは接触時刻に対応する位置、姿勢、actuator、身体位置・速度を同じ補間規則で確定する。
+終端sampleは接触時刻に対応する位置、速度、短経路quaternion slerpによる姿勢、角速度、actuator、
+身体位置・速度を同じ補間規則で確定する。接触fractionは接触geometryの各点について補間経路上で探索し、
+最早eventを選択する。
 接触後のtick $k+1$ 状態は保存しない。Resultの終了点、graph終端、Replay最終poseは同じsampleを参照する。
 
 最大flight tick数はscenario/game policyの明示的な上限である。

@@ -6,6 +6,7 @@
 
 mod aerodynamics;
 mod aerodynamics_contract;
+mod contact;
 mod dynamics;
 mod flight_control;
 mod math;
@@ -19,6 +20,10 @@ pub use aerodynamics::{
     UniformAir, WindFieldAerodynamicLoad,
 };
 pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
+pub use contact::{
+    ContactError, InterpolatedFlightState, WaterContactGeometry, WaterContactSample,
+    detect_water_contact,
+};
 pub use flight_control::{
     ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, ControlMode, FbwAuthority,
     SurfaceCommands, SurfaceDeflections, advance_surface_control, mix_surface_commands,

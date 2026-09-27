@@ -56,6 +56,8 @@ pub enum MathError {
     NonFinite,
     /// A quaternion is zero or outside the permitted unit-length tolerance.
     InvalidQuaternion,
+    /// A quaternion interpolation fraction is outside the inclusive unit interval.
+    InvalidInterpolationFraction,
     /// A matrix is not exactly symmetric.
     AsymmetricTensor,
     /// A tensor is not positive definite.
@@ -292,6 +294,46 @@ impl UnitQuaternion {
         let [scalar_part, vector_x, vector_y, vector_z] = self.components;
         let inverse = [scalar_part, -vector_x, -vector_y, -vector_z];
         BodyVector::try_from_components(rotate(inverse, vector.components))
+    }
+
+    /// Interpolates the shortest rotation arc to another attitude.
+    pub fn slerp(self, other: Self, fraction: f64) -> Result<Self, MathError> {
+        if !fraction.is_finite() {
+            return Err(MathError::NonFinite);
+        }
+        if !(0.0..=1.0).contains(&fraction) {
+            return Err(MathError::InvalidInterpolationFraction);
+        }
+        if fraction == 0.0 {
+            return Ok(self);
+        }
+        if fraction == 1.0 {
+            return Ok(other);
+        }
+
+        let start = self.components;
+        let mut end = other.components;
+        let mut cosine = start
+            .into_iter()
+            .zip(end)
+            .map(|(left, right)| left * right)
+            .sum::<f64>();
+        if cosine < 0.0 {
+            end = end.map(|component| -component);
+            cosine = -cosine;
+        }
+        cosine = cosine.clamp(-1.0, 1.0);
+
+        let components = if cosine > 0.9995 {
+            core::array::from_fn(|index| start[index] + fraction * (end[index] - start[index]))
+        } else {
+            let angle = libm::acos(cosine);
+            let sine = libm::sin(angle);
+            let start_weight = libm::sin((1.0 - fraction) * angle) / sine;
+            let end_weight = libm::sin(fraction * angle) / sine;
+            core::array::from_fn(|index| start_weight * start[index] + end_weight * end[index])
+        };
+        Self::from_integrated_components(components)
     }
 
     pub(crate) fn derivative(self, angular_rate: BodyVector) -> [f64; 4] {
