@@ -1,4 +1,7 @@
 use crate::PHYSICS_DT_SECONDS;
+use crate::contact::{
+    ContactError, WaterContactGeometry, WaterContactSample, detect_water_contact,
+};
 use crate::dynamics::{
     AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, Gravity, PilotPositionTarget,
     advance_with_surface_deflections, pilot_target_acceleration, total_momentum,
@@ -106,6 +109,17 @@ pub enum FlightTickError {
     Actuator(ActuatorError),
     /// Pilot motion or 6DoF evaluation failed.
     Dynamics(DynamicsError),
+    /// Water-contact evaluation failed.
+    Contact(ContactError),
+}
+
+/// Result of advancing one controlled physics interval with terminal contact detection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FlightTickOutcome {
+    /// The full next integer-tick state remains airborne.
+    Advanced(FlightTickState),
+    /// Water contact ended the flight within the interval; no post-contact state is exposed.
+    WaterContact(WaterContactSample),
 }
 
 /// Applies one fixed-rate input and returns the next complete simulation state.
@@ -157,6 +171,27 @@ pub fn advance_flight_tick<P: ExternalLoadProvider>(
     })
 }
 
+/// Advances one controlled tick and returns either its airborne state or terminal water contact.
+///
+/// The full next-tick state remains internal when contact occurs, so callers cannot accidentally
+/// append or present the post-contact state as part of the flight.
+pub fn advance_flight_tick_with_contact<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    previous: FlightTickState,
+    config: FlightTickConfig,
+    input: FlightTickInput,
+    loads: &P,
+    geometry: WaterContactGeometry<'_>,
+) -> Result<FlightTickOutcome, FlightTickError> {
+    let next = advance_flight_tick(aircraft, previous, config, input, loads)?;
+    let contact = detect_water_contact(aircraft, previous, next, config.actuator_limits, geometry)
+        .map_err(FlightTickError::Contact)?;
+    match contact {
+        Some(sample) => Ok(FlightTickOutcome::WaterContact(sample)),
+        None => Ok(FlightTickOutcome::Advanced(next)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -168,6 +203,7 @@ mod tests {
     };
     use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
     use crate::{DynamicsError, PHYSICS_DT_SECONDS};
+    use crate::{FlightTickOutcome, WaterContactGeometry, advance_flight_tick_with_contact};
 
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
@@ -311,6 +347,117 @@ mod tests {
                 &ConstantLoad::new(Wrench::zero()),
             ),
             Err(FlightTickError::TickOverflow)
+        );
+    }
+
+    #[test]
+    fn integrated_tick_exposes_only_the_fractional_terminal_state_on_contact() {
+        let aircraft = aircraft();
+        let previous_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -0.01).unwrap(),
+            NedVector::try_new(0.0, 0.0, 2.0).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let previous = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            8,
+            previous_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let geometry_points = [crate::BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let geometry = WaterContactGeometry::try_new(&geometry_points).unwrap();
+        let loads = ConstantLoad::new(Wrench::zero());
+        let neutral_commands = SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap();
+        let input = FlightTickInput::new(
+            neutral_commands,
+            neutral_commands,
+            crate::PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
+        );
+        let outcome = advance_flight_tick_with_contact(
+            &aircraft,
+            previous,
+            config(ControlMode::Manual),
+            input,
+            &loads,
+            geometry,
+        )
+        .unwrap();
+        let FlightTickOutcome::WaterContact(contact) = outcome else {
+            panic!("expected terminal contact, got {outcome:?}");
+        };
+        assert_eq!(contact.interval_start_tick(), 8);
+        assert!((contact.fraction() - 0.5).abs() < 1.0e-10);
+        assert!(
+            contact
+                .state()
+                .flight_state()
+                .datum_position_ned()
+                .components()[2]
+                .abs()
+                < 1.0e-12
+        );
+        assert_eq!(previous.tick_index(), 8);
+    }
+
+    #[test]
+    fn integrated_tick_returns_airborne_state_and_contact_failures_are_typed() {
+        let aircraft = aircraft();
+        let previous = initial_state(&aircraft);
+        let loads = ConstantLoad::new(Wrench::zero());
+        let geometry_points = [crate::BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let geometry = WaterContactGeometry::try_new(&geometry_points).unwrap();
+        let advanced = advance_flight_tick_with_contact(
+            &aircraft,
+            previous,
+            config(ControlMode::Manual),
+            tick_input(&aircraft),
+            &loads,
+            geometry,
+        )
+        .unwrap();
+        assert!(matches!(
+            advanced,
+            FlightTickOutcome::Advanced(state) if state.tick_index() == previous.tick_index() + 1
+        ));
+
+        let extreme_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, f64::MAX).unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let extreme_state = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            0,
+            extreme_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let extreme_points = [crate::BodyPoint::try_new(0.0, 0.0, f64::MAX).unwrap()];
+        let extreme_geometry = WaterContactGeometry::try_new(&extreme_points).unwrap();
+        let error = advance_flight_tick_with_contact(
+            &aircraft,
+            extreme_state,
+            config(ControlMode::Manual),
+            tick_input(&aircraft),
+            &loads,
+            extreme_geometry,
+        );
+        assert_eq!(
+            error,
+            Err(FlightTickError::Contact(crate::ContactError::Math(
+                crate::MathError::NonFinite
+            )))
         );
     }
 }

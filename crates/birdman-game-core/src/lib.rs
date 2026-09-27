@@ -29,7 +29,8 @@ pub use flight_control::{
     SurfaceCommands, SurfaceDeflections, advance_surface_control, mix_surface_commands,
 };
 pub use simulation::{
-    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, advance_flight_tick,
+    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,
+    advance_flight_tick, advance_flight_tick_with_contact,
 };
 pub use wind_field::{WindError, WindField};
 

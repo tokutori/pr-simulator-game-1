@@ -27,6 +27,8 @@ pilot target policyは連続停止距離に基づき、停止距離が1 tick分�
 そのtimestepは100 Hz tick以下の有限値とし、描画frame数から値を生成しない。
 `advance_surface_control`はpilot/FBWのauthority混合、rate limit・saturation適用、更新後stateを一つの
 決定的な操作として返す。混合後commandもrecord可能な値として返却する。
+`advance_flight_tick_with_contact`は統合tickの次状態をwater-contact detectorへ渡し、次のinteger-tick stateまたはterminal contactを
+返す。Contact時にはfractional sampleのみを公開し、接触後のinteger-tick stateを呼出し側へ返さない。
 
 このactuator modelは静的舵角限界とrate limitを表す。独立した遅延・一次lagを追加する場合は、
 遅延bufferとその初期状態をFlightRecordへ含める契約および統合収束試験を同時に定義する。

@@ -97,6 +97,7 @@ trimから生成する場合はair-relative条件を明示し、ground条件に�
 同じ補間state上で二分探索により確定する。
 終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
 接触後のtick状態を通常sampleとして保存しない。Result、graph、Replayは同じ終端sampleを参照する。
+`advance_flight_tick_with_contact`はContact時にfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開しない。
 水面波は初期版では描画のみであり、波頂による接触時刻の変動は計算しない。
 platform上の走行・拘束解除・複雑な陸地衝突は初期版の対象外である。
 飛距離の定義（直線水平距離または規定方向への投影）はBPG-006で明示し、公式競技計測との同一性を仮定しない。
