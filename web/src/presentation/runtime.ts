@@ -1,5 +1,6 @@
 import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize } from "../render/contracts/runtime.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
+import type { Pose } from "../render/contracts/math.js";
 
 export class PresentationRuntime {
   private readonly backends: ReadonlyMap<PresentationMode, PresentationBackendAdapter>;
@@ -77,7 +78,7 @@ export class PresentationRuntime {
     this.activeBackend = backend;
     if (!this.loopStarted) {
       try {
-        this.renderer.startLoop((timestampMs) => { this.renderFrame(timestampMs); });
+        this.renderer.startLoop((timestampMs, viewerPose) => { this.renderFrame(timestampMs, viewerPose); });
         this.loopStarted = true;
       } catch (error) {
         this.activeBackend = null;
@@ -131,10 +132,10 @@ export class PresentationRuntime {
     }
   }
 
-  private renderFrame(timestampMs: number): void {
+  private renderFrame(timestampMs: number, viewerPose: Pose | null): void {
     const backend = this.activeBackend;
     if (backend === null || this.disposed) return;
-    this.renderer.render(backend.currentFrame(timestampMs, this.viewModel()));
+    this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(), viewerPose));
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

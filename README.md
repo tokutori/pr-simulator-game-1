@@ -8,8 +8,8 @@ keyboard / gamepad、manual / shared / automatic、FBWを備える計画であ�
 
 ## 現在の実装範囲
 
-BPG-001の設計契約とworkspaceを基盤に、BPG-014のScreen表示shell、8 Scene共通のUI契約、VR panel描画契約、Three.js adapter境界を実装中である。Boot画面でScreen表示を確認できる。
-WebXR・Phone VR session、各Sceneのゲーム機能、物理計算、実データ、Pages公開は未実装である。
+BPG-014のScreen表示shellに続き、BPG-015でnative WebXR session、VR panel表示、gaze/XR select操作を実装する。WebXRのsession拒否・終了と全Scene fixtureは自動試験するが、実HMDの表示・操作は未検証である。Boot画面でScreen表示を確認できる。
+Phone VR、各Sceneのゲーム機能、物理計算、実データ、Pages公開は未実装である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境

@@ -1,5 +1,6 @@
 import {
   CanvasTexture,
+  CircleGeometry,
   Color,
   DoubleSide,
   LinearFilter,
@@ -12,10 +13,30 @@ import {
   WebGLRenderer
 } from "three";
 import type { Object3D } from "three";
-import type { BackendFrame, RendererAdapter, ViewportSize } from "../../contracts/runtime.js";
+import type { BackendFrame, RendererAdapter, SelectRay, ViewportSize } from "../../contracts/runtime.js";
+import { quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
+import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 
-export function createThreeRenderer(canvas: HTMLCanvasElement, panelCanvas: HTMLCanvasElement): RendererAdapter {
+type ThreeWebXrState =
+  | { readonly type: "idle" }
+  | { readonly type: "requesting" }
+  | { readonly type: "requested"; readonly session: XRSession }
+  | { readonly type: "attaching"; readonly session: XRSession }
+  | { readonly type: "active"; readonly session: XRSession }
+  | { readonly type: "stopping"; readonly session: XRSession }
+  | { readonly type: "failed"; readonly message: string };
+
+export interface ThreeRendererBundle {
+  readonly renderer: RendererAdapter;
+  readonly webxr: WebXrSessionPort;
+}
+
+export function createThreeRenderer(
+  canvas: HTMLCanvasElement,
+  panelCanvas: HTMLCanvasElement,
+  xrSystem: XRSystem | null
+): ThreeRendererBundle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.setClearColor(0x8aadb0, 1);
@@ -40,22 +61,79 @@ export function createThreeRenderer(canvas: HTMLCanvasElement, panelCanvas: HTML
   const panelMesh = new Mesh(panelGeometry, panelMaterial);
   panelMesh.visible = false;
   scene.add(panelMesh);
+  const gazeCursorGeometry = new CircleGeometry(0.035, 32);
+  const gazeCursorMaterial = new MeshBasicMaterial({ color: 0xf0d382, side: DoubleSide, transparent: true, opacity: 0.8, depthWrite: false });
+  const gazeCursor = new Mesh(gazeCursorGeometry, gazeCursorMaterial);
+  gazeCursor.position.z = 0.015;
+  gazeCursor.visible = false;
+  panelMesh.add(gazeCursor);
 
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   camera.position.set(0, 0, 0);
   let disposed = false;
   let loopRunning = false;
-  let panelRevision = -1;
   let width = 0;
   let height = 0;
   let pixelRatio = 0;
+  let currentPanel = null as BackendFrame["panel"];
+  let xrState: ThreeWebXrState = { type: "idle" };
+  let requestGeneration = 0;
+  let sessionEndHandler: (() => void) | null = null;
+  let referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
+  let activeReferenceSpace: XRReferenceSpace | null = null;
+  let selectRayHandler: ((ray: SelectRay) => void) | null = null;
 
-  return {
+  const onSelect = (event: XRInputSourceEvent): void => {
+    if (xrState.type !== "active" && xrState.type !== "attaching") return;
+    const referenceSpace = renderer.xr.getReferenceSpace();
+    if (referenceSpace === null || selectRayHandler === null) return;
+    const targetPose = event.frame.getPose(event.inputSource.targetRaySpace, referenceSpace);
+    if (targetPose === undefined) return;
+    const transform = targetPose.transform;
+    const orientation = quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z);
+    selectRayHandler({
+      origin: vec3(transform.position.x, transform.position.y, transform.position.z),
+      direction: rotateVec3(orientation, vec3(0, 0, -1)),
+      timestampMs: event.frame.predictedDisplayTime
+    });
+  };
+
+  const onSessionEnd = (): void => {
+    const session = sessionFromState(xrState);
+    if (session === null) return;
+    session.removeEventListener("select", onSelect);
+    const expected = xrState.type === "stopping";
+    xrState = { type: "idle" };
+    if (expected) return;
+    queueMicrotask(() => {
+      clearSession(session);
+      sessionEndHandler?.();
+    });
+  };
+
+  const onReferenceSpaceReset = (event: XRReferenceSpaceEvent): void => {
+    const transform = event.transform as XRRigidTransform | null | undefined;
+    referenceSpaceResetHandler?.(transform === null || transform === undefined ? null : {
+      position: vec3(transform.position.x, transform.position.y, transform.position.z),
+      orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
+    });
+  };
+
+  const rendererAdapter: RendererAdapter = {
     startLoop(callback) {
       ensureActive(disposed);
       if (loopRunning) throw new Error("Three.js frame loop is already active");
       loopRunning = true;
-      renderer.setAnimationLoop((timestamp) => { callback(timestamp); });
+      renderer.setAnimationLoop((timestamp, xrFrame) => {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const viewer = referenceSpace === null ? null : xrFrame.getViewerPose(referenceSpace);
+        const transform = viewer?.transform;
+        const viewerPose = transform === undefined ? null : {
+          position: vec3(transform.position.x, transform.position.y, transform.position.z),
+          orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
+        };
+        callback(timestamp, viewerPose);
+      });
     },
     stopLoop() {
       if (disposed || !loopRunning) return;
@@ -64,18 +142,27 @@ export function createThreeRenderer(canvas: HTMLCanvasElement, panelCanvas: HTML
     },
     render(frame: BackendFrame) {
       ensureActive(disposed);
-      resizeIfNeeded(frame.viewport);
+      if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
       setPose(camera, frame.cameraPose);
-      setPose(panelMesh, frame.menuPose);
+      setPose(panelMesh, frame.panelPose);
       panelMesh.visible = frame.panelVisible;
-      if (frame.panelRevision !== panelRevision) {
+      if (frame.panel !== currentPanel) {
         panelTexture.needsUpdate = true;
-        panelRevision = frame.panelRevision;
+        currentPanel = frame.panel;
+      }
+      const panelWidth = frame.panel?.size.width ?? 2.4;
+      const panelHeight = frame.panel?.size.height ?? 1.8;
+      panelMesh.scale.set(panelWidth / 2.4, panelHeight / 1.8, 1);
+      gazeCursor.visible = frame.gazeCursor !== null && frame.panelVisible;
+      if (frame.gazeCursor !== null) {
+        gazeCursor.position.set(frame.gazeCursor.point.x, frame.gazeCursor.point.y, 0.015);
+        gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
       }
       renderer.render(scene, camera);
     },
     resize(viewport: ViewportSize) {
       ensureActive(disposed);
+      if (renderer.xr.isPresenting) return;
       resizeIfNeeded(viewport);
     },
     dispose() {
@@ -83,14 +170,142 @@ export function createThreeRenderer(canvas: HTMLCanvasElement, panelCanvas: HTML
       if (loopRunning) renderer.setAnimationLoop(null);
       loopRunning = false;
       panelTexture.dispose();
+      gazeCursorGeometry.dispose();
+      gazeCursorMaterial.dispose();
       panelGeometry.dispose();
       panelMaterial.dispose();
       water.geometry.dispose();
       water.material.dispose();
       renderer.dispose();
       disposed = true;
+    },
+    setSelectRayHandler(handler) {
+      selectRayHandler = handler;
     }
   };
+
+  const webxr: WebXrSessionPort = {
+    async checkAvailability(): Promise<WebXrAvailability> {
+      if (xrSystem === null) return { supported: false, message: "WebXR is unavailable in this browser" };
+      try {
+        const supported = await xrSystem.isSessionSupported("immersive-vr");
+        return supported
+          ? { supported: true, message: "WebXR immersive-vr is supported" }
+          : { supported: false, message: "This browser or device does not support immersive-vr" };
+      } catch (error) {
+        return { supported: false, message: `WebXR capability check failed: ${errorMessage(error)}` };
+      }
+    },
+    requestSessionFromUserGesture(): Promise<WebXrSessionRequest> {
+      if (xrSystem === null) return Promise.resolve({ ok: false, message: "WebXR is unavailable in this browser" });
+      if (xrState.type !== "idle" && xrState.type !== "failed") {
+        return Promise.resolve({ ok: false, message: "A WebXR session is already active or starting" });
+      }
+      const generation = ++requestGeneration;
+      xrState = { type: "requesting" };
+      let request: Promise<XRSession>;
+      try {
+        request = xrSystem.requestSession("immersive-vr");
+      } catch (error) {
+        const message = `WebXR session request failed: ${errorMessage(error)}`;
+        if (generation === requestGeneration) xrState = { type: "failed", message };
+        return Promise.resolve({ ok: false, message });
+      }
+      return request.then(
+        (session) => {
+          if (generation !== requestGeneration || xrState.type !== "requesting") {
+            void session.end().catch(() => undefined);
+            return { ok: false, message: "WebXR session request was canceled" } as const;
+          }
+          xrState = { type: "requested", session };
+          return { ok: true } as const;
+        },
+        (error: unknown) => {
+          const message = `WebXR session request failed: ${errorMessage(error)}`;
+          if (generation === requestGeneration && xrState.type === "requesting") xrState = { type: "failed", message };
+          return { ok: false, message } as const;
+        }
+      );
+    },
+    async startSession(): Promise<void> {
+      ensureActive(disposed);
+      if (xrState.type !== "requested") throw new Error("WebXR session must be requested by an explicit user action");
+      const session = xrState.session;
+      xrState = { type: "attaching", session };
+      session.addEventListener("end", onSessionEnd);
+      session.addEventListener("select", onSelect);
+      renderer.xr.enabled = true;
+      renderer.xr.setReferenceSpaceType("local");
+      try {
+        await renderer.xr.setSession(session);
+        if (!isAttaching()) throw new Error("WebXR session ended during startup");
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        if (referenceSpace === null) throw new Error("WebXR reference space is unavailable");
+        activeReferenceSpace = referenceSpace;
+        activeReferenceSpace.addEventListener("reset", onReferenceSpaceReset);
+        xrState = { type: "active", session };
+      } catch (error) {
+        if (xrState.type === "attaching") {
+          xrState = { type: "stopping", session };
+          try {
+            await session.end();
+          } catch (cleanupError) {
+            xrState = { type: "failed", message: errorMessage(cleanupError) };
+            throw new Error(`WebXR attach failed: ${errorMessage(error)}; session cleanup failed: ${errorMessage(cleanupError)}`, { cause: cleanupError });
+          } finally {
+            clearSession(session);
+          }
+        }
+        throw error;
+      }
+    },
+    async endSession(): Promise<void> {
+      const state = xrState;
+      if (state.type === "requesting") {
+        requestGeneration++;
+        xrState = { type: "idle" };
+        return;
+      }
+      const session = sessionFromState(state);
+      if (session === null) {
+        xrState = { type: "idle" };
+        return;
+      }
+      xrState = { type: "stopping", session };
+      if (state.type === "active" || state.type === "attaching") session.removeEventListener("end", onSessionEnd);
+      try {
+        await session.end();
+      } finally {
+        clearSession(session);
+      }
+    },
+    setSessionEndHandler(handler: (() => void) | null): void {
+      sessionEndHandler = handler;
+    },
+    setReferenceSpaceResetHandler(handler: ((previousReferenceFromNew: Pose | null) => void) | null): void {
+      referenceSpaceResetHandler = handler;
+    }
+  };
+
+  return Object.freeze({
+    renderer: rendererAdapter,
+    webxr
+  });
+
+  function clearSession(session = sessionFromState(xrState)): void {
+    if (session !== null) {
+      session.removeEventListener("select", onSelect);
+      session.removeEventListener("end", onSessionEnd);
+    }
+    activeReferenceSpace?.removeEventListener("reset", onReferenceSpaceReset);
+    activeReferenceSpace = null;
+    xrState = { type: "idle" };
+    renderer.xr.enabled = false;
+  }
+
+  function isAttaching(): boolean {
+    return xrState.type === "attaching";
+  }
 
   function resizeIfNeeded(viewport: ViewportSize): void {
     if (viewport.x === width && viewport.y === height && viewport.pixelRatio === pixelRatio) return;
@@ -111,4 +326,22 @@ function setPose(object: Object3D, pose: Pose): void {
 
 function ensureActive(disposed: boolean): void {
   if (disposed) throw new Error("Three.js renderer has been disposed");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sessionFromState(state: ThreeWebXrState): XRSession | null {
+  switch (state.type) {
+    case "requested":
+    case "attaching":
+    case "active":
+    case "stopping":
+      return state.session;
+    case "idle":
+    case "requesting":
+    case "failed":
+      return null;
+  }
 }

@@ -1,5 +1,5 @@
-import type { Pose, Vec2 } from "./math.js";
-import type { UiViewModel } from "./ui.js";
+import type { Pose, Vec2, Vec3 } from "./math.js";
+import type { UiPanel, UiViewModel } from "./ui.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -10,17 +10,30 @@ export interface ViewportSize extends Vec2 {
 export interface BackendFrame {
   readonly timestampMs: number;
   readonly cameraPose: Pose;
-  readonly menuPose: Pose;
+  readonly panelPose: Pose;
+  readonly panel: UiPanel | null;
   readonly panelVisible: boolean;
-  readonly panelRevision: number;
+  readonly gazeCursor: PanelCursor | null;
   readonly viewport: ViewportSize;
 }
 
+export interface PanelCursor {
+  readonly point: Vec2;
+  readonly progress: number;
+}
+
+export interface SelectRay {
+  readonly origin: Vec3;
+  readonly direction: Vec3;
+  readonly timestampMs: number;
+}
+
 export interface RendererAdapter {
-  startLoop(callback: (timestampMs: number) => void): void;
+  startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void;
   stopLoop(): void;
   render(frame: BackendFrame): void;
   resize(viewport: ViewportSize): void;
+  setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;
   dispose(): void;
 }
 
@@ -28,7 +41,7 @@ export interface PresentationBackendAdapter {
   readonly mode: PresentationMode;
   start(): Promise<void>;
   stop(): Promise<void>;
-  currentFrame(timestampMs: number, viewModel: UiViewModel): BackendFrame;
+  currentFrame(timestampMs: number, viewModel: UiViewModel, viewerPose: Pose | null): BackendFrame;
 }
 
 export type RenderError =

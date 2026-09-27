@@ -50,7 +50,8 @@ BootやResultのためだけにScreenへ戻すことを禁止する。
 XR終了・tracking喪失では現在のGameSceneを保持し、Flight/Countdown/Replayは停止して復帰先を表示する。
 
 BPG-014〜016をBPG-001直後に実施する。全Sceneのview model fixtureで表示・選択・復帰を検証し、
-後続のゲーム進行、HUD、Analysis、Replayの各PRでもScreen/VR双方の受入試験を必須とする。
+BPG-015ではnative WebXR sessionへ接続する。BPG-017でgame flowを実flight stateへ接続する際、
+HUD、Analysis、Replayを含むScreen/VR双方の受入試験を必須とする。
 fixtureは表示基盤の検証データであり、未実装physicsの代用としてゲームへ組み込まない。
 
 ## 状態とcapability
@@ -72,6 +73,15 @@ nullや非有限値を0度として採用しない。受信timeout・stale判定
 sensor権限とXR sessionは利用者の明示操作から要求する。
 非同期capability調査は開始操作より前に実施し、await後にuser activationが残ると仮定しない。
 別backendへ切り替える際も、必要な権限要求を新たな開始操作から実行する。
+
+## BPG-015 WebXR実装
+
+WebXR sessionはユーザー操作内から要求し、Three.js `WebXRManager`へ接続する。reference spaceは`local`とし、
+左右眼のpose/projectionとXR animation loopをruntimeから利用する。XR select rayとhead-gaze dwellは共通`UiAction`へ変換する。
+`XRReferenceSpace`のresetではevent transformをengine非依存のposeへ変換してWorld/Cockpit/Menu anchorを新referenceへ写像する。
+transformが取得できない場合は選択を停止し、Screenへ退出して再開始を促す。
+全Scene/overlayのfixture、自動session lifecycle試験、production buildは実施可能である。HMD/browser上のpose・projection・操作確認は
+対象実機未確保のため未実施として扱い、実機検証完了までBPG-015を完了扱いしない。
 
 fullscreenとlandscape lockは補助機能とする。非対応・拒否・中断を処理し、
 手動の横向き配置や通常表示へ復帰できる。複数のAPIがuser activationを消費し得るため、

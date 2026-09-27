@@ -3,11 +3,13 @@ import { createPilotEyePoint, pilotEyePoseFrd } from "../../web/src/render/camer
 import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
 import type { AnchorFrames } from "../../web/src/render/anchors.js";
 import { IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
+import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
-import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
+import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { GazeDwellSelector } from "../../web/src/presentation/gaze-dwell.js";
 import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "../../web/src/presentation/panel-interaction.js";
 import { drawVrPanel } from "../../web/src/presentation/vr-panel-canvas.js";
 import type { PanelDrawingContext } from "../../web/src/presentation/vr-panel-canvas.js";
@@ -142,6 +144,39 @@ describe("anchor and camera transforms", () => {
   });
 });
 
+describe("head-gaze selection", () => {
+  it("focuses a control, exposes dwell progress, activates once, and clears on cancellation", () => {
+    const panel = requiredPanel(createSceneFixture("Title"));
+    const button = panel.controls.find((control) => control.kind === "button");
+    if (button === undefined) throw new Error("Missing button fixture");
+    const point = normalizedPoint(panel, button.rect.x + button.rect.width / 2, button.rect.y + button.rect.height / 2);
+    const actions: UiAction[] = [];
+    const selector = new GazeDwellSelector((action) => { actions.push(action); }, 1000);
+    expect(selector.update(panel, point, 100)?.progress).toBe(0);
+    expect(selector.update(panel, point, 600)?.progress).toBe(0.5);
+    expect(selector.update(panel, point, 1100)?.progress).toBe(1);
+    expect(selector.update(panel, point, 1600)?.progress).toBe(1);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+    expect(selector.wasActivatedRecently(button.id, {
+      origin: vec3(0, 0, 0), direction: vec3(0, 0, -1), timestampMs: 1200
+    })).toBe(true);
+    expect(selector.update(panel, null, 1700)).toBeNull();
+    expect(actions.at(-1)).toEqual({ type: "focus", controlId: null });
+  });
+
+  it("converts a dwell on a range control to the selected value", () => {
+    const panel = requiredPanel(createSceneFixture("Title"));
+    const range = panel.controls.find((control) => control.kind === "range");
+    if (range === undefined) throw new Error("Missing range fixture");
+    const point = normalizedPoint(panel, range.rect.x + range.rect.width, range.rect.y + range.rect.height / 2);
+    const actions: UiAction[] = [];
+    const selector = new GazeDwellSelector((action) => { actions.push(action); }, 500);
+    selector.update(panel, point, 200);
+    selector.update(panel, point, 700);
+    expect(actions).toContainEqual({ type: "set-range", controlId: range.id, value: 1 });
+  });
+});
+
 describe("presentation runtime", () => {
   it("keeps one engine loop while switching backend and disposes owned resources", async () => {
     const active = new Set<PresentationMode>();
@@ -196,9 +231,9 @@ class FakeRenderer implements RendererAdapter {
   disposeCount = 0;
   readonly frames: BackendFrame[] = [];
   lastViewport: ViewportSize | null = null;
-  private callback: ((timestampMs: number) => void) | null = null;
+  private callback: ((timestampMs: number, viewerPose: Pose | null) => void) | null = null;
 
-  startLoop(callback: (timestampMs: number) => void): void {
+  startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void {
     if (this.callback !== null) throw new Error("Only one frame loop may run");
     this.callback = callback;
     this.startCount++;
@@ -218,12 +253,14 @@ class FakeRenderer implements RendererAdapter {
     this.lastViewport = viewport;
   }
 
+  setSelectRayHandler(): void {}
+
   dispose(): void {
     this.disposeCount++;
   }
 
   tick(timestampMs: number): void {
-    this.callback?.(timestampMs);
+    this.callback?.(timestampMs, null);
   }
 }
 
@@ -257,9 +294,10 @@ class FakeBackend implements PresentationBackendAdapter {
     return Object.freeze({
       timestampMs,
       cameraPose: IDENTITY_POSE,
-      menuPose: IDENTITY_POSE,
+      panelPose: IDENTITY_POSE,
+      panel: null,
       panelVisible: this.mode !== "screen",
-      panelRevision: 1,
+      gazeCursor: null,
       viewport: Object.freeze({ x: 800, y: 600, pixelRatio: 1 })
     });
   }

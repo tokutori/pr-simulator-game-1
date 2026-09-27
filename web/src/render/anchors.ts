@@ -37,6 +37,10 @@ export class MenuAnchorPlacement {
     return this.worldFromMenu;
   }
 
+  applyReferenceTransform(newReferenceFromPrevious: Pose): void {
+    if (this.worldFromMenu !== null) this.worldFromMenu = composePose(newReferenceFromPrevious, this.worldFromMenu);
+  }
+
   current(): Pose | null {
     return this.worldFromMenu;
   }

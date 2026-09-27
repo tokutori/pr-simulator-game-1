@@ -24,9 +24,10 @@ export class ScreenPresentationBackend implements PresentationBackendAdapter {
     return Object.freeze({
       timestampMs,
       cameraPose: IDENTITY_POSE,
-      menuPose: placeMenuPanel(IDENTITY_POSE, 2.4),
+      panelPose: placeMenuPanel(IDENTITY_POSE, 2.4),
+      panel: null,
       panelVisible: false,
-      panelRevision: 0,
+      gazeCursor: null,
       viewport: this.viewport()
     });
   }
