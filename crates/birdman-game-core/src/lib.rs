@@ -4,8 +4,15 @@
 //! The core owns no clock, I/O, random generator, or platform interface. It
 //! evaluates explicit state, model, load, and input values.
 
+mod aerodynamics;
 mod dynamics;
 mod math;
+
+pub use aerodynamics::{
+    AeroCoefficients, AeroError, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
+    AerodynamicRole, AerodynamicWrench, CoefficientLaw, ElementEnvelope, ElementOrientation,
+    ElementReference, ElementalFlow, UniformAerodynamicLoad, UniformAir,
+};
 
 pub use dynamics::{
     AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightState, Gravity,

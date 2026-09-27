@@ -60,6 +60,17 @@ RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stat
 この段階のpilot accelerationは1 step中一定とする。位置目標から移動限界・速度・加速度を満たす
 指令列を生成する操作policyは、BPG-006の責務である。
 
+## BPG-003の空力接続
+
+`AerodynamicModel`は左右主翼・水平尾翼・垂直尾翼・胴体を各1要素保持する。各要素は評価点と
+荷重作用点、取付姿勢、参照面積・span・chord、6係数law、alpha/beta/dynamic-pressure envelopeを持つ。
+`UniformAerodynamicLoad`は位置一様な風と密度から各要素の局所流を評価し、forceとdatum $O$ まわりの
+momentを合成する。位置依存風場はBPG-004/005で別境界から接続する。
+
+評価点の速度には機体datum速度と $\omega\times r_i$ を用いる。身体の相対速度は空力点速度へ加えない。
+係数lawは参照値・alpha derivative・beta derivativeによる一次式であり、rate derivativeは持たない。
+適用範囲外はclampせずerrorとし、外力providerの失敗としてstep全体へ伝播する。
+
 ## 時間と処理落ち
 
 ```math

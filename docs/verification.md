@@ -21,7 +21,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 ### BPG-002 core検証
 
 `birdman-game-core`のunit testsは解析解または運動量不変量を期待値に使用する。
-2026-09-27時点の`cargo +1.97.0 test -p birdman-game-core`は17件すべて成功した。
+2026-09-27時点のBPG-002完了時は17件すべて成功した。BPG-003で空力unit test 19件を追加した。
 
 | ケース | 初期条件・比較対象 | 受入許容差・結果 |
 |---|---|---|
@@ -38,10 +38,25 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 これらは数値積分器と運動量収支の検証であり、実機飛距離の予測精度を保証しない。
 100 Hzの統合系収束と独立reference caseの追加比較は、空力・風場・control接続後にも継続する。
 
+### BPG-003 空力core検証
+
+2026-09-27時点で追加した19件の空力unit testはすべて成功した。
+
+| ケース | 比較対象 | 受入許容差・結果 |
+|---|---|---|
+| 動圧・揚力・抗力 | $\rho=2$ kg/m³、$V=10$ m/s、$S=2$ m²、$C_L=0.5$、$C_D=0.1 | $q=100$ Pa、$F_x=-20$ N、$F_z=-100$ N、誤差 $\le10^{-12}$、成功 |
+| alpha/beta係数law | rad単位の基準係数と角度微係数 | 解析力との差 $\le10^{-10}$、成功 |
+| 一様windと回転局所速度 | $v_O=(10,0,0)$ m/s、$\omega_z=1$ rad/s、$r=(1,0,0)$ m | $V_i=\sqrt{101}$ m/s、pilot相対速度の変更でflow不変、誤差 $\le10^{-12}$、成功 |
+| 左右対称な主翼 | $y=\pm1$ m、各要素の上向き揚力50 N | 合力 $F_z=-100$ N、roll moment 0、誤差 $\le10^{-12}$、成功 |
+| 作用点と合成重心 | 実pilot position $x_p=0.3$ m、mass ratioから算出した $r_G$ | $M_O-r_G\times F$ の解析値と一致、誤差 $\le10^{-12}$、成功 |
+| 係数moment | 参照span/chordと $C_l,C_m,C_n$ | 各body軸momentの解析値と一致、誤差 $\le10^{-12}$、成功 |
+| 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
+| RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
+
 | BPG | 検証 |
 |---|---|
 | 002 | frame往復、quaternion不変量、機体・パイロットの運動量収支、一般3次元の内部移動、重力、刻み半減収束、参照case比較 |
-| 003 | 対称空力、揚抗力の解析値、alpha/beta符号、moment arm、低速・適用範囲・非有限値 |
+| 003 | 5要素role、解析揚抗力、alpha/beta係数、wind subtract、回転局所速度、pilot非加算、moment arm、要素姿勢、zero-speed・envelope・数値境界 |
 | 004 | 無風、一様風Galilean invariance、同一ground launchのheadwind、crosswind、鉛直風、shear、grid境界 |
 | 005 | 左右対称、片翼上昇流、水平・垂直尾翼の局所風、回転局所速度、二重計上回避 |
 | 006 | lifecycle、身体位置指令・移動限界、接触補間と同時刻終端state、authority両端、actuator飽和、決定的scenario、入力replay |
