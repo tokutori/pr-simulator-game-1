@@ -88,7 +88,7 @@ rendererは前後の有効snapshotを補間する。画質設定は物理tickを
 ## 発進と着水
 
 launchはdatum $O$ のground velocityと姿勢、構造datum高度、身体初期位置・速度から初期化する。
-合成重心高度を指定する入力形式は、身体初期位置からdatum位置へ変換する。風をground velocityへ自動加算しない。
+合成重心位置・ground velocityを指定する入力形式は、身体状態・姿勢・角速度からmass-ratio offsetを用いてdatum position・velocityへ変換する。Rust coreは`flight_state_from_composite_cg_launch`でこの変換を提供する。風をground velocityへ自動加算しない。
 trimから生成する場合はair-relative条件を明示し、ground条件によるlaunchと別の生成方法にする。
 静水面はNEDのD=0とする。初期版の接触判定は登録した機体接触点のいずれかがD>=0となる条件を用いる。
 接触点は構造datumからの固定offsetでモデルに記録する。接触検出は隣接する成功tick間のstateを補間し、

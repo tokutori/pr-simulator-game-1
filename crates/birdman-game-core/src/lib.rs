@@ -10,6 +10,7 @@ mod contact;
 mod dynamics;
 mod flight_control;
 mod math;
+mod scenario;
 mod scoring;
 mod simulation;
 mod wind_field;
@@ -30,6 +31,7 @@ pub use flight_control::{
     ControlMode, FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
     body_rate_feedback_commands, mix_surface_commands,
 };
+pub use scenario::{CompositeCgLaunchConditions, flight_state_from_composite_cg_launch};
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
     course_distance_score,

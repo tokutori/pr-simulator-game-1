@@ -6,6 +6,8 @@
 
 合成重心 $G$ と慣性テンソルはパイロット位置から導出する。機体質量 $m_a$、パイロット質量 $m_p$、パイロット位置 $r_p^B=(x_p,0,z_p)$ を用い、$z_p$ は機体モデルで固定する。
 
+scenario inputが合成重心position/ground velocityを指定する場合、初期pilot stateとattitude/angular rateからdatum $O$ のlaunch stateへ逆変換する。変換後のpilot position/velocityはAircraftModelのrange検証を通す。windをground velocityへ暗黙に加算しない。
+
 ```math
 M=m_a+m_p,\qquad r_G^B=\frac{m_p r_p^B}{M}
 ```
