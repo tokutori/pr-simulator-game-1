@@ -98,6 +98,7 @@ trimから生成する場合はair-relative条件を明示し、ground条件に�
 終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
 接触後のtick状態を通常sampleとして保存しない。Result、graph、Replayは同じ終端sampleを参照する。
 `advance_flight_tick_with_contact`はContact時にfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開しない。
+`run_flight`は固定100 Hzの機器非依存input列を順に適用し、最初のWaterContactまたはTimeLimitで終了する。score v1はWaterContactならfractional terminal sample、TimeLimitなら最後の有効stateから算出し、終了後のtickを処理しない。
 水面波は初期版では描画のみであり、波頂による接触時刻の変動は計算しない。
 platform上の走行・拘束解除・複雑な陸地衝突は初期版の対象外である。
 Distance score v1は発進course axisに対するdatumの符号付き水平変位projectionとする。右向きcross-track変位と直線水平変位長は独立metricとして保持し、trajectory lengthとは区別する。公式競技計測との同一性を仮定しない。

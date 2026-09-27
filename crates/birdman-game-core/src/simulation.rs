@@ -10,6 +10,7 @@ use crate::flight_control::{
     ActuatorConfig, ActuatorError, ActuatorState, ControlMode, SurfaceCommands,
     advance_surface_control,
 };
+use crate::scoring::{CourseAxis, DistanceScore, DistanceScoreError, course_distance_score};
 
 /// Immutable simulation state at an integer physics tick boundary.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -122,6 +123,82 @@ pub enum FlightTickOutcome {
     WaterContact(WaterContactSample),
 }
 
+/// Terminal result of replaying a finite fixed-rate flight input sequence.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FlightRunOutcome {
+    /// Contact ended the flight; score uses the same fractional terminal state.
+    WaterContact {
+        /// Fractional physical and actuator state at first contact.
+        sample: WaterContactSample,
+        /// Versioned endpoint distance metrics computed from the contact state.
+        score: DistanceScore,
+    },
+    /// All allowed ticks elapsed without contact.
+    TimeLimit {
+        /// Last valid integer-tick state at the configured time limit.
+        state: FlightTickState,
+        /// Versioned endpoint distance metrics computed from the limit state.
+        score: DistanceScore,
+    },
+}
+
+/// Failures while replaying a finite flight input sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightRunError {
+    /// A flight must contain at least one allowed physics tick.
+    EmptyInput,
+    /// A controlled tick or contact evaluation failed.
+    Tick(FlightTickError),
+    /// Terminal distance score evaluation failed.
+    Score(DistanceScoreError),
+}
+
+/// Replays device-independent input samples until contact or the fixed tick limit.
+///
+/// The input slice is the sealed tick sequence. No allocation occurs, and a
+/// contact result contains no post-contact integer-tick state.
+pub fn run_flight<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    initial: FlightTickState,
+    config: FlightTickConfig,
+    inputs: &[FlightTickInput],
+    loads: &P,
+    geometry: WaterContactGeometry<'_>,
+    course_axis: CourseAxis,
+) -> Result<FlightRunOutcome, FlightRunError> {
+    if inputs.is_empty() {
+        return Err(FlightRunError::EmptyInput);
+    }
+    let start_datum = initial.flight_state().datum_position_ned();
+    let mut state = initial;
+    for input in inputs.iter().copied() {
+        match advance_flight_tick_with_contact(aircraft, state, config, input, loads, geometry)
+            .map_err(FlightRunError::Tick)?
+        {
+            FlightTickOutcome::Advanced(next) => state = next,
+            FlightTickOutcome::WaterContact(sample) => {
+                let terminal_datum = sample.state().flight_state().datum_position_ned();
+                let score = score_endpoints(start_datum, terminal_datum, course_axis)?;
+                return Ok(FlightRunOutcome::WaterContact { sample, score });
+            }
+        }
+    }
+    let score = score_endpoints(
+        start_datum,
+        state.flight_state().datum_position_ned(),
+        course_axis,
+    )?;
+    Ok(FlightRunOutcome::TimeLimit { state, score })
+}
+
+fn score_endpoints(
+    start_datum: crate::NedPoint,
+    terminal_datum: crate::NedPoint,
+    course_axis: CourseAxis,
+) -> Result<DistanceScore, FlightRunError> {
+    course_distance_score(start_datum, terminal_datum, course_axis).map_err(FlightRunError::Score)
+}
+
 /// Applies one fixed-rate input and returns the next complete simulation state.
 ///
 /// Control mode resolution, actuator update, pilot position control, and all four
@@ -195,16 +272,19 @@ pub fn advance_flight_tick_with_contact<P: ExternalLoadProvider>(
 #[cfg(test)]
 mod tests {
     use super::{
-        FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, advance_flight_tick,
+        FlightRunError, FlightRunOutcome, FlightTickConfig, FlightTickError, FlightTickInput,
+        FlightTickState, advance_flight_tick, run_flight, score_endpoints,
     };
     use crate::dynamics::{AircraftModel, ConstantLoad, FlightState, Gravity, Wrench};
     use crate::flight_control::{
         ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode, FbwAuthority,
         SurfaceCommands, body_rate_feedback_commands,
     };
-    use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
+    use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
+    use crate::{
+        CourseAxis, FlightTickOutcome, WaterContactGeometry, advance_flight_tick_with_contact,
+    };
     use crate::{DynamicsError, ExternalLoadProvider, LoadError, PHYSICS_DT_SECONDS};
-    use crate::{FlightTickOutcome, WaterContactGeometry, advance_flight_tick_with_contact};
 
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
@@ -253,6 +333,14 @@ mod tests {
 
     fn config(mode: ControlMode) -> FlightTickConfig {
         FlightTickConfig::new(mode, actuator_limits(), Gravity::try_new(0.0).unwrap())
+    }
+
+    fn neutral_input(aircraft: &AircraftModel) -> FlightTickInput {
+        FlightTickInput::new(
+            SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+            SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+            crate::PilotPositionTarget::try_new(aircraft, 0.0).unwrap(),
+        )
     }
 
     struct SyntheticRollMoment;
@@ -367,6 +455,192 @@ mod tests {
 
         assert!(state.flight_state().angular_velocity_body().components()[0] < 1.0);
         assert!(state.actuator_state().roll_rad() < 0.0);
+    }
+
+    #[test]
+    fn flight_sequence_stops_at_fractional_contact_and_scores_terminal_state() {
+        let aircraft = aircraft();
+        let initial_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -0.015).unwrap(),
+            NedVector::try_new(10.0, 0.0, 1.0).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let initial = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            0,
+            initial_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let loads = ConstantLoad::new(Wrench::zero());
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let geometry = WaterContactGeometry::try_new(&contact_points).unwrap();
+        let inputs = [neutral_input(&aircraft); 5];
+        let axis = CourseAxis::try_new(1.0, 0.0).unwrap();
+
+        let result = run_flight(
+            &aircraft,
+            initial,
+            config(ControlMode::Manual),
+            &inputs,
+            &loads,
+            geometry,
+            axis,
+        )
+        .unwrap();
+        let FlightRunOutcome::WaterContact { sample, score } = result else {
+            panic!("expected terminal water contact");
+        };
+        assert_eq!(sample.interval_start_tick(), 1);
+        assert!((sample.fraction() - 0.5).abs() < 1.0e-12);
+        assert!(
+            sample
+                .state()
+                .flight_state()
+                .datum_position_ned()
+                .components()[2]
+                .abs()
+                < 1.0e-14
+        );
+        assert!((score.course_parallel_m() - 0.15).abs() < 1.0e-12);
+        assert_eq!(score.cross_track_m(), 0.0);
+
+        let repeated = run_flight(
+            &aircraft,
+            initial,
+            config(ControlMode::Manual),
+            &inputs,
+            &loads,
+            geometry,
+            axis,
+        )
+        .unwrap();
+        assert_eq!(result, repeated);
+    }
+
+    #[test]
+    fn flight_sequence_exhaustion_is_time_limit_and_empty_sequence_is_rejected() {
+        let aircraft = aircraft();
+        let initial = initial_state(&aircraft);
+        let loads = ConstantLoad::new(Wrench::zero());
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let geometry = WaterContactGeometry::try_new(&contact_points).unwrap();
+        let inputs = [neutral_input(&aircraft); 3];
+        let axis = CourseAxis::try_new(1.0, 0.0).unwrap();
+
+        assert_eq!(
+            run_flight(
+                &aircraft,
+                initial,
+                config(ControlMode::Manual),
+                &[],
+                &loads,
+                geometry,
+                axis,
+            ),
+            Err(FlightRunError::EmptyInput)
+        );
+        let FlightRunOutcome::TimeLimit { state, score } = run_flight(
+            &aircraft,
+            initial,
+            config(ControlMode::Manual),
+            &inputs,
+            &loads,
+            geometry,
+            axis,
+        )
+        .unwrap() else {
+            panic!("expected time limit");
+        };
+        assert_eq!(state.tick_index(), 3);
+        assert_eq!(score.course_parallel_m(), 0.0);
+    }
+
+    #[test]
+    fn flight_sequence_preserves_load_and_contact_errors() {
+        struct FailingLoad;
+
+        impl ExternalLoadProvider for FailingLoad {
+            fn evaluate(
+                &self,
+                _model: &AircraftModel,
+                _state: &FlightState,
+            ) -> Result<Wrench, LoadError> {
+                Err(LoadError::Unavailable)
+            }
+        }
+
+        let aircraft = aircraft();
+        let initial = initial_state(&aircraft);
+        let input = [neutral_input(&aircraft)];
+        let loads = FailingLoad;
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let geometry = WaterContactGeometry::try_new(&contact_points).unwrap();
+        let axis = CourseAxis::try_new(1.0, 0.0).unwrap();
+        assert_eq!(
+            run_flight(
+                &aircraft,
+                initial,
+                config(ControlMode::Manual),
+                &input,
+                &loads,
+                geometry,
+                axis,
+            ),
+            Err(FlightRunError::Tick(FlightTickError::Dynamics(
+                DynamicsError::Load(LoadError::Unavailable)
+            )))
+        );
+
+        let extreme_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, f64::MAX).unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let extreme_initial = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            0,
+            extreme_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let extreme_contact_points = [BodyPoint::try_new(0.0, 0.0, f64::MAX).unwrap()];
+        let extreme_geometry = WaterContactGeometry::try_new(&extreme_contact_points).unwrap();
+        let constant_load = ConstantLoad::new(Wrench::zero());
+        assert!(matches!(
+            run_flight(
+                &aircraft,
+                extreme_initial,
+                config(ControlMode::Manual),
+                &input,
+                &constant_load,
+                extreme_geometry,
+                axis,
+            ),
+            Err(FlightRunError::Tick(FlightTickError::Contact(_)))
+        ));
+    }
+
+    #[test]
+    fn terminal_score_arithmetic_error_remains_typed() {
+        assert_eq!(
+            score_endpoints(
+                NedPoint::try_new(-f64::MAX, 0.0, 0.0).unwrap(),
+                NedPoint::try_new(f64::MAX, 0.0, 0.0).unwrap(),
+                CourseAxis::try_new(1.0, 0.0).unwrap(),
+            ),
+            Err(FlightRunError::Score(crate::DistanceScoreError::NonFinite))
+        );
     }
 
     #[test]

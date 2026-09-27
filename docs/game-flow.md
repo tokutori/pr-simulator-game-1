@@ -43,6 +43,7 @@ Countdown開始時にconfigurationをsealし、launchまで物理・controller�
 launch eventを一度だけ処理し、tick 0の初期snapshotを保存してから、tick 0の入力で最初のstepを実行する。
 Countdown時計はUI用であり、Flightのsimulation timeと分離する。
 非表示化やtracking中断でCountdownを停止し、明示的な再開なしに発進しない。
+Rust coreの`run_flight`は開始済みinitial stateとsealed tick input列を実行し、WaterContactまたはTimeLimitで終端する。両終端理由に対して最後の有効datumからscore v1を確定する。Webはtick inputを提供しoutcome snapshotを表示する。
 
 ## Overlayと停止
 

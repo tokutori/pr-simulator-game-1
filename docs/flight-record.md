@@ -39,6 +39,7 @@ tick kの入力はstate k→k+1に適用する。tick 0の初期状態も保存�
 最大flight tick数はscenario/game policyの明示的な上限である。
 Briefingで上限分のsample・入力・終端event領域を確保し、確保失敗時はReadyへ進めない。
 上限到達はTimeLimitとして確定し、bufferの上書きやsample間引きを行わない。
+Distance score v1はWaterContact時にfractional terminal datum、TimeLimit時に最後の有効integer-tick datumを用いる。
 具体的な上限・1 sampleのbyte数・総容量はBPG-019で計測して登録する。
 端末負荷によって保存周期を変更しない。描画用downsampleは原recordを保持して別途生成する。
 
