@@ -1,8 +1,8 @@
 use crate::{
     AircraftModel, BodyPoint, BodyVector, ConstantLoad, DynamicsError, ExternalLoadProvider,
     FlightState, Gravity, InertiaTensor, LoadError, MathError, NedPoint, NedVector, PHYSICS_HZ,
-    PilotAcceleration, PilotPositionTarget, UnitQuaternion, Wrench, advance,
-    pilot_target_acceleration, total_momentum,
+    PilotAcceleration, PilotPositionTarget, SurfaceDeflections, UnitQuaternion, Wrench, advance,
+    advance_with_surface_deflections, pilot_target_acceleration, total_momentum,
 };
 
 fn model(pilot_mass: f64, inertia: InertiaTensor) -> AircraftModel {
@@ -598,6 +598,63 @@ fn each_runge_kutta_stage_evaluates_external_loads() {
     )
     .unwrap();
     assert_eq!(loads.0.get(), 4);
+}
+
+#[test]
+fn fixed_actuator_deflections_reach_all_runge_kutta_stages() {
+    struct ActuatorCountingLoads {
+        expected: SurfaceDeflections,
+        calls: core::cell::Cell<u8>,
+    }
+
+    impl ExternalLoadProvider for ActuatorCountingLoads {
+        fn evaluate(
+            &self,
+            _model: &AircraftModel,
+            _state: &FlightState,
+        ) -> Result<Wrench, LoadError> {
+            Ok(Wrench::zero())
+        }
+
+        fn evaluate_with_surface_deflections(
+            &self,
+            _model: &AircraftModel,
+            _state: &FlightState,
+            surface_deflections: SurfaceDeflections,
+        ) -> Result<Wrench, LoadError> {
+            if surface_deflections != self.expected {
+                return Err(LoadError::Unavailable);
+            }
+            self.calls.set(self.calls.get() + 1);
+            Ok(Wrench::zero())
+        }
+    }
+
+    let model = model(0.0, diagonal_inertia(1.0, 1.0, 1.0));
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.0,
+        0.0,
+    );
+    let expected = SurfaceDeflections::try_new(0.1, -0.2, 0.3).unwrap();
+    let loads = ActuatorCountingLoads {
+        expected,
+        calls: core::cell::Cell::new(0),
+    };
+    advance_with_surface_deflections(
+        &model,
+        &initial,
+        PilotAcceleration::try_new(0.0).unwrap(),
+        Gravity::try_new(0.0).unwrap(),
+        &loads,
+        expected,
+        0.01,
+    )
+    .unwrap();
+    assert_eq!(loads.calls.get(), 4);
 }
 
 #[test]
