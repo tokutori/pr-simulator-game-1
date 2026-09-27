@@ -18,7 +18,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 
 ### CLI検証flight
 
-`cargo run -p birdman-game-cli --locked -- verify-flight all` はRust coreの`FlightScenario::run_feedback`を使い、Manual・Shared(0.5)・AutomaticでTimeLimitとWaterContactの両終端を再現する。各modeは同じ固定tick pilot intent列を二度実行し、同一終端を確認する。FBWは各tickでcoreが直前stateからbody-rate feedbackを生成し、mode別の状態遷移へ適用する。空力は各element位置で固定空間wind gradientをsampleする。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの空力係数・wind gradient・feedback gainは統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。BPG-006では、出典付き機体係数・controller tuning・scenarioの検証を別途完了する。
+`cargo run -p birdman-game-cli --locked -- verify-flight all` はRust coreの`FlightScenario::run_feedback`を使い、Manual・Shared(0.5)・AutomaticでTimeLimitとWaterContactの両終端を再現する。各modeは同じ固定tick pilot intent列を二度実行し、同一終端を確認する。FBWは各tickでcoreが直前stateからbody-rate feedbackを生成し、mode別の状態遷移へ適用する。空力は各element位置で固定空間wind gradientをsampleする。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの空力係数・wind gradient・feedback gainは統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。この再現可能なsynthetic flightがBPG-006のCLI受入条件であり、機体固有modelのsource調査・fidelity検証はBPG-035でM6完了後に行う。BPG-035はM3〜M6のsynthetic game開発をblockしない。
 
 ## 後続の物理検証
 
@@ -101,8 +101,9 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 一様風不変性の試験では、位置依存の地面効果や接触を除外して比較する。
 評価対象、初期条件、入力列、許容差、duration、seed、実行環境、commitを記録する。
 100 Hzの適合性は空力・actuator・FBW・身体移動を含む統合系で、軌道・姿勢・接触時刻・scoreを
-刻み半減と比較する。公開機体とscenarioでは通常の入力範囲でのフライト成立率、失敗理由の表示、
-採用値の出典・仮定・適用範囲、操作性を受入条件に含める。実機同定の達成とは区別する。
+刻み半減と比較する。BPG-035では通常の入力範囲でのフライト成立率、失敗理由の表示、
+採用値の出典・仮定・適用範囲、操作性を受入条件に含める。M3〜M6のplayable synthetic game受入と
+実機同定・機体固有fidelity検証は別のgateとして扱う。
 
 ## 表示・性能・配布
 
