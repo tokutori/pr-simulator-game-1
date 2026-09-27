@@ -1,0 +1,91 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { stringify } from "smol-toml";
+import { build } from "vite";
+import { expect, it } from "vitest";
+import { verifiedAssets } from "./vite-plugin.js";
+
+it("builds a manifest-registered asset through the same import path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
+  if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {
+    throw new Error("Temporary cleanup escaped the test directory");
+  }
+  try {
+    const image = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+    await mkdir(join(root, "assets"));
+    await mkdir(join(root, "web/src"), { recursive: true });
+    await writeFile(join(root, "assets/test.svg"), image, "utf8");
+    await writeFile(join(root, "assets/manifest.toml"), stringify({ schema_version: 1, assets: [{
+      path: "assets/test.svg", sha256: createHash("sha256").update(image).digest("hex"),
+      source: "original:test", source_version: "1", license: "MIT", license_url: "LICENSE",
+      attribution: "Test", processing: "none"
+    }] }), "utf8");
+    await writeFile(join(root, "web/index.html"), "<script type=\"module\" src=\"/src/main.ts\"></script>", "utf8");
+    await writeFile(join(root, "web/src/main.ts"), "import url from '../../assets/test.svg'; document.body.textContent = url;", "utf8");
+    await expect(build({ configFile: false, root: join(root, "web"), publicDir: false,
+      plugins: [verifiedAssets(root)], logLevel: "silent", build: { outDir: "dist" } })).resolves.toBeDefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("builds a registered icon referenced by HTML and a module", async () => {
+  const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
+  if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {
+    throw new Error("Temporary cleanup escaped the test directory");
+  }
+  try {
+    const icon = Buffer.from([0, 0, 1, 0, 1, 0]);
+    await mkdir(join(root, "assets"));
+    await mkdir(join(root, "web/src"), { recursive: true });
+    await writeFile(join(root, "assets/test.ico"), icon);
+    await writeFile(join(root, "assets/manifest.toml"), stringify({ schema_version: 1, assets: [{
+      path: "assets/test.ico", sha256: createHash("sha256").update(icon).digest("hex"),
+      source: "original:test", source_version: "1", license: "MIT", license_url: "LICENSE",
+      attribution: "Test", processing: "none"
+    }] }), "utf8");
+    await writeFile(join(root, "web/index.html"),
+      "<link rel=\"icon\" href=\"../assets/test.ico\"><script type=\"module\" src=\"/src/main.ts\"></script>", "utf8");
+    await writeFile(join(root, "web/src/main.ts"),
+      "import url from '../../assets/test.ico'; document.body.textContent = url;", "utf8");
+    await expect(build({ configFile: false, root: join(root, "web"), publicDir: false,
+      plugins: [verifiedAssets(root)], logLevel: "silent", build: { outDir: "dist" } })).resolves.toBeDefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  ["module import", "<script type=\"module\" src=\"/src/main.ts\"></script>", "import url from '../../unmanaged.svg'; document.body.textContent = url;"],
+  ["new URL", "<script type=\"module\" src=\"/src/main.ts\"></script>", "document.body.textContent = new URL('../../unmanaged.svg', import.meta.url).href;"],
+  ["dynamic new URL", "<script type=\"module\" src=\"/src/main.ts\"></script>", "const image = '../../unmanaged.svg'; document.body.textContent = new URL(image, import.meta.url).href;"],
+  ["CSS URL", "<script type=\"module\" src=\"/src/main.ts\"></script>", "import './style.css';"],
+  ["HTML URL", "<img src=\"../unmanaged.svg\">", ""],
+  ["unquoted HTML URL", "<img src=../unmanaged.svg>", ""],
+  ["inline HTML style", "<style>body{background:url('../unmanaged.svg')}</style>", ""],
+  ["HTML icon", "<link rel=\"icon\" href=\"../unmanaged.ico\">", ""],
+  ["module icon", "<script type=\"module\" src=\"/src/main.ts\"></script>",
+    "import url from '../../unmanaged.ico'; document.body.textContent = url;"]
+])("rejects an unregistered %s even when Vite inlines it", async (kind, html, source) => {
+  const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
+  if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {
+    throw new Error("Temporary cleanup escaped the test directory");
+  }
+  try {
+    await mkdir(join(root, "assets"));
+    await mkdir(join(root, "web/src"), { recursive: true });
+    await writeFile(join(root, "assets/manifest.toml"), stringify({ schema_version: 1, assets: [] }), "utf8");
+    await writeFile(join(root, "web/index.html"), html, "utf8");
+    await writeFile(join(root, "unmanaged.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", "utf8");
+    await writeFile(join(root, "unmanaged.ico"), Buffer.from([0, 0, 1, 0, 1, 0]));
+    await writeFile(join(root, "web/src/main.ts"), source, "utf8");
+    if (kind === "CSS URL") await writeFile(join(root, "web/src/style.css"), "body { background: url('../../unmanaged.svg'); }", "utf8");
+    await expect(build({ configFile: false, root: join(root, "web"), publicDir: false,
+      plugins: [verifiedAssets(root)], logLevel: "silent", build: { outDir: "dist" } }))
+      .rejects.toThrow(kind === "dynamic new URL" ? "Unsupported dynamic asset URL" : "Unregistered build asset");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

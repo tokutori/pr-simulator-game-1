@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+repository = "https://github.com/tokutori/pr-simulator-game-1"
+
+[workspace.dependencies]
+birdman-game-core = { path = "crates/birdman-game-core" }
+birdman-game-format = { path = "crates/birdman-game-format" }
+wasm-bindgen = "=0.2.129"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1

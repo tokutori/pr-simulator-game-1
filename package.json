@@ -1,0 +1,29 @@
+{
+  "name": "pr-simulator-game-1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24.14.1 <25" },
+  "scripts": {
+    "dev": "vite --config web/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "build": "vite build --config web/vite.config.ts",
+    "preview": "vite preview --config web/vite.config.ts",
+    "check:repository": "tsx tools/check/main.ts",
+    "verify": "npm run typecheck && npm run lint && npm test && npm run check:repository && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.10.1",
+    "eslint": "10.11.0",
+    "smol-toml": "1.9.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.1",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

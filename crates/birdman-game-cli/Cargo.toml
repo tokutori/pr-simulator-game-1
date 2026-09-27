@@ -1,0 +1,14 @@
+[package]
+name = "birdman-game-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+birdman-game-core.workspace = true
+birdman-game-format.workspace = true
+
+[lints]
+workspace = true

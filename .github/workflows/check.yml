@@ -1,0 +1,46 @@
+name: Check
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**', 'chore/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.14.1'
+          cache: npm
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo doc --workspace --no-deps --locked
+      - name: Verify core without std
+        run: cargo build -p birdman-game-core --target wasm32v1-none --locked
+      - name: Build browser WASM adapter
+        run: cargo build -p birdman-game-wasm --target wasm32-unknown-unknown --locked
+      - name: Build WASI CLI
+        run: cargo build -p birdman-game-cli --target wasm32-wasip2 --locked
+      - run: cargo run -p birdman-game-cli --locked
+      - run: npm ci
+      - run: npm run verify
