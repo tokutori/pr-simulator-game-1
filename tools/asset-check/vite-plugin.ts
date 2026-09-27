@@ -96,7 +96,9 @@ export function verifiedAssets(root: string): Plugin {
               throw new Error(`Unsupported dynamic asset URL: ${id}`);
             }
             const parent = node.parent;
-            const isWorkerUrl = ts.isNewExpression(parent) && parent.arguments?.[0] === node &&
+            const workerPath = first.text.split(/[?#]/, 1)[0] ?? first.text;
+            const isWorkerSource = /\.[cm]?[jt]sx?$/i.test(workerPath);
+            const isWorkerUrl = isWorkerSource && ts.isNewExpression(parent) && parent.arguments?.[0] === node &&
               ((ts.isIdentifier(parent.expression) && ["Worker", "SharedWorker"].includes(parent.expression.text)) ||
                 (ts.isPropertyAccessExpression(parent.expression) && ["Worker", "SharedWorker"].includes(parent.expression.name.text)));
             if (!isWorkerUrl) references.push(first.text);

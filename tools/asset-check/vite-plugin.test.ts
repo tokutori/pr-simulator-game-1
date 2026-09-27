@@ -126,6 +126,33 @@ it("builds a registered HTML resource whose path contains spaces", async () => {
   }
 });
 
+it("checks every HTML srcset candidate", async () => {
+  const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
+  if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {
+    throw new Error("Temporary cleanup escaped the test directory");
+  }
+  try {
+    const image = "<svg xmlns=\"http://www.w3.org/2000/svg\"/>";
+    await mkdir(join(root, "assets"));
+    await mkdir(join(root, "web/src"), { recursive: true });
+    await writeFile(join(root, "assets/registered.svg"), image, "utf8");
+    await writeFile(join(root, "assets/manifest.toml"), stringify({ schema_version: 1, assets: [{
+      path: "assets/registered.svg", sha256: createHash("sha256").update(image).digest("hex"),
+      source: "original:test", source_version: "1", license: "MIT", license_url: "LICENSE",
+      attribution: "Test", processing: "none"
+    }] }), "utf8");
+    await writeFile(join(root, "unregistered.svg"), image, "utf8");
+    await writeFile(join(root, "web/index.html"),
+      "<img srcset=\"../assets/registered.svg 1x, ../unregistered.svg 2x\">", "utf8");
+    await writeFile(join(root, "web/src/main.ts"), "document.body.textContent = 'ready';", "utf8");
+    await expect(build({ configFile: false, root: join(root, "web"), publicDir: false,
+      plugins: [verifiedAssets(root)], logLevel: "silent", build: { outDir: "dist" } }))
+      .rejects.toThrow("Unregistered build asset");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it.each([
   ["module import", "<script type=\"module\" src=\"/src/main.ts\"></script>", "import url from '../../unmanaged.svg'; document.body.textContent = url;"],
   ["new URL", "<script type=\"module\" src=\"/src/main.ts\"></script>", "document.body.textContent = new URL('../../unmanaged.svg', import.meta.url).href;"],
