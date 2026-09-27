@@ -3,35 +3,40 @@
 ## 状態機械と描画world
 
 主要GameSceneはBoot、Title、FlightSetup、Briefing、Countdown、Flight、Result、Replayの8種とする。
-GameSceneは `web/src/app` のdiscriminated unionで管理し、許可されたeventのみで遷移する。
+FlightSetupからReplayまでのgameplay session phase・許可event・遷移規則はRust coreの型付きGameSessionが管理する。
+WebのGameSceneは表示用projectionであり、session存在時はRustが返すimmutable snapshotから導出する。
+Boot、Title、設定form draft、DOM focus、renderer/session lifecycleはbrowser側の表示状態とする。
+Webは型付きintentをWASMへ送信し、遷移可否・開始可能条件・終了理由・retry条件を独自に再実装しない。
+asset取得や権限要求等の非同期browser状態はTypeScriptが識別子付きで管理する。
 描画worldはGameSceneと独立に保持する。Three.jsのScene等の具体objectはengine adapterが所有する。
 水面・地形・空・雲・機体の共有assetは通常遷移で破棄せず、camera、visibility、UI、sessionを変更する。
 world差し替え・context復旧・終了時には所有者がresourceを明示的に解放する。
 
 | GameScene | sessionの処理 | 主な遷移 |
 |---|---|---|
-| Boot | WASM・最低限asset・renderer初期化 | 成功→Title、失敗→Boot内のerror状態 |
-| Title | 独立したAttract再生のみ | Flight→FlightSetup、Demo→Attract substate |
-| FlightSetup | 三軸設定を検証しFlightConfigurationを構築 | Start→Briefing、Back→Title |
-| Briefing | 必要asset取得、初期状態・記録bufferを準備 | Ready→Countdown、Back→FlightSetup |
-| Countdown | 初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
-| Flight | 100 Hz physics、入力、記録 | 終了→Result、Pause→同じFlight内で停止 |
-| Result | 確定済みrecordを参照 | Replay、Retry→Briefing、Setup、Title |
-| Replay | 確定済みrecordの再生・seek | 戻る→Result |
+| Boot | WebがWASM・最低限asset・rendererを初期化 | 成功→Title、失敗→Boot内のerror状態 |
+| Title | 表示shell。AttractはRust sessionの独立demo recordを参照 | Flight→FlightSetup、Demo→Attract substate |
+| FlightSetup | Webは編集draftを保持し、RustがFlightConfigurationを検証・確定 | Start intent→Briefing、Back→Title |
+| Briefing | Rustが準備sessionと容量を確定し、Webが必要assetを取得 | Ready→Countdown、Back→FlightSetup |
+| Countdown | Rustが初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
+| Flight | Rustが100 Hz physics・入力適用・記録を処理 | 終了→Result、Pause→同じFlight内で停止 |
+| Result | Rustが確定したrecord・metricsを参照 | Replay、Retry→Briefing、Setup、Title |
+| Replay | Rust queryが確定recordを時刻指定で再生・seek | 戻るintent→Result |
 
 SummaryとAnalysisはResult内のtabである。Replayボタンは主要Scene遷移を行う。
 Retry、Attract、camera種別、解析グラフごとのGameSceneは追加しない。
 
 ## 準備と開始
 
-BootではWASM、機体・scenario manifest、最小world、renderer、capability調査、初期画質推定を扱う。
+BootではbrowserがWASM、機体・scenario manifest、最小world、renderer、capability調査、初期画質推定を扱う。
 高品質assetは必要時にlazy loadする。端末権限やXR sessionは自動要求しない。
-Bootのloading/failed、Briefingのpreparing/ready/failedは各Scene内のunionとし、
+Bootのloading/failedとasset/permission requestはbrowser側のunionとする。Briefingのdomain preparing/ready/failedは
+GameSession内のRust unionとし、必要なbrowser assetが未取得の場合はWebがready intentを送らない。
 準備未完了の値をPreparedFlightとして扱わない。
 失敗時は原因と再試行・復帰操作を表示し、読み込み成功を装って進行しない。
 非同期loadの世代を識別し、Scene退出後の完了通知による巻き戻りを防ぐ。
 
-FlightSetupではphysics stateを積分しない。Briefingで設定を解決し、
+FlightSetupのdraftはWeb表示状態であり、確定設定の検証・構築はRustが行う。Briefingで設定を解決し、
 WindField、波・空・雲、launch条件、asset hashを確定する。
 Countdown開始時にconfigurationをsealし、launchまで物理・controller・actuatorの時刻を固定する。
 操縦deviceの最新値は取得するが、Countdown中の入力を事前積分しない。
@@ -103,8 +108,9 @@ API権限、退出、エラー表示はInformation設定にかかわらず利用
 
 ## 検証
 
-BPG-017で遷移表、不許可event、二重launch/finalize、load競合、Pause→Settings→Pause、
-非表示復帰、同条件Retry、三軸固定を検証する。
+BPG-017ではRust coreの遷移表、不許可intent、二重launch/finalize、pause理由・resume条件、同条件Retryをunit testし、
+WASM browser試験ではsnapshotからのScene導出とstale requestの破棄を確認する。
+load競合、Pause→Settings→Pause、非表示復帰、三軸固定も検証する。
 Replayの再生操作はBPG-021、AttractとCameraDirectorはBPG-022で接続する。
 Scene追加とcamera追加を独立に扱い、world resourceの再生成・listener重複を検査する。
 

@@ -1,14 +1,12 @@
 import { IDENTITY_POSE } from "../render/contracts/math.js";
 import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
+import type { AppModel, PresentationUiState } from "./app-state.js";
 
-export function createBootViewModel(
-  status: string,
-  webXrAvailable = false,
-  webXrActive = false,
-  phoneVrAvailable = false,
-  phoneVrActive = false
-): UiViewModel {
+export function createBootViewModel(model: AppModel): UiViewModel {
+  const activeMode = activeModeOf(model.presentation);
+  const canStart = model.presentation.type === "failed" ||
+    (model.presentation.type === "ready" && model.presentation.mode === "screen");
   return Object.freeze({
     scene: "Boot",
     title: "鳥人間滑空ゲーム",
@@ -25,46 +23,50 @@ export function createBootViewModel(
           kind: "status" as const,
           id: "boot-state",
           label: "状態",
-          value: status,
+          value: model.status,
           enabled: false,
           rect: normalizedRect(0.08, 0.84, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-enter-webxr",
-          label: webXrAvailable ? "WebXRで開始" : "WebXRは利用できない",
-          enabled: webXrAvailable && !webXrActive && !phoneVrActive,
+          label: model.webXrAvailable ? "WebXRで開始" : "WebXRは利用できない",
+          enabled: model.webXrAvailable && canStart,
           rect: normalizedRect(0.08, 0.68, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-enter-phone-vr",
-          label: phoneVrAvailable ? "Phone VRで開始" : "Phone VRは利用できない",
-          enabled: phoneVrAvailable && !webXrActive && !phoneVrActive,
+          label: model.phoneVrAvailable ? "Phone VRで開始" : "Phone VRは利用できない",
+          enabled: model.phoneVrAvailable && canStart,
           rect: normalizedRect(0.08, 0.54, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-recenter-phone-tracking",
           label: "頭部追跡を正面に再設定",
-          enabled: phoneVrActive,
+          enabled: activeMode === "phone-vr",
           rect: normalizedRect(0.08, 0.4, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-recenter-menu",
           label: "メニューを正面に配置",
-          enabled: webXrActive || phoneVrActive,
+          enabled: activeMode === "webxr" || activeMode === "phone-vr",
           rect: normalizedRect(0.08, 0.26, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-exit-vr",
           label: "VRを終了",
-          enabled: webXrActive || phoneVrActive,
+          enabled: activeMode === "webxr" || activeMode === "phone-vr",
           rect: normalizedRect(0.08, 0.12, 0.84, 0.08)
         })
       ])
     })])
   });
+}
+
+function activeModeOf(state: PresentationUiState): "screen" | "webxr" | "phone-vr" | null {
+  return state.type === "ready" ? state.mode : null;
 }

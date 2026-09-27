@@ -110,6 +110,8 @@ export class PresentationRuntime {
     try {
       await previous.stop();
     } catch (error) {
+      this.activeBackend = null;
+      this.stopLoop();
       return { ok: false, error: { type: "backend-failed", mode: previous.mode, message: errorMessage(error) } };
     }
     this.activeBackend = null;
@@ -118,18 +120,48 @@ export class PresentationRuntime {
       this.activeBackend = next;
       return { ok: true };
     } catch (error) {
+      const startMessage = errorMessage(error);
       try {
-        await previous.start();
-        this.activeBackend = previous;
-      } catch {
-        this.activeBackend = null;
-        if (this.loopStarted) {
-          this.renderer.stopLoop();
-          this.loopStarted = false;
+        await next.stop();
+      } catch (cleanupError) {
+        this.stopLoop();
+        return {
+          ok: false,
+          error: {
+            type: "backend-failed",
+            mode,
+            message: `Backend start failed: ${startMessage}; cleanup failed: ${errorMessage(cleanupError)}`
+          }
+        };
+      }
+      const screen = this.backends.get("screen");
+      if (screen !== undefined && screen !== next) {
+        try {
+          await screen.start();
+          this.activeBackend = screen;
+          return { ok: false, error: { type: "backend-failed", mode, message: startMessage } };
+        } catch (fallbackError) {
+          this.activeBackend = null;
+          this.stopLoop();
+          return {
+            ok: false,
+            error: {
+              type: "backend-failed",
+              mode,
+              message: `Backend start failed: ${startMessage}; Screen recovery failed: ${errorMessage(fallbackError)}`
+            }
+          };
         }
       }
-      return { ok: false, error: { type: "backend-failed", mode, message: errorMessage(error) } };
+      this.stopLoop();
+      return { ok: false, error: { type: "backend-failed", mode, message: startMessage } };
     }
+  }
+
+  private stopLoop(): void {
+    if (!this.loopStarted) return;
+    this.renderer.stopLoop();
+    this.loopStarted = false;
   }
 
   private renderFrame(timestampMs: number, viewerPose: Pose | null): void {

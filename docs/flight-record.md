@@ -3,9 +3,12 @@
 ## 責務と不変性
 
 Result、Analysis、Replayは同一の確定済みFlightRecordを参照する。
+record型、tick sample追記、終端確定、domain validation、集計値はRust coreが所有する。
 recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
-coreのstepはI/O・heap allocationを行わない。coreが返す状態とdiagnosticをadapter側の
-事前確保bufferへ書き込む。外部formatと検証は `birdman-game-format`、保存I/OはCLI/Webが担当する。
+coreはBriefing時に最大tick数分のcapacityを準備し、simulation step中はallocationなしでappendする。
+上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
+`birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
+WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
 ## Header
@@ -62,6 +65,10 @@ AoA等の未定義値はOption等で表し、NaNを欠損値として使用し�
 追加diagnosticはschemaで有無を明示し、初期基本recordだけでmap・高度・速度とPilot再生が成立する構成とする。
 
 ## Derived telemetryと集計
+
+Summary metrics、record由来のtelemetry series、sample/cursor queryはRust coreの純粋関数で生成する。
+Webは返された値を選択・描画し、scoreや集計値を独自に再計算しない。表示用downsampleはWebで行えるが、
+終端値・summary・Personal Bestの正本へ逆流させない。
 
 ```math
 V_{air,G}^N=v_G^N-W(p_G^N),\qquad

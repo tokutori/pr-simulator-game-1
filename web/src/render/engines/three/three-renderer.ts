@@ -15,9 +15,10 @@ import {
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
 import type { BackendFrame, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
-import { quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
+import { quaternion, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
+import { selectRayFromXrEvent } from "./xr-select-ray.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -90,15 +91,8 @@ export function createThreeRenderer(
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null) return;
-    const targetPose = event.frame.getPose(event.inputSource.targetRaySpace, referenceSpace);
-    if (targetPose === undefined) return;
-    const transform = targetPose.transform;
-    const orientation = quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z);
-    selectRayHandler({
-      origin: vec3(transform.position.x, transform.position.y, transform.position.z),
-      direction: rotateVec3(orientation, vec3(0, 0, -1)),
-      timestampMs: event.frame.predictedDisplayTime
-    });
+    const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
+    if (ray !== null) selectRayHandler(ray);
   };
 
   const onSessionEnd = (): void => {

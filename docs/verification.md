@@ -64,12 +64,13 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |
 | 016 | 全SceneのPhone VR UI、sensor権限・null・timeout・stale、左右aspect、実スマートフォン |
-| 017 | 全backendの基本ループ、preset決定性、Custom、三軸の境界、軌道不変性、Pause/Retry |
-| 018 | HUD項目とcamera許可、未定義telemetry、全backendの表示と操作 |
-| 019 | 全tick記録、身体状態・目標列、接触時の位置/姿勢/actuator/身体状態一致、容量、集計、schema、条件別PB |
-| 020 | map軸・風断面、速度/高度、共有cursor、欠損、Screen/VR解析操作 |
-| 021 | snapshot補間、seek、再生時計、全backendのResult復帰、原record不変性 |
+| 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
+| 018 | HUD項目とcamera許可、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
+| 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |
+| 020 | Rust analysis series/queryと既知値、map軸・風断面、速度/高度、共有cursor、欠損、Screen/VR描画・操作 |
+| 021 | Rust replay clock/seek/interpolation query、snapshot補間、quaternion符号、全backendのResult復帰、原record不変性 |
 | 022 | camera director、Attract、短いrecord、FPS差、demoとplayer記録の分離 |
+| 023 | Boot updateの純粋性、排他遷移、request ID、stale permission、backend開始失敗とScreen復帰、pagehide disposal、実`XRFrame.getPose()`境界のnull |
 
 非有限値は入口と積分途中で拒否する。比較は解析解、不変量、独立した基準caseを用いる。
 同じ実装から期待値を生成するだけの試験を検証根拠としない。

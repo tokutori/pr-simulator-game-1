@@ -5,6 +5,8 @@
 ResultはSummaryとAnalysisのtab、およびRetry / Replay / Setup / Titleの操作を持つ。
 主要GameSceneは追加しない。Replayへ移動する場合は選択時刻を渡し、復帰時にtabとcursorを維持する。
 すべての表示は `flight-record.md` のimmutable recordを参照する。
+終了理由、確定可能性、Retry blueprint、score、Summary metricsはRust coreの結果を正本とする。
+WebはResult/Analysisのtab・focus・表示範囲を管理し、ゲーム規則やmetricsを再計算しない。
 
 SummaryはDistanceとFlight Timeを主表示とし、最大対気速度、最大重心AoA、最大絶対roll、
 発進軸からの横偏位、三軸設定、scenarioと代表風を併記する。
@@ -24,6 +26,7 @@ Result、Analysis、Replay操作はVR sessionを維持して実行できる。DO
 グラフ描画のためにThree.js Sceneを追加しない。
 SVG/Canvas選択はsample数、操作性、アクセシビリティの測定後に決定する。
 pointer hoverだけでなくtouch・keyboardでも共有時刻を選択でき、数値の代替表示を提供する。
+軌跡・高度・速度・風の元系列とSummary集計はcoreから受け取り、軸変換・layout・描画・hover hit-testをWebが担当する。
 
 ## Horizontal map
 
@@ -62,8 +65,8 @@ AoA、roll/pitch、pilot/FBW/actuatorの系列はAdvanced Analysisとして追�
 
 ## Cursor・性能・検証
 
-ResultとReplayで単一のrecord-time cursorモデルを共有する。
-seek範囲は有効record区間に限定し、NaN・未知単位・不連続時刻をvalidationで拒否する。
+ResultとReplayで単一のrecord-time cursor値を共有し、seek範囲・補間sampleはRust core queryが返す。
+coreは有効record区間外・非有限時刻・不正recordを拒否する。Webは受信値でcursor位置と描画を更新する。
 graph側のhover/dragは再生時刻だけを変更し、元record・physics・Personal Bestを更新しない。
 大量sampleは表示用に間引いてよいが、端点・極値・eventを保持する。
 画面resizeや端末画質で集計値を変えない。

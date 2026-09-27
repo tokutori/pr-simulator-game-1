@@ -62,6 +62,13 @@ start/stopに加え、capability調査、resize、recenter、frame描画、dispo
 非同期開始と終了の競合、二重開始、session end、permission denied、context lossを明示的に扱う。
 停止時にlistener、animation callback、render targetを解放する。
 
+Boot UIは単一の不変Model、純粋なupdate、Modelから導出するview、副作用effect portを用いる。
+permission要求・backend切替は一件ずつ直列化し、完了Messageにはrequest IDを付ける。
+古い非同期完了はModelを更新せず、取得済みsession等の資源を解放する。
+切替対象の起動に失敗した場合、停止済みのVR backendを再起動せずScreenを開始する。
+Screen復帰も失敗した場合はactive backendなしを明示し、render loopを停止する。
+unexpected session end・tracking喪失は同じ状態遷移を経てScreen復帰を行う。
+
 `navigator.xr` の存在確認後、`isSessionSupported('immersive-vr')` のfalseとrejectを処理する。
 support確認の成功はsession開始成功を保証しない。
 参考: [WebXR仕様](https://immersive-web.github.io/webxr/)、

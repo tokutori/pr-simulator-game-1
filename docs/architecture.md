@@ -38,11 +38,11 @@ CLI/WASMはcoreを直接使用してよい。format経由で物理計算を呼�
 
 | 境界 | 責務 |
 |---|---|
-| `crates/birdman-game-core` | math、frames、dynamics、aerodynamics、environment、control、scenario、simulation |
-| `crates/birdman-game-format` | aircraft/scenario/worldの外部表現、version、検証 |
-| `crates/birdman-game-wasm` | WASM ABI、所有権、coreへの変換、RenderSnapshot |
+| `crates/birdman-game-core` | math、frames、dynamics、aerodynamics、environment、control、scenario、simulation、game session、record集計・再生query |
+| `crates/birdman-game-format` | aircraft/scenario/world/recordの外部表現、version、検証・codec |
+| `crates/birdman-game-wasm` | WASM ABI、所有権、coreへの変換、session command、RenderSnapshot・分析query |
 | `crates/birdman-game-cli` | native/WASI実行、CSV出力、profiling入口 |
-| `web/src` | 入力、アプリケーション状態、共通UI、camera pose、画質、WASM呼出し |
+| `web/src` | device入力、browser/presentation状態、共通UI、camera pose、画質、WASM呼出し |
 | `web/src/render/contracts` | engine非依存の描画・UI・view・resource識別子の契約 |
 | `web/src/render/engines/three` | Three.js固有のscene graph、camera、shader、GPU/XR結合 |
 | `tools/world-build` | offline地理・気象処理とasset生成 |
@@ -53,6 +53,15 @@ Webはstrict TypeScriptとし、外部APIのnull/undefinedを最小境界で検�
 Web実行コードとNode.js用build/toolコードは別tsconfigで型検査し、WebからNode.js moduleへのimportをlintで拒否する。
 配布assetの入口とVite build graphの検査は `data-sources.md` に従う。
 失敗は判別可能な型で保持し、状態遷移はdiscriminated unionと網羅的分岐で表現する。
+
+Web UIはThe Elm Architectureの原則を採用する。単一の不変`AppModel`を状態の正本とし、
+純粋な`update(model, message)`が次状態と副作用要求を返す。DOMと各backendのviewはModelから導出し、
+event handlerはMessageのみを送信する。非同期完了にはrequest IDを付け、現在状態と一致しない結果を破棄する。
+物理状態はcore/WASMの正本を参照し、UIに複製しない。外部API・描画engine・物理実行の副作用はeffect portへ隔離する。
+このAppModelはbrowserのresource lifecycle、表示状態、編集途中のform、focus等を所有する。
+GameSessionの開始可否、domain phase、pause理由、終了・再試行規則、score、record確定値はRust coreが所有する。
+Webはimmutableなsession snapshotからScene・HUD・button availabilityを導出し、session変更intentをWASMへ送る。
+Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
 
 ## 実行契約
 
@@ -88,5 +97,7 @@ no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計�
 既存stateの並進速度はbody表現、本ゲームはNED表現を採用するため、式を直接転記しない。
 係数と検証ケースはBPG-002以降で適用範囲を再確認する。runtime dependencyは追加しない。
 
-BPG-001は契約とbuild可能な境界のみを含む。物理、FBW、renderer、GIS処理は後続BPGで実装する。
+BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
+GameSession、record、metrics、analysis/replay queryとそのWASM commandは後続BPGで実装する。
+BootのAppModelはbrowser/presentation状態のみを持ち、Rust側のgameplay state実装を代替しない。
 開発原則は[設計指針](https://zenn.dev/bem130/articles/1b352797de94e7)に基づく。

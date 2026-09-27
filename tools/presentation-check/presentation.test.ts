@@ -199,7 +199,7 @@ describe("presentation runtime", () => {
     expect(active.size).toBe(0);
   });
 
-  it("restores the active backend after a rejected backend start", async () => {
+  it("falls back to Screen after a rejected backend start", async () => {
     const active = new Set<PresentationMode>();
     const renderer = new FakeRenderer();
     const screen = new FakeBackend("screen", active);
@@ -212,7 +212,45 @@ describe("presentation runtime", () => {
     expect(switched.error).toEqual({ type: "backend-failed", mode: "webxr", message: "permission denied" });
     expect(runtime.currentMode).toBe("screen");
     expect(active).toEqual(new Set(["screen"]));
+    expect(screen.startCount).toBe(2);
+    expect(webxr.startCount).toBe(1);
     expect(renderer.startCount).toBe(1);
+    await runtime.dispose();
+  });
+
+  it("falls back to Screen instead of restarting a stopped WebXR backend", async () => {
+    const active = new Set<PresentationMode>();
+    const renderer = new FakeRenderer();
+    const screen = new FakeBackend("screen", active);
+    const webxr = new FakeBackend("webxr", active);
+    const phoneVr = new FakeBackend("phone-vr", active, "sensor startup failed");
+    const runtime = new PresentationRuntime(renderer, [screen, webxr, phoneVr], () => createSceneFixture("Boot"));
+    expect(await runtime.start("webxr")).toEqual({ ok: true });
+    const switched = await runtime.switchTo("phone-vr");
+    expect(switched.ok).toBe(false);
+    expect(runtime.currentMode).toBe("screen");
+    expect(active).toEqual(new Set(["screen"]));
+    expect(webxr.startCount).toBe(1);
+    expect(screen.startCount).toBe(1);
+    expect(renderer.startCount).toBe(1);
+    expect(renderer.stopCount).toBe(0);
+    await runtime.dispose();
+  });
+
+  it("stops the render loop when Screen recovery also fails", async () => {
+    const active = new Set<PresentationMode>();
+    const renderer = new FakeRenderer();
+    const screen = new FakeBackend("screen", active, "screen recovery failed", 2);
+    const webxr = new FakeBackend("webxr", active, "session startup failed");
+    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => createSceneFixture("Boot"));
+    expect(await runtime.start("screen")).toEqual({ ok: true });
+    const switched = await runtime.switchTo("webxr");
+    expect(switched.ok).toBe(false);
+    expect(runtime.currentMode).toBeNull();
+    expect(active).toEqual(new Set());
+    expect(renderer.stopCount).toBe(1);
+    renderer.tick(42);
+    expect(renderer.frames).toHaveLength(0);
     await runtime.dispose();
   });
 
@@ -268,16 +306,19 @@ class FakeRenderer implements RendererAdapter {
 
 class FakeBackend implements PresentationBackendAdapter {
   private running = false;
+  startCount = 0;
 
   constructor(
     readonly mode: PresentationMode,
     private readonly active: Set<PresentationMode>,
-    private readonly failure: string | null = null
+    private readonly failure: string | null = null,
+    private readonly failOnAttempt = 1
   ) {}
 
   start(): Promise<void> {
+    this.startCount++;
     if (this.running) throw new Error(`${this.mode} already running`);
-    if (this.failure !== null) throw new Error(this.failure);
+    if (this.failure !== null && this.startCount === this.failOnAttempt) throw new Error(this.failure);
     if (this.active.size > 0) throw new Error("Multiple presentation backends became active");
     this.running = true;
     this.active.add(this.mode);
@@ -285,7 +326,7 @@ class FakeBackend implements PresentationBackendAdapter {
   }
 
   stop(): Promise<void> {
-    if (!this.running) throw new Error(`${this.mode} is not running`);
+    if (!this.running) return Promise.resolve();
     this.running = false;
     this.active.delete(this.mode);
     return Promise.resolve();
