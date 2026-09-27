@@ -666,7 +666,6 @@ impl AerodynamicEvaluation {
 pub struct UniformAerodynamicLoad {
     aerodynamics: AerodynamicModel,
     air: UniformAir,
-    surface_deflections: SurfaceDeflections,
 }
 
 /// A load provider sampling a stationary spatial wind field at each element.
@@ -675,7 +674,6 @@ pub struct WindFieldAerodynamicLoad<'a> {
     aerodynamics: AerodynamicModel,
     air_density_kg_m3: f64,
     wind_field: WindField<'a>,
-    surface_deflections: SurfaceDeflections,
 }
 
 impl<'a> WindFieldAerodynamicLoad<'a> {
@@ -685,39 +683,32 @@ impl<'a> WindFieldAerodynamicLoad<'a> {
         air_density_kg_m3: f64,
         wind_field: WindField<'a>,
     ) -> Result<Self, AeroError> {
-        Self::try_new_with_surface_deflections(
-            aerodynamics,
-            air_density_kg_m3,
-            wind_field,
-            SurfaceDeflections::neutral(),
-        )
-    }
-
-    /// Creates a provider for validated air density, wind field, and actuator positions.
-    pub fn try_new_with_surface_deflections(
-        aerodynamics: AerodynamicModel,
-        air_density_kg_m3: f64,
-        wind_field: WindField<'a>,
-        surface_deflections: SurfaceDeflections,
-    ) -> Result<Self, AeroError> {
         UniformAir::try_new(NedVector::zero(), air_density_kg_m3)?;
         Ok(Self {
             aerodynamics,
             air_density_kg_m3,
             wind_field,
-            surface_deflections,
         })
     }
 }
 
 impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
+        self.evaluate_with_surface_deflections(_model, state, SurfaceDeflections::neutral())
+    }
+
+    fn evaluate_with_surface_deflections(
+        &self,
+        _model: &AircraftModel,
+        state: &FlightState,
+        surface_deflections: SurfaceDeflections,
+    ) -> Result<Wrench, LoadError> {
         self.aerodynamics
             .evaluate_in_wind_field_with_surface_deflections(
                 state,
                 self.air_density_kg_m3,
                 self.wind_field,
-                self.surface_deflections,
+                surface_deflections,
             )
             .map(|evaluation| evaluation.total_wrench())
             .map_err(LoadError::Aerodynamic)
@@ -727,31 +718,26 @@ impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {
 impl UniformAerodynamicLoad {
     /// Creates an external-load provider for one aerodynamic model and air state.
     pub const fn new(aerodynamics: AerodynamicModel, air: UniformAir) -> Self {
-        Self {
-            aerodynamics,
-            air,
-            surface_deflections: SurfaceDeflections::neutral(),
-        }
-    }
-
-    /// Creates a provider for one aerodynamic model, air state, and actuator positions.
-    pub const fn with_surface_deflections(
-        aerodynamics: AerodynamicModel,
-        air: UniformAir,
-        surface_deflections: SurfaceDeflections,
-    ) -> Self {
-        Self {
-            aerodynamics,
-            air,
-            surface_deflections,
-        }
+        Self { aerodynamics, air }
     }
 }
 
 impl ExternalLoadProvider for UniformAerodynamicLoad {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         self.aerodynamics
-            .evaluate_with_surface_deflections(state, self.air, self.surface_deflections)
+            .evaluate(state, self.air)
+            .map(|evaluation| evaluation.total_wrench())
+            .map_err(LoadError::Aerodynamic)
+    }
+
+    fn evaluate_with_surface_deflections(
+        &self,
+        _model: &AircraftModel,
+        state: &FlightState,
+        surface_deflections: SurfaceDeflections,
+    ) -> Result<Wrench, LoadError> {
+        self.aerodynamics
+            .evaluate_with_surface_deflections(state, self.air, surface_deflections)
             .map(|evaluation| evaluation.total_wrench())
             .map_err(LoadError::Aerodynamic)
     }
@@ -941,7 +927,9 @@ fn map_math_error(error: MathError) -> AeroError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamics::{DynamicsError, Gravity, PilotAcceleration, advance};
+    use crate::dynamics::{
+        DynamicsError, Gravity, PilotAcceleration, advance, advance_with_surface_deflections,
+    };
     use crate::math::{InertiaTensor, NedPoint, UnitQuaternion};
     use crate::wind_field::WindError;
     use core::f64::consts::{FRAC_PI_2, PI};
@@ -1230,11 +1218,7 @@ mod tests {
             0.01,
         )
         .unwrap();
-        let provider = UniformAerodynamicLoad::with_surface_deflections(
-            aerodynamics,
-            air([0.0; 3], 1.0),
-            update.state().deflections(),
-        );
+        let provider = UniformAerodynamicLoad::new(aerodynamics, air([0.0; 3], 1.0));
         let aircraft = AircraftModel::try_new(
             10.0,
             InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
@@ -1246,10 +1230,26 @@ mod tests {
             1.0,
         )
         .unwrap();
+        let initial_state = state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
         let wrench = provider
-            .evaluate(&aircraft, &state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0))
+            .evaluate_with_surface_deflections(
+                &aircraft,
+                &initial_state,
+                update.state().deflections(),
+            )
             .unwrap();
         near(wrench.force_body_newtons().components()[2], -10.0, 1.0e-12);
+        let next = advance_with_surface_deflections(
+            &aircraft,
+            &initial_state,
+            PilotAcceleration::try_new(0.0).unwrap(),
+            Gravity::try_new(0.0).unwrap(),
+            &provider,
+            update.state().deflections(),
+            0.01,
+        )
+        .unwrap();
+        assert!(next.datum_velocity_ned().components()[2] < 0.0);
     }
 
     #[test]

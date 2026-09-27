@@ -1,4 +1,5 @@
 use crate::aerodynamics_contract::AerodynamicEvaluationError;
+use crate::flight_control::SurfaceDeflections;
 use crate::math::{
     BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
 };
@@ -441,6 +442,16 @@ pub enum LoadError {
 pub trait ExternalLoadProvider {
     /// Evaluates the non-gravitational wrench at the supplied stage state.
     fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError>;
+
+    /// Evaluates a wrench with one fixed physical actuator state for this tick.
+    fn evaluate_with_surface_deflections(
+        &self,
+        model: &AircraftModel,
+        state: &FlightState,
+        _surface_deflections: SurfaceDeflections,
+    ) -> Result<Wrench, LoadError> {
+        self.evaluate(model, state)
+    }
 }
 
 /// A load provider that returns one constant body-frame wrench.
@@ -518,6 +529,27 @@ pub fn advance<P: ExternalLoadProvider>(
     loads: &P,
     timestep_seconds: f64,
 ) -> Result<FlightState, DynamicsError> {
+    advance_with_surface_deflections(
+        model,
+        state,
+        pilot_acceleration,
+        gravity,
+        loads,
+        SurfaceDeflections::neutral(),
+        timestep_seconds,
+    )
+}
+
+/// Evaluates one RK4 dynamics step with constant actuator deflections at every load stage.
+pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
+    model: &AircraftModel,
+    state: &FlightState,
+    pilot_acceleration: PilotAcceleration,
+    gravity: Gravity,
+    loads: &P,
+    surface_deflections: SurfaceDeflections,
+    timestep_seconds: f64,
+) -> Result<FlightState, DynamicsError> {
     if !timestep_seconds.is_finite() || timestep_seconds <= 0.0 {
         return Err(DynamicsError::InvalidTimeStep);
     }
@@ -526,16 +558,44 @@ pub fn advance<P: ExternalLoadProvider>(
         return Err(DynamicsError::PilotOutOfRange);
     }
 
-    let first = derivative(model, state, pilot_acceleration, gravity, loads)?;
+    let first = derivative(
+        model,
+        state,
+        pilot_acceleration,
+        gravity,
+        loads,
+        surface_deflections,
+    )?;
     let second_state = offset_state(state, &first, timestep_seconds * 0.5)?;
     validate_state(model, &second_state)?;
-    let second = derivative(model, &second_state, pilot_acceleration, gravity, loads)?;
+    let second = derivative(
+        model,
+        &second_state,
+        pilot_acceleration,
+        gravity,
+        loads,
+        surface_deflections,
+    )?;
     let third_state = offset_state(state, &second, timestep_seconds * 0.5)?;
     validate_state(model, &third_state)?;
-    let third = derivative(model, &third_state, pilot_acceleration, gravity, loads)?;
+    let third = derivative(
+        model,
+        &third_state,
+        pilot_acceleration,
+        gravity,
+        loads,
+        surface_deflections,
+    )?;
     let fourth_state = offset_state(state, &third, timestep_seconds)?;
     validate_state(model, &fourth_state)?;
-    let fourth = derivative(model, &fourth_state, pilot_acceleration, gravity, loads)?;
+    let fourth = derivative(
+        model,
+        &fourth_state,
+        pilot_acceleration,
+        gravity,
+        loads,
+        surface_deflections,
+    )?;
 
     let initial = state.components();
     let mut result = [0.0; STATE_COMPONENTS];
@@ -595,8 +655,11 @@ fn derivative<P: ExternalLoadProvider>(
     pilot_acceleration: PilotAcceleration,
     gravity: Gravity,
     loads: &P,
+    surface_deflections: SurfaceDeflections,
 ) -> Result<StateDerivative, DynamicsError> {
-    let wrench = loads.evaluate(model, state).map_err(DynamicsError::Load)?;
+    let wrench = loads
+        .evaluate_with_surface_deflections(model, state, surface_deflections)
+        .map_err(DynamicsError::Load)?;
     let (linear_momentum, angular_momentum) = body_momenta(model, state)?;
     let [roll_rate, pitch_rate, yaw_rate] = state.angular_velocity_body.components();
     let angular_rate = [roll_rate, pitch_rate, yaw_rate];
