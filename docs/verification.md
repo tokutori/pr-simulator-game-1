@@ -16,6 +16,10 @@ CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
 BPG-001のWebは起動ページのみであり、フライトやThree.jsの動作確認を意味しない。
 
+### CLI検証flight
+
+`cargo run -p birdman-game-cli --locked -- verify-flight all` はManual・Shared(0.5)・Automaticを同じ固定tick入力列で実行し、各modeを2回ずつ再生して同一結果を確認する。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの係数とFBW入力列は統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。BPG-006では、出典付き機体係数・controller tuning・scenarioの検証を別途完了する。
+
 ## 後続の物理検証
 
 ### BPG-002 core検証
