@@ -60,23 +60,42 @@ fn run_verification(requested_mode: &str) -> Result<(), String> {
         _ => return Err(usage()),
     };
 
-    let scenario = VerificationScenario::new(DEFAULT_TICK_LIMIT)?;
+    let time_limit_scenario = VerificationScenario::new(DEFAULT_TICK_LIMIT, 100.0)?;
+    let contact_scenario = VerificationScenario::new(DEFAULT_TICK_LIMIT, 10.0)?;
     println!(
         "Synthetic verification scenario; aerodynamic coefficients and FBW gains are not aircraft-tuned."
     );
     println!(
         "Physics: {PHYSICS_HZ} Hz, tick limit: {}",
-        scenario.pilot_inputs.len()
+        time_limit_scenario.pilot_inputs.len()
     );
     for (name, mode) in modes {
-        let first = scenario.run(mode)?;
-        let repeated = scenario.run(mode)?;
-        if first != repeated {
-            return Err(format!("{name} replay was not deterministic"));
+        let time_limit = run_reproducibly(&time_limit_scenario, mode, name)?;
+        if !matches!(time_limit, FlightRunOutcome::TimeLimit { .. }) {
+            return Err(format!("{name} verification did not reach TimeLimit"));
         }
-        print_outcome(name, first);
+        print_outcome(&format!("{name}/time-limit"), time_limit);
+
+        let water_contact = run_reproducibly(&contact_scenario, mode, name)?;
+        if !matches!(water_contact, FlightRunOutcome::WaterContact { .. }) {
+            return Err(format!("{name} verification did not reach WaterContact"));
+        }
+        print_outcome(&format!("{name}/water-contact"), water_contact);
     }
     Ok(())
+}
+
+fn run_reproducibly(
+    scenario: &VerificationScenario,
+    mode: ControlMode,
+    name: &str,
+) -> Result<FlightRunOutcome, String> {
+    let first = scenario.run(mode)?;
+    let repeated = scenario.run(mode)?;
+    if first != repeated {
+        return Err(format!("{name} replay was not deterministic"));
+    }
+    Ok(first)
 }
 
 fn print_outcome(name: &str, outcome: FlightRunOutcome) {
@@ -114,7 +133,7 @@ struct VerificationScenario {
 }
 
 impl VerificationScenario {
-    fn new(tick_limit: usize) -> Result<Self, String> {
+    fn new(tick_limit: usize, launch_altitude_m: f64) -> Result<Self, String> {
         let actuator_limits = [ActuatorConfig::try_new(0.35, 1.0).map_err(display_error)?; 3];
         let aircraft = AircraftModel::try_new(
             30.0,
@@ -128,7 +147,7 @@ impl VerificationScenario {
         )
         .map_err(display_error)?;
         let launch = CompositeCgLaunchConditions::try_new(
-            NedPoint::try_new(0.0, 0.0, -100.0).map_err(display_error)?,
+            NedPoint::try_new(0.0, 0.0, -launch_altitude_m).map_err(display_error)?,
             NedVector::try_new(15.0, 0.0, 0.0).map_err(display_error)?,
             UnitQuaternion::IDENTITY,
             BodyVector::zero(),
@@ -288,7 +307,7 @@ mod tests {
 
     #[test]
     fn all_control_modes_run_reproducibly_with_distinct_synthetic_inputs() {
-        let scenario = VerificationScenario::new(120).unwrap();
+        let scenario = VerificationScenario::new(120, 100.0).unwrap();
         let modes = [
             ControlMode::Manual,
             ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
@@ -306,8 +325,24 @@ mod tests {
     }
 
     #[test]
+    fn all_control_modes_reproduce_terminal_water_contact() {
+        let scenario = VerificationScenario::new(400, 10.0).unwrap();
+        let modes = [
+            ControlMode::Manual,
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            ControlMode::Automatic,
+        ];
+        for mode in modes {
+            let first = scenario.run(mode).unwrap();
+            let repeated = scenario.run(mode).unwrap();
+            assert_eq!(first, repeated);
+            assert!(matches!(first, FlightRunOutcome::WaterContact { .. }));
+        }
+    }
+
+    #[test]
     fn cli_wind_gradient_changes_the_multipoint_aerodynamic_load() {
-        let scenario = VerificationScenario::new(1).unwrap();
+        let scenario = VerificationScenario::new(1, 100.0).unwrap();
         let gradient_provider = WindFieldAerodynamicLoad::try_new(
             scenario.aerodynamics,
             scenario.air_density_kg_m3,
