@@ -299,6 +299,17 @@ pub fn advance_flight_tick<P: ExternalLoadProvider>(
     input: FlightTickInput,
     loads: &P,
 ) -> Result<FlightTickState, FlightTickError> {
+    advance_flight_tick_with_timestep(aircraft, previous, config, input, loads, PHYSICS_DT_SECONDS)
+}
+
+fn advance_flight_tick_with_timestep<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    previous: FlightTickState,
+    config: FlightTickConfig,
+    input: FlightTickInput,
+    loads: &P,
+    timestep_seconds: f64,
+) -> Result<FlightTickState, FlightTickError> {
     let next_tick_index = previous
         .tick_index
         .checked_add(1)
@@ -309,14 +320,14 @@ pub fn advance_flight_tick<P: ExternalLoadProvider>(
         config.control_mode,
         input.pilot_surface_commands,
         input.fbw_surface_commands,
-        PHYSICS_DT_SECONDS,
+        timestep_seconds,
     )
     .map_err(FlightTickError::Actuator)?;
     let pilot_acceleration = pilot_target_acceleration(
         aircraft,
         &previous.flight_state,
         input.pilot_position_target,
-        PHYSICS_DT_SECONDS,
+        timestep_seconds,
     )
     .map_err(FlightTickError::Dynamics)?;
     let next_flight_state = advance_with_surface_deflections(
@@ -326,7 +337,7 @@ pub fn advance_flight_tick<P: ExternalLoadProvider>(
         config.gravity,
         loads,
         actuator_update.state().deflections(),
-        PHYSICS_DT_SECONDS,
+        timestep_seconds,
     )
     .map_err(FlightTickError::Dynamics)?;
     Ok(FlightTickState {
@@ -367,6 +378,32 @@ pub fn advance_feedback_flight_tick_with_contact<P: ExternalLoadProvider>(
     loads: &P,
     geometry: WaterContactGeometry<'_>,
 ) -> Result<FlightTickOutcome, FlightTickError> {
+    let next = advance_feedback_flight_tick_with_timestep(
+        aircraft,
+        previous,
+        config,
+        feedback,
+        input,
+        loads,
+        PHYSICS_DT_SECONDS,
+    )?;
+    let contact = detect_water_contact(aircraft, previous, next, config.actuator_limits, geometry)
+        .map_err(FlightTickError::Contact)?;
+    match contact {
+        Some(sample) => Ok(FlightTickOutcome::WaterContact(sample)),
+        None => Ok(FlightTickOutcome::Advanced(next)),
+    }
+}
+
+fn advance_feedback_flight_tick_with_timestep<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    previous: FlightTickState,
+    config: FlightTickConfig,
+    feedback: BodyRateFeedbackConfig,
+    input: FlightFeedbackInput,
+    loads: &P,
+    timestep_seconds: f64,
+) -> Result<FlightTickState, FlightTickError> {
     let fbw_commands = body_rate_feedback_commands(
         feedback,
         input.target_angular_rate_body,
@@ -378,15 +415,28 @@ pub fn advance_feedback_flight_tick_with_contact<P: ExternalLoadProvider>(
         fbw_commands,
         input.pilot_position_target,
     );
-    advance_flight_tick_with_contact(aircraft, previous, config, tick_input, loads, geometry)
+    advance_flight_tick_with_timestep(
+        aircraft,
+        previous,
+        config,
+        tick_input,
+        loads,
+        timestep_seconds,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
-        FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, advance_flight_tick,
-        run_feedback_flight, run_flight, score_endpoints,
+        FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState,
+        advance_feedback_flight_tick_with_timestep, advance_flight_tick, run_feedback_flight,
+        run_flight, score_endpoints,
+    };
+    use crate::aerodynamics::{
+        AeroCoefficients, AerodynamicElement, AerodynamicModel, CoefficientLaw,
+        ControlCoefficientDerivatives, ElementEnvelope, ElementOrientation, ElementReference,
+        WindFieldAerodynamicLoad,
     };
     use crate::dynamics::{AircraftModel, ConstantLoad, FlightState, Gravity, Wrench};
     use crate::flight_control::{
@@ -394,10 +444,11 @@ mod tests {
         SurfaceCommands,
     };
     use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
+    use crate::{AerodynamicRole, WindField};
     use crate::{
         CourseAxis, FlightTickOutcome, WaterContactGeometry, advance_flight_tick_with_contact,
     };
-    use crate::{DynamicsError, ExternalLoadProvider, LoadError, PHYSICS_DT_SECONDS};
+    use crate::{DynamicsError, ExternalLoadProvider, LoadError, PHYSICS_DT_SECONDS, PHYSICS_HZ};
 
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
@@ -454,6 +505,174 @@ mod tests {
             SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
             crate::PilotPositionTarget::try_new(aircraft, 0.0).unwrap(),
         )
+    }
+
+    fn convergence_loads() -> WindFieldAerodynamicLoad<'static> {
+        let reference = ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
+        let envelope = ElementEnvelope::try_new(-1.2, 1.2, -1.2, 1.2, 0.0, 10_000.0).unwrap();
+        let roles = [
+            AerodynamicRole::LeftWing,
+            AerodynamicRole::RightWing,
+            AerodynamicRole::HorizontalTail,
+            AerodynamicRole::VerticalTail,
+            AerodynamicRole::Fuselage,
+        ];
+        let elements = roles.map(|role| {
+            let (x, y, z) = match role {
+                AerodynamicRole::LeftWing => (0.0, -1.0, 0.0),
+                AerodynamicRole::RightWing => (0.0, 1.0, 0.0),
+                AerodynamicRole::HorizontalTail => (-2.0, 0.0, 0.0),
+                AerodynamicRole::VerticalTail => (-2.0, 0.0, -0.2),
+                AerodynamicRole::Fuselage => (0.0, 0.0, 0.0),
+            };
+            let (lift, lift_alpha, drag, lift_control, roll_control) = match role {
+                AerodynamicRole::LeftWing => (0.25, 2.5, 0.04, [0.15, 0.02, 0.0], [0.15, 0.0, 0.0]),
+                AerodynamicRole::RightWing => {
+                    (0.25, 2.5, 0.04, [0.15, 0.02, 0.0], [-0.15, 0.0, 0.0])
+                }
+                AerodynamicRole::HorizontalTail => (0.0, 1.0, 0.05, [0.0, 0.1, 0.0], [0.0; 3]),
+                AerodynamicRole::VerticalTail => (0.0, 0.0, 0.05, [0.0; 3], [0.0; 3]),
+                AerodynamicRole::Fuselage => (0.0, 0.0, 0.08, [0.0; 3], [0.0; 3]),
+            };
+            let zero = CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
+            let coefficients = AeroCoefficients::new(
+                CoefficientLaw::try_new(lift, lift_alpha, 0.0).unwrap(),
+                CoefficientLaw::try_new(drag, 0.0, 0.0).unwrap(),
+                zero,
+                zero,
+                zero,
+                zero,
+            )
+            .with_control_derivatives(
+                ControlCoefficientDerivatives::try_new(
+                    lift_control,
+                    [0.0; 3],
+                    [0.0; 3],
+                    roll_control,
+                    [0.0; 3],
+                    [0.0; 3],
+                )
+                .unwrap(),
+            );
+            AerodynamicElement::try_new(
+                role,
+                BodyPoint::try_new(x, y, z).unwrap(),
+                BodyPoint::try_new(x, y, z).unwrap(),
+                ElementOrientation::IDENTITY,
+                reference,
+                coefficients,
+                envelope,
+            )
+            .unwrap()
+        });
+        let model = AerodynamicModel::try_new(elements).unwrap();
+        WindFieldAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
+            .unwrap()
+    }
+
+    fn integrate_feedback_sample(
+        aircraft: &AircraftModel,
+        initial: FlightTickState,
+        timestep_seconds: f64,
+        sample_count: usize,
+        substeps_per_input: usize,
+        loads: &WindFieldAerodynamicLoad<'_>,
+    ) -> FlightTickState {
+        let controller = BodyRateFeedbackConfig::try_new([0.08; 3], [0.2; 3]).unwrap();
+        let config = FlightTickConfig::new(
+            ControlMode::Shared(FbwAuthority::try_new(0.4).unwrap()),
+            actuator_limits(),
+            Gravity::try_new(9.80665).unwrap(),
+        );
+        let mut state = initial;
+        for step_index in 0..sample_count {
+            let time_seconds = (step_index / substeps_per_input) as f64 / PHYSICS_HZ as f64;
+            let phase = core::f64::consts::TAU * 0.4 * time_seconds;
+            let pilot_commands = SurfaceCommands::try_new(
+                0.025 * libm::sin(phase),
+                0.01 * libm::cos(phase),
+                0.005 * libm::sin(phase * 0.5),
+            )
+            .unwrap();
+            let pilot_target =
+                crate::PilotPositionTarget::try_new(aircraft, 0.25 * libm::sin(phase)).unwrap();
+            state = advance_feedback_flight_tick_with_timestep(
+                aircraft,
+                state,
+                config,
+                controller,
+                FlightFeedbackInput::new(pilot_commands, BodyVector::zero(), pilot_target),
+                loads,
+                timestep_seconds,
+            )
+            .unwrap();
+        }
+        state
+    }
+
+    fn state_error(first: FlightTickState, second: FlightTickState) -> f64 {
+        let first_flight = first.flight_state();
+        let second_flight = second.flight_state();
+        let first_attitude = first_flight.attitude_body_to_ned().components();
+        let second_attitude = second_flight.attitude_body_to_ned().components();
+        let attitude_sign = if first_attitude
+            .into_iter()
+            .zip(second_attitude)
+            .map(|(first, second)| first * second)
+            .sum::<f64>()
+            < 0.0
+        {
+            -1.0
+        } else {
+            1.0
+        };
+        first_flight
+            .datum_position_ned()
+            .components()
+            .into_iter()
+            .zip(second_flight.datum_position_ned().components())
+            .chain(
+                first_flight
+                    .datum_velocity_ned()
+                    .components()
+                    .into_iter()
+                    .zip(second_flight.datum_velocity_ned().components()),
+            )
+            .chain(
+                first_flight
+                    .angular_velocity_body()
+                    .components()
+                    .into_iter()
+                    .zip(second_flight.angular_velocity_body().components()),
+            )
+            .chain(
+                first_attitude
+                    .into_iter()
+                    .zip(second_attitude.map(|component| component * attitude_sign)),
+            )
+            .chain(core::iter::once((
+                first_flight.pilot_position_m(),
+                second_flight.pilot_position_m(),
+            )))
+            .chain(core::iter::once((
+                first_flight.pilot_velocity_mps(),
+                second_flight.pilot_velocity_mps(),
+            )))
+            .chain(
+                [
+                    first.actuator_state().roll_rad(),
+                    first.actuator_state().pitch_rad(),
+                    first.actuator_state().yaw_rad(),
+                ]
+                .into_iter()
+                .zip([
+                    second.actuator_state().roll_rad(),
+                    second.actuator_state().pitch_rad(),
+                    second.actuator_state().yaw_rad(),
+                ]),
+            )
+            .map(|(first, second)| (first - second).abs())
+            .fold(0.0, f64::max)
     }
 
     struct SyntheticRollMoment;
@@ -569,6 +788,39 @@ mod tests {
 
         assert!(state.flight_state().angular_velocity_body().components()[0] < 1.0);
         assert!(state.actuator_state().roll_rad() < 0.0);
+    }
+
+    #[test]
+    fn coupled_aerodynamics_control_and_pilot_motion_converge_under_step_halving() {
+        let aircraft = aircraft();
+        let initial_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -50.0).unwrap(),
+            NedVector::try_new(15.0, 0.4, 0.2).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::try_new(0.02, -0.01, 0.015).unwrap(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let initial = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            0,
+            initial_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let loads = convergence_loads();
+        let nominal = integrate_feedback_sample(&aircraft, initial, 0.01, 100, 1, &loads);
+        let half_step = integrate_feedback_sample(&aircraft, initial, 0.005, 200, 2, &loads);
+        let fine = integrate_feedback_sample(&aircraft, initial, 0.0025, 400, 4, &loads);
+        let nominal_error = state_error(nominal, fine);
+        let half_step_error = state_error(half_step, fine);
+
+        assert!(
+            half_step_error < nominal_error,
+            "step halving must reduce the combined state error: 100 Hz={nominal_error}, 200 Hz={half_step_error}"
+        );
     }
 
     #[test]

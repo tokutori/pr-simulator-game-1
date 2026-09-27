@@ -48,4 +48,6 @@ pilot target policyは連続停止距離に基づき、停止距離が1 tick分�
 検証ではManual/Automaticの端点、Sharedの各axis混合、飽和、rate limit、境界値、拒否された入力後の
 入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
 閉ループ減衰で検証する。閉ループcontrollerの安定性・通常操縦での飛行成立性は、
-aircraft-specific controllerとaerodynamic derivativesを組み合わせたBPG-006統合検証で扱う。
+合成係数を使った100 Hz/200 Hzのstep-halving連成試験で数値収束を確認する。
+この試験は、実機の安定性・通常操縦の成立性を保証しない。後者はaircraft-specific controllerと
+aerodynamic derivativesを組み合わせたBPG-006の別受入条件とする。

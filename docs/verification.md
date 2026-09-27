@@ -74,7 +74,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 | 003 | 5要素role、解析揚抗力、alpha/beta係数、wind subtract、回転局所速度、pilot非加算、moment arm、要素姿勢、zero-speed・envelope・数値境界 |
 | 004 | 無風、一様風Galilean invariance、固定ground launchのheadwind、crosswind、鉛直風、解析shear、grid trilinear解析値・閉境界・範囲外error、WindField→空力→RK4接続 |
 | 005 | 対称grid上昇流とroll相殺、右翼上昇流の解析roll、水平尾翼の解析pitch、垂直尾翼の解析yaw、回転局所速度、二重計上回避 |
-| 006 | lifecycle、身体位置指令・移動限界、接触補間と同時刻終端state、authority両端・Shared混合、actuator飽和・rate limit、決定的scenario、入力replay |
+| 006 | lifecycle、身体位置指令・移動限界、接触補間と同時刻終端state、authority両端・Shared混合、actuator飽和・rate limit、決定的scenario、入力replay、空力・FBW・pilot motionを含む100/200 Hz step-halving収束 |
 | 026 | position targetの加速・制動・収束、最大速度・加速度・移動範囲、復帰不能境界のtyped error、同条件決定性、6DoF internal-mass接続 |
 | 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral互換、stage error時の状態不変 |
 | 028 | Manual / Shared / Automaticの統合tick、pilot target・actuator・6DoF一括更新、決定性、load error時の不変性、tick overflow |
