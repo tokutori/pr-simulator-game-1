@@ -38,6 +38,28 @@ RK4の各stageで位置・速度・姿勢・局所風・空力を再評価する
 姿勢の正規化規則と誤差はBPG-002で収束試験により検証する。
 操縦指令とactuator出力の更新周期・保持規則はBPG-006で固定する。
 
+## BPG-002のcore実装契約
+
+`FlightState`はdatum $O$ のNED位置・対地速度、body-to-NED quaternion、body角速度、
+パイロットの前後位置・相対速度を保持する。`AircraftModel`はパイロットを除く機体質量と
+$O$まわりの固定慣性、パイロット質量・固定高さ・移動限界を保持する。慣性は有限・対称・正定値、
+機体質量は正、パイロット質量は非負でなければならない。
+
+運動量収支を解く未知量は、body成分で表したdatum速度の時間微分
+$d v_O^B/dt$ と角加速度である。積分stateの速度はNED成分なので、その時間微分へ変換する際に
+$R_{NB}(d v_O^B/dt+\omega^B\times v_O^B)$ を用いる。座標成分の微分と慣性座標で表した物理加速度を
+同一視しない。
+
+`advance`は正の有限timestep、有限の一定パイロット加速度、重力、機体モデル、現在state、
+外力providerを受け取る。providerが返すbody-frame wrenchは重力を含まない。重力合力はcoreが
+全質量へ作用させ、パイロット重力によるdatum $O$まわりmomentも計上する。外力providerは4つの
+RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stateで単位長へ射影する。
+一回のstepは入力stateを変更せず、いずれかのstageが失敗した場合は型付きerrorのみを返す。
+力学step内にheap allocationを行わない。
+
+この段階のpilot accelerationは1 step中一定とする。位置目標から移動限界・速度・加速度を満たす
+指令列を生成する操作policyは、BPG-006の責務である。
+
 ## 時間と処理落ち
 
 ```math
