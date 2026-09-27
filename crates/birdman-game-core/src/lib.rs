@@ -26,7 +26,8 @@ pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{
     AircraftModel, ConstantLoad, DynamicsError, ExternalLoadProvider, FlightState, Gravity,
-    LoadError, Momentum, PilotAcceleration, STANDARD_GRAVITY, Wrench, advance, total_momentum,
+    LoadError, Momentum, PilotAcceleration, PilotPositionTarget, STANDARD_GRAVITY, Wrench, advance,
+    pilot_target_acceleration, total_momentum,
 };
 pub use math::{
     BodyFrame, BodyPoint, BodyVector, Frame, InertiaTensor, MathError, NedFrame, NedPoint,

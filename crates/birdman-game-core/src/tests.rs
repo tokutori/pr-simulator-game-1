@@ -1,7 +1,8 @@
 use crate::{
     AircraftModel, BodyPoint, BodyVector, ConstantLoad, DynamicsError, ExternalLoadProvider,
     FlightState, Gravity, InertiaTensor, LoadError, MathError, NedPoint, NedVector, PHYSICS_HZ,
-    PilotAcceleration, UnitQuaternion, Wrench, advance, total_momentum,
+    PilotAcceleration, PilotPositionTarget, UnitQuaternion, Wrench, advance,
+    pilot_target_acceleration, total_momentum,
 };
 
 fn model(pilot_mass: f64, inertia: InertiaTensor) -> AircraftModel {
@@ -103,6 +104,125 @@ fn integrate(
 #[test]
 fn fixed_tick_rate_is_one_hundred_hz() {
     assert_eq!(PHYSICS_HZ, 100);
+}
+
+#[test]
+fn pilot_position_target_acceleration_respects_stopping_distance() {
+    let model = model(0.5, diagonal_inertia(1.0, 1.0, 1.0));
+    let target = PilotPositionTarget::try_new(&model, 0.5).unwrap();
+    let accelerating = pilot_target_acceleration(
+        &model,
+        &state(
+            [0.0; 3],
+            [0.0; 3],
+            UnitQuaternion::IDENTITY,
+            [0.0; 3],
+            0.0,
+            0.0,
+        ),
+        target,
+        0.01,
+    )
+    .unwrap();
+    close(accelerating.meters_per_second_squared(), 2.0, 1.0e-14);
+
+    let braking_state = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.49,
+        0.2,
+    );
+    let braking = pilot_target_acceleration(&model, &braking_state, target, 0.01).unwrap();
+    close(braking.meters_per_second_squared(), -2.0, 1.0e-14);
+}
+
+#[test]
+fn pilot_position_target_rejects_invalid_and_unrecoverable_inputs() {
+    let model = model(0.5, diagonal_inertia(1.0, 1.0, 1.0));
+    assert_eq!(
+        PilotPositionTarget::try_new(&model, 0.51),
+        Err(DynamicsError::PilotOutOfRange)
+    );
+    let target = PilotPositionTarget::try_new(&model, 0.5).unwrap();
+    let unrecoverable = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.49,
+        0.3,
+    );
+    assert_eq!(
+        pilot_target_acceleration(&model, &unrecoverable, target, 0.01),
+        Err(DynamicsError::PilotMotionUnrecoverable)
+    );
+    let valid = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.0,
+        0.0,
+    );
+    assert_eq!(
+        pilot_target_acceleration(&model, &valid, target, 0.0),
+        Err(DynamicsError::InvalidTimeStep)
+    );
+    assert_eq!(
+        pilot_target_acceleration(&model, &valid, target, 0.02),
+        Err(DynamicsError::InvalidTimeStep)
+    );
+}
+
+#[test]
+fn pilot_position_policy_reaches_a_fixed_target_deterministically() {
+    let model = model(0.5, diagonal_inertia(1.0, 1.0, 1.0));
+    let target = PilotPositionTarget::try_new(&model, 0.2).unwrap();
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.0,
+        0.0,
+    );
+    let mut first = initial;
+    let mut second = initial;
+    for _ in 0..2_000 {
+        let first_acceleration = pilot_target_acceleration(&model, &first, target, 0.01).unwrap();
+        let second_acceleration = pilot_target_acceleration(&model, &second, target, 0.01).unwrap();
+        assert_eq!(first_acceleration, second_acceleration);
+        first = step(
+            &model,
+            &first,
+            first_acceleration.meters_per_second_squared(),
+            0.0,
+            Wrench::zero(),
+            0.01,
+        )
+        .unwrap();
+        second = step(
+            &model,
+            &second,
+            second_acceleration.meters_per_second_squared(),
+            0.0,
+            Wrench::zero(),
+            0.01,
+        )
+        .unwrap();
+        assert!(first.pilot_position_m().abs() <= 0.5);
+        assert!(first.pilot_velocity_mps().abs() <= 1.0);
+    }
+    assert_eq!(first, second);
+    assert!((first.pilot_position_m() - target.position_m()).abs() < 1.0e-3);
+    assert!(
+        first.pilot_velocity_mps().abs() < 1.0e-3,
+        "position={}, velocity={}",
+        first.pilot_position_m(),
+        first.pilot_velocity_mps()
+    );
 }
 
 #[test]

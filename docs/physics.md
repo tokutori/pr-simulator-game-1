@@ -58,8 +58,8 @@ RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stat
 一回のstepは入力stateを変更せず、いずれかのstageが失敗した場合は型付きerrorのみを返す。
 力学step内にheap allocationを行わない。
 
-この段階のpilot accelerationは1 step中一定とする。位置目標から移動限界・速度・加速度を満たす
-指令列を生成する操作policyは、BPG-006の責務である。
+この段階のpilot accelerationは1 step中一定とする。位置目標から停止距離・移動限界・速度・加速度を満たす
+指令を生成するRust coreのpolicyは `pilot-motion.md` とBPG-026で定義する。
 
 ## BPG-003の空力接続
 

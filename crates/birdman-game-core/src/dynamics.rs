@@ -261,6 +261,125 @@ impl PilotAcceleration {
     }
 }
 
+/// A validated longitudinal pilot position target within one aircraft's travel range.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PilotPositionTarget {
+    position_m: f64,
+}
+
+impl PilotPositionTarget {
+    /// Creates a finite target inside the aircraft model's pilot travel range.
+    pub fn try_new(model: &AircraftModel, position_m: f64) -> Result<Self, DynamicsError> {
+        if !position_m.is_finite() {
+            return Err(DynamicsError::NonFinite);
+        }
+        if position_m < model.pilot_minimum_position_m
+            || position_m > model.pilot_maximum_position_m
+        {
+            return Err(DynamicsError::PilotOutOfRange);
+        }
+        Ok(Self { position_m })
+    }
+
+    /// Returns the target position relative to datum O in meters.
+    pub const fn position_m(self) -> f64 {
+        self.position_m
+    }
+}
+
+/// Computes a bounded pilot acceleration that follows a longitudinal position target.
+///
+/// The speed target is limited by the model and by the continuous stopping speed for
+/// the remaining distance. An already-unrecoverable velocity toward a travel boundary
+/// is rejected instead of clamping position or velocity. The policy accepts substeps up
+/// to the fixed 100 Hz simulation tick.
+pub fn pilot_target_acceleration(
+    model: &AircraftModel,
+    state: &FlightState,
+    target: PilotPositionTarget,
+    timestep_seconds: f64,
+) -> Result<PilotAcceleration, DynamicsError> {
+    validate_state(model, state)?;
+    if !timestep_seconds.is_finite()
+        || timestep_seconds <= 0.0
+        || timestep_seconds > 1.0 / crate::PHYSICS_HZ as f64
+    {
+        return Err(DynamicsError::InvalidTimeStep);
+    }
+    if target.position_m < model.pilot_minimum_position_m
+        || target.position_m > model.pilot_maximum_position_m
+    {
+        return Err(DynamicsError::PilotOutOfRange);
+    }
+
+    let position = state.pilot_position_m;
+    let velocity = state.pilot_velocity_mps;
+    let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
+    let boundary_clearance = if velocity > 0.0 {
+        model.pilot_maximum_position_m - position
+    } else if velocity < 0.0 {
+        position - model.pilot_minimum_position_m
+    } else {
+        f64::INFINITY
+    };
+    let stopping_distance = velocity.abs() * velocity.abs() / (2.0 * maximum_acceleration);
+    if !stopping_distance.is_finite() || stopping_distance > boundary_clearance {
+        return Err(DynamicsError::PilotMotionUnrecoverable);
+    }
+
+    let position_error = target.position_m - position;
+    if position_error == 0.0 {
+        return acceleration_toward_velocity(0.0, velocity, timestep_seconds, maximum_acceleration);
+    }
+    let one_tick_stopping_distance =
+        0.5 * maximum_acceleration * timestep_seconds * timestep_seconds;
+    if position_error.abs() <= one_tick_stopping_distance
+        && stopping_distance <= one_tick_stopping_distance
+    {
+        return acceleration_toward_velocity(0.0, velocity, timestep_seconds, maximum_acceleration);
+    }
+    let direction = position_error.signum();
+    let distance = position_error.abs();
+    let speed_square = 2.0 * maximum_acceleration * distance;
+    let stopping_speed = if speed_square.is_finite() {
+        libm::sqrt(speed_square).min(model.pilot_maximum_speed_mps)
+    } else {
+        model.pilot_maximum_speed_mps
+    };
+    let velocity_toward_target = velocity * direction;
+    let speed_tolerance =
+        16.0 * f64::EPSILON * velocity_toward_target.abs().max(stopping_speed.abs());
+    let commanded_acceleration = if velocity_toward_target > 0.0
+        && velocity_toward_target + speed_tolerance >= stopping_speed
+    {
+        -direction * maximum_acceleration
+    } else {
+        let desired_velocity = direction * stopping_speed;
+        let requested_acceleration = (desired_velocity - velocity) / timestep_seconds;
+        if !requested_acceleration.is_finite() {
+            requested_acceleration.signum() * maximum_acceleration
+        } else {
+            requested_acceleration.clamp(-maximum_acceleration, maximum_acceleration)
+        }
+    };
+    PilotAcceleration::try_new(commanded_acceleration)
+}
+
+fn acceleration_toward_velocity(
+    desired_velocity: f64,
+    current_velocity: f64,
+    timestep_seconds: f64,
+    maximum_acceleration: f64,
+) -> Result<PilotAcceleration, DynamicsError> {
+    let requested_acceleration = (desired_velocity - current_velocity) / timestep_seconds;
+    let bounded_acceleration = if !requested_acceleration.is_finite() {
+        requested_acceleration.signum() * maximum_acceleration
+    } else {
+        requested_acceleration.clamp(-maximum_acceleration, maximum_acceleration)
+    };
+    PilotAcceleration::try_new(bounded_acceleration)
+}
+
 /// Non-gravitational external force and moment about datum O.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wrench {
@@ -356,6 +475,8 @@ pub enum DynamicsError {
     InvalidPilotLimits,
     /// Pilot position, speed, or acceleration exceeds model limits.
     PilotOutOfRange,
+    /// Pilot velocity cannot be stopped before reaching a movement boundary.
+    PilotMotionUnrecoverable,
     /// The requested timestep is not finite and positive.
     InvalidTimeStep,
     /// The coupled mass matrix is singular or numerically non-invertible.

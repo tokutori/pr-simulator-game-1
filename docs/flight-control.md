@@ -22,7 +22,9 @@ authorityは有限な$[0,1]$値だけを保持するvalidated型とする。制�
 各actuatorは正の最大舵角$radian$と最大舵角速度$radian/second$を持つ。
 入力targetは最大舵角でsaturateし、現在状態から1 stepで移動できる角度を最大舵角速度とtimestepで制限する。
 step中の出力は更新済みactuator stateとして保持し、次のtickまで同じ値を空力評価へ渡す。
-制御・actuator更新周期はphysics tickと同じ100 Hzとする。stepは正の有限timestepのみ受理する。
+制御・actuator更新周期はphysics tickと同じ100 Hzとする。actuator stepは正の有限timestepのみ受理する。
+pilot target policyは連続停止距離に基づき、停止距離が1 tick分の停止距離以下になった目標近傍では速度を0へ収束させる。
+そのtimestepは100 Hz tick以下の有限値とし、描画frame数から値を生成しない。
 `advance_surface_control`はpilot/FBWのauthority混合、rate limit・saturation適用、更新後stateを一つの
 決定的な操作として返す。混合後commandもrecord可能な値として返却する。
 
