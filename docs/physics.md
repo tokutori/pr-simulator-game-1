@@ -38,6 +38,7 @@ RK4の各stageで位置・速度・姿勢・局所風・空力を再評価する
 姿勢の正規化規則と誤差はBPG-002で収束試験により検証する。
 操縦指令とactuator出力の更新周期・保持規則はBPG-006で固定する。
 authority混合・actuator stateの型と更新規則は `flight-control.md` を正本とする。
+tick単位の統合処理は `advance_flight_tick` が固定100 Hzで実行し、成功時だけ整数tickと全physical stateを更新する。
 
 ## BPG-002のcore実装契約
 

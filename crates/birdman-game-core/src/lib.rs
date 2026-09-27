@@ -9,6 +9,7 @@ mod aerodynamics_contract;
 mod dynamics;
 mod flight_control;
 mod math;
+mod simulation;
 mod wind_field;
 
 pub use aerodynamics::{
@@ -21,6 +22,9 @@ pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, Aerodynam
 pub use flight_control::{
     ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, ControlMode, FbwAuthority,
     SurfaceCommands, SurfaceDeflections, advance_surface_control, mix_surface_commands,
+};
+pub use simulation::{
+    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, advance_flight_tick,
 };
 pub use wind_field::{WindError, WindField};
 
@@ -40,6 +44,9 @@ pub use math::{
 /// assert_eq!(birdman_game_core::PHYSICS_HZ, 100);
 /// ```
 pub const PHYSICS_HZ: u32 = 100;
+
+/// Fixed simulation timestep in seconds.
+pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;
 
 #[cfg(test)]
 mod tests;

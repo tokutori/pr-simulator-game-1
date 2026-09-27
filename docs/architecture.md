@@ -67,6 +67,7 @@ Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作
 
 simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatform adapterが管理する。
 物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
+Rust coreの `advance_flight_tick` は一つの入力sampleからauthority・actuator・pilot motion・6DoFを原子的に進める。
 同一モデル、scenario、機体・身体の初期状態、tickごとの舵・身体位置指令列に対する決定性を保つ。
 パイロット前後移動の力学・入力境界は `pilot-motion.md` に従う。
 FBW authority混合と舵actuator stateは `flight-control.md` に従う。
