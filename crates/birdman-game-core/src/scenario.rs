@@ -1,5 +1,15 @@
+use crate::aerodynamics::{AerodynamicModel, WindFieldAerodynamicLoad};
+use crate::aerodynamics_contract::AeroError;
+use crate::contact::{ContactError, WaterContactGeometry};
 use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
-use crate::math::{BodyVector, MathError, NedPoint, NedVector, UnitQuaternion};
+use crate::flight_control::{ActuatorConfig, ActuatorState, ControlMode};
+use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector, UnitQuaternion};
+use crate::scoring::CourseAxis;
+use crate::simulation::{
+    FlightRunError, FlightRunOutcome, FlightTickConfig, FlightTickError, FlightTickInput,
+    FlightTickOutcome, FlightTickState, advance_flight_tick_with_contact, run_flight,
+};
+use crate::wind_field::WindField;
 
 /// Immutable launch inputs expressed at the composite center of mass.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +105,132 @@ pub fn flight_state_from_composite_cg_launch(
     )?;
     total_momentum(aircraft, &state)?;
     Ok(state)
+}
+
+/// Validated model and initial-condition inputs for one reproducible flight scenario.
+pub struct FlightScenarioDefinition<'a> {
+    /// Airframe and moving-pilot mass properties.
+    pub aircraft: AircraftModel,
+    /// Launch pose and ground velocity expressed at composite center of mass.
+    pub launch: CompositeCgLaunchConditions,
+    /// Five-element aerodynamic model.
+    pub aerodynamics: AerodynamicModel,
+    /// Positive ambient air density in kg/m³.
+    pub air_density_kg_m3: f64,
+    /// Stationary spatial wind field sampled at every element and RK stage.
+    pub wind_field: WindField<'a>,
+    /// Per-axis physical actuator limits.
+    pub actuator_limits: [ActuatorConfig; 3],
+    /// Initial physical actuator deflections, validated against `actuator_limits`.
+    pub initial_actuator_state: ActuatorState,
+    /// Gravitational acceleration for every tick in this scenario.
+    pub gravity: crate::dynamics::Gravity,
+    /// Fixed structural contact points in datum body coordinates.
+    pub contact_points_body: &'a [BodyPoint],
+    /// Horizontal course direction used to score this flight.
+    pub course_axis: CourseAxis,
+}
+
+/// Errors while validating scenario-wide model and initial-state boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightScenarioError {
+    /// The aerodynamic provider rejected density or environment input.
+    Aerodynamic(AeroError),
+    /// Launch inputs could not be converted to a valid flight state.
+    Launch(DynamicsError),
+    /// The initial tick state or actuator state is invalid.
+    InitialState(FlightTickError),
+    /// Contact geometry is invalid.
+    Contact(ContactError),
+}
+
+/// Immutable validated launch, model, environment, and termination conditions.
+pub struct FlightScenario<'a> {
+    aircraft: AircraftModel,
+    initial_state: FlightTickState,
+    actuator_limits: [ActuatorConfig; 3],
+    gravity: crate::dynamics::Gravity,
+    loads: WindFieldAerodynamicLoad<'a>,
+    contact_geometry: WaterContactGeometry<'a>,
+    course_axis: CourseAxis,
+}
+
+impl<'a> FlightScenario<'a> {
+    /// Validates and assembles one reusable flight scenario without allocation.
+    pub fn try_new(definition: FlightScenarioDefinition<'a>) -> Result<Self, FlightScenarioError> {
+        let loads = WindFieldAerodynamicLoad::try_new(
+            definition.aerodynamics,
+            definition.air_density_kg_m3,
+            definition.wind_field,
+        )
+        .map_err(FlightScenarioError::Aerodynamic)?;
+        let initial_flight =
+            flight_state_from_composite_cg_launch(&definition.aircraft, definition.launch)
+                .map_err(FlightScenarioError::Launch)?;
+        let initial_state = FlightTickState::try_new(
+            &definition.aircraft,
+            definition.actuator_limits,
+            0,
+            initial_flight,
+            definition.initial_actuator_state,
+        )
+        .map_err(FlightScenarioError::InitialState)?;
+        let contact_geometry = WaterContactGeometry::try_new(definition.contact_points_body)
+            .map_err(FlightScenarioError::Contact)?;
+        Ok(Self {
+            aircraft: definition.aircraft,
+            initial_state,
+            actuator_limits: definition.actuator_limits,
+            gravity: definition.gravity,
+            loads,
+            contact_geometry,
+            course_axis: definition.course_axis,
+        })
+    }
+
+    /// Returns the validated tick-zero state.
+    pub const fn initial_state(&self) -> FlightTickState {
+        self.initial_state
+    }
+
+    /// Creates the fixed physics configuration for the requested control mode.
+    pub const fn tick_config(&self, control_mode: ControlMode) -> FlightTickConfig {
+        FlightTickConfig::new(control_mode, self.actuator_limits, self.gravity)
+    }
+
+    /// Advances one controlled tick and terminates at the first water contact.
+    pub fn advance_tick_with_contact(
+        &self,
+        previous: FlightTickState,
+        control_mode: ControlMode,
+        input: FlightTickInput,
+    ) -> Result<FlightTickOutcome, FlightTickError> {
+        advance_flight_tick_with_contact(
+            &self.aircraft,
+            previous,
+            self.tick_config(control_mode),
+            input,
+            &self.loads,
+            self.contact_geometry,
+        )
+    }
+
+    /// Replays a fixed input sequence until contact or its tick limit.
+    pub fn run(
+        &self,
+        control_mode: ControlMode,
+        inputs: &[FlightTickInput],
+    ) -> Result<FlightRunOutcome, FlightRunError> {
+        run_flight(
+            &self.aircraft,
+            self.initial_state,
+            self.tick_config(control_mode),
+            inputs,
+            &self.loads,
+            self.contact_geometry,
+            self.course_axis,
+        )
+    }
 }
 
 fn negate_ned_vector(vector: NedVector) -> Result<NedVector, DynamicsError> {

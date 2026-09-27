@@ -31,7 +31,10 @@ pub use flight_control::{
     ControlMode, FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
     body_rate_feedback_commands, mix_surface_commands,
 };
-pub use scenario::{CompositeCgLaunchConditions, flight_state_from_composite_cg_launch};
+pub use scenario::{
+    CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
+    flight_state_from_composite_cg_launch,
+};
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
     course_distance_score,

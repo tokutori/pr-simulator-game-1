@@ -5,10 +5,9 @@ use birdman_game_core::{
     AircraftModel, BodyPoint, BodyRateFeedbackConfig, BodyVector, CoefficientLaw,
     CompositeCgLaunchConditions, ControlCoefficientDerivatives, ControlMode, CourseAxis,
     ElementEnvelope, ElementOrientation, ElementReference, FbwAuthority, FlightRunOutcome,
-    FlightTickConfig, FlightTickInput, FlightTickState, Gravity, InertiaTensor, NedPoint,
-    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UnitQuaternion,
-    WaterContactGeometry, WindField, WindFieldAerodynamicLoad, body_rate_feedback_commands,
-    flight_state_from_composite_cg_launch, run_flight,
+    FlightScenario, FlightScenarioDefinition, FlightTickInput, Gravity, InertiaTensor, NedPoint,
+    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UnitQuaternion, WindField,
+    body_rate_feedback_commands,
 };
 
 const DEFAULT_TICK_LIMIT: usize = 400;
@@ -101,9 +100,14 @@ fn print_outcome(name: &str, outcome: FlightRunOutcome) {
 
 struct VerificationScenario {
     aircraft: AircraftModel,
-    initial: FlightTickState,
+    launch: CompositeCgLaunchConditions,
+    aerodynamics: AerodynamicModel,
+    wind_field: WindField<'static>,
+    air_density_kg_m3: f64,
+    actuator_limits: [ActuatorConfig; 3],
+    initial_actuator_state: birdman_game_core::ActuatorState,
+    gravity: Gravity,
     pilot_inputs: Vec<(SurfaceCommands, PilotPositionTarget)>,
-    loads: WindFieldAerodynamicLoad<'static>,
     contact_geometry: [BodyPoint; 1],
     course_axis: CourseAxis,
     feedback: BodyRateFeedbackConfig,
@@ -132,16 +136,6 @@ impl VerificationScenario {
             0.0,
         )
         .map_err(display_error)?;
-        let initial_flight =
-            flight_state_from_composite_cg_launch(&aircraft, launch).map_err(display_error)?;
-        let initial = FlightTickState::try_new(
-            &aircraft,
-            actuator_limits,
-            0,
-            initial_flight,
-            birdman_game_core::ActuatorState::neutral(),
-        )
-        .map_err(display_error)?;
         let pilot_inputs = (0..tick_limit)
             .map(|tick| {
                 let roll = if tick % 80 < 40 { 0.04 } else { -0.04 };
@@ -162,27 +156,43 @@ impl VerificationScenario {
         )
         .map_err(display_error)?;
 
+        let aerodynamics = aerodynamic_model()?;
         Ok(Self {
             aircraft,
-            initial,
+            launch,
+            aerodynamics,
+            wind_field,
+            air_density_kg_m3: 1.225,
+            actuator_limits,
+            initial_actuator_state: birdman_game_core::ActuatorState::neutral(),
+            gravity: Gravity::try_new(9.80665).map_err(display_error)?,
             pilot_inputs,
-            loads: WindFieldAerodynamicLoad::try_new(aerodynamic_model()?, 1.225, wind_field)
-                .map_err(display_error)?,
             contact_geometry: [BodyPoint::try_new(0.0, 0.0, 0.0).map_err(display_error)?],
             course_axis: CourseAxis::try_new(1.0, 0.0).map_err(display_error)?,
             feedback,
         })
     }
 
+    fn assemble(&self) -> Result<FlightScenario<'_>, String> {
+        let scenario = FlightScenario::try_new(FlightScenarioDefinition {
+            aircraft: self.aircraft,
+            launch: self.launch,
+            aerodynamics: self.aerodynamics,
+            air_density_kg_m3: self.air_density_kg_m3,
+            wind_field: self.wind_field,
+            actuator_limits: self.actuator_limits,
+            initial_actuator_state: self.initial_actuator_state,
+            gravity: self.gravity,
+            contact_points_body: &self.contact_geometry,
+            course_axis: self.course_axis,
+        })
+        .map_err(display_error)?;
+        Ok(scenario)
+    }
+
     fn run(&self, mode: ControlMode) -> Result<FlightRunOutcome, String> {
-        let config = FlightTickConfig::new(
-            mode,
-            [ActuatorConfig::try_new(0.35, 1.0).map_err(display_error)?; 3],
-            Gravity::try_new(9.80665).map_err(display_error)?,
-        );
-        let contact_geometry =
-            WaterContactGeometry::try_new(&self.contact_geometry).map_err(display_error)?;
-        let mut predicted = self.initial;
+        let scenario = self.assemble()?;
+        let mut predicted = scenario.initial_state();
         let mut inputs = Vec::with_capacity(self.pilot_inputs.len());
         for (pilot_commands, pilot_position_target) in self.pilot_inputs.iter().copied() {
             let fbw_commands = body_rate_feedback_commands(
@@ -193,30 +203,15 @@ impl VerificationScenario {
             .map_err(display_error)?;
             let input = FlightTickInput::new(pilot_commands, fbw_commands, pilot_position_target);
             inputs.push(input);
-            match birdman_game_core::advance_flight_tick_with_contact(
-                &self.aircraft,
-                predicted,
-                config,
-                input,
-                &self.loads,
-                contact_geometry,
-            )
-            .map_err(display_error)?
+            match scenario
+                .advance_tick_with_contact(predicted, mode, input)
+                .map_err(display_error)?
             {
                 birdman_game_core::FlightTickOutcome::Advanced(next) => predicted = next,
                 birdman_game_core::FlightTickOutcome::WaterContact(_) => break,
             }
         }
-        run_flight(
-            &self.aircraft,
-            self.initial,
-            config,
-            &inputs,
-            &self.loads,
-            contact_geometry,
-            self.course_axis,
-        )
-        .map_err(display_error)
+        scenario.run(mode, &inputs).map_err(display_error)
     }
 }
 
@@ -286,10 +281,9 @@ fn display_error(error: impl std::fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::VerificationScenario;
-    use super::aerodynamic_model;
     use birdman_game_core::{
         ControlMode, ExternalLoadProvider, FbwAuthority, FlightRunOutcome, NedVector,
-        UniformAerodynamicLoad, UniformAir,
+        UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
     };
 
     #[test]
@@ -314,12 +308,20 @@ mod tests {
     #[test]
     fn cli_wind_gradient_changes_the_multipoint_aerodynamic_load() {
         let scenario = VerificationScenario::new(1).unwrap();
+        let gradient_provider = WindFieldAerodynamicLoad::try_new(
+            scenario.aerodynamics,
+            scenario.air_density_kg_m3,
+            scenario.wind_field,
+        )
+        .unwrap();
         let uniform_reference = UniformAerodynamicLoad::new(
-            aerodynamic_model().unwrap(),
+            scenario.aerodynamics,
             UniformAir::try_new(NedVector::try_new(2.0, 0.0, 0.0).unwrap(), 1.225).unwrap(),
         );
-        let state = scenario.initial.flight_state();
-        let gradient_load = scenario.loads.evaluate(&scenario.aircraft, &state).unwrap();
+        let state = scenario.assemble().unwrap().initial_state().flight_state();
+        let gradient_load = gradient_provider
+            .evaluate(&scenario.aircraft, &state)
+            .unwrap();
         let uniform_load = uniform_reference
             .evaluate(&scenario.aircraft, &state)
             .unwrap();
