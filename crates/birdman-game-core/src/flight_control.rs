@@ -1,3 +1,4 @@
+use crate::math::BodyVector;
 use core::f64::consts::PI;
 
 /// Roll, pitch, and yaw surface commands in radians.
@@ -6,6 +7,89 @@ pub struct SurfaceCommands {
     roll_rad: f64,
     pitch_rad: f64,
     yaw_rad: f64,
+}
+
+/// Per-axis gains and command limits for a body-rate feedback law.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyRateFeedbackConfig {
+    gains_seconds: [f64; 3],
+    command_limits_rad: [f64; 3],
+}
+
+impl BodyRateFeedbackConfig {
+    /// Creates nonnegative gains in seconds and positive command limits in radians.
+    pub fn try_new(
+        gains_seconds: [f64; 3],
+        command_limits_rad: [f64; 3],
+    ) -> Result<Self, ActuatorError> {
+        if gains_seconds
+            .into_iter()
+            .chain(command_limits_rad)
+            .any(|value| !value.is_finite())
+        {
+            return Err(ActuatorError::NonFinite);
+        }
+        if gains_seconds.into_iter().any(|gain| gain < 0.0) {
+            return Err(ActuatorError::InvalidFeedbackGain);
+        }
+        if command_limits_rad
+            .into_iter()
+            .any(|limit| limit <= 0.0 || limit > PI)
+        {
+            return Err(ActuatorError::InvalidLimit);
+        }
+        Ok(Self {
+            gains_seconds,
+            command_limits_rad,
+        })
+    }
+}
+
+/// Converts explicit body angular-rate targets into bounded FBW surface commands.
+///
+/// The gain order is roll, pitch, and yaw. Each axis is independent and uses
+/// `gain * (target_rate - observed_rate)`, saturated at its configured command limit.
+pub fn body_rate_feedback_commands(
+    config: BodyRateFeedbackConfig,
+    target_angular_rate_body: BodyVector,
+    observed_angular_rate_body: BodyVector,
+) -> Result<SurfaceCommands, ActuatorError> {
+    let target = target_angular_rate_body.components();
+    let observed = observed_angular_rate_body.components();
+    let commands: [f64; 3] = core::array::from_fn(|index| {
+        saturated_rate_command(
+            config.gains_seconds[index],
+            config.command_limits_rad[index],
+            target[index],
+            observed[index],
+        )
+    });
+    SurfaceCommands::try_new(commands[0], commands[1], commands[2])
+}
+
+fn saturated_rate_command(
+    gain_seconds: f64,
+    limit_rad: f64,
+    target_rate: f64,
+    observed_rate: f64,
+) -> f64 {
+    let error = target_rate - observed_rate;
+    if gain_seconds == 0.0 || error == 0.0 {
+        return 0.0;
+    }
+    if !error.is_finite() {
+        return if target_rate > observed_rate {
+            limit_rad
+        } else {
+            -limit_rad
+        };
+    }
+    let saturation_error = limit_rad / gain_seconds;
+    if error.abs() >= saturation_error {
+        error.signum() * limit_rad
+    } else {
+        gain_seconds * error
+    }
 }
 
 impl SurfaceCommands {
@@ -318,6 +402,8 @@ pub enum ActuatorError {
     NonFinite,
     /// FBW authority is outside the inclusive interval from zero to one.
     InvalidAuthority,
+    /// A body-rate feedback gain is negative.
+    InvalidFeedbackGain,
     /// An actuator travel or rate limit is invalid.
     InvalidLimit,
     /// A timestep is not finite and positive.
@@ -341,9 +427,11 @@ fn validate_deflections(
 #[cfg(test)]
 mod tests {
     use super::{
-        ActuatorConfig, ActuatorError, ActuatorState, ControlMode, FbwAuthority, SurfaceCommands,
-        SurfaceDeflections, advance_surface_control, mix_surface_commands,
+        ActuatorConfig, ActuatorError, ActuatorState, BodyRateFeedbackConfig, ControlMode,
+        FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
+        body_rate_feedback_commands, mix_surface_commands,
     };
+    use crate::math::BodyVector;
 
     fn commands(roll: f64, pitch: f64, yaw: f64) -> SurfaceCommands {
         SurfaceCommands::try_new(roll, pitch, yaw).unwrap()
@@ -379,6 +467,44 @@ mod tests {
         let mixed =
             mix_surface_commands(mode, commands(0.0, 0.4, -0.4), commands(0.8, 0.0, 0.4)).unwrap();
         assert_commands_close(mixed, commands(0.2, 0.3, -0.2));
+    }
+
+    #[test]
+    fn body_rate_feedback_tracks_targets_with_per_axis_saturation() {
+        let config = BodyRateFeedbackConfig::try_new([2.0, 2.0, 2.0], [0.3, 0.5, 0.2]).unwrap();
+        let target = BodyVector::try_new(0.3, 0.4, -0.2).unwrap();
+        let observed = BodyVector::try_new(0.1, 0.0, 0.0).unwrap();
+        let output = body_rate_feedback_commands(config, target, observed).unwrap();
+        assert_commands_close(output, commands(0.3, 0.5, -0.2));
+    }
+
+    #[test]
+    fn body_rate_feedback_damps_uncommanded_motion_and_handles_extreme_finite_rates() {
+        let config = BodyRateFeedbackConfig::try_new([2.0; 3], [0.4; 3]).unwrap();
+        let zero = BodyVector::zero();
+        let rotating = BodyVector::try_new(0.1, -0.2, 0.3).unwrap();
+        let result = body_rate_feedback_commands(config, zero, rotating).unwrap();
+        assert_commands_close(result, commands(-0.2, 0.4, -0.4));
+
+        let extreme = BodyVector::try_new(f64::MAX, -f64::MAX, 0.0).unwrap();
+        let result = body_rate_feedback_commands(config, extreme, rotating).unwrap();
+        assert_commands_close(result, commands(0.4, -0.4, -0.4));
+    }
+
+    #[test]
+    fn body_rate_feedback_rejects_invalid_gains_and_command_limits() {
+        assert_eq!(
+            BodyRateFeedbackConfig::try_new([-1.0, 0.0, 0.0], [0.5; 3]),
+            Err(ActuatorError::InvalidFeedbackGain)
+        );
+        assert_eq!(
+            BodyRateFeedbackConfig::try_new([f64::NAN, 0.0, 0.0], [0.5; 3]),
+            Err(ActuatorError::NonFinite)
+        );
+        assert_eq!(
+            BodyRateFeedbackConfig::try_new([0.0; 3], [0.0, 0.5, 0.5]),
+            Err(ActuatorError::InvalidLimit)
+        );
     }
 
     #[test]

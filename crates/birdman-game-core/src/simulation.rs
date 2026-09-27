@@ -199,10 +199,11 @@ mod tests {
     };
     use crate::dynamics::{AircraftModel, ConstantLoad, FlightState, Gravity, Wrench};
     use crate::flight_control::{
-        ActuatorConfig, ActuatorState, ControlMode, FbwAuthority, SurfaceCommands,
+        ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode, FbwAuthority,
+        SurfaceCommands, body_rate_feedback_commands,
     };
     use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
-    use crate::{DynamicsError, PHYSICS_DT_SECONDS};
+    use crate::{DynamicsError, ExternalLoadProvider, LoadError, PHYSICS_DT_SECONDS};
     use crate::{FlightTickOutcome, WaterContactGeometry, advance_flight_tick_with_contact};
 
     fn aircraft() -> AircraftModel {
@@ -254,6 +255,29 @@ mod tests {
         FlightTickConfig::new(mode, actuator_limits(), Gravity::try_new(0.0).unwrap())
     }
 
+    struct SyntheticRollMoment;
+
+    impl ExternalLoadProvider for SyntheticRollMoment {
+        fn evaluate(
+            &self,
+            _model: &AircraftModel,
+            _state: &FlightState,
+        ) -> Result<Wrench, LoadError> {
+            Ok(Wrench::zero())
+        }
+
+        fn evaluate_with_surface_deflections(
+            &self,
+            _model: &AircraftModel,
+            _state: &FlightState,
+            deflections: crate::SurfaceDeflections,
+        ) -> Result<Wrench, LoadError> {
+            let moment = BodyVector::try_new(10.0 * deflections.roll_rad(), 0.0, 0.0)
+                .map_err(|_| LoadError::Unavailable)?;
+            Wrench::try_new(BodyVector::zero(), moment).map_err(|_| LoadError::Unavailable)
+        }
+    }
+
     #[test]
     fn one_tick_advances_control_pilot_and_physics_state_deterministically() {
         let aircraft = aircraft();
@@ -296,6 +320,53 @@ mod tests {
         .unwrap();
         assert!((manual.actuator_state().roll_rad() - 0.2).abs() < 1.0e-14);
         assert!((automatic.actuator_state().roll_rad() + 0.3).abs() < 1.0e-14);
+    }
+
+    #[test]
+    fn body_rate_feedback_damps_synthetic_roll_motion_through_flight_ticks() {
+        let aircraft = aircraft();
+        let initial_flight = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::try_new(1.0, 0.0, 0.0).unwrap(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let mut state = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits(),
+            0,
+            initial_flight,
+            ActuatorState::neutral(),
+        )
+        .unwrap();
+        let controller = BodyRateFeedbackConfig::try_new([0.1, 0.0, 0.0], [0.5; 3]).unwrap();
+        let target = BodyVector::zero();
+        let pilot = SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap();
+        let pilot_position_target = crate::PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+        let loads = SyntheticRollMoment;
+
+        for _ in 0..40 {
+            let fbw = body_rate_feedback_commands(
+                controller,
+                target,
+                state.flight_state().angular_velocity_body(),
+            )
+            .unwrap();
+            state = advance_flight_tick(
+                &aircraft,
+                state,
+                config(ControlMode::Automatic),
+                FlightTickInput::new(pilot, fbw, pilot_position_target),
+                &loads,
+            )
+            .unwrap();
+        }
+
+        assert!(state.flight_state().angular_velocity_body().components()[0] < 1.0);
+        assert!(state.actuator_state().roll_rad() < 0.0);
     }
 
     #[test]

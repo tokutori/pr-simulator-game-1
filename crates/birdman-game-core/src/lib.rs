@@ -25,8 +25,9 @@ pub use contact::{
     detect_water_contact,
 };
 pub use flight_control::{
-    ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, ControlMode, FbwAuthority,
-    SurfaceCommands, SurfaceDeflections, advance_surface_control, mix_surface_commands,
+    ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, BodyRateFeedbackConfig,
+    ControlMode, FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
+    body_rate_feedback_commands, mix_surface_commands,
 };
 pub use simulation::{
     FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,

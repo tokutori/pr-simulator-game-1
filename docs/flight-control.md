@@ -19,6 +19,12 @@ roll、pitch、yawの各論理指令・actuator出力は、対応する機体軸
 authorityは有限な$[0,1]$値だけを保持するvalidated型とする。制御modeはManual、Shared(authority)、Automaticの
 直和型で表し、modeとauthorityの矛盾を許さない。
 
+`BodyRateFeedbackConfig`はroll・pitch・yaw順の有限な非負gain（秒）と正のcommand limit（radian）を保持する。
+`body_rate_feedback_commands`は明示されたtarget/observed body angular rate（rad/s）から
+$u_i=K_i(\omega_{target,i}-\omega_{observed,i})$を計算し、axisごとにcommand limitで飽和する。
+これはcontroller primitiveであり、標準gainや公開機体へのtuningを定義しない。機体固有controllerは、空力微係数・actuator・scenarioと
+合わせた検証後に構成する。
+
 各actuatorは正の最大舵角$radian$と最大舵角速度$radian/second$を持つ。
 入力targetは最大舵角でsaturateし、現在状態から1 stepで移動できる角度を最大舵角速度とtimestepで制限する。
 step中の出力は更新済みactuator stateとして保持し、次のtickまで同じ値を空力評価へ渡す。
@@ -39,5 +45,6 @@ pilot target policyは連続停止距離に基づき、停止距離が1 tick分�
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 
 検証ではManual/Automaticの端点、Sharedの各axis混合、飽和、rate limit、境界値、拒否された入力後の
-入力state不変を確認する。閉ループcontrollerの安定性・通常操縦での飛行成立性は、
+入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
+閉ループ減衰で検証する。閉ループcontrollerの安定性・通常操縦での飛行成立性は、
 aircraft-specific controllerとaerodynamic derivativesを組み合わせたBPG-006統合検証で扱う。
