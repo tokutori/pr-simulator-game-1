@@ -1,0 +1,128 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  color: #f3f4e8;
+  background: #10242b;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.presentation-shell {
+  position: relative;
+  min-height: 100vh;
+  isolation: isolate;
+}
+
+.presentation-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: -1;
+}
+
+.screen-ui-root {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 3rem);
+}
+
+.screen-ui-shell {
+  width: min(42rem, 100%);
+  padding: clamp(1.25rem, 4vw, 2.5rem);
+  border: 1px solid rgb(185 214 207 / 45%);
+  border-radius: 1rem;
+  background: rgb(16 36 43 / 92%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+}
+
+.screen-ui-shell h1,
+.screen-ui-panel h2 {
+  margin: 0;
+  line-height: 1.2;
+}
+
+.screen-ui-description {
+  margin: 0.75rem 0 1.5rem;
+  color: #c7d7d1;
+}
+
+.screen-ui-panel {
+  padding-top: 1rem;
+  border-top: 1px solid #547278;
+}
+
+.screen-ui-panel h2 {
+  font-size: 1rem;
+  color: #c7d7d1;
+}
+
+.screen-ui-controls {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.screen-ui-controls button,
+.screen-ui-controls input {
+  accent-color: #c2d9a3;
+}
+
+.screen-ui-controls button {
+  min-height: 2.75rem;
+  padding: 0.65rem 1rem;
+  border: 1px solid #91b4b3;
+  border-radius: 0.5rem;
+  color: #f3f4e8;
+  background: #31555a;
+  font: inherit;
+  cursor: pointer;
+}
+
+.screen-ui-controls button:focus-visible,
+.screen-ui-controls input:focus-visible {
+  outline: 3px solid #f0d382;
+  outline-offset: 3px;
+}
+
+.screen-ui-controls button:disabled,
+.screen-ui-controls input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.screen-ui-toggle,
+.screen-ui-range {
+  display: grid;
+  gap: 0.5rem;
+  color: #dbe7df;
+}
+
+.screen-ui-toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.screen-ui-status {
+  color: #c7d7d1;
+}

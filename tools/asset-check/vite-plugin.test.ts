@@ -102,6 +102,25 @@ it("builds a Vite worker URL without treating source code as a manifest asset", 
   }
 });
 
+it("builds dynamic imports without scanning Vite virtual modules as project source", async () => {
+  const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
+  if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {
+    throw new Error("Temporary cleanup escaped the test directory");
+  }
+  try {
+    await mkdir(join(root, "assets"));
+    await mkdir(join(root, "web/src"), { recursive: true });
+    await writeFile(join(root, "assets/manifest.toml"), stringify({ schema_version: 1, assets: [] }), "utf8");
+    await writeFile(join(root, "web/index.html"), "<script type=\"module\" src=\"/src/main.ts\"></script>", "utf8");
+    await writeFile(join(root, "web/src/main.ts"), "void import('./lazy.ts');", "utf8");
+    await writeFile(join(root, "web/src/lazy.ts"), "export const ready = true;", "utf8");
+    await expect(build({ configFile: false, root: join(root, "web"), publicDir: false,
+      plugins: [verifiedAssets(root)], logLevel: "silent", build: { outDir: "dist" } })).resolves.toBeDefined();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("builds a registered HTML resource whose path contains spaces", async () => {
   const root = await mkdtemp(join(tmpdir(), "birdman-build-assets-"));
   if (dirname(resolve(root)) !== resolve(tmpdir()) || !basename(root).startsWith("birdman-build-assets-")) {

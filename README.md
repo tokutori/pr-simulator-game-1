@@ -8,8 +8,8 @@ keyboard / gamepad、manual / shared / automatic、FBWを備える計画であ�
 
 ## 現在の実装範囲
 
-BPG-001: 設計契約、4 crateのworkspace、Webの起動ページ、CI、asset検査、GitHub Issuesによる計画管理。
-物理計算、操縦、描画、実データ、Pages公開は未実装である。
+BPG-001の設計契約とworkspaceを基盤に、BPG-014のScreen表示shell、8 Scene共通のUI契約、VR panel描画契約、Three.js adapter境界を実装中である。Boot画面でScreen表示を確認できる。
+WebXR・Phone VR session、各Sceneのゲーム機能、物理計算、実データ、Pages公開は未実装である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境
@@ -32,7 +32,7 @@ cargo run -p birdman-game-cli --locked
 npm run dev
 ```
 
-Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。
+Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。現在はBoot表示shellを起動する。
 BPG-001のWASM検査はRust artifactのbuildまでである。JavaScript binding生成、
 browser接続、nativeとの軌道比較はBPG-007で実装する。
 

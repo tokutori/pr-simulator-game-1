@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { checkAssets } from "../asset-check/index.js";
+import { assertRenderImportBoundary } from "../presentation-check/render-boundary.js";
 import { record, nonEmpty } from "../shared/validation.js";
 
 const count = await checkAssets(process.cwd());
@@ -23,6 +24,11 @@ for (const value of metadata.packages) {
     if (!permitted.includes(nonEmpty(dep.name))) throw new Error(`Forbidden dependency in ${name}: ${String(dep.name)}`);
   }
 }
+const sourcePaths = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { encoding: "utf8" })
+  .split("\0")
+  .filter((path) => path.startsWith("web/src/") && /\.[cm]?[jt]sx?$/.test(path));
+const sourceTexts = await Promise.all(sourcePaths.map(async (path) => ({ path, text: await readFile(path, "utf8") })));
+assertRenderImportBoundary(sourceTexts);
 // Include untracked files during local development, but respect .gitignore.
 const paths = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { encoding: "utf8" }).split("\0").filter((path) => path.endsWith(".md"));
 for (const path of paths) {
@@ -31,4 +37,4 @@ for (const path of paths) {
     throw new Error(`Unsupported GitHub math/reference delimiter in ${path}`);
   }
 }
-console.log(`Repository checks passed: ${String(count)} assets, dependency boundaries, GitHub math delimiters`);
+console.log(`Repository checks passed: ${String(count)} assets, dependency boundaries, render engine boundary, GitHub math delimiters`);

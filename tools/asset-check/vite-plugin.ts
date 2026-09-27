@@ -80,6 +80,7 @@ export function verifiedAssets(root: string): Plugin {
       }
     },
     async transform(code, id) {
+      if (id.includes("\0")) return null;
       if (/\.css(?:\?|$)/i.test(id)) {
         if (/image-set\s*\(/i.test(code)) throw new Error(`Unsupported CSS asset syntax: ${id}`);
         for (const match of code.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
@@ -108,6 +109,7 @@ export function verifiedAssets(root: string): Plugin {
         visit(source);
         for (const reference of references) await verifyReference(reference, id.split("?")[0] ?? id, true);
       }
+      return null;
     },
     async generateBundle() {
       for (const id of this.getModuleIds()) {
