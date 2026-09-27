@@ -80,6 +80,8 @@ V_{ground}=\lVert v_G^N\rVert,\qquad h_G=-D_G
 
 基本表示の速度は3D normである。水平速度を表示する場合は別名で明示する。
 AoAは合成重心のair-relative vectorをbodyへ変換して求める診断値とし、各翼の局所AoAと区別する。
+Distance score definition v1はstart datumからterminal datumまでの発進course axisに対する符号付き水平projectionとする。
+cross-trackとnet horizontal displacementを別metricとして保持する。trajectory lengthからscoreを算出しない。
 最大AoAは重心AoAの定義可能なsampleに対する最大値、最大rollは標準Euler分解の絶対値最大とする。
 特異姿勢で角度が定義できない場合はinvalidを保持する。
 最大速度・角度は保存された100 Hz sampleと有効な終端sampleから集計し、連続時間の厳密最大とは表記しない。

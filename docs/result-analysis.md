@@ -8,8 +8,8 @@ ResultはSummaryとAnalysisのtab、およびRetry / Replay / Setup / Titleの�
 終了理由、確定可能性、Retry blueprint、score、Summary metricsはRust coreの結果を正本とする。
 WebはResult/Analysisのtab・focus・表示範囲を管理し、ゲーム規則やmetricsを再計算しない。
 
-SummaryはDistanceとFlight Timeを主表示とし、最大対気速度、最大重心AoA、最大絶対roll、
-発進軸からの横偏位、三軸設定、scenarioと代表風を併記する。
+SummaryはRust coreが返すversioned course-distance scoreとFlight Timeを主表示とし、cross-track displacement、net horizontal displacement、最大対気速度、最大重心AoA、最大絶対roll、
+三軸設定、scenarioと代表風を併記する。
 異常終了と着水を区別し、欠損値はunavailableと表示する。
 
 ## 最小Analysis

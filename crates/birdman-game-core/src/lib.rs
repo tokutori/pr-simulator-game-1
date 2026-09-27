@@ -10,6 +10,7 @@ mod contact;
 mod dynamics;
 mod flight_control;
 mod math;
+mod scoring;
 mod simulation;
 mod wind_field;
 
@@ -28,6 +29,10 @@ pub use flight_control::{
     ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, BodyRateFeedbackConfig,
     ControlMode, FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
     body_rate_feedback_commands, mix_surface_commands,
+};
+pub use scoring::{
+    COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
+    course_distance_score,
 };
 pub use simulation::{
     FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,

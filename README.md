@@ -10,7 +10,7 @@ keyboard / gamepad、manual / shared / automatic、FBWを備える計画であ�
 
 BPG-014のScreen表示shell、BPG-015のnative WebXR sessionとVR操作、BPG-016のPhone VR stereo・端末姿勢tracking・head-gaze・Gamepad操作を実装し、自動試験を追加した。Boot画面でScreen表示を確認できる。実HMD・スマートフォン・browser・viewerの組合せによる表示・操作確認は未実施であり、各受入Issueを完了扱いしない。
 
-BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜028ではRust coreにauthority mixer、actuator dynamics、pilot position policy、全RK4段階への舵状態伝播、100 Hzの決定的flight tickを実装した。BPG-029では水面接触fractionと同時刻の終端state補間を実装し、BPG-030では接触時に終端sampleだけを返すtick統合を追加した。BPG-031ではRust coreに明示gainを用いるbody-rate feedback primitiveを追加した。機体固有controller tuning、scenario launch・score、FlightRecord、GameSession、WASM/browser間のフライト接続は未実装であり、M2のBPG-006以降で扱う。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。各Sceneのゲーム機能、実環境データ、Pages公開も未実装である。Boot UIのTEA状態整理とbackend切替失敗の修正はBPG-023で行う。
+BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜028ではRust coreにauthority mixer、actuator dynamics、pilot position policy、全RK4段階への舵状態伝播、100 Hzの決定的flight tickを実装した。BPG-029では水面接触fractionと同時刻の終端state補間を実装し、BPG-030では接触時に終端sampleだけを返すtick統合を追加した。BPG-031ではRust coreに明示gainを用いるbody-rate feedback primitiveを追加した。BPG-032ではRust coreにversioned course-distance scoreを追加する。機体固有controller tuning、scenario launch・score統合、FlightRecord、GameSession、WASM/browser間のフライト接続は未実装であり、M2のBPG-006以降で扱う。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。各Sceneのゲーム機能、実環境データ、Pages公開も未実装である。Boot UIのTEA状態整理とbackend切替失敗の修正はBPG-023で行う。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境

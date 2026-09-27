@@ -100,7 +100,7 @@ trimから生成する場合はair-relative条件を明示し、ground条件に�
 `advance_flight_tick_with_contact`はContact時にfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開しない。
 水面波は初期版では描画のみであり、波頂による接触時刻の変動は計算しない。
 platform上の走行・拘束解除・複雑な陸地衝突は初期版の対象外である。
-飛距離の定義（直線水平距離または規定方向への投影）はBPG-006で明示し、公式競技計測との同一性を仮定しない。
+Distance score v1は発進course axisに対するdatumの符号付き水平変位projectionとする。右向きcross-track変位と直線水平変位長は独立metricとして保持し、trajectory lengthとは区別する。公式競技計測との同一性を仮定しない。
 
 ## 数値エラーと検証範囲
 
