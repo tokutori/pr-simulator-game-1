@@ -29,6 +29,9 @@ source再配布と派生asset配布の許諾はそれぞれ確認する。
 ゲーム固有の画像・音声・model・shader・binaryは `assets/` に置き、source、license、hashを
 `assets/manifest.toml` へ登録する。`web/public` は空とし、`web/src` にはコード、HTML、CSSのみを置く。
 Vite buildではmodule import、`new URL(..., import.meta.url)`、HTMLのresource属性、CSSの`url()`を検査する。
+静的文字列を使う一般の`new URL()`は拡張子に関わらずmanifestと照合し、動的引数を拒否する。
+`Worker` / `SharedWorker` constructorの第1引数として直接渡すURLはsource module参照として扱い、manifest asset検査から除外する。
+HTMLの`src`・`href`・`poster`は属性値全体を単一URLとして検査し、`srcset`・`imagesrcset`は候補ごとに検査する。
 asset形式の判定にはViteの解決済み`assetsInclude`を使用し、明示的な`?url`・`?raw`も登録対象とする。
 CSSの`image-set()`は登録経路を実装するまで使用しない。
 小容量assetのdata URL化も元ファイルの登録を要する。動的URL生成は登録済みasset IDから解決し、

@@ -5,6 +5,24 @@ import ts from "typescript";
 import type { Plugin } from "vite";
 import { checkAssets, parseManifest } from "./index.js";
 
+function srcsetUrls(value: string): string[] {
+  const urls: string[] = [];
+  let position = 0;
+  while (position < value.length) {
+    while (position < value.length && /[\s,]/.test(value[position] ?? "")) position++;
+    if (position === value.length) break;
+    const start = position;
+    while (position < value.length && !/\s/.test(value[position] ?? "")) position++;
+    const token = value.slice(start, position);
+    const url = token.replace(/,+$/, "");
+    if (url.length > 0) urls.push(url);
+    if (token.endsWith(",")) continue;
+    while (position < value.length && value[position] !== ",") position++;
+    if (position < value.length) position++;
+  }
+  return urls;
+}
+
 async function fileIdentity(path: string): Promise<string> {
   const info = await stat(path, { bigint: true });
   if (!info.isFile() || info.ino === 0n) throw new Error(`Cannot identify asset file: ${path}`);
@@ -20,10 +38,10 @@ export function verifiedAssets(root: string): Plugin {
     const clean = reference.split(/[?#]/, 1)[0];
     return clean !== undefined && (isViteAsset(clean) || /(?:\?|&)(?:raw|url)(?:&|$)/.test(reference));
   }
-  async function verifyReference(reference: string, importer: string): Promise<void> {
+  async function verifyReference(reference: string, importer: string, requireManifest = false): Promise<void> {
     if (/^data:/i.test(reference)) throw new Error(`Unregistered build asset: ${reference.slice(0, 32)}`);
     const clean = reference.split(/[?#]/, 1)[0];
-    if (clean === undefined || !isAssetReference(reference)) return;
+    if (clean === undefined || (!requireManifest && !isAssetReference(reference))) return;
     if (/^https?:\/\//i.test(reference)) throw new Error(`Unregistered build asset: ${reference}`);
     const file = clean.startsWith("/") ? join(rootPath, "web", clean.slice(1)) : resolve(dirname(importer), clean);
     if (!registered.has(await fileIdentity(file))) throw new Error(`Unregistered build asset: ${reference}`);
@@ -45,10 +63,15 @@ export function verifiedAssets(root: string): Plugin {
       async handler(html, context) {
         const importer = context.filename;
         if (/image-set\s*\(/i.test(html)) throw new Error(`Unsupported CSS asset syntax: ${importer}`);
-        for (const match of html.matchAll(/\b(?:src|href|poster|srcset|imagesrcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
-          const value = match[1] ?? match[2] ?? match[3];
+        for (const match of html.matchAll(/\b(src|href|poster|srcset|imagesrcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+          const attribute = match[1]?.toLowerCase();
+          const value = match[2] ?? match[3] ?? match[4];
           if (value !== undefined) {
-            for (const candidate of value.split(/\s*,\s*/)) await verifyReference(candidate.trim().split(/\s+/)[0] ?? "", importer);
+            if (attribute === "srcset" || attribute === "imagesrcset") {
+              for (const candidate of srcsetUrls(value)) await verifyReference(candidate, importer);
+            } else {
+              await verifyReference(value, importer);
+            }
           }
         }
         for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
@@ -72,12 +95,16 @@ export function verifiedAssets(root: string): Plugin {
             if (first === undefined || !(ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) {
               throw new Error(`Unsupported dynamic asset URL: ${id}`);
             }
-            references.push(first.text);
+            const parent = node.parent;
+            const isWorkerUrl = ts.isNewExpression(parent) && parent.arguments?.[0] === node &&
+              ((ts.isIdentifier(parent.expression) && ["Worker", "SharedWorker"].includes(parent.expression.text)) ||
+                (ts.isPropertyAccessExpression(parent.expression) && ["Worker", "SharedWorker"].includes(parent.expression.name.text)));
+            if (!isWorkerUrl) references.push(first.text);
           }
           ts.forEachChild(node, visit);
         }
         visit(source);
-        for (const reference of references) await verifyReference(reference, id.split("?")[0] ?? id);
+        for (const reference of references) await verifyReference(reference, id.split("?")[0] ?? id, true);
       }
     },
     async generateBundle() {
