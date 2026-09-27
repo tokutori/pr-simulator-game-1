@@ -1,6 +1,7 @@
 use crate::aerodynamics_contract::AerodynamicEvaluationError;
 pub use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
+use crate::flight_control::SurfaceDeflections;
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
@@ -186,6 +187,7 @@ pub struct AeroCoefficients {
     roll_moment: CoefficientLaw,
     pitch_moment: CoefficientLaw,
     yaw_moment: CoefficientLaw,
+    control_derivatives: ControlCoefficientDerivatives,
 }
 
 impl AeroCoefficients {
@@ -205,7 +207,17 @@ impl AeroCoefficients {
             roll_moment,
             pitch_moment,
             yaw_moment,
+            control_derivatives: ControlCoefficientDerivatives::ZERO,
         }
+    }
+
+    /// Returns these coefficients with explicit derivatives per control-axis radian.
+    pub const fn with_control_derivatives(
+        mut self,
+        derivatives: ControlCoefficientDerivatives,
+    ) -> Self {
+        self.control_derivatives = derivatives;
+        self
     }
 
     fn validate_drag(self, envelope: ElementEnvelope) -> Result<(), AeroError> {
@@ -217,6 +229,67 @@ impl AeroCoefficients {
             }
         }
         Ok(())
+    }
+}
+
+/// Aerodynamic coefficient derivatives for roll, pitch, and yaw actuator deflections.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ControlCoefficientDerivatives {
+    lift_per_axis_rad: [f64; 3],
+    drag_per_axis_rad: [f64; 3],
+    side_force_per_axis_rad: [f64; 3],
+    roll_moment_per_axis_rad: [f64; 3],
+    pitch_moment_per_axis_rad: [f64; 3],
+    yaw_moment_per_axis_rad: [f64; 3],
+}
+
+impl ControlCoefficientDerivatives {
+    const ZERO: Self = Self {
+        lift_per_axis_rad: [0.0; 3],
+        drag_per_axis_rad: [0.0; 3],
+        side_force_per_axis_rad: [0.0; 3],
+        roll_moment_per_axis_rad: [0.0; 3],
+        pitch_moment_per_axis_rad: [0.0; 3],
+        yaw_moment_per_axis_rad: [0.0; 3],
+    };
+
+    /// Creates finite coefficient derivatives ordered roll, pitch, and yaw.
+    pub fn try_new(
+        lift_per_axis_rad: [f64; 3],
+        drag_per_axis_rad: [f64; 3],
+        side_force_per_axis_rad: [f64; 3],
+        roll_moment_per_axis_rad: [f64; 3],
+        pitch_moment_per_axis_rad: [f64; 3],
+        yaw_moment_per_axis_rad: [f64; 3],
+    ) -> Result<Self, AeroError> {
+        if lift_per_axis_rad
+            .into_iter()
+            .chain(drag_per_axis_rad)
+            .chain(side_force_per_axis_rad)
+            .chain(roll_moment_per_axis_rad)
+            .chain(pitch_moment_per_axis_rad)
+            .chain(yaw_moment_per_axis_rad)
+            .any(|value| !value.is_finite())
+        {
+            return Err(AeroError::NonFinite);
+        }
+        Ok(Self {
+            lift_per_axis_rad,
+            drag_per_axis_rad,
+            side_force_per_axis_rad,
+            roll_moment_per_axis_rad,
+            pitch_moment_per_axis_rad,
+            yaw_moment_per_axis_rad,
+        })
+    }
+
+    fn effect(self, derivatives: [f64; 3], deflections: SurfaceDeflections) -> f64 {
+        let controls = [
+            deflections.roll_rad(),
+            deflections.pitch_rad(),
+            deflections.yaw_rad(),
+        ];
+        derivatives[0] * controls[0] + derivatives[1] * controls[1] + derivatives[2] * controls[2]
     }
 }
 
@@ -355,18 +428,45 @@ impl AerodynamicModel {
         state: &FlightState,
         air: UniformAir,
     ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
-        self.evaluate_in_wind_field(
+        self.evaluate_with_surface_deflections(state, air, SurfaceDeflections::neutral())
+    }
+
+    /// Evaluates all five elements at the supplied physical surface deflections.
+    pub fn evaluate_with_surface_deflections(
+        self,
+        state: &FlightState,
+        air: UniformAir,
+        surface_deflections: SurfaceDeflections,
+    ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
+        self.evaluate_in_wind_field_with_surface_deflections(
             state,
             air.density_kg_m3,
             WindField::uniform(air.wind_velocity_ned_mps),
+            surface_deflections,
         )
     }
 
+    #[cfg(test)]
     fn evaluate_in_wind_field(
         self,
         state: &FlightState,
         air_density_kg_m3: f64,
         wind_field: WindField<'_>,
+    ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
+        self.evaluate_in_wind_field_with_surface_deflections(
+            state,
+            air_density_kg_m3,
+            wind_field,
+            SurfaceDeflections::neutral(),
+        )
+    }
+
+    fn evaluate_in_wind_field_with_surface_deflections(
+        self,
+        state: &FlightState,
+        air_density_kg_m3: f64,
+        wind_field: WindField<'_>,
+        surface_deflections: SurfaceDeflections,
     ) -> Result<AerodynamicEvaluation, AerodynamicEvaluationError> {
         let mut evaluations = [
             AerodynamicWrench::zero(AerodynamicRole::LeftWing),
@@ -378,11 +478,17 @@ impl AerodynamicModel {
         let mut total_force = BodyVector::zero();
         let mut total_moment = BodyVector::zero();
         for element in self.elements {
-            let evaluation = evaluate_element(element, state, air_density_kg_m3, wind_field)
-                .map_err(|cause| AerodynamicEvaluationError::Element {
-                    role: element.role,
-                    cause,
-                })?;
+            let evaluation = evaluate_element(
+                element,
+                state,
+                air_density_kg_m3,
+                wind_field,
+                surface_deflections,
+            )
+            .map_err(|cause| AerodynamicEvaluationError::Element {
+                role: element.role,
+                cause,
+            })?;
             total_force = total_force
                 .plus(evaluation.force_body_newtons)
                 .map_err(map_math_error)
@@ -560,6 +666,7 @@ impl AerodynamicEvaluation {
 pub struct UniformAerodynamicLoad {
     aerodynamics: AerodynamicModel,
     air: UniformAir,
+    surface_deflections: SurfaceDeflections,
 }
 
 /// A load provider sampling a stationary spatial wind field at each element.
@@ -568,6 +675,7 @@ pub struct WindFieldAerodynamicLoad<'a> {
     aerodynamics: AerodynamicModel,
     air_density_kg_m3: f64,
     wind_field: WindField<'a>,
+    surface_deflections: SurfaceDeflections,
 }
 
 impl<'a> WindFieldAerodynamicLoad<'a> {
@@ -577,11 +685,27 @@ impl<'a> WindFieldAerodynamicLoad<'a> {
         air_density_kg_m3: f64,
         wind_field: WindField<'a>,
     ) -> Result<Self, AeroError> {
+        Self::try_new_with_surface_deflections(
+            aerodynamics,
+            air_density_kg_m3,
+            wind_field,
+            SurfaceDeflections::neutral(),
+        )
+    }
+
+    /// Creates a provider for validated air density, wind field, and actuator positions.
+    pub fn try_new_with_surface_deflections(
+        aerodynamics: AerodynamicModel,
+        air_density_kg_m3: f64,
+        wind_field: WindField<'a>,
+        surface_deflections: SurfaceDeflections,
+    ) -> Result<Self, AeroError> {
         UniformAir::try_new(NedVector::zero(), air_density_kg_m3)?;
         Ok(Self {
             aerodynamics,
             air_density_kg_m3,
             wind_field,
+            surface_deflections,
         })
     }
 }
@@ -589,7 +713,12 @@ impl<'a> WindFieldAerodynamicLoad<'a> {
 impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         self.aerodynamics
-            .evaluate_in_wind_field(state, self.air_density_kg_m3, self.wind_field)
+            .evaluate_in_wind_field_with_surface_deflections(
+                state,
+                self.air_density_kg_m3,
+                self.wind_field,
+                self.surface_deflections,
+            )
             .map(|evaluation| evaluation.total_wrench())
             .map_err(LoadError::Aerodynamic)
     }
@@ -598,14 +727,31 @@ impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {
 impl UniformAerodynamicLoad {
     /// Creates an external-load provider for one aerodynamic model and air state.
     pub const fn new(aerodynamics: AerodynamicModel, air: UniformAir) -> Self {
-        Self { aerodynamics, air }
+        Self {
+            aerodynamics,
+            air,
+            surface_deflections: SurfaceDeflections::neutral(),
+        }
+    }
+
+    /// Creates a provider for one aerodynamic model, air state, and actuator positions.
+    pub const fn with_surface_deflections(
+        aerodynamics: AerodynamicModel,
+        air: UniformAir,
+        surface_deflections: SurfaceDeflections,
+    ) -> Self {
+        Self {
+            aerodynamics,
+            air,
+            surface_deflections,
+        }
     }
 }
 
 impl ExternalLoadProvider for UniformAerodynamicLoad {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         self.aerodynamics
-            .evaluate(state, self.air)
+            .evaluate_with_surface_deflections(state, self.air, self.surface_deflections)
             .map(|evaluation| evaluation.total_wrench())
             .map_err(LoadError::Aerodynamic)
     }
@@ -616,6 +762,7 @@ fn evaluate_element(
     state: &FlightState,
     air_density_kg_m3: f64,
     wind_field: WindField<'_>,
+    surface_deflections: SurfaceDeflections,
 ) -> Result<AerodynamicWrench, AeroError> {
     let [flow_x, flow_y, flow_z] = element.flow_point_from_datum.components();
     let radius = BodyVector::try_new(flow_x, flow_y, flow_z).map_err(map_math_error)?;
@@ -690,12 +837,32 @@ fn evaluate_element(
     }
 
     let coefficients = element.coefficients;
-    let lift = coefficients.lift.at(alpha, beta)?;
-    let drag = coefficients.drag.at(alpha, beta)?;
-    let side_force = coefficients.side_force.at(alpha, beta)?;
-    let roll_moment = coefficients.roll_moment.at(alpha, beta)?;
-    let pitch_moment = coefficients.pitch_moment.at(alpha, beta)?;
-    let yaw_moment = coefficients.yaw_moment.at(alpha, beta)?;
+    let derivatives = coefficients.control_derivatives;
+    let lift = coefficients.lift.at(alpha, beta)?
+        + derivatives.effect(derivatives.lift_per_axis_rad, surface_deflections);
+    let drag = coefficients.drag.at(alpha, beta)?
+        + derivatives.effect(derivatives.drag_per_axis_rad, surface_deflections);
+    let side_force = coefficients.side_force.at(alpha, beta)?
+        + derivatives.effect(derivatives.side_force_per_axis_rad, surface_deflections);
+    let roll_moment = coefficients.roll_moment.at(alpha, beta)?
+        + derivatives.effect(derivatives.roll_moment_per_axis_rad, surface_deflections);
+    let pitch_moment = coefficients.pitch_moment.at(alpha, beta)?
+        + derivatives.effect(derivatives.pitch_moment_per_axis_rad, surface_deflections);
+    let yaw_moment = coefficients.yaw_moment.at(alpha, beta)?
+        + derivatives.effect(derivatives.yaw_moment_per_axis_rad, surface_deflections);
+    if [
+        lift,
+        drag,
+        side_force,
+        roll_moment,
+        pitch_moment,
+        yaw_moment,
+    ]
+    .iter()
+    .any(|value| !value.is_finite())
+    {
+        return Err(AeroError::NonFinite);
+    }
     if drag < 0.0 {
         return Err(AeroError::NegativeDragCoefficient);
     }
@@ -970,6 +1137,119 @@ mod tests {
         let expected_drag_z = -flow.dynamic_pressure_pascal() * 0.1 * 2.0 / 105.0_f64.sqrt();
         let expected_lift_z = -expected_lift_magnitude * 10.0 / 10.0_f64.hypot(2.0);
         near(force[2], expected_drag_z + expected_lift_z, 1.0e-10);
+    }
+
+    #[test]
+    fn surface_deflections_change_aerodynamic_coefficients_and_wrench() {
+        let coefficients = constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0)
+            .with_control_derivatives(
+                ControlCoefficientDerivatives::try_new(
+                    [0.0, 1.0, 0.0],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0, 0.5, 0.0],
+                    [0.0; 3],
+                )
+                .unwrap(),
+            );
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            coefficients,
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let state = state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
+        let neutral = aerodynamics.evaluate(&state, air([0.0; 3], 1.0)).unwrap();
+        let commanded = aerodynamics
+            .evaluate_with_surface_deflections(
+                &state,
+                air([0.0; 3], 1.0),
+                SurfaceDeflections::try_new(0.0, 0.1, 0.0).unwrap(),
+            )
+            .unwrap();
+        let neutral_element = neutral.element(AerodynamicRole::LeftWing);
+        let commanded_element = commanded.element(AerodynamicRole::LeftWing);
+        near(
+            neutral_element.force_body_newtons().components()[2],
+            0.0,
+            1.0e-12,
+        );
+        near(
+            commanded_element.force_body_newtons().components()[2],
+            -5.0,
+            1.0e-12,
+        );
+        near(
+            commanded_element
+                .moment_about_datum_body_newton_meters()
+                .components()[1],
+            2.5,
+            1.0e-12,
+        );
+    }
+
+    #[test]
+    fn authority_mixed_actuator_state_reaches_the_load_provider() {
+        use crate::flight_control::{
+            ActuatorConfig, ActuatorState, ControlMode, FbwAuthority, SurfaceCommands,
+            advance_surface_control,
+        };
+
+        let coefficients = constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0)
+            .with_control_derivatives(
+                ControlCoefficientDerivatives::try_new(
+                    [0.0, 1.0, 0.0],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                )
+                .unwrap(),
+            );
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            coefficients,
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let actuator_limits = [ActuatorConfig::try_new(0.5, 20.0).unwrap(); 3];
+        let update = advance_surface_control(
+            ActuatorState::neutral(),
+            actuator_limits,
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            SurfaceCommands::try_new(0.0, 0.1, 0.0).unwrap(),
+            SurfaceCommands::try_new(0.0, 0.3, 0.0).unwrap(),
+            0.01,
+        )
+        .unwrap();
+        let provider = UniformAerodynamicLoad::with_surface_deflections(
+            aerodynamics,
+            air([0.0; 3], 1.0),
+            update.state().deflections(),
+        );
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let wrench = provider
+            .evaluate(&aircraft, &state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0))
+            .unwrap();
+        near(wrench.force_body_newtons().components()[2], -10.0, 1.0e-12);
     }
 
     #[test]

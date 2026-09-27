@@ -7,15 +7,21 @@
 mod aerodynamics;
 mod aerodynamics_contract;
 mod dynamics;
+mod flight_control;
 mod math;
 mod wind_field;
 
 pub use aerodynamics::{
     AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
-    AerodynamicWrench, CoefficientLaw, ElementEnvelope, ElementOrientation, ElementReference,
-    ElementalFlow, FlowAngles, UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
+    AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives, ElementEnvelope,
+    ElementOrientation, ElementReference, ElementalFlow, FlowAngles, UniformAerodynamicLoad,
+    UniformAir, WindFieldAerodynamicLoad,
 };
 pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
+pub use flight_control::{
+    ActuatorConfig, ActuatorError, ActuatorState, ActuatorUpdate, ControlMode, FbwAuthority,
+    SurfaceCommands, SurfaceDeflections, advance_surface_control, mix_surface_commands,
+};
 pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{

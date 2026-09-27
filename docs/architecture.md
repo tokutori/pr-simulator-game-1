@@ -69,6 +69,7 @@ simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatf
 物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
 同一モデル、scenario、機体・身体の初期状態、tickごとの舵・身体位置指令列に対する決定性を保つ。
 パイロット前後移動の力学・入力境界は `pilot-motion.md` に従う。
+FBW authority混合と舵actuator stateは `flight-control.md` に従う。
 Desktop・WebXR・Phone VRはpresentation layerに配置する。head trackingは視線のみへ適用し、
 physicsやFBWを変更しない。権限、reference space、光学profile、loopの契約は `presentation.md` に従う。
 Information・Assistance・Weatherの三軸難易度は `difficulty.md` に従う。
