@@ -87,7 +87,9 @@ M_G^B=M_O^B-r_G^B\times F^B
 
 回転に伴う局所速度が生む減衰と、係数表のrate derivativeを二重計上しない。
 全機係数を各要素に複製しない。係数の同定範囲と、要素モデルへ割り当て済みの寄与を区別する。
-BPG-003の一様風providerはBPG-002のRK4荷重境界へ接続する。空間風fieldとの結合は後続BPGの責務である。
+`UniformAerodynamicLoad`と`WindFieldAerodynamicLoad`はBPG-002のRK4荷重境界へ接続する。
+`WindFieldAerodynamicLoad`は各RK4 stageで各要素位置の風をsampleし、相対速度から荷重を評価する。
+左右翼・尾翼の異なるsampleは各要素のforceとdatum momentを通じてのみ作用し、独立した風力や勾配加速度を追加しない。
 
 ## 符号確認
 

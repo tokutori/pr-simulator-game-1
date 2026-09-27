@@ -1122,6 +1122,205 @@ mod tests {
     }
 
     #[test]
+    fn symmetric_grid_updraft_preserves_wing_load_and_cancels_roll() {
+        let elements = ROLES.map(|role| {
+            let (force_point, coefficients) = match role {
+                AerodynamicRole::LeftWing => (
+                    point(0.0, -1.0, 0.0),
+                    coefficients(
+                        law_with_slopes(0.0, 1.0, 0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                    ),
+                ),
+                AerodynamicRole::RightWing => (
+                    point(0.0, 1.0, 0.0),
+                    coefficients(
+                        law_with_slopes(0.0, 1.0, 0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                    ),
+                ),
+                _ => (point(0.0, 0.0, 0.0), zero_coefficients()),
+            };
+            AerodynamicElement::try_new(
+                role,
+                force_point,
+                force_point,
+                ElementOrientation::IDENTITY,
+                reference(1.0, 1.0, 1.0),
+                coefficients,
+                envelope(),
+            )
+            .unwrap()
+        });
+        let aerodynamics = AerodynamicModel::try_new(elements).unwrap();
+        let samples = [ned_vector(0.0, 0.0, -2.0); 8];
+        let wind = WindField::grid(
+            NedPoint::try_new(-1.0, -1.0, -1.0).unwrap(),
+            ned_vector(1.0, 2.0, 1.0),
+            [2, 2, 2],
+            &samples,
+        )
+        .unwrap();
+        let evaluation = aerodynamics
+            .evaluate_in_wind_field(&state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0), 1.0, wind)
+            .unwrap();
+        let left = evaluation.element(AerodynamicRole::LeftWing);
+        let right = evaluation.element(AerodynamicRole::RightWing);
+        assert_eq!(left.flow, right.flow);
+        near(
+            left.force_body_newtons().components()[2],
+            right.force_body_newtons().components()[2],
+            1.0e-12,
+        );
+        near(
+            evaluation
+                .total_wrench()
+                .moment_about_datum_newton_meters()
+                .components()[0],
+            0.0,
+            1.0e-12,
+        );
+    }
+
+    #[test]
+    fn right_wing_updraft_generates_the_analytic_roll_sign() {
+        let elements = ROLES.map(|role| {
+            let (force_point, element_coefficients) = match role {
+                AerodynamicRole::LeftWing => (
+                    point(0.0, -1.0, 0.0),
+                    coefficients(
+                        law_with_slopes(0.0, 1.0, 0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                    ),
+                ),
+                AerodynamicRole::RightWing => (
+                    point(0.0, 1.0, 0.0),
+                    coefficients(
+                        law_with_slopes(0.0, 1.0, 0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                        law(0.0),
+                    ),
+                ),
+                _ => (point(0.0, 0.0, 0.0), zero_coefficients()),
+            };
+            AerodynamicElement::try_new(
+                role,
+                force_point,
+                force_point,
+                ElementOrientation::IDENTITY,
+                reference(1.0, 1.0, 1.0),
+                element_coefficients,
+                envelope(),
+            )
+            .unwrap()
+        });
+        let aerodynamics = AerodynamicModel::try_new(elements).unwrap();
+        let samples: [NedVector; 8] = core::array::from_fn(|index| {
+            let east_index = (index / 2) % 2;
+            ned_vector(0.0, 0.0, if east_index == 0 { 0.0 } else { -2.0 })
+        });
+        let wind = WindField::grid(
+            NedPoint::try_new(-1.0, -1.0, -1.0).unwrap(),
+            ned_vector(1.0, 2.0, 1.0),
+            [2, 2, 2],
+            &samples,
+        )
+        .unwrap();
+        let evaluation = aerodynamics
+            .evaluate_in_wind_field(&state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0), 1.0, wind)
+            .unwrap();
+        let left_lift = evaluation
+            .element(AerodynamicRole::LeftWing)
+            .force_body_newtons()
+            .components()[2];
+        let right_lift = evaluation
+            .element(AerodynamicRole::RightWing)
+            .force_body_newtons()
+            .components()[2];
+        let roll = evaluation
+            .total_wrench()
+            .moment_about_datum_newton_meters()
+            .components()[0];
+        near(left_lift, 0.0, 1.0e-12);
+        let expected_right_lift = -52.0 * atan2(2.0, 10.0) * 10.0 / 104.0_f64.sqrt();
+        near(right_lift, expected_right_lift, 1.0e-12);
+        near(roll, right_lift, 1.0e-12);
+    }
+
+    #[test]
+    fn tail_local_wind_differences_generate_expected_pitch_and_yaw() {
+        let horizontal_tail_model = model(
+            AerodynamicRole::HorizontalTail,
+            coefficients(
+                law_with_slopes(0.0, 1.0, 0.0),
+                law(0.0),
+                law(0.0),
+                law(0.0),
+                law(0.0),
+                law(0.0),
+            ),
+            point(-1.0, 0.0, 0.0),
+            point(-1.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let updraft = WindField::linear_gradient(
+            NedPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+            NedVector::zero(),
+            [[0.0; 3], [0.0; 3], [2.0, 0.0, 0.0]],
+        )
+        .unwrap();
+        let pitch = horizontal_tail_model
+            .evaluate_in_wind_field(&state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0), 1.0, updraft)
+            .unwrap()
+            .total_wrench()
+            .moment_about_datum_newton_meters()
+            .components()[1];
+        let expected_pitch = -52.0 * atan2(2.0, 10.0) * 10.0 / 104.0_f64.sqrt();
+        near(pitch, expected_pitch, 1.0e-12);
+
+        let vertical_tail_model = model(
+            AerodynamicRole::VerticalTail,
+            coefficients(law(0.0), law(0.0), law(1.0), law(0.0), law(0.0), law(0.0)),
+            point(-1.0, 0.0, 0.0),
+            point(-1.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            envelope(),
+        );
+        let crosswind = WindField::linear_gradient(
+            NedPoint::try_new(0.0, 0.0, 0.0).unwrap(),
+            NedVector::zero(),
+            [[0.0; 3], [2.0, 0.0, 0.0], [0.0; 3]],
+        )
+        .unwrap();
+        let yaw = vertical_tail_model
+            .evaluate_in_wind_field(&state([10.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0), 1.0, crosswind)
+            .unwrap()
+            .total_wrench()
+            .moment_about_datum_newton_meters()
+            .components()[2];
+        let expected_yaw = -52.0 * 10.0 / 104.0_f64.sqrt();
+        near(yaw, expected_yaw, 1.0e-12);
+    }
+
+    #[test]
     fn grid_range_failure_keeps_wind_error_and_element_role() {
         let samples = [ned_vector(0.0, 0.0, 0.0); 8];
         let wind = WindField::grid(
