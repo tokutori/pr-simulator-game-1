@@ -3,8 +3,8 @@
 ## 所有境界
 
 制御・authority混合・actuator状態はRust coreの決定的なdomain stateとする。入力機器はTypeScript adapterで
-機器非依存の舵指令へ変換し、tick単位でcoreへ渡す。DOM、Gamepad API、FBW出力の生成に必要な観測値の取得は
-この境界へ含めない。coreには観測snapshot、pilot command、controller command、actuator model、timestepを明示して渡す。
+機器非依存のpilot commandとdesired body rateへ変換し、tick単位でcoreへ渡す。DOMとGamepad APIはこの境界へ含めない。
+observed body rateはRustの直前tick stateから取得し、FBW commandをcore内で生成する。
 
 FBW authorityは舵指令だけに適用する。pilot body targetは別経路であり、authority mixerに含めない。
 Manualはpilot指令を選択し、Automaticはcontroller指令を選択し、Sharedはauthority $a$ による線形混合を行う。
@@ -22,7 +22,8 @@ authorityは有限な$[0,1]$値だけを保持するvalidated型とする。制�
 `BodyRateFeedbackConfig`はroll・pitch・yaw順の有限な非負gain（秒）と正のcommand limit（radian）を保持する。
 `body_rate_feedback_commands`は明示されたtarget/observed body angular rate（rad/s）から
 $u_i=K_i(\omega_{target,i}-\omega_{observed,i})$を計算し、axisごとにcommand limitで飽和する。
-これはcontroller primitiveであり、標準gainや公開機体へのtuningを定義しない。機体固有controllerは、空力微係数・actuator・scenarioと
+feedback-controlled tickはtargetを入力とし、observed rateは直前のRust core stateから取得してFBW commandを導出する。
+CLI/WASM adapterはFBW commandを事前生成しない。これはcontroller primitiveであり、標準gainや公開機体へのtuningを定義しない。機体固有controllerは、空力微係数・actuator・scenarioと
 合わせた検証後に構成する。
 
 各actuatorは正の最大舵角$radian$と最大舵角速度$radian/second$を持つ。

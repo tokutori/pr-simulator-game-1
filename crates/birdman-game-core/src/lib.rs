@@ -40,9 +40,10 @@ pub use scoring::{
     course_distance_score,
 };
 pub use simulation::{
-    FlightRunError, FlightRunOutcome, FlightTickConfig, FlightTickError, FlightTickInput,
-    FlightTickOutcome, FlightTickState, advance_flight_tick, advance_flight_tick_with_contact,
-    run_flight,
+    FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
+    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,
+    advance_feedback_flight_tick_with_contact, advance_flight_tick,
+    advance_flight_tick_with_contact, run_feedback_flight, run_flight,
 };
 pub use wind_field::{WindError, WindField};
 

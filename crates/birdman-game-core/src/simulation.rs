@@ -7,8 +7,8 @@ use crate::dynamics::{
     advance_with_surface_deflections, pilot_target_acceleration, total_momentum,
 };
 use crate::flight_control::{
-    ActuatorConfig, ActuatorError, ActuatorState, ControlMode, SurfaceCommands,
-    advance_surface_control,
+    ActuatorConfig, ActuatorError, ActuatorState, BodyRateFeedbackConfig, ControlMode,
+    SurfaceCommands, advance_surface_control, body_rate_feedback_commands,
 };
 use crate::scoring::{CourseAxis, DistanceScore, DistanceScoreError, course_distance_score};
 
@@ -78,6 +78,29 @@ impl FlightTickInput {
     }
 }
 
+/// One device-independent pilot intent and desired body-rate sample.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlightFeedbackInput {
+    pilot_surface_commands: SurfaceCommands,
+    target_angular_rate_body: crate::BodyVector,
+    pilot_position_target: PilotPositionTarget,
+}
+
+impl FlightFeedbackInput {
+    /// Creates a sample for Rust-side body-rate feedback and pilot-motion control.
+    pub const fn new(
+        pilot_surface_commands: SurfaceCommands,
+        target_angular_rate_body: crate::BodyVector,
+        pilot_position_target: PilotPositionTarget,
+    ) -> Self {
+        Self {
+            pilot_surface_commands,
+            target_angular_rate_body,
+            pilot_position_target,
+        }
+    }
+}
+
 /// Fixed flight-control settings used for all ticks in one sealed flight.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightTickConfig {
@@ -97,6 +120,29 @@ impl FlightTickConfig {
             control_mode,
             actuator_limits,
             gravity,
+        }
+    }
+}
+
+/// Fixed settings for a finite feedback-controlled flight run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlightFeedbackRunConfig {
+    tick: FlightTickConfig,
+    feedback: BodyRateFeedbackConfig,
+    course_axis: CourseAxis,
+}
+
+impl FlightFeedbackRunConfig {
+    /// Creates immutable tick, feedback, and scoring settings for one run.
+    pub const fn new(
+        tick: FlightTickConfig,
+        feedback: BodyRateFeedbackConfig,
+        course_axis: CourseAxis,
+    ) -> Self {
+        Self {
+            tick,
+            feedback,
+            course_axis,
         }
     }
 }
@@ -191,6 +237,48 @@ pub fn run_flight<P: ExternalLoadProvider>(
     Ok(FlightRunOutcome::TimeLimit { state, score })
 }
 
+/// Runs feedback-controlled flight, deriving each FBW command from the preceding tick state.
+pub fn run_feedback_flight<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    initial: FlightTickState,
+    config: FlightFeedbackRunConfig,
+    inputs: &[FlightFeedbackInput],
+    loads: &P,
+    geometry: WaterContactGeometry<'_>,
+) -> Result<FlightRunOutcome, FlightRunError> {
+    if inputs.is_empty() {
+        return Err(FlightRunError::EmptyInput);
+    }
+    let start_datum = initial.flight_state().datum_position_ned();
+    let mut state = initial;
+    for input in inputs.iter().copied() {
+        match advance_feedback_flight_tick_with_contact(
+            aircraft,
+            state,
+            config.tick,
+            config.feedback,
+            input,
+            loads,
+            geometry,
+        )
+        .map_err(FlightRunError::Tick)?
+        {
+            FlightTickOutcome::Advanced(next) => state = next,
+            FlightTickOutcome::WaterContact(sample) => {
+                let terminal_datum = sample.state().flight_state().datum_position_ned();
+                let score = score_endpoints(start_datum, terminal_datum, config.course_axis)?;
+                return Ok(FlightRunOutcome::WaterContact { sample, score });
+            }
+        }
+    }
+    let score = score_endpoints(
+        start_datum,
+        state.flight_state().datum_position_ned(),
+        config.course_axis,
+    )?;
+    Ok(FlightRunOutcome::TimeLimit { state, score })
+}
+
 fn score_endpoints(
     start_datum: crate::NedPoint,
     terminal_datum: crate::NedPoint,
@@ -269,16 +357,41 @@ pub fn advance_flight_tick_with_contact<P: ExternalLoadProvider>(
     }
 }
 
+/// Derives this tick's FBW command from its desired rate and the preceding core state.
+pub fn advance_feedback_flight_tick_with_contact<P: ExternalLoadProvider>(
+    aircraft: &AircraftModel,
+    previous: FlightTickState,
+    config: FlightTickConfig,
+    feedback: BodyRateFeedbackConfig,
+    input: FlightFeedbackInput,
+    loads: &P,
+    geometry: WaterContactGeometry<'_>,
+) -> Result<FlightTickOutcome, FlightTickError> {
+    let fbw_commands = body_rate_feedback_commands(
+        feedback,
+        input.target_angular_rate_body,
+        previous.flight_state.angular_velocity_body(),
+    )
+    .map_err(FlightTickError::Actuator)?;
+    let tick_input = FlightTickInput::new(
+        input.pilot_surface_commands,
+        fbw_commands,
+        input.pilot_position_target,
+    );
+    advance_flight_tick_with_contact(aircraft, previous, config, tick_input, loads, geometry)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        FlightRunError, FlightRunOutcome, FlightTickConfig, FlightTickError, FlightTickInput,
-        FlightTickState, advance_flight_tick, run_flight, score_endpoints,
+        FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
+        FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, advance_flight_tick,
+        run_feedback_flight, run_flight, score_endpoints,
     };
     use crate::dynamics::{AircraftModel, ConstantLoad, FlightState, Gravity, Wrench};
     use crate::flight_control::{
         ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode, FbwAuthority,
-        SurfaceCommands, body_rate_feedback_commands,
+        SurfaceCommands,
     };
     use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
     use crate::{
@@ -422,7 +535,7 @@ mod tests {
             0.0,
         )
         .unwrap();
-        let mut state = FlightTickState::try_new(
+        let initial = FlightTickState::try_new(
             &aircraft,
             actuator_limits(),
             0,
@@ -431,27 +544,28 @@ mod tests {
         )
         .unwrap();
         let controller = BodyRateFeedbackConfig::try_new([0.1, 0.0, 0.0], [0.5; 3]).unwrap();
-        let target = BodyVector::zero();
         let pilot = SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap();
         let pilot_position_target = crate::PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
         let loads = SyntheticRollMoment;
-
-        for _ in 0..40 {
-            let fbw = body_rate_feedback_commands(
-                controller,
-                target,
-                state.flight_state().angular_velocity_body(),
-            )
-            .unwrap();
-            state = advance_flight_tick(
-                &aircraft,
-                state,
+        let inputs =
+            [FlightFeedbackInput::new(pilot, BodyVector::zero(), pilot_position_target); 40];
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let outcome = run_feedback_flight(
+            &aircraft,
+            initial,
+            FlightFeedbackRunConfig::new(
                 config(ControlMode::Automatic),
-                FlightTickInput::new(pilot, fbw, pilot_position_target),
-                &loads,
-            )
-            .unwrap();
-        }
+                controller,
+                CourseAxis::try_new(1.0, 0.0).unwrap(),
+            ),
+            &inputs,
+            &loads,
+            WaterContactGeometry::try_new(&contact_points).unwrap(),
+        )
+        .unwrap();
+        let FlightRunOutcome::TimeLimit { state, .. } = outcome else {
+            panic!("feedback test fixture must remain airborne");
+        };
 
         assert!(state.flight_state().angular_velocity_body().components()[0] < 1.0);
         assert!(state.actuator_state().roll_rad() < 0.0);

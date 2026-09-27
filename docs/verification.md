@@ -18,7 +18,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 
 ### CLI検証flight
 
-`cargo run -p birdman-game-cli --locked -- verify-flight all` はRust coreの`FlightScenario`を使い、Manual・Shared(0.5)・AutomaticでTimeLimitとWaterContactの両終端を再現する。各modeは同じ固定tick pilot input列とFBW更新則を二度実行し、同一終端を確認する。FBWは各tickの直前stateからbody-rate feedbackを再計算し、mode別の状態遷移へ適用する。空力は各element位置で固定空間wind gradientをsampleする。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの空力係数・wind gradient・feedback gainは統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。BPG-006では、出典付き機体係数・controller tuning・scenarioの検証を別途完了する。
+`cargo run -p birdman-game-cli --locked -- verify-flight all` はRust coreの`FlightScenario::run_feedback`を使い、Manual・Shared(0.5)・AutomaticでTimeLimitとWaterContactの両終端を再現する。各modeは同じ固定tick pilot intent列を二度実行し、同一終端を確認する。FBWは各tickでcoreが直前stateからbody-rate feedbackを生成し、mode別の状態遷移へ適用する。空力は各element位置で固定空間wind gradientをsampleする。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの空力係数・wind gradient・feedback gainは統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。BPG-006では、出典付き機体係数・controller tuning・scenarioの検証を別途完了する。
 
 ## 後続の物理検証
 

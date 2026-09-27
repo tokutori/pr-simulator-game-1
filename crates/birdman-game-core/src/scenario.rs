@@ -2,12 +2,14 @@ use crate::aerodynamics::{AerodynamicModel, WindFieldAerodynamicLoad};
 use crate::aerodynamics_contract::AeroError;
 use crate::contact::{ContactError, WaterContactGeometry};
 use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
-use crate::flight_control::{ActuatorConfig, ActuatorState, ControlMode};
+use crate::flight_control::{ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode};
 use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector, UnitQuaternion};
 use crate::scoring::CourseAxis;
 use crate::simulation::{
-    FlightRunError, FlightRunOutcome, FlightTickConfig, FlightTickError, FlightTickInput,
-    FlightTickOutcome, FlightTickState, advance_flight_tick_with_contact, run_flight,
+    FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
+    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,
+    advance_feedback_flight_tick_with_contact, advance_flight_tick_with_contact,
+    run_feedback_flight, run_flight,
 };
 use crate::wind_field::WindField;
 
@@ -215,6 +217,25 @@ impl<'a> FlightScenario<'a> {
         )
     }
 
+    /// Advances one tick with FBW commands derived from the previous core state.
+    pub fn advance_feedback_tick_with_contact(
+        &self,
+        previous: FlightTickState,
+        control_mode: ControlMode,
+        feedback: BodyRateFeedbackConfig,
+        input: FlightFeedbackInput,
+    ) -> Result<FlightTickOutcome, FlightTickError> {
+        advance_feedback_flight_tick_with_contact(
+            &self.aircraft,
+            previous,
+            self.tick_config(control_mode),
+            feedback,
+            input,
+            &self.loads,
+            self.contact_geometry,
+        )
+    }
+
     /// Replays a fixed input sequence until contact or its tick limit.
     pub fn run(
         &self,
@@ -229,6 +250,27 @@ impl<'a> FlightScenario<'a> {
             &self.loads,
             self.contact_geometry,
             self.course_axis,
+        )
+    }
+
+    /// Replays pilot intents while deriving FBW commands from each preceding core state.
+    pub fn run_feedback(
+        &self,
+        control_mode: ControlMode,
+        feedback: BodyRateFeedbackConfig,
+        inputs: &[FlightFeedbackInput],
+    ) -> Result<FlightRunOutcome, FlightRunError> {
+        run_feedback_flight(
+            &self.aircraft,
+            self.initial_state,
+            FlightFeedbackRunConfig::new(
+                self.tick_config(control_mode),
+                feedback,
+                self.course_axis,
+            ),
+            inputs,
+            &self.loads,
+            self.contact_geometry,
         )
     }
 }
