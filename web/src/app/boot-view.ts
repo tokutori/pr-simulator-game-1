@@ -2,11 +2,17 @@ import { IDENTITY_POSE } from "../render/contracts/math.js";
 import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
 
-export function createBootViewModel(status: string, webXrAvailable = false, webXrActive = false): UiViewModel {
+export function createBootViewModel(
+  status: string,
+  webXrAvailable = false,
+  webXrActive = false,
+  phoneVrAvailable = false,
+  phoneVrActive = false
+): UiViewModel {
   return Object.freeze({
     scene: "Boot",
     title: "鳥人間滑空ゲーム",
-    description: "Screen/VR共通表示基盤。フライト機能は後続の実装計画で追加する。",
+    description: "Screen/WebXR/Phone VR共通表示基盤。フライト機能は後続の実装計画で追加する。",
     activeOverlay: null,
     panels: Object.freeze([Object.freeze({
       id: "boot-status",
@@ -21,28 +27,42 @@ export function createBootViewModel(status: string, webXrAvailable = false, webX
           label: "状態",
           value: status,
           enabled: false,
-          rect: normalizedRect(0.08, 0.72, 0.84, 0.1)
+          rect: normalizedRect(0.08, 0.84, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-enter-webxr",
           label: webXrAvailable ? "WebXRで開始" : "WebXRは利用できない",
-          enabled: webXrAvailable && !webXrActive,
-          rect: normalizedRect(0.08, 0.52, 0.84, 0.1)
+          enabled: webXrAvailable && !webXrActive && !phoneVrActive,
+          rect: normalizedRect(0.08, 0.68, 0.84, 0.08)
+        }),
+        Object.freeze({
+          kind: "button" as const,
+          id: "boot-enter-phone-vr",
+          label: phoneVrAvailable ? "Phone VRで開始" : "Phone VRは利用できない",
+          enabled: phoneVrAvailable && !webXrActive && !phoneVrActive,
+          rect: normalizedRect(0.08, 0.54, 0.84, 0.08)
+        }),
+        Object.freeze({
+          kind: "button" as const,
+          id: "boot-recenter-phone-tracking",
+          label: "頭部追跡を正面に再設定",
+          enabled: phoneVrActive,
+          rect: normalizedRect(0.08, 0.4, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
           id: "boot-recenter-menu",
           label: "メニューを正面に配置",
-          enabled: webXrActive,
-          rect: normalizedRect(0.08, 0.32, 0.84, 0.1)
+          enabled: webXrActive || phoneVrActive,
+          rect: normalizedRect(0.08, 0.26, 0.84, 0.08)
         }),
         Object.freeze({
           kind: "button" as const,
-          id: "boot-exit-webxr",
-          label: "WebXRを終了",
-          enabled: webXrActive,
-          rect: normalizedRect(0.08, 0.12, 0.84, 0.1)
+          id: "boot-exit-vr",
+          label: "VRを終了",
+          enabled: webXrActive || phoneVrActive,
+          rect: normalizedRect(0.08, 0.12, 0.84, 0.08)
         })
       ])
     })])

@@ -89,6 +89,26 @@ fullscreenとlandscape lockは補助機能とする。非対応・拒否・中�
 根拠: [Device Orientation and Motion](https://www.w3.org/TR/orientation-event/)、
 [Screen Orientation](https://w3c.github.io/screen-orientation/)。
 
+## BPG-016 Phone VR実装
+
+Phone VRはsecure context上の`DeviceOrientationEvent`と`ScreenOrientation`を使用する。
+センサー許可要求は開始操作の同期区間で呼び出し、開始後は有効なorientation eventを受け取るまでstereoを有効化しない。
+`alpha`・`beta`・`gamma`のnull、非有限値、初回event timeout、tracking staleを失敗状態として扱い、0度へ置換しない。
+画面角度はScreen Orientation仕様の自然向きからのcounter-clockwise角としてZ軸補正へ適用する。
+姿勢は最初の有効sampleをtracking基準とし、明示的なrecenterで更新する。tracking喪失時はstereoを解除しScreenへ復帰する。
+
+head-gazeは既存のdwell selectorを使用する。標準mappingのGamepadが接続されている間は、左stickをpanel cursor、
+button 0を選択、button 1を戻る、右stickをscrollへ対応付ける。Gamepad入力とhead-gazeが同時に同一controlへ
+actionを発火させない。これらは共通`UiAction`へ変換する。標準mappingでないGamepadは選択対象とせず、head-gazeを継続する。
+mappingは[W3C Gamepad API](https://www.w3.org/TR/gamepad/)のStandard Gamepad配置に従う。
+初期optical profileはIPD 0.064 m、vertical FOV 60°、focus distance 10 m、distortion disabledとし、
+`generic-unverified-v1`として明示する。これらの値はviewer適合を保証しない。
+
+自動試験は全Scene/overlay fixture、permission拒否、event欠落/null/stale、screen rotation、recenter、listener解放、
+head-gazeと標準Gamepadのfocus/選択/back/scrollを対象とする。実スマートフォン、browser、viewerでの表示・操作・
+Screen復帰は未確認であり、実機受入完了までBPG-016を完了扱いしない。fullscreen・screen lockと非標準Gamepadは
+現行実装の対象外である。
+
 ## 視点の階層
 
 ```text

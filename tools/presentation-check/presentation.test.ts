@@ -253,6 +253,8 @@ class FakeRenderer implements RendererAdapter {
     this.lastViewport = viewport;
   }
 
+  setStereoPresentation(): void {}
+
   setSelectRayHandler(): void {}
 
   dispose(): void {

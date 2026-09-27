@@ -78,6 +78,8 @@ export type UiAction =
   | { readonly type: "set-toggle"; readonly controlId: string; readonly value: boolean }
   | { readonly type: "set-range"; readonly controlId: string; readonly value: number }
   | { readonly type: "focus"; readonly controlId: string | null }
+  | { readonly type: "back" }
+  | { readonly type: "scroll"; readonly deltaX: number; readonly deltaY: number }
   | { readonly type: "recenter-menu" };
 
 export type UiActionDispatcher = (action: UiAction) => void;

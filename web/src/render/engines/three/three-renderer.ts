@@ -12,8 +12,9 @@ import {
   SRGBColorSpace,
   WebGLRenderer
 } from "three";
+import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
-import type { BackendFrame, RendererAdapter, SelectRay, ViewportSize } from "../../contracts/runtime.js";
+import type { BackendFrame, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import { quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
@@ -38,6 +39,7 @@ export function createThreeRenderer(
   xrSystem: XRSystem | null
 ): ThreeRendererBundle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
+  const stereoEffect = new StereoEffect(renderer);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.setClearColor(0x8aadb0, 1);
 
@@ -76,6 +78,7 @@ export function createThreeRenderer(
   let height = 0;
   let pixelRatio = 0;
   let currentPanel = null as BackendFrame["panel"];
+  let stereoPresentation: StereoPresentationProfile | null = null;
   let xrState: ThreeWebXrState = { type: "idle" };
   let requestGeneration = 0;
   let sessionEndHandler: (() => void) | null = null;
@@ -158,12 +161,33 @@ export function createThreeRenderer(
         gazeCursor.position.set(frame.gazeCursor.point.x, frame.gazeCursor.point.y, 0.015);
         gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
       }
-      renderer.render(scene, camera);
+      if (stereoPresentation !== null && !renderer.xr.isPresenting) {
+        stereoEffect.render(scene, camera);
+        renderer.setViewport(0, 0, width, height);
+        renderer.setScissor(0, 0, width, height);
+        renderer.setScissorTest(false);
+      } else {
+        renderer.render(scene, camera);
+      }
     },
     resize(viewport: ViewportSize) {
       ensureActive(disposed);
       if (renderer.xr.isPresenting) return;
       resizeIfNeeded(viewport);
+    },
+    setStereoPresentation(profile: StereoPresentationProfile | null) {
+      ensureActive(disposed);
+      if (renderer.xr.isPresenting && profile !== null) throw new Error("Phone VR stereo cannot overlap an immersive WebXR session");
+      if (profile !== null && (!Number.isFinite(profile.eyeSeparationMeters) || profile.eyeSeparationMeters <= 0 ||
+          !Number.isFinite(profile.verticalFieldOfViewDegrees) || profile.verticalFieldOfViewDegrees <= 0 ||
+          profile.verticalFieldOfViewDegrees >= 180 || !Number.isFinite(profile.focusDistanceMeters) || profile.focusDistanceMeters <= 0)) {
+        throw new RangeError("Phone VR optical profile values must be positive and finite");
+      }
+      stereoPresentation = profile;
+      camera.fov = profile?.verticalFieldOfViewDegrees ?? 60;
+      camera.focus = profile?.focusDistanceMeters ?? 10;
+      if (profile !== null) stereoEffect.setEyeSeparation(profile.eyeSeparationMeters);
+      camera.updateProjectionMatrix();
     },
     dispose() {
       if (disposed) return;
@@ -313,7 +337,8 @@ export function createThreeRenderer(
     height = viewport.y;
     pixelRatio = viewport.pixelRatio;
     renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(width, height, false);
+    if (stereoPresentation !== null) stereoEffect.setSize(width, height);
+    else renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
   }

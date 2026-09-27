@@ -8,8 +8,8 @@ keyboard / gamepad、manual / shared / automatic、FBWを備える計画であ�
 
 ## 現在の実装範囲
 
-BPG-014のScreen表示shellに続き、BPG-015でnative WebXR session、VR panel表示、gaze/XR select操作を実装する。WebXRのsession拒否・終了と全Scene fixtureは自動試験するが、実HMDの表示・操作は未検証である。Boot画面でScreen表示を確認できる。
-Phone VR、各Sceneのゲーム機能、物理計算、実データ、Pages公開は未実装である。
+BPG-014のScreen表示shellに続き、BPG-015でnative WebXR session、VR panel表示、gaze/XR select操作を実装した。WebXRのsession拒否・終了と全Scene fixtureは自動試験するが、実HMDの表示・操作は未検証である。BPG-016ではPhone VR stereo、端末姿勢tracking、head-gaze、標準Gamepad操作を実装し、自動試験を追加した。スマートフォン・browser・viewerでの実機検証は未実施である。Boot画面でScreen表示を確認できる。
+各Sceneのゲーム機能、物理計算、実データ、Pages公開は未実装である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境

@@ -7,6 +7,13 @@ export interface ViewportSize extends Vec2 {
   readonly pixelRatio: number;
 }
 
+export interface StereoPresentationProfile {
+  readonly eyeSeparationMeters: number;
+  readonly verticalFieldOfViewDegrees: number;
+  readonly focusDistanceMeters: number;
+  readonly distortion: "disabled";
+}
+
 export interface BackendFrame {
   readonly timestampMs: number;
   readonly cameraPose: Pose;
@@ -33,6 +40,7 @@ export interface RendererAdapter {
   stopLoop(): void;
   render(frame: BackendFrame): void;
   resize(viewport: ViewportSize): void;
+  setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;
   dispose(): void;
 }
