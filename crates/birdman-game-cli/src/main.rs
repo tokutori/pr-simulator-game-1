@@ -6,8 +6,8 @@ use birdman_game_core::{
     CompositeCgLaunchConditions, ControlCoefficientDerivatives, ControlMode, CourseAxis,
     ElementEnvelope, ElementOrientation, ElementReference, FbwAuthority, FlightRunOutcome,
     FlightTickConfig, FlightTickInput, FlightTickState, Gravity, InertiaTensor, NedPoint,
-    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UniformAerodynamicLoad,
-    UniformAir, UnitQuaternion, WaterContactGeometry, body_rate_feedback_commands,
+    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UnitQuaternion,
+    WaterContactGeometry, WindField, WindFieldAerodynamicLoad, body_rate_feedback_commands,
     flight_state_from_composite_cg_launch, run_flight,
 };
 
@@ -103,7 +103,7 @@ struct VerificationScenario {
     aircraft: AircraftModel,
     initial: FlightTickState,
     pilot_inputs: Vec<(SurfaceCommands, PilotPositionTarget)>,
-    loads: UniformAerodynamicLoad,
+    loads: WindFieldAerodynamicLoad<'static>,
     contact_geometry: [BodyPoint; 1],
     course_axis: CourseAxis,
     feedback: BodyRateFeedbackConfig,
@@ -155,15 +155,19 @@ impl VerificationScenario {
             .collect::<Result<Vec<_>, String>>()?;
         let feedback =
             BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).map_err(display_error)?;
+        let wind_field = WindField::linear_gradient(
+            NedPoint::try_new(0.0, 0.0, -100.0).map_err(display_error)?,
+            NedVector::try_new(2.0, 0.0, 0.0).map_err(display_error)?,
+            [[0.0, 0.0, 0.01], [0.001, 0.0, 0.0], [0.0, 0.02, 0.0]],
+        )
+        .map_err(display_error)?;
 
         Ok(Self {
             aircraft,
             initial,
             pilot_inputs,
-            loads: UniformAerodynamicLoad::new(
-                aerodynamic_model()?,
-                UniformAir::try_new(NedVector::zero(), 1.225).map_err(display_error)?,
-            ),
+            loads: WindFieldAerodynamicLoad::try_new(aerodynamic_model()?, 1.225, wind_field)
+                .map_err(display_error)?,
             contact_geometry: [BodyPoint::try_new(0.0, 0.0, 0.0).map_err(display_error)?],
             course_axis: CourseAxis::try_new(1.0, 0.0).map_err(display_error)?,
             feedback,
@@ -282,7 +286,11 @@ fn display_error(error: impl std::fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::VerificationScenario;
-    use birdman_game_core::{ControlMode, FbwAuthority, FlightRunOutcome};
+    use super::aerodynamic_model;
+    use birdman_game_core::{
+        ControlMode, ExternalLoadProvider, FbwAuthority, FlightRunOutcome, NedVector,
+        UniformAerodynamicLoad, UniformAir,
+    };
 
     #[test]
     fn all_control_modes_run_reproducibly_with_distinct_synthetic_inputs() {
@@ -301,5 +309,20 @@ mod tests {
         });
         assert_ne!(results[0], results[1]);
         assert_ne!(results[1], results[2]);
+    }
+
+    #[test]
+    fn cli_wind_gradient_changes_the_multipoint_aerodynamic_load() {
+        let scenario = VerificationScenario::new(1).unwrap();
+        let uniform_reference = UniformAerodynamicLoad::new(
+            aerodynamic_model().unwrap(),
+            UniformAir::try_new(NedVector::try_new(2.0, 0.0, 0.0).unwrap(), 1.225).unwrap(),
+        );
+        let state = scenario.initial.flight_state();
+        let gradient_load = scenario.loads.evaluate(&scenario.aircraft, &state).unwrap();
+        let uniform_load = uniform_reference
+            .evaluate(&scenario.aircraft, &state)
+            .unwrap();
+        assert_ne!(gradient_load, uniform_load);
     }
 }
