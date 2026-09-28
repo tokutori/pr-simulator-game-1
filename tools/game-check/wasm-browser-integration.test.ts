@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
@@ -46,6 +47,40 @@ describe("generated WebAssembly browser binding", () => {
       session.open_setup();
       session.return_to_title();
       expect(session.phase_code()).toBe(0);
+    } finally {
+      session.free();
+    }
+  });
+
+  it("keeps a short pilot-position keyboard input within the playable glide range", () => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    try {
+      session.open_setup();
+      session.prepare();
+      session.mark_briefing_ready();
+      session.start_countdown(1);
+      session.advance_countdown();
+      session.launch();
+
+      let targetPositionMeters = 0;
+      let snapshot = parseFlightSnapshot(session.snapshot());
+      for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
+        const pressed = tick >= 160 && tick < 170 ? new Set(["KeyJ"]) : new Set<string>();
+        const intent = keyboardIntent(pressed, targetPositionMeters, physics_hz());
+        targetPositionMeters = intent.pilotPositionMeters;
+        snapshot = parseFlightSnapshot(session.advance_tick(
+          intent.roll,
+          intent.pitch,
+          intent.yaw,
+          intent.pilotPositionMeters
+        ));
+      }
+
+      expect(snapshot.terminal).toBe("water-contact");
+      expect(snapshot.scoreCourseMeters).toBeGreaterThanOrEqual(180);
+      expect(snapshot.scoreCourseMeters).toBeLessThanOrEqual(230);
+      expect(Math.abs(snapshot.pilotPositionMeters)).toBeGreaterThan(0.03);
     } finally {
       session.free();
     }

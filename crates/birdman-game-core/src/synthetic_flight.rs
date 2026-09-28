@@ -341,7 +341,7 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
             if matches!(role, LeftWing | RightWing) {
                 4.5
             } else if role == HorizontalTail {
-                2.0
+                6.0
             } else {
                 0.0
             },
@@ -397,14 +397,14 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
         )?,
         element(
             HorizontalTail,
-            1.37,
-            1.0,
-            0.5,
-            0.10,
+            2.5,
+            1.7,
+            0.7,
+            -0.225,
             0.04,
             [0.0, 0.3, 0.0],
             [0.0, 12.0, 0.0],
-            (0.0, 0.0, 0.1),
+            (-1.8, 0.0, 0.1),
         )?,
         element(
             VerticalTail,
@@ -478,7 +478,10 @@ mod tests {
                         .flight_state()
                         .datum_position_ned()
                         .components()[0];
-                    assert!((150.0..=300.0).contains(&north_distance));
+                    assert!(
+                        (200.0..=300.0).contains(&north_distance),
+                        "neutral playable distance was {north_distance} m"
+                    );
                     assert!((15.0..=35.0).contains(&elapsed_seconds));
                     break;
                 }
