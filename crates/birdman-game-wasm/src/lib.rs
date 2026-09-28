@@ -5,8 +5,8 @@ use birdman_game_core::{
     FlightFeedbackInput, FlightRecordDisposition, FlightRecordPlaybackSample, FlightRecordSample,
     FlightScenario, FlightTickOutcome, FlightTickState, GameSession, GameSessionConfiguration,
     NedPoint, PauseReason, PilotPositionTarget, SessionEndReason, SessionPhase,
-    SessionScenarioIdentity, SessionSnapshot, SessionTerminalState, SurfaceCommands, SyntheticFlightError,
-    SyntheticPlayableFlight, course_distance_score,
+    SessionScenarioIdentity, SessionSnapshot, SessionTerminalState, SurfaceCommands,
+    SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
 };
 use birdman_game_format::{
     AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, InformationLevel,
@@ -298,7 +298,8 @@ impl GameSessionBridge {
 
     /// Returns whether the current Replay phase displays a persisted archive.
     pub fn is_archived_replay(&self) -> bool {
-        self.session.snapshot().phase() == SessionPhase::Replay && self.archived_preset_code.is_some()
+        self.session.snapshot().phase() == SessionPhase::Replay
+            && self.archived_preset_code.is_some()
     }
 
     /// Returns from FlightSetup or Result to Title.
