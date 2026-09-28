@@ -158,6 +158,10 @@ body {
   pointer-events: none;
 }
 
+.flight-hud[hidden] {
+  display: none;
+}
+
 .flight-hud h2,
 .flight-hud p {
   margin: 0;
