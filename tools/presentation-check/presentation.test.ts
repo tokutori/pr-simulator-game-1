@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createPilotEyePoint, pilotEyePoseFrd } from "../../web/src/render/camera/pilot-eye-point.js";
+import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseThree } from "../../web/src/render/camera/pilot-eye-point.js";
+import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
 import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
 import type { AnchorFrames } from "../../web/src/render/anchors.js";
-import { IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
+import { IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -86,6 +87,39 @@ describe("scene and overlay fixtures", () => {
     expect(labels).toContain(panel.title);
     expect(labels).toContain("共通actionを送信");
   });
+
+  it("renders multiline Result metadata inside an enlarged VR panel row", () => {
+    const panel = requiredPanel(createSceneFixture("Result"));
+    const labels: string[] = [];
+    const fonts: string[] = [];
+    const context: PanelDrawingContext = {
+      clearRect: () => undefined,
+      fillRect: () => undefined,
+      fillText: (text: string) => labels.push(text),
+      strokeRect: () => undefined,
+      beginPath: () => undefined,
+      moveTo: () => undefined,
+      lineTo: () => undefined,
+      stroke: () => undefined,
+      setFillStyle: () => undefined,
+      setStrokeStyle: () => undefined,
+      setFont: (value: string) => fonts.push(value),
+      setTextBaseline: () => undefined,
+      setLineWidth: () => undefined,
+      setGlobalAlpha: () => undefined
+    };
+    const metadata = {
+      kind: "button" as const,
+      id: "game-result-configuration",
+      label: "Selected axes\nScenario and model versions",
+      enabled: false,
+      rect: { x: 0.08, y: 0.6, width: 0.84, height: 0.11 }
+    };
+    drawVrPanel(context, { ...panel, controls: [metadata] }, 1024, 768);
+    expect(labels).toContain("Selected axes");
+    expect(labels).toContain("Scenario and model versions");
+    expect(fonts).toContain("500 17px system-ui, sans-serif");
+  });
 });
 
 describe("anchor and camera transforms", () => {
@@ -120,6 +154,23 @@ describe("anchor and camera transforms", () => {
     const eye = pilotEyePoseFrd(eyePoint, 0.65);
     expect(eye.position).toEqual(vec3(1.5, 0.04, -0.08));
     expect(eye.orientation).toEqual(IDENTITY_POSE.orientation);
+  });
+
+  it("maps the pilot eye point from FRD into the renderer's Three.js axes", () => {
+    const eyePoint = createPilotEyePoint(vec3(1.2, 0.04, -0.08), 0.35, IDENTITY_POSE.orientation);
+    const eye = pilotEyePoseThree(eyePoint, 0.65, 0.35);
+
+    expect(eye.position).toEqual(vec3(0.04, 0.08, -1.5));
+    expect(eye.orientation).toEqual(IDENTITY_POSE.orientation);
+  });
+
+  it("defines an engine-independent Chase pose behind and above the aircraft", () => {
+    const chase = replayCameraPoseFrd("chase");
+    const forward = rotateVec3(chase.orientation, vec3(1, 0, 0));
+    expect(chase.position).toEqual(vec3(-12, 0, -4));
+    expect(forward.x).toBeGreaterThan(0);
+    expect(forward.z / forward.x).toBeCloseTo(1 / 3, 10);
+    expect(replayCameraPoseFrd("pilot")).toEqual(IDENTITY_POSE);
   });
 
   it("maps binocular rays to the same control hit position", () => {
@@ -288,6 +339,8 @@ class FakeRenderer implements RendererAdapter {
   }
 
   setFlightPose(): void {}
+
+  setFlightCameraMode(): void {}
 
   resize(viewport: ViewportSize): void {
     this.lastViewport = viewport;
