@@ -690,6 +690,14 @@ impl<'a> WindFieldAerodynamicLoad<'a> {
             wind_field,
         })
     }
+
+    /// Returns the wind velocity at the supplied NED position.
+    pub fn wind_velocity_at(
+        &self,
+        position_ned: crate::math::NedPoint,
+    ) -> Result<NedVector, crate::wind_field::WindError> {
+        self.wind_field.velocity_at(position_ned)
+    }
 }
 
 impl ExternalLoadProvider for WindFieldAerodynamicLoad<'_> {

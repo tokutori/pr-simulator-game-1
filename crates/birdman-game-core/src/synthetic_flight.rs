@@ -62,6 +62,14 @@ pub struct SyntheticPlayableFlight {
 impl SyntheticPlayableFlight {
     /// Builds a synthetic glide from a trim-near state at the supplied altitude.
     pub fn try_new(launch_altitude_m: f64) -> Result<Self, SyntheticFlightError> {
+        Self::try_new_with_uniform_wind(launch_altitude_m, [0.0; 3])
+    }
+
+    /// Builds a synthetic glide with an explicit uniform NED wind field.
+    pub fn try_new_with_uniform_wind(
+        launch_altitude_m: f64,
+        wind_velocity_ned_mps: [f64; 3],
+    ) -> Result<Self, SyntheticFlightError> {
         if !launch_altitude_m.is_finite() || launch_altitude_m <= 0.0 {
             return Err(SyntheticFlightError::InvalidLaunchAltitude);
         }
@@ -89,9 +97,15 @@ impl SyntheticPlayableFlight {
         )
         .map_err(SyntheticFlightError::Dynamics)?;
         let aerodynamics = synthetic_playable_aerodynamic_model()?;
+        let wind_velocity = NedVector::try_new(
+            wind_velocity_ned_mps[0],
+            wind_velocity_ned_mps[1],
+            wind_velocity_ned_mps[2],
+        )
+        .map_err(SyntheticFlightError::Math)?;
         let wind_field = WindField::linear_gradient(
             NedPoint::try_new(0.0, 0.0, -100.0).map_err(SyntheticFlightError::Math)?,
-            NedVector::zero(),
+            wind_velocity,
             [[0.0; 3]; 3],
         )
         .map_err(SyntheticFlightError::Wind)?;
@@ -138,6 +152,23 @@ impl SyntheticPlayableFlight {
     /// Returns the course axis used for terminal distance scoring.
     pub const fn course_axis(&self) -> CourseAxis {
         self.course_axis
+    }
+
+    /// Consumes the fixture and returns its validated session components.
+    pub fn into_parts(
+        self,
+    ) -> (
+        AircraftModel,
+        FlightScenario<'static>,
+        BodyRateFeedbackConfig,
+        CourseAxis,
+    ) {
+        (
+            self.aircraft,
+            self.scenario,
+            self.feedback,
+            self.course_axis,
+        )
     }
 }
 
@@ -310,7 +341,7 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
             if matches!(role, LeftWing | RightWing) {
                 4.5
             } else if role == HorizontalTail {
-                2.0
+                6.0
             } else {
                 0.0
             },
@@ -366,14 +397,14 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
         )?,
         element(
             HorizontalTail,
-            1.37,
-            1.0,
-            0.5,
-            0.10,
+            2.5,
+            1.7,
+            0.7,
+            -0.225,
             0.04,
             [0.0, 0.3, 0.0],
             [0.0, 12.0, 0.0],
-            (0.0, 0.0, 0.1),
+            (-1.8, 0.0, 0.1),
         )?,
         element(
             VerticalTail,
@@ -447,7 +478,10 @@ mod tests {
                         .flight_state()
                         .datum_position_ned()
                         .components()[0];
-                    assert!((150.0..=300.0).contains(&north_distance));
+                    assert!(
+                        (200.0..=300.0).contains(&north_distance),
+                        "neutral playable distance was {north_distance} m"
+                    );
                     assert!((15.0..=35.0).contains(&elapsed_seconds));
                     break;
                 }

@@ -1,21 +1,733 @@
 //! Browser adapter; no clock or browser state enters the simulation core.
 
 use birdman_game_core::{
-    BodyVector, ControlMode, DistanceScore, DistanceScoreError, FbwAuthority, FlightFeedbackInput,
-    FlightTickOutcome, FlightTickState, NedPoint, PilotPositionTarget, SurfaceCommands,
+    BodyVector, BriefingFailure, ControlMode, DistanceScore, DistanceScoreError, FbwAuthority,
+    FlightFeedbackInput, FlightRecordDisposition, FlightRecordPlaybackSample, FlightRecordSample,
+    FlightScenario, FlightTickOutcome, FlightTickState, GameSession, GameSessionConfiguration,
+    NedPoint, PauseReason, PilotPositionTarget, SessionEndReason, SessionPhase,
+    SessionScenarioIdentity, SessionSnapshot, SessionTerminalState, SurfaceCommands,
     SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
+};
+use birdman_game_format::{
+    AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, InformationLevel,
+    ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
+    ScenarioModelCatalog, WeatherClass, resolve_configuration,
 };
 use wasm_bindgen::{JsValue, prelude::*};
 
 const MAX_TICKS: u64 = 4_000;
 const SURFACE_COMMAND_LIMIT_RAD: f64 = 0.04;
 const TARGET_RATE_LIMIT_RAD_PER_SECOND: f64 = 0.8;
-const SNAPSHOT_LENGTH: usize = 20;
+const SNAPSHOT_LENGTH: usize = 33;
+const RECORD_SAMPLE_LENGTH: usize = 51;
+const PLAYBACK_SAMPLE_LENGTH: usize = 36;
+const WEATHER_SCENARIO_ENTRIES: [ScenarioCatalogEntry; 5] = [
+    ScenarioCatalogEntry {
+        scenario_id: 1,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 1,
+        weather: WeatherClass::Calm,
+    },
+    ScenarioCatalogEntry {
+        scenario_id: 2,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 2,
+        weather: WeatherClass::Mild,
+    },
+    ScenarioCatalogEntry {
+        scenario_id: 3,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 3,
+        weather: WeatherClass::Typical,
+    },
+    ScenarioCatalogEntry {
+        scenario_id: 4,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 4,
+        weather: WeatherClass::Challenging,
+    },
+    ScenarioCatalogEntry {
+        scenario_id: 5,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 5,
+        weather: WeatherClass::NearLimit,
+    },
+];
 
 /// Exposes the fixed simulation frequency to platform callers.
 #[wasm_bindgen]
 pub fn physics_hz() -> u32 {
     birdman_game_core::PHYSICS_HZ
+}
+
+/// Owns the Rust game lifecycle for one synthetic browser session.
+#[wasm_bindgen]
+pub struct GameSessionBridge {
+    session: GameSession<'static>,
+    scenarios: [FlightScenario<'static>; 5],
+    aircraft: birdman_game_core::AircraftModel,
+    feedback: birdman_game_core::BodyRateFeedbackConfig,
+    difficulty: DifficultySettings,
+    archived_preset_code: Option<u32>,
+    resolved_configuration: Option<ResolvedConfiguration>,
+    snapshot: [f64; SNAPSHOT_LENGTH],
+}
+
+#[wasm_bindgen]
+impl GameSessionBridge {
+    /// Creates a Title session. Mode is 0=Manual, 1=Shared, 2=Automatic.
+    #[wasm_bindgen(constructor)]
+    pub fn new(control_mode: u32) -> Result<GameSessionBridge, JsValue> {
+        let (aircraft, scenarios, feedback) = playable_scenarios()?;
+        let difficulty = DifficultySettings::custom(
+            InformationLevel::Full,
+            assistance_from_control_mode(control_mode_from_code(control_mode)?),
+            WeatherClass::Calm,
+        );
+        Ok(Self {
+            session: GameSession::new(),
+            scenarios,
+            aircraft,
+            feedback,
+            difficulty,
+            archived_preset_code: None,
+            resolved_configuration: None,
+            snapshot: [0.0; SNAPSHOT_LENGTH],
+        })
+    }
+
+    /// Opens FlightSetup from Title or Result.
+    pub fn open_setup(&mut self) -> Result<(), JsValue> {
+        self.session.open_setup().map_err(game_session_error)?;
+        self.resolved_configuration = None;
+        self.archived_preset_code = None;
+        Ok(())
+    }
+
+    /// Selects the FBW authority mode while FlightSetup is active.
+    pub fn set_control_mode(&mut self, code: u32) -> Result<(), JsValue> {
+        self.require_setup()?;
+        self.difficulty = self
+            .difficulty
+            .with_assistance(assistance_from_control_mode(control_mode_from_code(code)?));
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Returns the selected control mode: 0=Manual, 1=Shared, 2=Automatic.
+    pub fn control_mode_code(&self) -> u32 {
+        match self.difficulty.assistance() {
+            AssistanceLevel::Manual => 0,
+            AssistanceLevel::Assisted | AssistanceLevel::Light => 1,
+            AssistanceLevel::Strong => 2,
+        }
+    }
+
+    /// Selects one of the four non-Custom difficulty presets.
+    pub fn set_difficulty_preset(&mut self, code: u32) -> Result<(), JsValue> {
+        self.require_setup()?;
+        let preset = match code {
+            0 => DifficultyPreset::Beginner,
+            1 => DifficultyPreset::Standard,
+            2 => DifficultyPreset::Expert,
+            3 => DifficultyPreset::Realistic,
+            _ => {
+                return Err(JsValue::from_str(
+                    "difficulty preset code must be in [0, 3]",
+                ));
+            }
+        };
+        self.difficulty = DifficultySettings::preset(preset).map_err(configuration_error)?;
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Selects the Information axis; 0=Full, 1=Standard, 2=Minimal, 3=Realistic.
+    pub fn set_information_level(&mut self, code: u32) -> Result<(), JsValue> {
+        self.require_setup()?;
+        let level = match code {
+            0 => InformationLevel::Full,
+            1 => InformationLevel::Standard,
+            2 => InformationLevel::Minimal,
+            3 => InformationLevel::Realistic,
+            _ => {
+                return Err(JsValue::from_str(
+                    "information level code must be in [0, 3]",
+                ));
+            }
+        };
+        self.difficulty = self.difficulty.with_information(level);
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Selects the Assistance axis; 0=Strong, 1=Assisted, 2=Light, 3=Manual.
+    pub fn set_assistance_level(&mut self, code: u32) -> Result<(), JsValue> {
+        self.require_setup()?;
+        let level = assistance_from_code(code)?;
+        self.difficulty = self.difficulty.with_assistance(level);
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Selects the Weather axis; 0=Calm through 4=NearLimit.
+    pub fn set_weather_class(&mut self, code: u32) -> Result<(), JsValue> {
+        self.require_setup()?;
+        self.difficulty = self.difficulty.with_weather(weather_from_code(code)?);
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Advances through Beginner, Standard, Expert, and Realistic presets.
+    pub fn cycle_difficulty_preset(&mut self) -> Result<(), JsValue> {
+        self.require_setup()?;
+        let next = match self.difficulty_preset_code() {
+            3 | 4 => 0,
+            code => code + 1,
+        };
+        self.set_difficulty_preset(next)
+    }
+
+    /// Advances the Information axis and marks the selection Custom.
+    pub fn cycle_information_level(&mut self) -> Result<(), JsValue> {
+        self.require_setup()?;
+        self.set_information_level((self.information_level_code() + 1) % 4)
+    }
+
+    /// Advances the Assistance axis and marks the selection Custom.
+    pub fn cycle_assistance_level(&mut self) -> Result<(), JsValue> {
+        self.require_setup()?;
+        self.set_assistance_level((self.assistance_level_code() + 1) % 4)
+    }
+
+    /// Advances the Weather axis and marks the selection Custom.
+    pub fn cycle_weather_class(&mut self) -> Result<(), JsValue> {
+        self.require_setup()?;
+        self.set_weather_class((self.weather_class_code() + 1) % 5)
+    }
+
+    /// Returns preset code: 0=Beginner, 1=Standard, 2=Expert, 3=Realistic, 4=Custom.
+    pub fn difficulty_preset_code(&self) -> u32 {
+        if self.session.snapshot().phase() == SessionPhase::Replay
+            && let Some(code) = self.archived_preset_code
+        {
+            return code;
+        }
+        match self.difficulty.preset_label() {
+            DifficultyPreset::Beginner => 0,
+            DifficultyPreset::Standard => 1,
+            DifficultyPreset::Expert => 2,
+            DifficultyPreset::Realistic => 3,
+            DifficultyPreset::Custom => 4,
+        }
+    }
+
+    /// Returns Information axis code: 0=Full, 1=Standard, 2=Minimal, 3=Realistic.
+    pub fn information_level_code(&self) -> u32 {
+        information_code(self.difficulty.information())
+    }
+
+    /// Returns Assistance axis code: 0=Strong, 1=Assisted, 2=Light, 3=Manual.
+    pub fn assistance_level_code(&self) -> u32 {
+        assistance_code(self.difficulty.assistance())
+    }
+
+    /// Returns Weather axis code: 0=Calm through 4=NearLimit.
+    pub fn weather_class_code(&self) -> u32 {
+        weather_code(self.difficulty.weather())
+    }
+
+    /// Returns the resolved difficulty and model identity used by this session.
+    ///
+    /// Layout: preset, information, assistance, weather, scenario-catalog-version,
+    /// scenario-id, scenario-version, aircraft-version, environment-version,
+    /// controller-profile-version, seed-low, seed-high.
+    pub fn configuration_metadata(&self) -> Result<Vec<u32>, JsValue> {
+        let identity = self.session.configuration_identity().ok_or_else(|| {
+            JsValue::from_str("resolved configuration is unavailable before Briefing")
+        })?;
+        Ok(vec![
+            self.difficulty_preset_code(),
+            information_code(self.difficulty.information()),
+            assistance_code(self.difficulty.assistance()),
+            weather_code(self.difficulty.weather()),
+            identity.catalog_version,
+            identity.scenario_id,
+            identity.scenario_version,
+            identity.aircraft_model_version,
+            identity.environment_version,
+            identity.controller_profile_version,
+            identity.seed as u32,
+            (identity.seed >> 32) as u32,
+        ])
+    }
+
+    /// Loads a finalized stored record and enters the Rust-owned Replay phase.
+    pub fn open_archived_flight_record(&mut self, json: &str) -> Result<(), JsValue> {
+        let document = birdman_game_format::FlightRecordDocument::decode_json(json.as_bytes())
+            .map_err(flight_record_format_error)?;
+        let difficulty = document.header.difficulty;
+        let preset_code = match difficulty.preset {
+            birdman_game_format::FlightRecordPresetDocument::Beginner => 0,
+            birdman_game_format::FlightRecordPresetDocument::Standard => 1,
+            birdman_game_format::FlightRecordPresetDocument::Expert => 2,
+            birdman_game_format::FlightRecordPresetDocument::Realistic => 3,
+            birdman_game_format::FlightRecordPresetDocument::Custom => 4,
+        };
+        let settings = DifficultySettings::custom(
+            information_from_record(difficulty.information),
+            assistance_from_record(difficulty.assistance),
+            weather_from_record(difficulty.weather),
+        );
+        let record = document
+            .to_finalized_core_record()
+            .map_err(flight_record_format_error)?;
+        self.session
+            .open_archived_replay(record)
+            .map_err(game_session_error)?;
+        self.difficulty = settings;
+        self.archived_preset_code = Some(preset_code);
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Returns whether the current Replay phase displays a persisted archive.
+    pub fn is_archived_replay(&self) -> bool {
+        self.session.snapshot().phase() == SessionPhase::Replay
+            && self.archived_preset_code.is_some()
+    }
+
+    /// Returns from FlightSetup or Result to Title.
+    pub fn return_to_title(&mut self) -> Result<(), JsValue> {
+        self.session.return_to_title().map_err(game_session_error)?;
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Cancels Briefing preparation and returns to FlightSetup.
+    pub fn cancel_briefing(&mut self) -> Result<(), JsValue> {
+        self.session.cancel_briefing().map_err(game_session_error)?;
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Records a classified preparation failure: 0=asset, 1=capacity, 2=scenario, 3=configuration.
+    pub fn fail_briefing(&mut self, reason: u32) -> Result<(), JsValue> {
+        self.session
+            .fail_briefing(briefing_failure_from_code(reason)?)
+            .map_err(game_session_error)
+    }
+
+    /// Retries preparation after a failure without creating a flight result.
+    pub fn retry_briefing(&mut self) -> Result<(), JsValue> {
+        self.session.retry_briefing().map_err(game_session_error)
+    }
+
+    /// Seals the selected synthetic scenario as Briefing preparation.
+    pub fn prepare(&mut self) -> Result<(), JsValue> {
+        let catalog =
+            ScenarioCatalog::try_new(1, &WEATHER_SCENARIO_ENTRIES).map_err(configuration_error)?;
+        let profiles = controller_profiles(self.feedback)?;
+        let resolved = resolve_configuration(self.difficulty, 0, &profiles, &catalog)
+            .map_err(configuration_error)?;
+        let models: [ScenarioModel<'static>; 5] = core::array::from_fn(|index| ScenarioModel {
+            metadata: WEATHER_SCENARIO_ENTRIES[index],
+            model: self.scenarios[index],
+        });
+        let model_catalog =
+            ScenarioModelCatalog::try_new(1, &models).map_err(configuration_error)?;
+        let scenario = model_catalog
+            .resolve(resolved.scenario)
+            .map_err(configuration_error)?;
+        let configuration = GameSessionConfiguration::try_new(
+            scenario,
+            resolved.controller.mode(),
+            resolved.controller.feedback(),
+            MAX_TICKS,
+            SessionScenarioIdentity {
+                catalog_version: resolved.scenario.catalog_version,
+                scenario_id: resolved.scenario.scenario_id,
+                scenario_version: resolved.scenario.scenario_version,
+                aircraft_model_version: resolved.scenario.aircraft_model_version,
+                environment_version: resolved.scenario.environment_version,
+                controller_profile_version: resolved.controller.version(),
+                seed: resolved.scenario.seed,
+            },
+        )
+        .map_err(game_session_error)?;
+        self.session
+            .prepare_flight(configuration)
+            .map_err(game_session_error)?;
+        self.resolved_configuration = Some(resolved);
+        Ok(())
+    }
+
+    fn require_setup(&self) -> Result<(), JsValue> {
+        if self.session.snapshot().phase() == SessionPhase::FlightSetup {
+            Ok(())
+        } else {
+            Err(game_session_error(
+                birdman_game_core::GameSessionError::InvalidTransition,
+            ))
+        }
+    }
+
+    /// Confirms the browser's required assets are ready.
+    pub fn mark_briefing_ready(&mut self) -> Result<(), JsValue> {
+        self.session
+            .mark_briefing_ready()
+            .map_err(game_session_error)
+    }
+
+    /// Starts the presentation countdown; physics remains frozen.
+    pub fn start_countdown(&mut self, ticks: u32) -> Result<(), JsValue> {
+        self.session
+            .start_countdown(ticks)
+            .map_err(game_session_error)
+    }
+
+    /// Advances one countdown presentation tick.
+    pub fn advance_countdown(&mut self) -> Result<u32, JsValue> {
+        self.session.advance_countdown().map_err(game_session_error)
+    }
+
+    /// Cancels Countdown and returns to the ready Briefing.
+    pub fn cancel_countdown(&mut self) -> Result<(), JsValue> {
+        self.session.cancel_countdown().map_err(game_session_error)
+    }
+
+    /// Launches once after countdown reaches zero and returns the initial snapshot.
+    pub fn launch(&mut self) -> Result<Vec<f64>, JsValue> {
+        let state = self.session.launch().map_err(game_session_error)?;
+        let telemetry = self.session.telemetry().ok().flatten();
+        self.snapshot = packed_session_snapshot(state, telemetry);
+        Ok(self.snapshot.to_vec())
+    }
+
+    /// Applies one normalized intent through Rust-owned session and physics state.
+    pub fn advance_tick(
+        &mut self,
+        roll: f64,
+        pitch: f64,
+        yaw: f64,
+        pilot_position_m: f64,
+    ) -> Result<Vec<f64>, JsValue> {
+        if self.session.snapshot().phase() == SessionPhase::Result {
+            return Ok(self.snapshot.to_vec());
+        }
+        validate_axes([roll, pitch, yaw]).map_err(JsValue::from_str)?;
+        let pilot_position = PilotPositionTarget::try_new(&self.aircraft, pilot_position_m)
+            .map_err(|error| JsValue::from_str(&format!("invalid pilot position: {error:?}")))?;
+        let pilot_commands = SurfaceCommands::try_new(
+            roll * SURFACE_COMMAND_LIMIT_RAD,
+            pitch * SURFACE_COMMAND_LIMIT_RAD,
+            yaw * SURFACE_COMMAND_LIMIT_RAD,
+        )
+        .map_err(|error| JsValue::from_str(&format!("invalid pilot command: {error:?}")))?;
+        let target_rate = BodyVector::try_new(
+            roll * TARGET_RATE_LIMIT_RAD_PER_SECOND,
+            pitch * TARGET_RATE_LIMIT_RAD_PER_SECOND,
+            yaw * TARGET_RATE_LIMIT_RAD_PER_SECOND,
+        )
+        .map_err(|error| JsValue::from_str(&format!("invalid target rate: {error:?}")))?;
+        match self.session.advance_flight_tick(FlightFeedbackInput::new(
+            pilot_commands,
+            target_rate,
+            pilot_position,
+        )) {
+            Ok(state) => {
+                let telemetry = self.session.telemetry().ok().flatten();
+                self.snapshot = packed_session_snapshot(state, telemetry);
+            }
+            Err(_) if self.session.snapshot().phase() == SessionPhase::Result => {
+                let telemetry = self.session.telemetry().ok().flatten();
+                self.snapshot = packed_session_snapshot(self.session.snapshot(), telemetry);
+                return Ok(self.snapshot.to_vec());
+            }
+            Err(error) => return Err(game_session_error(error)),
+        }
+        Ok(self.snapshot.to_vec())
+    }
+
+    /// Adds a pause cause: 0=Manual, 1=DocumentHidden, 2=TrackingSuspended, 3=ProcessingDelay.
+    pub fn pause(&mut self, reason: u32) -> Result<(), JsValue> {
+        self.session
+            .pause(pause_reason_from_code(reason)?)
+            .map_err(game_session_error)
+    }
+
+    /// Clears a resolved pause cause without resuming the flight.
+    pub fn clear_pause_reason(&mut self, reason: u32) -> Result<(), JsValue> {
+        self.session
+            .clear_pause_reason(pause_reason_from_code(reason)?)
+            .map_err(game_session_error)
+    }
+
+    /// Resumes only after all pause causes clear.
+    pub fn resume(&mut self) -> Result<(), JsValue> {
+        self.session.resume().map_err(game_session_error)
+    }
+
+    /// Aborts at the current input boundary and returns the terminal snapshot.
+    pub fn abort(&mut self) -> Result<Vec<f64>, JsValue> {
+        let state = self.session.abort_flight().map_err(game_session_error)?;
+        let telemetry = self.session.telemetry().ok().flatten();
+        self.snapshot = packed_session_snapshot(state, telemetry);
+        Ok(self.snapshot.to_vec())
+    }
+
+    /// Retries the sealed scenario and configuration from Briefing.
+    pub fn retry(&mut self) -> Result<(), JsValue> {
+        self.session.retry().map_err(game_session_error)
+    }
+
+    /// Enters read-only playback of the finalized flight record.
+    pub fn enter_replay(&mut self) -> Result<(), JsValue> {
+        self.session.enter_replay().map_err(game_session_error)
+    }
+
+    /// Returns from playback to the same finalized result.
+    pub fn leave_replay(&mut self) -> Result<(), JsValue> {
+        self.session.leave_replay().map_err(game_session_error)?;
+        if self.session.snapshot().phase() == SessionPhase::Title {
+            self.archived_preset_code = None;
+        }
+        Ok(())
+    }
+
+    /// Returns phase code: 0=Title, 1=Setup, 2=Preparing, 3=Ready, 4=Countdown,
+    /// 5=Flight, 6=Paused, 7=Result, 8=BriefingFailed, 9=Replay.
+    pub fn phase_code(&self) -> u32 {
+        phase_code(self.session.snapshot().phase())
+    }
+
+    /// Returns remaining presentation countdown ticks, or zero outside Countdown.
+    pub fn countdown_remaining(&self) -> u32 {
+        match self.session.snapshot().phase() {
+            SessionPhase::Countdown { remaining_ticks } => remaining_ticks,
+            _ => 0,
+        }
+    }
+
+    /// Returns the latest atomic flight snapshot.
+    pub fn snapshot(&self) -> Vec<f64> {
+        self.snapshot.to_vec()
+    }
+
+    /// Returns the field names and ordering of the packed snapshots.
+    pub fn snapshot_layout() -> String {
+        packed_snapshot_layout()
+    }
+
+    /// Returns the number of samples retained by the session record.
+    pub fn flight_record_sample_count(&self) -> u32 {
+        self.session
+            .flight_record()
+            .map_or(0, |record| record.sample_count() as u32)
+    }
+
+    /// Returns one stable-layout record sample, including its transition input.
+    pub fn flight_record_sample(&self, index: u32) -> Result<Vec<f64>, JsValue> {
+        let record = self
+            .session
+            .flight_record()
+            .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
+        let sample = record
+            .sample(index as usize)
+            .ok_or_else(|| JsValue::from_str("flight record sample index is out of range"))?;
+        Ok(pack_flight_record_sample(sample).to_vec())
+    }
+
+    /// Returns all retained sample fields in one packed WebAssembly transfer.
+    pub fn flight_record_samples_packed(&self) -> Result<Vec<f64>, JsValue> {
+        let record = self
+            .session
+            .flight_record()
+            .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
+        let capacity = record
+            .sample_count()
+            .checked_mul(RECORD_SAMPLE_LENGTH)
+            .ok_or_else(|| JsValue::from_str("flight record transfer size overflowed"))?;
+        let mut packed = Vec::with_capacity(capacity);
+        for sample in record.samples() {
+            packed.extend_from_slice(&pack_flight_record_sample(sample));
+        }
+        Ok(packed)
+    }
+
+    /// Returns a Rust-interpolated playback sample at fixed-tick time.
+    pub fn flight_record_sample_at(
+        &self,
+        tick_index: u32,
+        fraction: f64,
+    ) -> Result<Vec<f64>, JsValue> {
+        let record = self
+            .session
+            .flight_record()
+            .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
+        let sample = record
+            .sample_at_time(u64::from(tick_index), fraction)
+            .map_err(|error| {
+                JsValue::from_str(&format!("flight record query failed: {error:?}"))
+            })?;
+        Ok(pack_flight_record_playback_sample(sample).to_vec())
+    }
+
+    /// Returns a fixed-altitude 5×5 wind grid as [N, E, WN, WE, WD] tuples.
+    /// Rows advance north from `north_min_m`; columns advance east from `east_min_m`.
+    /// The query reads the sealed scenario and never advances the flight.
+    pub fn flight_analysis_wind_grid_packed(
+        &self,
+        north_min_m: f64,
+        east_min_m: f64,
+        altitude_m: f64,
+        spacing_m: f64,
+    ) -> Result<Vec<f64>, JsValue> {
+        if !north_min_m.is_finite()
+            || !east_min_m.is_finite()
+            || !altitude_m.is_finite()
+            || altitude_m < 0.0
+            || !spacing_m.is_finite()
+            || spacing_m <= 0.0
+        {
+            return Err(JsValue::from_str(
+                "wind grid coordinates and spacing must be finite; altitude must be nonnegative and spacing positive",
+            ));
+        }
+        if self.session.configuration_identity().is_none() {
+            return Err(JsValue::from_str(
+                "wind grid is unavailable before a scenario is prepared",
+            ));
+        }
+        let mut packed = Vec::with_capacity(125);
+        for north_index in 0..5 {
+            for east_index in 0..5 {
+                let north = north_min_m + f64::from(north_index) * spacing_m;
+                let east = east_min_m + f64::from(east_index) * spacing_m;
+                let position = NedPoint::try_new(north, east, -altitude_m).map_err(|error| {
+                    JsValue::from_str(&format!("invalid wind grid point: {error:?}"))
+                })?;
+                let wind = self
+                    .session
+                    .wind_velocity_at(position)
+                    .map_err(|error| {
+                        JsValue::from_str(&format!("wind grid query failed: {error:?}"))
+                    })?
+                    .ok_or_else(|| {
+                        JsValue::from_str("wind grid is unavailable before a scenario is prepared")
+                    })?;
+                packed.extend_from_slice(&[north, east]);
+                packed.extend_from_slice(&wind.components());
+            }
+        }
+        Ok(packed)
+    }
+
+    /// Returns summary metrics calculated by Rust from retained record samples.
+    pub fn flight_record_summary(&self) -> Result<Vec<f64>, JsValue> {
+        let record = self
+            .session
+            .flight_record()
+            .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
+        let summary = record.summary().map_err(|error| {
+            JsValue::from_str(&format!("flight record summary failed: {error:?}"))
+        })?;
+        let (score_available, course_parallel, cross_track, net_horizontal) =
+            summary.score.map_or((0.0, 0.0, 0.0, 0.0), |score| {
+                (
+                    1.0,
+                    score.course_parallel_m(),
+                    score.cross_track_m(),
+                    score.net_horizontal_m(),
+                )
+            });
+        Ok(vec![
+            summary.sample_count as f64,
+            summary.duration_seconds,
+            summary.maximum_altitude_m,
+            summary.maximum_airspeed_mps,
+            summary.maximum_groundspeed_mps,
+            summary.maximum_angle_of_attack_rad.unwrap_or(0.0),
+            if summary.maximum_angle_of_attack_rad.is_some() {
+                1.0
+            } else {
+                0.0
+            },
+            summary.maximum_absolute_roll_rad,
+            score_available,
+            course_parallel,
+            cross_track,
+            net_horizontal,
+        ])
+    }
+
+    /// Returns the field names and ordering for interpolated playback samples.
+    pub fn flight_record_playback_sample_layout() -> String {
+        "tick,fraction,datum_north_m,datum_east_m,datum_down_m,velocity_north_mps,velocity_east_mps,velocity_down_mps,attitude_w,attitude_x,attitude_y,attitude_z,angular_rate_roll_rad_s,angular_rate_pitch_rad_s,angular_rate_yaw_rad_s,pilot_position_m,pilot_velocity_mps,actuator_roll_rad,actuator_pitch_rad,actuator_yaw_rad,wind_north_mps,wind_east_mps,wind_down_mps,altitude_m,airspeed_mps,groundspeed_mps,angle_of_attack_rad,angle_of_attack_defined,sideslip_rad,sideslip_defined,roll_rad,pitch_rad,heading_rad,cg_north_m,cg_east_m,cg_down_m"
+            .to_owned()
+    }
+
+    /// Returns the field names and ordering for summary metrics.
+    pub fn flight_record_summary_layout() -> String {
+        "sample_count,duration_s,maximum_altitude_m,maximum_airspeed_mps,maximum_groundspeed_mps,maximum_angle_of_attack_rad,maximum_angle_of_attack_defined,maximum_absolute_roll_rad,score_available,course_parallel_m,cross_track_m,net_horizontal_m"
+            .to_owned()
+    }
+
+    /// Returns record-finalization codes and terminal time, or an empty vector before finalization.
+    pub fn flight_record_finalization(&self) -> Vec<f64> {
+        let Some(finalization) = self
+            .session
+            .flight_record()
+            .and_then(|record| record.finalization())
+        else {
+            return Vec::new();
+        };
+        let (score_available, course_distance, cross_track) =
+            finalization.score.map_or((0.0, 0.0, 0.0), |score| {
+                (1.0, score.course_parallel_m(), score.cross_track_m())
+            });
+        vec![
+            end_reason_code(finalization.reason) as f64,
+            match finalization.disposition {
+                FlightRecordDisposition::Complete => 0.0,
+                FlightRecordDisposition::Interrupted => 1.0,
+                FlightRecordDisposition::Failed => 2.0,
+            },
+            finalization.terminal_tick as f64,
+            finalization.terminal_fraction,
+            score_available,
+            course_distance,
+            cross_track,
+        ]
+    }
+
+    /// Encodes the finalized Rust-owned record using the versioned JSON schema.
+    pub fn export_flight_record_json(&self) -> Result<String, JsValue> {
+        let record = self
+            .session
+            .flight_record()
+            .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
+        let settings = self
+            .resolved_configuration
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("resolved flight settings are unavailable"))?
+            .difficulty;
+        let document = birdman_game_format::FlightRecordDocument::from_record(record, settings)
+            .map_err(flight_record_format_error)?;
+        let encoded = document.encode_json().map_err(flight_record_format_error)?;
+        String::from_utf8(encoded)
+            .map_err(|_| JsValue::from_str("flight record JSON encoding was not UTF-8"))
+    }
+
+    /// Returns the field names and ordering of the packed record sample.
+    pub fn flight_record_sample_layout() -> String {
+        flight_record_sample_layout()
+    }
 }
 
 /// Owns one synthetic flight and exposes atomic tick/snapshot operations.
@@ -45,7 +757,10 @@ impl SyntheticFlightSession {
         };
         let state = fixture.scenario().initial_state();
         let start_datum = state.flight_state().datum_position_ned();
-        let snapshot = snapshot_from_tick(state, 0, 0.0, 0.0, -1.0);
+        let snapshot = append_telemetry(
+            snapshot_from_tick(state, 0, 0.0, 0.0, -1.0),
+            fixture.scenario().telemetry(state.flight_state()).ok(),
+        );
         Ok(Self {
             fixture,
             control_mode,
@@ -106,8 +821,10 @@ impl SyntheticFlightSession {
                 };
                 self.state = next;
                 self.finished = terminal != 0;
-                self.snapshot =
-                    snapshot_from_tick(next, terminal, score_course_m, cross_track_m, -1.0);
+                self.snapshot = append_telemetry(
+                    snapshot_from_tick(next, terminal, score_course_m, cross_track_m, -1.0),
+                    self.fixture.scenario().telemetry(next.flight_state()).ok(),
+                );
             }
             Ok(FlightTickOutcome::WaterContact(sample)) => {
                 let terminal_state = sample.state();
@@ -116,12 +833,18 @@ impl SyntheticFlightSession {
                     terminal_state.flight_state().datum_position_ned(),
                     self.fixture.course_axis(),
                 )?;
-                self.snapshot = snapshot_from_contact(
-                    sample.interval_start_tick(),
-                    terminal_state.flight_state(),
-                    terminal_state.actuator_state(),
-                    score,
-                    sample.fraction(),
+                self.snapshot = append_telemetry(
+                    snapshot_from_contact(
+                        sample.interval_start_tick(),
+                        terminal_state.flight_state(),
+                        terminal_state.actuator_state(),
+                        Some(score),
+                        sample.fraction(),
+                    ),
+                    self.fixture
+                        .scenario()
+                        .telemetry(terminal_state.flight_state())
+                        .ok(),
                 );
                 self.finished = true;
             }
@@ -139,9 +862,168 @@ impl SyntheticFlightSession {
 
     /// Returns the field names and ordering of the packed snapshot.
     pub fn snapshot_layout() -> String {
-        "tick,north_m,east_m,down_m,velocity_north_mps,velocity_east_mps,velocity_down_mps,attitude_w,attitude_x,attitude_y,attitude_z,pilot_position_m,pilot_velocity_mps,actuator_roll_rad,actuator_pitch_rad,actuator_yaw_rad,terminal_code,score_course_m,cross_track_m,contact_fraction"
-            .to_owned()
+        packed_snapshot_layout()
     }
+}
+
+fn packed_snapshot_layout() -> String {
+    "tick,north_m,east_m,down_m,velocity_north_mps,velocity_east_mps,velocity_down_mps,attitude_w,attitude_x,attitude_y,attitude_z,pilot_position_m,pilot_velocity_mps,actuator_roll_rad,actuator_pitch_rad,actuator_yaw_rad,terminal_code,score_course_m,cross_track_m,contact_fraction,altitude_m,airspeed_mps,groundspeed_mps,wind_north_mps,wind_east_mps,wind_down_mps,angle_of_attack_rad,sideslip_angle_rad,roll_rad,pitch_rad,heading_rad,telemetry_available,flight_time_s"
+        .to_owned()
+}
+
+fn flight_record_sample_layout() -> String {
+    "tick,fraction,datum_north_m,datum_east_m,datum_down_m,velocity_north_mps,velocity_east_mps,velocity_down_mps,attitude_w,attitude_x,attitude_y,attitude_z,angular_rate_roll_rad_s,angular_rate_pitch_rad_s,angular_rate_yaw_rad_s,pilot_position_m,pilot_velocity_mps,actuator_roll_rad,actuator_pitch_rad,actuator_yaw_rad,wind_north_mps,wind_east_mps,wind_down_mps,altitude_m,airspeed_mps,groundspeed_mps,angle_of_attack_rad,angle_of_attack_defined,sideslip_rad,sideslip_defined,roll_rad,pitch_rad,heading_rad,telemetry_available,input_available,pilot_roll_rad,pilot_pitch_rad,pilot_yaw_rad,target_rate_roll_rad_s,target_rate_pitch_rad_s,target_rate_yaw_rad_s,pilot_position_target_m,fbw_roll_rad,fbw_pitch_rad,fbw_yaw_rad,mixed_roll_rad,mixed_pitch_rad,mixed_yaw_rad,cg_north_m,cg_east_m,cg_down_m"
+        .to_owned()
+}
+
+fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE_LENGTH] {
+    let flight = sample.flight_state;
+    let [north, east, down] = flight.datum_position_ned().components();
+    let [velocity_north, velocity_east, velocity_down] = flight.datum_velocity_ned().components();
+    let [attitude_w, attitude_x, attitude_y, attitude_z] =
+        flight.attitude_body_to_ned().components();
+    let [rate_roll, rate_pitch, rate_yaw] = flight.angular_velocity_body().components();
+    let [wind_north, wind_east, wind_down] = sample.wind_at_cg_ned_mps.components();
+    let actuators = sample.actuator_state.deflections();
+    let telemetry = sample.telemetry;
+    let input = sample.input_from_previous;
+    let (pilot_roll, pilot_pitch, pilot_yaw, target_rate, position_target, fbw, mixed) =
+        if let Some(input) = input {
+            (
+                input.pilot_surface_commands.roll_rad(),
+                input.pilot_surface_commands.pitch_rad(),
+                input.pilot_surface_commands.yaw_rad(),
+                input.target_angular_rate_body.components(),
+                input.pilot_position_target_m,
+                [
+                    input.fbw_surface_commands.roll_rad(),
+                    input.fbw_surface_commands.pitch_rad(),
+                    input.fbw_surface_commands.yaw_rad(),
+                ],
+                [
+                    input.mixed_surface_commands.roll_rad(),
+                    input.mixed_surface_commands.pitch_rad(),
+                    input.mixed_surface_commands.yaw_rad(),
+                ],
+            )
+        } else {
+            (0.0, 0.0, 0.0, [0.0; 3], 0.0, [0.0; 3], [0.0; 3])
+        };
+    let mut packed = [0.0; RECORD_SAMPLE_LENGTH];
+    packed.copy_from_slice(&[
+        sample.tick_index as f64,
+        sample.fraction,
+        north,
+        east,
+        down,
+        velocity_north,
+        velocity_east,
+        velocity_down,
+        attitude_w,
+        attitude_x,
+        attitude_y,
+        attitude_z,
+        rate_roll,
+        rate_pitch,
+        rate_yaw,
+        flight.pilot_position_m(),
+        flight.pilot_velocity_mps(),
+        actuators.roll_rad(),
+        actuators.pitch_rad(),
+        actuators.yaw_rad(),
+        wind_north,
+        wind_east,
+        wind_down,
+        telemetry.altitude_m,
+        telemetry.airspeed_mps,
+        telemetry.groundspeed_mps,
+        telemetry.angle_of_attack_rad.unwrap_or(0.0),
+        f64::from(telemetry.angle_of_attack_rad.is_some()),
+        telemetry.sideslip_angle_rad.unwrap_or(0.0),
+        f64::from(telemetry.sideslip_angle_rad.is_some()),
+        telemetry.roll_rad,
+        telemetry.pitch_rad,
+        telemetry.heading_rad,
+        1.0,
+        f64::from(input.is_some()),
+        pilot_roll,
+        pilot_pitch,
+        pilot_yaw,
+        target_rate[0],
+        target_rate[1],
+        target_rate[2],
+        position_target,
+        fbw[0],
+        fbw[1],
+        fbw[2],
+        mixed[0],
+        mixed[1],
+        mixed[2],
+        telemetry.composite_cg_position_ned_m.components()[0],
+        telemetry.composite_cg_position_ned_m.components()[1],
+        telemetry.composite_cg_position_ned_m.components()[2],
+    ]);
+    packed
+}
+
+fn pack_flight_record_playback_sample(
+    sample: FlightRecordPlaybackSample,
+) -> [f64; PLAYBACK_SAMPLE_LENGTH] {
+    let flight = sample.flight_state;
+    let [north, east, down] = flight.datum_position_ned().components();
+    let [velocity_north, velocity_east, velocity_down] = flight.datum_velocity_ned().components();
+    let [attitude_w, attitude_x, attitude_y, attitude_z] =
+        flight.attitude_body_to_ned().components();
+    let [rate_roll, rate_pitch, rate_yaw] = flight.angular_velocity_body().components();
+    let [wind_north, wind_east, wind_down] = sample.telemetry.wind_velocity_ned_mps.components();
+    let (angle_of_attack, angle_of_attack_defined) = sample
+        .telemetry
+        .angle_of_attack_rad
+        .map_or((0.0, 0.0), |value| (value, 1.0));
+    let (sideslip, sideslip_defined) = sample
+        .telemetry
+        .sideslip_angle_rad
+        .map_or((0.0, 0.0), |value| (value, 1.0));
+    let mut packed = [0.0; PLAYBACK_SAMPLE_LENGTH];
+    packed.copy_from_slice(&[
+        sample.tick_index as f64,
+        sample.fraction,
+        north,
+        east,
+        down,
+        velocity_north,
+        velocity_east,
+        velocity_down,
+        attitude_w,
+        attitude_x,
+        attitude_y,
+        attitude_z,
+        rate_roll,
+        rate_pitch,
+        rate_yaw,
+        flight.pilot_position_m(),
+        flight.pilot_velocity_mps(),
+        sample.actuator_state.roll_rad(),
+        sample.actuator_state.pitch_rad(),
+        sample.actuator_state.yaw_rad(),
+        wind_north,
+        wind_east,
+        wind_down,
+        sample.telemetry.altitude_m,
+        sample.telemetry.airspeed_mps,
+        sample.telemetry.groundspeed_mps,
+        angle_of_attack,
+        angle_of_attack_defined,
+        sideslip,
+        sideslip_defined,
+        sample.telemetry.roll_rad,
+        sample.telemetry.pitch_rad,
+        sample.telemetry.heading_rad,
+        sample.telemetry.composite_cg_position_ned_m.components()[0],
+        sample.telemetry.composite_cg_position_ned_m.components()[1],
+        sample.telemetry.composite_cg_position_ned_m.components()[2],
+    ]);
+    packed
 }
 
 fn snapshot_from_tick(
@@ -157,7 +1039,8 @@ fn snapshot_from_tick(
     let [attitude_w, attitude_x, attitude_y, attitude_z] =
         flight.attitude_body_to_ned().components();
     let actuators = state.actuator_state().deflections();
-    [
+    let mut packed = [0.0; SNAPSHOT_LENGTH];
+    packed[..20].copy_from_slice(&[
         state.tick_index() as f64,
         north,
         east,
@@ -178,14 +1061,15 @@ fn snapshot_from_tick(
         score_course_m,
         cross_track_m,
         contact_fraction,
-    ]
+    ]);
+    packed
 }
 
 fn snapshot_from_contact(
     interval_start_tick: u64,
     state: birdman_game_core::FlightState,
     actuator_state: birdman_game_core::ActuatorState,
-    score: DistanceScore,
+    score: Option<DistanceScore>,
     contact_fraction: f64,
 ) -> [f64; SNAPSHOT_LENGTH] {
     let [north, east, down] = state.datum_position_ned().components();
@@ -193,7 +1077,8 @@ fn snapshot_from_contact(
     let [attitude_w, attitude_x, attitude_y, attitude_z] =
         state.attitude_body_to_ned().components();
     let actuators = actuator_state.deflections();
-    [
+    let mut packed = [0.0; SNAPSHOT_LENGTH];
+    packed[..20].copy_from_slice(&[
         interval_start_tick as f64,
         north,
         east,
@@ -211,10 +1096,11 @@ fn snapshot_from_contact(
         actuators.pitch_rad(),
         actuators.yaw_rad(),
         1.0,
-        score.course_parallel_m(),
-        score.cross_track_m(),
+        score.map_or(0.0, DistanceScore::course_parallel_m),
+        score.map_or(0.0, DistanceScore::cross_track_m),
         contact_fraction,
-    ]
+    ]);
+    packed
 }
 
 fn score_from(
@@ -232,6 +1118,167 @@ fn synthetic_error(error: SyntheticFlightError) -> JsValue {
     JsValue::from_str(&format!("synthetic flight construction failed: {error:?}"))
 }
 
+fn configuration_error(error: birdman_game_format::ConfigurationError) -> JsValue {
+    JsValue::from_str(&format!("configuration resolution failed: {error:?}"))
+}
+
+fn playable_scenarios() -> Result<
+    (
+        birdman_game_core::AircraftModel,
+        [FlightScenario<'static>; 5],
+        birdman_game_core::BodyRateFeedbackConfig,
+    ),
+    JsValue,
+> {
+    let winds = [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.25, 0.0],
+        [-0.25, 0.5, 0.0],
+        [-0.5, 0.75, 0.0],
+        [-0.75, 1.0, 0.0],
+    ];
+    let mut aircraft = None;
+    let mut feedback = None;
+    let mut scenarios = Vec::with_capacity(5);
+    for wind in winds {
+        let fixture = SyntheticPlayableFlight::try_new_with_uniform_wind(10.5, wind)
+            .map_err(synthetic_error)?;
+        let (fixture_aircraft, scenario, fixture_feedback, _) = fixture.into_parts();
+        aircraft = Some(fixture_aircraft);
+        feedback = Some(fixture_feedback);
+        scenarios.push(scenario);
+    }
+    let scenarios: [FlightScenario<'static>; 5] = scenarios
+        .try_into()
+        .map_err(|_| JsValue::from_str("synthetic scenario catalog must contain five models"))?;
+    Ok((
+        aircraft.ok_or_else(|| JsValue::from_str("synthetic scenario catalog is empty"))?,
+        scenarios,
+        feedback.ok_or_else(|| JsValue::from_str("synthetic scenario catalog is empty"))?,
+    ))
+}
+
+fn controller_profiles(
+    feedback: birdman_game_core::BodyRateFeedbackConfig,
+) -> Result<[ControllerProfile; 4], JsValue> {
+    let shared = |authority| {
+        FbwAuthority::try_new(authority)
+            .map(ControlMode::Shared)
+            .map_err(|error| JsValue::from_str(&format!("invalid authority profile: {error:?}")))
+    };
+    Ok([
+        ControllerProfile::try_new(AssistanceLevel::Strong, ControlMode::Automatic, feedback, 1)
+            .map_err(configuration_error)?,
+        ControllerProfile::try_new(AssistanceLevel::Assisted, shared(0.5)?, feedback, 2)
+            .map_err(configuration_error)?,
+        ControllerProfile::try_new(AssistanceLevel::Light, shared(0.2)?, feedback, 3)
+            .map_err(configuration_error)?,
+        ControllerProfile::try_new(AssistanceLevel::Manual, ControlMode::Manual, feedback, 4)
+            .map_err(configuration_error)?,
+    ])
+}
+
+fn assistance_from_control_mode(mode: ControlMode) -> AssistanceLevel {
+    match mode {
+        ControlMode::Manual => AssistanceLevel::Manual,
+        ControlMode::Shared(_) => AssistanceLevel::Assisted,
+        ControlMode::Automatic => AssistanceLevel::Strong,
+    }
+}
+
+fn assistance_from_code(code: u32) -> Result<AssistanceLevel, JsValue> {
+    match code {
+        0 => Ok(AssistanceLevel::Strong),
+        1 => Ok(AssistanceLevel::Assisted),
+        2 => Ok(AssistanceLevel::Light),
+        3 => Ok(AssistanceLevel::Manual),
+        _ => Err(JsValue::from_str("assistance level code must be in [0, 3]")),
+    }
+}
+
+fn assistance_code(level: AssistanceLevel) -> u32 {
+    match level {
+        AssistanceLevel::Strong => 0,
+        AssistanceLevel::Assisted => 1,
+        AssistanceLevel::Light => 2,
+        AssistanceLevel::Manual => 3,
+    }
+}
+
+fn information_code(level: InformationLevel) -> u32 {
+    match level {
+        InformationLevel::Full => 0,
+        InformationLevel::Standard => 1,
+        InformationLevel::Minimal => 2,
+        InformationLevel::Realistic => 3,
+    }
+}
+
+fn information_from_record(
+    level: birdman_game_format::FlightRecordInformationDocument,
+) -> InformationLevel {
+    match level {
+        birdman_game_format::FlightRecordInformationDocument::Full => InformationLevel::Full,
+        birdman_game_format::FlightRecordInformationDocument::Standard => {
+            InformationLevel::Standard
+        }
+        birdman_game_format::FlightRecordInformationDocument::Minimal => InformationLevel::Minimal,
+        birdman_game_format::FlightRecordInformationDocument::Realistic => {
+            InformationLevel::Realistic
+        }
+    }
+}
+
+fn assistance_from_record(
+    level: birdman_game_format::FlightRecordAssistanceDocument,
+) -> AssistanceLevel {
+    match level {
+        birdman_game_format::FlightRecordAssistanceDocument::Strong => AssistanceLevel::Strong,
+        birdman_game_format::FlightRecordAssistanceDocument::Assisted => AssistanceLevel::Assisted,
+        birdman_game_format::FlightRecordAssistanceDocument::Light => AssistanceLevel::Light,
+        birdman_game_format::FlightRecordAssistanceDocument::Manual => AssistanceLevel::Manual,
+    }
+}
+
+fn weather_from_record(weather: birdman_game_format::FlightRecordWeatherDocument) -> WeatherClass {
+    match weather {
+        birdman_game_format::FlightRecordWeatherDocument::Calm => WeatherClass::Calm,
+        birdman_game_format::FlightRecordWeatherDocument::Mild => WeatherClass::Mild,
+        birdman_game_format::FlightRecordWeatherDocument::Typical => WeatherClass::Typical,
+        birdman_game_format::FlightRecordWeatherDocument::Challenging => WeatherClass::Challenging,
+        birdman_game_format::FlightRecordWeatherDocument::NearLimit => WeatherClass::NearLimit,
+    }
+}
+
+fn weather_from_code(code: u32) -> Result<WeatherClass, JsValue> {
+    match code {
+        0 => Ok(WeatherClass::Calm),
+        1 => Ok(WeatherClass::Mild),
+        2 => Ok(WeatherClass::Typical),
+        3 => Ok(WeatherClass::Challenging),
+        4 => Ok(WeatherClass::NearLimit),
+        _ => Err(JsValue::from_str("weather class code must be in [0, 4]")),
+    }
+}
+
+fn weather_code(weather: WeatherClass) -> u32 {
+    match weather {
+        WeatherClass::Calm => 0,
+        WeatherClass::Mild => 1,
+        WeatherClass::Typical => 2,
+        WeatherClass::Challenging => 3,
+        WeatherClass::NearLimit => 4,
+    }
+}
+
+fn game_session_error(error: birdman_game_core::GameSessionError) -> JsValue {
+    JsValue::from_str(&format!("game session operation failed: {error:?}"))
+}
+
+fn flight_record_format_error(error: birdman_game_format::FlightRecordFormatError) -> JsValue {
+    JsValue::from_str(&format!("flight record format error: {error:?}"))
+}
+
 fn validate_axes(axes: [f64; 3]) -> Result<(), &'static str> {
     if axes
         .into_iter()
@@ -242,9 +1289,143 @@ fn validate_axes(axes: [f64; 3]) -> Result<(), &'static str> {
     Ok(())
 }
 
+fn control_mode_from_code(code: u32) -> Result<ControlMode, JsValue> {
+    match code {
+        0 => Ok(ControlMode::Manual),
+        1 => FbwAuthority::try_new(0.5)
+            .map(ControlMode::Shared)
+            .map_err(|error| JsValue::from_str(&format!("invalid FBW authority: {error:?}"))),
+        2 => Ok(ControlMode::Automatic),
+        _ => Err(JsValue::from_str("control mode must be 0, 1, or 2")),
+    }
+}
+
+fn pause_reason_from_code(code: u32) -> Result<PauseReason, JsValue> {
+    match code {
+        0 => Ok(PauseReason::Manual),
+        1 => Ok(PauseReason::DocumentHidden),
+        2 => Ok(PauseReason::TrackingSuspended),
+        3 => Ok(PauseReason::ProcessingDelay),
+        _ => Err(JsValue::from_str("pause reason must be in [0, 3]")),
+    }
+}
+
+fn briefing_failure_from_code(code: u32) -> Result<BriefingFailure, JsValue> {
+    match code {
+        0 => Ok(BriefingFailure::AssetUnavailable),
+        1 => Ok(BriefingFailure::CapacityUnavailable),
+        2 => Ok(BriefingFailure::ScenarioUnavailable),
+        3 => Ok(BriefingFailure::InvalidConfiguration),
+        _ => Err(JsValue::from_str("briefing failure code must be in [0, 3]")),
+    }
+}
+
+fn phase_code(phase: SessionPhase) -> u32 {
+    match phase {
+        SessionPhase::Title => 0,
+        SessionPhase::FlightSetup => 1,
+        SessionPhase::BriefingPreparing => 2,
+        SessionPhase::BriefingReady => 3,
+        SessionPhase::BriefingFailed { .. } => 8,
+        SessionPhase::Countdown { .. } => 4,
+        SessionPhase::FlightRunning => 5,
+        SessionPhase::FlightPaused { .. } => 6,
+        SessionPhase::Result => 7,
+        SessionPhase::Replay => 9,
+    }
+}
+
+fn packed_session_snapshot(
+    snapshot: SessionSnapshot,
+    telemetry: Option<birdman_game_core::FlightTelemetry>,
+) -> [f64; SNAPSHOT_LENGTH] {
+    let packed = match snapshot {
+        SessionSnapshot::Result(result) => {
+            let mut packed = match result.state {
+                SessionTerminalState::WaterContact(sample) => {
+                    let terminal = sample.state();
+                    let contact_fraction = if result.reason == SessionEndReason::WaterContact {
+                        sample.fraction()
+                    } else {
+                        -1.0
+                    };
+                    let mut packed = snapshot_from_contact(
+                        sample.interval_start_tick(),
+                        terminal.flight_state(),
+                        terminal.actuator_state(),
+                        result.score,
+                        contact_fraction,
+                    );
+                    packed[16] = end_reason_code(result.reason) as f64;
+                    packed
+                }
+                SessionTerminalState::Tick(state) => {
+                    snapshot_from_tick(state, end_reason_code(result.reason), 0.0, 0.0, -1.0)
+                }
+            };
+            if let Some(score) = result.score {
+                packed[17] = score.course_parallel_m();
+                packed[18] = score.cross_track_m();
+            }
+            packed
+        }
+        SessionSnapshot::FlightRunning { state, .. }
+        | SessionSnapshot::FlightPaused { state, .. } => {
+            snapshot_from_tick(state, 0, 0.0, 0.0, -1.0)
+        }
+        SessionSnapshot::Title
+        | SessionSnapshot::FlightSetup
+        | SessionSnapshot::BriefingPreparing { .. }
+        | SessionSnapshot::BriefingReady { .. }
+        | SessionSnapshot::BriefingFailed { .. }
+        | SessionSnapshot::Countdown { .. }
+        | SessionSnapshot::Replay { .. } => [0.0; SNAPSHOT_LENGTH],
+    };
+    append_telemetry(packed, telemetry)
+}
+
+fn append_telemetry(
+    mut packed: [f64; SNAPSHOT_LENGTH],
+    telemetry: Option<birdman_game_core::FlightTelemetry>,
+) -> [f64; SNAPSHOT_LENGTH] {
+    if let Some(telemetry) = telemetry {
+        let [wind_north, wind_east, wind_down] = telemetry.wind_velocity_ned_mps.components();
+        packed[20..31].copy_from_slice(&[
+            telemetry.altitude_m,
+            telemetry.airspeed_mps,
+            telemetry.groundspeed_mps,
+            wind_north,
+            wind_east,
+            wind_down,
+            telemetry.angle_of_attack_rad.unwrap_or(0.0),
+            telemetry.sideslip_angle_rad.unwrap_or(0.0),
+            telemetry.roll_rad,
+            telemetry.pitch_rad,
+            telemetry.heading_rad,
+        ]);
+        packed[31] = 1.0;
+    }
+    let contact_fraction = packed[19].max(0.0);
+    packed[32] = (packed[0] + contact_fraction) / f64::from(birdman_game_core::PHYSICS_HZ);
+    packed
+}
+
+fn end_reason_code(reason: SessionEndReason) -> u8 {
+    match reason {
+        SessionEndReason::WaterContact => 1,
+        SessionEndReason::TimeLimit => 2,
+        SessionEndReason::OutOfValidEnvelope => 3,
+        SessionEndReason::ManualAbort => 4,
+        SessionEndReason::FatalSimulationError => 5,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SNAPSHOT_LENGTH, SyntheticFlightSession, validate_axes};
+    use super::{
+        GameSessionBridge, PLAYBACK_SAMPLE_LENGTH, RECORD_SAMPLE_LENGTH, SNAPSHOT_LENGTH,
+        SyntheticFlightSession, flight_record_sample_layout, validate_axes,
+    };
     use birdman_game_core::{
         BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, PilotPositionTarget,
         SurfaceCommands, SyntheticPlayableFlight,
@@ -265,6 +1446,135 @@ mod tests {
     }
 
     #[test]
+    fn packed_snapshot_layout_matches_the_wasm_payload_length() {
+        assert_eq!(
+            GameSessionBridge::snapshot_layout().split(',').count(),
+            SNAPSHOT_LENGTH
+        );
+        assert_eq!(
+            GameSessionBridge::flight_record_playback_sample_layout()
+                .split(',')
+                .count(),
+            PLAYBACK_SAMPLE_LENGTH
+        );
+        assert_eq!(
+            GameSessionBridge::flight_record_sample_layout()
+                .split(',')
+                .count(),
+            RECORD_SAMPLE_LENGTH
+        );
+        assert_eq!(
+            GameSessionBridge::flight_record_summary_layout()
+                .split(',')
+                .count(),
+            12
+        );
+    }
+
+    #[test]
+    fn bridge_exposes_the_rust_owned_flight_record_and_finalization() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.prepare().unwrap();
+        assert_eq!(bridge.flight_record_sample_count(), 0);
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+
+        assert_eq!(bridge.flight_record_sample_count(), 1);
+        let initial = bridge.flight_record_sample(0).unwrap();
+        assert_eq!(initial.len(), RECORD_SAMPLE_LENGTH);
+        assert_eq!(initial[0], 0.0);
+        assert_eq!(
+            bridge.flight_record_samples_packed().unwrap().len(),
+            RECORD_SAMPLE_LENGTH
+        );
+        let playback = bridge.flight_record_sample_at(0, 0.0).unwrap();
+        assert_eq!(playback.len(), PLAYBACK_SAMPLE_LENGTH);
+        assert_eq!(playback[0], 0.0);
+        let summary = bridge.flight_record_summary().unwrap();
+        assert_eq!(summary.len(), 12);
+        assert_eq!(summary[0], 1.0);
+        assert_eq!(initial[1], 0.0);
+        assert_eq!(initial[34], 0.0);
+        assert!(bridge.flight_record_finalization().is_empty());
+
+        bridge.advance_tick(0.1, 0.2, 0.0, 0.1).unwrap();
+        assert_eq!(bridge.flight_record_sample_count(), 2);
+        let transition = bridge.flight_record_sample(1).unwrap();
+        assert_eq!(transition.len(), RECORD_SAMPLE_LENGTH);
+        assert_eq!(transition[0], 1.0);
+        assert_eq!(transition[34], 1.0);
+        assert_eq!(transition[35], 0.1 * 0.04);
+
+        bridge.abort().unwrap();
+        let finalization = bridge.flight_record_finalization();
+        assert_eq!(finalization.len(), 7);
+        assert_eq!(finalization[0], 4.0);
+        assert_eq!(finalization[1], 1.0);
+        assert_eq!(finalization[2], 1.0);
+        assert_eq!(finalization[4], 1.0);
+        let encoded = bridge.export_flight_record_json().unwrap();
+        let decoded =
+            birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
+        assert_eq!(decoded.samples.len(), 2);
+        assert!(decoded.finalization.is_some());
+        let mut archived = GameSessionBridge::new(0).unwrap();
+        archived.open_archived_flight_record(&encoded).unwrap();
+        assert_eq!(archived.phase_code(), 9);
+        assert!(archived.is_archived_replay());
+        assert_eq!(archived.flight_record_sample_count(), 2);
+        assert_eq!(
+            archived.flight_record_samples_packed().unwrap(),
+            bridge.flight_record_samples_packed().unwrap()
+        );
+        assert_eq!(
+            archived.flight_record_sample_at(1, 0.0).unwrap(),
+            bridge.flight_record_sample_at(1, 0.0).unwrap()
+        );
+        assert_eq!(
+            archived.flight_record_summary().unwrap(),
+            bridge.flight_record_summary().unwrap()
+        );
+        assert_eq!(
+            archived.flight_record_finalization(),
+            bridge.flight_record_finalization()
+        );
+        assert_eq!(
+            archived.configuration_metadata().unwrap(),
+            bridge.configuration_metadata().unwrap()
+        );
+        bridge.enter_replay().unwrap();
+        assert_eq!(bridge.phase_code(), 9);
+        assert_eq!(
+            bridge.flight_record_sample_at(1, 0.0).unwrap().len(),
+            PLAYBACK_SAMPLE_LENGTH
+        );
+        bridge.leave_replay().unwrap();
+        assert_eq!(bridge.phase_code(), 7);
+        assert_eq!(
+            flight_record_sample_layout().split(',').count(),
+            RECORD_SAMPLE_LENGTH
+        );
+    }
+
+    #[test]
+    fn analysis_wind_grid_queries_the_sealed_scenario_without_advancing_flight() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.prepare().unwrap();
+        let before = bridge.phase_code();
+        let grid = bridge
+            .flight_analysis_wind_grid_packed(-10.0, -10.0, 10.0, 5.0)
+            .unwrap();
+        assert_eq!(grid.len(), 125);
+        assert_eq!(grid[0..5], [-10.0, -10.0, 0.0, 0.0, 0.0]);
+        assert_eq!(grid[120..125], [10.0, 10.0, 0.0, 0.0, 0.0]);
+        assert_eq!(bridge.phase_code(), before);
+    }
+
+    #[test]
     fn synthetic_session_finishes_with_contact_and_stable_terminal_snapshot() {
         let mut session = SyntheticFlightSession::new(0).unwrap();
         let mut snapshot = session.snapshot();
@@ -277,6 +1587,7 @@ mod tests {
         assert_eq!(snapshot[16], 1.0);
         assert_eq!(snapshot[0].fract(), 0.0);
         assert!(snapshot[19].is_finite() && (0.0..=1.0).contains(&snapshot[19]));
+        assert!((snapshot[32] - (snapshot[0] + snapshot[19]) / 100.0).abs() < 1.0e-12);
         let terminal = session.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(terminal, snapshot);
     }
@@ -303,6 +1614,121 @@ mod tests {
                 .zip(&neutral_snapshot[7..11])
                 .any(|(controlled, neutral)| (controlled - neutral).abs() > 1.0e-6)
         );
+    }
+
+    #[test]
+    fn game_session_bridge_owns_scene_lifecycle_and_rejects_ticks_outside_flight() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        assert_eq!(bridge.phase_code(), 0);
+        assert_eq!(bridge.control_mode_code(), 0);
+
+        bridge.open_setup().unwrap();
+        assert_eq!(bridge.phase_code(), 1);
+        bridge.set_control_mode(1).unwrap();
+        assert_eq!(bridge.control_mode_code(), 1);
+        bridge.set_control_mode(0).unwrap();
+        bridge.prepare().unwrap();
+        assert_eq!(bridge.phase_code(), 2);
+        bridge.fail_briefing(0).unwrap();
+        assert_eq!(bridge.phase_code(), 8);
+        bridge.retry_briefing().unwrap();
+        assert_eq!(bridge.phase_code(), 2);
+        bridge.cancel_briefing().unwrap();
+        assert_eq!(bridge.phase_code(), 1);
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(2).unwrap();
+        assert_eq!(bridge.advance_countdown().unwrap(), 1);
+        assert_eq!(bridge.phase_code(), 4);
+        assert_eq!(bridge.advance_countdown().unwrap(), 0);
+        let initial = bridge.launch().unwrap();
+        assert_eq!(bridge.phase_code(), 5);
+        assert_eq!(initial[0], 0.0);
+
+        let next = bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+        assert_eq!(next[0], 1.0);
+        bridge.pause(0).unwrap();
+        assert_eq!(bridge.phase_code(), 6);
+        bridge.pause(1).unwrap();
+        bridge.clear_pause_reason(1).unwrap();
+        assert_eq!(bridge.phase_code(), 6);
+        bridge.resume().unwrap();
+        bridge.pause(1).unwrap();
+        bridge.abort().unwrap();
+        assert_eq!(bridge.phase_code(), 7);
+        bridge.retry().unwrap();
+        assert_eq!(bridge.phase_code(), 3);
+        bridge.open_setup().unwrap();
+        bridge.return_to_title().unwrap();
+        assert_eq!(bridge.phase_code(), 0);
+    }
+
+    #[test]
+    fn game_session_setup_selection_changes_the_flight_controller_mode() {
+        fn first_tick_for_mode(mode: u32) -> Vec<f64> {
+            let mut bridge = GameSessionBridge::new(0).unwrap();
+            bridge.open_setup().unwrap();
+            bridge.set_control_mode(mode).unwrap();
+            bridge.prepare().unwrap();
+            bridge.mark_briefing_ready().unwrap();
+            bridge.start_countdown(1).unwrap();
+            bridge.advance_countdown().unwrap();
+            bridge.launch().unwrap();
+            let mut snapshot = Vec::new();
+            for _ in 0..20 {
+                snapshot = bridge.advance_tick(0.0, 0.5, 0.0, 0.0).unwrap();
+            }
+            snapshot
+        }
+
+        let manual = first_tick_for_mode(0);
+        let shared = first_tick_for_mode(1);
+        let automatic = first_tick_for_mode(2);
+        assert_ne!(manual[14], shared[14]);
+        assert_ne!(shared[14], automatic[14]);
+        assert_ne!(manual[14], automatic[14]);
+    }
+
+    #[test]
+    fn setup_axes_resolve_versioned_weather_and_survive_result() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.set_difficulty_preset(1).unwrap();
+        assert_eq!(bridge.difficulty_preset_code(), 1);
+        assert_eq!(bridge.information_level_code(), 1);
+        assert_eq!(bridge.assistance_level_code(), 1);
+        assert_eq!(bridge.weather_class_code(), 2);
+
+        bridge.set_information_level(2).unwrap();
+        bridge.set_assistance_level(3).unwrap();
+        bridge.set_weather_class(4).unwrap();
+        assert_eq!(bridge.difficulty_preset_code(), 4);
+        assert_eq!(bridge.information_level_code(), 2);
+        assert_eq!(bridge.assistance_level_code(), 3);
+        assert_eq!(bridge.weather_class_code(), 4);
+
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        let resolved = bridge.configuration_metadata().unwrap();
+        assert_eq!(&resolved[..], &[4, 2, 3, 4, 1, 5, 1, 1, 5, 4, 0, 0]);
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        let launch = bridge.launch().unwrap();
+        assert!(launch[20] > 0.0);
+        assert!(launch[21] > 0.0);
+        assert!(launch[22] > 0.0);
+        assert!(launch[26].is_finite());
+        bridge.abort().unwrap();
+        assert_eq!(bridge.phase_code(), 7);
+        assert_eq!(bridge.configuration_metadata().unwrap(), resolved);
+        let result_identity = bridge.session.snapshot().result().unwrap().scenario;
+        assert_eq!(result_identity.scenario_id, 5);
+        assert_eq!(result_identity.environment_version, 5);
+        bridge.open_setup().unwrap();
+        assert!(bridge.session.configuration_identity().is_none());
+        assert!(bridge.resolved_configuration.is_none());
+        bridge.return_to_title().unwrap();
+        assert!(bridge.session.configuration_identity().is_none());
     }
 
     #[test]

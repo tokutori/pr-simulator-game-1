@@ -10,7 +10,13 @@ keyboard / gamepad、manual / shared / automatic、FBWを備える計画であ�
 
 BPG-014のScreen表示shell、BPG-015のnative WebXR sessionとVR操作、BPG-016のPhone VR stereo・端末姿勢tracking・head-gaze・Gamepad操作を実装し、自動試験を追加した。Boot画面でScreen表示を確認できる。実HMD・スマートフォン・browser・viewerの組合せによる表示・操作確認は未実施であり、各受入Issueを完了扱いしない。
 
-BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜028ではRust coreにauthority mixer、actuator dynamics、pilot position policy、全RK4段階への舵状態伝播、100 Hzの決定的flight tickを実装した。BPG-029では水面接触fractionと同時刻の終端state補間を実装し、BPG-030では接触時に終端sampleだけを返すtick統合を追加した。BPG-031ではRust coreに明示gainを用いるbody-rate feedback primitiveを追加した。BPG-032ではRust coreにversioned course-distance scoreを実装した。BPG-033ではCG基準launch条件をdatum基準FlightStateへ変換する。BPG-034では固定tick input列を再生し、contact・score・TimeLimitを一つのRust operationで確定する。Rust coreの`FlightScenario`はlaunch・機体・空力・空間風・actuator・contact・score設定を統合する。BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007のWASM browserは別の`SyntheticPlayableFlight`を使う。この合成滑空fixtureは約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持ち、neutral入力で約273 m・約28秒の飛行をRust試験で確認する。係数はplayability用であり、実機・公開機体の性能やcontroller tuningを示さない。BPG-007ではkeyboard/gamepad入力、fixed-tick更新、HUD、fractional water-contactをRust/WASMとScreen表示へ接続した。生成WASMを用いるNode統合試験、neutral滑空試験、入力・描画契約試験は成功している。実ブラウザー上のWebGL操作受入は未確認であり、BPG-007の完了前に確認する。GameSession遷移、正式なgameplay規則、FlightRecordは後続BPGで実装する。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。各Sceneのゲーム機能、実環境データ、Pages公開も未実装である。Boot UIのTEA状態整理とbackend切替失敗の修正はBPG-023で行う。
+BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜034ではRust coreにauthority mixer、actuator dynamics、pilot position policy、決定的flight tick、fractional water contact、score、launch変換、固定tick flight sequenceを追加した。Rust coreの`FlightScenario`はlaunch・機体・空力・空間風・actuator・contact・score設定を統合する。
+
+BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007のWASM browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約220 m・約23秒、100 msのpilot-position keyboard入力を与えたManual flightで約193 mの飛行を確認する。このfixtureの係数はplayability用であり、実機性能やcontroller tuningを示さない。
+
+現在の作業差分では、keyboard/gamepad入力、fixed-tick更新、HUD、fractional water-contactに加え、Rust `GameSession`のTitle・Setup・Briefing・Countdown・Flight・Result・Replay遷移をWASM／Screen UIへ接続している。SetupではInformation・Assistance・Weatherの各軸とpresetを選択でき、解決結果をRustのflight制御・scenarioへ反映する。Rust coreは初期sample・tick入力・終端状態を記録し、`birdman-game-format`のJSON schema version 1とWASM exportを提供する。WebはResult確定時にIndexedDBへ保存し、Rust由来summaryを表示する。保存recordはTitleに最新3件を表示し、選択時はRust GameSessionでarchiveを検証してReplayへ遷移する。Analysis graphは水平map、altitude/speed系列、共有cursor、固定高度の5×5 wind queryを備える。模式的な湖岸・platform・地物は非地理データとして管理する。Replayは確定recordのseek、Result Analysis cursor同期、Rust補間pose、連続再生・速度選択、Screen上のPilot/Chase選択を実装した。追加Replay rig、生成WASM宣言の更新、実ブラウザー受入は未完了であり、BPG-007は未完了である。
+
+FlightRecordの永続record読出しUI、追加Replay rig、Attract、実環境データ、Pages公開は後続BPGで実装する。Replayには連続再生・速度選択とScreen上のPilot/Chase切替がある。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境
@@ -34,7 +40,7 @@ cargo run -p birdman-game-cli --locked -- verify-flight all
 npm run dev
 ```
 
-Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。GameSessionを含む完全なgameplay loop、実ブラウザー上のWebGL操作確認、実機受入は未完了である。
+Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。現行差分にはGameSessionを含む基本Scene遷移があるが、生成bindingの更新、実ブラウザー上のWebGL操作確認、全gameplay loopの受入、実機検証は未完了である。
 
 ## 設計資料
 
@@ -53,4 +59,4 @@ Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認で�
 ソースコードはMIT License。第三者データは[個別の利用条件](THIRD_PARTY_DATA.md)を維持する。
 
 開発は全Scene共通のScreen/VR表示基盤を早期に確立し、簡易worldでゲーム骨格と記録・Replayを完成させる。
-実環境データと地形・水面・空の高品質化はその後に実施する。BPG IDは識別子であり、数値順は実装順を表さない。
+実環境データと景観品質はその後に実施する。湖面は機体の速度・姿勢を把握する重要な視覚的手掛かりであるため、水面描画を地形・会場および空・雲より先行させる。BPG IDは識別子であり、数値順は実装順を表さない。

@@ -1,4 +1,4 @@
-export const FLIGHT_SNAPSHOT_LENGTH = 20;
+export const FLIGHT_SNAPSHOT_LENGTH = 33;
 
 export interface FlightSnapshot {
   readonly tick: number;
@@ -8,10 +8,28 @@ export interface FlightSnapshot {
   readonly pilotPositionMeters: number;
   readonly pilotVelocityMetersPerSecond: number;
   readonly actuatorDeflectionRadians: Readonly<{ roll: number; pitch: number; yaw: number }>;
-  readonly terminal: "airborne" | "water-contact" | "time-limit";
+  readonly terminal:
+    | "airborne"
+    | "water-contact"
+    | "time-limit"
+    | "out-of-valid-envelope"
+    | "manual-abort"
+    | "fatal-simulation-error";
   readonly scoreCourseMeters: number;
   readonly crossTrackMeters: number;
   readonly contactFraction: number | null;
+  readonly flightTimeSeconds: number;
+  readonly telemetry: Readonly<{
+    altitudeMeters: number;
+    airspeedMetersPerSecond: number;
+    groundspeedMetersPerSecond: number;
+    windVelocityNedMetersPerSecond: Readonly<{ north: number; east: number; down: number }>;
+    angleOfAttackRadians: number | null;
+    sideslipAngleRadians: number | null;
+    rollRadians: number;
+    pitchRadians: number;
+    headingRadians: number;
+  }> | null;
 }
 
 export function parseFlightSnapshot(values: ArrayLike<number>): FlightSnapshot {
@@ -24,28 +42,16 @@ export function parseFlightSnapshot(values: ArrayLike<number>): FlightSnapshot {
   }
 
   const [
-    tick,
-    north,
-    east,
-    down,
-    velocityNorth,
-    velocityEast,
-    velocityDown,
-    attitudeW,
-    attitudeX,
-    attitudeY,
-    attitudeZ,
-    pilotPositionMeters,
-    pilotVelocityMetersPerSecond,
-    actuatorRoll,
-    actuatorPitch,
-    actuatorYaw,
-    terminalCode,
-    scoreCourseMeters,
-    crossTrackMeters,
-    contactFraction
+    tick, north, east, down, velocityNorth, velocityEast, velocityDown,
+    attitudeW, attitudeX, attitudeY, attitudeZ, pilotPositionMeters,
+    pilotVelocityMetersPerSecond, actuatorRoll, actuatorPitch, actuatorYaw,
+    terminalCode, scoreCourseMeters, crossTrackMeters, contactFraction,
+    altitudeMeters, airspeedMetersPerSecond, groundspeedMetersPerSecond,
+    windNorth, windEast, windDown, angleOfAttackRadians, sideslipAngleRadians,
+    rollRadians, pitchRadians, headingRadians, telemetryAvailable, flightTimeSeconds
   ] = snapshot as [number, number, number, number, number, number, number, number, number, number,
-    number, number, number, number, number, number, number, number, number, number];
+    number, number, number, number, number, number, number, number, number, number,
+    number, number, number, number, number, number, number, number, number, number, number, number, number];
   const terminal = terminalFromCode(terminalCode);
   if (!Number.isInteger(tick) || tick < 0) throw new RangeError("Flight tick must be a nonnegative integer");
   if (terminal === "water-contact" && (contactFraction < 0 || contactFraction > 1)) {
@@ -53,6 +59,9 @@ export function parseFlightSnapshot(values: ArrayLike<number>): FlightSnapshot {
   }
   if (terminal !== "water-contact" && contactFraction !== -1) {
     throw new RangeError("Non-contact snapshots must use the sentinel contact fraction");
+  }
+  if (telemetryAvailable !== 0 && telemetryAvailable !== 1) {
+    throw new RangeError("Telemetry availability must be encoded as 0 or 1");
   }
   const attitudeNorm = Math.hypot(attitudeW, attitudeX, attitudeY, attitudeZ);
   if (Math.abs(attitudeNorm - 1) > 1e-8) throw new RangeError("Flight attitude must be a unit quaternion");
@@ -68,7 +77,19 @@ export function parseFlightSnapshot(values: ArrayLike<number>): FlightSnapshot {
     terminal,
     scoreCourseMeters,
     crossTrackMeters,
-    contactFraction: terminal === "water-contact" ? contactFraction : null
+    contactFraction: terminal === "water-contact" ? contactFraction : null,
+    flightTimeSeconds,
+    telemetry: telemetryAvailable === 1 ? Object.freeze({
+      altitudeMeters,
+      airspeedMetersPerSecond,
+      groundspeedMetersPerSecond,
+      windVelocityNedMetersPerSecond: Object.freeze({ north: windNorth, east: windEast, down: windDown }),
+      angleOfAttackRadians: airspeedMetersPerSecond > 0 ? angleOfAttackRadians : null,
+      sideslipAngleRadians: airspeedMetersPerSecond > 0 ? sideslipAngleRadians : null,
+      rollRadians,
+      pitchRadians,
+      headingRadians
+    }) : null
   });
 }
 
@@ -77,6 +98,9 @@ function terminalFromCode(code: number): FlightSnapshot["terminal"] {
     case 0: return "airborne";
     case 1: return "water-contact";
     case 2: return "time-limit";
+    case 3: return "out-of-valid-envelope";
+    case 4: return "manual-abort";
+    case 5: return "fatal-simulation-error";
     default: throw new RangeError(`Unknown flight terminal code: ${String(code)}`);
   }
 }

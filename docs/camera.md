@@ -9,6 +9,7 @@
 $r_{eye}^B=r_{eye,0}^B+(x_p-x_{p,0},0,0)$ とする。Replayも記録された実身体位置を使用する。
 forward vectorだけではroll方向が決まらないため、正規直交basisまたは単位quaternionを用いる。
 PilotEyePointは左右眼の中点を表し、眼別offsetはpresentation backendが一度だけ適用する。
+Pilot viewにはnoseとwing/cockpit横線をbody-fixedな姿勢基準として含め、外界の地平線・対岸稜線と同時に見える構図を保つ。可動camera装飾や過度な視野遮蔽でこの基準を失わない。
 
 ```math
 T_{world,view}=T_{world,aircraft}\,T_{aircraft,pilot}\,T_{pilot,head}\,T_{head,eye}
@@ -20,6 +21,9 @@ engine非依存の数値poseを生成し、Three.js等のcameraや数学型を�
 機体姿勢を直接反映し、強い追従遅延を追加しない。
 head poseとstereo/XR変換は `presentation.md` に従う。
 景観・操作panel・cursorの参照系は `vr-spaces.md` に従う。
+
+BPG-007のsynthetic aircraftは `SYNTHETIC_PILOT_EYE_POINT` を明示的なview metadataとして使用する。
+実機・別機体modelを追加する際は、各modelのPilotEyePoint metadataへ置き換える。
 
 Informationに許可cameraとvisual stabilization profileを含める。
 Fullでは明示設定でchaseを許可できる。Standard/Minimal/RealisticはPilotのみとする。
@@ -48,6 +52,7 @@ backend間で同じ設定を再現できない場合はFlightSetupで非対応�
 
 AutoはCameraDirectorを選択するmodeであり、独立したcamera projectionではない。
 ReplayはAutoと手動rigを選択でき、手動選択時には自動cutを停止する。
+初期Replay実装はScreen上でPilot/Chaseを手動選択し、Chase poseはengine非依存のFRD座標で定義する。XR/Phone VRではPilotを維持する。Orbitおよび定点rigはBPG-022以降で追加する。
 CameraModeごとのGameSceneを作らない。実装は `web/src/render/camera/` に配置する。
 定点rigの位置とIDはworld assetの `camera_points` に保存し、origin/version/hashを共有する。
 Platform/shore/telephotoのtarget追従は共通rigのパラメータとして扱う。
@@ -90,6 +95,6 @@ Replay/Attractの自動cutはDesktopを基本対象とし、XR/Phoneでは明示
 
 ## 検証
 
-Pilotの位置offset、basis、機体回転合成、IPD二重加算、camera許可集合、視覚補助の条件保存を検証する。
+Pilotの位置offset、basis、機体回転合成、IPD二重加算、camera許可集合、視覚補助の条件保存を検証する。cockpit/nose/wingのbody-fixed方向と地平線の相対姿勢がpitch・rollに一致することも確認する。
 Cinematicは30/60/120 FPS、seek・巻戻し、手動選択、短いrecord、定点追従、最短shot時間を検証する。
 camera変更がphysics state・保存済みFlight recordを変更しないことを確認する。

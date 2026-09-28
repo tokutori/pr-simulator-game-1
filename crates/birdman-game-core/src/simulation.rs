@@ -99,6 +99,21 @@ impl FlightFeedbackInput {
             pilot_position_target,
         }
     }
+
+    /// Returns the device-independent pilot surface command.
+    pub const fn pilot_surface_commands(self) -> SurfaceCommands {
+        self.pilot_surface_commands
+    }
+
+    /// Returns the desired body angular rate supplied to FBW.
+    pub const fn target_angular_rate_body(self) -> crate::BodyVector {
+        self.target_angular_rate_body
+    }
+
+    /// Returns the pilot longitudinal position target.
+    pub const fn pilot_position_target(self) -> PilotPositionTarget {
+        self.pilot_position_target
+    }
 }
 
 /// Fixed flight-control settings used for all ticks in one sealed flight.

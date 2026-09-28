@@ -1,0 +1,75 @@
+import { describe, expect, it } from "vitest";
+import {
+  FlightRecordRepository,
+  type FlightRecordPersistencePort,
+  type StoredFlightRecord,
+  type StoredFlightRecordSummary
+} from "../../web/src/game/flight-record-store.js";
+
+class MemoryFlightRecordPersistence implements FlightRecordPersistencePort {
+  private readonly records: StoredFlightRecord[] = [];
+
+  add(json: string, savedAt: string): Promise<number> {
+    const id = this.records.length + 1;
+    this.records.push(Object.freeze({ id, savedAt, json }));
+    return Promise.resolve(id);
+  }
+
+  get(id: number): Promise<StoredFlightRecord | null> {
+    return Promise.resolve(this.records.find((record) => record.id === id) ?? null);
+  }
+
+  getAll(): Promise<readonly StoredFlightRecordSummary[]> {
+    return Promise.resolve(this.records.map(({ id, savedAt }) => Object.freeze({ id, savedAt })));
+  }
+}
+
+const finalizedRecord = JSON.stringify({
+  schema_version: 1,
+  header: { scenario_id: 1 },
+  samples: [{ tick_index: 0 }],
+  finalization: { reason: "manual_abort" }
+});
+
+describe("FlightRecordRepository", () => {
+  it("persists the Rust-exported finalized document and returns records newest first", async () => {
+    const persistence = new MemoryFlightRecordPersistence();
+    const repository = new FlightRecordRepository(persistence, () => new Date("2026-09-28T00:00:00.000Z"));
+    const first = await repository.saveFrom({ export_flight_record_json: () => finalizedRecord });
+    const second = await repository.saveFrom({ export_flight_record_json: () => finalizedRecord });
+
+    expect(first).toMatchObject({ id: 1, json: finalizedRecord });
+    expect(second.id).toBe(2);
+    expect(await repository.load(1)).toBe(finalizedRecord);
+    const entries = await repository.list();
+    expect(entries.map((record) => record.id)).toEqual([2, 1]);
+    expect(entries[0]).toEqual({ id: 2, savedAt: "2026-09-28T00:00:00.000Z" });
+    expect(entries[0]).not.toHaveProperty("json");
+  });
+
+  it.each([
+    "not-json",
+    JSON.stringify({ schema_version: 2, header: {}, samples: [{}], finalization: {} }),
+    JSON.stringify({ schema_version: 1, header: [], samples: [{}], finalization: {} }),
+    JSON.stringify({ schema_version: 1, header: {}, samples: [], finalization: {} }),
+    JSON.stringify({ schema_version: 1, header: {}, samples: [{}], finalization: null })
+  ])("rejects invalid or incomplete documents before storage", async (json) => {
+    const persistence = new MemoryFlightRecordPersistence();
+    const repository = new FlightRecordRepository(persistence);
+    await expect(repository.saveFrom({ export_flight_record_json: () => json })).rejects.toThrow();
+    expect(await repository.list()).toEqual([]);
+  });
+
+  it("rejects documents above the Rust format size limit", async () => {
+    const persistence = new MemoryFlightRecordPersistence();
+    const repository = new FlightRecordRepository(persistence);
+    const oversized = `${finalizedRecord}${" ".repeat(16 * 1024 * 1024)}`;
+    await expect(repository.saveFrom({ export_flight_record_json: () => oversized })).rejects.toThrow(RangeError);
+    expect(await repository.list()).toEqual([]);
+  });
+
+  it("rejects invalid record identifiers", async () => {
+    const repository = new FlightRecordRepository(new MemoryFlightRecordPersistence());
+    await expect(repository.load(0)).rejects.toThrow(RangeError);
+  });
+});

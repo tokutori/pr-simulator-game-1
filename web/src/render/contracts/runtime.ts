@@ -27,7 +27,11 @@ export interface BackendFrame {
 export interface FlightRenderPose {
   readonly datumPositionNed: Readonly<{ north: number; east: number; down: number }>;
   readonly attitudeBodyToNed: Readonly<{ w: number; x: number; y: number; z: number }>;
+  readonly pilotPositionMeters: number;
+  readonly initialPilotPositionMeters: number;
 }
+
+export type FlightCameraMode = "pilot" | "chase";
 
 export interface PanelCursor {
   readonly point: Vec2;
@@ -45,6 +49,7 @@ export interface RendererAdapter {
   stopLoop(): void;
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;
+  setFlightCameraMode(mode: FlightCameraMode): void;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;

@@ -14,7 +14,7 @@
 
 CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
-BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`とブラウザー用`SyntheticPlayableFlight`は分離する。playable fixtureは無風・neutral入力で150–300 mを15–35秒で飛行するRust core受入試験を持つ。これらの係数はplayability用であり、実機性能を示さない。
+BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`とブラウザー用`SyntheticPlayableFlight`は分離する。playable fixtureは無風・neutral入力で200–300 mを15–35秒で飛行するRust core受入試験を持つ。WASM browser integrationはManual modeで100 msのpilot-position keyboard入力後に180–230 mで着水することも検証する。これらの係数はplayability用であり、実機性能を示さない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
 
 ### CLI検証flight

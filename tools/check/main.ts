@@ -10,7 +10,7 @@ const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-
 if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata");
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
-  ["birdman-game-format", ["birdman-game-core"]],
+  ["birdman-game-format", ["birdman-game-core", "serde", "serde_json"]],
   ["birdman-game-cli", ["birdman-game-core", "birdman-game-format"]],
   ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "wasm-bindgen"]]
 ]);
