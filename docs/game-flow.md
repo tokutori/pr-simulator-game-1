@@ -16,10 +16,10 @@ world差し替え・context復旧・終了時には所有者がresourceを明示
 |---|---|---|
 | Boot | WebがWASM・最低限asset・rendererを初期化 | 成功→Title、失敗→Boot内のerror状態 |
 | Title | 表示shell。AttractはRust sessionの独立demo recordを参照 | Flight→FlightSetup、Demo→Attract substate |
-| FlightSetup | Webは編集draftを保持し、RustがFlightConfigurationを検証・確定 | Start intent→Briefing、Back→Title |
+| FlightSetup | Rust format境界がpreset・Information・Assistance・Weatherを保持し、coreは確定したscenario/controllerとmodel identityをsealする | Start intent→Briefing、Back→Title |
 | Briefing | Rustが準備sessionと容量を確定し、Webが必要assetを取得 | Ready→Countdown、Back→FlightSetup |
 | Countdown | Rustが初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
-| Flight | Rustが100 Hz physics・入力適用・記録を処理 | 終了→Result、Pause→同じFlight内で停止 |
+| Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、WebはInformation設定に応じて表示する | 終了→Result、Pause→同じFlight内で停止 |
 | Result | Rustが確定したrecord・metricsを参照 | Replay、Retry→Briefing、Setup、Title |
 | Replay | Rust queryが確定recordを時刻指定で再生・seek | 戻るintent→Result |
 
@@ -36,7 +36,7 @@ GameSession内のRust unionとし、必要なbrowser assetが未取得の場合�
 失敗時は原因と再試行・復帰操作を表示し、読み込み成功を装って進行しない。
 非同期loadの世代を識別し、Scene退出後の完了通知による巻き戻りを防ぐ。
 
-FlightSetupのdraftはWeb表示状態であり、確定設定の検証・構築はRustが行う。Briefingで設定を解決し、
+FlightSetupの表示値はRust format境界の設定projectionであり、TypeScriptに独立した設定正本を作らない。各編集eventをRustへ送り、Briefingでpreset・三軸・versioned scenario/controller catalogを解決する。Information metadataはformat境界に保持し、coreには渡さない。coreのGameSessionは物理configurationとscenario/controller version identityをsealする。
 WindField、波・空・雲、launch条件、asset hashを確定する。
 Countdown開始時にconfigurationをsealし、launchまで物理・controller・actuatorの時刻を固定する。
 操縦deviceの最新値は取得するが、Countdown中の入力を事前積分しない。

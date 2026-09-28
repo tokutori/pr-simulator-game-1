@@ -119,16 +119,47 @@ describe("browser flight adapters", () => {
     values[7] = 1;
     values[16] = 1;
     values[19] = 0.25;
+    values[20] = 12.5;
+    values[21] = 10.2;
+    values[22] = 10.4;
+    values[26] = 0.03;
+    values[31] = 1;
+    values[32] = 12.125;
     const parsed = parseFlightSnapshot(values);
 
     expect(parsed.tick).toBe(12);
     expect(parsed.terminal).toBe("water-contact");
     expect(parsed.contactFraction).toBe(0.25);
+    expect(parsed.telemetry?.altitudeMeters).toBe(12.5);
+    expect(parsed.telemetry?.airspeedMetersPerSecond).toBe(10.2);
+    expect(parsed.telemetry?.groundspeedMetersPerSecond).toBe(10.4);
+    expect(parsed.telemetry?.angleOfAttackRadians).toBe(0.03);
+    expect(parsed.flightTimeSeconds).toBe(12.125);
+    expect(() => parseFlightSnapshot([...values.slice(0, 31), 2])).toThrow(RangeError);
     expect(Object.isFrozen(parsed.positionNed)).toBe(true);
 
     expect(() => parseFlightSnapshot(values.slice(1))).toThrow(RangeError);
     values[19] = 1.5;
     expect(() => parseFlightSnapshot(values)).toThrow(RangeError);
+  });
+
+  it("maps every typed terminal reason from the packed snapshot", () => {
+    const terminalCases = [
+      [0, "airborne"],
+      [1, "water-contact"],
+      [2, "time-limit"],
+      [3, "out-of-valid-envelope"],
+      [4, "manual-abort"],
+      [5, "fatal-simulation-error"]
+    ] as const;
+
+    for (const [code, expected] of terminalCases) {
+      const values = new Array<number>(FLIGHT_SNAPSHOT_LENGTH).fill(0);
+      values[7] = 1;
+      values[16] = code;
+      values[19] = code === 1 ? 0.5 : -1;
+      expect(parseFlightSnapshot(values).terminal).toBe(expected);
+    }
   });
 
   it("keeps contact tick integral and represents sub-tick time separately", () => {
@@ -193,7 +224,7 @@ class FakeFlightHud implements FlightHudPort {
   }
 
   fail(): void {}
-  clear(): void {}
+  setVisible(): void {}
 }
 
 function snapshotValues(): number[] {
