@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=24.14.1 <25" },
+  "engines": {
+    "node": ">=24.14.1 <25"
+  },
   "dependencies": {
+    "snabbdom": "3.6.4",
     "three": "0.186.0"
   },
   "scripts": {
@@ -28,6 +31,7 @@
     "@types/three": "0.186.0",
     "@types/webxr": "0.5.24",
     "eslint": "10.11.0",
+    "happy-dom": "20.14.5",
     "smol-toml": "1.9.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
