@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
+import type { AppModel } from "../../web/src/app/app-state.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
@@ -116,6 +119,65 @@ describe("generated WebAssembly browser binding", () => {
       expect(session.phase_code()).toBe(7);
       session.retry();
       expect(session.phase_code()).toBe(3);
+    } finally {
+      session.free();
+    }
+  });
+
+  it.each(["screen", "webxr", "phone-vr"] as const)("projects one Rust-owned flow to %s scenes", (mode) => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    try {
+      let model: AppModel = Object.freeze({
+        ...createInitialAppModel(),
+        presentation: Object.freeze({ type: "ready", mode })
+      });
+      const projectedScene = (): string => {
+        const phaseCode = session.phase_code();
+        const snapshot = phaseCode === 5 || phaseCode === 6
+          ? parseFlightSnapshot(session.snapshot())
+          : null;
+        model = updateApp(model, {
+          type: "game-session-synced",
+          phaseCode,
+          controlModeCode: session.control_mode_code(),
+          difficulty: {
+            presetCode: session.difficulty_preset_code(),
+            informationCode: session.information_level_code(),
+            assistanceCode: session.assistance_level_code(),
+            weatherCode: session.weather_class_code()
+          },
+          configurationMetadata: null,
+          countdownRemaining: session.countdown_remaining(),
+          snapshot
+        }).model;
+        return createGameViewModel(model, snapshot).scene;
+      };
+
+      expect(projectedScene()).toBe("Title");
+      session.open_setup();
+      expect(projectedScene()).toBe("FlightSetup");
+      session.prepare();
+      expect(projectedScene()).toBe("Briefing");
+      session.mark_briefing_ready();
+      expect(projectedScene()).toBe("Briefing");
+      session.start_countdown(1);
+      expect(projectedScene()).toBe("Countdown");
+      session.advance_countdown();
+      session.launch();
+      expect(projectedScene()).toBe("Flight");
+      session.pause(0);
+      expect(projectedScene()).toBe("Flight");
+      session.resume();
+
+      let snapshot = parseFlightSnapshot(session.snapshot());
+      for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
+        snapshot = parseFlightSnapshot(session.advance_tick(0, 0, 0, 0));
+      }
+      expect(snapshot.terminal).toBe("water-contact");
+      expect(projectedScene()).toBe("Result");
+      session.retry();
+      expect(projectedScene()).toBe("Briefing");
     } finally {
       session.free();
     }
