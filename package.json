@@ -9,10 +9,14 @@
     "three": "0.186.0"
   },
   "scripts": {
+    "predev": "tsx tools/wasm-build/main.ts",
     "dev": "vite --config web/vite.config.ts",
+    "pretypecheck": "tsx tools/wasm-build/main.ts",
     "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.tools.json --noEmit",
     "lint": "eslint . --max-warnings 0",
+    "pretest": "tsx tools/wasm-build/main.ts",
     "test": "vitest run",
+    "prebuild": "tsx tools/wasm-build/main.ts",
     "build": "vite build --config web/vite.config.ts",
     "preview": "vite preview --config web/vite.config.ts",
     "check:repository": "tsx tools/check/main.ts",

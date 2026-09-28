@@ -287,6 +287,8 @@ class FakeRenderer implements RendererAdapter {
     this.frames.push(frame);
   }
 
+  setFlightPose(): void {}
+
   resize(viewport: ViewportSize): void {
     this.lastViewport = viewport;
   }

@@ -12,7 +12,8 @@ export class PresentationRuntime {
   constructor(
     private readonly renderer: RendererAdapter,
     backends: readonly PresentationBackendAdapter[],
-    private readonly viewModel: () => UiViewModel
+    private readonly viewModel: () => UiViewModel,
+    private readonly onFrame: (timestampMs: number) => void = () => undefined
   ) {
     const entries = backends.map((backend) => [backend.mode, backend] as const);
     if (new Set(entries.map(([mode]) => mode)).size !== entries.length) throw new Error("Presentation backend modes must be unique");
@@ -167,6 +168,7 @@ export class PresentationRuntime {
   private renderFrame(timestampMs: number, viewerPose: Pose | null): void {
     const backend = this.activeBackend;
     if (backend === null || this.disposed) return;
+    this.onFrame(timestampMs);
     this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(), viewerPose));
   }
 

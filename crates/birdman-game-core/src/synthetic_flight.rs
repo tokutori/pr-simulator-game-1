@@ -1,0 +1,193 @@
+use crate::aerodynamics::{
+    AeroCoefficients, AerodynamicElement, AerodynamicModel, CoefficientLaw,
+    ControlCoefficientDerivatives, ElementEnvelope, ElementOrientation, ElementReference,
+};
+use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
+use crate::dynamics::{AircraftModel, DynamicsError, Gravity};
+use crate::flight_control::{ActuatorConfig, ActuatorError, ActuatorState, BodyRateFeedbackConfig};
+use crate::math::{
+    BodyPoint, BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion,
+};
+use crate::scenario::{
+    CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
+};
+use crate::scoring::{CourseAxis, DistanceScoreError};
+use crate::wind_field::{WindError, WindField};
+
+static CONTACT_POINTS_BODY: [BodyPoint; 1] = [BodyPoint::origin()];
+
+/// Errors while constructing the explicitly synthetic browser/CLI flight fixture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyntheticFlightError {
+    /// Launch altitude must be positive and finite.
+    InvalidLaunchAltitude,
+    /// A mathematical coordinate could not be constructed.
+    Math(MathError),
+    /// Aircraft or launch properties are invalid.
+    Dynamics(DynamicsError),
+    /// Surface or feedback settings are invalid.
+    Actuator(ActuatorError),
+    /// Aerodynamic model construction failed.
+    Aerodynamics(AeroError),
+    /// Wind field construction failed.
+    Wind(WindError),
+    /// Scenario-wide validation failed.
+    Scenario(FlightScenarioError),
+    /// Course direction construction failed.
+    Course(DistanceScoreError),
+}
+
+/// Reusable software fixture for deterministic synthetic flights.
+///
+/// Its coefficients and controller gains are integration-test values, not
+/// aircraft identification or performance claims.
+pub struct SyntheticFlight {
+    aircraft: AircraftModel,
+    scenario: FlightScenario<'static>,
+    feedback: BodyRateFeedbackConfig,
+    course_axis: CourseAxis,
+}
+
+impl SyntheticFlight {
+    /// Builds a synthetic flight at the supplied positive launch altitude.
+    pub fn try_new(launch_altitude_m: f64) -> Result<Self, SyntheticFlightError> {
+        if !launch_altitude_m.is_finite() || launch_altitude_m <= 0.0 {
+            return Err(SyntheticFlightError::InvalidLaunchAltitude);
+        }
+
+        let actuator_limits =
+            [ActuatorConfig::try_new(0.35, 1.0).map_err(SyntheticFlightError::Actuator)?; 3];
+        let aircraft = AircraftModel::try_new(
+            30.0,
+            InertiaTensor::diagonal(8.0, 10.0, 12.0).map_err(SyntheticFlightError::Math)?,
+            70.0,
+            -0.1,
+            -0.4,
+            0.4,
+            0.3,
+            0.8,
+        )
+        .map_err(SyntheticFlightError::Dynamics)?;
+        let launch = CompositeCgLaunchConditions::try_new(
+            NedPoint::try_new(0.0, 0.0, -launch_altitude_m).map_err(SyntheticFlightError::Math)?,
+            NedVector::try_new(15.0, 0.0, 0.0).map_err(SyntheticFlightError::Math)?,
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .map_err(SyntheticFlightError::Dynamics)?;
+        let aerodynamics = synthetic_aerodynamic_model()?;
+        let wind_field = WindField::linear_gradient(
+            NedPoint::try_new(0.0, 0.0, -100.0).map_err(SyntheticFlightError::Math)?,
+            NedVector::try_new(2.0, 0.0, 0.0).map_err(SyntheticFlightError::Math)?,
+            [[0.0, 0.0, 0.01], [0.001, 0.0, 0.0], [0.0, 0.02, 0.0]],
+        )
+        .map_err(SyntheticFlightError::Wind)?;
+        let feedback = BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3])
+            .map_err(SyntheticFlightError::Actuator)?;
+        let course_axis = CourseAxis::try_new(1.0, 0.0).map_err(SyntheticFlightError::Course)?;
+        let scenario = FlightScenario::try_new(FlightScenarioDefinition {
+            aircraft,
+            launch,
+            aerodynamics,
+            air_density_kg_m3: 1.225,
+            wind_field,
+            actuator_limits,
+            initial_actuator_state: ActuatorState::neutral(),
+            gravity: Gravity::try_new(9.80665).map_err(SyntheticFlightError::Dynamics)?,
+            contact_points_body: &CONTACT_POINTS_BODY,
+            course_axis,
+        })
+        .map_err(SyntheticFlightError::Scenario)?;
+
+        Ok(Self {
+            aircraft,
+            scenario,
+            feedback,
+            course_axis,
+        })
+    }
+
+    /// Returns the fixed aircraft model used to validate pilot-position input.
+    pub const fn aircraft(&self) -> AircraftModel {
+        self.aircraft
+    }
+
+    /// Returns the validated scenario used by this fixture.
+    pub const fn scenario(&self) -> &FlightScenario<'static> {
+        &self.scenario
+    }
+
+    /// Returns the fixed synthetic body-rate feedback configuration.
+    pub const fn feedback(&self) -> BodyRateFeedbackConfig {
+        self.feedback
+    }
+
+    /// Returns the course axis used for terminal distance scoring.
+    pub const fn course_axis(&self) -> CourseAxis {
+        self.course_axis
+    }
+}
+
+fn synthetic_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightError> {
+    use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
+
+    let envelope = ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0)
+        .map_err(SyntheticFlightError::Aerodynamics)?;
+    let reference =
+        ElementReference::try_new(0.4, 1.0, 0.5).map_err(SyntheticFlightError::Aerodynamics)?;
+    let zero =
+        CoefficientLaw::try_new(0.0, 0.0, 0.0).map_err(SyntheticFlightError::Aerodynamics)?;
+    let drag =
+        CoefficientLaw::try_new(0.04, 0.0, 0.0).map_err(SyntheticFlightError::Aerodynamics)?;
+    let lift =
+        CoefficientLaw::try_new(0.15, 2.0, 0.0).map_err(SyntheticFlightError::Aerodynamics)?;
+
+    let element = |role| {
+        let (x, y, z) = match role {
+            LeftWing => (0.0, -0.8, 0.0),
+            RightWing => (0.0, 0.8, 0.0),
+            HorizontalTail => (-1.2, 0.0, 0.1),
+            VerticalTail => (-1.2, 0.0, -0.1),
+            Fuselage => (0.0, 0.0, 0.0),
+        };
+        let point = BodyPoint::try_new(x, y, z).map_err(SyntheticFlightError::Math)?;
+        let control_lift = match role {
+            LeftWing => [0.4, 0.0, 0.0],
+            RightWing => [-0.4, 0.0, 0.0],
+            HorizontalTail => [0.0, 0.3, 0.0],
+            VerticalTail => [0.0, 0.0, 0.2],
+            Fuselage => [0.0; 3],
+        };
+        let derivatives = ControlCoefficientDerivatives::try_new(
+            control_lift,
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+            [0.0; 3],
+        )
+        .map_err(SyntheticFlightError::Aerodynamics)?;
+        let coefficients = AeroCoefficients::new(lift, drag, zero, zero, zero, zero)
+            .with_control_derivatives(derivatives);
+        AerodynamicElement::try_new(
+            role,
+            point,
+            point,
+            ElementOrientation::IDENTITY,
+            reference,
+            coefficients,
+            envelope,
+        )
+        .map_err(SyntheticFlightError::Aerodynamics)
+    };
+    let elements = [
+        element(LeftWing)?,
+        element(RightWing)?,
+        element(HorizontalTail)?,
+        element(VerticalTail)?,
+        element(Fuselage)?,
+    ];
+    AerodynamicModel::try_new(elements).map_err(SyntheticFlightError::Aerodynamics)
+}

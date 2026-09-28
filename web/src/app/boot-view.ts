@@ -10,7 +10,7 @@ export function createBootViewModel(model: AppModel): UiViewModel {
   return Object.freeze({
     scene: "Boot",
     title: "鳥人間滑空ゲーム",
-    description: "Screen/WebXR/Phone VR共通表示基盤。フライト機能は後続の実装計画で追加する。",
+    description: "Rust/WASMの合成flightを開始した。A/D・矢印キー・J/LまたはGamepadで操縦する。",
     activeOverlay: null,
     panels: Object.freeze([Object.freeze({
       id: "boot-status",

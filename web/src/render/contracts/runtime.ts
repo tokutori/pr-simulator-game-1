@@ -24,6 +24,11 @@ export interface BackendFrame {
   readonly viewport: ViewportSize;
 }
 
+export interface FlightRenderPose {
+  readonly datumPositionNed: Readonly<{ north: number; east: number; down: number }>;
+  readonly attitudeBodyToNed: Readonly<{ w: number; x: number; y: number; z: number }>;
+}
+
 export interface PanelCursor {
   readonly point: Vec2;
   readonly progress: number;
@@ -39,6 +44,7 @@ export interface RendererAdapter {
   startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void;
   stopLoop(): void;
   render(frame: BackendFrame): void;
+  setFlightPose(pose: FlightRenderPose | null): void;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;

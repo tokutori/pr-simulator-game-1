@@ -11,6 +11,10 @@ import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
+import { BrowserPilotInput, DEFAULT_PILOT_INPUT_CONFIGURATION } from "./game/browser-input.js";
+import { FlightController } from "./game/flight-controller.js";
+import { initializeSyntheticFlight } from "./game/wasm-flight.js";
+import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import type { UiAction } from "./render/contracts/ui.js";
 import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 
@@ -24,7 +28,8 @@ canvas.className = "presentation-canvas";
 canvas.setAttribute("aria-hidden", "true");
 const uiRoot = document.createElement("div");
 uiRoot.className = "screen-ui-root";
-stage.append(canvas, uiRoot);
+const flightHudRoot = document.createElement("section");
+stage.append(canvas, uiRoot, flightHudRoot);
 mount.replaceChildren(stage);
 
 const panelCanvas = document.createElement("canvas");
@@ -32,8 +37,10 @@ panelCanvas.width = VR_PANEL_PIXELS.width;
 panelCanvas.height = VR_PANEL_PIXELS.height;
 let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
+let flightController: FlightController | null = null;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
+const flightHud = new FlightHudAdapter(flightHudRoot);
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatch({ type: "ui-action", action });
 });
@@ -106,13 +113,16 @@ function runEffect(effect: AppEffect): void {
         });
         return;
       }
+      flightController?.suspend();
       void presentation.switchTo(effect.mode).then((result) => {
         dispatchBackendResult(effect.requestId, effect.mode, presentation.currentMode, result);
+        flightController?.resume();
       }, (error: unknown) => {
         dispatchBackendResult(effect.requestId, effect.mode, presentation.currentMode, {
           ok: false,
           error: { type: "renderer-failed", message: errorMessage(error) }
         });
+        flightController?.resume();
       });
       return;
     }
@@ -145,6 +155,22 @@ async function initializePresentation(requestId: number): Promise<void> {
     if (model.presentation.type === "hidden") return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null);
     rendererAdapter = bundle.renderer;
+    const syntheticFlight = await initializeSyntheticFlight();
+    if (isPageHidden()) {
+      syntheticFlight.session.free();
+      bundle.renderer.dispose();
+      return;
+    }
+    flightController = new FlightController(
+      syntheticFlight.session,
+      new BrowserPilotInput(window, {
+        ...DEFAULT_PILOT_INPUT_CONFIGURATION,
+        physicsHz: syntheticFlight.physicsHz
+      }),
+      bundle.renderer,
+      flightHud,
+      syntheticFlight.physicsHz
+    );
     const screenBackend = new ScreenPresentationBackend(currentViewport);
     webXrBackend = new WebXrPresentationBackend(
       bundle.webxr,
@@ -162,12 +188,19 @@ async function initializePresentation(requestId: number): Promise<void> {
       onPhoneVrTrackingUnavailable,
       { gamepadInput: createBrowserPhoneVrGamepadInputPort() }
     );
-    const presentation = new PresentationRuntime(bundle.renderer, [screenBackend, webXrBackend, phoneVrBackend], () => createBootViewModel(model));
+    const presentation = new PresentationRuntime(
+      bundle.renderer,
+      [screenBackend, webXrBackend, phoneVrBackend],
+      () => createBootViewModel(model),
+      (timestampMs) => flightController?.onFrame(timestampMs)
+    );
     runtime = presentation;
     const started = await presentation.start("screen");
     if (!started.ok) {
       const status = `Renderer initialization failed: ${runtimeErrorMessage(started)}`;
       await presentation.dispose();
+      flightController.dispose();
+      flightController = null;
       rendererAdapter = null;
       if (runtime === presentation) runtime = null;
       dispatch({ type: "presentation-initialization-failed", requestId, message: status });
@@ -175,6 +208,8 @@ async function initializePresentation(requestId: number): Promise<void> {
     }
     if (isPageHidden()) {
       await presentation.dispose();
+      flightController.dispose();
+      flightController = null;
       rendererAdapter = null;
       if (runtime === presentation) runtime = null;
       return;
@@ -201,6 +236,8 @@ async function initializePresentation(requestId: number): Promise<void> {
     } else {
       rendererAdapter?.dispose();
     }
+    flightController?.dispose();
+    flightController = null;
     dispatch({
       type: "presentation-initialization-failed",
       requestId,
@@ -248,7 +285,15 @@ function onResize(): void {
 
 function onPageHide(): void {
   window.removeEventListener("resize", onResize);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
+  flightController?.dispose();
+  flightController = null;
   dispatch({ type: "page-hidden" });
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState === "hidden") flightController?.suspend();
+  else flightController?.resume();
 }
 
 function currentViewport(): ViewportSize {
@@ -290,4 +335,5 @@ function assertNever(value: never): never {
 renderModel();
 window.addEventListener("resize", onResize);
 window.addEventListener("pagehide", onPageHide, { once: true });
+document.addEventListener("visibilitychange", onVisibilityChange);
 dispatch({ type: "initialize" });

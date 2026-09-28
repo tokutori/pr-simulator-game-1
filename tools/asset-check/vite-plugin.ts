@@ -32,6 +32,7 @@ async function fileIdentity(path: string): Promise<string> {
 /** Validate the resolved build graph, including resources Vite later inlines. */
 export function verifiedAssets(root: string): Plugin {
   const rootPath = resolve(root);
+  const applicationWasmPath = resolve(rootPath, "web/pkg/birdman_game_wasm_bg.wasm");
   let registered = new Set<string>();
   let isViteAsset: (file: string) => boolean;
   function isAssetReference(reference: string): boolean {
@@ -44,6 +45,10 @@ export function verifiedAssets(root: string): Plugin {
     if (clean === undefined || (!requireManifest && !isAssetReference(reference))) return;
     if (/^https?:\/\//i.test(reference)) throw new Error(`Unregistered build asset: ${reference}`);
     const file = clean.startsWith("/") ? join(rootPath, "web", clean.slice(1)) : resolve(dirname(importer), clean);
+    if (resolve(file) === applicationWasmPath) {
+      await fileIdentity(file);
+      return;
+    }
     if (!registered.has(await fileIdentity(file))) throw new Error(`Unregistered build asset: ${reference}`);
   }
   return {
@@ -115,6 +120,7 @@ export function verifiedAssets(root: string): Plugin {
       for (const id of this.getModuleIds()) {
         const file = id.split("?")[0];
         if (file === undefined || !isAbsolute(file) || file.includes(`${sep}node_modules${sep}`)) continue;
+        if (resolve(file) === applicationWasmPath) continue;
         const query = id.slice(file.length);
         if (!isAssetReference(file + query)) continue;
         if (!registered.has(await fileIdentity(file))) {

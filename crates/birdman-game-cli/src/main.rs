@@ -1,12 +1,8 @@
 //! Native verification commands for deterministic flight scenarios.
 
 use birdman_game_core::{
-    ActuatorConfig, AeroCoefficients, AerodynamicElement, AerodynamicModel, AerodynamicRole,
-    AircraftModel, BodyPoint, BodyRateFeedbackConfig, BodyVector, CoefficientLaw,
-    CompositeCgLaunchConditions, ControlCoefficientDerivatives, ControlMode, CourseAxis,
-    ElementEnvelope, ElementOrientation, ElementReference, FbwAuthority, FlightFeedbackInput,
-    FlightRunOutcome, FlightScenario, FlightScenarioDefinition, Gravity, InertiaTensor, NedPoint,
-    NedVector, PHYSICS_HZ, PilotPositionTarget, SurfaceCommands, UnitQuaternion, WindField,
+    BodyVector, ControlMode, FbwAuthority, FlightFeedbackInput, FlightRunOutcome, PHYSICS_HZ,
+    PilotPositionTarget, SurfaceCommands, SyntheticFlight,
 };
 
 const DEFAULT_TICK_LIMIT: usize = 400;
@@ -117,43 +113,14 @@ fn print_outcome(name: &str, outcome: FlightRunOutcome) {
 }
 
 struct VerificationScenario {
-    aircraft: AircraftModel,
-    launch: CompositeCgLaunchConditions,
-    aerodynamics: AerodynamicModel,
-    wind_field: WindField<'static>,
-    air_density_kg_m3: f64,
-    actuator_limits: [ActuatorConfig; 3],
-    initial_actuator_state: birdman_game_core::ActuatorState,
-    gravity: Gravity,
+    fixture: SyntheticFlight,
     pilot_inputs: Vec<FlightFeedbackInput>,
-    contact_geometry: [BodyPoint; 1],
-    course_axis: CourseAxis,
-    feedback: BodyRateFeedbackConfig,
 }
 
 impl VerificationScenario {
     fn new(tick_limit: usize, launch_altitude_m: f64) -> Result<Self, String> {
-        let actuator_limits = [ActuatorConfig::try_new(0.35, 1.0).map_err(display_error)?; 3];
-        let aircraft = AircraftModel::try_new(
-            30.0,
-            InertiaTensor::diagonal(8.0, 10.0, 12.0).map_err(display_error)?,
-            70.0,
-            -0.1,
-            -0.4,
-            0.4,
-            0.3,
-            0.8,
-        )
-        .map_err(display_error)?;
-        let launch = CompositeCgLaunchConditions::try_new(
-            NedPoint::try_new(0.0, 0.0, -launch_altitude_m).map_err(display_error)?,
-            NedVector::try_new(15.0, 0.0, 0.0).map_err(display_error)?,
-            UnitQuaternion::IDENTITY,
-            BodyVector::zero(),
-            0.0,
-            0.0,
-        )
-        .map_err(display_error)?;
+        let fixture = SyntheticFlight::try_new(launch_altitude_m).map_err(display_error)?;
+        let aircraft = fixture.aircraft();
         let pilot_inputs = (0..tick_limit)
             .map(|tick| {
                 let roll = if tick % 80 < 40 { 0.04 } else { -0.04 };
@@ -169,114 +136,18 @@ impl VerificationScenario {
                 ))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let feedback =
-            BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).map_err(display_error)?;
-        let wind_field = WindField::linear_gradient(
-            NedPoint::try_new(0.0, 0.0, -100.0).map_err(display_error)?,
-            NedVector::try_new(2.0, 0.0, 0.0).map_err(display_error)?,
-            [[0.0, 0.0, 0.01], [0.001, 0.0, 0.0], [0.0, 0.02, 0.0]],
-        )
-        .map_err(display_error)?;
-
-        let aerodynamics = aerodynamic_model()?;
         Ok(Self {
-            aircraft,
-            launch,
-            aerodynamics,
-            wind_field,
-            air_density_kg_m3: 1.225,
-            actuator_limits,
-            initial_actuator_state: birdman_game_core::ActuatorState::neutral(),
-            gravity: Gravity::try_new(9.80665).map_err(display_error)?,
+            fixture,
             pilot_inputs,
-            contact_geometry: [BodyPoint::try_new(0.0, 0.0, 0.0).map_err(display_error)?],
-            course_axis: CourseAxis::try_new(1.0, 0.0).map_err(display_error)?,
-            feedback,
         })
-    }
-
-    fn assemble(&self) -> Result<FlightScenario<'_>, String> {
-        let scenario = FlightScenario::try_new(FlightScenarioDefinition {
-            aircraft: self.aircraft,
-            launch: self.launch,
-            aerodynamics: self.aerodynamics,
-            air_density_kg_m3: self.air_density_kg_m3,
-            wind_field: self.wind_field,
-            actuator_limits: self.actuator_limits,
-            initial_actuator_state: self.initial_actuator_state,
-            gravity: self.gravity,
-            contact_points_body: &self.contact_geometry,
-            course_axis: self.course_axis,
-        })
-        .map_err(display_error)?;
-        Ok(scenario)
     }
 
     fn run(&self, mode: ControlMode) -> Result<FlightRunOutcome, String> {
-        let scenario = self.assemble()?;
-        scenario
-            .run_feedback(mode, self.feedback, &self.pilot_inputs)
+        self.fixture
+            .scenario()
+            .run_feedback(mode, self.fixture.feedback(), &self.pilot_inputs)
             .map_err(display_error)
     }
-}
-
-fn aerodynamic_model() -> Result<AerodynamicModel, String> {
-    use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
-
-    let roles = [LeftWing, RightWing, HorizontalTail, VerticalTail, Fuselage];
-    let envelope =
-        ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0).map_err(display_error)?;
-    let reference = ElementReference::try_new(0.4, 1.0, 0.5).map_err(display_error)?;
-    let zero = CoefficientLaw::try_new(0.0, 0.0, 0.0).map_err(display_error)?;
-    let drag = CoefficientLaw::try_new(0.04, 0.0, 0.0).map_err(display_error)?;
-    let lift = CoefficientLaw::try_new(0.15, 2.0, 0.0).map_err(display_error)?;
-
-    let elements = roles.map(|role| {
-        let (x, y, z) = match role {
-            LeftWing => (0.0, -0.8, 0.0),
-            RightWing => (0.0, 0.8, 0.0),
-            HorizontalTail => (-1.2, 0.0, 0.1),
-            VerticalTail => (-1.2, 0.0, -0.1),
-            Fuselage => (0.0, 0.0, 0.0),
-        };
-        let point = BodyPoint::try_new(x, y, z).map_err(display_error)?;
-        let control_lift = match role {
-            LeftWing => [0.4, 0.0, 0.0],
-            RightWing => [-0.4, 0.0, 0.0],
-            HorizontalTail => [0.0, 0.3, 0.0],
-            VerticalTail => [0.0, 0.0, 0.2],
-            Fuselage => [0.0; 3],
-        };
-        let derivatives = ControlCoefficientDerivatives::try_new(
-            control_lift,
-            [0.0; 3],
-            [0.0; 3],
-            [0.0; 3],
-            [0.0; 3],
-            [0.0; 3],
-        )
-        .map_err(display_error)?;
-        let coefficients = AeroCoefficients::new(lift, drag, zero, zero, zero, zero)
-            .with_control_derivatives(derivatives);
-        AerodynamicElement::try_new(
-            role,
-            point,
-            point,
-            ElementOrientation::IDENTITY,
-            reference,
-            coefficients,
-            envelope,
-        )
-        .map_err(display_error)
-    });
-    AerodynamicModel::try_new(
-        elements
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?
-            .try_into()
-            .map_err(|_| "invalid verification element set".to_owned())?,
-    )
-    .map_err(display_error)
 }
 
 fn display_error(error: impl std::fmt::Debug) -> String {
@@ -286,10 +157,7 @@ fn display_error(error: impl std::fmt::Debug) -> String {
 #[cfg(test)]
 mod tests {
     use super::VerificationScenario;
-    use birdman_game_core::{
-        ControlMode, ExternalLoadProvider, FbwAuthority, FlightRunOutcome, NedVector,
-        UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
-    };
+    use birdman_game_core::{ControlMode, FbwAuthority, FlightRunOutcome};
 
     #[test]
     fn all_control_modes_run_reproducibly_with_distinct_synthetic_inputs() {
@@ -324,28 +192,5 @@ mod tests {
             assert_eq!(first, repeated);
             assert!(matches!(first, FlightRunOutcome::WaterContact { .. }));
         }
-    }
-
-    #[test]
-    fn cli_wind_gradient_changes_the_multipoint_aerodynamic_load() {
-        let scenario = VerificationScenario::new(1, 100.0).unwrap();
-        let gradient_provider = WindFieldAerodynamicLoad::try_new(
-            scenario.aerodynamics,
-            scenario.air_density_kg_m3,
-            scenario.wind_field,
-        )
-        .unwrap();
-        let uniform_reference = UniformAerodynamicLoad::new(
-            scenario.aerodynamics,
-            UniformAir::try_new(NedVector::try_new(2.0, 0.0, 0.0).unwrap(), 1.225).unwrap(),
-        );
-        let state = scenario.assemble().unwrap().initial_state().flight_state();
-        let gradient_load = gradient_provider
-            .evaluate(&scenario.aircraft, &state)
-            .unwrap();
-        let uniform_load = uniform_reference
-            .evaluate(&scenario.aircraft, &state)
-            .unwrap();
-        assert_ne!(gradient_load, uniform_load);
     }
 }

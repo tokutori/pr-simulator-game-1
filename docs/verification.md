@@ -14,7 +14,8 @@
 
 CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
-BPG-001のWebは起動ページのみであり、フライトやThree.jsの動作確認を意味しない。
+BPG-007ではsynthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。
+正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
 
 ### CLI検証flight
 
@@ -84,7 +85,7 @@ BPG-001のWebは起動ページのみであり、フライトやThree.jsの動�
 | 032 | course-distance score v1の北・東・斜行・逆行・高度不変性、cross-track/net horizontal解析値、極端軸正規化、無効軸・差分overflowのtyped error |
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
 | 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
-| 007 | native/WASM数値許容差、FPS独立性、pause/resume、keyboard/gamepadのbinding・切断・tick入力からsnapshotまでのbrowser試験 |
+| 007 | native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。実ブラウザーのWebGL受入は別途記録する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |
 | 016 | 全SceneのPhone VR UI、sensor権限・null・timeout・stale、左右aspect、実スマートフォン |

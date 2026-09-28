@@ -187,6 +187,14 @@ impl<F: Frame> Vector3<F> {
 }
 
 impl<F: Frame> Point3<F> {
+    /// Returns the origin of the selected coordinate frame.
+    pub const fn origin() -> Self {
+        Self {
+            components: [0.0; 3],
+            frame: PhantomData,
+        }
+    }
+
     /// Creates a point from finite coordinates.
     pub fn try_new(
         first_coordinate: f64,

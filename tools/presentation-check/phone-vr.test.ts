@@ -350,6 +350,7 @@ class FakeRenderer implements RendererAdapter {
   startLoop(): void {}
   stopLoop(): void {}
   render(): void {}
+  setFlightPose(): void {}
   resize(): void {}
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
   setSelectRayHandler(): void {}

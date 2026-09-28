@@ -4,6 +4,7 @@ import {
   Color,
   DoubleSide,
   LinearFilter,
+  BoxGeometry,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
@@ -14,11 +15,12 @@ import {
 } from "three";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
-import type { BackendFrame, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
+import type { BackendFrame, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import { quaternion, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
+import { flightRelativePose } from "./flight-pose.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -52,7 +54,7 @@ export function createThreeRenderer(
     new MeshBasicMaterial({ color: 0x527e82 })
   );
   water.rotation.x = -Math.PI / 2;
-  water.position.y = -2.4;
+  water.position.y = 0;
   scene.add(water);
 
   const panelTexture = new CanvasTexture(panelCanvas);
@@ -73,6 +75,14 @@ export function createThreeRenderer(
 
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   camera.position.set(0, 0, 0);
+  scene.add(camera);
+  const cockpitMaterial = new MeshBasicMaterial({ color: 0x343f3d });
+  const cockpitWing = new Mesh(new BoxGeometry(3.8, 0.055, 0.24), cockpitMaterial);
+  cockpitWing.position.set(0, -0.58, -1.25);
+  camera.add(cockpitWing);
+  const cockpitNose = new Mesh(new BoxGeometry(0.16, 0.12, 1.7), cockpitMaterial);
+  cockpitNose.position.set(0, -0.5, -1.95);
+  camera.add(cockpitNose);
   let disposed = false;
   let loopRunning = false;
   let width = 0;
@@ -86,6 +96,7 @@ export function createThreeRenderer(
   let referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
   let activeReferenceSpace: XRReferenceSpace | null = null;
   let selectRayHandler: ((ray: SelectRay) => void) | null = null;
+  let flightPose: FlightRenderPose | null = null;
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
@@ -140,8 +151,8 @@ export function createThreeRenderer(
     render(frame: BackendFrame) {
       ensureActive(disposed);
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
-      setPose(camera, frame.cameraPose);
-      setPose(panelMesh, frame.panelPose);
+      setPose(camera, flightPose === null ? frame.cameraPose : flightRelativePose(flightPose, frame.cameraPose));
+      setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
         panelTexture.needsUpdate = true;
@@ -194,11 +205,17 @@ export function createThreeRenderer(
       panelMaterial.dispose();
       water.geometry.dispose();
       water.material.dispose();
+      cockpitWing.geometry.dispose();
+      cockpitNose.geometry.dispose();
+      cockpitMaterial.dispose();
       renderer.dispose();
       disposed = true;
     },
     setSelectRayHandler(handler) {
       selectRayHandler = handler;
+    },
+    setFlightPose(pose: FlightRenderPose | null) {
+      flightPose = pose;
     }
   };
 

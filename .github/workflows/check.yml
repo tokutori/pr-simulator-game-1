@@ -41,6 +41,8 @@ jobs:
         run: cargo build -p birdman-game-wasm --target wasm32-unknown-unknown --locked
       - name: Build WASI CLI
         run: cargo build -p birdman-game-cli --target wasm32-wasip2 --locked
+      - name: Install matching wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --locked --version 0.2.129
       - run: cargo run -p birdman-game-cli --locked
       - run: npm ci
       - run: npm run verify
