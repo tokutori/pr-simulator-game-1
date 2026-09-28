@@ -1,6 +1,7 @@
 use super::{
     GameSession, GameSessionConfiguration, GameSessionError, PauseReason, SessionEndReason,
-    SessionPhase, SessionScenarioIdentity, SessionTerminalState,
+    SessionPhase, SessionReplaySource, SessionScenarioIdentity, SessionSnapshot,
+    SessionTerminalState,
 };
 use crate::{
     BodyVector, ControlMode, FlightFeedbackInput, PilotPositionTarget, SurfaceCommands,
@@ -52,7 +53,7 @@ fn neutral_input(session: &GameSession<'_>) -> FlightFeedbackInput {
 #[test]
 fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     let mut session = GameSession::new();
-    assert_eq!(session.snapshot().phase, SessionPhase::Title);
+    assert_eq!(session.snapshot().phase(), SessionPhase::Title);
     assert_eq!(session.launch(), Err(GameSessionError::InvalidTransition));
     session.open_setup().unwrap();
     session.prepare_flight(configuration(100)).unwrap();
@@ -66,7 +67,7 @@ fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     assert_eq!(session.advance_countdown().unwrap(), 1);
     assert_eq!(session.advance_countdown().unwrap(), 0);
     session.launch().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::FlightRunning);
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
     let record = session.flight_record().unwrap();
     assert_eq!(record.sample_count(), 1);
     assert_eq!(record.sample(0).unwrap().tick_index, 0);
@@ -80,19 +81,19 @@ fn pause_reasons_freeze_ticks_and_require_explicit_resume_after_all_clear() {
     session.start_countdown(1).unwrap();
     session.advance_countdown().unwrap();
     session.launch().unwrap();
-    let previous = session.snapshot().flight_state;
+    let previous = session.snapshot().flight_state();
     session.pause(PauseReason::Manual).unwrap();
     session.pause(PauseReason::DocumentHidden).unwrap();
     assert_eq!(
         session.advance_flight_tick(neutral_input(&session)),
         Err(GameSessionError::InvalidTransition)
     );
-    assert_eq!(session.snapshot().flight_state, previous);
+    assert_eq!(session.snapshot().flight_state(), previous);
     session
         .clear_pause_reason(PauseReason::DocumentHidden)
         .unwrap();
     assert_eq!(session.resume(), Ok(()));
-    assert_eq!(session.snapshot().phase, SessionPhase::FlightRunning);
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
 }
 
 #[test]
@@ -111,7 +112,7 @@ fn resume_waits_until_external_pause_causes_are_cleared() {
         .clear_pause_reason(PauseReason::TrackingSuspended)
         .unwrap();
     session.resume().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::FlightRunning);
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
 }
 
 #[test]
@@ -123,12 +124,12 @@ fn abort_from_paused_flight_finalizes_the_last_valid_tick() {
     session
         .advance_flight_tick(neutral_input(&session))
         .unwrap();
-    let last_state = session.snapshot().flight_state.unwrap();
+    let last_state = session.snapshot().flight_state().unwrap();
     session.pause(PauseReason::DocumentHidden).unwrap();
-    let result = session.abort_flight().unwrap().result.unwrap();
+    let result = session.abort_flight().unwrap().result().unwrap();
     assert_eq!(result.reason, SessionEndReason::ManualAbort);
     assert_eq!(result.state, SessionTerminalState::Tick(last_state));
-    assert_eq!(session.snapshot().phase, SessionPhase::Result);
+    assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     assert_eq!(
         session
             .flight_record()
@@ -147,19 +148,25 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     session.advance_countdown().unwrap();
     session.launch().unwrap();
     session.abort_flight().unwrap();
-    let result = session.snapshot().result;
+    let result = session.snapshot().result();
     let record = session.flight_record().unwrap().sample_count();
     session.enter_replay().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::Replay);
-    assert_eq!(session.snapshot().result, result);
+    assert_eq!(session.snapshot().phase(), SessionPhase::Replay);
+    assert!(matches!(
+        session.snapshot(),
+        SessionSnapshot::Replay {
+            source: SessionReplaySource::CurrentSessionResult,
+            ..
+        }
+    ));
     assert_eq!(session.flight_record().unwrap().sample_count(), record);
     assert_eq!(
         session.advance_flight_tick(neutral_input(&session)),
         Err(GameSessionError::InvalidTransition)
     );
     session.leave_replay().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::Result);
-    assert_eq!(session.snapshot().result, result);
+    assert_eq!(session.snapshot().phase(), SessionPhase::Result);
+    assert_eq!(session.snapshot().result(), result);
 }
 
 #[test]
@@ -179,15 +186,22 @@ fn archived_record_opens_replay_from_title_and_returns_without_result() {
 
     let mut viewer = GameSession::new();
     viewer.open_archived_replay(archived_record).unwrap();
-    assert_eq!(viewer.snapshot().phase, SessionPhase::Replay);
-    assert_eq!(viewer.snapshot().result, None);
+    assert_eq!(viewer.snapshot().phase(), SessionPhase::Replay);
+    assert_eq!(viewer.snapshot().result(), None);
+    assert!(matches!(
+        viewer.snapshot(),
+        SessionSnapshot::Replay {
+            source: SessionReplaySource::ArchivedRecord,
+            ..
+        }
+    ));
     assert_eq!(
         viewer.configuration_identity(),
         Some(source_record.header().scenario)
     );
     assert_eq!(viewer.flight_record().unwrap().sample_count(), 1);
     viewer.leave_replay().unwrap();
-    assert_eq!(viewer.snapshot().phase, SessionPhase::Title);
+    assert_eq!(viewer.snapshot().phase(), SessionPhase::Title);
     assert!(viewer.flight_record().is_none());
     assert_eq!(viewer.configuration_identity(), None);
 }
@@ -205,7 +219,7 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
     let result = session
         .advance_flight_tick(neutral_input(&session))
         .unwrap()
-        .result
+        .result()
         .unwrap();
     assert_eq!(result.reason, SessionEndReason::TimeLimit);
     assert_eq!(result.scenario, identity);
@@ -223,8 +237,8 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
         Err(GameSessionError::InvalidTransition)
     );
     session.retry().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::BriefingReady);
-    assert_eq!(session.snapshot().flight_state, None);
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
+    assert_eq!(session.snapshot().flight_state(), None);
     assert_eq!(session.configuration.as_ref().unwrap().identity(), identity);
     assert!(session.flight_record().unwrap().sample(0).is_none());
 }
@@ -239,8 +253,8 @@ fn synthetic_flight_reaches_contact_result_without_skipping_terminal_state() {
         let snapshot = session
             .advance_flight_tick(neutral_input(&session))
             .unwrap();
-        if snapshot.phase == SessionPhase::Result {
-            let result = snapshot.result.unwrap();
+        if snapshot.phase() == SessionPhase::Result {
+            let result = snapshot.result().unwrap();
             assert_eq!(result.reason, SessionEndReason::WaterContact);
             assert!(result.score.unwrap().course_parallel_m() > 150.0);
             assert!(matches!(
@@ -275,15 +289,15 @@ fn briefing_cancellation_releases_the_sealed_configuration_for_setup() {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session.prepare_flight(configuration(100)).unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::BriefingPreparing);
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingPreparing);
     session.cancel_briefing().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::FlightSetup);
-    assert!(session.snapshot().result.is_none());
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightSetup);
+    assert!(session.snapshot().result().is_none());
     assert!(session.mark_briefing_ready().is_err());
     session.prepare_flight(configuration(100)).unwrap();
     session.mark_briefing_ready().unwrap();
     session.open_setup().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::FlightSetup);
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightSetup);
 }
 
 #[test]
@@ -321,14 +335,14 @@ fn briefing_failure_is_typed_retryable_and_never_creates_result() {
         .fail_briefing(super::BriefingFailure::AssetUnavailable)
         .unwrap();
     assert_eq!(
-        session.snapshot().phase,
+        session.snapshot().phase(),
         SessionPhase::BriefingFailed {
             reason: super::BriefingFailure::AssetUnavailable
         }
     );
-    assert!(session.snapshot().result.is_none());
+    assert!(session.snapshot().result().is_none());
     session.retry_briefing().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::BriefingPreparing);
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingPreparing);
     session.mark_briefing_ready().unwrap();
-    assert_eq!(session.snapshot().phase, SessionPhase::BriefingReady);
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
 }

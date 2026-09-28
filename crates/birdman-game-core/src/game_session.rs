@@ -186,15 +186,107 @@ pub struct SessionResult {
     pub scenario: SessionScenarioIdentity,
 }
 
-/// Read-only view of the current game session.
+/// Exclusive replay source selected by the session.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SessionSnapshot {
-    /// Current lifecycle phase.
-    pub phase: SessionPhase,
-    /// Latest complete airborne tick state, if launched.
-    pub flight_state: Option<FlightTickState>,
-    /// Finalized result, if the session has ended.
-    pub result: Option<SessionResult>,
+pub enum SessionReplaySource {
+    /// Playback of the result produced by the active session.
+    CurrentSessionResult,
+    /// Playback of a previously finalized record.
+    ArchivedRecord,
+}
+
+/// Read-only lifecycle projection whose payload is exclusive to its phase.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SessionSnapshot {
+    /// No flight configuration exists.
+    Title,
+    /// Flight configuration can be edited.
+    FlightSetup,
+    /// Required browser and presentation assets are being prepared.
+    BriefingPreparing {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+    },
+    /// The flight is ready for a countdown.
+    BriefingReady {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+    },
+    /// Briefing preparation failed.
+    BriefingFailed {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Classified preparation failure.
+        reason: BriefingFailure,
+    },
+    /// Countdown is active while physics remains frozen.
+    Countdown {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Remaining presentation ticks before launch.
+        remaining_ticks: u32,
+    },
+    /// Physics advances when one fixed-tick input is submitted.
+    FlightRunning {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Latest complete physics state.
+        state: FlightTickState,
+    },
+    /// Physics remains frozen while one or more pause causes are active.
+    FlightPaused {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Latest complete physics state.
+        state: FlightTickState,
+        /// Active reasons that prevent resuming.
+        reasons: PauseReasons,
+    },
+    /// The active flight has one immutable result.
+    Result(SessionResult),
+    /// A finalized record is being inspected without advancing physics.
+    Replay {
+        /// Scenario associated with the playback source.
+        scenario: SessionScenarioIdentity,
+        /// Exclusive source of the replayed flight.
+        source: SessionReplaySource,
+    },
+}
+
+impl SessionSnapshot {
+    /// Returns the phase represented by this exclusive snapshot.
+    pub const fn phase(self) -> SessionPhase {
+        match self {
+            Self::Title => SessionPhase::Title,
+            Self::FlightSetup => SessionPhase::FlightSetup,
+            Self::BriefingPreparing { .. } => SessionPhase::BriefingPreparing,
+            Self::BriefingReady { .. } => SessionPhase::BriefingReady,
+            Self::BriefingFailed { reason, .. } => SessionPhase::BriefingFailed { reason },
+            Self::Countdown {
+                remaining_ticks, ..
+            } => SessionPhase::Countdown { remaining_ticks },
+            Self::FlightRunning { .. } => SessionPhase::FlightRunning,
+            Self::FlightPaused { reasons, .. } => SessionPhase::FlightPaused { reasons },
+            Self::Result(_) => SessionPhase::Result,
+            Self::Replay { .. } => SessionPhase::Replay,
+        }
+    }
+
+    /// Returns an airborne state only while the session is running or paused.
+    pub const fn flight_state(self) -> Option<FlightTickState> {
+        match self {
+            Self::FlightRunning { state, .. } | Self::FlightPaused { state, .. } => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Returns the result while the session is in the Result phase.
+    pub const fn result(self) -> Option<SessionResult> {
+        match self {
+            Self::Result(result) => Some(result),
+            _ => None,
+        }
+    }
 }
 
 /// Invalid lifecycle operations or deterministic configuration values.
@@ -244,12 +336,63 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns the current immutable session projection.
-    pub const fn snapshot(&self) -> SessionSnapshot {
-        SessionSnapshot {
-            phase: self.phase,
-            flight_state: self.flight_state,
-            result: self.result,
+    pub fn snapshot(&self) -> SessionSnapshot {
+        match self.phase {
+            SessionPhase::Title => SessionSnapshot::Title,
+            SessionPhase::FlightSetup => SessionSnapshot::FlightSetup,
+            SessionPhase::BriefingPreparing => SessionSnapshot::BriefingPreparing {
+                scenario: self.required_configuration().identity(),
+            },
+            SessionPhase::BriefingReady => SessionSnapshot::BriefingReady {
+                scenario: self.required_configuration().identity(),
+            },
+            SessionPhase::BriefingFailed { reason } => SessionSnapshot::BriefingFailed {
+                scenario: self.required_configuration().identity(),
+                reason,
+            },
+            SessionPhase::Countdown { remaining_ticks } => SessionSnapshot::Countdown {
+                scenario: self.required_configuration().identity(),
+                remaining_ticks,
+            },
+            SessionPhase::FlightRunning => SessionSnapshot::FlightRunning {
+                scenario: self.required_configuration().identity(),
+                state: self.required_flight_state(),
+            },
+            SessionPhase::FlightPaused { reasons } => SessionSnapshot::FlightPaused {
+                scenario: self.required_configuration().identity(),
+                state: self.required_flight_state(),
+                reasons,
+            },
+            SessionPhase::Result => {
+                SessionSnapshot::Result(self.result.expect("result phase must retain a result"))
+            }
+            SessionPhase::Replay => {
+                let (scenario, source) = match self.result {
+                    Some(result) => (result.scenario, SessionReplaySource::CurrentSessionResult),
+                    None => {
+                        let scenario = self
+                            .record
+                            .as_ref()
+                            .expect("replay phase must retain a record")
+                            .header()
+                            .scenario;
+                        (scenario, SessionReplaySource::ArchivedRecord)
+                    }
+                };
+                SessionSnapshot::Replay { scenario, source }
+            }
         }
+    }
+
+    fn required_configuration(&self) -> &GameSessionConfiguration<'a> {
+        self.configuration
+            .as_ref()
+            .expect("configured phase must retain its sealed configuration")
+    }
+
+    fn required_flight_state(&self) -> FlightTickState {
+        self.flight_state
+            .expect("active flight phase must retain its last valid state")
     }
 
     /// Returns the sealed configuration identity while its briefing, flight, or result is retained.

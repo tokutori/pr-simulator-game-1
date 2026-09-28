@@ -44,7 +44,8 @@ pub use flight_record::{
 };
 pub use game_session::{
     BriefingFailure, GameSession, GameSessionConfiguration, GameSessionError, PauseReason,
-    PauseReasons, SessionPhase, SessionResult, SessionSnapshot, SessionTerminalState,
+    PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
+    SessionTerminalState,
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
