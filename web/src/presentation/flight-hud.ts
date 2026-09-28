@@ -38,5 +38,8 @@ function terminalLabel(terminal: FlightSnapshot["terminal"]): string {
     case "airborne": return "滑空中";
     case "water-contact": return "着水";
     case "time-limit": return "時間制限";
+    case "out-of-valid-envelope": return "空力モデルの適用範囲外";
+    case "manual-abort": return "手動終了";
+    case "fatal-simulation-error": return "シミュレーションエラー";
   }
 }
