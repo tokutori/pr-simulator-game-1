@@ -85,4 +85,39 @@ describe("generated WebAssembly browser binding", () => {
       session.free();
     }
   });
+
+  it.each([
+    { mode: 0, label: "Manual" },
+    { mode: 1, label: "Shared" },
+    { mode: 2, label: "Automatic" }
+  ])("runs the $label control mode through pause, water contact, and retry", ({ mode }) => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    try {
+      session.open_setup();
+      session.set_control_mode(mode);
+      session.prepare();
+      session.mark_briefing_ready();
+      session.start_countdown(1);
+      session.advance_countdown();
+      session.launch();
+
+      session.pause(0);
+      expect(session.phase_code()).toBe(6);
+      session.resume();
+      expect(session.phase_code()).toBe(5);
+
+      let snapshot = parseFlightSnapshot(session.snapshot());
+      for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
+        snapshot = parseFlightSnapshot(session.advance_tick(0, 0, 0, 0));
+      }
+
+      expect(snapshot.terminal).toBe("water-contact");
+      expect(session.phase_code()).toBe(7);
+      session.retry();
+      expect(session.phase_code()).toBe(3);
+    } finally {
+      session.free();
+    }
+  });
 });
