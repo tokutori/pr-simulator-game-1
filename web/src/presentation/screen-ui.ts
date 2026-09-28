@@ -36,6 +36,9 @@ export class ScreenUiAdapter {
     shell.className = "screen-ui-shell";
     shell.dataset.vnodeKey = "screen-shell";
     shell.dataset.scene = viewModel.scene;
+    if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) {
+      shell.dataset.mode = "analysis";
+    }
     if (viewModel.activeOverlay !== null) shell.dataset.overlay = viewModel.activeOverlay;
     const heading = documentRef.createElement("h1");
     heading.textContent = viewModel.title;
@@ -91,12 +94,18 @@ export class ScreenUiAdapter {
     section.className = "screen-ui-panel";
     section.dataset.vnodeKey = panel.id;
     section.dataset.anchor = panel.anchor;
+    const usesNormalizedLayout = panel.controls.some((control) => control.kind === "chart");
+    if (usesNormalizedLayout) section.dataset.layout = "normalized";
     section.setAttribute("aria-label", panel.title);
     const title = documentRef.createElement("h2");
     title.textContent = panel.title;
     const controls = documentRef.createElement("div");
     controls.className = "screen-ui-controls";
-    for (const control of panel.controls) controls.append(this.createControl(documentRef, control));
+    for (const control of panel.controls) {
+      const element = this.createControl(documentRef, control);
+      if (usesNormalizedLayout) applyNormalizedRect(element, control.rect);
+      controls.append(element);
+    }
     section.append(title, controls);
     return section;
   }
@@ -355,6 +364,14 @@ export class ScreenUiAdapter {
     figure.append(caption, svg, legend);
     return figure;
   }
+}
+
+function applyNormalizedRect(element: HTMLElement, rect: UiControl["rect"]): void {
+  element.style.position = "absolute";
+  element.style.left = `${rect.x * 100}%`;
+  element.style.top = `${rect.y * 100}%`;
+  element.style.width = `${rect.width * 100}%`;
+  element.style.height = `${rect.height * 100}%`;
 }
 
 function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
