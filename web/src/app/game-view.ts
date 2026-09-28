@@ -122,7 +122,7 @@ export function createGameViewModel(
         rect: normalizedRect(0.08, 0.31, 0.30, 0.07)
       }),
       Object.freeze({
-        ...button("game-replay-camera", `Camera: ${model.replayCameraMode}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
+        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
         rect: normalizedRect(0.40, 0.31, 0.52, 0.07)
       }),
       Object.freeze({
@@ -517,6 +517,10 @@ function button(id: string, label: string, enabled: boolean): UiButton {
 function formatSavedAt(value: string): string {
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : "日時不明";
+}
+
+function replayCameraLabel(mode: AppModel["replayCameraMode"]): string {
+  return mode === "auto" ? "Auto" : mode === "pilot" ? "Pilot" : "Chase";
 }
 
 function status(id: string, label: string, value: string): UiStatus {

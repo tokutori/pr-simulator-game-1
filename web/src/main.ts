@@ -23,6 +23,7 @@ import {
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
+import { resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
 import type { UiAction } from "./render/contracts/ui.js";
 import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
@@ -70,7 +71,13 @@ function dispatch(message: AppMessage): void {
 function renderModel(): void {
   flightHud.setInformationCode(model.difficulty.informationCode);
   flightHud.setVisible(gameSessionPhaseCode(model.gameSession) === 5 || gameSessionPhaseCode(model.gameSession) === 6);
-  flightRenderer?.setFlightCameraMode(gameSessionPhaseCode(model.gameSession) === 9 ? model.replayCameraMode : "pilot");
+  const replayCameraMode = resolveReplayCameraMode(
+    model.replayCameraMode,
+    model.flightAnalysis,
+    model.analysisCursorTimeSeconds,
+    model.presentation.type === "ready" ? model.presentation.mode : "screen"
+  );
+  flightRenderer?.setFlightCameraMode(gameSessionPhaseCode(model.gameSession) === 9 ? replayCameraMode : "pilot");
   if (gameSessionPhaseCode(model.gameSession) === 9) {
     if (model.replayPose !== null) flightRenderer?.setFlightPose(model.replayPose);
   }

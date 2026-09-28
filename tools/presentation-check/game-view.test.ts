@@ -110,7 +110,7 @@ describe("Game scene view model", () => {
       presentation: Object.freeze({ type: "ready", mode: "screen" })
     }, null);
     expect(screenView.panels[0]?.controls.find((control) => control.id === "game-replay-camera"))
-      .toMatchObject({ kind: "button", label: "Camera: pilot", enabled: true });
+      .toMatchObject({ kind: "button", label: "Camera: Auto", enabled: true });
     const xrView = createGameViewModel({
       ...base,
       presentation: Object.freeze({ type: "ready", mode: "webxr" })

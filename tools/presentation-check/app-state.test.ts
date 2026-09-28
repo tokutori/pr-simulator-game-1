@@ -367,12 +367,20 @@ describe("Boot application state", () => {
     expect(ended.effects).toHaveLength(2);
   });
 
-  it("allows Pilot and Chase selection only on the Screen backend", () => {
+  it("cycles Auto and manual camera selection only on the Screen backend", () => {
     const replay: AppModel = readyModel(9);
-    const chase = updateApp(replay, {
+    const pilot = updateApp(replay, {
+      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+    });
+    expect(pilot.model.replayCameraMode).toBe("pilot");
+    const chase = updateApp(pilot.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
     });
     expect(chase.model.replayCameraMode).toBe("chase");
+    const automatic = updateApp(chase.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+    });
+    expect(automatic.model.replayCameraMode).toBe("auto");
     const vrReplay: AppModel = {
       ...replay,
       presentation: Object.freeze({ type: "ready", mode: "webxr" })

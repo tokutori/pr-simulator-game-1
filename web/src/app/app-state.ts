@@ -80,7 +80,7 @@ export interface AppModel {
   readonly replayPlaying: boolean;
   readonly replaySpeed: 0.5 | 1 | 2;
   readonly replayClockGeneration: number;
-  readonly replayCameraMode: FlightCameraMode;
+  readonly replayCameraMode: "auto" | FlightCameraMode;
   readonly storedFlightRecords: readonly StoredFlightRecordUiEntry[];
   readonly storedFlightRecordsStatus: string;
   readonly pendingRecordListRequestId: number | null;
@@ -257,7 +257,7 @@ export function createInitialAppModel(): AppModel {
     replayPlaying: false,
     replaySpeed: 1,
     replayClockGeneration: 0,
-    replayCameraMode: "pilot",
+    replayCameraMode: "auto",
     storedFlightRecords: Object.freeze([]),
     storedFlightRecordsStatus: "保存記録を読み込んでいる",
     pendingRecordListRequestId: null,
@@ -556,7 +556,12 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 9) {
     if (action.controlId === "game-replay-camera") {
       if (model.presentation.type !== "ready" || model.presentation.mode !== "screen") return transition(model);
-      return transition(withModel(model, { replayCameraMode: model.replayCameraMode === "pilot" ? "chase" : "pilot" }));
+      const nextCameraMode = model.replayCameraMode === "auto"
+        ? "pilot"
+        : model.replayCameraMode === "pilot"
+          ? "chase"
+          : "auto";
+      return transition(withModel(model, { replayCameraMode: nextCameraMode }));
     }
     if (action.controlId === "game-replay-play-pause") {
       if (model.flightAnalysis === null) return transition(model);
