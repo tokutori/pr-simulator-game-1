@@ -22,7 +22,7 @@ export interface PilotInputPort {
 export interface FlightHudPort {
   render(snapshot: FlightSnapshot): void;
   fail(message: string): void;
-  clear(): void;
+  setVisible(visible: boolean): void;
 }
 
 export class FlightController {
@@ -30,6 +30,8 @@ export class FlightController {
   private snapshotValue: FlightSnapshot;
   private disposed = false;
   private failed = false;
+  private terminalReported = false;
+  private initialPilotPositionMeters: number;
 
   constructor(
     private readonly session: FlightSessionPort,
@@ -37,11 +39,13 @@ export class FlightController {
     private readonly renderer: FlightPosePort,
     private readonly hud: FlightHudPort,
     physicsHz: number,
-    private readonly readGamepads: () => readonly (Gamepad | null)[] = readAvailableGamepads
+    private readonly readGamepads: () => readonly (Gamepad | null)[] = readAvailableGamepads,
+    private readonly onTerminal: (snapshot: FlightSnapshot) => void = () => undefined
   ) {
     if (!Number.isFinite(physicsHz) || physicsHz <= 0) throw new RangeError("Physics frequency must be positive and finite");
     this.clock = new FixedTickClock(1_000 / physicsHz);
     this.snapshotValue = parseFlightSnapshot(session.snapshot());
+    this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
     this.applySnapshot(this.snapshotValue);
   }
 
@@ -61,6 +65,10 @@ export class FlightController {
           intent.pilotPositionMeters
         ));
         this.applySnapshot(this.snapshotValue);
+        if (this.snapshotValue.terminal !== "airborne" && !this.terminalReported) {
+          this.terminalReported = true;
+          this.onTerminal(this.snapshotValue);
+        }
       });
     } catch (error: unknown) {
       this.failed = true;
@@ -77,19 +85,36 @@ export class FlightController {
     this.clock.resume();
   }
 
+  reset(snapshot: ArrayLike<number>): void {
+    if (this.disposed) throw new Error("Cannot reset a disposed flight controller");
+    this.failed = false;
+    this.terminalReported = false;
+    this.clock.reset();
+    this.snapshotValue = parseFlightSnapshot(snapshot);
+    this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
+    this.applySnapshot(this.snapshotValue);
+  }
+
+  renderCurrentSnapshot(): void {
+    if (this.disposed) return;
+    this.applySnapshot(this.snapshotValue);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.input.dispose();
     this.session.free();
     this.renderer.setFlightPose(null);
-    this.hud.clear();
+    this.hud.setVisible(false);
   }
 
   private applySnapshot(snapshot: FlightSnapshot): void {
     const pose: FlightRenderPose = Object.freeze({
       datumPositionNed: snapshot.positionNed,
-      attitudeBodyToNed: snapshot.attitudeBodyToNed
+      attitudeBodyToNed: snapshot.attitudeBodyToNed,
+      pilotPositionMeters: snapshot.pilotPositionMeters,
+      initialPilotPositionMeters: this.initialPilotPositionMeters
     });
     this.renderer.setFlightPose(pose);
     this.hud.render(snapshot);

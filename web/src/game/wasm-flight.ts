@@ -1,14 +1,15 @@
-import initializeWasm, { SyntheticFlightSession, physics_hz } from "../../pkg/birdman_game_wasm.js";
+import initializeWasm, { GameSessionBridge, physics_hz } from "../../pkg/birdman_game_wasm.js";
 
 let wasmInitialization: Promise<unknown> | null = null;
 
-export async function initializeSyntheticFlight(): Promise<{
-  readonly session: SyntheticFlightSession;
+export async function initializeGameSession(): Promise<{
+  readonly session: GameSessionBridge;
   readonly physicsHz: number;
 }> {
   wasmInitialization ??= initializeWasm();
   await wasmInitialization;
-  return Object.freeze({ session: new SyntheticFlightSession(0), physicsHz: physics_hz() });
+  const session = new GameSessionBridge(0);
+  return Object.freeze({ session, physicsHz: physics_hz() });
 }
 
-export type { SyntheticFlightSession };
+export type { GameSessionBridge };
