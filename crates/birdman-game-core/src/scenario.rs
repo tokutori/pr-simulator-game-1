@@ -133,6 +133,40 @@ pub struct FlightScenarioDefinition<'a> {
     pub course_axis: CourseAxis,
 }
 
+/// Core-derived telemetry at the composite center of mass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlightTelemetry {
+    /// Composite-center position in local NED metres.
+    pub composite_cg_position_ned_m: NedPoint,
+    /// Composite-center altitude above the still-water plane in m.
+    pub altitude_m: f64,
+    /// Three-dimensional air-relative speed norm in m/s.
+    pub airspeed_mps: f64,
+    /// Three-dimensional ground-relative speed norm in m/s.
+    pub groundspeed_mps: f64,
+    /// Ambient wind velocity sampled at the composite center in NED axes.
+    pub wind_velocity_ned_mps: NedVector,
+    /// Composite-center angle of attack, or `None` at zero airspeed.
+    pub angle_of_attack_rad: Option<f64>,
+    /// Composite-center sideslip angle, or `None` at zero airspeed.
+    pub sideslip_angle_rad: Option<f64>,
+    /// Body roll angle in rad.
+    pub roll_rad: f64,
+    /// Body pitch angle in rad.
+    pub pitch_rad: f64,
+    /// Body heading angle in rad.
+    pub heading_rad: f64,
+}
+
+/// Failure while deriving telemetry from a validated flight state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightTelemetryError {
+    /// Composite-center kinematics could not be calculated.
+    Dynamics(DynamicsError),
+    /// The ambient wind field could not be sampled at the composite center.
+    Wind(crate::wind_field::WindError),
+}
+
 /// Errors while validating scenario-wide model and initial-state boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightScenarioError {
@@ -147,6 +181,7 @@ pub enum FlightScenarioError {
 }
 
 /// Immutable validated launch, model, environment, and termination conditions.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightScenario<'a> {
     aircraft: AircraftModel,
     initial_state: FlightTickState,
@@ -193,6 +228,96 @@ impl<'a> FlightScenario<'a> {
     /// Returns the validated tick-zero state.
     pub const fn initial_state(&self) -> FlightTickState {
         self.initial_state
+    }
+
+    /// Returns the aircraft model validated with this scenario.
+    pub const fn aircraft(&self) -> AircraftModel {
+        self.aircraft
+    }
+
+    /// Returns the course axis used to score this scenario.
+    pub const fn course_axis(&self) -> CourseAxis {
+        self.course_axis
+    }
+
+    /// Returns the validated scenario wind at an arbitrary finite NED point.
+    pub fn wind_velocity_at(
+        &self,
+        position_ned: NedPoint,
+    ) -> Result<NedVector, crate::wind_field::WindError> {
+        self.loads.wind_velocity_at(position_ned)
+    }
+
+    /// Derives telemetry at the composite center of mass.
+    pub fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
+        let mass_fraction = self.aircraft.pilot_mass_kg()
+            / (self.aircraft.airframe_mass_kg() + self.aircraft.pilot_mass_kg());
+        let offset_body = BodyVector::try_new(
+            mass_fraction * state.pilot_position_m(),
+            0.0,
+            mass_fraction * self.aircraft.pilot_vertical_offset_m(),
+        )
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let position_ned = state
+            .datum_position_ned()
+            .translated(
+                state
+                    .attitude_body_to_ned()
+                    .body_to_ned(offset_body)
+                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+            )
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let rotational_velocity = state
+            .angular_velocity_body()
+            .cross(offset_body)
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let relative_velocity =
+            BodyVector::try_new(mass_fraction * state.pilot_velocity_mps(), 0.0, 0.0)
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let cg_velocity_body = rotational_velocity
+            .plus(relative_velocity)
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let cg_velocity_ned = state
+            .datum_velocity_ned()
+            .plus(
+                state
+                    .attitude_body_to_ned()
+                    .body_to_ned(cg_velocity_body)
+                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+            )
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let wind = self
+            .loads
+            .wind_velocity_at(position_ned)
+            .map_err(FlightTelemetryError::Wind)?;
+        let air_velocity_body = state
+            .attitude_body_to_ned()
+            .ned_to_body(
+                cg_velocity_ned
+                    .minus(wind)
+                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+            )
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let [u, v, w] = air_velocity_body.components();
+        let airspeed = air_velocity_body
+            .norm()
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+        let [qw, qx, qy, qz] = state.attitude_body_to_ned().components();
+        Ok(FlightTelemetry {
+            composite_cg_position_ned_m: position_ned,
+            altitude_m: -position_ned.components()[2],
+            airspeed_mps: airspeed,
+            groundspeed_mps: cg_velocity_ned
+                .norm()
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+            wind_velocity_ned_mps: wind,
+            angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
+            sideslip_angle_rad: (airspeed > 0.0)
+                .then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
+            roll_rad: libm::atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)),
+            pitch_rad: libm::asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0)),
+            heading_rad: libm::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)),
+        })
     }
 
     /// Creates the fixed physics configuration for the requested control mode.
@@ -584,6 +709,52 @@ mod tests {
                 0.0,
             ),
             Err(DynamicsError::NonFinite)
+        );
+    }
+
+    #[test]
+    fn telemetry_reports_composite_cg_altitude_and_three_dimensional_speeds() {
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let scenario =
+            FlightScenario::try_new(scenario_definition(1.225, &contact_points)).unwrap();
+        let state = scenario.initial_state().flight_state();
+        let telemetry = scenario.telemetry(state).unwrap();
+
+        assert!((telemetry.altitude_m - 10.0).abs() < 1.0e-12);
+        assert_eq!(
+            telemetry.composite_cg_position_ned_m,
+            composite_cg_position(&scenario.aircraft(), state)
+        );
+        assert!((telemetry.groundspeed_mps - 10.0).abs() < 1.0e-12);
+        assert!((telemetry.airspeed_mps - 10.0).abs() < 1.0e-12);
+        assert_eq!(telemetry.angle_of_attack_rad, Some(0.0));
+        assert_eq!(telemetry.sideslip_angle_rad, Some(0.0));
+        assert_eq!(telemetry.wind_velocity_ned_mps.components(), [0.0; 3]);
+        assert_eq!(
+            [
+                telemetry.roll_rad,
+                telemetry.pitch_rad,
+                telemetry.heading_rad
+            ],
+            [0.0; 3]
+        );
+    }
+
+    #[test]
+    fn telemetry_subtracts_local_wind_from_composite_ground_velocity() {
+        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let mut definition = scenario_definition(1.225, &contact_points);
+        definition.wind_field = WindField::uniform(NedVector::try_new(2.0, 0.0, 0.0).unwrap());
+        let scenario = FlightScenario::try_new(definition).unwrap();
+        let telemetry = scenario
+            .telemetry(scenario.initial_state().flight_state())
+            .unwrap();
+
+        assert!((telemetry.airspeed_mps - 8.0).abs() < 1.0e-12);
+        assert!((telemetry.groundspeed_mps - 10.0).abs() < 1.0e-12);
+        assert_eq!(
+            telemetry.wind_velocity_ned_mps.components(),
+            [2.0, 0.0, 0.0]
         );
     }
 }

@@ -344,6 +344,17 @@ impl ActuatorState {
         })
     }
 
+    /// Restores finite recorded actuator deflections without applying a live model limit.
+    pub fn try_from_recorded(
+        roll_rad: f64,
+        pitch_rad: f64,
+        yaw_rad: f64,
+    ) -> Result<Self, ActuatorError> {
+        Ok(Self(SurfaceDeflections::try_new(
+            roll_rad, pitch_rad, yaw_rad,
+        )?))
+    }
+
     /// Returns the roll actuator deflection in radians.
     pub const fn roll_rad(self) -> f64 {
         self.0.roll_rad()
@@ -362,6 +373,23 @@ impl ActuatorState {
     /// Returns the current physical surface deflections.
     pub const fn deflections(self) -> SurfaceDeflections {
         self.0
+    }
+
+    /// Interpolates between recorded actuator states.
+    pub fn interpolate(self, other: Self, fraction: f64) -> Result<Self, ActuatorError> {
+        if !fraction.is_finite() {
+            return Err(ActuatorError::NonFinite);
+        }
+        if !(0.0..=1.0).contains(&fraction) {
+            return Err(ActuatorError::InvalidInterpolationFraction);
+        }
+        let start = self.0.components();
+        let end = other.0.components();
+        let values: [f64; 3] =
+            core::array::from_fn(|index| start[index] + fraction * (end[index] - start[index]));
+        Ok(Self(SurfaceDeflections::try_new(
+            values[0], values[1], values[2],
+        )?))
     }
 
     /// Advances all actuators with symmetric travel saturation and rate limiting.
@@ -408,6 +436,8 @@ pub enum ActuatorError {
     InvalidLimit,
     /// A timestep is not finite and positive.
     InvalidTimeStep,
+    /// An interpolation fraction is outside the inclusive unit interval.
+    InvalidInterpolationFraction,
     /// An actuator state exceeds its configured travel limit.
     DeflectionOutOfRange,
 }

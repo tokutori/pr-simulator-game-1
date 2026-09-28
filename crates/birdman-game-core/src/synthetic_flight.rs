@@ -62,6 +62,14 @@ pub struct SyntheticPlayableFlight {
 impl SyntheticPlayableFlight {
     /// Builds a synthetic glide from a trim-near state at the supplied altitude.
     pub fn try_new(launch_altitude_m: f64) -> Result<Self, SyntheticFlightError> {
+        Self::try_new_with_uniform_wind(launch_altitude_m, [0.0; 3])
+    }
+
+    /// Builds a synthetic glide with an explicit uniform NED wind field.
+    pub fn try_new_with_uniform_wind(
+        launch_altitude_m: f64,
+        wind_velocity_ned_mps: [f64; 3],
+    ) -> Result<Self, SyntheticFlightError> {
         if !launch_altitude_m.is_finite() || launch_altitude_m <= 0.0 {
             return Err(SyntheticFlightError::InvalidLaunchAltitude);
         }
@@ -89,9 +97,15 @@ impl SyntheticPlayableFlight {
         )
         .map_err(SyntheticFlightError::Dynamics)?;
         let aerodynamics = synthetic_playable_aerodynamic_model()?;
+        let wind_velocity = NedVector::try_new(
+            wind_velocity_ned_mps[0],
+            wind_velocity_ned_mps[1],
+            wind_velocity_ned_mps[2],
+        )
+        .map_err(SyntheticFlightError::Math)?;
         let wind_field = WindField::linear_gradient(
             NedPoint::try_new(0.0, 0.0, -100.0).map_err(SyntheticFlightError::Math)?,
-            NedVector::zero(),
+            wind_velocity,
             [[0.0; 3]; 3],
         )
         .map_err(SyntheticFlightError::Wind)?;
@@ -138,6 +152,23 @@ impl SyntheticPlayableFlight {
     /// Returns the course axis used for terminal distance scoring.
     pub const fn course_axis(&self) -> CourseAxis {
         self.course_axis
+    }
+
+    /// Consumes the fixture and returns its validated session components.
+    pub fn into_parts(
+        self,
+    ) -> (
+        AircraftModel,
+        FlightScenario<'static>,
+        BodyRateFeedbackConfig,
+        CourseAxis,
+    ) {
+        (
+            self.aircraft,
+            self.scenario,
+            self.feedback,
+            self.course_axis,
+        )
     }
 }
 
