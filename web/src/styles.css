@@ -66,6 +66,48 @@ body {
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
 }
 
+.screen-ui-shell[data-mode="analysis"] {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.screen-ui-shell[data-mode="analysis"] > h1,
+.screen-ui-shell[data-mode="analysis"] > .screen-ui-description,
+.screen-ui-panel[data-layout="normalized"] > h2 {
+  display: none;
+}
+
+.screen-ui-panel[data-layout="normalized"] {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-panel[data-layout="normalized"] .screen-ui-controls {
+  position: absolute;
+  inset: 0;
+  display: block;
+  margin: 0;
+}
+
+.screen-ui-panel[data-layout="normalized"] .screen-ui-controls > * {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+
 .screen-ui-shell[data-scene="Boot"] {
   position: fixed;
   top: 1rem;
@@ -272,7 +314,7 @@ body {
 .screen-ui-chart {
   box-sizing: border-box;
   display: flex;
-  min-height: 12rem;
+  min-height: 0;
   flex-direction: column;
   gap: 0.25rem;
   margin: 0;
@@ -290,7 +332,7 @@ body {
 .screen-ui-chart svg {
   display: block;
   width: 100%;
-  min-height: 8rem;
+  min-height: 0;
   flex: 1;
   overflow: visible;
 }
