@@ -51,7 +51,7 @@ export type GameSessionUiState =
   | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
   | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
-  | { readonly kind: "flight"; readonly phaseCode: 5 | 6; readonly snapshot: FlightSnapshot | null }
+  | { readonly kind: "flight"; readonly phaseCode: 5 | 6; readonly snapshot: FlightSnapshot }
   | { readonly kind: "result"; readonly phaseCode: 7; readonly snapshot: FlightSnapshot | null }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
   | { readonly kind: "replay"; readonly phaseCode: 9; readonly snapshot: FlightSnapshot | null };
