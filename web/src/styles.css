@@ -47,6 +47,10 @@ body {
   padding: clamp(1rem, 4vw, 3rem);
 }
 
+.screen-ui-mount {
+  display: contents;
+}
+
 .screen-ui-shell {
   width: min(42rem, 100%);
   padding: clamp(1.25rem, 4vw, 2.5rem);
