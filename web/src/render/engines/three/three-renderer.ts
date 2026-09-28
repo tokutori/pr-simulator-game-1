@@ -3,6 +3,7 @@ import {
   CircleGeometry,
   Color,
   DoubleSide,
+  Group,
   LinearFilter,
   BoxGeometry,
   Mesh,
@@ -15,12 +16,15 @@ import {
 } from "three";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
-import type { BackendFrame, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
-import { quaternion, vec3 } from "../../contracts/math.js";
+import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
+import { IDENTITY_POSE, quaternion, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
+import { composePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { flightRelativePose } from "./flight-pose.js";
+import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
+import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -73,16 +77,17 @@ export function createThreeRenderer(
   gazeCursor.visible = false;
   panelMesh.add(gazeCursor);
 
+  const aircraftRoot = new Group();
+  scene.add(aircraftRoot);
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
-  camera.position.set(0, 0, 0);
-  scene.add(camera);
+  aircraftRoot.add(camera);
   const cockpitMaterial = new MeshBasicMaterial({ color: 0x343f3d });
   const cockpitWing = new Mesh(new BoxGeometry(3.8, 0.055, 0.24), cockpitMaterial);
   cockpitWing.position.set(0, -0.58, -1.25);
-  camera.add(cockpitWing);
+  aircraftRoot.add(cockpitWing);
   const cockpitNose = new Mesh(new BoxGeometry(0.16, 0.12, 1.7), cockpitMaterial);
   cockpitNose.position.set(0, -0.5, -1.95);
-  camera.add(cockpitNose);
+  aircraftRoot.add(cockpitNose);
   let disposed = false;
   let loopRunning = false;
   let width = 0;
@@ -97,6 +102,7 @@ export function createThreeRenderer(
   let activeReferenceSpace: XRReferenceSpace | null = null;
   let selectRayHandler: ((ray: SelectRay) => void) | null = null;
   let flightPose: FlightRenderPose | null = null;
+  let flightCameraMode: FlightCameraMode = "pilot";
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
@@ -151,7 +157,20 @@ export function createThreeRenderer(
     render(frame: BackendFrame) {
       ensureActive(disposed);
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
-      setPose(camera, flightPose === null ? frame.cameraPose : flightRelativePose(flightPose, frame.cameraPose));
+      const useChaseCamera = flightPose !== null && flightCameraMode === "chase" && !renderer.xr.isPresenting && stereoPresentation === null;
+      if (useChaseCamera) {
+        setPose(camera, poseFrdToThree(replayCameraPoseFrd("chase")));
+      } else {
+        const pilotEyePose = flightPose === null
+          ? IDENTITY_POSE
+          : pilotEyePoseThree(
+            SYNTHETIC_PILOT_EYE_POINT,
+            flightPose.pilotPositionMeters,
+            flightPose.initialPilotPositionMeters
+          );
+        setPose(camera, composePose(pilotEyePose, frame.cameraPose));
+      }
+      setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
       setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
@@ -216,6 +235,9 @@ export function createThreeRenderer(
     },
     setFlightPose(pose: FlightRenderPose | null) {
       flightPose = pose;
+    },
+    setFlightCameraMode(mode: FlightCameraMode) {
+      flightCameraMode = mode;
     }
   };
 
