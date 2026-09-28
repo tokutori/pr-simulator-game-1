@@ -1721,7 +1721,7 @@ mod tests {
         bridge.abort().unwrap();
         assert_eq!(bridge.phase_code(), 7);
         assert_eq!(bridge.configuration_metadata().unwrap(), resolved);
-        let result_identity = bridge.session.snapshot().result.unwrap().scenario;
+        let result_identity = bridge.session.snapshot().result().unwrap().scenario;
         assert_eq!(result_identity.scenario_id, 5);
         assert_eq!(result_identity.environment_version, 5);
         bridge.open_setup().unwrap();
