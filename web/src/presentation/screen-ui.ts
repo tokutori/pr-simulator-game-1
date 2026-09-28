@@ -373,7 +373,7 @@ function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
   }
   if (Object.keys(attributes).length > 0) data.attrs = attributes;
   if (Object.keys(dataset).length > 0) data.dataset = dataset;
-  if (element.classList.length > 0) data.class = Object.fromEntries(Array.from(element.classList).map((name) => [name, true]));
+  const classes = Array.from(element.classList);
   const key = element.dataset.vnodeKey;
   if (key !== undefined) data.key = key;
   if (element.tagName === "INPUT") {
@@ -385,7 +385,7 @@ function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
     if (child.nodeType === 3) return vnode(undefined, undefined, undefined, child.textContent ?? "", undefined);
     return vnode("!", {}, [], child.textContent ?? "", undefined);
   });
-  return vnode(element.tagName.toLowerCase(), data, children, undefined, attachExisting ? element : undefined);
+  return vnode(`${element.tagName.toLowerCase()}${classes.map((name) => `.${name}`).join("")}`, data, children, undefined, attachExisting ? element : undefined);
 }
 
 function eventElement(event: Event, root: HTMLElement): Element | null {
