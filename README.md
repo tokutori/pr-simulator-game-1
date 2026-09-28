@@ -12,7 +12,7 @@ BPG-014のScreen表示shell、BPG-015のnative WebXR sessionとVR操作、BPG-01
 
 BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜034ではRust coreにauthority mixer、actuator dynamics、pilot position policy、決定的flight tick、fractional water contact、score、launch変換、固定tick flight sequenceを追加した。Rust coreの`FlightScenario`はlaunch・機体・空力・空間風・actuator・contact・score設定を統合する。
 
-BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007のWASM browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約273 m・約28秒の飛行をRust試験で確認する。このfixtureの係数はplayability用であり、実機性能やcontroller tuningを示さない。
+BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007のWASM browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約220 m・約23秒、100 msのpilot-position keyboard入力を与えたManual flightで約193 mの飛行を確認する。このfixtureの係数はplayability用であり、実機性能やcontroller tuningを示さない。
 
 現在の作業差分では、keyboard/gamepad入力、fixed-tick更新、HUD、fractional water-contactに加え、Rust `GameSession`のTitle・Setup・Briefing・Countdown・Flight・Result・Replay遷移をWASM／Screen UIへ接続している。SetupではInformation・Assistance・Weatherの各軸とpresetを選択でき、解決結果をRustのflight制御・scenarioへ反映する。Rust coreは初期sample・tick入力・終端状態を記録し、`birdman-game-format`のJSON schema version 1とWASM exportを提供する。WebはResult確定時にIndexedDBへ保存し、Rust由来summaryを表示する。保存recordはTitleに最新3件を表示し、選択時はRust GameSessionでarchiveを検証してReplayへ遷移する。Analysis graphは水平map、altitude/speed系列、共有cursor、固定高度の5×5 wind queryを備える。模式的な湖岸・platform・地物は非地理データとして管理する。Replayは確定recordのseek、Result Analysis cursor同期、Rust補間pose、連続再生・速度選択、Screen上のPilot/Chase選択を実装した。追加Replay rig、生成WASM宣言の更新、実ブラウザー受入は未完了であり、BPG-007は未完了である。
 
