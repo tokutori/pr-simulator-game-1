@@ -46,7 +46,7 @@ pub use simulation::{
     advance_feedback_flight_tick_with_contact, advance_flight_tick,
     advance_flight_tick_with_contact, run_feedback_flight, run_flight,
 };
-pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError};
+pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
 pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{

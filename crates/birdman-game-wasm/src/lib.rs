@@ -3,7 +3,7 @@
 use birdman_game_core::{
     BodyVector, ControlMode, DistanceScore, DistanceScoreError, FbwAuthority, FlightFeedbackInput,
     FlightTickOutcome, FlightTickState, NedPoint, PilotPositionTarget, SurfaceCommands,
-    SyntheticFlight, SyntheticFlightError, course_distance_score,
+    SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
 };
 use wasm_bindgen::{JsValue, prelude::*};
 
@@ -21,7 +21,7 @@ pub fn physics_hz() -> u32 {
 /// Owns one synthetic flight and exposes atomic tick/snapshot operations.
 #[wasm_bindgen]
 pub struct SyntheticFlightSession {
-    fixture: SyntheticFlight,
+    fixture: SyntheticPlayableFlight,
     control_mode: ControlMode,
     state: FlightTickState,
     start_datum: NedPoint,
@@ -34,7 +34,7 @@ impl SyntheticFlightSession {
     /// Creates a synthetic browser flight. Mode is 0=Manual, 1=Shared, 2=Automatic.
     #[wasm_bindgen(constructor)]
     pub fn new(control_mode: u32) -> Result<SyntheticFlightSession, JsValue> {
-        let fixture = SyntheticFlight::try_new(30.0).map_err(synthetic_error)?;
+        let fixture = SyntheticPlayableFlight::try_new(10.5).map_err(synthetic_error)?;
         let control_mode = match control_mode {
             0 => ControlMode::Manual,
             1 => ControlMode::Shared(FbwAuthority::try_new(0.5).map_err(|error| {
@@ -247,7 +247,7 @@ mod tests {
     use super::{SNAPSHOT_LENGTH, SyntheticFlightSession, validate_axes};
     use birdman_game_core::{
         BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, PilotPositionTarget,
-        SurfaceCommands, SyntheticFlight,
+        SurfaceCommands, SyntheticPlayableFlight,
     };
 
     #[test]
@@ -282,8 +282,32 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_session_control_intent_changes_aircraft_and_pilot_state() {
+        let mut neutral = SyntheticFlightSession::new(0).unwrap();
+        let mut controlled = SyntheticFlightSession::new(0).unwrap();
+        let initial = neutral.snapshot();
+
+        for _ in 0..100 {
+            neutral.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+            controlled.advance_tick(0.6, 0.4, 0.0, 0.3).unwrap();
+        }
+
+        let neutral_snapshot = neutral.snapshot();
+        let controlled_snapshot = controlled.snapshot();
+        assert_ne!(controlled_snapshot[13], 0.0);
+        assert_ne!(controlled_snapshot[14], 0.0);
+        assert_ne!(controlled_snapshot[11], initial[11]);
+        assert!(
+            controlled_snapshot[7..11]
+                .iter()
+                .zip(&neutral_snapshot[7..11])
+                .any(|(controlled, neutral)| (controlled - neutral).abs() > 1.0e-6)
+        );
+    }
+
+    #[test]
     fn browser_session_snapshot_matches_core_reference_trajectory() {
-        let fixture = SyntheticFlight::try_new(30.0).unwrap();
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
         let mut native_state = fixture.scenario().initial_state();
         let mut wasm_session = SyntheticFlightSession::new(0).unwrap();
         let inputs = [
