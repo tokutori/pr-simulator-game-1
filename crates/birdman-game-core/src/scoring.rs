@@ -44,6 +44,36 @@ pub struct DistanceScore {
 }
 
 impl DistanceScore {
+    /// Restores finite stored metrics from a validated versioned record.
+    pub fn try_from_recorded(
+        course_parallel_m: f64,
+        cross_track_m: f64,
+        net_horizontal_m: f64,
+    ) -> Result<Self, DistanceScoreError> {
+        if !course_parallel_m.is_finite()
+            || !cross_track_m.is_finite()
+            || !net_horizontal_m.is_finite()
+        {
+            return Err(DistanceScoreError::NonFinite);
+        }
+        if net_horizontal_m < 0.0 {
+            return Err(DistanceScoreError::InvalidRecordedMetrics);
+        }
+        let expected_net = libm::hypot(course_parallel_m, cross_track_m);
+        if !expected_net.is_finite() {
+            return Err(DistanceScoreError::NonFinite);
+        }
+        let tolerance = 1.0e-9 * expected_net.max(1.0);
+        if (expected_net - net_horizontal_m).abs() > tolerance {
+            return Err(DistanceScoreError::InvalidRecordedMetrics);
+        }
+        Ok(Self {
+            course_parallel_m,
+            cross_track_m,
+            net_horizontal_m,
+        })
+    }
+
     /// Returns signed displacement parallel to the launch course.
     pub const fn course_parallel_m(self) -> f64 {
         self.course_parallel_m
@@ -67,6 +97,8 @@ pub enum DistanceScoreError {
     NonFinite,
     /// The horizontal course axis has zero length.
     InvalidCourseAxis,
+    /// Stored endpoint metrics are inconsistent with their geometric invariant.
+    InvalidRecordedMetrics,
 }
 
 /// Measures endpoint displacement from the start datum to a terminal datum.
@@ -183,5 +215,19 @@ mod tests {
         assert_eq!(score.course_parallel_m(), 3.0);
         assert_eq!(score.cross_track_m(), 4.0);
         assert_eq!(score.net_horizontal_m(), 5.0);
+    }
+
+    #[test]
+    fn recorded_score_requires_consistent_finite_horizontal_metrics() {
+        let restored = super::DistanceScore::try_from_recorded(3.0, 4.0, 5.0).unwrap();
+        assert_eq!(restored.net_horizontal_m(), 5.0);
+        assert_eq!(
+            super::DistanceScore::try_from_recorded(3.0, 4.0, 6.0),
+            Err(DistanceScoreError::InvalidRecordedMetrics)
+        );
+        assert_eq!(
+            super::DistanceScore::try_from_recorded(f64::MAX, f64::MAX, 1.0),
+            Err(DistanceScoreError::NonFinite)
+        );
     }
 }

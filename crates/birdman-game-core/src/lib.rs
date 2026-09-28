@@ -4,14 +4,18 @@
 //! The core owns no clock, I/O, random generator, or platform interface. It
 //! evaluates explicit state, model, load, and input values.
 
+extern crate alloc;
+
 mod aerodynamics;
 mod aerodynamics_contract;
 mod contact;
 mod dynamics;
 mod flight_control;
+mod flight_record;
 mod math;
 mod scenario;
 mod scoring;
+mod session_contract;
 mod simulation;
 mod synthetic_flight;
 mod wind_field;
@@ -32,6 +36,11 @@ pub use flight_control::{
     ControlMode, FbwAuthority, SurfaceCommands, SurfaceDeflections, advance_surface_control,
     body_rate_feedback_commands, mix_surface_commands,
 };
+pub use flight_record::{
+    FlightRecord, FlightRecordDisposition, FlightRecordError, FlightRecordFinalization,
+    FlightRecordHeader, FlightRecordInput, FlightRecordPlaybackSample, FlightRecordQueryError,
+    FlightRecordSample, FlightRecordSummary, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
+};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
     FlightTelemetry, FlightTelemetryError, flight_state_from_composite_cg_launch,
@@ -40,6 +49,7 @@ pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
     course_distance_score,
 };
+pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
 pub use simulation::{
     FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
     FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,
