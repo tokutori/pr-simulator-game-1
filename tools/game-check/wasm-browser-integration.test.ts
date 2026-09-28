@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
+import { BrowserPilotInput } from "../../web/src/game/browser-input.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
@@ -85,6 +86,45 @@ describe("generated WebAssembly browser binding", () => {
       expect(snapshot.scoreCourseMeters).toBeLessThanOrEqual(230);
       expect(Math.abs(snapshot.pilotPositionMeters)).toBeGreaterThan(0.03);
     } finally {
+      session.free();
+    }
+  });
+
+  it("routes a neutral-confirmed gamepad input through WASM flight", () => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    const target = { addEventListener() {}, removeEventListener() {} } as unknown as Window;
+    const input = new BrowserPilotInput(target);
+    const neutralGamepad = { connected: true, axes: [0, 0, 0, 0] } as unknown as Gamepad;
+    const activeGamepad = { connected: true, axes: [0, 0, 0, 0.18] } as unknown as Gamepad;
+    try {
+      session.open_setup();
+      session.prepare();
+      session.mark_briefing_ready();
+      session.start_countdown(1);
+      session.advance_countdown();
+      session.launch();
+      input.readIntent([neutralGamepad]);
+
+      let snapshot = parseFlightSnapshot(session.snapshot());
+      let minimumPilotPositionMeters = snapshot.pilotPositionMeters;
+      for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
+        const intent = input.readIntent(tick >= 160 && tick < 170 ? [activeGamepad] : [neutralGamepad]);
+        snapshot = parseFlightSnapshot(session.advance_tick(
+          intent.roll,
+          intent.pitch,
+          intent.yaw,
+          intent.pilotPositionMeters
+        ));
+        minimumPilotPositionMeters = Math.min(minimumPilotPositionMeters, snapshot.pilotPositionMeters);
+      }
+
+      expect(snapshot.terminal).toBe("water-contact");
+      expect(snapshot.scoreCourseMeters).toBeGreaterThanOrEqual(180);
+      expect(snapshot.scoreCourseMeters).toBeLessThanOrEqual(230);
+      expect(minimumPilotPositionMeters).toBeLessThan(-0.005);
+    } finally {
+      input.dispose();
       session.free();
     }
   });
