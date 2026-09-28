@@ -2,16 +2,23 @@
 
 ## 責務と不変性
 
-Result、Analysis、Replayは同一の確定済みFlightRecordを参照する。
+Result、Analysis、Replayは同一の確定済みFlightRecordを参照する。scoreとterminal dispositionもfinalization metadataに保持する。
 record型、tick sample追記、終端確定、domain validation、集計値はRust coreが所有する。
 recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
-coreはBriefing時に最大tick数分のcapacityを準備し、simulation step中はallocationなしでappendする。
+coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。予約失敗は型付きerrorとしてReady遷移を拒否する。
 上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
-WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。
+WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1からのmetadata移行と実ブラウザー操作は未検証である。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
 ## Header
+
+外部保存形式は`birdman-game-format::FlightRecordDocument`のJSON schema version 1とする。
+physics/model versionはschema versionから独立させる。decoderは16 MiBを超える入力、未知schema version、未知field、壊れたJSONを拒否する。
+`serde_json`は`float_roundtrip`を有効化し、f64 sampleのencode/decodeで値を完全一致させる。
+
+version 1はscenario/model/environment/controller version、resolved presetと三軸、seed、tick上限、全sample、input、telemetry、finalization、scoreを保存する。
+physics build hash、presentation policy、asset content hash、初期環境位相は未収録であり、永続化互換性を宣言する前にschemaへ追加する。
 
 - record schema、座標・単位契約、physics build/modelのversionとhash
 - AircraftModel、scenario/world asset、controller設定とversion、seed、機体・身体の初期状態と身体移動モデル
@@ -40,7 +47,7 @@ tick kの入力はstate k→k+1に適用する。tick 0の初期状態も保存�
 Briefingで上限分のsample・入力・終端event領域を確保し、確保失敗時はReadyへ進めない。
 上限到達はTimeLimitとして確定し、bufferの上書きやsample間引きを行わない。
 Distance score v1はWaterContact時にfractional terminal datum、TimeLimit時に最後の有効integer-tick datumを用いる。
-具体的な上限・1 sampleのbyte数・総容量はBPG-019で計測して登録する。
+記録上限は4,000 tickとし、最大4,001 sampleを保持する。sampleの実byte数とWASMを含む最大予約量はBPG-019の実装検証で測定し、本契約へ追記する。
 端末負荷によって保存周期を変更しない。描画用downsampleは原recordを保持して別途生成する。
 
 ## Sampleと入力列
@@ -51,6 +58,7 @@ f64の物理値を保存する。圧縮・量子化は後続format versionで誤
 |---|---|
 | tick / terminal fraction | simulation時刻 |
 | position_ned_m | 機体構造datum $O$ の対地位置 |
+| composite_cg_position_ned_m | 合成重心 $G$ のNED位置。map軌跡の正本 |
 | velocity_ned_mps | datum $O$ の対地速度 |
 | attitude_body_to_ned | 単位quaternion。Euler角はderived |
 | angular_velocity_body_rad_s | body角速度 |
@@ -116,8 +124,14 @@ pause、seek、速度変更、逆方向操作はplayback clockだけへ作用し
 graph cursorと再生位置は同じrecord時刻を参照する。
 保存済み入力からのnative/WASM再積分は検証機能として分離し、Replay表示と同一視しない。
 
+BPG-021の現行実装はRustのResult/Replay phase往復、記録時刻scrub、Result Analysis cursor同期、
+Rust補間sampleからのrender pose適用、連続playback clock、pause、0.5×/1×/2×速度選択、ScreenでのPilot/Chase選択までを含む。
+その他のReplay rigとブラウザー／VR受入は未実装であり、Scene受入完了条件として残す。
+
 ## 検証
 
 BPG-019でtick/FPS独立性、初期・終端sample、欠損/非有限値/重複tick、範囲外seek、
 capacity境界、allocation、schema round-trip、手計算可能な集計値、失敗finalizationを検証する。
 record validationは単調時刻、単位quaternion、有限値、有効な要素IDとheader整合を確認する。
+playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路quaternion slerp、線形状態補間、
+角度のwrap-aware補間を行う。queryは記録範囲外を拒否し、物理状態を変更しない。

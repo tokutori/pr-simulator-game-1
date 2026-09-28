@@ -225,6 +225,7 @@ class FakeRenderer implements RendererAdapter {
   stopLoop(): void {}
   render(): void {}
   setFlightPose(): void {}
+  setFlightCameraMode(): void {}
   resize(): void {}
   setStereoPresentation(): void {}
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void { this.selectHandler = handler; }

@@ -368,10 +368,10 @@ export class ScreenUiAdapter {
 
 function applyNormalizedRect(element: HTMLElement, rect: UiControl["rect"]): void {
   element.style.position = "absolute";
-  element.style.left = `${rect.x * 100}%`;
-  element.style.top = `${rect.y * 100}%`;
-  element.style.width = `${rect.width * 100}%`;
-  element.style.height = `${rect.height * 100}%`;
+  element.style.left = `${String(rect.x * 100)}%`;
+  element.style.top = `${String(rect.y * 100)}%`;
+  element.style.width = `${String(rect.width * 100)}%`;
+  element.style.height = `${String(rect.height * 100)}%`;
 }
 
 function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
