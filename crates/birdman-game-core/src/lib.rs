@@ -34,7 +34,7 @@ pub use flight_control::{
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
-    flight_state_from_composite_cg_launch,
+    FlightTelemetry, FlightTelemetryError, flight_state_from_composite_cg_launch,
 };
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
