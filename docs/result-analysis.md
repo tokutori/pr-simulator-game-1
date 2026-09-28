@@ -9,7 +9,7 @@ ResultはSummaryとAnalysisのtab、およびRetry / Replay / Setup / Titleの�
 WebはResult/Analysisのtab・focus・表示範囲を管理し、ゲーム規則やmetricsを再計算しない。
 
 SummaryはRust coreが返すversioned course-distance scoreとFlight Timeを主表示とし、cross-track displacement、net horizontal displacement、最大対気速度、最大重心AoA、最大絶対roll、
-三軸設定、scenarioと代表風を併記する。
+解決済みpreset・三軸設定、scenario catalog／scenario／aircraft／environment／controllerのversion、seed、代表風を併記する。
 異常終了と着水を区別し、欠損値はunavailableと表示する。
 
 ## 最小Analysis
@@ -31,7 +31,7 @@ pointer hoverだけでなくtouch・keyboardでも共有時刻を選択でき、
 ## Horizontal map
 
 東を右、北を上とする等縮尺のlocal NED平面を用いる。実描画のy反転は2D adapterに限定する。
-軌跡は記録されたdatum $O$ のposeと身体状態から導出した合成重心 $G$ の水平位置で統一する。
+軌跡は各record sampleに保存された合成重心 $G$ のNED水平位置で統一する。Webでbody stateから重心位置を再計算しない。
 着水点とscoreは接触時刻の終端sampleから算出し、接触点位置との区別を表示する。
 全体軌跡に余白を加え、静止・極短距離・同一直線軌道でも表示範囲が退化しないようにする。
 湖岸line、platform、多景島等はworld assetと同じorigin/versionを使用する。
@@ -50,6 +50,8 @@ gridは固定NED高度の水平断面であり、軌跡上の各高度におけ�
 map用の風断面はvalidated scenarioからWASM queryで取得してcacheできる。
 Flight記録上の重心風は変更しない。scenarioが欠けるrecordでは疎gridを非表示にし、
 保存済みの軌跡上風を表示する。queryはFlightのsimulation stateを更新しない。
+最初の実装では発進時の重心高度を固定断面とし、record軌跡と合成world地物を含む等方範囲へ5×5点を配置する。
+水平成分は同一scaleの矢印で示し、鉛直成分の範囲と断面高度を数値で表示する。
 
 ## 高度と速度
 
@@ -75,4 +77,4 @@ BPG-020で既知軌道・wind・高度・速度のfixture、軸方向と等縮�
 終端種別、cursor同期、touch/keyboard、表示用間引きの極値保持を検証する。
 VRのgamepad/head-gaze等によるtab・scroll・cursor・Replay遷移も同じ受入条件で検証する。
 BPG-021で同じ時刻のmap marker・graph・3D poseの一致とResultへの復帰を検証する。
-最初のmapは正式形式の合成湖岸・camera pointを用い、実地理assetの取得を待たず完成させる。
+最初のmapはversion付き`synthetic-training-basin` assetを用い、実地理assetの取得を待たず完成させる。originはscenario発進時の合成重心を基準とするlocal NEDである。湖岸・platform・小島の座標は模式的な非地理データであり、既知のsynthetic scenario catalogだけに適用する。実地理形状は別versionのworld assetで管理し、このfixtureから推定しない。
