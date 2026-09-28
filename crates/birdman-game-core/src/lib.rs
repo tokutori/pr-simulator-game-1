@@ -12,6 +12,7 @@ mod contact;
 mod dynamics;
 mod flight_control;
 mod flight_record;
+mod game_session;
 mod math;
 mod scenario;
 mod scoring;
@@ -40,6 +41,10 @@ pub use flight_record::{
     FlightRecord, FlightRecordDisposition, FlightRecordError, FlightRecordFinalization,
     FlightRecordHeader, FlightRecordInput, FlightRecordPlaybackSample, FlightRecordQueryError,
     FlightRecordSample, FlightRecordSummary, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
+};
+pub use game_session::{
+    BriefingFailure, GameSession, GameSessionConfiguration, GameSessionError, PauseReason,
+    PauseReasons, SessionPhase, SessionResult, SessionSnapshot, SessionTerminalState,
 };
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
