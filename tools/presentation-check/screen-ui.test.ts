@@ -19,6 +19,8 @@ describe("screen UI DOM patching", () => {
     if (range?.kind !== "range") throw new Error("FlightSetup fixture has no range control");
 
     adapter.render(initial);
+    const mount = root.querySelector(".screen-ui-mount");
+    expect(mount).not.toBeNull();
     const input = root.querySelector<HTMLInputElement>(`input[data-control-id="${range.id}"]`);
     if (input === null) throw new Error(`Rendered range control is missing: ${root.innerHTML}`);
     const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
@@ -41,6 +43,7 @@ describe("screen UI DOM patching", () => {
     };
     adapter.render(updated);
 
+    expect(root.querySelector(".screen-ui-mount")).toBe(mount);
     expect(root.querySelector(`input[data-control-id="${range.id}"]`)).toBe(input);
     expect(window.document.activeElement).toBe(input);
     expect(root.querySelector(".screen-ui-shell")).toBe(shell);
