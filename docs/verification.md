@@ -108,7 +108,7 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 
 ## 表示・性能・配布
 
-BPG-010の湖面描画は地形・空に依存しない簡易world上で先行受入する。静止・前進・横移動とpitch/roll変化を与え、world-spaceの波面・反射・表面模様から移動方向・速度変化・姿勢変化を識別できることを目視確認する。描画と静水面接触判定が独立していることも確認する。続くBPG-009では稜線誤差と500 m移動時のparallax、BPG-011ではreflectionへの雲・hazeの反映を評価する。
+BPG-010の湖面描画は地形・空に依存しない簡易world上で先行受入する。静止・前進・横移動とpitch/roll変化を与え、world-spaceの波面・反射・表面模様から移動方向・速度変化・姿勢変化を識別できることを目視確認する。描画と静水面接触判定が独立していることも確認する。続くBPG-009では対岸稜線・cockpit/wing基準・近景optic flow・中景landmarkを段階的に有効化し、pitch・roll・yaw・速度・高度・scaleの手掛かりと500 m移動時のparallaxを確認する。BPG-011では稜線視認性を維持するhazeをcloud detailより先に調整し、reflectionへの空・雲の反映も評価する。
 BPG-012ではframe-time分布、画質振動、physics allocationと実行時間、download量を計測する。
 BPG-013ではsubpath、WASM MIME、cache、asset帰属、keyboard/gamepad、browser smoke testを検証する。
 未確認の端末・browserは明記する。実機同定・物理HIL検証をこれらの合格に含めない。

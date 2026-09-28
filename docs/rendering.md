@@ -1,12 +1,12 @@
 # 描画・性能契約
 
-視覚的手掛かりとしての優先順位はWater、Aircraft、Venue、Far Terrain、Sky/Cloudsとする。ゲームループ成立後の景観工程では、湖面描画を地形・会場および空・雲より先に実装する。
+空間把握のための視覚優先順位は、湖面optic flow、地平線・対岸稜線とcockpit/wing/noseの自己基準、近距離固定物、中距離landmark、haze、装飾的なcloud・terrain textureとする。ゲームループ成立後は湖面を最初に実装し、以後も見栄えより速度・姿勢・高度・進行方向・scaleを復元する手掛かりを優先する。
 WebGL描画はRenderSnapshotを入力とし、physics stateを変更しない。
 Three.js固有の実装はengine adapterへ集約する。共通契約とassetの正本は `render-boundary.md` に従う。
 Desktop・WebXR・Phone VRのbackendと光学profileは [presentation契約](presentation.md) に従う。
 二眼描画ではreflection、cloud billboard、HUD、post-processingの両眼整合を検証する。
 全Scene・overlayのScreen/VR対応を高品質描画に先行して確立する。
-簡易worldでもPilot視点、ゲーム進行、Result/Analysis/Replayを完成させてから景観品質を追求する。その後は水面反射・波面・表面模様が速度と姿勢の把握に与える情報を先に成立させる。湖面描画は簡易worldで独立して開発し、地形・空の完成を待たない。
+簡易worldでもPilot視点、ゲーム進行、Result/Analysis/Replayを完成させてから景観品質を追求する。その後は水面反射・波面・表面模様を先行させ、地平線・対岸稜線、cockpit/wing/nose、近距離固定物、中距離landmark、hazeの順に追加する。湖面描画は簡易worldで独立して開発し、地形・空の完成を待たない。
 
 ## 湖面
 
@@ -27,6 +27,12 @@ Low 4–6、Medium 8–12、High 12–24成分を暫定予算とする。
 水面の見た目と静水面の着水判定は初期版では分離する。
 
 ## 地形・会場
+
+## 空間手掛かりの層
+
+遠景の対岸稜線をworld-fixedなhorizon/referenceとして保ち、Pilot視点のpitch・roll判読を支える。機体のnose・wing/cockpit横線はbody-fixedな自己基準とし、外界と同時に視認できる。
+近景はplatform・buoy等の固定objectでoptic flowを生成し、中景は島・湖岸・識別可能なpeakでheading・横流れ・scaleを補う。近・中・遠景のparallaxを維持し、均一なskyboxやtextureだけで距離感を代替しない。
+地形・物体・機体の描画は同一world scaleと姿勢変換を用いる。decorative detailより先に、pitch・roll・yaw・速度・高度の変化を読み取れることを受入条件とする。
 
 松原会場は湖岸線、砂浜、platform、松林、観客エリア、仮設構造物を優先する。
 彦根近傍は中精度、対岸・山地は稜線とpeakを保持するlow-poly geometryとする。
