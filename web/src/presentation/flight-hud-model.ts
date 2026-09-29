@@ -1,5 +1,6 @@
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { HudProfileUiState } from "../app/app-state.js";
+import { nedToWgs84 } from "../render/contracts/launch-venue.js";
 
 export type InformationLevelCode = 0 | 1 | 2 | 3 | 4;
 
@@ -18,6 +19,8 @@ export interface FlightHudModel {
   readonly wind: string | null;
   readonly angleOfAttack: string | null;
   readonly telemetry: string;
+  readonly location: string;
+  readonly mapAttribution: string;
 }
 
 export function createFlightHudModel(
@@ -29,6 +32,9 @@ export function createFlightHudModel(
   const telemetry = snapshot.telemetry;
   const distance = `距離 ${snapshot.scoreCourseMeters.toFixed(1)} m`;
   const duration = `時間 ${snapshot.flightTimeSeconds.toFixed(1)} s`;
+  const coordinates = nedToWgs84(snapshot.positionNed.north, snapshot.positionNed.east);
+  const location = `緯度 ${coordinates.latitudeDegrees.toFixed(6)}° · 経度 ${coordinates.longitudeDegrees.toFixed(6)}°`;
+  const mapAttribution = "湖岸 © OpenStreetMap contributors · ODbL 1.0";
   if (telemetry === null) {
     return Object.freeze({
       status: terminalLabel(snapshot.terminal),
@@ -44,7 +50,9 @@ export function createFlightHudModel(
       pilotPosition: informationCode === 0 ? `${snapshot.pilotPositionMeters.toFixed(2)} m` : null,
       wind: informationCode === 0 ? "unavailable" : null,
       angleOfAttack: informationCode === 0 ? "unavailable" : null,
-      telemetry: "telemetry unavailable"
+      telemetry: "telemetry unavailable",
+      location,
+      mapAttribution
     });
   }
 
@@ -79,7 +87,9 @@ export function createFlightHudModel(
         angleOfAttack: telemetry.angleOfAttackRadians === null
           ? "—"
           : `${(telemetry.angleOfAttackRadians * 180 / Math.PI).toFixed(1)}°`,
-        telemetry: `${groundspeed} · ${distance} · ${duration}`
+        telemetry: `${groundspeed} · ${distance} · ${duration}`,
+        location,
+        mapAttribution
       });
     }
     case 1:
@@ -97,7 +107,9 @@ export function createFlightHudModel(
         pilotPosition: null,
         wind: null,
         angleOfAttack: null,
-        telemetry: `対地速度 ${telemetry.groundspeedMetersPerSecond.toFixed(1)} m/s · ${distance} · ${duration}`
+        telemetry: `対地速度 ${telemetry.groundspeedMetersPerSecond.toFixed(1)} m/s · ${distance} · ${duration}`,
+        location,
+        mapAttribution
       });
     case 2:
       return Object.freeze({
@@ -114,7 +126,9 @@ export function createFlightHudModel(
         pilotPosition: null,
         wind: null,
         angleOfAttack: null,
-        telemetry: ""
+        telemetry: "",
+        location,
+        mapAttribution
       });
     case 3:
       return Object.freeze({
@@ -131,7 +145,9 @@ export function createFlightHudModel(
         pilotPosition: null,
         wind: null,
         angleOfAttack: null,
-        telemetry: "代表計器表示 · 対象機の実機構成は未確認"
+        telemetry: "代表計器表示 · 対象機の実機構成は未確認",
+        location,
+        mapAttribution
       });
   }
 }

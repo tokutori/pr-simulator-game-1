@@ -4,8 +4,16 @@
 第三者データ・画像・地形・機体assetには各出典の利用条件を適用し、MITへ再ライセンスしない。
 ソフトウェア依存のライセンスも各packageの条件を維持する。
 
-現時点の配布asset登録数は0である。候補一覧は `docs/data-sources.md` に記載する。
+配布assetの一覧と個別条件は `assets/manifest.toml` に記載する。候補一覧は `docs/data-sources.md` に記載する。
 候補掲載は取得・再配布の許諾確認を意味しない。
+
+## 琵琶湖の局所湖岸
+
+`assets/biwa-shoreline.json` は OpenStreetMap の琵琶湖 relation 63499 の
+外周 way 41696803 を発進地点周辺に切り出して簡略化した加工済みデータである。
+このデータには [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/) を適用する。
+帰属表示は「© OpenStreetMap contributors」であり、ゲーム中の HUD と
+データ内のメタデータに掲載する。ソースコードの MIT License をこのデータへ適用しない。
 
 ## 登録要件
 

@@ -87,10 +87,17 @@ impl SyntheticPlayableFlight {
             0.8,
         )
         .map_err(SyntheticFlightError::Dynamics)?;
+        // The playable Lake Biwa launch faces northwest. The 3.5 degree deck
+        // slope is a venue feature; the aircraft is released in level trim.
+        let bearing = -core::f64::consts::FRAC_PI_4;
+        let (half_yaw_sine, half_yaw_cosine) = libm::sincos(bearing * 0.5);
+        let attitude = UnitQuaternion::try_new(half_yaw_cosine, 0.0, 0.0, half_yaw_sine)
+            .map_err(SyntheticFlightError::Math)?;
         let launch = CompositeCgLaunchConditions::try_new(
             NedPoint::try_new(0.0, 0.0, -launch_altitude_m).map_err(SyntheticFlightError::Math)?,
-            NedVector::try_new(9.7, 0.0, 0.51).map_err(SyntheticFlightError::Math)?,
-            UnitQuaternion::IDENTITY,
+            NedVector::try_new(9.7 * libm::cos(bearing), 9.7 * libm::sin(bearing), 0.51)
+                .map_err(SyntheticFlightError::Math)?,
+            attitude,
             BodyVector::zero(),
             0.0,
             0.0,
@@ -111,7 +118,8 @@ impl SyntheticPlayableFlight {
         .map_err(SyntheticFlightError::Wind)?;
         let feedback = BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3])
             .map_err(SyntheticFlightError::Actuator)?;
-        let course_axis = CourseAxis::try_new(1.0, 0.0).map_err(SyntheticFlightError::Course)?;
+        let course_axis = CourseAxis::try_new(libm::cos(bearing), libm::sin(bearing))
+            .map_err(SyntheticFlightError::Course)?;
         let scenario = FlightScenario::try_new(FlightScenarioDefinition {
             aircraft,
             launch,
@@ -450,6 +458,9 @@ mod tests {
             PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
         );
         let mut state = fixture.scenario().initial_state();
+        let initial_velocity = state.flight_state().datum_velocity_ned().components();
+        assert!(initial_velocity[0] > 0.0 && initial_velocity[1] < 0.0);
+        assert!((initial_velocity[0] + initial_velocity[1]).abs() < 1.0e-10);
         loop {
             let outcome = fixture
                 .scenario()
@@ -473,14 +484,16 @@ mod tests {
                 FlightTickOutcome::WaterContact(sample) => {
                     let elapsed_seconds =
                         (sample.interval_start_tick() as f64 + sample.fraction()) / 100.0;
-                    let north_distance = sample
+                    let [north_distance, east_distance, _] = sample
                         .state()
                         .flight_state()
                         .datum_position_ned()
-                        .components()[0];
+                        .components();
+                    let course_distance =
+                        (north_distance - east_distance) / core::f64::consts::SQRT_2;
                     assert!(
-                        (200.0..=300.0).contains(&north_distance),
-                        "neutral playable distance was {north_distance} m"
+                        (200.0..=300.0).contains(&course_distance),
+                        "neutral playable distance was {course_distance} m"
                     );
                     assert!((15.0..=35.0).contains(&elapsed_seconds));
                     break;

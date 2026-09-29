@@ -41,6 +41,7 @@ import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
 import { createBirdmanAirframe } from "./birdman-airframe.js";
+import { createLakeVenue } from "./lake-venue-mesh.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -219,6 +220,8 @@ export function createThreeRenderer(
   water.frustumCulled = false;
   water.receiveShadow = true;
   scene.add(water);
+  const venue = createLakeVenue();
+  scene.add(venue.group);
   const reflectionTarget = new WebGLRenderTarget(512, 256, {
     minFilter: LinearFilter,
     magFilter: LinearFilter,
@@ -380,6 +383,7 @@ export function createThreeRenderer(
       // The non-flight scenic camera is at the origin. Keep its water below
       // eye level so amplified wave crests do not cut across the horizon.
       water.position.set(flightPose?.datumPositionNed.east ?? 0, flightPose === null ? -1.5 : 0, -(flightPose?.datumPositionNed.north ?? 0));
+      venue.group.visible = flightPose !== null;
       // Keep the light's orthographic shadow volume around the moving airframe.
       sun.target.position.copy(aircraftRoot.position);
       sun.position.copy(aircraftRoot.position).add(sunOffset);
@@ -491,6 +495,7 @@ export function createThreeRenderer(
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
       airframe.dispose();
+      venue.dispose();
       renderer.dispose();
       disposed = true;
     },

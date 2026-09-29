@@ -8,6 +8,8 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly status: HTMLOutputElement;
   private readonly warning: HTMLOutputElement;
   private readonly telemetry: HTMLOutputElement;
+  private readonly location: HTMLOutputElement;
+  private readonly mapAttribution: HTMLAnchorElement;
   private readonly adi: SVGSVGElement;
   private readonly horizon: SVGGElement;
   private readonly readouts: HTMLOutputElement;
@@ -40,6 +42,13 @@ export class FlightHudAdapter implements FlightHudPort {
     this.warning.className = "flight-hud-warning";
     this.telemetry = documentRef.createElement("output");
     this.telemetry.className = "flight-hud-telemetry";
+    this.location = documentRef.createElement("output");
+    this.location.className = "flight-hud-location";
+    this.mapAttribution = documentRef.createElement("a");
+    this.mapAttribution.className = "flight-hud-attribution";
+    this.mapAttribution.href = "https://www.openstreetmap.org/copyright";
+    this.mapAttribution.target = "_blank";
+    this.mapAttribution.rel = "noopener noreferrer";
     this.adi = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.adi.setAttribute("viewBox", "0 0 240 180");
     this.adi.setAttribute("role", "img");
@@ -140,7 +149,7 @@ export class FlightHudAdapter implements FlightHudPort {
     controls.textContent = "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
-    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, controls);
+    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, this.mapAttribution, controls);
     this.setVisible(false);
   }
 
@@ -190,6 +199,8 @@ export class FlightHudAdapter implements FlightHudPort {
       this.angleIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
     }
     this.telemetry.textContent = model.telemetry;
+    this.location.textContent = model.location;
+    this.mapAttribution.textContent = model.mapAttribution;
     if (model.attitude !== null) {
       const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
       this.horizon.setAttribute("transform", `rotate(${String(-model.attitude.rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);

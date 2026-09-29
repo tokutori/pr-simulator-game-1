@@ -46,7 +46,7 @@ describe("Flight HUD DOM lifecycle", () => {
     const hud = new FlightHudAdapter(root as unknown as HTMLElement);
     const nodes = [...root.children];
 
-    expect(root.children).toHaveLength(8);
+    expect(root.children).toHaveLength(10);
     hud.setVisible(true);
     const firstValues = new Array<number>(33).fill(0);
     firstValues[7] = 1;

@@ -18,3 +18,13 @@ license = "MIT (generated artwork; reference photograph is not distributed)"
 license_url = "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE"
 attribution = "User-supplied reference photograph; OpenAI-generated artwork"
 processing = "Generated orthographic indigo fabric and hand-painted Tokushima University lettering"
+
+[[assets]]
+path = "assets/biwa-shoreline.json"
+sha256 = "2e0c09f9825fa26312f2c98e9a0ee541d326620e884d0fa18743411ac7e1da19"
+source = "OpenStreetMap Lake Biwa relation 63499, outer way 41696803, API map export near the launch coordinate"
+source_version = "way version 47, 2026-02-23T09:13:17Z; fetched 2026-09-30"
+license = "ODbL-1.0"
+license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
+attribution = "© OpenStreetMap contributors"
+processing = "tools/world-build/build_biwa_shoreline.py; origin WGS84 35.294075,136.254448; water datum 0 m; 2 m Douglas-Peucker simplification; source XML excluded"
