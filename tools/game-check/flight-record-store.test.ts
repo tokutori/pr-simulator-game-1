@@ -31,6 +31,13 @@ const finalizedRecord = JSON.stringify({
   finalization: { reason: "manual_abort" }
 });
 
+const finalizedCustomHudRecord = JSON.stringify({
+  schema_version: 2,
+  header: { scenario_id: 1, difficulty: { information: "custom", hud_profile: {} } },
+  samples: [{ tick_index: 0 }],
+  finalization: { reason: "manual_abort" }
+});
+
 describe("FlightRecordRepository", () => {
   it("persists the Rust-exported finalized document and returns records newest first", async () => {
     const persistence = new MemoryFlightRecordPersistence();
@@ -47,9 +54,19 @@ describe("FlightRecordRepository", () => {
     expect(entries[0]).not.toHaveProperty("json");
   });
 
+  it("persists current schema records without coupling the browser adapter to a schema version", async () => {
+    const persistence = new MemoryFlightRecordPersistence();
+    const repository = new FlightRecordRepository(persistence);
+
+    const saved = await repository.saveFrom({ export_flight_record_json: () => finalizedCustomHudRecord });
+
+    expect(saved.json).toBe(finalizedCustomHudRecord);
+    expect(await repository.load(saved.id)).toBe(finalizedCustomHudRecord);
+  });
+
   it.each([
     "not-json",
-    JSON.stringify({ schema_version: 2, header: {}, samples: [{}], finalization: {} }),
+    JSON.stringify({ schema_version: 2, header: [], samples: [{}], finalization: {} }),
     JSON.stringify({ schema_version: 1, header: [], samples: [{}], finalization: {} }),
     JSON.stringify({ schema_version: 1, header: {}, samples: [], finalization: {} }),
     JSON.stringify({ schema_version: 1, header: {}, samples: [{}], finalization: null })

@@ -179,13 +179,12 @@ function validateFinalizedRecord(json: string): void {
     throw new TypeError("Rust returned invalid flight record JSON");
   }
   if (!isObject(value)) throw new TypeError("Flight record document must be an object");
-  const document = value as { readonly schema_version?: unknown; readonly header?: unknown; readonly samples?: unknown; readonly finalization?: unknown };
-  if (document.schema_version !== 1
-      || !isObject(document.header)
+  const document = value as { readonly header?: unknown; readonly samples?: unknown; readonly finalization?: unknown };
+  if (!isObject(document.header)
       || !Array.isArray(document.samples)
       || document.samples.length === 0
       || !isObject(document.finalization)) {
-    throw new TypeError("Only a finalized version 1 flight record can be persisted");
+    throw new TypeError("Only a finalized flight record can be persisted");
   }
 }
 
