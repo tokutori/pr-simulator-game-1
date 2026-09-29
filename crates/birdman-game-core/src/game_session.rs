@@ -402,6 +402,16 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    /// Returns whether an explicit resume can succeed under the current pause causes.
+    pub const fn can_resume(&self) -> bool {
+        match self.phase {
+            SessionPhase::FlightPaused { reasons } => {
+                reasons.remove(PauseReason::Manual).is_empty()
+            }
+            _ => false,
+        }
+    }
+
     fn required_configuration(&self) -> &GameSessionConfiguration<'a> {
         self.configuration
             .as_ref()

@@ -47,6 +47,21 @@ describe("Game scene view model", () => {
     expect(controls.some((control) => control.id === "game-state" || control.id === "game-flight-metrics")).toBe(false);
   });
 
+  it("enables Resume only when Rust reports that pause causes permit resuming", () => {
+    const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(6) });
+    const blocked = createGameViewModel(model, flightSnapshot).panels[0]?.controls
+      .find((control) => control.id === "game-flight-resume");
+    expect(blocked).toMatchObject({ kind: "button", enabled: false });
+
+    const availableModel = Object.freeze({
+      ...model,
+      gameSession: sessionForPhase(6, true)
+    });
+    const available = createGameViewModel(availableModel, flightSnapshot).panels[0]?.controls
+      .find((control) => control.id === "game-flight-resume");
+    expect(available).toMatchObject({ kind: "button", enabled: true });
+  });
+
   it("renders one cockpit-anchored HUD and one set of controls in VR Flight", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
@@ -496,9 +511,9 @@ describe("Game scene view model", () => {
   });
 });
 
-function sessionForPhase(phaseCode: number) {
+function sessionForPhase(phaseCode: number, canResume = false) {
   const snapshot = phaseCode === 5 || phaseCode === 6 ? flightSnapshot : null;
-  const session = gameSessionState(phaseCode, 0, snapshot);
+  const session = gameSessionState(phaseCode, 0, snapshot, canResume);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }

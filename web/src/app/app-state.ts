@@ -53,7 +53,8 @@ export type GameSessionUiState =
   | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
   | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
-  | { readonly kind: "flight"; readonly phaseCode: 5 | 6; readonly snapshot: FlightSnapshot }
+  | { readonly kind: "flight"; readonly phaseCode: 5; readonly snapshot: FlightSnapshot }
+  | { readonly kind: "paused-flight"; readonly phaseCode: 6; readonly snapshot: FlightSnapshot; readonly canResume: boolean }
   | { readonly kind: "result"; readonly phaseCode: 7; readonly snapshot: FlightSnapshot | null }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
   | { readonly kind: "replay"; readonly phaseCode: 9; readonly snapshot: FlightSnapshot | null }
@@ -156,6 +157,7 @@ export type AppMessage =
       readonly configurationMetadata: ConfigurationMetadataUiState | null;
       readonly countdownRemaining: number;
       readonly snapshot: FlightSnapshot | null;
+      readonly canResume?: boolean;
     }
   | {
       readonly type: "game-operation-completed";
@@ -166,6 +168,7 @@ export type AppMessage =
       readonly configurationMetadata: ConfigurationMetadataUiState | null;
       readonly countdownRemaining: number;
       readonly snapshot: FlightSnapshot | null;
+      readonly canResume?: boolean;
     }
   | { readonly type: "game-session-status"; readonly message: string }
   | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisData }
@@ -214,7 +217,8 @@ export function gameSessionCountdown(session: GameSessionUiState): number {
 export function gameSessionState(
   phaseCode: number,
   countdownRemaining: number,
-  snapshot: FlightSnapshot | null
+  snapshot: FlightSnapshot | null,
+  canResume = false
 ): GameSessionUiState | null {
   switch (phaseCode) {
     case -1: return { kind: "boot", phaseCode: -1 };
@@ -227,8 +231,9 @@ export function gameSessionState(
         ? { kind: "countdown", phaseCode: 4, countdownRemaining }
         : null;
     case 5:
-    case 6:
       return snapshot === null ? null : { kind: "flight", phaseCode, snapshot };
+    case 6:
+      return snapshot === null ? null : { kind: "paused-flight", phaseCode, snapshot, canResume };
     case 7: return { kind: "result", phaseCode: 7, snapshot };
     case 8: return { kind: "briefing-failed", phaseCode: 8 };
     case 9: return { kind: "replay", phaseCode: 9, snapshot };
@@ -348,7 +353,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, message.message, message.mode);
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -378,7 +383,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false);
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,
@@ -518,6 +523,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId === "game-flight-resume"
+      && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
+    return transition(model);
+  }
   if (action.type === "activate" && action.controlId.startsWith("game-title-open-record-")
       && model.pendingGameRequestId !== null) return transition(model);
   if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 0 && model.pendingGameRequestId === null) {

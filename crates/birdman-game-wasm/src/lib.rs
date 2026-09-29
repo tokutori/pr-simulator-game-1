@@ -477,6 +477,11 @@ impl GameSessionBridge {
         self.session.resume().map_err(game_session_error)
     }
 
+    /// Returns whether the current pause causes permit an explicit resume.
+    pub fn can_resume(&self) -> bool {
+        self.session.can_resume()
+    }
+
     /// Aborts at the current input boundary and returns the terminal snapshot.
     pub fn abort(&mut self) -> Result<Vec<f64>, JsValue> {
         let state = self.session.abort_flight().map_err(game_session_error)?;
@@ -1723,16 +1728,21 @@ mod tests {
         assert_eq!(bridge.advance_countdown().unwrap(), 0);
         let initial = bridge.launch().unwrap();
         assert_eq!(bridge.phase_code(), 5);
+        assert!(!bridge.can_resume());
         assert_eq!(initial[0], 0.0);
 
         let next = bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(next[0], 1.0);
         bridge.pause(0).unwrap();
         assert_eq!(bridge.phase_code(), 6);
+        assert!(bridge.can_resume());
         bridge.pause(1).unwrap();
+        assert!(!bridge.can_resume());
         bridge.clear_pause_reason(1).unwrap();
         assert_eq!(bridge.phase_code(), 6);
+        assert!(bridge.can_resume());
         bridge.resume().unwrap();
+        assert!(!bridge.can_resume());
         bridge.pause(1).unwrap();
         bridge.abort().unwrap();
         assert_eq!(bridge.phase_code(), 7);

@@ -229,6 +229,38 @@ describe("Boot application state", () => {
     expect(stale.model).toBe(completed.model);
   });
 
+  it("retains Rust pause eligibility in the paused-flight state", () => {
+    const model = readyModel(6);
+    const synced = updateApp(model, {
+      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      difficulty: model.difficulty, configurationMetadata: null,
+      countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
+    });
+    expect(synced.model.gameSession).toEqual({
+      kind: "paused-flight", phaseCode: 6, snapshot: flightSnapshot, canResume: false
+    });
+  });
+
+  it("does not dispatch Resume while external pause conditions remain", () => {
+    const model = readyModel(6);
+    const rejected = updateApp(model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" }
+    });
+    expect(rejected.model).toBe(model);
+    expect(rejected.effects).toEqual([]);
+
+    const eligible = {
+      ...model,
+      gameSession: sessionForTest(6, flightSnapshot, true)
+    };
+    const resumed = updateApp(eligible, {
+      type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" }
+    });
+    expect(resumed.effects).toEqual([
+      { type: "game-session-operation", operation: "resume", requestId: 2 }
+    ]);
+  });
+
   it("projects the Rust-selected control mode after a Setup update", () => {
     const setupModel = readyModel(1);
     const requested = updateApp(setupModel, { type: "ui-action", action: { type: "activate", controlId: "game-setup-assistance" } });
@@ -514,8 +546,8 @@ function readyModel(phaseCode = 0): AppModel {
   return { ...ready.model, gameSession: sessionForTest(phaseCode, snapshot) };
 }
 
-function sessionForTest(phaseCode: number, snapshot: FlightSnapshot | null = null): GameSessionUiState {
-  const session = gameSessionState(phaseCode, 0, snapshot);
+function sessionForTest(phaseCode: number, snapshot: FlightSnapshot | null = null, canResume = false): GameSessionUiState {
+  const session = gameSessionState(phaseCode, 0, snapshot, canResume);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }

@@ -377,6 +377,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       difficulty: readDifficulty(gameSession),
       configurationMetadata: readConfigurationMetadata(gameSession),
       countdownRemaining: gameSession.countdown_remaining(),
+      canResume: gameSession.can_resume(),
       snapshot: null
     });
   } catch (error) {
@@ -539,6 +540,7 @@ function completeGameOperation(requestId: number, rawSnapshot?: ArrayLike<number
     difficulty: readDifficulty(session),
     configurationMetadata: readConfigurationMetadata(session),
     countdownRemaining: session.countdown_remaining(),
+    canResume: session.can_resume(),
     snapshot
   });
 }
@@ -556,6 +558,7 @@ function scheduleCountdownTick(generation: number): void {
         difficulty: readDifficulty(session),
         configurationMetadata: readConfigurationMetadata(session),
         countdownRemaining: remainingTicks,
+        canResume: session.can_resume(),
         snapshot: gameSessionSnapshot(model.gameSession)
       });
       if (remainingTicks === 0) {
@@ -569,6 +572,7 @@ function scheduleCountdownTick(generation: number): void {
           difficulty: readDifficulty(session),
           configurationMetadata: readConfigurationMetadata(session),
           countdownRemaining: 0,
+          canResume: session.can_resume(),
           snapshot: parseFlightSnapshot(initial)
         });
       } else {
@@ -582,7 +586,8 @@ function scheduleCountdownTick(generation: number): void {
         difficulty: readDifficulty(session),
         configurationMetadata: readConfigurationMetadata(session),
         countdownRemaining: session.countdown_remaining(),
-          snapshot: gameSessionSnapshot(model.gameSession)
+        canResume: session.can_resume(),
+        snapshot: gameSessionSnapshot(model.gameSession)
       });
       dispatch({ type: "game-session-status", message: `発進準備に失敗した: ${errorMessage(error)}` });
     }
@@ -614,6 +619,7 @@ function createFlightController(
         difficulty: readDifficulty(activeSession),
         configurationMetadata: readConfigurationMetadata(activeSession),
         countdownRemaining: activeSession.countdown_remaining(),
+        canResume: activeSession.can_resume(),
         snapshot
       });
     }
@@ -727,6 +733,7 @@ function syncGameSession(): void {
     difficulty: readDifficulty(session),
     configurationMetadata: readConfigurationMetadata(session),
     countdownRemaining: session.countdown_remaining(),
+    canResume: session.can_resume(),
     snapshot: flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession)
   });
 }

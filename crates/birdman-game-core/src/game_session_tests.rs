@@ -119,7 +119,9 @@ fn pause_reasons_freeze_ticks_and_require_explicit_resume_after_all_clear() {
     session.launch().unwrap();
     let previous = session.snapshot().flight_state();
     session.pause(PauseReason::Manual).unwrap();
+    assert!(session.can_resume());
     session.pause(PauseReason::DocumentHidden).unwrap();
+    assert!(!session.can_resume());
     assert_eq!(
         session.advance_flight_tick(neutral_input(&session)),
         Err(GameSessionError::InvalidTransition)
@@ -128,6 +130,7 @@ fn pause_reasons_freeze_ticks_and_require_explicit_resume_after_all_clear() {
     session
         .clear_pause_reason(PauseReason::DocumentHidden)
         .unwrap();
+    assert!(session.can_resume());
     assert_eq!(session.resume(), Ok(()));
     assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
 }
@@ -140,6 +143,7 @@ fn resume_waits_until_external_pause_causes_are_cleared() {
     session.launch().unwrap();
     session.pause(PauseReason::Manual).unwrap();
     session.pause(PauseReason::TrackingSuspended).unwrap();
+    assert!(!session.can_resume());
     assert_eq!(
         session.resume(),
         Err(GameSessionError::PauseConditionsRemain)
@@ -147,6 +151,7 @@ fn resume_waits_until_external_pause_causes_are_cleared() {
     session
         .clear_pause_reason(PauseReason::TrackingSuspended)
         .unwrap();
+    assert!(session.can_resume());
     session.resume().unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
 }

@@ -21,13 +21,15 @@ export function createGameViewModel(
 ): UiViewModel {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
+  const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
   const scene = sceneForPhase(phaseCode);
   const buttons = gameButtons(
     phaseCode,
     model.difficulty,
     model.configurationMetadata,
     countdownRemaining,
-    model.flightAnalysis !== null
+    model.flightAnalysis !== null,
+    canResume
   );
   if (phaseCode === 0) {
     const savedFlightButtons = model.storedFlightRecords.slice(0, 3).map((record) => button(
@@ -53,7 +55,7 @@ export function createGameViewModel(
   const vrFlightPanel = (phaseCode === 5 || phaseCode === 6) && (activeMode === "webxr" || activeMode === "phone-vr");
   const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
     ? []
-    : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining))];
+    : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume))];
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
   if (phaseCode === 5 || phaseCode === 6) {
     if (!vrFlightPanel) {
@@ -281,11 +283,11 @@ export function createGameViewModel(
     scene,
     title: titleForScene(scene),
     description: phaseCode === 0
-      ? [descriptionForPhase(phaseCode, model.difficulty, countdownRemaining),
+      ? [descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume),
         model.storedFlightRecordsStatus,
         model.storedFlightRecords.length > 0 ? `保存FlightRecord ${String(model.storedFlightRecords.length)}件` : ""]
         .filter(Boolean).join(" · ")
-      : descriptionForPhase(phaseCode, model.difficulty, countdownRemaining),
+      : descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume),
     presentationStyle: phaseCode === 10 || (phaseCode === 9 && model.replayViewMode !== "analysis") ? "cinematic" : "default",
     activeOverlay: phaseCode === 6 ? "Pause" : null,
     panels: Object.freeze([panel])
@@ -570,7 +572,8 @@ function gameButtons(
   difficulty: DifficultyUiState,
   configurationMetadata: ConfigurationMetadataUiState | null,
   countdownRemaining: number,
-  replayAvailable: boolean
+  replayAvailable: boolean,
+  canResume: boolean
 ): UiButton[] {
   switch (phaseCode) {
     case 0:
@@ -600,7 +603,7 @@ function gameButtons(
       ];
     case 6:
       return [
-        button("game-flight-resume", "Resume", true),
+        button("game-flight-resume", "Resume", canResume),
         button("game-paused-abort", "飛行を終了", true)
       ];
     case 7:
@@ -687,7 +690,7 @@ function titleForScene(scene: UiViewModel["scene"]): string {
   }
 }
 
-function descriptionForPhase(phaseCode: number, difficulty: DifficultyUiState, countdownRemaining: number): string {
+function descriptionForPhase(phaseCode: number, difficulty: DifficultyUiState, countdownRemaining: number, canResume = false): string {
   switch (phaseCode) {
     case 0: return "合成scenarioを用いて滑空飛行を行う。";
     case 1: return `合成scenarioを使用する。${assistanceLabel(difficulty.assistanceCode)}、${weatherLabel(difficulty.weatherCode)}。`;
@@ -695,7 +698,9 @@ function descriptionForPhase(phaseCode: number, difficulty: DifficultyUiState, c
     case 3: return "設定を固定した。発進操作でCountdownを開始する。";
     case 4: return `物理時間を停止している。発進まで ${String(countdownRemaining)}。`;
     case 5: return "KeyboardまたはGamepadで操縦する。Physicsは100 Hzで独立して進む。";
-    case 6: return "飛行状態を保持して停止している。Resumeで再開する。";
+    case 6: return canResume
+      ? "飛行状態を保持して停止している。Resumeで再開できる。"
+      : "飛行状態を保持して停止している。外部の一時停止条件が解消するまで再開できない。";
     case 7: return "確定済みterminal snapshotから結果を表示する。";
     case 8: return "Briefing準備に失敗した。再試行または設定変更を選択する。";
     case 9: return "確定済みFlightRecordのposeを再生している。physics stateは進行しない。";
