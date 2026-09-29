@@ -5,13 +5,20 @@ export interface LakeDetailLayer {
   readonly extentMeters: number;
 }
 
+interface BroaderWavelets {
+  readonly count: number;
+  readonly featureScaleMeters: number;
+  readonly heightScale: number;
+}
+
 /** Builds a periodic normal field from finite-length height wavelets once. */
 export function createLakeDetailLayer(
   extentMeters: number,
   waveletCount: number,
   seed: number,
   directionX: number,
-  directionZ: number
+  directionZ: number,
+  broaderWavelets?: BroaderWavelets
 ): LakeDetailLayer {
   const size = 512;
   const texelMeters = extentMeters / size;
@@ -25,7 +32,9 @@ export function createLakeDetailLayer(
     return randomState / 4294967296;
   };
 
-  for (let wavelet = 0; wavelet < waveletCount; wavelet++) {
+  for (let wavelet = 0; wavelet < waveletCount + (broaderWavelets?.count ?? 0); wavelet++) {
+    const broader = wavelet >= waveletCount;
+    const localFeatureScale = broader ? (broaderWavelets?.featureScaleMeters ?? featureScale) : featureScale;
     const shapeBits = Math.imul(wavelet ^ seed, 0x9e3779b1) >>> 0;
     const crestlet = shapeBits / 4294967296 < 0.6;
     const centerX = random() * size;
@@ -39,9 +48,10 @@ export function createLakeDetailLayer(
     const travelZ = directionZ * Math.cos(angle) + directionX * Math.sin(angle);
     const crestX = -travelZ;
     const crestZ = travelX;
-    const crestLength = (crestlet ? 0.6 + random() * 0.25 : 0.3 + random() * 0.35) * featureScale;
-    const envelopeWidth = (crestlet ? 0.35 + random() * 0.15 : 0.4 + random() * 0.5) * featureScale;
-    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(featureScale)) * (crestlet ? 1.2 : 1);
+    const crestLength = (crestlet ? 0.6 + random() * 0.25 : 0.3 + random() * 0.35) * localFeatureScale;
+    const envelopeWidth = (crestlet ? 0.35 + random() * 0.15 : 0.4 + random() * 0.5) * localFeatureScale;
+    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(localFeatureScale))
+      * (crestlet ? 1.2 : 1) * (broader ? (broaderWavelets?.heightScale ?? 1) : 1);
     const bend = crestlet ? (((shapeBits >>> 8) & 255) / 255 - 0.5) * 0.25 : 0;
     const waveNumber = 1.8 / envelopeWidth;
     const carrierMean = Math.exp(-0.5 * 1.8 * 1.8);

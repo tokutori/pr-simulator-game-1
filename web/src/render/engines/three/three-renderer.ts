@@ -89,7 +89,8 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
   const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
-    far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ);
+    far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ,
+      { count: 900, featureScaleMeters: 4.5, heightScale: 0.5 });
   } catch (error) {
     near.texture.dispose();
     throw error;
