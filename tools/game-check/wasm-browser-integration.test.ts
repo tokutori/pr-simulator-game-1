@@ -229,7 +229,12 @@ describe("generated WebAssembly browser binding", () => {
         });
         expect(effect?.type).toBe("game-session-operation");
         if (effect?.type !== "game-session-operation") throw new Error(`No GameSession operation for ${controlId}`);
-        const result = executeGameSessionOperation(session, effect.operation);
+        let result;
+        try {
+          result = executeGameSessionOperation(session, effect.operation);
+        } catch (error: unknown) {
+          throw new Error(`${controlId} (${effect.operation}) failed: ${String(error)}`, { cause: error });
+        }
         model = requested.model;
         return { requestId: requested.model.pendingGameRequestId as number, result };
       };
@@ -257,11 +262,34 @@ describe("generated WebAssembly browser binding", () => {
       const openSetup = requestOperation("game-title-start", "open-setup");
       completeOperation(openSetup.requestId);
       expect(projectedScene()).toBe("FlightSetup");
-      const prepare = requestOperation("game-setup-start", "prepare");
-      completeOperation(prepare.requestId);
+      for (const [controlId, operation] of [
+        ["game-setup-mode-shared", "set-control-shared"],
+        ["game-setup-mode-automatic", "set-control-automatic"],
+        ["game-setup-mode-manual", "set-control-manual"],
+        ["game-setup-preset", "cycle-difficulty-preset"],
+        ["game-setup-information", "cycle-information-level"],
+        ["game-setup-assistance", "cycle-assistance-level"],
+        ["game-setup-weather", "cycle-weather-class"]
+      ] as const) {
+        const configured = requestOperation(controlId, operation);
+        completeOperation(configured.requestId);
+        expect(projectedScene()).toBe("FlightSetup");
+      }
+      session.prepare();
+      session.fail_briefing(0);
+      expect(projectedScene()).toBe("Briefing");
+      expect(model.gameSession.kind).toBe("briefing-failed");
+      const retryBriefing = requestOperation("game-briefing-retry", "retry-briefing");
+      completeOperation(retryBriefing.requestId);
       expect(projectedScene()).toBe("Briefing");
       const cancelBriefing = requestOperation("game-briefing-cancel", "cancel-briefing");
       completeOperation(cancelBriefing.requestId);
+      expect(projectedScene()).toBe("FlightSetup");
+      const prepare = requestOperation("game-setup-start", "prepare");
+      completeOperation(prepare.requestId);
+      expect(projectedScene()).toBe("Briefing");
+      const cancelReadyBriefing = requestOperation("game-briefing-cancel", "cancel-briefing");
+      completeOperation(cancelReadyBriefing.requestId);
       expect(projectedScene()).toBe("FlightSetup");
       const prepareAgain = requestOperation("game-setup-start", "prepare");
       completeOperation(prepareAgain.requestId);
