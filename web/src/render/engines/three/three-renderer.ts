@@ -707,7 +707,7 @@ void main() {
   vBaseXZ = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
-  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.23) / uDetailExtents.y);
+  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.73) / uDetailExtents.y);
   float nearHeight = nearDetail.a - 128.0 / 255.0;
   float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
@@ -868,14 +868,26 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
 vec3 lakeMicroDetail(vec2 worldXZ) {
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
-  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.23) / uDetailExtents.y);
-  vec2 finePoint = (worldXZ - drift * 0.7) * 2.6;
+  // These compact gravity-wave bands use phase-speed ratios proportional to
+  // sqrt(wavelength): far/near/fine/ripple = 0.73/0.42/0.26/0.18.
+  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.73) / uDetailExtents.y);
+  // Each rotated octave advects along its rotated propagation direction.
+  // Reusing the unrotated drift makes oblique crests slide sideways.
+  vec2 fineDrift = vec2(
+    0.6 * drift.x + 0.8 * drift.y,
+    -0.8 * drift.x + 0.6 * drift.y
+  ) * 0.26;
+  vec2 finePoint = (worldXZ - fineDrift) * 2.6;
   vec2 fineRotated = vec2(
     0.6 * finePoint.x - 0.8 * finePoint.y,
     0.8 * finePoint.x + 0.6 * finePoint.y
   );
   vec4 fineSample = texture2D(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631));
-  vec2 ripplePoint = (worldXZ - drift * 0.87) * 5.2;
+  vec2 rippleDrift = vec2(
+    0.8 * drift.x + 0.6 * drift.y,
+    -0.6 * drift.x + 0.8 * drift.y
+  ) * 0.18;
+  vec2 ripplePoint = (worldXZ - rippleDrift) * 5.2;
   vec2 rippleRotated = vec2(
     0.8 * ripplePoint.x - 0.6 * ripplePoint.y,
     0.6 * ripplePoint.x + 0.8 * ripplePoint.y
