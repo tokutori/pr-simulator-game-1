@@ -133,6 +133,17 @@ export type UiAction =
 
 export type UiActionDispatcher = (action: UiAction) => void;
 
+export function viewExposesAction(view: UiViewModel, action: UiAction): boolean {
+  if (!("controlId" in action) || action.controlId === null) return false;
+  return view.panels.some((panel) => panel.controls.some((control) => {
+    if (control.id !== action.controlId || !control.enabled) return false;
+    if (action.type === "activate") return control.kind === "button";
+    if (action.type === "set-toggle") return control.kind === "toggle";
+    if (action.type === "set-range") return control.kind === "range";
+    return false;
+  }));
+}
+
 export function normalizedRect(x: number, y: number, width: number, height: number): NormalizedRect {
   const values = [x, y, width, height];
   if (values.some((value) => !Number.isFinite(value)) || width <= 0 || height <= 0 ||

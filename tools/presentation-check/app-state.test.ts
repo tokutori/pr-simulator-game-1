@@ -5,6 +5,7 @@ import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleG
 import type { AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
 flightSnapshotValues[7] = 1;
@@ -34,6 +35,28 @@ describe("Boot application state", () => {
     expect(isGameFlowActivation({ type: "activate", controlId: "game-flight-resume" })).toBe(true);
     expect(isGameFlowActivation({ type: "activate", controlId: "boot-enter-webxr" })).toBe(false);
     expect(isGameFlowActivation({ type: "focus", controlId: "game-flight-resume" })).toBe(false);
+  });
+
+  it("preserves an activation when the same enabled control remains in the synchronized view", () => {
+    const refreshedBriefing = {
+      ...readyModel(2),
+      gameSession: sessionForTest(3)
+    };
+    const briefingView = createGameViewModel(refreshedBriefing, null);
+
+    expect(isStaleGameFlowActivation(
+      { type: "activate", controlId: "game-briefing-cancel" },
+      2,
+      3
+    )).toBe(true);
+    expect(viewExposesAction(briefingView, {
+      type: "activate",
+      controlId: "game-briefing-cancel"
+    })).toBe(true);
+    expect(viewExposesAction(briefingView, {
+      type: "activate",
+      controlId: "game-setup-start"
+    })).toBe(false);
   });
 
   it("dispatches every enabled game-flow button from its rendered phase", () => {

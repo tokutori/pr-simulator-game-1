@@ -33,6 +33,7 @@ import {
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
 import { syntheticVenueMapForScenario } from "./game/synthetic-venue-map.js";
+import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { createFlightHudModel } from "./presentation/flight-hud-model.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
@@ -730,7 +731,8 @@ function dispatchUiAction(action: UiAction): void {
   if (session !== null && isGameFlowActivation(action)) {
     syncGameSession();
     const synchronizedPhaseCode = gameSessionPhaseCode(model.gameSession);
-    if (isStaleGameFlowActivation(action, displayedPhaseCode, synchronizedPhaseCode)) return;
+    if (isStaleGameFlowActivation(action, displayedPhaseCode, synchronizedPhaseCode)
+        && !viewExposesAction(currentViewModel(), action)) return;
   }
   dispatch({ type: "ui-action", action });
 }
