@@ -33,7 +33,7 @@ export function createLakeDetailLayer(
     const travelZ = directionZ * Math.cos(angle) + directionX * Math.sin(angle);
     const crestX = -travelZ;
     const crestZ = travelX;
-    const crestLength = (0.45 + random() * 0.65) * featureScale;
+    const crestLength = (0.3 + random() * 0.35) * featureScale;
     const envelopeWidth = (0.4 + random() * 0.5) * featureScale;
     const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(featureScale));
     const radius = Math.ceil(4 * Math.max(crestLength, envelopeWidth) / texelMeters);
