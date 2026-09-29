@@ -455,6 +455,22 @@ impl FlightRecord {
         self.finalization
     }
 
+    /// Returns the score eligible for an initial Personal Best candidate.
+    ///
+    /// Only a finalized, complete water-contact record with a score is eligible.
+    /// This does not compare the record against a configuration key or other records.
+    pub const fn personal_best_candidate_score(&self) -> Option<DistanceScore> {
+        match self.finalization {
+            Some(finalization)
+                if matches!(finalization.reason, SessionEndReason::WaterContact)
+                    && matches!(finalization.disposition, FlightRecordDisposition::Complete) =>
+            {
+                finalization.score
+            }
+            _ => None,
+        }
+    }
+
     /// Returns an interpolated snapshot at an exact tick and fractional tick.
     pub fn sample_at_time(
         &self,
@@ -912,6 +928,29 @@ mod tests {
             record.append_tick(initial, input(), telemetry),
             Err(FlightRecordError::AlreadyFinalized)
         );
+    }
+
+    #[test]
+    fn personal_best_candidate_requires_scored_water_contact() {
+        let (header, initial, telemetry) = fixture();
+        let score = crate::DistanceScore::try_from_recorded(100.0, 0.0, 100.0).unwrap();
+
+        let mut unfinished = FlightRecord::try_new(header).unwrap();
+        unfinished.begin(initial, telemetry).unwrap();
+        assert_eq!(unfinished.personal_best_candidate_score(), None);
+
+        for (reason, score, expected) in [
+            (SessionEndReason::WaterContact, Some(score), Some(score)),
+            (SessionEndReason::WaterContact, None, None),
+            (SessionEndReason::TimeLimit, Some(score), None),
+            (SessionEndReason::ManualAbort, Some(score), None),
+            (SessionEndReason::FatalSimulationError, None, None),
+        ] {
+            let mut record = FlightRecord::try_new(header).unwrap();
+            record.begin(initial, telemetry).unwrap();
+            record.finalize(reason, 0, 0.0, score).unwrap();
+            assert_eq!(record.personal_best_candidate_score(), expected);
+        }
     }
 
     #[test]
