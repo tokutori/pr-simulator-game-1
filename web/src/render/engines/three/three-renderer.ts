@@ -33,6 +33,7 @@ import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQuality
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
+import { createLakeSkyTexture } from "./lake-sky-texture.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -126,7 +127,8 @@ export function createThreeRenderer(
   renderer.setClearColor(0x9fb0ad, 1);
 
   const scene = new Scene();
-  scene.background = new Color(0x9fb0ad);
+  const skyTexture = createLakeSkyTexture();
+  scene.background = skyTexture;
 
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
@@ -141,6 +143,7 @@ export function createThreeRenderer(
       uDetailNear: { value: lakeResources.near.texture },
       uDetailFar: { value: lakeResources.far.texture },
       uDetailExtents: { value: new Vector4(lakeResources.near.extentMeters, lakeResources.far.extentMeters, 0, 0) },
+      uSkyTexture: { value: skyTexture },
       uWaveKAmplitude: { value: lakeResources.waveKAmplitude },
       uWaveOmegaPhase: { value: lakeResources.waveOmegaPhase },
       uWaveCount: { value: lakeResources.waveCount },
@@ -376,6 +379,7 @@ export function createThreeRenderer(
       panelMaterial.dispose();
       waterGeometry.dispose();
       waterMaterial.dispose();
+      skyTexture.dispose();
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
       cockpitWing.geometry.dispose();
@@ -802,6 +806,7 @@ uniform vec3 uWaterLight;
 uniform vec4 uSunDirection;
 uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
+uniform sampler2D uSkyTexture;
 uniform vec4 uDetailExtents;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -812,15 +817,12 @@ varying vec2 vBaseXZ;
 varying vec2 vRepresentedSlope;
 ${lakeWavePacketShader}
 
-vec3 analyticSky(vec3 ray) {
-  float elevation = clamp(ray.y, 0.0, 1.0);
-  // Match the clear/background color at the horizon in linear space.
-  vec3 horizon = vec3(0.35, 0.43, 0.42);
-  vec3 zenith = vec3(0.18, 0.36, 0.52);
-  vec3 sky = mix(horizon, zenith, pow(elevation, 0.72));
-  float sun = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 900.0);
-  float glow = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 32.0);
-  return sky + vec3(1.0, 0.72, 0.43) * (sun * 2.0 + glow * 0.08);
+vec3 lakeSkyRadiance(vec3 ray) {
+  vec3 skyRay = vec3(ray.x, max(ray.y, 0.0), ray.z);
+  skyRay = dot(skyRay, skyRay) < 1e-8 ? vec3(1.0, 0.0, 0.0) : normalize(skyRay);
+  vec2 skyUv = vec2(atan(skyRay.z, skyRay.x) / 6.2831853 + 0.5,
+    asin(skyRay.y) / 3.1415927 + 0.5);
+  return texture2D(uSkyTexture, skyUv).rgb;
 }
 
 float lakeNoise(vec2 point) {
@@ -939,7 +941,7 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   vec3 normal = normalize(vec3(-totalSlope.x, 1.0, -totalSlope.y));
   vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
   vec3 reflectedDirection = reflect(-viewDirection, normal);
-  vec3 reflection = analyticSky(reflectedDirection);
+  vec3 reflection = lakeSkyRadiance(reflectedDirection);
   // Normal-map facets facing away from the eye are not visible. Use the
   // resolved surface for the Fresnel weight while retaining normal detail
   // in the reflected direction until a visibility-aware BRDF is available.
