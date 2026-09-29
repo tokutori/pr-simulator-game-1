@@ -6,8 +6,10 @@ import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
 import { BrowserPilotInput } from "../../web/src/game/browser-input.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
+import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
@@ -214,7 +216,7 @@ describe("generated WebAssembly browser binding", () => {
         }).model;
         return createGameViewModel(model, snapshot).scene;
       };
-      const requestOperation = (controlId: string, operation: string): number => {
+      const requestOperation = (controlId: string, expectedOperation: string) => {
         const requested = updateApp(model, {
           type: "ui-action",
           action: { type: "activate", controlId }
@@ -222,13 +224,16 @@ describe("generated WebAssembly browser binding", () => {
         const effect = requested.effects.find((entry) => entry.type === "game-session-operation");
         expect(effect).toEqual({
           type: "game-session-operation",
-          operation,
+          operation: expectedOperation,
           requestId: requested.model.pendingGameRequestId
         });
+        expect(effect?.type).toBe("game-session-operation");
+        if (effect?.type !== "game-session-operation") throw new Error(`No GameSession operation for ${controlId}`);
+        const result = executeGameSessionOperation(session, effect.operation);
         model = requested.model;
-        return requested.model.pendingGameRequestId as number;
+        return { requestId: requested.model.pendingGameRequestId as number, result };
       };
-      const completeOperation = (requestId: number): void => {
+      const completeOperation = (requestId: number, terminalSnapshot?: FlightSnapshot): void => {
         const phaseCode = session.phase_code();
         model = updateApp(model, {
           type: "game-operation-completed",
@@ -244,39 +249,37 @@ describe("generated WebAssembly browser binding", () => {
           configurationMetadata: null,
           countdownRemaining: session.countdown_remaining(),
           canResume: session.can_resume(),
-          snapshot: phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(session.snapshot()) : null
+          snapshot: terminalSnapshot ?? (phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(session.snapshot()) : null)
         }).model;
       };
 
       expect(projectedScene()).toBe("Title");
       const openSetup = requestOperation("game-title-start", "open-setup");
-      session.open_setup();
-      completeOperation(openSetup);
+      completeOperation(openSetup.requestId);
       expect(projectedScene()).toBe("FlightSetup");
       const prepare = requestOperation("game-setup-start", "prepare");
-      session.prepare();
-      session.mark_briefing_ready();
-      completeOperation(prepare);
+      completeOperation(prepare.requestId);
       expect(projectedScene()).toBe("Briefing");
       const cancelBriefing = requestOperation("game-briefing-cancel", "cancel-briefing");
-      session.cancel_briefing();
-      completeOperation(cancelBriefing);
+      completeOperation(cancelBriefing.requestId);
       expect(projectedScene()).toBe("FlightSetup");
       const prepareAgain = requestOperation("game-setup-start", "prepare");
-      session.prepare();
-      session.mark_briefing_ready();
-      completeOperation(prepareAgain);
+      completeOperation(prepareAgain.requestId);
       expect(projectedScene()).toBe("Briefing");
       const startFlight = requestOperation("game-briefing-start", "start-flight");
-      session.start_countdown(1);
-      completeOperation(startFlight);
+      expect(startFlight.result.kind).toBe("countdown-started");
+      completeOperation(startFlight.requestId);
       expect(projectedScene()).toBe("Countdown");
-      session.advance_countdown();
+      const cancelCountdown = requestOperation("game-countdown-cancel", "cancel-countdown");
+      completeOperation(cancelCountdown.requestId);
+      expect(projectedScene()).toBe("Briefing");
+      const restartCountdown = requestOperation("game-briefing-start", "start-flight");
+      completeOperation(restartCountdown.requestId);
+      while (session.countdown_remaining() > 0) session.advance_countdown();
       session.launch();
       expect(projectedScene()).toBe("Flight");
       const pause = requestOperation("game-flight-pause", "pause");
-      session.pause(0);
-      completeOperation(pause);
+      completeOperation(pause.requestId);
       expect(projectedScene()).toBe("Flight");
       const settings = updateApp(model, {
         type: "ui-action",
@@ -289,8 +292,7 @@ describe("generated WebAssembly browser binding", () => {
         action: { type: "activate", controlId: "game-pause-settings-back" }
       }).model;
       const resume = requestOperation("game-flight-resume", "resume");
-      session.resume();
-      completeOperation(resume);
+      completeOperation(resume.requestId);
 
       let snapshot = parseFlightSnapshot(session.snapshot());
       for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
@@ -299,13 +301,34 @@ describe("generated WebAssembly browser binding", () => {
       expect(snapshot.terminal).toBe("water-contact");
       expect(projectedScene()).toBe("Result");
       const retry = requestOperation("game-result-retry", "retry");
-      session.retry();
-      completeOperation(retry);
+      completeOperation(retry.requestId);
       expect(projectedScene()).toBe("Briefing");
       const retryStart = requestOperation("game-briefing-start", "start-flight");
-      session.start_countdown(1);
-      completeOperation(retryStart);
+      completeOperation(retryStart.requestId);
       expect(projectedScene()).toBe("Countdown");
+      while (session.countdown_remaining() > 0) session.advance_countdown();
+      session.launch();
+      expect(projectedScene()).toBe("Flight");
+      const abort = requestOperation("game-flight-abort", "abort");
+      expect(abort.result.kind).toBe("aborted");
+      if (abort.result.kind !== "aborted") throw new Error("Abort did not return a terminal snapshot");
+      completeOperation(abort.requestId, parseFlightSnapshot(abort.result.terminalSnapshot));
+      expect(projectedScene()).toBe("Result");
+      const returnToTitle = requestOperation("game-result-title", "return-to-title");
+      completeOperation(returnToTitle.requestId);
+      expect(projectedScene()).toBe("Title");
+      const demo = requestOperation("game-title-demo", "enter-attract");
+      completeOperation(demo.requestId);
+      expect(projectedScene()).toBe("Title");
+      expect(model.gameSession.kind).toBe("attract");
+      const leaveDemo = requestOperation("game-attract-return", "leave-attract");
+      completeOperation(leaveDemo.requestId);
+      expect(projectedScene()).toBe("Title");
+      const setupAgain = requestOperation("game-title-start", "open-setup");
+      completeOperation(setupAgain.requestId);
+      const setupBack = requestOperation("game-setup-back", "return-to-title");
+      completeOperation(setupBack.requestId);
+      expect(projectedScene()).toBe("Title");
     } finally {
       session.free();
     }

@@ -1,6 +1,7 @@
 import "./styles.css";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
+import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, updateApp } from "./app/app-state.js";
 import type { AppEffect, AppMessage, AppModel, GameSessionOperation, GameSessionProjection } from "./app/app-state.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
@@ -453,86 +454,20 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
     return;
   }
   try {
-    switch (operation) {
-      case "open-setup":
-        session.open_setup();
-        break;
-      case "set-control-manual":
-        session.set_control_mode(0);
-        break;
-      case "set-control-shared":
-        session.set_control_mode(1);
-        break;
-      case "set-control-automatic":
-        session.set_control_mode(2);
-        break;
-      case "cycle-difficulty-preset":
-        session.cycle_difficulty_preset();
-        break;
-      case "cycle-information-level":
-        session.cycle_information_level();
-        break;
-      case "cycle-assistance-level":
-        session.cycle_assistance_level();
-        break;
-      case "cycle-weather-class":
-        session.cycle_weather_class();
-        break;
-      case "return-to-title":
-        session.return_to_title();
-        break;
-      case "prepare":
-        session.prepare();
-        session.mark_briefing_ready();
-        break;
-      case "cancel-briefing":
-        session.cancel_briefing();
-        break;
-      case "start-flight":
-        session.start_countdown(3);
-        completeGameOperation(requestId);
-        countdownGeneration += 1;
-        scheduleCountdownTick(countdownGeneration);
-        return;
-      case "cancel-countdown":
-        countdownGeneration += 1;
-        session.cancel_countdown();
-        break;
-      case "pause":
-        session.pause(0);
-        flightController?.suspend();
-        break;
-      case "resume":
-        session.resume();
-        flightController?.resume();
-        break;
-      case "abort": {
-        const terminal = session.abort();
-        flightController?.reset(terminal);
-        completeGameOperation(requestId, terminal);
-        return;
-      }
-      case "retry":
-        session.retry();
-        break;
-      case "retry-briefing":
-        session.retry_briefing();
-        session.mark_briefing_ready();
-        break;
-      case "enter-replay":
-        (session as unknown as { enter_replay(): void }).enter_replay();
-        break;
-      case "leave-replay":
-        (session as unknown as { leave_replay(): void }).leave_replay();
-        break;
-      case "enter-attract":
-        session.enter_attract();
-        break;
-      case "leave-attract":
-        session.leave_attract();
-        break;
-      default:
-        return assertNever(operation);
+    if (operation === "cancel-countdown") countdownGeneration += 1;
+    const result = executeGameSessionOperation(session, operation);
+    if (result.kind === "countdown-started") {
+      completeGameOperation(requestId);
+      countdownGeneration += 1;
+      scheduleCountdownTick(countdownGeneration);
+      return;
+    }
+    if (operation === "pause") flightController?.suspend();
+    if (operation === "resume") flightController?.resume();
+    if (result.kind === "aborted") {
+      flightController?.reset(result.terminalSnapshot);
+      completeGameOperation(requestId, result.terminalSnapshot);
+      return;
     }
     completeGameOperation(requestId);
   } catch (error: unknown) {
