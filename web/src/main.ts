@@ -2,7 +2,7 @@ import "./styles.css";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, updateApp } from "./app/app-state.js";
-import type { AppEffect, AppMessage, AppModel, GameSessionOperation } from "./app/app-state.js";
+import type { AppEffect, AppMessage, AppModel, GameSessionOperation, GameSessionProjection } from "./app/app-state.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserPanelContext } from "./presentation/browser-canvas.js";
@@ -224,7 +224,7 @@ function runEffect(effect: AppEffect): void {
         session.open_archived_flight_record(json);
         completeGameOperation(effect.requestId);
       }).catch((error: unknown) => {
-        dispatch({ type: "game-operation-failed", requestId: effect.requestId, message: errorMessage(error) });
+        dispatchGameOperationFailure(effect.requestId, errorMessage(error));
       });
       return;
     }
@@ -518,7 +518,34 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
     }
     completeGameOperation(requestId);
   } catch (error: unknown) {
-    dispatch({ type: "game-operation-failed", requestId, message: errorMessage(error) });
+    dispatchGameOperationFailure(requestId, errorMessage(error));
+  }
+}
+
+function dispatchGameOperationFailure(requestId: number, message: string): void {
+  const session = gameSession;
+  if (session === null) {
+    dispatch({ type: "game-operation-failed", requestId, message });
+    return;
+  }
+  try {
+    const phaseCode = session.phase_code();
+    const currentSession: GameSessionProjection = {
+      phaseCode,
+      controlModeCode: session.control_mode_code(),
+      difficulty: readDifficulty(session),
+      configurationMetadata: readConfigurationMetadata(session),
+      countdownRemaining: session.countdown_remaining(),
+      snapshot: phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(session.snapshot()) : null,
+      canResume: session.can_resume()
+    };
+    dispatch({ type: "game-operation-failed", requestId, message, currentSession });
+  } catch (syncError: unknown) {
+    dispatch({
+      type: "game-operation-failed",
+      requestId,
+      message: `${message}; GameSession resync failed: ${errorMessage(syncError)}`
+    });
   }
 }
 

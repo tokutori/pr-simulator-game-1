@@ -567,6 +567,30 @@ describe("Boot application state", () => {
     expect(transition.model.status).toContain("不正な状態snapshot");
     expect(transition.model.gameSession).toEqual(model.gameSession);
   });
+
+  it("reconciles a rejected UI operation to the current Rust phase", () => {
+    const requested = updateApp(readyModel(0), {
+      type: "ui-action", action: { type: "activate", controlId: "game-title-start" }
+    });
+    const rejected = updateApp(requested.model, {
+      type: "game-operation-failed",
+      requestId: requested.model.pendingGameRequestId as number,
+      message: "InvalidTransition",
+      currentSession: {
+        phaseCode: 1,
+        controlModeCode: 0,
+        difficulty: requested.model.difficulty,
+        configurationMetadata: null,
+        countdownRemaining: 0,
+        snapshot: null,
+        canResume: false
+      }
+    });
+
+    expect(rejected.model.pendingGameRequestId).toBeNull();
+    expect(rejected.model.gameSession.phaseCode).toBe(1);
+    expect(rejected.model.status).toBe("InvalidTransition");
+  });
 });
 
 function readyModel(phaseCode = 0): AppModel {

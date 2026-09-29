@@ -127,6 +127,16 @@ export interface ConfigurationMetadataUiState {
   readonly seedHigh: number;
 }
 
+export interface GameSessionProjection {
+  readonly phaseCode: number;
+  readonly controlModeCode: number;
+  readonly difficulty: DifficultyUiState;
+  readonly configurationMetadata: ConfigurationMetadataUiState | null;
+  readonly countdownRemaining: number;
+  readonly snapshot: FlightSnapshot | null;
+  readonly canResume: boolean;
+}
+
 export type AppMessage =
   | { readonly type: "initialize" }
   | {
@@ -189,7 +199,12 @@ export type AppMessage =
   | { readonly type: "flight-replay-pose-loaded"; readonly requestId: number; readonly pose: FlightRenderPose }
   | { readonly type: "flight-replay-pose-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "replay-clock-tick"; readonly generation: number; readonly elapsedSeconds: number }
-  | { readonly type: "game-operation-failed"; readonly requestId: number; readonly message: string };
+  | {
+      readonly type: "game-operation-failed";
+      readonly requestId: number;
+      readonly message: string;
+      readonly currentSession?: GameSessionProjection;
+    };
 
 export type AppEffect =
   | { readonly type: "initialize-presentation"; readonly requestId: number }
@@ -518,6 +533,15 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return transition(withModel(model, { status: message.message }));
     case "game-operation-failed": {
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
+      if (message.currentSession !== undefined) {
+        const completed = updateApp(model, {
+          type: "game-operation-completed",
+          requestId: message.requestId,
+          ...message.currentSession
+        });
+        if (completed.model.status === "GameSessionから不正な状態snapshotを受信した") return completed;
+        return transition(withModel(completed.model, { status: message.message }), completed.effects);
+      }
       return transition(withModel(model, {
         pendingGameRequestId: null,
         status: message.message
