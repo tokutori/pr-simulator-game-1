@@ -11,6 +11,8 @@ import {
 } from "../../web/src/game/flight-record-query.js";
 
 class PackedFlightRecord implements FlightRecordQueryPort {
+  lastSecondsQuery: number | null = null;
+
   constructor(
     private readonly samples: readonly number[][],
     private readonly summary = defaultSummary(samples)
@@ -42,7 +44,11 @@ class PackedFlightRecord implements FlightRecordQueryPort {
     return finalization;
   }
 
-  flight_record_sample_at(tickIndex: number, fraction: number): number[] {
+  flight_record_sample_at_seconds(timeSeconds: number): number[] {
+    this.lastSecondsQuery = timeSeconds;
+    const tickTime = timeSeconds * 100;
+    const tickIndex = Math.floor(tickTime);
+    const fraction = tickTime - tickIndex;
     const values = Array<number>(FLIGHT_RECORD_PLAYBACK_LAYOUT.length).fill(0);
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.tick] = tickIndex;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.fraction] = fraction;
@@ -166,7 +172,9 @@ describe("loadFlightAnalysis", () => {
 
 describe("queryFlightRecordSampleAt", () => {
   it("queries a Rust-interpolated playback sample at a shared time", () => {
-    const analysisSample = queryFlightRecordSampleAt(new PackedFlightRecord([sample(0, 0)]), 100, 1.25);
+    const record = new PackedFlightRecord([sample(0, 0)]);
+    const analysisSample = queryFlightRecordSampleAt(record, 100, 1.25);
+    expect(record.lastSecondsQuery).toBe(1.25);
     expect(analysisSample).toMatchObject({
       timeSeconds: 1.25,
       northMeters: 1.25,
@@ -199,7 +207,7 @@ describe("queryFlightRecordRenderPoseAt", () => {
 
   it("rejects a playback pose with an invalid quaternion", () => {
     const record = new PackedFlightRecord([sample(0, 0)]);
-    record.flight_record_sample_at = () => Array<number>(FLIGHT_RECORD_PLAYBACK_LAYOUT.length).fill(0);
+    record.flight_record_sample_at_seconds = () => Array<number>(FLIGHT_RECORD_PLAYBACK_LAYOUT.length).fill(0);
     expect(() => queryFlightRecordRenderPoseAt(record, 100, 0, 0)).toThrow("unit quaternion");
   });
 });

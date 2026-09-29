@@ -89,7 +89,7 @@ export interface FlightRecordQueryPort {
   flight_record_sample_count(): number;
   flight_record_samples_packed(): Float64Array | number[];
   flight_record_summary(): Float64Array | number[];
-  flight_record_sample_at(tickIndex: number, fraction: number): Float64Array | number[];
+  flight_record_sample_at_seconds(timeSeconds: number): Float64Array | number[];
   flight_record_finalization(): Float64Array | number[];
   flight_analysis_wind_grid_packed?: (
     northMinimumMeters: number,
@@ -107,10 +107,7 @@ export function queryFlightRecordSampleAt(
   if (!Number.isSafeInteger(physicsHz) || physicsHz <= 0 || !Number.isFinite(timeSeconds) || timeSeconds < 0) {
     throw new RangeError("Flight record query time and physics frequency must be valid");
   }
-  const tickTime = timeSeconds * physicsHz;
-  const tickIndex = Math.floor(tickTime);
-  const fraction = tickTime - tickIndex;
-  const packed = record.flight_record_sample_at(tickIndex, fraction);
+  const packed = record.flight_record_sample_at_seconds(timeSeconds);
   requirePackedLength(packed, FLIGHT_RECORD_PLAYBACK_LAYOUT.length, "playback sample");
   return decodeAnalysisSample(packed, FLIGHT_RECORD_PLAYBACK_LAYOUT, physicsHz);
 }
@@ -125,10 +122,7 @@ export function queryFlightRecordRenderPoseAt(
   if (!Number.isSafeInteger(physicsHz) || physicsHz <= 0 || !Number.isFinite(timeSeconds) || timeSeconds < 0) {
     throw new RangeError("Flight record query time and physics frequency must be valid");
   }
-  const tickTime = timeSeconds * physicsHz;
-  const tickIndex = Math.floor(tickTime);
-  const fraction = tickTime - tickIndex;
-  const packed = record.flight_record_sample_at(tickIndex, fraction);
+  const packed = record.flight_record_sample_at_seconds(timeSeconds);
   requirePackedLength(packed, FLIGHT_RECORD_PLAYBACK_LAYOUT.length, "playback pose");
   const layout = FLIGHT_RECORD_PLAYBACK_LAYOUT;
   const valueAt = (index: number): number => required(packed, index);
