@@ -858,6 +858,41 @@ mod tests {
     }
 
     #[test]
+    fn tick_append_keeps_the_preallocated_sample_buffer() {
+        let (header, initial, telemetry) = fixture();
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(2.0, 3.0, 4.0).unwrap(),
+            1.0,
+            -0.2,
+            -0.5,
+            0.5,
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        let actuator_limits = [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3];
+        let next = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits,
+            1,
+            initial.flight_state(),
+            initial.actuator_state(),
+        )
+        .unwrap();
+        let mut record = FlightRecord::try_new(header).unwrap();
+        record.begin(initial, telemetry).unwrap();
+        let buffer = record.samples.as_ptr();
+        let capacity = record.samples.capacity();
+
+        record.append_tick(next, input(), telemetry).unwrap();
+
+        assert_eq!(record.samples.as_ptr(), buffer);
+        assert_eq!(record.samples.capacity(), capacity);
+        assert_eq!(record.sample_count(), 2);
+    }
+
+    #[test]
     fn finalization_classifies_abort_and_rejects_mutation_afterward() {
         let (header, initial, telemetry) = fixture();
         let mut record = FlightRecord::try_new(header).unwrap();
