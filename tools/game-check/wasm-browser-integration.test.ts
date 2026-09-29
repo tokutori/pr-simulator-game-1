@@ -258,6 +258,15 @@ describe("generated WebAssembly browser binding", () => {
       session.mark_briefing_ready();
       completeOperation(prepare);
       expect(projectedScene()).toBe("Briefing");
+      const cancelBriefing = requestOperation("game-briefing-cancel", "cancel-briefing");
+      session.cancel_briefing();
+      completeOperation(cancelBriefing);
+      expect(projectedScene()).toBe("FlightSetup");
+      const prepareAgain = requestOperation("game-setup-start", "prepare");
+      session.prepare();
+      session.mark_briefing_ready();
+      completeOperation(prepareAgain);
+      expect(projectedScene()).toBe("Briefing");
       const startFlight = requestOperation("game-briefing-start", "start-flight");
       session.start_countdown(1);
       completeOperation(startFlight);

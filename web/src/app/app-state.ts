@@ -761,6 +761,9 @@ function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model
 }
 
 function operationForGameAction(phaseCode: number, controlId: string): GameSessionOperation | null {
+  if (controlId === "game-briefing-cancel" && (phaseCode === 2 || phaseCode === 3)) {
+    return "cancel-briefing";
+  }
   const operations: Readonly<Record<string, readonly [number, GameSessionOperation]>> = {
     "game-title-start": [0, "open-setup"],
     "game-setup-start": [1, "prepare"],
@@ -772,7 +775,6 @@ function operationForGameAction(phaseCode: number, controlId: string): GameSessi
     "game-setup-assistance": [1, "cycle-assistance-level"],
     "game-setup-weather": [1, "cycle-weather-class"],
     "game-setup-back": [1, "return-to-title"],
-    "game-briefing-cancel": [2, "cancel-briefing"],
     "game-briefing-start": [3, "start-flight"],
     "game-countdown-cancel": [4, "cancel-countdown"],
     "game-flight-pause": [5, "pause"],
