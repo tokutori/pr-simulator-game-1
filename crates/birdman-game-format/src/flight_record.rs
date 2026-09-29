@@ -902,10 +902,19 @@ mod tests {
             AssistanceLevel::Manual,
             WeatherClass::Calm,
         );
-        assert_eq!(
-            FlightRecordDocument::from_record(&restored, settings).unwrap(),
-            decoded
-        );
+        let mut reconstructed = FlightRecordDocument::from_record(&restored, settings).unwrap();
+        for (actual, expected) in reconstructed.samples.iter_mut().zip(&decoded.samples) {
+            for (actual_component, expected_component) in actual
+                .attitude_body_to_ned
+                .iter()
+                .zip(expected.attitude_body_to_ned)
+            {
+                assert!((*actual_component - expected_component).abs() < 1.0e-14);
+            }
+            // Core revalidates and normalizes non-axis-aligned unit quaternions.
+            actual.attitude_body_to_ned = expected.attitude_body_to_ned;
+        }
+        assert_eq!(reconstructed, decoded);
     }
 
     #[test]

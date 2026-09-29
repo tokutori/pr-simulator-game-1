@@ -1702,17 +1702,25 @@ mod tests {
         assert_eq!(archived.phase_code(), 9);
         assert!(archived.is_archived_replay());
         assert_eq!(archived.flight_record_sample_count(), 2);
-        assert_eq!(
+        // Reconstructing a non-axis-aligned quaternion from JSON normalizes it
+        // again, so archived numeric samples may differ by a few ulps.
+        let assert_samples_close = |actual: Vec<f64>, expected: Vec<f64>| {
+            assert_eq!(actual.len(), expected.len());
+            for (actual_value, expected_value) in actual.into_iter().zip(expected) {
+                assert!((actual_value - expected_value).abs() < 1.0e-12);
+            }
+        };
+        assert_samples_close(
             archived.flight_record_samples_packed().unwrap(),
-            bridge.flight_record_samples_packed().unwrap()
+            bridge.flight_record_samples_packed().unwrap(),
         );
-        assert_eq!(
+        assert_samples_close(
             archived.flight_record_sample_at(1, 0.0).unwrap(),
-            bridge.flight_record_sample_at(1, 0.0).unwrap()
+            bridge.flight_record_sample_at(1, 0.0).unwrap(),
         );
-        assert_eq!(
+        assert_samples_close(
             archived.flight_record_sample_at_seconds(0.01).unwrap(),
-            bridge.flight_record_sample_at(1, 0.0).unwrap()
+            bridge.flight_record_sample_at(1, 0.0).unwrap(),
         );
         assert_eq!(
             archived.flight_record_summary().unwrap(),
