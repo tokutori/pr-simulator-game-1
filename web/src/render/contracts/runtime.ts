@@ -33,6 +33,9 @@ export interface FlightRenderPose {
   readonly initialPilotPositionMeters: number;
   /** Simulation clock, used by render-only environmental animation. */
   readonly simulationTimeSeconds?: number;
+  /** Render-only wing flex proxy; does not affect the simulated aerodynamic model. */
+  readonly airspeedMetersPerSecond?: number | null;
+  readonly actuatorDeflectionRadians?: Readonly<{ pitch: number; yaw: number }>;
   /** Instantaneous scenario wind in NED, kept separate from the stable visual wave state. */
   readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }

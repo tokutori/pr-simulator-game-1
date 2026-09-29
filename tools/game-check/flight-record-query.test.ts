@@ -55,6 +55,8 @@ class PackedFlightRecord implements FlightRecordQueryPort {
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.east] = (tickIndex - fraction) / 100;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.altitude] = 20 + (tickIndex + fraction) / 100;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.airspeed] = 10;
+    values[FLIGHT_RECORD_PLAYBACK_LAYOUT.actuatorPitch] = 0.12;
+    values[FLIGHT_RECORD_PLAYBACK_LAYOUT.actuatorYaw] = -0.08;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.groundspeed] = 11;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.angleOfAttackDefined] = 0;
     values[FLIGHT_RECORD_PLAYBACK_LAYOUT.sideslipDefined] = 0;
@@ -189,6 +191,8 @@ describe("queryFlightRecordRenderPoseAt", () => {
       pilotPositionMeters: 0.2,
       initialPilotPositionMeters: -0.1,
       simulationTimeSeconds: 1.25,
+      airspeedMetersPerSecond: 10,
+      actuatorDeflectionRadians: { pitch: 0.12, yaw: -0.08 },
       windVelocityNedMetersPerSecond: { north: 0, east: 0 }
     });
   });

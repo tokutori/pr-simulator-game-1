@@ -1,4 +1,5 @@
 import {
+  AmbientLight,
   BufferAttribute,
   CanvasTexture,
   CircleGeometry,
@@ -6,7 +7,7 @@ import {
   DoubleSide,
   Group,
   LinearFilter,
-  BoxGeometry,
+  DirectionalLight,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
@@ -34,6 +35,7 @@ import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
+import { createBirdmanAirframe } from "./birdman-airframe.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -141,6 +143,10 @@ export function createThreeRenderer(
   const scene = new Scene();
   const skyTexture = createLakeSkyTexture();
   scene.background = skyTexture;
+  scene.add(new AmbientLight(0xdceaf0, 1.15));
+  const sun = new DirectionalLight(0xffefd8, 1.45);
+  sun.position.set(-20, 35, -18);
+  scene.add(sun);
 
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
@@ -204,32 +210,14 @@ export function createThreeRenderer(
 
   const aircraftRoot = new Group();
   scene.add(aircraftRoot);
+  const airframe = createBirdmanAirframe();
+  aircraftRoot.add(airframe.root);
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   aircraftRoot.add(camera);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
   const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 2000);
   externalCameraRig.add(fixedCamera);
-  const cockpitMaterial = new MeshBasicMaterial({ color: 0x343f3d });
-  const cockpitWing = new Mesh(new BoxGeometry(3.8, 0.055, 0.24), cockpitMaterial);
-  cockpitWing.position.set(0, -0.58, -1.25);
-  aircraftRoot.add(cockpitWing);
-  const cockpitNose = new Mesh(new BoxGeometry(0.16, 0.12, 1.7), cockpitMaterial);
-  cockpitNose.position.set(0, -0.5, -1.95);
-  aircraftRoot.add(cockpitNose);
-  const airframeMaterial = new MeshBasicMaterial({ color: 0xe8e6d7 });
-  const mainWing = new Mesh(new BoxGeometry(22, 0.12, 1.1), airframeMaterial);
-  mainWing.position.set(0, -0.75, 0.3);
-  aircraftRoot.add(mainWing);
-  const fuselage = new Mesh(new BoxGeometry(0.2, 0.22, 5), airframeMaterial);
-  fuselage.position.set(0, -0.62, 1);
-  aircraftRoot.add(fuselage);
-  const horizontalTail = new Mesh(new BoxGeometry(4, 0.08, 0.55), airframeMaterial);
-  horizontalTail.position.set(0, -0.58, 3.3);
-  aircraftRoot.add(horizontalTail);
-  const verticalTail = new Mesh(new BoxGeometry(0.08, 1.1, 0.55), airframeMaterial);
-  verticalTail.position.set(0, -0.15, 3.3);
-  aircraftRoot.add(verticalTail);
   let disposed = false;
   let loopRunning = false;
   let width = 0;
@@ -327,6 +315,11 @@ export function createThreeRenderer(
         fixedCamera.updateProjectionMatrix();
       }
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
+      airframe.setVisualState(
+        flightPose?.airspeedMetersPerSecond ?? null,
+        flightPose?.actuatorDeflectionRadians?.pitch ?? 0,
+        flightPose?.actuatorDeflectionRadians?.yaw ?? 0
+      );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;
       // The non-flight scenic camera is at the origin. Keep its water below
@@ -394,14 +387,7 @@ export function createThreeRenderer(
       skyTexture.dispose();
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
-      cockpitWing.geometry.dispose();
-      cockpitNose.geometry.dispose();
-      cockpitMaterial.dispose();
-      mainWing.geometry.dispose();
-      fuselage.geometry.dispose();
-      horizontalTail.geometry.dispose();
-      verticalTail.geometry.dispose();
-      airframeMaterial.dispose();
+      airframe.dispose();
       renderer.dispose();
       disposed = true;
     },

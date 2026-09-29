@@ -55,6 +55,8 @@ export const FLIGHT_RECORD_PLAYBACK_LAYOUT = Object.freeze({
   attitudeY: 10,
   attitudeZ: 11,
   pilotPosition: 15,
+  actuatorPitch: 18,
+  actuatorYaw: 19,
   north: 33,
   east: 34,
   altitude: 23,
@@ -148,6 +150,11 @@ export function queryFlightRecordRenderPoseAt(
     pilotPositionMeters: valueAt(layout.pilotPosition),
     initialPilotPositionMeters,
     simulationTimeSeconds: timeSeconds,
+    airspeedMetersPerSecond: valueAt(layout.airspeed),
+    actuatorDeflectionRadians: Object.freeze({
+      pitch: valueAt(layout.actuatorPitch),
+      yaw: valueAt(layout.actuatorYaw)
+    }),
     windVelocityNedMetersPerSecond: Object.freeze({
       north: valueAt(layout.windNorth),
       east: valueAt(layout.windEast)

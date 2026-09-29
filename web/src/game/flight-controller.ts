@@ -117,6 +117,8 @@ export class FlightController {
       pilotPositionMeters: snapshot.pilotPositionMeters,
       initialPilotPositionMeters: this.initialPilotPositionMeters,
       simulationTimeSeconds: snapshot.flightTimeSeconds,
+      airspeedMetersPerSecond: snapshot.telemetry?.airspeedMetersPerSecond ?? null,
+      actuatorDeflectionRadians: snapshot.actuatorDeflectionRadians,
       windVelocityNedMetersPerSecond: snapshot.telemetry?.windVelocityNedMetersPerSecond ?? null
     });
     this.renderer.setFlightPose(pose);
