@@ -571,6 +571,7 @@ varying float vCrest;
 varying float vCompression;
 varying float vGridSpacing;
 varying vec2 vBaseXZ;
+varying vec2 vRepresentedSlope;
 ${lakeWavePacketShader}
 
 void main() {
@@ -580,8 +581,10 @@ void main() {
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
   vBaseXZ = waveXZ;
   vec2 detailDrift = uWindDirection.xy * uTimeSeconds;
-  float nearHeight = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x).a - 128.0 / 255.0;
-  float farHeight = texture2D(uDetailFar, (waveXZ - detailDrift * 0.23) / uDetailExtents.y).a - 128.0 / 255.0;
+  vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
+  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.23) / uDetailExtents.y);
+  float nearHeight = nearDetail.a - 128.0 / 255.0;
+  float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
   p.y += nearHeight * 0.65 * nearVisibility + farHeight * 0.4 * farVisibility;
@@ -598,6 +601,12 @@ void main() {
   float dzz = 1.0;
   float dhdx = 0.0;
   float dhdz = 0.0;
+  vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
+  vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
+  vec2 resolvedDetailSlope = nearSlope * (0.65 * nearVisibility)
+    + farSlope * (0.4 * farVisibility);
+  dhdx += resolvedDetailSlope.x;
+  dhdz += resolvedDetailSlope.y;
   float crest = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) {
@@ -633,6 +642,13 @@ void main() {
       crest += s * k * a;
     }
   }
+  float horizontalDeterminant = dxx * dzz - dxz * dzx;
+  // The geometric normal is measured after Gerstner horizontal displacement.
+  // Convert the represented detail slope into that same coordinate system.
+  vRepresentedSlope = vec2(
+    dzz * resolvedDetailSlope.x - dzx * resolvedDetailSlope.y,
+    -dxz * resolvedDetailSlope.x + dxx * resolvedDetailSlope.y
+  ) / max(horizontalDeterminant, 0.01);
   vec3 tangentX = vec3(dxx, dhdx, dzx);
   vec3 tangentZ = vec3(dxz, dhdz, dzz);
   vec3 localNormal = normalize(cross(tangentZ, tangentX));
@@ -640,7 +656,7 @@ void main() {
   vWorldPosition = worldPosition.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
   vCrest = crest / max(slopeEnergy, 0.001);
-  vCompression = clamp(1.0 - (dxx * dzz - dxz * dzx), 0.0, 1.0);
+  vCompression = clamp(1.0 - horizontalDeterminant, 0.0, 1.0);
   vGridSpacing = aGridSpacing;
   gl_Position = projectionMatrix * viewMatrix * worldPosition;
 }
@@ -667,6 +683,7 @@ varying float vCrest;
 varying float vCompression;
 varying float vGridSpacing;
 varying vec2 vBaseXZ;
+varying vec2 vRepresentedSlope;
 ${lakeWavePacketShader}
 
 vec3 analyticSky(vec3 ray) {
@@ -761,7 +778,11 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   float patches = lakeNoise(worldXZ * 0.17 + vec2(2.3, -7.1));
   vec2 microSlope = microDetail.xy;
   float unresolvedVariance = max(microDetail.z - dot(microSlope, microSlope), 0.0);
-  vec3 normal = normalize(geometricNormal + vec3(-waveSlope.x - microSlope.x, 0.0, -waveSlope.y - microSlope.y));
+  // Subtract the exact vertex slope already represented by the geometric
+  // normal; vertex LOD0 and filtered fragment samples need not be identical.
+  vec2 geometricSlope = -geometricNormal.xz / max(geometricNormal.y, 0.01);
+  vec2 totalSlope = geometricSlope + waveSlope + microSlope - vRepresentedSlope;
+  vec3 normal = normalize(vec3(-totalSlope.x, 1.0, -totalSlope.y));
   vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
   vec3 reflectedDirection = reflect(-viewDirection, normal);
   vec3 reflection = analyticSky(reflectedDirection);
