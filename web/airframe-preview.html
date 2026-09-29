@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>機体三面図 | 鳥人間滑空ゲーム</title>
+    <style>
+      body { margin: 0; background: #252a2e; color: #edf2f3; font: 15px system-ui, sans-serif; }
+      header { padding: 12px 16px; display: flex; gap: 20px; align-items: baseline; flex-wrap: wrap; }
+      header a { color: #aad8ef; }
+      header small { color: #b8c2c6; }
+      main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 12px 12px; }
+      section { height: 42vh; min-height: 300px; position: relative; background: #363c42; overflow: hidden; }
+      section h2 { position: absolute; left: 12px; top: 8px; z-index: 1; margin: 0; font-size: 16px; }
+      section p { position: absolute; left: 12px; bottom: 8px; z-index: 1; margin: 0; font-size: 12px; }
+      canvas { width: 100%; height: 100%; display: block; }
+      @media (max-width: 720px) { main { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header><a href="./">← ゲームへ戻る</a><strong>機体三面図</strong><small>飛行画面と同じ機体モデルを表示。グリッドは上面・正面が1 m、側面が0.5 m。</small></header>
+    <main>
+      <section data-view="top"><h2>上面</h2><p>主翼幅 20.863 m（実測）</p></section>
+      <section data-view="side"><h2>側面</h2><p>主翼・コクピット・尾翼の前後位置</p></section>
+      <section data-view="front"><h2>正面</h2><p>二段上反角とコクピット幅</p></section>
+    </main>
+    <script type="module" src="./src/render/engines/three/airframe-orthographic-preview.ts"></script>
+  </body>
+</html>
