@@ -25,23 +25,16 @@ head poseとstereo/XR変換は `presentation.md` に従う。
 BPG-007のsynthetic aircraftは `SYNTHETIC_PILOT_EYE_POINT` を明示的なview metadataとして使用する。
 実機・別機体modelを追加する際は、各modelのPilotEyePoint metadataへ置き換える。
 
-Informationに許可cameraとvisual stabilization profileを含める。
-Fullでは明示設定でchaseを許可できる。Standard/Minimal/RealisticはPilotのみとする。
-すべてのpresetの既定はPilot、安定化offとする。Customは有効な組合せだけを受け付ける。
-Flight中の許可camera間の切替は許可するが、許可集合と安定化profileは飛行開始前に固定する。
-許可集合をPersonal Bestの比較keyへ含め、実際のcamera切替をpresentation eventとして記録する。
-Replay/Attractのcamera選択は元フライトの記録・比較keyを変更しない。
-
-Pilotの安定化を追加する場合は視覚的な微小振動抑制に限定し、physics stateへ反映しない。
-頭部追跡へcinematic smoothingやhead bobを適用しない。XR/Phoneの初期版では安定化offを維持する。
-backend間で同じ設定を再現できない場合はFlightSetupで非対応と表示し、飛行中に黙って補正しない。
+Flightのcamera modeはPilotに固定する。Information preset、presentation backend、操縦modeによる切替を設けない。
+Replay/Attractでは複数のcamera rigを選択できる。選択はpresentationに限定し、FlightRecord、物理状態、Personal Best比較条件を変更しない。
+初期版ではvisual stabilizationを設けない。head trackingへcinematic smoothingやhead bobを適用せず、機体姿勢を直接反映する。
 
 ## CameraModeとGameScene
 
 | Rig | Flight | Replay | Attract |
 |---|---|---|---|
-| Pilot | 既定 | 任意 | 任意 |
-| Chase | Full/Customで許可時のみ | 手動の既定 | あり |
+| Pilot | 固定 | 任意 | 任意 |
+| Chase | なし | 手動の既定 | あり |
 | Orbit | なし | 手動観察 | なし |
 | Platform | なし | あり | あり |
 | Shore | なし | あり | あり |
@@ -97,6 +90,6 @@ Replay/Attractの自動cutはDesktopを基本対象とし、XR/Phoneでは明示
 
 ## 検証
 
-Pilotの位置offset、basis、機体回転合成、IPD二重加算、camera許可集合、視覚補助の条件保存を検証する。cockpit/nose/wingのbody-fixed方向と地平線の相対姿勢がpitch・rollに一致することも確認する。
+Pilotの位置offset、basis、機体回転合成、IPD二重加算を検証する。Flight cameraが全Information presetとpresentation backendでPilotに固定されること、Replay/Attractのcamera選択がphysicsとrecordを変更しないことを確認する。cockpit/nose/wingのbody-fixed方向と地平線の相対姿勢がpitch・rollに一致することも確認する。
 Cinematicは30/60/120 FPS、seek・巻戻し、手動選択、短いrecord、定点追従、最短shot時間を検証する。
 camera変更がphysics state・保存済みFlight recordを変更しないことを確認する。

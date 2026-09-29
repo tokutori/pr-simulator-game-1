@@ -6,7 +6,7 @@ Desktop、native WebXR、Phone VRをWeb側のpresentation backendとして分離
 physics・WindField・FBW・操縦authorityは全backendで共通とする。
 本書はBPG-001の設計契約であり、VR機能の実装・実機確認はBPG-014〜016で行う。
 head trackingは視線入力であり、操舵入力へ自動的に割り当てない。
-PilotEyePoint・camera許可・Replay/Attractのrigは `camera.md`、主要Sceneとoverlayは `game-flow.md` に従う。
+FlightのPilot固定cameraとReplay/Attractのrigは `camera.md`、主要Sceneとoverlayは `game-flow.md` に従う。
 Desktopというbackend名は通常のScreen表示を表し、スマートフォンの単眼表示も含む。
 追従規則は `vr-spaces.md`、engine交換境界は `render-boundary.md` に従う。
 本書のThree.js APIは初期engine adapterの実装候補である。

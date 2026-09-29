@@ -43,8 +43,8 @@ Full / Standard / Minimal / Realistic / Customを用意する。
 Fullは対気速度、対地速度、高度、AoA、風、姿勢、flight-path marker、警告を表示する。
 Standardは主要計器、Minimalは高度・距離・時間、Realisticは対象機の実際の計器構成に近づける。
 対象機の計器構成が未確定の段階では、Realisticを実機と同一と表示しない。
-Customはtelemetry、attitude、wind、flight-path、AoA、warning cue、許可camera、視覚安定化の設定を保持する。
-通常FlightはPilot視点を既定とする。camera許可と比較条件は `camera.md` に従う。
+Customはtelemetry、attitude、wind、flight-path、AoA、warning cueの表示設定を保持する。
+FlightはPilot視点に固定する。Replay/Attractのcamera選択はInformation presetから独立させる。
 情報補助の低減でアプリケーションエラー、permission状態、退出操作を隠さない。
 
 ## Assistance
@@ -107,7 +107,7 @@ backend切替やpause/resumeは独立した表示・session操作として扱う
 Resultには距離・時間とInformation、Assistanceの実値、scenario名と代表気象条件を保存する。
 
 Personal Bestは表示preset名で分類せず、解決済みconfigurationのcanonical keyで分離する。
-keyには許可camera・視覚安定化を含むInformation項目、ControllerConfigとversion、scenario ID/version/hash/seed、
+keyにはInformation項目、ControllerConfigとversion、scenario ID/version/hash/seed、
 AircraftModel/version/hash、physics version、launch条件、score定義versionを含める。
 同じ設定へ解決されるpresetとCustomは同じ比較群とする。
 画質やbackendは記録metadataとして保持し、物理条件のkeyから分離する。
