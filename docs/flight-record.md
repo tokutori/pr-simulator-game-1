@@ -22,7 +22,7 @@ physics build hash、presentation policy、asset content hash、初期環境位�
 
 - record schema、座標・単位契約、physics build/modelのversionとhash
 - AircraftModel、scenario/world asset、controller設定とversion、seed、機体・身体の初期状態と身体移動モデル
-- 解決済み三軸設定、許可camera・安定化、score定義version、固定dt
+- 解決済み三軸設定、score定義version、固定dt
 - 波の初期位相とsimulation時刻の基準、環境の再表示に必要なmetadata
 - 最大flight tick数、sample layout、追加diagnosticの有無
 - backend・端末情報等の任意metadata、presentation event列のschema

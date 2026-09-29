@@ -90,7 +90,7 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |
 | 016 | 全SceneのPhone VR UI、sensor権限・null・timeout・stale、左右aspect、実スマートフォン |
 | 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
-| 018 | HUD項目とcamera許可、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
+| 018 | HUD項目とFlight Pilot camera固定、Replay/Attract rig選択、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
 | 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |
 | 020 | Rust analysis series/queryと既知値、map軸・風断面、速度/高度、共有cursor、欠損、Screen/VR描画・操作 |
 | 021 | Rust replay clock/seek/interpolation query、snapshot補間、quaternion符号、全backendのResult復帰、原record不変性 |

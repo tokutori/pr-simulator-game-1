@@ -71,8 +71,8 @@ pause中はtick・controller・actuator・記録sample・波のsimulation time�
 非表示化時の押下状態を解除し、device再接続後の入力を再取得する。
 
 Settingsは画質、音量、表示サイズ、binding設定等を扱う。
-初期版ではInformation内容、camera許可・安定化、Assistance、Weather、input shapingを飛行中に変更しない。
-これらはFlightSetupへ戻って変更する。HUDの文字サイズ・配色等の可読性設定は変更してよい。
+初期版ではInformation内容、Assistance、Weather、input shapingを飛行中に変更しない。
+これらはFlightSetupへ戻って変更する。Flight cameraはPilotに固定し、Replay/Attract cameraはpresentation操作として選択する。HUDの文字サイズ・配色等の可読性設定は変更してよい。
 操縦bindingはFlight中は固定する。頭部recenterは姿勢の基準化として記録metadataへ残す。
 
 ## 終了とResult
