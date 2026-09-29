@@ -51,8 +51,8 @@ export interface ThreeRendererBundle {
 const LAKE_VISUAL_HEIGHT_SCALE = 8.0;
 // A single reference appearance is shared by the title, flight, and replay
 // scenes until the scenario provides a coherent wave-state descriptor.
-const LAKE_REFERENCE_WIND_NORTH = 1.2;
-const LAKE_REFERENCE_WIND_EAST = 2.4;
+const LAKE_REFERENCE_WIND_NORTH = 0.54;
+const LAKE_REFERENCE_WIND_EAST = 1.07;
 
 export function createThreeRenderer(
   canvas: HTMLCanvasElement,
@@ -70,14 +70,17 @@ export function createThreeRenderer(
 
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
-  const lakeWaves = createLakeWaveSpectrum(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST, 600, waterQuality.componentCount);
+  // Keep the same frequency grid and wave state across quality profiles.
+  // Mesh density changes with quality; the appearance does not switch weather.
+  const lakeWaves = createLakeWaveSpectrum(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST, 600, 18);
+  const renderedWaves = lakeWaves.components.slice(0, 6);
   const referenceWindSpeed = Math.hypot(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST);
   const detailDirectionX = LAKE_REFERENCE_WIND_EAST / referenceWindSpeed;
   const detailDirectionZ = -LAKE_REFERENCE_WIND_NORTH / referenceWindSpeed;
-  const detailNear = createLakeDetailLayer(64, 2300, 1717, detailDirectionX, detailDirectionZ);
-  const detailFar = createLakeDetailLayer(93, 1800, 2917, detailDirectionX, detailDirectionZ);
+  const detailNear = createLakeDetailLayer(64, 1400, 1717, detailDirectionX, detailDirectionZ);
+  const detailFar = createLakeDetailLayer(193, 2400, 2917, detailDirectionX, detailDirectionZ);
   const waveKAmplitude = Array.from({ length: 24 }, (_, index) => {
-    const wave = lakeWaves.components[index];
+    const wave = renderedWaves[index];
     return wave === undefined ? new Vector4() : new Vector4(
       wave.directionEast,
       -wave.directionNorth,
@@ -86,7 +89,7 @@ export function createThreeRenderer(
     );
   });
   const waveOmegaPhase = Array.from({ length: 24 }, (_, index) => {
-    const wave = lakeWaves.components[index];
+    const wave = renderedWaves[index];
     return wave === undefined ? new Vector4() : new Vector4(
       wave.angularFrequencyRadiansPerSecond,
       wave.phaseRadians,
@@ -104,7 +107,7 @@ export function createThreeRenderer(
       uDetailExtents: { value: new Vector4(detailNear.extentMeters, detailFar.extentMeters, 0, 0) },
       uWaveKAmplitude: { value: waveKAmplitude },
       uWaveOmegaPhase: { value: waveOmegaPhase },
-      uWaveCount: { value: lakeWaves.components.length },
+      uWaveCount: { value: renderedWaves.length },
       uVisualWaveHeight: { value: lakeWaves.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE },
       uWaterDark: { value: new Color(0x172831) },
       uWaterMid: { value: new Color(0x293b43) },
@@ -465,7 +468,7 @@ function lakeUniform<T>(material: ShaderMaterial, name: string, expectedValue: T
 function lakeVisualAmplitudeScale(waveNumberRadiansPerMeter: number): number {
   const shortWaveWeight = Math.max(0, Math.min(1, (waveNumberRadiansPerMeter - 1.5) / 4.5));
   const smoothWeight = shortWaveWeight * shortWaveWeight * (3 - 2 * shortWaveWeight);
-  return 1.8 + (LAKE_VISUAL_HEIGHT_SCALE - 1.8) * smoothWeight;
+  return 0.65 + 1.35 * smoothWeight;
 }
 
 function createLakeGeometry(segments: number): PlaneGeometry {
@@ -554,6 +557,10 @@ mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed
 
 const lakeWaterVertexShader = /* glsl */ `
 uniform float uTimeSeconds;
+uniform vec4 uWindDirection;
+uniform sampler2D uDetailNear;
+uniform sampler2D uDetailFar;
+uniform vec4 uDetailExtents;
 uniform vec4 uWaveKAmplitude[24];
 uniform vec4 uWaveOmegaPhase[24];
 uniform int uWaveCount;
@@ -563,6 +570,7 @@ varying vec3 vWorldNormal;
 varying float vCrest;
 varying float vCompression;
 varying float vGridSpacing;
+varying vec2 vBaseXZ;
 ${lakeWavePacketShader}
 
 void main() {
@@ -570,6 +578,13 @@ void main() {
   // mapping to world XZ keeps the resulting top face wound toward +Y.
   vec3 p = vec3(position.x, 0.0, -position.y);
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
+  vBaseXZ = waveXZ;
+  vec2 detailDrift = uWindDirection.xy * uTimeSeconds;
+  float nearHeight = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x).a - 128.0 / 255.0;
+  float farHeight = texture2D(uDetailFar, (waveXZ - detailDrift * 0.23) / uDetailExtents.y).a - 128.0 / 255.0;
+  float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
+  float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
+  p.y += nearHeight * 0.65 * nearVisibility + farHeight * 0.4 * farVisibility;
   float slopeEnergy = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
@@ -651,6 +666,7 @@ varying vec3 vWorldNormal;
 varying float vCrest;
 varying float vCompression;
 varying float vGridSpacing;
+varying vec2 vBaseXZ;
 ${lakeWavePacketShader}
 
 vec3 analyticSky(vec3 ray) {
@@ -709,15 +725,28 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   vec2 drift = uWindDirection.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
   vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.23) / uDetailExtents.y);
-  vec2 nearSlope = nearSample.rg * 2.0 - 1.0;
-  vec2 farSlope = farSample.rg * 2.0 - 1.0;
-  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4;
+  vec2 finePoint = (worldXZ - drift * 0.7) * 2.6;
+  vec2 fineRotated = vec2(
+    0.6 * finePoint.x - 0.8 * finePoint.y,
+    0.8 * finePoint.x + 0.6 * finePoint.y
+  );
+  vec4 fineSample = texture2D(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631));
+  vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
+  vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
+  vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
+  vec2 fineSlope = vec2(
+    0.6 * fineRawSlope.x + 0.8 * fineRawSlope.y,
+    -0.8 * fineRawSlope.x + 0.6 * fineRawSlope.y
+  ) * 2.6 * 0.11;
+  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4 + fineSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
-  float nearVariance = max(nearSample.b - dot(nearSlope, nearSlope), 0.0);
-  float farVariance = max(farSample.b - dot(farSlope, farSlope), 0.0);
+  float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
+  float farVariance = max(farSample.b / 2.5 - dot(farSlope, farSlope), 0.0);
+  float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
-    + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance;
+    + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance
+    + 2.6 * 2.6 * 0.11 * 0.11 * fineVariance;
   // Preserve visible fine-scale contrast as the pilot eye rises above the
   // water; projected waves otherwise lose nearly all of their normal detail.
   float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
@@ -766,9 +795,9 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
 }
 
 void main() {
-  vec2 footprintX = dFdx(vWorldPosition.xz) * 0.25;
-  vec2 footprintY = dFdy(vWorldPosition.xz) * 0.25;
-  vec2 center = vWorldPosition.xz;
+  vec2 footprintX = dFdx(vBaseXZ) * 0.25;
+  vec2 footprintY = dFdy(vBaseXZ) * 0.25;
+  vec2 center = vBaseXZ;
   vec2 waveSlope = lakeWaveSlope(center);
   // Supersample subpixel normal detail, then shade the filtered normal once.
   vec3 microDetail = (
@@ -777,7 +806,7 @@ void main() {
     lakeMicroDetail(center - footprintX + footprintY) +
     lakeMicroDetail(center + footprintX + footprintY)
   ) * 0.25;
-  vec3 color = sampleLakeColor(center, waveSlope, microDetail);
+  vec3 color = sampleLakeColor(vWorldPosition.xz, waveSlope, microDetail);
   gl_FragColor = vec4(color, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
