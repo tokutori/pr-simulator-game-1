@@ -1696,7 +1696,7 @@ mod tests {
             decoded.header.difficulty.information,
             birdman_game_format::FlightRecordInformationDocument::Custom
         );
-        assert_eq!(decoded.header.difficulty.hud_profile.unwrap().wind, false);
+        assert!(!decoded.header.difficulty.hud_profile.unwrap().wind);
         let mut archived = GameSessionBridge::new(0).unwrap();
         archived.open_archived_flight_record(&encoded).unwrap();
         assert_eq!(archived.phase_code(), 9);
