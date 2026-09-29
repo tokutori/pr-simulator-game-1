@@ -17,6 +17,10 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly windReadout: HTMLOutputElement;
   private readonly angleInstrument: HTMLDivElement;
   private readonly angleReadout: HTMLOutputElement;
+  private readonly headingScale: SVGGElement;
+  private readonly pilotPositionIndicator: SVGPolygonElement;
+  private readonly windNeedle: SVGGElement;
+  private readonly angleIndicator: SVGPolygonElement;
   private informationCode: InformationLevelCode = 0;
 
   constructor(
@@ -77,15 +81,47 @@ export class FlightHudAdapter implements FlightHudPort {
     const headingInstrument = instrumentOutput(documentRef, instruments, "HDG", "heading");
     this.headingInstrument = headingInstrument.cell;
     this.headingReadout = headingInstrument.output;
+    const headingGauge = svgGauge(documentRef, headingInstrument.cell, "heading", "0 0 220 50", "方位目盛");
+    this.headingScale = documentRef.createElementNS("http://www.w3.org/2000/svg", "g");
+    headingGauge.append(this.headingScale, svgElement(documentRef, "path", {
+      d: "M 110 28 L 104 38 H 116 Z", fill: "#ffd45c"
+    }));
     const pilotPositionInstrument = instrumentOutput(documentRef, instruments, "PILOT CG", "pilot-position");
     this.pilotPositionInstrument = pilotPositionInstrument.cell;
     this.pilotPositionReadout = pilotPositionInstrument.output;
+    const pilotGauge = svgGauge(documentRef, pilotPositionInstrument.cell, "pilot-position", "0 0 200 34", "前後重心位置");
+    pilotGauge.append(svgElement(documentRef, "path", { d: "M 20 16 H 180", stroke: "#b9c9c2", "stroke-width": "3" }));
+    for (let index = 0; index <= 8; index += 1) {
+      const x = 20 + index * 20;
+      pilotGauge.append(svgElement(documentRef, "path", { d: `M ${String(x)} 12 V 21`, stroke: "#b9c9c2", "stroke-width": "1" }));
+    }
+    this.pilotPositionIndicator = svgElement(documentRef, "polygon", { points: "20,5 14,1 26,1", fill: "#ffd45c" });
+    pilotGauge.append(this.pilotPositionIndicator);
     const windInstrument = instrumentOutput(documentRef, instruments, "WIND N / E / D", "wind");
     this.windInstrument = windInstrument.cell;
     this.windReadout = windInstrument.output;
+    const windGauge = svgGauge(documentRef, windInstrument.cell, "wind", "0 0 72 72", "風向計。矢印は風の流れる方向を示す");
+    windGauge.append(
+      svgElement(documentRef, "circle", { cx: "36", cy: "36", r: "27", fill: "none", stroke: "#b9c9c2", "stroke-width": "1.5" }),
+      svgElement(documentRef, "path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: "#526c70", "stroke-width": "1" })
+    );
+    const northLabel = svgElement(documentRef, "text", { x: "36", y: "8", "text-anchor": "middle", fill: "#f3f4e8", "font-size": "7" });
+    northLabel.textContent = "N";
+    windGauge.append(northLabel);
+    this.windNeedle = documentRef.createElementNS("http://www.w3.org/2000/svg", "g");
+    this.windNeedle.append(svgElement(documentRef, "path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: "#ffd45c" }));
+    windGauge.append(this.windNeedle);
     const angleInstrument = instrumentOutput(documentRef, instruments, "ANGLE OF ATTACK", "angle");
     this.angleInstrument = angleInstrument.cell;
     this.angleReadout = angleInstrument.output;
+    const angleGauge = svgGauge(documentRef, angleInstrument.cell, "angle-of-attack", "0 0 200 34", "迎角目盛");
+    angleGauge.append(svgElement(documentRef, "path", { d: "M 10 16 H 190", stroke: "#b9c9c2", "stroke-width": "3" }));
+    for (let index = 0; index <= 6; index += 1) {
+      const x = 10 + index * 30;
+      angleGauge.append(svgElement(documentRef, "path", { d: `M ${String(x)} 12 V 21`, stroke: "#b9c9c2", "stroke-width": "1" }));
+    }
+    this.angleIndicator = svgElement(documentRef, "polygon", { points: "70,5 64,1 76,1", fill: "#ffd45c" });
+    angleGauge.append(this.angleIndicator);
     this.readouts = documentRef.createElement("output");
     this.readouts.className = "flight-hud-readouts";
     const controls = documentRef.createElement("p");
@@ -115,12 +151,24 @@ export class FlightHudAdapter implements FlightHudPort {
     this.readouts.textContent = model.readouts;
     this.headingInstrument.hidden = model.heading === null;
     this.headingReadout.textContent = model.heading ?? "";
+    if (model.headingDegrees !== null) renderHeadingScale(this.headingScale, model.headingDegrees);
     this.pilotPositionInstrument.hidden = model.pilotPosition === null;
     this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
+    if (model.pilotPositionRatio !== null) {
+      const x = 20 + ((model.pilotPositionRatio + 1) / 2) * 160;
+      this.pilotPositionIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
+    }
     this.windInstrument.hidden = model.wind === null;
     this.windReadout.textContent = model.wind ?? "";
+    this.windNeedle.setAttribute("visibility", model.windDirectionDegrees === null ? "hidden" : "visible");
+    if (model.windDirectionDegrees !== null) this.windNeedle.setAttribute("transform", `rotate(${String(model.windDirectionDegrees)} 36 36)`);
     this.angleInstrument.hidden = model.angleOfAttack === null;
     this.angleReadout.textContent = model.angleOfAttack ?? "";
+    if (model.angleOfAttackDegrees !== null) {
+      const ratio = (Math.max(-10, Math.min(20, model.angleOfAttackDegrees)) + 10) / 30;
+      const x = 10 + ratio * 180;
+      this.angleIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
+    }
     this.telemetry.textContent = model.telemetry;
     if (model.attitude !== null) {
       const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
@@ -149,4 +197,58 @@ function instrumentOutput(documentRef: Document, root: HTMLElement, label: strin
   cell.append(caption, output);
   root.append(cell);
   return Object.freeze({ cell, output });
+}
+
+function svgGauge(documentRef: Document, cell: HTMLElement, name: string, viewBox: string, label: string): SVGSVGElement {
+  const svg = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", viewBox);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", label);
+  svg.setAttribute("data-instrument", name);
+  cell.append(svg);
+  return svg;
+}
+
+function renderHeadingScale(group: SVGGElement, headingDegrees: number): void {
+  const documentRef = group.ownerDocument;
+  group.replaceChildren();
+  for (let offset = -60; offset <= 60; offset += 10) {
+    const x = 110 + offset * 1.2;
+    const major = offset % 30 === 0;
+    group.append(svgElement(documentRef, "path", {
+      d: `M ${String(x)} ${major ? "28" : "33"} V 40`,
+      stroke: major ? "#f3f4e8" : "#b9c9c2",
+      "stroke-width": major ? "1.5" : "1"
+    }));
+    if (major) {
+      const bearing = normalizeDegrees(Math.round(headingDegrees + offset));
+      const label = svgElement(documentRef, "text", {
+        x: String(x), y: "22", "text-anchor": "middle", fill: "#f3f4e8", "font-size": "8"
+      });
+      label.textContent = compassLabel(bearing);
+      group.append(label);
+    }
+  }
+}
+
+function compassLabel(degrees: number): string {
+  if (degrees === 0) return "N";
+  if (degrees === 90) return "E";
+  if (degrees === 180) return "S";
+  if (degrees === 270) return "W";
+  return String(degrees).padStart(3, "0");
+}
+
+function normalizeDegrees(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
+}
+
+function svgElement<K extends keyof SVGElementTagNameMap>(
+  documentRef: Document,
+  name: K,
+  attributes: Readonly<Record<string, string>>
+): SVGElementTagNameMap[K] {
+  const element = documentRef.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
+  return element;
 }

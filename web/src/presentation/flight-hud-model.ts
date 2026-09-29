@@ -5,6 +5,10 @@ export type InformationLevelCode = 0 | 1 | 2 | 3;
 export interface FlightHudModel {
   readonly status: string;
   readonly attitude: Readonly<{ rollDegrees: number; pitchDegrees: number }> | null;
+  readonly headingDegrees: number | null;
+  readonly pilotPositionRatio: number | null;
+  readonly windDirectionDegrees: number | null;
+  readonly angleOfAttackDegrees: number | null;
   readonly readouts: string;
   readonly heading: string | null;
   readonly pilotPosition: string | null;
@@ -21,6 +25,10 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
     return Object.freeze({
       status: terminalLabel(snapshot.terminal),
       attitude: null,
+      headingDegrees: null,
+      pilotPositionRatio: informationCode === 0 ? pilotPositionRatio(snapshot.pilotPositionMeters) : null,
+      windDirectionDegrees: null,
+      angleOfAttackDegrees: null,
       readouts: informationCode === 2 ? `${distance} · ${duration}` : `計器データ unavailable · ${distance} · ${duration}`,
       heading: null,
       pilotPosition: informationCode === 0 ? `${snapshot.pilotPositionMeters.toFixed(2)} m` : null,
@@ -32,11 +40,14 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
 
   const rollDegrees = telemetry.rollRadians * 180 / Math.PI;
   const pitchDegrees = telemetry.pitchRadians * 180 / Math.PI;
-  const headingDegrees = ((telemetry.headingRadians * 180 / Math.PI) % 360 + 360) % 360;
+  const headingDegrees = normalizeDegrees(telemetry.headingRadians * 180 / Math.PI);
   const airspeed = `IAS ${telemetry.airspeedMetersPerSecond.toFixed(1)} m/s`;
   const altitude = `ALT ${telemetry.altitudeMeters.toFixed(1)} m`;
   const attitudeText = `PITCH ${pitchDegrees.toFixed(0)}° · ROLL ${rollDegrees.toFixed(0)}°`;
   const attitude = Object.freeze({ rollDegrees, pitchDegrees });
+  const angleOfAttackDegrees = telemetry.angleOfAttackRadians === null
+    ? null
+    : telemetry.angleOfAttackRadians * 180 / Math.PI;
 
   switch (informationCode) {
     case 0: {
@@ -45,6 +56,10 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
       return Object.freeze({
         status: terminalLabel(snapshot.terminal),
         attitude,
+        headingDegrees,
+        pilotPositionRatio: pilotPositionRatio(snapshot.pilotPositionMeters),
+        windDirectionDegrees: windDirectionDegrees(telemetry.windVelocityNedMetersPerSecond.north, telemetry.windVelocityNedMetersPerSecond.east),
+        angleOfAttackDegrees,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
         heading: `${headingDegrees.toFixed(0)}°`,
         pilotPosition: `${snapshot.pilotPositionMeters >= 0 ? "+" : ""}${snapshot.pilotPositionMeters.toFixed(2)} m`,
@@ -59,6 +74,10 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
       return Object.freeze({
         status: terminalLabel(snapshot.terminal),
         attitude,
+        headingDegrees,
+        pilotPositionRatio: null,
+        windDirectionDegrees: null,
+        angleOfAttackDegrees: null,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
         heading: `${headingDegrees.toFixed(0)}°`,
         pilotPosition: null,
@@ -70,6 +89,10 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
       return Object.freeze({
         status: terminalLabel(snapshot.terminal),
         attitude: null,
+        headingDegrees: null,
+        pilotPositionRatio: null,
+        windDirectionDegrees: null,
+        angleOfAttackDegrees: null,
         readouts: `${altitude} · ${distance} · ${duration}`,
         heading: null,
         pilotPosition: null,
@@ -81,6 +104,10 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
       return Object.freeze({
         status: terminalLabel(snapshot.terminal),
         attitude,
+        headingDegrees,
+        pilotPositionRatio: null,
+        windDirectionDegrees: null,
+        angleOfAttackDegrees: null,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
         heading: `${headingDegrees.toFixed(0)}°`,
         pilotPosition: null,
@@ -89,6 +116,19 @@ export function createFlightHudModel(snapshot: FlightSnapshot, informationCode: 
         telemetry: "代表計器表示 · 対象機の実機構成は未確認"
       });
   }
+}
+
+function normalizeDegrees(degrees: number): number {
+  return ((degrees % 360) + 360) % 360;
+}
+
+function pilotPositionRatio(positionMeters: number): number {
+  return Math.max(-1, Math.min(1, positionMeters / 0.4));
+}
+
+function windDirectionDegrees(north: number, east: number): number | null {
+  if (north === 0 && east === 0) return null;
+  return normalizeDegrees(Math.atan2(east, north) * 180 / Math.PI);
 }
 
 function terminalLabel(terminal: FlightSnapshot["terminal"]): string {
