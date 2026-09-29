@@ -140,7 +140,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
         readonly schema_version: number;
         readonly header: { readonly difficulty: { readonly hud_profile: unknown } };
       };
-      expect(document.schema_version).toBe(2);
+      expect(document.schema_version).toBe(3);
       expect(document.header.difficulty.hud_profile).toEqual({
         telemetry: true,
         attitude: true,
