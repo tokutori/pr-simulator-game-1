@@ -2,8 +2,16 @@ import "./styles.css";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, updateApp } from "./app/app-state.js";
-import type { AppEffect, AppMessage, AppModel, GameSessionOperation, GameSessionProjection } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import type {
+  AppEffect,
+  AppMessage,
+  AppModel,
+  GameSessionOperation,
+  GameSessionProjection,
+  ReplayClockCommand,
+  ReplayClockState
+} from "./app/app-state.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserPanelContext } from "./presentation/browser-canvas.js";
@@ -72,7 +80,7 @@ const flightHud = new FlightHudAdapter(flightHudRoot, (snapshot) => {
   }
 });
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
-  dispatch({ type: "ui-action", action });
+  dispatchUiAction(action);
 });
 
 function dispatch(message: AppMessage): void {
@@ -219,6 +227,9 @@ function runEffect(effect: AppEffect): void {
     case "game-session-operation":
       runGameSessionOperation(effect.operation, effect.requestId, gameSessionPhaseCode(model.gameSession));
       return;
+    case "control-replay-clock":
+      runReplayClockCommand(effect.requestId, effect.generation, effect.command);
+      return;
     case "persist-flight-record":
       if (gameSession !== null) void persistFlightRecord(gameSession);
       return;
@@ -313,6 +324,87 @@ function runEffect(effect: AppEffect): void {
     default:
       return assertNever(effect);
   }
+}
+
+function runReplayClockCommand(
+  requestId: number,
+  generation: number,
+  command: ReplayClockCommand
+): void {
+  const session = gameSession;
+  if (session === null) {
+    dispatch({
+      type: "replay-clock-command-failed",
+      requestId,
+      generation,
+      message: "Rust GameSession is unavailable"
+    });
+    return;
+  }
+  try {
+    switch (command.kind) {
+      case "synchronize":
+        if (command.seekTimeSeconds !== null) session.seek_playback(command.seekTimeSeconds);
+        break;
+      case "play":
+        session.set_playback_playing(true);
+        break;
+      case "pause":
+        session.set_playback_playing(false);
+        break;
+      case "seek":
+        session.seek_playback(command.timeSeconds);
+        break;
+      case "rate":
+        session.set_playback_rate_code(command.rateCode);
+        break;
+      case "advance":
+        session.advance_playback(command.elapsedSeconds);
+        break;
+      default:
+        return assertNever(command);
+    }
+    dispatch({
+      type: "replay-clock-command-completed",
+      requestId,
+      generation,
+      state: readReplayClockState(session.playback_clock_state())
+    });
+  } catch (error: unknown) {
+    let state: ReplayClockState | undefined;
+    try {
+      if (session.phase_code() === 9 || session.phase_code() === 10) {
+        session.set_playback_playing(false);
+        state = readReplayClockState(session.playback_clock_state());
+      }
+    } catch {
+      state = undefined;
+    }
+    dispatch({
+      type: "replay-clock-command-failed",
+      requestId,
+      generation,
+      message: errorMessage(error),
+      ...(state === undefined ? {} : { state })
+    });
+  }
+}
+
+function readReplayClockState(values: ArrayLike<number>): ReplayClockState {
+  if (values.length !== 3) throw new TypeError("Rust Replay clock returned an incompatible state length");
+  const timeSeconds = Number(values[0]);
+  const rateCode = Number(values[1]);
+  const playingCode = Number(values[2]);
+  if (!Number.isFinite(timeSeconds) || timeSeconds < 0
+      || !Number.isInteger(rateCode) || rateCode < 0 || rateCode > 2
+      || (playingCode !== 0 && playingCode !== 1)) {
+    throw new TypeError("Rust Replay clock returned invalid state values");
+  }
+  return Object.freeze({
+    timeSeconds,
+    rateCode: rateCode as ReplayClockState["rateCode"],
+    playing: playingCode === 1
+  });
 }
 
 async function initializePresentation(requestId: number): Promise<void> {
@@ -633,6 +725,13 @@ function createFlightRecordRepository(): FlightRecordRepository {
 }
 
 function dispatchUiAction(action: UiAction): void {
+  const session = gameSession;
+  const actualPhaseCode = session?.phase_code();
+  const displayedPhaseCode = gameSessionPhaseCode(model.gameSession);
+  if (actualPhaseCode !== undefined && actualPhaseCode !== displayedPhaseCode) {
+    syncGameSession();
+    if (isStaleGameFlowActivation(action, displayedPhaseCode, actualPhaseCode)) return;
+  }
   dispatch({ type: "ui-action", action });
 }
 

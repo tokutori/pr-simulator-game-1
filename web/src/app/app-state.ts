@@ -32,6 +32,20 @@ export type GameSessionOperation =
   | "enter-attract"
   | "leave-attract";
 
+export interface ReplayClockState {
+  readonly timeSeconds: number;
+  readonly rateCode: 0 | 1 | 2;
+  readonly playing: boolean;
+}
+
+export type ReplayClockCommand =
+  | { readonly kind: "synchronize"; readonly seekTimeSeconds: number | null }
+  | { readonly kind: "play" }
+  | { readonly kind: "pause" }
+  | { readonly kind: "seek"; readonly timeSeconds: number }
+  | { readonly kind: "rate"; readonly rateCode: 0 | 1 | 2 }
+  | { readonly kind: "advance"; readonly elapsedSeconds: number };
+
 export type PresentationUiState =
   | { readonly type: "uninitialized" }
   | { readonly type: "initializing"; readonly requestId: number }
@@ -96,6 +110,8 @@ export interface AppModel {
   readonly replayViewMode: "cinematic" | "telemetry" | "analysis";
   readonly replaySpeed: 0.5 | 1 | 2;
   readonly replayClockGeneration: number;
+  readonly pendingReplayClockRequestId: number | null;
+  readonly nextReplayClockRequestId: number;
   readonly replayCameraMode: "auto" | FlightCameraMode;
   readonly storedFlightRecords: readonly StoredFlightRecordUiEntry[];
   readonly storedFlightRecordsStatus: string;
@@ -200,6 +216,19 @@ export type AppMessage =
   | { readonly type: "flight-replay-pose-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "replay-clock-tick"; readonly generation: number; readonly elapsedSeconds: number }
   | {
+      readonly type: "replay-clock-command-completed";
+      readonly requestId: number;
+      readonly generation: number;
+      readonly state: ReplayClockState;
+    }
+  | {
+      readonly type: "replay-clock-command-failed";
+      readonly requestId: number;
+      readonly generation: number;
+      readonly message: string;
+      readonly state?: ReplayClockState;
+    }
+  | {
       readonly type: "game-operation-failed";
       readonly requestId: number;
       readonly message: string;
@@ -221,6 +250,12 @@ export type AppEffect =
   | { readonly type: "load-flight-analysis-cursor"; readonly requestId: number; readonly timeSeconds: number }
   | { readonly type: "load-flight-replay-pose"; readonly requestId: number; readonly timeSeconds: number }
   | { readonly type: "schedule-replay-clock-tick"; readonly generation: number; readonly delayMilliseconds: number }
+  | {
+      readonly type: "control-replay-clock";
+      readonly requestId: number;
+      readonly generation: number;
+      readonly command: ReplayClockCommand;
+    }
   | { readonly type: "game-session-operation"; readonly operation: GameSessionOperation; readonly requestId: number };
 
 export interface AppTransition {
@@ -230,6 +265,16 @@ export interface AppTransition {
 
 export function gameSessionPhaseCode(session: GameSessionUiState): number {
   return session.phaseCode;
+}
+
+export function isStaleGameFlowActivation(
+  action: UiAction,
+  displayedPhaseCode: number,
+  actualPhaseCode: number
+): boolean {
+  return action.type === "activate"
+    && action.controlId.startsWith("game-")
+    && displayedPhaseCode !== actualPhaseCode;
 }
 
 export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshot | null {
@@ -301,6 +346,8 @@ export function createInitialAppModel(): AppModel {
     replayViewMode: "cinematic",
     replaySpeed: 1,
     replayClockGeneration: 0,
+    pendingReplayClockRequestId: null,
+    nextReplayClockRequestId: 1,
     replayCameraMode: "auto",
     storedFlightRecords: Object.freeze([]),
     storedFlightRecordsStatus: "保存記録を読み込んでいる",
@@ -412,7 +459,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           : null,
         nextAnalysisRequestId: enteringResult ? model.nextAnalysisRequestId + 1 : model.nextAnalysisRequestId,
         replayPlaying: nextPhaseCode === 10 || nextPhaseCode === 9 ? model.replayPlaying : false,
-        replayClockGeneration: [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1
+        replayClockGeneration: [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1,
+        pendingReplayClockRequestId: [9, 10].includes(nextPhaseCode) ? model.pendingReplayClockRequestId : null
       }), effects);
     }
     case "game-operation-completed": {
@@ -429,19 +477,33 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const enteringReplay = previousPhaseCode !== 9 && nextPhaseCode === 9;
       const enteringAttract = previousPhaseCode !== 10 && nextPhaseCode === 10;
       const enteringPlayback = enteringReplay || enteringAttract;
+      const leavingPlayback = [9, 10].includes(previousPhaseCode) && ![9, 10].includes(nextPhaseCode);
+      const playbackClockRequestId = enteringPlayback ? model.nextReplayClockRequestId : null;
+      const replayClockGeneration = enteringPlayback || leavingPlayback
+        ? model.replayClockGeneration + 1
+        : model.replayClockGeneration;
       const analysisRequestId = enteringResult || enteringAttract || (enteringReplay && model.flightAnalysis === null)
         ? model.nextAnalysisRequestId
         : null;
-      const replayPoseRequestId = enteringPlayback && model.flightAnalysis !== null
-        ? model.nextReplayPoseRequestId
-        : null;
-      const effects: AppEffect[] = enteringResult && analysisRequestId !== null
-        ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
-        : enteringPlayback && analysisRequestId !== null
-          ? [{ type: "load-flight-analysis", requestId: analysisRequestId }]
-          : enteringPlayback && replayPoseRequestId !== null
-            ? [{ type: "load-flight-replay-pose", requestId: replayPoseRequestId, timeSeconds: model.analysisCursorTimeSeconds }]
-          : [];
+      const effects: AppEffect[] = [];
+      if (playbackClockRequestId !== null) {
+        effects.push({
+          type: "control-replay-clock",
+          requestId: playbackClockRequestId,
+          generation: replayClockGeneration,
+          command: {
+            kind: "synchronize",
+            seekTimeSeconds: enteringReplay && previousPhaseCode === 7
+              ? model.analysisCursorTimeSeconds
+              : null
+          }
+        });
+      }
+      if (enteringResult && analysisRequestId !== null) {
+        effects.push({ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId });
+      } else if (enteringPlayback && analysisRequestId !== null) {
+        effects.push({ type: "load-flight-analysis", requestId: analysisRequestId });
+      }
       return transition(withModel(model, {
         pendingGameRequestId: null,
         gameSession: Object.freeze(gameSession),
@@ -453,20 +515,25 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
         analysisChart: enteringResult ? "map" : model.analysisChart,
-        analysisCursorTimeSeconds: enteringResult || enteringAttract ? 0 : model.analysisCursorTimeSeconds,
+        analysisCursorTimeSeconds: enteringResult || enteringAttract || (enteringReplay && previousPhaseCode !== 7)
+          ? 0
+          : model.analysisCursorTimeSeconds,
         analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult ? model.analysisCursorSample : null,
         pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult
           ? model.pendingAnalysisCursorRequestId
           : null,
         nextAnalysisRequestId: analysisRequestId === null ? model.nextAnalysisRequestId : analysisRequestId + 1,
         replayPose: enteringPlayback ? null : [9, 10].includes(nextPhaseCode) ? model.replayPose : null,
-        pendingReplayPoseRequestId: replayPoseRequestId,
-        nextReplayPoseRequestId: replayPoseRequestId === null ? model.nextReplayPoseRequestId : replayPoseRequestId + 1,
-        replayPlaying: nextPhaseCode === 10 ? true : nextPhaseCode === 9 ? enteringReplay ? false : model.replayPlaying : false,
+        pendingReplayPoseRequestId: enteringPlayback ? null : model.pendingReplayPoseRequestId,
+        replayPlaying: enteringPlayback ? false : [9, 10].includes(nextPhaseCode) ? model.replayPlaying : false,
         replayViewMode: enteringReplay ? "cinematic" : model.replayViewMode,
-        replayClockGeneration: enteringAttract
-          ? model.replayClockGeneration + 1
-          : [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1
+        replayClockGeneration,
+        pendingReplayClockRequestId: enteringPlayback
+          ? playbackClockRequestId
+          : leavingPlayback ? null : model.pendingReplayClockRequestId,
+        nextReplayClockRequestId: playbackClockRequestId === null
+          ? model.nextReplayClockRequestId
+          : playbackClockRequestId + 1
       }), effects);
     }
     case "flight-analysis-loaded":
@@ -475,11 +542,12 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         const requestId = model.nextAnalysisCursorRequestId;
         const playbackPhase = gameSessionPhaseCode(model.gameSession);
         const replayPoseRequestId = [9, 10].includes(playbackPhase) ? model.nextReplayPoseRequestId : null;
-        const effects: AppEffect[] = [{ type: "load-flight-analysis-cursor", requestId, timeSeconds: 0 }];
+        const timeSeconds = model.analysisCursorTimeSeconds;
+        const effects: AppEffect[] = [{ type: "load-flight-analysis-cursor", requestId, timeSeconds }];
         if (replayPoseRequestId !== null) {
-          effects.push({ type: "load-flight-replay-pose", requestId: replayPoseRequestId, timeSeconds: 0 });
+          effects.push({ type: "load-flight-replay-pose", requestId: replayPoseRequestId, timeSeconds });
         }
-        if (playbackPhase === 10) {
+        if ([9, 10].includes(playbackPhase) && model.replayPlaying) {
           effects.push({ type: "schedule-replay-clock-tick", generation: model.replayClockGeneration, delayMilliseconds: 50 });
         }
         return transition(withModel(model, {
@@ -529,6 +597,49 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }));
     case "replay-clock-tick":
       return updateReplayClock(model, message);
+    case "replay-clock-command-completed": {
+      const phaseCode = gameSessionPhaseCode(model.gameSession);
+      if (model.pendingReplayClockRequestId !== message.requestId
+          || model.replayClockGeneration !== message.generation
+          || ![9, 10].includes(phaseCode)) return transition(model);
+      const speed = playbackRateForCode(message.state.rateCode);
+      if (speed === null || !Number.isFinite(message.state.timeSeconds) || message.state.timeSeconds < 0) {
+        return transition(withModel(model, {
+          pendingReplayClockRequestId: null,
+          replayPlaying: false,
+          replayClockGeneration: model.replayClockGeneration + 1,
+          status: "Rust Replay clock returned an invalid state"
+        }));
+      }
+      const next = withModel(model, {
+        pendingReplayClockRequestId: null,
+        analysisCursorTimeSeconds: message.state.timeSeconds,
+        replaySpeed: speed,
+        replayPlaying: message.state.playing
+      });
+      const queried = model.flightAnalysis === null
+        ? { model: next, effects: [] as AppEffect[] }
+        : withReplayQuery(next, message.state.timeSeconds);
+      if (message.state.playing && model.flightAnalysis !== null) {
+        queried.effects.push({
+          type: "schedule-replay-clock-tick",
+          generation: message.generation,
+          delayMilliseconds: 50
+        });
+      }
+      return transition(queried.model, queried.effects);
+    }
+    case "replay-clock-command-failed":
+      if (model.pendingReplayClockRequestId !== message.requestId
+          || model.replayClockGeneration !== message.generation) return transition(model);
+      return transition(withModel(model, {
+        pendingReplayClockRequestId: null,
+        replayPlaying: message.state?.playing ?? false,
+        replaySpeed: message.state === undefined ? model.replaySpeed : playbackRateForCode(message.state.rateCode) ?? model.replaySpeed,
+        analysisCursorTimeSeconds: message.state?.timeSeconds ?? model.analysisCursorTimeSeconds,
+        replayClockGeneration: model.replayClockGeneration + 1,
+        status: `Replay clock operation failed: ${message.message}`
+      }));
     case "game-session-status":
       return transition(withModel(model, { status: message.message }));
     case "game-operation-failed": {
@@ -552,6 +663,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         presentation: Object.freeze({ type: "hidden" }),
         replayPlaying: false,
         replayClockGeneration: model.replayClockGeneration + 1,
+        pendingReplayClockRequestId: null,
         status: "Page hidden"
       }), [
         { type: "cancel-pending-request", mode: "webxr" },
@@ -601,18 +713,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   if (action.type === "set-range" && action.controlId === "game-replay-cursor"
       && gameSessionPhaseCode(model.gameSession) === 9 && model.flightAnalysis !== null && Number.isFinite(action.value)) {
     const timeSeconds = Math.min(model.flightAnalysis.summary.durationSeconds, Math.max(0, action.value));
-    const replayRequestId = model.nextReplayPoseRequestId;
-    const cursorRequestId = model.nextAnalysisCursorRequestId;
-    return transition(withModel(model, {
-      analysisCursorTimeSeconds: timeSeconds,
-      pendingReplayPoseRequestId: replayRequestId,
-      nextReplayPoseRequestId: replayRequestId + 1,
-      pendingAnalysisCursorRequestId: cursorRequestId,
-      nextAnalysisCursorRequestId: cursorRequestId + 1
-    }), [
-      { type: "load-flight-replay-pose", requestId: replayRequestId, timeSeconds },
-      { type: "load-flight-analysis-cursor", requestId: cursorRequestId, timeSeconds }
-    ]);
+    return beginReplayClockCommand(model, { kind: "seek", timeSeconds }, true);
   }
   if (action.type === "set-range" && action.controlId === "game-analysis-cursor"
       && gameSessionPhaseCode(model.gameSession) === 7 && model.flightAnalysis !== null && Number.isFinite(action.value)) {
@@ -659,29 +760,11 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
     }
     if (action.controlId === "game-replay-play-pause") {
       if (model.flightAnalysis === null) return transition(model);
-      if (model.replayPlaying) {
-        return transition(withModel(model, {
-          replayPlaying: false,
-          replayClockGeneration: model.replayClockGeneration + 1
-        }));
-      }
-      const durationSeconds = model.flightAnalysis.summary.durationSeconds;
-      const restart = model.analysisCursorTimeSeconds >= durationSeconds;
-      const generation = model.replayClockGeneration + 1;
-      const startTime = restart ? 0 : model.analysisCursorTimeSeconds;
-      const base = withModel(model, {
-        replayPlaying: true,
-        replayClockGeneration: generation,
-        analysisCursorTimeSeconds: startTime
-      });
-      const effects: AppEffect[] = [{ type: "schedule-replay-clock-tick", generation, delayMilliseconds: 50 }];
-      const queried = restart ? withReplayQuery(base, startTime) : { model: base, effects: [] };
-      effects.push(...queried.effects);
-      return transition(queried.model, effects);
+      return beginReplayClockCommand(model, { kind: model.replayPlaying ? "pause" : "play" }, true);
     }
-    if (action.controlId === "game-replay-speed-0_5") return transition(withModel(model, { replaySpeed: 0.5 }));
-    if (action.controlId === "game-replay-speed-1") return transition(withModel(model, { replaySpeed: 1 }));
-    if (action.controlId === "game-replay-speed-2") return transition(withModel(model, { replaySpeed: 2 }));
+    if (action.controlId === "game-replay-speed-0_5") return beginReplayClockCommand(model, { kind: "rate", rateCode: 0 }, true);
+    if (action.controlId === "game-replay-speed-1") return beginReplayClockCommand(model, { kind: "rate", rateCode: 1 }, true);
+    if (action.controlId === "game-replay-speed-2") return beginReplayClockCommand(model, { kind: "rate", rateCode: 2 }, true);
   }
   if (action.type === "focus" || action.type === "back" || action.type === "scroll") return transition(model);
   if (action.type === "recenter-menu") {
@@ -724,22 +807,31 @@ function updateReplayClock(
       || model.flightAnalysis === null || !Number.isFinite(message.elapsedSeconds) || message.elapsedSeconds < 0) {
     return transition(model);
   }
-  const durationSeconds = model.flightAnalysis.summary.durationSeconds;
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return transition(withModel(model, { replayPlaying: false }));
-  const advancedTime = model.analysisCursorTimeSeconds + message.elapsedSeconds * model.replaySpeed;
-  const reachedEnd = advancedTime >= durationSeconds;
-  const looping = phaseCode === 10;
-  const timeSeconds = reachedEnd ? looping ? 0 : durationSeconds : advancedTime;
-  const generation = reachedEnd && !looping ? model.replayClockGeneration + 1 : model.replayClockGeneration;
-  const next = withModel(model, {
-    analysisCursorTimeSeconds: timeSeconds,
-    replayPlaying: looping || !reachedEnd,
+  return beginReplayClockCommand(model, { kind: "advance", elapsedSeconds: message.elapsedSeconds }, false);
+}
+
+function beginReplayClockCommand(
+  model: AppModel,
+  command: ReplayClockCommand,
+  restartSchedule: boolean
+): AppTransition {
+  if (model.pendingReplayClockRequestId !== null) return transition(model);
+  const requestId = model.nextReplayClockRequestId;
+  const generation = restartSchedule ? model.replayClockGeneration + 1 : model.replayClockGeneration;
+  return transition(withModel(model, {
+    pendingReplayClockRequestId: requestId,
+    nextReplayClockRequestId: requestId + 1,
     replayClockGeneration: generation
-  });
-  const queried = withReplayQuery(next, timeSeconds);
-  const effects = queried.effects;
-  if (looping || !reachedEnd) effects.push({ type: "schedule-replay-clock-tick", generation, delayMilliseconds: 50 });
-  return transition(queried.model, effects);
+  }), [{ type: "control-replay-clock", requestId, generation, command }]);
+}
+
+function playbackRateForCode(code: number): AppModel["replaySpeed"] | null {
+  switch (code) {
+    case 0: return 0.5;
+    case 1: return 1;
+    case 2: return 2;
+    default: return null;
+  }
 }
 
 function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model: AppModel; readonly effects: AppEffect[] } {
