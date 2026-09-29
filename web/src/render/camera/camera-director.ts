@@ -9,7 +9,7 @@ export function resolveReplayCameraMode(
   timeSeconds: number,
   presentationMode: PresentationMode
 ): FlightCameraMode {
-  if (presentationMode !== "screen") return "pilot";
+  if (selection === "auto" && presentationMode !== "screen") return "pilot";
   if (selection !== "auto") return selection;
   if (analysis === null || analysis.samples.length === 0) return "pilot";
   if (!Number.isFinite(timeSeconds) || timeSeconds < 0) throw new RangeError("Camera time must be finite and non-negative");

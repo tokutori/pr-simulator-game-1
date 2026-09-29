@@ -584,7 +584,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
       return transition(withModel(model, { replayViewMode: nextMode }));
     }
     if (action.controlId === "game-replay-camera") {
-      if (model.presentation.type !== "ready" || model.presentation.mode !== "screen") return transition(model);
+      if (model.presentation.type !== "ready") return transition(model);
       const cameraModes: readonly AppModel["replayCameraMode"][] = [
         "auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"
       ];

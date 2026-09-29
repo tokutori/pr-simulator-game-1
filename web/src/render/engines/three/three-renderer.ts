@@ -82,8 +82,10 @@ export function createThreeRenderer(
   scene.add(aircraftRoot);
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   aircraftRoot.add(camera);
+  const externalCameraRig = new Group();
+  scene.add(externalCameraRig);
   const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 2000);
-  scene.add(fixedCamera);
+  externalCameraRig.add(fixedCamera);
   const cockpitMaterial = new MeshBasicMaterial({ color: 0x343f3d });
   const cockpitWing = new Mesh(new BoxGeometry(3.8, 0.055, 0.24), cockpitMaterial);
   cockpitWing.position.set(0, -0.58, -1.25);
@@ -174,27 +176,28 @@ export function createThreeRenderer(
     render(frame: BackendFrame) {
       ensureActive(disposed);
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
-      const useExternalCamera = flightPose !== null && flightCameraMode !== "pilot" && !renderer.xr.isPresenting && stereoPresentation === null;
+      const useExternalCamera = flightPose !== null && flightCameraMode !== "pilot";
       const fixedView = useExternalCamera && flightCameraMode !== "chase" ? fixedCameraView : null;
       const useChaseCamera = useExternalCamera && fixedView === null;
-      if (useChaseCamera) {
-        setPose(camera, poseFrdToThree(replayCameraPoseFrd("chase")));
-      } else {
-        const pilotEyePose = flightPose === null
-          ? IDENTITY_POSE
-          : pilotEyePoseThree(
-            SYNTHETIC_PILOT_EYE_POINT,
-            flightPose.pilotPositionMeters,
-            flightPose.initialPilotPositionMeters
-          );
-        setPose(camera, composePose(pilotEyePose, frame.cameraPose));
-      }
-      if (fixedView !== null) {
-        setPose(fixedCamera, fixedView.pose);
-        if (fixedCamera.fov !== fixedView.verticalFieldOfViewDegrees) {
-          fixedCamera.fov = fixedView.verticalFieldOfViewDegrees;
-          fixedCamera.updateProjectionMatrix();
-        }
+      const pilotEyePose = flightPose === null
+        ? IDENTITY_POSE
+        : pilotEyePoseThree(
+          SYNTHETIC_PILOT_EYE_POINT,
+          flightPose.pilotPositionMeters,
+          flightPose.initialPilotPositionMeters
+        );
+      setPose(camera, composePose(pilotEyePose, frame.cameraPose));
+      const externalPose = fixedView?.pose ?? (useChaseCamera && flightPose !== null
+        ? flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")))
+        : IDENTITY_POSE);
+      setPose(externalCameraRig, externalPose);
+      setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
+      if (fixedView !== null && fixedCamera.fov !== fixedView.verticalFieldOfViewDegrees) {
+        fixedCamera.fov = fixedView.verticalFieldOfViewDegrees;
+        fixedCamera.updateProjectionMatrix();
+      } else if (fixedView === null && fixedCamera.fov !== 60) {
+        fixedCamera.fov = 60;
+        fixedCamera.updateProjectionMatrix();
       }
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
       setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
@@ -212,12 +215,12 @@ export function createThreeRenderer(
         gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
       }
       if (stereoPresentation !== null && !renderer.xr.isPresenting) {
-        stereoEffect.render(scene, camera);
+        stereoEffect.render(scene, useExternalCamera ? fixedCamera : camera);
         renderer.setViewport(0, 0, width, height);
         renderer.setScissor(0, 0, width, height);
         renderer.setScissorTest(false);
       } else {
-        renderer.render(scene, fixedView === null ? camera : fixedCamera);
+        renderer.render(scene, useExternalCamera ? fixedCamera : camera);
       }
     },
     resize(viewport: ViewportSize) {

@@ -132,7 +132,7 @@ export function createGameViewModel(
         rect: normalizedRect(0.04, 0.82, 0.92, 0.075)
       }),
       Object.freeze({
-        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
+        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready"),
         rect: normalizedRect(0.04, 0.91, 0.32, 0.06)
       }),
       Object.freeze({ ...button("game-replay-return", "Resultへ戻る", true), rect: normalizedRect(0.64, 0.91, 0.32, 0.06) })
@@ -171,7 +171,7 @@ export function createGameViewModel(
         rect: normalizedRect(0.04, 0.31, 0.30, 0.07)
       }),
       Object.freeze({
-        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
+        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready"),
         rect: normalizedRect(0.36, 0.31, 0.60, 0.07)
       }),
       ...(!isCinematic ? [

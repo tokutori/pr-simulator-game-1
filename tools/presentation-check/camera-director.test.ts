@@ -44,7 +44,7 @@ describe("replay camera director", () => {
     expect(resolveReplayCameraMode("chase", analysis, 4, "screen")).toBe("chase");
     expect(resolveReplayCameraMode("auto", analysis, 0, "webxr")).toBe("pilot");
     expect(resolveReplayCameraMode("auto", analysis, 0, "phone-vr")).toBe("pilot");
-    expect(resolveReplayCameraMode("shore", analysis, 4, "webxr")).toBe("pilot");
+    expect(resolveReplayCameraMode("shore", analysis, 4, "webxr")).toBe("shore");
   });
 
   it("handles short records without indexing outside the sample range", () => {

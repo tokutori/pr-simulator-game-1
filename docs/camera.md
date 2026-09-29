@@ -52,7 +52,7 @@ backend間で同じ設定を再現できない場合はFlightSetupで非対応�
 
 AutoはCameraDirectorを選択するmodeであり、独立したcamera projectionではない。
 ReplayはAutoと手動rigを選択でき、手動選択時には自動cutを停止する。
-初期Replay実装はScreen上でPilot/Chaseを手動選択し、Chase poseはengine非依存のFRD座標で定義する。XR/Phone VRではPilotを維持する。Orbitおよび定点rigはBPG-022以降で追加する。
+ReplayではScreen/VRの両方でcamera rigを手動選択できる。VRの自動選択はPilotを維持し、手動選択した外部rigではhead trackingをcamera rigの局所姿勢として適用する。Chase poseはengine非依存のFRD座標で定義する。
 BPG-022の合成worldでは、定点rigの位置をversion・origin・camera_pointsのSHA-256を持つworld metadataに登録する。追従rigとOrbitは記録時刻から位置を導出し、seek後も同じ時刻で同じposeへ戻る。
 CameraModeごとのGameSceneを作らない。実装は `web/src/render/camera/` に配置する。
 定点rigの位置とIDはworld assetの `camera_points` に保存し、origin/version/hashを共有する。

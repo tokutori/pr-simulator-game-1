@@ -100,7 +100,7 @@ describe("Game scene view model", () => {
       .toMatchObject({ kind: "button", enabled: true });
   });
 
-  it("exposes Pilot/Chase selection only for Screen Replay", () => {
+  it("exposes camera selection for Screen and VR Replay", () => {
     const base = {
       ...createInitialAppModel(),
       gameSession: sessionForPhase(9),
@@ -126,7 +126,7 @@ describe("Game scene view model", () => {
       presentation: Object.freeze({ type: "ready", mode: "webxr" })
     }, null);
     expect(xrView.panels[0]?.controls.find((control) => control.id === "game-replay-camera"))
-      .toMatchObject({ kind: "button", enabled: false });
+      .toMatchObject({ kind: "button", enabled: true });
   });
 
   it("shows all three selected axes in Setup", () => {

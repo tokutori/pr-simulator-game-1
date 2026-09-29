@@ -415,7 +415,7 @@ describe("Boot application state", () => {
     expect(ended.effects).toHaveLength(2);
   });
 
-  it("cycles Auto and manual camera selection only on the Screen backend", () => {
+  it("cycles Auto and manual camera selection on every presentation backend", () => {
     const replay: AppModel = readyModel(9);
     const pilot = updateApp(replay, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
@@ -438,7 +438,7 @@ describe("Boot application state", () => {
     };
     expect(updateApp(vrReplay, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    }).model).toBe(vrReplay);
+    }).model.replayCameraMode).toBe("pilot");
   });
 
   it("persists an explicitly aborted flight on operation completion", () => {
