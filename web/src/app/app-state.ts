@@ -54,11 +54,22 @@ export type GameSessionUiState =
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
   | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
   | { readonly kind: "flight"; readonly phaseCode: 5; readonly snapshot: FlightSnapshot }
-  | { readonly kind: "paused-flight"; readonly phaseCode: 6; readonly snapshot: FlightSnapshot; readonly canResume: boolean }
+  | {
+      readonly kind: "paused-flight";
+      readonly phaseCode: 6;
+      readonly snapshot: FlightSnapshot;
+      readonly canResume: boolean;
+      readonly overlay: PauseOverlayState;
+    }
   | { readonly kind: "result"; readonly phaseCode: 7; readonly snapshot: FlightSnapshot | null }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
   | { readonly kind: "replay"; readonly phaseCode: 9; readonly snapshot: FlightSnapshot | null }
   | { readonly kind: "attract"; readonly phaseCode: 10; readonly snapshot: null };
+
+export type PauseOverlayState =
+  | { readonly kind: "menu" }
+  | { readonly kind: "settings" }
+  | { readonly kind: "help" };
 
 export interface AppModel {
   readonly status: string;
@@ -218,7 +229,8 @@ export function gameSessionState(
   phaseCode: number,
   countdownRemaining: number,
   snapshot: FlightSnapshot | null,
-  canResume = false
+  canResume = false,
+  previous: GameSessionUiState | null = null
 ): GameSessionUiState | null {
   switch (phaseCode) {
     case -1: return { kind: "boot", phaseCode: -1 };
@@ -233,7 +245,13 @@ export function gameSessionState(
     case 5:
       return snapshot === null ? null : { kind: "flight", phaseCode, snapshot };
     case 6:
-      return snapshot === null ? null : { kind: "paused-flight", phaseCode, snapshot, canResume };
+      return snapshot === null ? null : {
+        kind: "paused-flight",
+        phaseCode,
+        snapshot,
+        canResume,
+        overlay: previous?.kind === "paused-flight" ? previous.overlay : { kind: "menu" }
+      };
     case 7: return { kind: "result", phaseCode: 7, snapshot };
     case 8: return { kind: "briefing-failed", phaseCode: 8 };
     case 9: return { kind: "replay", phaseCode: 9, snapshot };
@@ -353,7 +371,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, message.message, message.mode);
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -383,7 +401,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,
@@ -526,6 +544,21 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   if (action.type === "activate" && action.controlId === "game-flight-resume"
       && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
     return transition(model);
+  }
+  if (action.type === "activate" && model.pendingGameRequestId === null && model.gameSession.kind === "paused-flight") {
+    const overlays: Readonly<Record<string, PauseOverlayState>> = {
+      "game-pause-open-settings": { kind: "settings" },
+      "game-pause-open-help": { kind: "help" },
+      "game-pause-settings-back": { kind: "menu" },
+      "game-pause-help-back": { kind: "menu" }
+    };
+    const overlay = overlays[action.controlId];
+    if (overlay !== undefined) {
+      return transition(withModel(model, {
+        gameSession: { ...model.gameSession, overlay },
+        status: ""
+      }));
+    }
   }
   if (action.type === "activate" && action.controlId.startsWith("game-title-open-record-")
       && model.pendingGameRequestId !== null) return transition(model);

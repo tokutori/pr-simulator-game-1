@@ -237,8 +237,41 @@ describe("Boot application state", () => {
       countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
     });
     expect(synced.model.gameSession).toEqual({
-      kind: "paused-flight", phaseCode: 6, snapshot: flightSnapshot, canResume: false
+      kind: "paused-flight", phaseCode: 6, snapshot: flightSnapshot, canResume: false, overlay: { kind: "menu" }
     });
+  });
+
+  it("keeps Pause Settings and Help navigation inside the paused flight", () => {
+    const paused = readyModel(6);
+    const openedSettings = updateApp(paused, {
+      type: "ui-action", action: { type: "activate", controlId: "game-pause-open-settings" }
+    });
+    expect(openedSettings.effects).toEqual([]);
+    expect(openedSettings.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
+    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: flightSnapshot });
+
+    const synchronized = updateApp(openedSettings.model, {
+      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      difficulty: openedSettings.model.difficulty, configurationMetadata: null,
+      countdownRemaining: 0, canResume: true, snapshot: flightSnapshot
+    });
+    expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
+    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: flightSnapshot });
+
+    const returned = updateApp(synchronized.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-pause-settings-back" }
+    });
+    expect(returned.effects).toEqual([]);
+    expect(returned.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "menu" } });
+
+    const openedHelp = updateApp(returned.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-pause-open-help" }
+    });
+    expect(openedHelp.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "help" } });
+    const returnedFromHelp = updateApp(openedHelp.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-pause-help-back" }
+    });
+    expect(returnedFromHelp.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "menu" } });
   });
 
   it("does not dispatch Resume while external pause conditions remain", () => {

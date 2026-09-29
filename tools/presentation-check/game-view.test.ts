@@ -62,6 +62,52 @@ describe("Game scene view model", () => {
     expect(available).toMatchObject({ kind: "button", enabled: true });
   });
 
+  it("projects separate Pause, Settings, and Help overlays while the flight remains paused", () => {
+    const menuModel = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(6) });
+    const menu = createGameViewModel(menuModel, flightSnapshot);
+    expect(menu.activeOverlay).toBe("Pause");
+    expect(menu.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([
+      "game-flight-resume", "game-pause-open-settings", "game-pause-open-help", "game-paused-abort"
+    ]));
+
+    const settingsModel = Object.freeze({
+      ...menuModel,
+      gameSession: { ...menuModel.gameSession, overlay: { kind: "settings" as const } }
+    });
+    const settings = createGameViewModel(settingsModel, flightSnapshot);
+    expect(settings.activeOverlay).toBe("PauseSettings");
+    expect(settings.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([
+      "game-pause-settings-info", "game-pause-settings-back"
+    ]));
+    expect(settings.panels[0]?.controls.some((control) => control.id === "game-flight-resume")).toBe(false);
+
+    const helpModel = Object.freeze({
+      ...menuModel,
+      gameSession: { ...menuModel.gameSession, overlay: { kind: "help" as const } }
+    });
+    const help = createGameViewModel(helpModel, flightSnapshot);
+    expect(help.activeOverlay).toBe("PauseHelp");
+    expect(help.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([
+      "game-pause-help-info", "game-pause-help-back"
+    ]));
+    expect(help.panels[0]?.controls.some((control) => control.id === "game-flight-resume")).toBe(false);
+
+    const vrModel = Object.freeze({
+      ...helpModel,
+      presentation: { type: "ready" as const, mode: "webxr" as const }
+    });
+    const vrHelp = createGameViewModel(vrModel, flightSnapshot);
+    expect(vrHelp.panels[0]?.anchor).toBe("cockpit");
+    expect(vrHelp.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([
+      "game-pause-help-info", "game-pause-help-back"
+    ]));
+    expect(vrHelp.panels[0]?.controls.every((control) =>
+      control.rect.x >= 0 && control.rect.y >= 0
+      && control.rect.x + control.rect.width <= 1
+      && control.rect.y + control.rect.height <= 1
+    )).toBe(true);
+  });
+
   it("renders one cockpit-anchored HUD and one set of controls in VR Flight", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),

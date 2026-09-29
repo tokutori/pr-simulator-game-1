@@ -22,6 +22,7 @@ export function createGameViewModel(
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
   const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
+  const pauseOverlay = model.gameSession.kind === "paused-flight" ? model.gameSession.overlay.kind : null;
   const scene = sceneForPhase(phaseCode);
   const buttons = gameButtons(
     phaseCode,
@@ -29,7 +30,8 @@ export function createGameViewModel(
     model.configurationMetadata,
     countdownRemaining,
     model.flightAnalysis !== null,
-    canResume
+    canResume,
+    pauseOverlay
   );
   if (phaseCode === 0) {
     const savedFlightButtons = model.storedFlightRecords.slice(0, 3).map((record) => button(
@@ -59,7 +61,12 @@ export function createGameViewModel(
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
   if (phaseCode === 5 || phaseCode === 6) {
     if (!vrFlightPanel) {
-      flightButtons.forEach((entry) => controls.push(entry));
+      if (phaseCode === 6 && pauseOverlay === "settings") {
+        controls.push(status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"));
+      } else if (phaseCode === 6 && pauseOverlay === "help") {
+        controls.push(status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"));
+      }
+      (phaseCode === 6 ? buttons : flightButtons).forEach((entry) => controls.push(entry));
     } else if (snapshot !== null) {
       const hud = createFlightHudModel(snapshot, informationLevelCode(model.difficulty.informationCode));
       const flightStatus = phaseCode === 6 ? "一時停止中" : hud.status;
@@ -91,10 +98,26 @@ export function createGameViewModel(
         ...status("game-flight-telemetry", "距離・飛行時間", hud.telemetry),
         rect: normalizedRect(0.04, 0.53, 0.92, 0.12)
       }));
-      flightButtons.forEach((entry, index) => controls.push(Object.freeze({
-        ...entry,
-        rect: normalizedRect(index === 0 ? 0.04 : 0.51, 0.78, 0.45, 0.13)
-      })));
+      if (phaseCode === 6 && pauseOverlay === "settings") {
+        controls.push(Object.freeze({
+          ...status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"),
+          rect: normalizedRect(0.04, 0.64, 0.92, 0.1)
+        }));
+      } else if (phaseCode === 6 && pauseOverlay === "help") {
+        controls.push(Object.freeze({
+          ...status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"),
+          rect: normalizedRect(0.04, 0.64, 0.92, 0.1)
+        }));
+      }
+      const pauseActions = phaseCode === 6 ? buttons : flightButtons;
+      pauseActions.forEach((entry, index) => {
+        const column = index % 2;
+        const row = Math.floor(index / 2);
+        controls.push(Object.freeze({
+          ...entry,
+          rect: normalizedRect(0.04 + column * 0.47, 0.77 + row * 0.11, 0.45, 0.095)
+        }));
+      });
     }
   }
   if (phaseCode === 7 && model.resultTab === "summary") {
@@ -289,7 +312,9 @@ export function createGameViewModel(
         .filter(Boolean).join(" · ")
       : descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume),
     presentationStyle: phaseCode === 10 || (phaseCode === 9 && model.replayViewMode !== "analysis") ? "cinematic" : "default",
-    activeOverlay: phaseCode === 6 ? "Pause" : null,
+    activeOverlay: phaseCode === 6
+      ? pauseOverlay === "settings" ? "PauseSettings" : pauseOverlay === "help" ? "PauseHelp" : "Pause"
+      : null,
     panels: Object.freeze([panel])
   });
 }
@@ -573,7 +598,8 @@ function gameButtons(
   configurationMetadata: ConfigurationMetadataUiState | null,
   countdownRemaining: number,
   replayAvailable: boolean,
-  canResume: boolean
+  canResume: boolean,
+  pauseOverlay: "menu" | "settings" | "help" | null
 ): UiButton[] {
   switch (phaseCode) {
     case 0:
@@ -602,8 +628,12 @@ function gameButtons(
         button("game-flight-abort", "飛行を終了", true)
       ];
     case 6:
+      if (pauseOverlay === "settings") return [button("game-pause-settings-back", "Pauseへ戻る", true)];
+      if (pauseOverlay === "help") return [button("game-pause-help-back", "Pauseへ戻る", true)];
       return [
         button("game-flight-resume", "Resume", canResume),
+        button("game-pause-open-settings", "Settings", true),
+        button("game-pause-open-help", "Help", true),
         button("game-paused-abort", "飛行を終了", true)
       ];
     case 7:
