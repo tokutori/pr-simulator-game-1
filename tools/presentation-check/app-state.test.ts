@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionState, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -28,6 +28,12 @@ describe("Boot application state", () => {
       0,
       7
     )).toBe(false);
+  });
+
+  it("identifies game-flow activations for fresh Rust state reads", () => {
+    expect(isGameFlowActivation({ type: "activate", controlId: "game-flight-resume" })).toBe(true);
+    expect(isGameFlowActivation({ type: "activate", controlId: "boot-enter-webxr" })).toBe(false);
+    expect(isGameFlowActivation({ type: "focus", controlId: "game-flight-resume" })).toBe(false);
   });
 
   it("dispatches every enabled game-flow button from its rendered phase", () => {
@@ -361,6 +367,24 @@ describe("Boot application state", () => {
     expect(resumed.effects).toEqual([
       { type: "game-session-operation", operation: "resume", requestId: 2 }
     ]);
+  });
+
+  it("ignores a Resume activation after synchronized pause eligibility changes", () => {
+    const stale = {
+      ...readyModel(6),
+      gameSession: sessionForTest(6, flightSnapshot, true)
+    };
+    const refreshed = updateApp(stale, {
+      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      difficulty: stale.difficulty, configurationMetadata: null,
+      countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
+    }).model;
+    const resume = updateApp(refreshed, {
+      type: "ui-action",
+      action: { type: "activate", controlId: "game-flight-resume" }
+    });
+    expect(resume.model).toBe(refreshed);
+    expect(resume.effects).toEqual([]);
   });
 
   it("projects the Rust-selected control mode after a Setup update", () => {

@@ -272,9 +272,11 @@ export function isStaleGameFlowActivation(
   displayedPhaseCode: number,
   actualPhaseCode: number
 ): boolean {
-  return action.type === "activate"
-    && action.controlId.startsWith("game-")
-    && displayedPhaseCode !== actualPhaseCode;
+  return isGameFlowActivation(action) && displayedPhaseCode !== actualPhaseCode;
+}
+
+export function isGameFlowActivation(action: UiAction): boolean {
+  return action.type === "activate" && action.controlId.startsWith("game-");
 }
 
 export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshot | null {

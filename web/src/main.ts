@@ -2,7 +2,7 @@ import "./styles.css";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -726,11 +726,11 @@ function createFlightRecordRepository(): FlightRecordRepository {
 
 function dispatchUiAction(action: UiAction): void {
   const session = gameSession;
-  const actualPhaseCode = session?.phase_code();
   const displayedPhaseCode = gameSessionPhaseCode(model.gameSession);
-  if (actualPhaseCode !== undefined && actualPhaseCode !== displayedPhaseCode) {
+  if (session !== null && isGameFlowActivation(action)) {
     syncGameSession();
-    if (isStaleGameFlowActivation(action, displayedPhaseCode, actualPhaseCode)) return;
+    const synchronizedPhaseCode = gameSessionPhaseCode(model.gameSession);
+    if (isStaleGameFlowActivation(action, displayedPhaseCode, synchronizedPhaseCode)) return;
   }
   dispatch({ type: "ui-action", action });
 }
