@@ -216,7 +216,7 @@ function runEffect(effect: AppEffect): void {
       return;
     }
     case "game-session-operation":
-      runGameSessionOperation(effect.operation, effect.requestId);
+      runGameSessionOperation(effect.operation, effect.requestId, gameSessionPhaseCode(model.gameSession));
       return;
     case "persist-flight-record":
       if (gameSession !== null) void persistFlightRecord(gameSession);
@@ -446,7 +446,7 @@ function currentViewModel() {
   );
 }
 
-function runGameSessionOperation(operation: GameSessionOperation, requestId: number): void {
+function runGameSessionOperation(operation: GameSessionOperation, requestId: number, requestedPhaseCode: number): void {
   const session = gameSession;
   if (session === null) {
     dispatch({ type: "game-operation-failed", requestId, message: "Rust GameSession is unavailable" });
@@ -536,11 +536,15 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
     }
     completeGameOperation(requestId);
   } catch (error: unknown) {
-    dispatchGameOperationFailure(requestId, errorMessage(error));
+    dispatchGameOperationFailure(requestId, errorMessage(error), { operation, requestedPhaseCode });
   }
 }
 
-function dispatchGameOperationFailure(requestId: number, message: string): void {
+function dispatchGameOperationFailure(
+  requestId: number,
+  message: string,
+  context?: { readonly operation: GameSessionOperation; readonly requestedPhaseCode: number }
+): void {
   const session = gameSession;
   if (session === null) {
     dispatch({ type: "game-operation-failed", requestId, message });
@@ -559,7 +563,10 @@ function dispatchGameOperationFailure(requestId: number, message: string): void 
         : gameSessionSnapshot(model.gameSession),
       canResume: session.can_resume()
     };
-    dispatch({ type: "game-operation-failed", requestId, message, currentSession });
+    const failureMessage = context === undefined
+      ? message
+      : `${context.operation} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
+    dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession });
   } catch (syncError: unknown) {
     dispatch({
       type: "game-operation-failed",
