@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -11,6 +12,30 @@ flightSnapshotValues[19] = -1;
 const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
 
 describe("Boot application state", () => {
+  it("dispatches every enabled game-flow button from its rendered phase", () => {
+    const models = [
+      ...[0, 1, 2, 3, 4, 5, 8, 10].map((phaseCode) => readyModel(phaseCode)),
+      { ...readyModel(6), gameSession: sessionForTest(6, flightSnapshot, true) },
+      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "settings" as const } } },
+      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "help" as const } } },
+      { ...readyModel(7), resultTab: "summary" as const },
+      { ...readyModel(7), resultTab: "analysis" as const },
+      { ...readyModel(9), replayViewMode: "cinematic" as const },
+      { ...readyModel(9), replayViewMode: "telemetry" as const },
+      { ...readyModel(9), replayViewMode: "analysis" as const }
+    ];
+
+    for (const model of models) {
+      const view = createGameViewModel(model, flightSnapshot);
+      for (const control of view.panels.flatMap((panel) => panel.controls)) {
+        if (control.kind !== "button" || !control.enabled) continue;
+        const updated = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: control.id } });
+        expect(updated.model.status, `${view.scene}: ${control.id}`).not.toContain("is unavailable");
+        expect(updated.model !== model || updated.effects.length > 0, `${view.scene}: ${control.id}`).toBe(true);
+      }
+    }
+  });
+
   it("initializes once and accepts only the matching completion", () => {
     const initial = createInitialAppModel();
     const initialized = updateApp(initial, { type: "initialize" });
@@ -590,6 +615,14 @@ describe("Boot application state", () => {
     expect(rejected.model.pendingGameRequestId).toBeNull();
     expect(rejected.model.gameSession.phaseCode).toBe(1);
     expect(rejected.model.status).toBe("InvalidTransition");
+  });
+
+  it("reports an unsupported action against the active phase", () => {
+    const rejected = updateApp(readyModel(7), {
+      type: "ui-action", action: { type: "activate", controlId: "unknown-result-action" }
+    });
+
+    expect(rejected.model.status).toBe("Action unknown-result-action is unavailable in result");
   });
 
   it("preserves the Rust terminal snapshot when an operation fails in Result", () => {

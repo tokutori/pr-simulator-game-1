@@ -691,7 +691,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
     return transition(model);
   }
   if (action.type !== "activate") {
-    return transition(withModel(model, { status: `Action ${action.type} is unavailable in Boot` }));
+    return transition(withModel(model, { status: `Action ${action.type} is unavailable in ${model.gameSession.kind}` }));
   }
   const gameOperation = operationForGameAction(gameSessionPhaseCode(model.gameSession), action.controlId);
   if (gameOperation !== null) return beginGameOperation(model, gameOperation);
@@ -712,7 +712,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
     if (!isInVr(model.presentation)) return transition(model);
     return transition(withModel(model, { status: "Menu placement updated" }), [{ type: "recenter-menu" }]);
   }
-  return transition(withModel(model, { status: `Action ${action.controlId} is unavailable in Boot` }));
+  return transition(withModel(model, { status: `Action ${action.controlId} is unavailable in ${model.gameSession.kind}` }));
 }
 
 function updateReplayClock(
