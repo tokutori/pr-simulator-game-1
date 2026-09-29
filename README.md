@@ -42,7 +42,7 @@ npm run dev
 
 Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。現行差分にはGameSessionを含む基本Scene遷移があるが、生成bindingの更新、実ブラウザー上のWebGL操作確認、全gameplay loopの受入、実機検証は未完了である。
 
-`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。公開前にはBPG-013の配布条件と実ブラウザー受入を確認する。
+`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。現段階は試験公開とし、BPG-013の配布条件と実ブラウザー受入は未完了のまま追跡する。
 
 ## 設計資料
 
