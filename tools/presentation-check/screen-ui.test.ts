@@ -109,8 +109,12 @@ describe("screen UI DOM patching", () => {
     const panel = root.querySelector<HTMLElement>(".screen-ui-panel");
     const button = root.querySelector<HTMLElement>('[data-control-id="map"]');
     const figure = root.querySelector<HTMLElement>(".screen-ui-chart");
+    const svg = figure?.querySelector("svg");
     expect(shell?.dataset.mode).toBe("analysis");
     expect(panel?.dataset.layout).toBe("normalized");
+    expect(svg?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(svg?.querySelector("path")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(svg?.querySelector("text")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(button?.style.left).toBe("8%");
     expect(button?.style.top).toBe("70%");
     expect(figure?.style.left).toBe("8%");

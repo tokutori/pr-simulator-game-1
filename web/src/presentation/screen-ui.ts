@@ -378,6 +378,8 @@ function applyNormalizedRect(element: HTMLElement, rect: UiControl["rect"]): voi
 
 function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
   const data: NonNullable<VNode["data"]> = {};
+  const namespace = element.namespaceURI;
+  if (namespace !== null && namespace !== "http://www.w3.org/1999/xhtml") data.ns = namespace;
   const attributes: Record<string, string> = {};
   const dataset: Record<string, string> = {};
   for (const attribute of Array.from(element.attributes)) {
