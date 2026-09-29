@@ -496,11 +496,7 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
       }
       case "retry":
         session.retry();
-        session.start_countdown(3);
-        completeGameOperation(requestId);
-        countdownGeneration += 1;
-        scheduleCountdownTick(countdownGeneration);
-        return;
+        break;
       case "retry-briefing":
         session.retry_briefing();
         session.mark_briefing_ready();

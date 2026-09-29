@@ -236,8 +236,32 @@ describe("generated WebAssembly browser binding", () => {
       }
       expect(snapshot.terminal).toBe("water-contact");
       expect(projectedScene()).toBe("Result");
+      const retry = updateApp(model, {
+        type: "ui-action",
+        action: { type: "activate", controlId: "game-result-retry" }
+      });
+      expect(retry.effects).toEqual([
+        { type: "game-session-operation", operation: "retry", requestId: retry.model.pendingGameRequestId }
+      ]);
       session.retry();
+      model = updateApp(retry.model, {
+        type: "game-operation-completed",
+        requestId: retry.model.pendingGameRequestId as number,
+        phaseCode: session.phase_code(),
+        controlModeCode: session.control_mode_code(),
+        difficulty: retry.model.difficulty,
+        configurationMetadata: null,
+        countdownRemaining: session.countdown_remaining(),
+        snapshot: null
+      }).model;
       expect(projectedScene()).toBe("Briefing");
+      const startFlight = updateApp(model, {
+        type: "ui-action",
+        action: { type: "activate", controlId: "game-briefing-start" }
+      });
+      expect(startFlight.effects).toEqual([
+        { type: "game-session-operation", operation: "start-flight", requestId: startFlight.model.pendingGameRequestId }
+      ]);
     } finally {
       session.free();
     }
