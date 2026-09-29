@@ -184,7 +184,7 @@ describe("generated WebAssembly browser binding", () => {
     }
   });
 
-  it.each(["screen", "webxr", "phone-vr"] as const)("projects one Rust-owned flow to %s scenes", (mode) => {
+  it.each(["screen", "webxr", "phone-vr"] as const)("runs UI actions through one Rust-owned flow on %s", (mode) => {
     initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
     const session = new GameSessionBridge(0);
     try {
@@ -209,26 +209,79 @@ describe("generated WebAssembly browser binding", () => {
           },
           configurationMetadata: null,
           countdownRemaining: session.countdown_remaining(),
+          canResume: session.can_resume(),
           snapshot
         }).model;
         return createGameViewModel(model, snapshot).scene;
       };
+      const requestOperation = (controlId: string, operation: string): number => {
+        const requested = updateApp(model, {
+          type: "ui-action",
+          action: { type: "activate", controlId }
+        });
+        const effect = requested.effects.find((entry) => entry.type === "game-session-operation");
+        expect(effect).toEqual({
+          type: "game-session-operation",
+          operation,
+          requestId: requested.model.pendingGameRequestId
+        });
+        model = requested.model;
+        return requested.model.pendingGameRequestId as number;
+      };
+      const completeOperation = (requestId: number): void => {
+        const phaseCode = session.phase_code();
+        model = updateApp(model, {
+          type: "game-operation-completed",
+          requestId,
+          phaseCode,
+          controlModeCode: session.control_mode_code(),
+          difficulty: {
+            presetCode: session.difficulty_preset_code(),
+            informationCode: session.information_level_code(),
+            assistanceCode: session.assistance_level_code(),
+            weatherCode: session.weather_class_code()
+          },
+          configurationMetadata: null,
+          countdownRemaining: session.countdown_remaining(),
+          canResume: session.can_resume(),
+          snapshot: phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(session.snapshot()) : null
+        }).model;
+      };
 
       expect(projectedScene()).toBe("Title");
+      const openSetup = requestOperation("game-title-start", "open-setup");
       session.open_setup();
+      completeOperation(openSetup);
       expect(projectedScene()).toBe("FlightSetup");
+      const prepare = requestOperation("game-setup-start", "prepare");
       session.prepare();
-      expect(projectedScene()).toBe("Briefing");
       session.mark_briefing_ready();
+      completeOperation(prepare);
       expect(projectedScene()).toBe("Briefing");
+      const startFlight = requestOperation("game-briefing-start", "start-flight");
       session.start_countdown(1);
+      completeOperation(startFlight);
       expect(projectedScene()).toBe("Countdown");
       session.advance_countdown();
       session.launch();
       expect(projectedScene()).toBe("Flight");
+      const pause = requestOperation("game-flight-pause", "pause");
       session.pause(0);
+      completeOperation(pause);
       expect(projectedScene()).toBe("Flight");
+      const settings = updateApp(model, {
+        type: "ui-action",
+        action: { type: "activate", controlId: "game-pause-open-settings" }
+      });
+      expect(settings.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
+      model = settings.model;
+      model = updateApp(model, {
+        type: "ui-action",
+        action: { type: "activate", controlId: "game-pause-settings-back" }
+      }).model;
+      const resume = requestOperation("game-flight-resume", "resume");
       session.resume();
+      completeOperation(resume);
 
       let snapshot = parseFlightSnapshot(session.snapshot());
       for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
@@ -236,32 +289,14 @@ describe("generated WebAssembly browser binding", () => {
       }
       expect(snapshot.terminal).toBe("water-contact");
       expect(projectedScene()).toBe("Result");
-      const retry = updateApp(model, {
-        type: "ui-action",
-        action: { type: "activate", controlId: "game-result-retry" }
-      });
-      expect(retry.effects).toEqual([
-        { type: "game-session-operation", operation: "retry", requestId: retry.model.pendingGameRequestId }
-      ]);
+      const retry = requestOperation("game-result-retry", "retry");
       session.retry();
-      model = updateApp(retry.model, {
-        type: "game-operation-completed",
-        requestId: retry.model.pendingGameRequestId as number,
-        phaseCode: session.phase_code(),
-        controlModeCode: session.control_mode_code(),
-        difficulty: retry.model.difficulty,
-        configurationMetadata: null,
-        countdownRemaining: session.countdown_remaining(),
-        snapshot: null
-      }).model;
+      completeOperation(retry);
       expect(projectedScene()).toBe("Briefing");
-      const startFlight = updateApp(model, {
-        type: "ui-action",
-        action: { type: "activate", controlId: "game-briefing-start" }
-      });
-      expect(startFlight.effects).toEqual([
-        { type: "game-session-operation", operation: "start-flight", requestId: startFlight.model.pendingGameRequestId }
-      ]);
+      const retryStart = requestOperation("game-briefing-start", "start-flight");
+      session.start_countdown(1);
+      completeOperation(retryStart);
+      expect(projectedScene()).toBe("Countdown");
     } finally {
       session.free();
     }
