@@ -858,6 +858,8 @@ mod tests {
         FlightTickState, Gravity, PilotPositionTarget, SurfaceCommands, WindField,
     };
 
+    const _: [(); 424] = [(); core::mem::size_of::<super::FlightRecordSample>()];
+
     #[test]
     fn reserved_record_retains_initial_and_monotonic_integer_samples() {
         let (header, initial, telemetry) = fixture();
