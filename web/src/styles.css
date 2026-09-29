@@ -118,6 +118,14 @@ body {
   display: none;
 }
 
+.screen-ui-shell[data-mode="analysis"] .screen-ui-controls button {
+  overflow-wrap: anywhere;
+  padding: clamp(0.12rem, 1vw, 0.65rem);
+  font-size: clamp(0.62rem, 1.6vw, 1rem);
+  line-height: 1.15;
+  white-space: normal;
+}
+
 .screen-ui-panel[data-layout="normalized"] {
   position: absolute;
   inset: 0;
@@ -268,6 +276,7 @@ body {
   .screen-ui-root { align-items: start; padding: max(0.6rem, env(safe-area-inset-top)) max(0.6rem, env(safe-area-inset-right)) max(0.6rem, env(safe-area-inset-bottom)) max(0.6rem, env(safe-area-inset-left)); }
   .screen-ui-shell { max-height: calc(100dvh - 1.2rem); padding: 1rem; }
   .screen-ui-shell[data-scene="Boot"] { top: max(0.6rem, env(safe-area-inset-top)); left: max(0.6rem, env(safe-area-inset-left)); width: min(21rem, calc(100vw - 1.2rem)); }
+  .screen-ui-shell[data-mode="analysis"] .screen-ui-controls button { font-size: clamp(0.58rem, 2.8vw, 0.85rem); }
   .flight-hud { grid-template-columns: 5.5rem minmax(0, 1fr); width: min(19rem, calc(100vw - 1.2rem)); padding: 0.4rem 0.5rem; font-size: 0.65rem; }
   .flight-hud-adi { width: 5.5rem; height: 4.2rem; }
   .flight-hud-instrument { padding: 0.2rem 0.25rem; }
