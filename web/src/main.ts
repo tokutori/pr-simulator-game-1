@@ -536,7 +536,9 @@ function dispatchGameOperationFailure(requestId: number, message: string): void 
       difficulty: readDifficulty(session),
       configurationMetadata: readConfigurationMetadata(session),
       countdownRemaining: session.countdown_remaining(),
-      snapshot: phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(session.snapshot()) : null,
+      snapshot: [5, 6, 7].includes(phaseCode)
+        ? parseFlightSnapshot(session.snapshot())
+        : gameSessionSnapshot(model.gameSession),
       canResume: session.can_resume()
     };
     dispatch({ type: "game-operation-failed", requestId, message, currentSession });

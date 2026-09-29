@@ -591,6 +591,28 @@ describe("Boot application state", () => {
     expect(rejected.model.gameSession.phaseCode).toBe(1);
     expect(rejected.model.status).toBe("InvalidTransition");
   });
+
+  it("preserves the Rust terminal snapshot when an operation fails in Result", () => {
+    const requested = updateApp(readyModel(7), {
+      type: "ui-action", action: { type: "activate", controlId: "game-result-retry" }
+    });
+    const rejected = updateApp(requested.model, {
+      type: "game-operation-failed",
+      requestId: requested.model.pendingGameRequestId as number,
+      message: "InvalidTransition",
+      currentSession: {
+        phaseCode: 7,
+        controlModeCode: 0,
+        difficulty: requested.model.difficulty,
+        configurationMetadata: null,
+        countdownRemaining: 0,
+        snapshot: flightSnapshot,
+        canResume: false
+      }
+    });
+
+    expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, snapshot: flightSnapshot });
+  });
 });
 
 function readyModel(phaseCode = 0): AppModel {
