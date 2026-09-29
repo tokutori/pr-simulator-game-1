@@ -69,9 +69,9 @@ export function createLakeSkyTexture(): DataTexture {
       const sunAlignment = Math.max(0, (rayX * sun[0] + rayY * sun[1] + rayZ * sun[2]) / sunLength);
       const sunGlow = Math.pow(sunAlignment, 120) * 14;
       const offset = (row * width + column) * 4;
-      pixels[offset] = Math.round(Math.max(0, Math.min(255, 168 - 42 * gradient + cloud + horizonHaze + sunGlow)));
-      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, 191 - 20 * gradient + cloud + horizonHaze + sunGlow * 0.8)));
-      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, 197 - 7 * gradient + cloud + horizonHaze + sunGlow * 0.55)));
+      pixels[offset] = Math.round(Math.max(0, Math.min(255, 177 - 70 * gradient + cloud * 1.6 + horizonHaze + sunGlow)));
+      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, 202 - 38 * gradient + cloud + horizonHaze + sunGlow * 0.8)));
+      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, 215 - 10 * gradient + cloud * 0.5 + horizonHaze + sunGlow * 0.55)));
       pixels[offset + 3] = 255;
     }
   }
