@@ -101,14 +101,13 @@ export function createGameViewModel(
   }
   if (phaseCode === 7 && model.resultTab === "analysis") {
     controls.push(
-      Object.freeze({ ...button("game-result-open-summary", "Summaryへ戻る", true), rect: normalizedRect(0.08, 0.79, 0.84, 0.07) }),
-      Object.freeze({ ...button("game-analysis-map", model.analysisChart === "map" ? "● Map" : "Map", true), rect: normalizedRect(0.08, 0.70, 0.25, 0.07) }),
-      Object.freeze({ ...button("game-analysis-altitude", model.analysisChart === "altitude" ? "● Altitude" : "Altitude", true), rect: normalizedRect(0.375, 0.70, 0.25, 0.07) }),
-      Object.freeze({ ...button("game-analysis-speed", model.analysisChart === "speed" ? "● Speed" : "Speed", true), rect: normalizedRect(0.67, 0.70, 0.25, 0.07) })
+      Object.freeze({ ...button("game-analysis-map", model.analysisChart === "map" ? "● Map" : "Map", true), rect: normalizedRect(0.02, 0.025, 0.30, 0.06) }),
+      Object.freeze({ ...button("game-analysis-altitude", model.analysisChart === "altitude" ? "● Altitude" : "Altitude", true), rect: normalizedRect(0.35, 0.025, 0.30, 0.06) }),
+      Object.freeze({ ...button("game-analysis-speed", model.analysisChart === "speed" ? "● Speed" : "Speed", true), rect: normalizedRect(0.68, 0.025, 0.30, 0.06) })
     );
-    if (analysis !== null) controls.push(Object.freeze({
-      ...button("game-result-replay", "Replayを見る", true),
-      rect: normalizedRect(0.08, 0.11, 0.84, 0.07)
+    controls.push(Object.freeze({
+      ...status("game-result-configuration", "Configuration", configurationSummary(model.configurationMetadata)),
+      rect: normalizedRect(0.04, 0.735, 0.92, 0.065)
     }));
     if (analysis !== null) controls.push(Object.freeze({
       kind: "range",
@@ -119,24 +118,32 @@ export function createGameViewModel(
       maximum: Math.max(analysis.summary.durationSeconds, 0.01),
       step: 0.01,
       enabled: true,
-      rect: normalizedRect(0.08, 0.625, 0.84, 0.055)
+      rect: normalizedRect(0.04, 0.61, 0.92, 0.045)
     }));
     if (model.analysisCursorSample !== null) {
       controls.push(Object.freeze({
         ...status("game-analysis-cursor-values", "At cursor", cursorReadout(model.analysisCursorSample)),
-        rect: normalizedRect(0.08, 0.555, 0.84, 0.06)
+        rect: normalizedRect(0.04, 0.66, 0.92, 0.065)
       }));
     }
     if (analysis === null) {
-      controls.push(Object.freeze({ ...status("game-analysis-loading", "Analysis", "FlightRecordを取得している"), rect: normalizedRect(0.08, 0.22, 0.84, 0.42) }));
+      controls.push(Object.freeze({ ...status("game-analysis-loading", "Analysis", "FlightRecordを取得している"), rect: normalizedRect(0.08, 0.105, 0.84, 0.49) }));
     } else {
       controls.push(createAnalysisChart(
         analysis,
         model.analysisChart,
         model.analysisCursorSample,
-        model.configurationMetadata?.scenarioId ?? null
+        model.configurationMetadata?.scenarioId ?? null,
+        normalizedRect(0.04, 0.105, 0.92, 0.49)
       ));
     }
+    controls.push(
+      Object.freeze({ ...button("game-result-open-summary", "Summary", true), rect: normalizedRect(0.02, 0.82, 0.30, 0.07) }),
+      Object.freeze({ ...button("game-result-replay", "Replay", analysis !== null), rect: normalizedRect(0.35, 0.82, 0.30, 0.07) }),
+      Object.freeze({ ...button("game-result-retry", "同条件で再試行", true), rect: normalizedRect(0.68, 0.82, 0.30, 0.07) }),
+      Object.freeze({ ...button("game-result-setup", "設定", true), rect: normalizedRect(0.18, 0.91, 0.30, 0.07) }),
+      Object.freeze({ ...button("game-result-title", "Title", true), rect: normalizedRect(0.52, 0.91, 0.30, 0.07) })
+    );
   } else if (phaseCode === 9 && model.replayViewMode === "analysis") {
     controls.push(
       Object.freeze({ ...button("game-replay-view-mode", "表示: Analysis", true), rect: normalizedRect(0.02, 0.035, 0.22, 0.06) }),
@@ -247,7 +254,7 @@ export function createGameViewModel(
       })]),
       Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
     );
-  } else if (phaseCode !== 5 && phaseCode !== 6) {
+  } else if (phaseCode !== 5 && phaseCode !== 6 && !(phaseCode === 7 && model.resultTab === "analysis")) {
     let bottom = 0.795;
     buttons.forEach((entry) => {
       const height = entry.id === "game-result-configuration" ? 0.11 : 0.075;

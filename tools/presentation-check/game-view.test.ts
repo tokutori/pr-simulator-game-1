@@ -233,6 +233,33 @@ describe("Game scene view model", () => {
     const chart = view.panels[0]?.controls.find((control) => control.kind === "chart");
     const cursorValues = view.panels[0]?.controls.find((control) => control.id === "game-analysis-cursor-values");
     expect(chart).toMatchObject({ kind: "chart", enabled: false });
+    const controls = view.panels[0]?.controls ?? [];
+    const controlIds = controls.map((control) => control.id);
+    expect(new Set(controlIds).size).toBe(controlIds.length);
+    expect(controlIds).toEqual(expect.arrayContaining([
+      "game-analysis-map",
+      "game-analysis-altitude",
+      "game-analysis-speed",
+      "game-result-open-summary",
+      "game-result-replay",
+      "game-result-retry",
+      "game-result-setup",
+      "game-result-title"
+    ]));
+    const chartControl = controls.find((control) => control.kind === "chart");
+    if (chartControl?.kind !== "chart") throw new Error("Analysis chart is missing");
+    expect(chartControl.rect).toMatchObject({ x: 0.04, y: 0.105, width: 0.92, height: 0.49 });
+    for (const id of ["game-analysis-map", "game-analysis-altitude", "game-analysis-speed"] as const) {
+      const selector = controls.find((control) => control.id === id);
+      expect(selector?.rect.y).toBe(0.025);
+    }
+    for (const id of ["game-result-open-summary", "game-result-replay", "game-result-retry", "game-result-setup", "game-result-title"] as const) {
+      const action = controls.find((control) => control.id === id);
+      if (action?.rect === undefined) throw new Error(`Result action has no layout: ${id}`);
+      expect(action.rect.y).toBeGreaterThanOrEqual(0.82);
+      expect(action.rect.y).toBeLessThan(1);
+      expect(action.rect.y + action.rect.height).toBeLessThanOrEqual(0.98);
+    }
     if (cursorValues?.kind !== "status") throw new Error("Analysis cursor status is missing");
     expect(cursorValues.value).toContain("t 1.00 s · N 8.0 m · E 6.0 m · h 8.0 m");
     expect(cursorValues.value).toContain("WN 2.0 · WE -1.0 · WD 0.0 m/s");
