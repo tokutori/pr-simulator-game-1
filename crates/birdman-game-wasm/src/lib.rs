@@ -500,6 +500,51 @@ impl GameSessionBridge {
         self.session.enter_replay().map_err(game_session_error)
     }
 
+    /// Returns [time in seconds, rate code, playing flag] for active playback.
+    pub fn playback_clock_state(&self) -> Result<Vec<f64>, JsValue> {
+        let clock = self
+            .session
+            .playback_clock()
+            .ok_or_else(|| JsValue::from_str("playback clock is unavailable outside playback"))?;
+        Ok(vec![
+            clock.time_seconds(),
+            f64::from(clock.rate().code()),
+            if clock.is_playing() { 1.0 } else { 0.0 },
+        ])
+    }
+
+    /// Selects a supported playback rate and returns the updated clock state.
+    pub fn set_playback_rate_code(&mut self, code: u32) -> Result<Vec<f64>, JsValue> {
+        self.session
+            .set_playback_rate_code(code)
+            .map_err(game_session_error)?;
+        self.playback_clock_state()
+    }
+
+    /// Starts or pauses playback and returns the updated clock state.
+    pub fn set_playback_playing(&mut self, playing: bool) -> Result<Vec<f64>, JsValue> {
+        self.session
+            .set_playback_playing(playing)
+            .map_err(game_session_error)?;
+        self.playback_clock_state()
+    }
+
+    /// Seeks within the current record in seconds and returns the updated clock state.
+    pub fn seek_playback(&mut self, time_seconds: f64) -> Result<Vec<f64>, JsValue> {
+        self.session
+            .seek_playback(time_seconds)
+            .map_err(game_session_error)?;
+        self.playback_clock_state()
+    }
+
+    /// Advances active playback using elapsed wall-clock seconds.
+    pub fn advance_playback(&mut self, elapsed_seconds: f64) -> Result<Vec<f64>, JsValue> {
+        self.session
+            .advance_playback(elapsed_seconds)
+            .map_err(game_session_error)?;
+        self.playback_clock_state()
+    }
+
     /// Returns from playback to the same finalized result.
     pub fn leave_replay(&mut self) -> Result<(), JsValue> {
         self.session.leave_replay().map_err(game_session_error)?;
@@ -594,6 +639,15 @@ impl GameSessionBridge {
             .map_err(|error| {
                 JsValue::from_str(&format!("flight record query failed: {error:?}"))
             })?;
+        Ok(pack_flight_record_playback_sample(sample).to_vec())
+    }
+
+    /// Returns a Rust-interpolated playback sample at elapsed seconds.
+    pub fn flight_record_sample_at_seconds(&self, time_seconds: f64) -> Result<Vec<f64>, JsValue> {
+        let sample = self
+            .session
+            .playback_sample_at_seconds(time_seconds)
+            .map_err(game_session_error)?;
         Ok(pack_flight_record_playback_sample(sample).to_vec())
     }
 
@@ -1600,6 +1654,10 @@ mod tests {
             bridge.flight_record_sample_at(1, 0.0).unwrap()
         );
         assert_eq!(
+            archived.flight_record_sample_at_seconds(0.01).unwrap(),
+            bridge.flight_record_sample_at(1, 0.0).unwrap()
+        );
+        assert_eq!(
             archived.flight_record_summary().unwrap(),
             bridge.flight_record_summary().unwrap()
         );
@@ -1613,6 +1671,15 @@ mod tests {
         );
         bridge.enter_replay().unwrap();
         assert_eq!(bridge.phase_code(), 9);
+        assert_eq!(bridge.playback_clock_state().unwrap(), [0.0, 1.0, 0.0]);
+        bridge.set_playback_rate_code(2).unwrap();
+        bridge.seek_playback(0.0).unwrap();
+        bridge.set_playback_playing(true).unwrap();
+        assert_eq!(bridge.advance_playback(0.005).unwrap(), [0.01, 2.0, 0.0]);
+        assert_eq!(
+            bridge.flight_record_sample_at_seconds(0.01).unwrap(),
+            bridge.flight_record_sample_at(1, 0.0).unwrap()
+        );
         assert_eq!(
             bridge.flight_record_sample_at(1, 0.0).unwrap().len(),
             PLAYBACK_SAMPLE_LENGTH
