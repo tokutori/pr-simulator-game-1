@@ -144,8 +144,10 @@ function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTextur
         context.scale(-1, 1);
       }
       // The generated decal has two wing halves and large transparent margins.
+      // The photographic strip occupies only part of the dyed leading panel.
+      // Preserve its long, slender appearance in the 20.863 m top view.
       context.drawImage(decal, side < 0 ? 32 : 1085, 280, 1051, 148,
-        0, 0, width, height / 2);
+        0, 31, width, 66);
       const decalPixels = context.getImageData(0, 0, width, height / 2).data;
       for (let pixel = 0; pixel < decalPixels.length; pixel += 4) {
         const alpha = (decalPixels[pixel + 3] ?? 0) / 255;
@@ -163,42 +165,25 @@ function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTextur
   return texture;
 }
 
-function universityMark(): CanvasTexture | null {
+function universityMark(onVisualReady?: () => void): CanvasTexture | null {
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 768;
+  canvas.width = 512;
+  canvas.height = 1536;
   const context = canvas.getContext("2d");
   if (context === null) return null;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#eeeae0";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.font = "bold 156px 'Yu Mincho', 'Noto Serif CJK JP', serif";
-  for (const [index, character] of ["徳", "島", "大", "学"].entries()) {
-    context.save();
-    context.translate(128 + ([0, -9, 5, -5][index] ?? 0), 98 + index * 185);
-    context.rotate([0.025, -0.035, 0.025, -0.02][index] ?? 0);
-    context.fillText(character, 0, 0);
-    context.restore();
-  }
-  // Small gaps and streaks give the white lettering the worn, brushed edge
-  // visible on the real indigo-painted fin.
-  context.globalCompositeOperation = "destination-out";
-  let seed = 32749;
-  const random = (): number => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  for (let mark = 0; mark < 850; mark++) {
-    context.globalAlpha = 0.18 + 0.50 * random();
-    context.fillRect(random() * canvas.width, random() * canvas.height,
-      2 + random() * 22, 0.5 + random() * 2.5);
-  }
-  context.globalAlpha = 1;
-  context.globalCompositeOperation = "source-over";
+  context.fillStyle = "#20344b";
+  context.fillRect(0, 0, canvas.width, canvas.height);
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
+  const artwork = new Image();
+  artwork.onload = () => {
+    context.drawImage(artwork, 0, 0, canvas.width, canvas.height);
+    texture.needsUpdate = true;
+    onVisualReady?.();
+  };
+  artwork.onerror = () => { console.warn("Fin artwork could not be loaded."); };
+  artwork.src = new URL("../../../../../assets/tokushima-fin-artwork.png", import.meta.url).href;
   return texture;
 }
 
@@ -683,9 +668,9 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   ], 0.045), skin);
   finFront.name = "rudder-front";
   rudder.add(finFront);
-  const universityTexture = universityMark();
+  const universityTexture = universityMark(onVisualReady);
   if (universityTexture !== null) {
-    const letters = new MeshBasicMaterial({ map: universityTexture, transparent: true, side: DoubleSide, depthWrite: false });
+    const letters = new MeshBasicMaterial({ map: universityTexture, side: DoubleSide });
     for (const side of [-1, 1] as const) {
       const mark = new Mesh(new PlaneGeometry(0.31, 1.02), letters);
       mark.name = "tokushima-university-mark";
