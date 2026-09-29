@@ -80,6 +80,7 @@ describe("Game scene view model", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
       gameSession: sessionForPhase(9),
+      replayViewMode: "telemetry" as const,
       analysisCursorTimeSeconds: 1.25,
       flightAnalysis: Object.freeze({
         samples: Object.freeze([]),
