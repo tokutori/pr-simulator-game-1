@@ -36,11 +36,24 @@ function cloudNoise(u: number, v: number, columns: number, rows: number): number
 
 /** Shared, subdued sky radiance for the background and the lake reflection. */
 export function createLakeSkyTexture(): DataTexture {
-  const width = 512;
-  const height = 256;
+  const width = 1024;
+  const height = 512;
   const pixels = new Uint8Array(width * height * 4);
   const sun = [0.42, 0.82, 0.38] as const;
   const sunLength = Math.hypot(...sun);
+  let randomState = 0x4f5a2c91;
+  const random = (): number => {
+    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+    return randomState / 4294967296;
+  };
+  // Finite patches avoid the panorama-wide smears produced by thresholding
+  // large noise cells. Their occupied solid angle is approximately 5%.
+  const clouds = Array.from({ length: 48 }, () => ({
+    u: random(),
+    v: 0.5 + (0.06 + random() * 0.28) / Math.PI,
+    radiusU: 0.009 + random() * 0.009,
+    radiusV: 0.007 + random() * 0.007
+  }));
   for (let row = 0; row < height; row++) {
     const v = (row + 0.5) / height;
     const latitude = (v - 0.5) * Math.PI;
@@ -50,19 +63,21 @@ export function createLakeSkyTexture(): DataTexture {
     for (let column = 0; column < width; column++) {
       const u = (column + 0.5) / width;
       const longitude = (u - 0.5) * Math.PI * 2;
-      let cloud = 0;
-      if (elevation > 0) {
-        const cloudDrift = cloudNoise(u, v, 4, 7) - 0.5;
-        const cloudWarp = cloudDrift * 0.012;
-        const lowCloudWeight = smoothstep(elevation / 0.025) *
-          (1 - smoothstep((elevation - 0.22 - cloudDrift * 0.07) / 0.16));
-        const cloudField = lowCloudWeight * (
-          cloudNoise(u, v + cloudWarp, 10, 24) * 0.65 +
-          cloudNoise(u, v + cloudWarp, 25, 52) * 0.35
-        );
-        // Weighted coverage over the visible sky is about 5% at this threshold.
-        cloud = smoothstep((cloudField - 0.62) / 0.04) * 18;
+      let cloudOpacity = 0;
+      if (latitude > 0 && latitude < 0.4) {
+        for (const patch of clouds) {
+          const separation = Math.abs(u - patch.u);
+          const dx = Math.min(separation, 1 - separation) / patch.radiusU;
+          const dy = (v - patch.v) / patch.radiusV;
+          const radiusSquared = dx * dx + dy * dy;
+          if (radiusSquared > 1.4) continue;
+          const billow = cloudNoise(u, v, 70, 85) * 0.65 + cloudNoise(u, v, 170, 230) * 0.35;
+          const opacity = smoothstep((1 - radiusSquared + (billow - 0.5) * 0.7) / 0.35) *
+            (0.55 + 0.45 * billow);
+          cloudOpacity = Math.max(cloudOpacity, opacity);
+        }
       }
+      const cloud = cloudOpacity * 18;
       const rayX = Math.cos(latitude) * Math.cos(longitude);
       const rayY = Math.sin(latitude);
       const rayZ = Math.cos(latitude) * Math.sin(longitude);
