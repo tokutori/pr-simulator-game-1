@@ -9,7 +9,7 @@ export class FixedTickClock {
     }
   }
 
-  advanceFrame(timestampMs: number, advanceTick: () => void): number {
+  advanceFrame(timestampMs: number, advanceTick: () => boolean): number {
     if (!Number.isFinite(timestampMs) || timestampMs < 0) {
       throw new RangeError("Frame timestamp must be nonnegative and finite");
     }
@@ -24,9 +24,10 @@ export class FixedTickClock {
 
     let ticks = 0;
     while (this.accumulatedMilliseconds + 1e-9 >= this.tickMilliseconds) {
-      advanceTick();
+      const shouldContinue = advanceTick();
       this.accumulatedMilliseconds -= this.tickMilliseconds;
       ticks += 1;
+      if (!shouldContinue) break;
     }
     return ticks;
   }

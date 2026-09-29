@@ -14,7 +14,7 @@ describe("browser flight adapters", () => {
       const clock = new FixedTickClock(10);
       let ticks = 0;
       for (let frame = 0; frame <= framesPerSecond * 5; frame += 1) {
-        clock.advanceFrame(frame * 1_000 / framesPerSecond, () => { ticks += 1; });
+        clock.advanceFrame(frame * 1_000 / framesPerSecond, () => { ticks += 1; return true; });
       }
       return ticks;
     });
@@ -25,13 +25,13 @@ describe("browser flight adapters", () => {
   it("does not accumulate hidden-page time across suspend and resume", () => {
     const clock = new FixedTickClock(10);
     let ticks = 0;
-    clock.advanceFrame(0, () => { ticks += 1; });
-    clock.advanceFrame(5, () => { ticks += 1; });
+    clock.advanceFrame(0, () => { ticks += 1; return true; });
+    clock.advanceFrame(5, () => { ticks += 1; return true; });
     clock.suspend();
-    clock.advanceFrame(10_000, () => { ticks += 1; });
+    clock.advanceFrame(10_000, () => { ticks += 1; return true; });
     clock.resume();
-    clock.advanceFrame(20_000, () => { ticks += 1; });
-    clock.advanceFrame(20_005, () => { ticks += 1; });
+    clock.advanceFrame(20_000, () => { ticks += 1; return true; });
+    clock.advanceFrame(20_005, () => { ticks += 1; return true; });
 
     expect(ticks).toBe(1);
   });
@@ -111,6 +111,48 @@ describe("browser flight adapters", () => {
     expect(session.freed).toBe(true);
     expect(input.disposed).toBe(true);
     expect(renderer.pose).toBeNull();
+  });
+
+  it("stops catch-up ticks immediately after a terminal flight tick", () => {
+    let ended = false;
+    let tickCount = 0;
+    let failure: string | null = null;
+    let terminalCount = 0;
+    const session: FlightSessionPort = {
+      advance_tick() {
+        if (ended) throw new Error("GameSession transition is invalid");
+        ended = true;
+        tickCount += 1;
+        const values = snapshotValues();
+        values[0] = 1;
+        values[16] = 1;
+        values[19] = 0.5;
+        return values;
+      },
+      snapshot: snapshotValues,
+      free() {}
+    };
+    const hud: FlightHudPort = {
+      render() {},
+      fail(message) { failure = message; },
+      setVisible() {}
+    };
+    const controller = new FlightController(
+      session,
+      new FakePilotInput(),
+      new FakeFlightRenderer(),
+      hud,
+      100,
+      () => [],
+      () => { terminalCount += 1; }
+    );
+
+    controller.onFrame(0);
+    controller.onFrame(50);
+
+    expect(tickCount).toBe(1);
+    expect(terminalCount).toBe(1);
+    expect(failure).toBeNull();
   });
 
   it("parses and validates the packed Rust snapshot contract", () => {

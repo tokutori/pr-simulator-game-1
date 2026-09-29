@@ -69,6 +69,7 @@ export class FlightController {
           this.terminalReported = true;
           this.onTerminal(this.snapshotValue);
         }
+        return this.snapshotValue.terminal === "airborne";
       });
     } catch (error: unknown) {
       this.failed = true;
