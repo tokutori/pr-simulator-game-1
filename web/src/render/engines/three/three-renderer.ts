@@ -866,6 +866,8 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
 }
 
 vec3 lakeMicroDetail(vec2 worldXZ) {
+  const float fineAmplitude = 0.16;
+  const float rippleAmplitude = 0.055;
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
   // These compact gravity-wave bands use phase-speed ratios proportional to
@@ -900,11 +902,11 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   vec2 fineSlope = vec2(
     0.6 * fineRawSlope.x + 0.8 * fineRawSlope.y,
     -0.8 * fineRawSlope.x + 0.6 * fineRawSlope.y
-  ) * 2.6 * 0.11;
+  ) * 2.6 * fineAmplitude;
   vec2 rippleSlope = vec2(
     0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
     -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
-  ) * 5.2 * 0.035;
+  ) * 5.2 * rippleAmplitude;
   vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4 + fineSlope + rippleSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
@@ -914,8 +916,8 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
     + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance
-    + 2.6 * 2.6 * 0.11 * 0.11 * fineVariance
-    + 5.2 * 5.2 * 0.035 * 0.035 * rippleVariance;
+    + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
+    + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
   // Preserve visible fine-scale contrast as the pilot eye rises above the
   // water; projected waves otherwise lose nearly all of their normal detail.
   float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
