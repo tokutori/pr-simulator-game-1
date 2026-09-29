@@ -46,24 +46,32 @@ export function createLakeSkyTexture(): DataTexture {
     const latitude = (v - 0.5) * Math.PI;
     const elevation = Math.max(0, Math.sin(latitude));
     const gradient = Math.pow(elevation, 0.72);
-    const cloudWeight = smoothstep(elevation / 0.12) * (1 - smoothstep((elevation - 0.78) / 0.2));
+    const horizonHaze = (1 - smoothstep(elevation / 0.12)) * 3;
     for (let column = 0; column < width; column++) {
       const u = (column + 0.5) / width;
       const longitude = (u - 0.5) * Math.PI * 2;
-      const cloud = (
-        (cloudNoise(u, v, 12, 5) - 0.5) * 0.5 +
-        (cloudNoise(u, v, 32, 13) - 0.5) * 0.35 +
-        (cloudNoise(u, v, 64, 25) - 0.5) * 0.15
-      ) * cloudWeight * 30;
+      let cloud = 0;
+      if (elevation > 0) {
+        const cloudDrift = cloudNoise(u, v, 4, 7) - 0.5;
+        const cloudWarp = cloudDrift * 0.012;
+        const lowCloudWeight = smoothstep(elevation / 0.025) *
+          (1 - smoothstep((elevation - 0.22 - cloudDrift * 0.07) / 0.16));
+        const cloudField = lowCloudWeight * (
+          cloudNoise(u, v + cloudWarp, 10, 24) * 0.65 +
+          cloudNoise(u, v + cloudWarp, 25, 52) * 0.35
+        );
+        // Weighted coverage over the visible sky is about 5% at this threshold.
+        cloud = smoothstep((cloudField - 0.62) / 0.04) * 18;
+      }
       const rayX = Math.cos(latitude) * Math.cos(longitude);
       const rayY = Math.sin(latitude);
       const rayZ = Math.cos(latitude) * Math.sin(longitude);
       const sunAlignment = Math.max(0, (rayX * sun[0] + rayY * sun[1] + rayZ * sun[2]) / sunLength);
       const sunGlow = Math.pow(sunAlignment, 120) * 14;
       const offset = (row * width + column) * 4;
-      pixels[offset] = Math.round(Math.max(0, Math.min(255, 159 - 23 * gradient + cloud + sunGlow)));
-      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, 176 - 15 * gradient + cloud + sunGlow * 0.8)));
-      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, 173 - gradient + cloud + sunGlow * 0.55)));
+      pixels[offset] = Math.round(Math.max(0, Math.min(255, 168 - 42 * gradient + cloud + horizonHaze + sunGlow)));
+      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, 191 - 20 * gradient + cloud + horizonHaze + sunGlow * 0.8)));
+      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, 197 - 7 * gradient + cloud + horizonHaze + sunGlow * 0.55)));
       pixels[offset + 3] = 255;
     }
   }
