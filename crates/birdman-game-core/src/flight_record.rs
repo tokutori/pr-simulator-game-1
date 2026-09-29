@@ -874,6 +874,13 @@ mod tests {
     }
 
     #[test]
+    fn maximum_record_sample_payload_matches_the_documented_budget() {
+        let sample_size = core::mem::size_of::<super::FlightRecordSample>();
+        assert_eq!(sample_size, 424);
+        assert_eq!(sample_size * super::MAX_FLIGHT_RECORD_SAMPLES, 1_696_424);
+    }
+
+    #[test]
     fn tick_append_keeps_the_preallocated_sample_buffer() {
         let (header, initial, telemetry) = fixture();
         let aircraft = AircraftModel::try_new(
