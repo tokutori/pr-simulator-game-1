@@ -21,7 +21,8 @@ describe("Game scene view model", () => {
     [5, "Flight"],
     [6, "Flight"],
     [7, "Result"],
-    [8, "Briefing"]
+    [8, "Briefing"],
+    [10, "Title"]
   ] as const)("maps phase %i to %s", (gamePhaseCode, scene) => {
     const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(gamePhaseCode) });
     const view = createGameViewModel(model, null);
@@ -64,6 +65,15 @@ describe("Game scene view model", () => {
     const pendingControls = createGameViewModel({ ...model, pendingGameRequestId: 2 }, null).panels[0]?.controls;
     expect(pendingControls?.find((control) => control.id === "game-title-open-record-12"))
       .toMatchObject({ kind: "button", enabled: false });
+  });
+
+  it("shows the Attract return action while the Title demo is playing", () => {
+    const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(10) });
+    const controls = createGameViewModel(model, null).panels[0]?.controls;
+    expect(controls?.find((control) => control.id === "game-attract-status"))
+      .toMatchObject({ kind: "status", value: "自動再生中" });
+    expect(controls?.find((control) => control.id === "game-attract-return"))
+      .toMatchObject({ kind: "button", enabled: true });
   });
 
   it("projects the Rust Replay phase with a shared record-time scrubber", () => {

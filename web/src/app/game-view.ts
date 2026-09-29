@@ -139,6 +139,11 @@ export function createGameViewModel(
       })
     );
     buttons.forEach((entry) => controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.08, 0.12, 0.84, 0.075) })));
+  } else if (phaseCode === 10) {
+    controls.push(
+      Object.freeze({ ...status("game-attract-status", "Demo", model.status || "自動再生中"), rect: normalizedRect(0.08, 0.72, 0.84, 0.08) }),
+      Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.08, 0.60, 0.84, 0.075) })
+    );
   } else {
     let bottom = 0.795;
     buttons.forEach((entry) => {
@@ -446,7 +451,7 @@ function gameButtons(
 ): UiButton[] {
   switch (phaseCode) {
     case 0:
-      return [button("game-title-start", "飛行を設定", true)];
+      return [button("game-title-start", "飛行を設定", true), button("game-title-demo", "デモ飛行を見る", true)];
     case 1:
       return [
         button("game-setup-preset", `Preset: ${presetLabel(difficulty.presetCode)}`, true),
@@ -491,6 +496,8 @@ function gameButtons(
       ];
     case 9:
       return [button("game-replay-return", "Resultへ戻る", true)];
+    case 10:
+      return [button("game-attract-return", "Titleへ戻る", true)];
     default:
       return [];
   }
@@ -539,6 +546,7 @@ function sceneForPhase(phaseCode: number): UiViewModel["scene"] {
     case 6: return "Flight";
     case 7: return "Result";
     case 9: return "Replay";
+    case 10: return "Title";
     default: return "Boot";
   }
 }
@@ -568,6 +576,7 @@ function descriptionForPhase(phaseCode: number, difficulty: DifficultyUiState, c
     case 7: return "確定済みterminal snapshotから結果を表示する。";
     case 8: return "Briefing準備に失敗した。再試行または設定変更を選択する。";
     case 9: return "確定済みFlightRecordのposeを再生している。physics stateは進行しない。";
+    case 10: return "Title用の独立したFlightRecordを自動再生している。";
     default: return "表示基盤を初期化している。";
   }
 }

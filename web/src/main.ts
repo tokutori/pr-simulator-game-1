@@ -63,7 +63,7 @@ function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
-  if (previousPhaseCode === 9 && gameSessionPhaseCode(model.gameSession) !== 9) flightController?.renderCurrentSnapshot();
+  if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
   renderModel();
   for (const effect of transition.effects) runEffect(effect);
 }
@@ -77,8 +77,8 @@ function renderModel(): void {
     model.analysisCursorTimeSeconds,
     model.presentation.type === "ready" ? model.presentation.mode : "screen"
   );
-  flightRenderer?.setFlightCameraMode(gameSessionPhaseCode(model.gameSession) === 9 ? replayCameraMode : "pilot");
-  if (gameSessionPhaseCode(model.gameSession) === 9) {
+  flightRenderer?.setFlightCameraMode([9, 10].includes(gameSessionPhaseCode(model.gameSession)) ? replayCameraMode : "pilot");
+  if ([9, 10].includes(gameSessionPhaseCode(model.gameSession))) {
     if (model.replayPose !== null) flightRenderer?.setFlightPose(model.replayPose);
   }
   if (model.presentation.type === "hidden") {
@@ -481,6 +481,12 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
         break;
       case "leave-replay":
         (session as unknown as { leave_replay(): void }).leave_replay();
+        break;
+      case "enter-attract":
+        session.enter_attract();
+        break;
+      case "leave-attract":
+        session.leave_attract();
         break;
       default:
         return assertNever(operation);
