@@ -264,13 +264,18 @@ export function createGameViewModel(
       bottom = y - 0.01;
     });
   }
+  const renderedControls = model.pendingGameRequestId === null
+    ? controls
+    : controls.map((control) => control.kind === "button" || control.kind === "range"
+      ? Object.freeze({ ...control, enabled: false })
+      : control);
   const panel: UiPanel = Object.freeze({
     id: "game-flow",
     title: "ゲーム進行",
     anchor: vrFlightPanel ? "cockpit" : "menu",
     localPose: vrFlightPanel ? pose(vec3(0, 0, -1.25), IDENTITY_POSE.orientation) : IDENTITY_POSE,
     size: vrFlightPanel ? Object.freeze({ width: 0.95, height: 0.68 }) : Object.freeze({ width: 2.4, height: 1.8 }),
-    controls: Object.freeze(controls)
+    controls: Object.freeze(renderedControls)
   });
   return Object.freeze({
     scene,

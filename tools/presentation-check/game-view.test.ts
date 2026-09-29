@@ -81,6 +81,23 @@ describe("Game scene view model", () => {
     const pendingControls = createGameViewModel({ ...model, pendingGameRequestId: 2 }, null).panels[0]?.controls;
     expect(pendingControls?.find((control) => control.id === "game-title-open-record-12"))
       .toMatchObject({ kind: "button", enabled: false });
+    expect(pendingControls?.find((control) => control.id === "game-title-start"))
+      .toMatchObject({ kind: "button", enabled: false });
+    expect(pendingControls?.find((control) => control.id === "game-title-demo"))
+      .toMatchObject({ kind: "button", enabled: false });
+  });
+
+  it("disables Result and Analysis actions while a game operation is pending", () => {
+    const model = Object.freeze({
+      ...createInitialAppModel(),
+      gameSession: sessionForPhase(7),
+      resultTab: "analysis" as const,
+      pendingGameRequestId: 2
+    });
+    const controls = createGameViewModel(model, null).panels[0]?.controls ?? [];
+    const buttons = controls.filter((control) => control.kind === "button");
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every((control) => !control.enabled)).toBe(true);
   });
 
   it("shows the Attract return action while the Title demo is playing", () => {
