@@ -9,9 +9,9 @@ pub use flight_record::{
     FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
     FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
     FlightRecordFinalizationDocument, FlightRecordFormatError, FlightRecordHeaderDocument,
-    FlightRecordInformationDocument, FlightRecordInputDocument, FlightRecordPresetDocument,
-    FlightRecordSampleDocument, FlightRecordTelemetryDocument, FlightRecordWeatherDocument,
-    MAX_FLIGHT_RECORD_JSON_BYTES,
+    FlightRecordHudProfileDocument, FlightRecordInformationDocument, FlightRecordInputDocument,
+    FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordTelemetryDocument,
+    FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
 };
 
 use birdman_game_core::{BodyRateFeedbackConfig, ControlMode, FbwAuthority, FlightScenario};
@@ -27,6 +27,148 @@ pub enum InformationLevel {
     Minimal,
     /// Instrumentation configured for a validated aircraft model.
     Realistic,
+    /// Independently configured flight information cues.
+    Custom,
+}
+
+/// Independently selectable non-physical flight information cues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HudProfile {
+    telemetry: bool,
+    attitude: bool,
+    wind: bool,
+    flight_path: bool,
+    angle_of_attack: bool,
+    warnings: bool,
+}
+
+impl HudProfile {
+    /// Constructs a profile from explicit cue visibility values.
+    pub const fn new(
+        telemetry: bool,
+        attitude: bool,
+        wind: bool,
+        flight_path: bool,
+        angle_of_attack: bool,
+        warnings: bool,
+    ) -> Self {
+        Self {
+            telemetry,
+            attitude,
+            wind,
+            flight_path,
+            angle_of_attack,
+            warnings,
+        }
+    }
+
+    /// Returns the default cue profile for a named Information level.
+    pub const fn for_level(level: InformationLevel) -> Self {
+        match level {
+            InformationLevel::Full => Self::new(true, true, true, true, true, true),
+            InformationLevel::Standard | InformationLevel::Realistic => {
+                Self::new(true, true, false, false, false, false)
+            }
+            InformationLevel::Minimal => Self::new(true, false, false, false, false, false),
+            InformationLevel::Custom => Self::new(true, true, true, true, true, true),
+        }
+    }
+
+    /// Returns whether the telemetry readouts are visible.
+    pub const fn telemetry(self) -> bool {
+        self.telemetry
+    }
+    /// Returns whether attitude cues are visible.
+    pub const fn attitude(self) -> bool {
+        self.attitude
+    }
+    /// Returns whether wind cues are visible.
+    pub const fn wind(self) -> bool {
+        self.wind
+    }
+    /// Returns whether the flight-path marker is visible.
+    pub const fn flight_path(self) -> bool {
+        self.flight_path
+    }
+    /// Returns whether angle-of-attack cues are visible.
+    pub const fn angle_of_attack(self) -> bool {
+        self.angle_of_attack
+    }
+    /// Returns whether warning cues are visible.
+    pub const fn warnings(self) -> bool {
+        self.warnings
+    }
+
+    /// Replaces one cue without changing the other profile values.
+    pub const fn with_cue(self, cue: HudCue, visible: bool) -> Self {
+        match cue {
+            HudCue::Telemetry => Self::new(
+                visible,
+                self.attitude,
+                self.wind,
+                self.flight_path,
+                self.angle_of_attack,
+                self.warnings,
+            ),
+            HudCue::Attitude => Self::new(
+                self.telemetry,
+                visible,
+                self.wind,
+                self.flight_path,
+                self.angle_of_attack,
+                self.warnings,
+            ),
+            HudCue::Wind => Self::new(
+                self.telemetry,
+                self.attitude,
+                visible,
+                self.flight_path,
+                self.angle_of_attack,
+                self.warnings,
+            ),
+            HudCue::FlightPath => Self::new(
+                self.telemetry,
+                self.attitude,
+                self.wind,
+                visible,
+                self.angle_of_attack,
+                self.warnings,
+            ),
+            HudCue::AngleOfAttack => Self::new(
+                self.telemetry,
+                self.attitude,
+                self.wind,
+                self.flight_path,
+                visible,
+                self.warnings,
+            ),
+            HudCue::Warnings => Self::new(
+                self.telemetry,
+                self.attitude,
+                self.wind,
+                self.flight_path,
+                self.angle_of_attack,
+                visible,
+            ),
+        }
+    }
+}
+
+/// Stable identity for one independently configurable HUD cue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HudCue {
+    /// Numeric telemetry readouts.
+    Telemetry,
+    /// Attitude indicator and heading.
+    Attitude,
+    /// Wind vector readout.
+    Wind,
+    /// Flight-path marker.
+    FlightPath,
+    /// Angle-of-attack cue.
+    AngleOfAttack,
+    /// Warning cues.
+    Warnings,
 }
 
 /// Weather classification attached to a versioned scenario catalog.
@@ -64,6 +206,7 @@ pub enum DifficultyPreset {
 pub struct DifficultySettings {
     preset: DifficultyPreset,
     information: InformationLevel,
+    hud_profile: HudProfile,
     assistance: AssistanceLevel,
     weather: WeatherClass,
 }
@@ -100,6 +243,7 @@ impl DifficultySettings {
         Ok(Self {
             preset,
             information,
+            hud_profile: HudProfile::for_level(information),
             assistance,
             weather,
         })
@@ -114,6 +258,7 @@ impl DifficultySettings {
         Self {
             preset: DifficultyPreset::Custom,
             information,
+            hud_profile: HudProfile::for_level(information),
             assistance,
             weather,
         }
@@ -127,6 +272,11 @@ impl DifficultySettings {
     /// Returns the information axis.
     pub const fn information(self) -> InformationLevel {
         self.information
+    }
+
+    /// Returns the resolved HUD cue profile.
+    pub const fn hud_profile(self) -> HudProfile {
+        self.hud_profile
     }
 
     /// Returns the assistance axis.
@@ -143,6 +293,25 @@ impl DifficultySettings {
     pub const fn with_information(mut self, value: InformationLevel) -> Self {
         self.preset = DifficultyPreset::Custom;
         self.information = value;
+        if !matches!(value, InformationLevel::Custom) {
+            self.hud_profile = HudProfile::for_level(value);
+        }
+        self
+    }
+
+    /// Selects the Custom information profile while changing one cue.
+    pub const fn with_hud_cue(mut self, cue: HudCue, visible: bool) -> Self {
+        self.preset = DifficultyPreset::Custom;
+        self.information = InformationLevel::Custom;
+        self.hud_profile = self.hud_profile.with_cue(cue, visible);
+        self
+    }
+
+    /// Replaces the resolved cue profile and selects Custom Information.
+    pub const fn with_hud_profile(mut self, profile: HudProfile) -> Self {
+        self.preset = DifficultyPreset::Custom;
+        self.information = InformationLevel::Custom;
+        self.hud_profile = profile;
         self
     }
 
@@ -522,6 +691,23 @@ mod tests {
         assert_eq!(changed.information(), InformationLevel::Minimal);
         assert_eq!(changed.assistance(), AssistanceLevel::Assisted);
         assert_eq!(changed.weather(), WeatherClass::Typical);
+    }
+
+    #[test]
+    fn custom_hud_cue_edit_changes_only_information_profile() {
+        let settings = DifficultySettings::preset(DifficultyPreset::Standard).unwrap();
+        let changed = settings.with_hud_cue(HudCue::Wind, true);
+
+        assert_eq!(changed.preset_label(), DifficultyPreset::Custom);
+        assert_eq!(changed.information(), InformationLevel::Custom);
+        assert_eq!(changed.assistance(), AssistanceLevel::Assisted);
+        assert_eq!(changed.weather(), WeatherClass::Typical);
+        assert!(changed.hud_profile().wind());
+        assert!(changed.hud_profile().telemetry());
+        assert!(changed.hud_profile().attitude());
+        assert!(!changed.hud_profile().flight_path());
+        assert!(!changed.hud_profile().angle_of_attack());
+        assert!(!changed.hud_profile().warnings());
     }
 
     #[test]

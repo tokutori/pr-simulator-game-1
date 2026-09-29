@@ -1,5 +1,6 @@
 use crate::{
-    AssistanceLevel, DifficultyPreset, DifficultySettings, InformationLevel, WeatherClass,
+    AssistanceLevel, DifficultyPreset, DifficultySettings, HudProfile, InformationLevel,
+    WeatherClass,
 };
 use alloc::vec::Vec;
 use birdman_game_core::{
@@ -11,7 +12,8 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// Current external flight-record schema version.
-pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
+pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 2;
+const LEGACY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
 
 /// Maximum encoded JSON size accepted by the decoder.
 pub const MAX_FLIGHT_RECORD_JSON_BYTES: usize = 16 * 1024 * 1024;
@@ -64,10 +66,32 @@ pub struct FlightRecordDifficultyDocument {
     pub preset: FlightRecordPresetDocument,
     /// Information display axis.
     pub information: FlightRecordInformationDocument,
+    /// Explicit cue profile for Custom information; omitted by schema version 1.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hud_profile: Option<FlightRecordHudProfileDocument>,
     /// FBW assistance axis.
     pub assistance: FlightRecordAssistanceDocument,
     /// Weather scenario axis.
     pub weather: FlightRecordWeatherDocument,
+}
+
+/// Independently selected HUD cue visibility persisted with a Custom profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlightRecordHudProfileDocument {
+    /// Whether numeric telemetry readouts are visible.
+    pub telemetry: bool,
+    /// Whether attitude cues are visible.
+    pub attitude: bool,
+    /// Whether wind cues are visible.
+    pub wind: bool,
+    /// Whether the flight-path marker is visible.
+    pub flight_path: bool,
+    /// Whether angle-of-attack cues are visible.
+    pub angle_of_attack: bool,
+    /// Whether warning cues are visible.
+    pub warnings: bool,
 }
 
 /// Stable preset names in the external record format.
@@ -98,6 +122,8 @@ pub enum FlightRecordInformationDocument {
     Minimal,
     /// Aircraft-configured instrumentation.
     Realistic,
+    /// Independently configured flight information cues.
+    Custom,
 }
 
 /// Stable assistance-level names in the external record format.
@@ -308,8 +334,22 @@ impl FlightRecordDocument {
 
     /// Validates schema version, bounded capacity, sample invariants, and finalization.
     pub fn validate(&self) -> Result<(), FlightRecordFormatError> {
-        if self.schema_version != FLIGHT_RECORD_SCHEMA_VERSION {
+        if !matches!(
+            self.schema_version,
+            LEGACY_FLIGHT_RECORD_SCHEMA_VERSION | FLIGHT_RECORD_SCHEMA_VERSION
+        ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
+        }
+        let information = self.header.difficulty.information;
+        let has_custom_hud_profile = self.header.difficulty.hud_profile.is_some();
+        if (self.schema_version == LEGACY_FLIGHT_RECORD_SCHEMA_VERSION
+            && (matches!(information, FlightRecordInformationDocument::Custom)
+                || has_custom_hud_profile))
+            || (self.schema_version == FLIGHT_RECORD_SCHEMA_VERSION
+                && matches!(information, FlightRecordInformationDocument::Custom)
+                    != has_custom_hud_profile)
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
         }
         if self.header.catalog_version == 0
             || self.header.scenario_version == 0
@@ -560,6 +600,8 @@ impl From<DifficultySettings> for FlightRecordDifficultyDocument {
         Self {
             preset: settings.preset_label().into(),
             information: settings.information().into(),
+            hud_profile: matches!(settings.information(), InformationLevel::Custom)
+                .then(|| settings.hud_profile().into()),
             assistance: settings.assistance().into(),
             weather: settings.weather().into(),
         }
@@ -585,6 +627,20 @@ impl From<InformationLevel> for FlightRecordInformationDocument {
             InformationLevel::Standard => Self::Standard,
             InformationLevel::Minimal => Self::Minimal,
             InformationLevel::Realistic => Self::Realistic,
+            InformationLevel::Custom => Self::Custom,
+        }
+    }
+}
+
+impl From<HudProfile> for FlightRecordHudProfileDocument {
+    fn from(profile: HudProfile) -> Self {
+        Self {
+            telemetry: profile.telemetry(),
+            attitude: profile.attitude(),
+            wind: profile.wind(),
+            flight_path: profile.flight_path(),
+            angle_of_attack: profile.angle_of_attack(),
+            warnings: profile.warnings(),
         }
     }
 }
@@ -850,6 +906,46 @@ mod tests {
             FlightRecordDocument::from_record(&restored, settings).unwrap(),
             decoded
         );
+    }
+
+    #[test]
+    fn custom_hud_profile_round_trips_in_schema_two() {
+        let mut document = completed_record();
+        document.header.difficulty.information =
+            super::super::FlightRecordInformationDocument::Custom;
+        document.header.difficulty.hud_profile = Some(super::FlightRecordHudProfileDocument {
+            telemetry: true,
+            attitude: false,
+            wind: true,
+            flight_path: false,
+            angle_of_attack: true,
+            warnings: false,
+        });
+        document.validate().unwrap();
+        let encoded = document.encode_json().unwrap();
+        assert_eq!(
+            FlightRecordDocument::decode_json(&encoded).unwrap(),
+            document
+        );
+    }
+
+    #[test]
+    fn schema_one_records_without_hud_profile_remain_readable() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&completed_record().encode_json().unwrap()).unwrap();
+        value["schema_version"] = serde_json::Value::from(1);
+        value["header"]["difficulty"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hud_profile");
+        let encoded = serde_json::to_vec(&value).unwrap();
+        let decoded = FlightRecordDocument::decode_json(&encoded).unwrap();
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(
+            decoded.header.difficulty.information,
+            super::super::FlightRecordInformationDocument::Full
+        );
+        assert_eq!(decoded.header.difficulty.hud_profile, None);
     }
 
     #[test]
