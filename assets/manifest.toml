@@ -1,2 +1,20 @@
 schema_version = 1
-assets = []
+[[assets]]
+path = "assets/indigo-resist-decal.png"
+sha256 = "9de869562b54113362a1a3b950b9761c3dde05df0737192a01dd843b9237c5d0"
+source = "OpenAI-generated decal using the user-supplied Tokutori wing photo as visual reference"
+source_version = "2026-09-30 attachment"
+license = "MIT (generated decal; reference photograph is not distributed)"
+license_url = "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE"
+attribution = "User-supplied reference photograph; OpenAI-generated decal"
+processing = "Generated transparent brushwork; cropped into separate left and right wing masks at runtime"
+
+[[assets]]
+path = "assets/tokushima-fin-artwork.png"
+sha256 = "3718fc75c76fcb3ed618a792ce18601b56e648a87ad03eb888c19ebca475cb56"
+source = "OpenAI-generated fin artwork using the user-supplied Tokutori tail photograph as visual reference"
+source_version = "2026-09-30 attachment"
+license = "MIT (generated artwork; reference photograph is not distributed)"
+license_url = "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE"
+attribution = "User-supplied reference photograph; OpenAI-generated artwork"
+processing = "Generated orthographic indigo fabric and hand-painted Tokushima University lettering"

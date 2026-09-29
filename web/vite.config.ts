@@ -23,5 +23,13 @@ export default defineConfig({
   publicDir: false,
   define: { __APP_BUILD_LABEL__: JSON.stringify(buildLabel) },
   plugins: [verifiedAssets(fileURLToPath(new URL("..", import.meta.url)))],
-  build: { outDir: "dist", emptyOutDir: true }
+  build: {
+    outDir: "dist", emptyOutDir: true,
+    rolldownOptions: {
+      input: {
+        game: fileURLToPath(new URL("./index.html", import.meta.url)),
+        airframePreview: fileURLToPath(new URL("./airframe-preview.html", import.meta.url))
+      }
+    }
+  }
 });
