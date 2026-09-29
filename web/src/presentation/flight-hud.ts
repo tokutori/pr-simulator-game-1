@@ -1,5 +1,7 @@
 import type { FlightHudPort } from "../game/flight-controller.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import { createFlightHudModel } from "./flight-hud-model.js";
+import type { InformationLevelCode } from "./flight-hud-model.js";
 
 export class FlightHudAdapter implements FlightHudPort {
   private readonly status: HTMLOutputElement;
@@ -7,11 +9,15 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly adi: SVGSVGElement;
   private readonly horizon: SVGGElement;
   private readonly readouts: HTMLOutputElement;
+  private readonly headingInstrument: HTMLDivElement;
   private readonly headingReadout: HTMLOutputElement;
+  private readonly pilotPositionInstrument: HTMLDivElement;
   private readonly pilotPositionReadout: HTMLOutputElement;
+  private readonly windInstrument: HTMLDivElement;
   private readonly windReadout: HTMLOutputElement;
+  private readonly angleInstrument: HTMLDivElement;
   private readonly angleReadout: HTMLOutputElement;
-  private informationCode = 0;
+  private informationCode: InformationLevelCode = 0;
 
   constructor(private readonly root: HTMLElement) {
     const documentRef = root.ownerDocument;
@@ -65,10 +71,18 @@ export class FlightHudAdapter implements FlightHudPort {
     this.adi.append(defs, this.horizon, frame, aircraft);
     const instruments = documentRef.createElement("div");
     instruments.className = "flight-hud-instruments";
-    this.headingReadout = instrumentOutput(documentRef, instruments, "HDG", "heading");
-    this.pilotPositionReadout = instrumentOutput(documentRef, instruments, "PILOT CG", "pilot-position");
-    this.windReadout = instrumentOutput(documentRef, instruments, "WIND N / E / D", "wind");
-    this.angleReadout = instrumentOutput(documentRef, instruments, "ANGLE OF ATTACK", "angle");
+    const headingInstrument = instrumentOutput(documentRef, instruments, "HDG", "heading");
+    this.headingInstrument = headingInstrument.cell;
+    this.headingReadout = headingInstrument.output;
+    const pilotPositionInstrument = instrumentOutput(documentRef, instruments, "PILOT CG", "pilot-position");
+    this.pilotPositionInstrument = pilotPositionInstrument.cell;
+    this.pilotPositionReadout = pilotPositionInstrument.output;
+    const windInstrument = instrumentOutput(documentRef, instruments, "WIND N / E / D", "wind");
+    this.windInstrument = windInstrument.cell;
+    this.windReadout = windInstrument.output;
+    const angleInstrument = instrumentOutput(documentRef, instruments, "ANGLE OF ATTACK", "angle");
+    this.angleInstrument = angleInstrument.cell;
+    this.angleReadout = angleInstrument.output;
     this.readouts = documentRef.createElement("output");
     this.readouts.className = "flight-hud-readouts";
     const controls = documentRef.createElement("p");
@@ -84,46 +98,27 @@ export class FlightHudAdapter implements FlightHudPort {
     if (!Number.isInteger(code) || code < 0 || code > 3) {
       throw new RangeError("Information code must lie in [0, 3]");
     }
-    this.informationCode = code;
+    this.informationCode = code as InformationLevelCode;
   }
 
   render(snapshot: FlightSnapshot): void {
-    this.status.textContent = terminalLabel(snapshot.terminal);
-    const telemetry = snapshot.telemetry;
-    if (telemetry === null) {
-      this.adi.classList.add("is-hidden");
-      this.readouts.textContent = "";
-      this.headingReadout.textContent = "—";
-      this.pilotPositionReadout.textContent = `${snapshot.pilotPositionMeters.toFixed(2)} m`;
-      this.windReadout.textContent = "unavailable";
-      this.angleReadout.textContent = "unavailable";
-      this.telemetry.textContent = `Tick ${String(snapshot.tick)} · telemetry unavailable · distance ${snapshot.scoreCourseMeters.toFixed(1)} m`;
-      return;
+    const model = createFlightHudModel(snapshot, this.informationCode);
+    this.status.textContent = model.status;
+    this.adi.classList.toggle("is-hidden", model.attitude === null);
+    this.readouts.textContent = model.readouts;
+    this.headingInstrument.hidden = model.heading === null;
+    this.headingReadout.textContent = model.heading ?? "";
+    this.pilotPositionInstrument.hidden = model.pilotPosition === null;
+    this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
+    this.windInstrument.hidden = model.wind === null;
+    this.windReadout.textContent = model.wind ?? "";
+    this.angleInstrument.hidden = model.angleOfAttack === null;
+    this.angleReadout.textContent = model.angleOfAttack ?? "";
+    this.telemetry.textContent = model.telemetry;
+    if (model.attitude !== null) {
+      const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
+      this.horizon.setAttribute("transform", `rotate(${String(-model.attitude.rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);
     }
-    this.adi.classList.remove("is-hidden");
-    const rollDegrees = telemetry.rollRadians * 180 / Math.PI;
-    const pitchDegrees = telemetry.pitchRadians * 180 / Math.PI;
-    const pitchShift = Math.max(-55, Math.min(55, pitchDegrees * 2.2));
-    this.horizon.setAttribute("transform", `rotate(${String(-rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);
-    const headingDegrees = ((telemetry.headingRadians * 180 / Math.PI) % 360 + 360) % 360;
-    this.readouts.textContent = `IAS ${telemetry.airspeedMetersPerSecond.toFixed(1)} m/s   ALT ${telemetry.altitudeMeters.toFixed(1)} m\nPITCH ${pitchDegrees.toFixed(0)}°   ROLL ${rollDegrees.toFixed(0)}°`;
-    this.headingReadout.textContent = `${headingDegrees.toFixed(0)}°`;
-    this.pilotPositionReadout.textContent = `${snapshot.pilotPositionMeters >= 0 ? "+" : ""}${snapshot.pilotPositionMeters.toFixed(2)} m`;
-    const distance = `distance ${snapshot.scoreCourseMeters.toFixed(1)} m`;
-    const time = `time ${snapshot.flightTimeSeconds.toFixed(1)} s`;
-    const groundspeed = `groundspeed ${telemetry.groundspeedMetersPerSecond.toFixed(1)} m/s`;
-    const wind = telemetry.windVelocityNedMetersPerSecond;
-    this.windReadout.textContent = `N ${wind.north.toFixed(1)} · E ${wind.east.toFixed(1)} · D ${wind.down.toFixed(1)} m/s`;
-    this.angleReadout.textContent = telemetry.angleOfAttackRadians === null
-      ? "—"
-      : `${(telemetry.angleOfAttackRadians * 180 / Math.PI).toFixed(1)}°`;
-    const modeLabel = this.informationCode === 3 ? "synthetic instruments" : "";
-    const fields = this.informationCode === 2
-      ? [distance, time]
-      : this.informationCode === 1 || this.informationCode === 3
-        ? [groundspeed, distance, time]
-      : [distance, time];
-    this.telemetry.textContent = [modeLabel, ...fields].filter(Boolean).join(" · ");
   }
 
   fail(message: string): void {
@@ -136,7 +131,7 @@ export class FlightHudAdapter implements FlightHudPort {
   }
 }
 
-function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): HTMLOutputElement {
+function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement } {
   const cell = documentRef.createElement("div");
   cell.className = `flight-hud-instrument flight-hud-instrument-${name}`;
   const caption = documentRef.createElement("span");
@@ -145,16 +140,5 @@ function instrumentOutput(documentRef: Document, root: HTMLElement, label: strin
   output.setAttribute("aria-label", label);
   cell.append(caption, output);
   root.append(cell);
-  return output;
-}
-
-function terminalLabel(terminal: FlightSnapshot["terminal"]): string {
-  switch (terminal) {
-    case "airborne": return "滑空中";
-    case "water-contact": return "着水";
-    case "time-limit": return "時間制限";
-    case "out-of-valid-envelope": return "空力モデルの適用範囲外";
-    case "manual-abort": return "手動終了";
-    case "fatal-simulation-error": return "シミュレーションエラー";
-  }
+  return Object.freeze({ cell, output });
 }
