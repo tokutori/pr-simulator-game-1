@@ -78,12 +78,18 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
       const transaction = database.transaction("records", "readonly");
       const request = transaction.objectStore("records").get(id);
       let record: StoredFlightRecord | null = null;
+      let malformed = false;
       request.onsuccess = () => {
         const result: unknown = request.result;
-        record = isStoredFlightRecord(result) ? result : null;
+        if (result === undefined) return;
+        if (isStoredFlightRecord(result)) record = result;
+        else malformed = true;
       };
       request.onerror = () => { reject(request.error ?? new Error("IndexedDB record read failed")); };
-      transaction.oncomplete = () => { resolve(record); };
+      transaction.oncomplete = () => {
+        if (malformed) reject(new TypeError("IndexedDB flight record is malformed"));
+        else resolve(record);
+      };
       transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB record read was aborted")); };
       transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB record read failed")); };
     }));
@@ -93,15 +99,18 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     return this.withDatabase((database) => new Promise<readonly StoredFlightRecordSummary[]>((resolve, reject) => {
       const transaction = database.transaction("recordMetadata", "readonly");
       const request = transaction.objectStore("recordMetadata").getAll();
-      let records: readonly StoredFlightRecordSummary[] = Object.freeze([]);
+      let records: readonly StoredFlightRecordSummary[] | null = null;
       request.onsuccess = () => {
         const result: unknown = request.result;
-        records = Array.isArray(result) && result.every(isStoredFlightRecordSummary)
-          ? Object.freeze(result)
-          : Object.freeze([]);
+        if (Array.isArray(result) && result.every(isStoredFlightRecordSummary)) {
+          records = Object.freeze(result);
+        }
       };
       request.onerror = () => { reject(request.error ?? new Error("IndexedDB record list failed")); };
-      transaction.oncomplete = () => { resolve(records); };
+      transaction.oncomplete = () => {
+        if (records === null) reject(new TypeError("IndexedDB record metadata is malformed"));
+        else resolve(records);
+      };
       transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB record list was aborted")); };
       transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB record list failed")); };
     }));
@@ -157,14 +166,14 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
 
 function isStoredFlightRecord(value: unknown): value is StoredFlightRecord {
   return typeof value === "object" && value !== null
-    && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id)
+    && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0
     && "savedAt" in value && typeof value.savedAt === "string"
     && "json" in value && typeof value.json === "string";
 }
 
 function isStoredFlightRecordSummary(value: unknown): value is StoredFlightRecordSummary {
   return typeof value === "object" && value !== null
-    && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id)
+    && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0
     && "savedAt" in value && typeof value.savedAt === "string";
 }
 
