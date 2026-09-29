@@ -138,9 +138,13 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       const saved = await repository.saveFrom(session);
       const document = JSON.parse(saved.json) as {
         readonly schema_version: number;
-        readonly header: { readonly difficulty: { readonly hud_profile: unknown } };
+        readonly header: {
+          readonly difficulty: { readonly hud_profile: unknown };
+          readonly physics_model_version: number;
+        };
       };
-      expect(document.schema_version).toBe(3);
+      expect(document.schema_version).toBe(4);
+      expect(document.header.physics_model_version).toBe(1);
       expect(document.header.difficulty.hud_profile).toEqual({
         telemetry: true,
         attitude: true,

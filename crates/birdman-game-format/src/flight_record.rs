@@ -12,9 +12,10 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// Current external flight-record schema version.
-pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 3;
+pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 4;
 const LEGACY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
 const CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 2;
+const SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 3;
 
 /// Maximum encoded JSON size accepted by the decoder.
 pub const MAX_FLIGHT_RECORD_JSON_BYTES: usize = 16 * 1024 * 1024;
@@ -60,6 +61,9 @@ pub struct FlightRecordHeaderDocument {
     /// Distance-score definition used to produce the finalized score; absent in schemas 1 and 2.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score_definition_version: Option<u32>,
+    /// Physical equations and integration semantics; absent before schema 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics_model_version: Option<u32>,
 }
 
 /// Resolved setup settings required to interpret a recorded flight.
@@ -329,6 +333,7 @@ impl FlightRecordDocument {
                 maximum_flight_ticks: header.maximum_flight_ticks,
                 physics_hz: header.physics_hz,
                 score_definition_version: Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION),
+                physics_model_version: Some(birdman_game_core::PHYSICS_MODEL_VERSION),
             },
             samples,
             finalization,
@@ -343,6 +348,7 @@ impl FlightRecordDocument {
             self.schema_version,
             LEGACY_FLIGHT_RECORD_SCHEMA_VERSION
                 | CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION
+                | SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
                 | FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
@@ -355,11 +361,16 @@ impl FlightRecordDocument {
             || (self.schema_version >= CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION
                 && matches!(information, FlightRecordInformationDocument::Custom)
                     != has_custom_hud_profile)
-            || (self.schema_version == FLIGHT_RECORD_SCHEMA_VERSION
+            || (self.schema_version >= SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
                 && self.header.score_definition_version
                     != Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION))
-            || (self.schema_version < FLIGHT_RECORD_SCHEMA_VERSION
+            || (self.schema_version < SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
                 && self.header.score_definition_version.is_some())
+            || (self.schema_version == FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.physics_model_version
+                    != Some(birdman_game_core::PHYSICS_MODEL_VERSION))
+            || (self.schema_version < FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.physics_model_version.is_some())
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -921,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_hud_profile_and_score_version_round_trip_in_schema_three() {
+    fn custom_hud_profile_score_and_physics_versions_round_trip_in_schema_four() {
         let mut document = completed_record();
         document.header.difficulty.information =
             super::super::FlightRecordInformationDocument::Custom;
@@ -933,10 +944,14 @@ mod tests {
             angle_of_attack: true,
             warnings: false,
         });
-        assert_eq!(document.schema_version, 3);
+        assert_eq!(document.schema_version, 4);
         assert_eq!(
             document.header.score_definition_version,
             Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+        );
+        assert_eq!(
+            document.header.physics_model_version,
+            Some(birdman_game_core::PHYSICS_MODEL_VERSION)
         );
         document.validate().unwrap();
         let encoded = document.encode_json().unwrap();
@@ -955,6 +970,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("score_definition_version");
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
         value["header"]["difficulty"]
             .as_object_mut()
             .unwrap()
@@ -968,6 +987,7 @@ mod tests {
         );
         assert_eq!(decoded.header.difficulty.hud_profile, None);
         assert_eq!(decoded.header.score_definition_version, None);
+        assert_eq!(decoded.header.physics_model_version, None);
     }
 
     #[test]
@@ -990,6 +1010,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("score_definition_version");
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
         let decoded =
             FlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert_eq!(decoded.schema_version, 2);
@@ -999,13 +1023,47 @@ mod tests {
         );
         assert!(decoded.header.difficulty.hud_profile.is_some());
         assert_eq!(decoded.header.score_definition_version, None);
+        assert_eq!(decoded.header.physics_model_version, None);
     }
 
     #[test]
-    fn schema_three_rejects_unknown_score_definition_versions() {
+    fn schema_three_score_records_remain_readable_without_physics_model_version() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&completed_record().encode_json().unwrap()).unwrap();
+        value["schema_version"] = serde_json::Value::from(3);
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
+        let decoded =
+            FlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, 3);
+        assert_eq!(
+            decoded.header.score_definition_version,
+            Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+        );
+        assert_eq!(decoded.header.physics_model_version, None);
+    }
+
+    #[test]
+    fn schema_four_rejects_unknown_score_and_physics_versions() {
         let mut document = completed_record();
         document.header.score_definition_version =
             Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION + 1);
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+
+        let mut document = completed_record();
+        document.header.physics_model_version = Some(birdman_game_core::PHYSICS_MODEL_VERSION + 1);
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+
+        let mut document = completed_record();
+        document.header.physics_model_version = None;
         assert_eq!(
             document.validate(),
             Err(FlightRecordFormatError::InvalidRecord)

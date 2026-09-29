@@ -32,10 +32,11 @@ const finalizedRecord = JSON.stringify({
 });
 
 const finalizedCustomHudRecord = JSON.stringify({
-  schema_version: 3,
+  schema_version: 4,
   header: {
     scenario_id: 1,
     score_definition_version: 1,
+    physics_model_version: 1,
     difficulty: { information: "custom", hud_profile: {} }
   },
   samples: [{ tick_index: 0 }],

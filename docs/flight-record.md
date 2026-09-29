@@ -16,13 +16,13 @@ recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraか
 
 ## Header
 
-外部保存形式は`birdman-game-format::FlightRecordDocument`のJSON schemaを用いる。現行versionは3であり、
-score definition versionを含まないversion 1・2 recordも読み込み対象とする。version判定とschema検証は
+外部保存形式は`birdman-game-format::FlightRecordDocument`のJSON schemaを用いる。現行versionは4であり、
+physics model versionを含まないversion 1〜3 recordも読み込み対象とする。version判定とschema検証は
 `birdman-game-format`が担当し、Web保存adapterはschema versionを解釈しない。
 physics/model versionはschema versionから独立させる。decoderは16 MiBを超える入力、未知schema version、未知field、壊れたJSONを拒否する。
 `serde_json`は`float_roundtrip`を有効化し、f64 sampleのencode/decodeで値を完全一致させる。
 
-schema version 1と2はscenario/model/environment/controller version、resolved presetと三軸、seed、tick上限、全sample、input、telemetry、finalization、scoreを保存する。version 2はCustom HUD profileを追加する。version 3はscore定義versionを追加し、Personal Best keyにおけるscore比較規則の識別を可能にする。legacy recordはscore定義versionが不明なためPersonal Best比較対象から除外する。
+schema version 1と2はscenario/model/environment/controller version、resolved presetと三軸、seed、tick上限、全sample、input、telemetry、finalization、scoreを保存する。version 2はCustom HUD profileを追加する。version 3はscore定義versionを追加する。version 4はphysics model versionを追加する。version 1〜2はscore定義versionが不明であり、version 1〜3はphysics model versionが不明なため、Personal Best比較対象から除外する。
 physics build hash、presentation policy、asset content hash、初期環境位相は未収録であり、永続化互換性を宣言する前にschemaへ追加する。
 
 - record schema、座標・単位契約、physics build/modelのversionとhash

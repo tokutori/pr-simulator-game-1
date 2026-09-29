@@ -84,6 +84,12 @@ pub use replay_clock::{ReplayClock, ReplayClockError, ReplayRate};
 /// ```
 pub const PHYSICS_HZ: u32 = 100;
 
+/// Version of the physical equations and integration semantics used by this core.
+///
+/// Increment when the same validated model and tick-input sequence can produce a
+/// different physical trajectory or terminal state.
+pub const PHYSICS_MODEL_VERSION: u32 = 1;
+
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;
 
