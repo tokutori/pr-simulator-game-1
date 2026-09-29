@@ -940,7 +940,10 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
   vec3 reflectedDirection = reflect(-viewDirection, normal);
   vec3 reflection = analyticSky(reflectedDirection);
-  float ndv = max(dot(normal, viewDirection), 0.0);
+  // Normal-map facets facing away from the eye are not visible. Use the
+  // resolved surface for the Fresnel weight while retaining normal detail
+  // in the reflected direction until a visibility-aware BRDF is available.
+  float ndv = max(dot(geometricNormal, viewDirection), 0.0);
   float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
   float sunAlignment = max(dot(reflectedDirection, normalize(uSunDirection.xyz)), 0.0);
   float roughness = clamp(0.23 + uWindSpeed * 0.018 + sqrt(unresolvedVariance) * 0.6, 0.23, 0.62);
@@ -958,7 +961,7 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   base *= vec3(0.29, 0.34, 0.37);
   // Art-directed reflection strength for the dark reference water. This is
   // not a rough-surface BRDF and leaves a visible sky/water boundary.
-  vec3 color = mix(base, reflection, fresnel * 0.55);
+  vec3 color = mix(base, reflection, fresnel * 0.45);
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
   color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
   float distanceToEye = length(cameraPosition.xz - worldXZ);
