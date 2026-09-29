@@ -52,7 +52,7 @@ tick kの入力はstate k→k+1に適用する。tick 0の初期状態も保存�
 Briefingで上限分のsample・入力・終端event領域を確保し、確保失敗時はReadyへ進めない。
 上限到達はTimeLimitとして確定し、bufferの上書きやsample間引きを行わない。
 Distance score v1はWaterContact時にfractional terminal datum、TimeLimit時に最後の有効integer-tick datumを用いる。
-記録上限は4,000 tickとし、最大4,001 sampleを保持する。sampleの実byte数とWASMを含む最大予約量はBPG-019の実装検証で測定し、本契約へ追記する。
+記録上限は4,000 tickとし、最大4,001 sampleを保持する。実測したsample領域とWASM転送payloadの容量は「責務と不変性」に記載する。
 端末負荷によって保存周期を変更しない。描画用downsampleは原recordを保持して別途生成する。
 
 ## Sampleと入力列
