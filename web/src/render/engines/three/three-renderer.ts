@@ -820,7 +820,7 @@ vec3 analyticSky(vec3 ray) {
   vec3 sky = mix(horizon, zenith, pow(elevation, 0.72));
   float sun = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 900.0);
   float glow = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 32.0);
-  return sky + vec3(1.0, 0.72, 0.43) * (sun * 12.0 + glow * 0.12);
+  return sky + vec3(1.0, 0.72, 0.43) * (sun * 2.0 + glow * 0.08);
 }
 
 float lakeNoise(vec2 point) {
@@ -965,7 +965,7 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
   color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
   float distanceToEye = length(cameraPosition.xz - worldXZ);
-  color += vec3(1.0, 0.78, 0.52) * glitter * 0.7;
+  color += vec3(1.0, 0.78, 0.52) * glitter * 0.15;
   color = mix(color, vec3(0.38, 0.43, 0.43), whitecap * 0.28);
   // Airlight belongs after the water tint. Tinting the haze made the horizon
   // darker than the foreground and produced a black horizontal band.
