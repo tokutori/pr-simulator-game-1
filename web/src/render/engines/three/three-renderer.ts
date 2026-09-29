@@ -71,9 +71,15 @@ function createLakeVisualResources(condition: LakeVisualCondition): LakeVisualRe
   }
   const directionX = condition.windEastMetersPerSecond / windSpeed;
   const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
-  // The same 18-band frequency grid is used at every quality level.
+  // The same 18-component, six-band spectrum is used at every quality level.
   const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
-  const renderedWaves = spectrum.components.slice(0, 6);
+  // The spectrum has three directions in each of six frequency bands. Take
+  // one direction from every band; slicing the first six kept only the two
+  // longest bands and made the geometry look like broad, smooth swells.
+  // sqrt(3) approximately retains each band's RMS height after selecting
+  // one of its three phase-separated directions.
+  const renderedWaves = Array.from({ length: 6 }, (_, band) => spectrum.components[band * 3 + band % 3])
+    .filter((wave): wave is NonNullable<typeof wave> => wave !== undefined);
   const near = createLakeDetailLayer(64, 1400, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
@@ -88,7 +94,7 @@ function createLakeVisualResources(condition: LakeVisualCondition): LakeVisualRe
       wave.directionEast,
       -wave.directionNorth,
       wave.waveNumberRadiansPerMeter,
-      wave.amplitudeMeters * lakeVisualAmplitudeScale(wave.waveNumberRadiansPerMeter)
+      wave.amplitudeMeters * Math.sqrt(3) * lakeVisualAmplitudeScale(wave.waveNumberRadiansPerMeter)
     );
   });
   const waveOmegaPhase = Array.from({ length: 24 }, (_, index) => {

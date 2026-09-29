@@ -26,6 +26,8 @@ export function createLakeDetailLayer(
   };
 
   for (let wavelet = 0; wavelet < waveletCount; wavelet++) {
+    const shapeBits = Math.imul(wavelet ^ seed, 0x9e3779b1) >>> 0;
+    const crestlet = shapeBits / 4294967296 < 0.42;
     const centerX = random() * size;
     const centerZ = random() * size;
     const angle = (random() - 0.5) * 1.8;
@@ -33,9 +35,12 @@ export function createLakeDetailLayer(
     const travelZ = directionZ * Math.cos(angle) + directionX * Math.sin(angle);
     const crestX = -travelZ;
     const crestZ = travelX;
-    const crestLength = (0.3 + random() * 0.35) * featureScale;
-    const envelopeWidth = (0.4 + random() * 0.5) * featureScale;
-    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(featureScale));
+    const crestLength = (crestlet ? 0.48 + random() * 0.24 : 0.3 + random() * 0.35) * featureScale;
+    const envelopeWidth = (crestlet ? 0.45 + random() * 0.2 : 0.4 + random() * 0.5) * featureScale;
+    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(featureScale)) * (crestlet ? 1.2 : 1);
+    const bend = crestlet ? (((shapeBits >>> 8) & 255) / 255 - 0.5) * 0.18 : 0;
+    const waveNumber = 1.8 / envelopeWidth;
+    const carrierMean = Math.exp(-0.5 * 1.8 * 1.8);
     const radius = Math.ceil(4 * Math.max(crestLength, envelopeWidth) / texelMeters);
 
     for (let offsetZ = -radius; offsetZ <= radius; offsetZ++) {
@@ -44,18 +49,34 @@ export function createLakeDetailLayer(
         const deltaZ = offsetZ * texelMeters;
         const alongCrest = deltaX * crestX + deltaZ * crestZ;
         const alongTravel = deltaX * travelX + deltaZ * travelZ;
-        const normalizedRadius = (alongCrest / crestLength) ** 2 + (alongTravel / envelopeWidth) ** 2;
+        const curvedTravel = alongTravel - bend * alongCrest * alongCrest / crestLength;
+        const normalizedRadius = (alongCrest / crestLength) ** 2 + (curvedTravel / envelopeWidth) ** 2;
         if (normalizedRadius > 16) continue;
         const envelope = height * Math.exp(-0.5 * normalizedRadius);
-        // A compact mound with its own surrounding trough replaces the long
-        // sinusoidal carrier. Its height integral vanishes over the plane.
-        const derivative = envelope * (0.5 * normalizedRadius - 2);
-        const crestDerivative = derivative * alongCrest / (crestLength * crestLength);
-        const travelDerivative = derivative * alongTravel / (envelopeWidth * envelopeWidth);
+        let localHeight: number;
+        let crestDerivative: number;
+        let travelDerivative: number;
+        if (crestlet) {
+          // A short, gently curved crest and its flanking troughs. The
+          // Gaussian-weighted cosine has zero integral along the travel axis.
+          const carrier = Math.cos(waveNumber * curvedTravel) - carrierMean;
+          localHeight = envelope * carrier;
+          travelDerivative = envelope * (
+            -curvedTravel * carrier / (envelopeWidth * envelopeWidth) - waveNumber * Math.sin(waveNumber * curvedTravel)
+          );
+          crestDerivative = -alongCrest * localHeight / (crestLength * crestLength)
+            - travelDerivative * 2 * bend * alongCrest / crestLength;
+        } else {
+          // Compact mound with a surrounding trough and zero height integral.
+          localHeight = envelope * (1 - 0.5 * normalizedRadius);
+          const derivative = envelope * (0.5 * normalizedRadius - 2);
+          crestDerivative = derivative * alongCrest / (crestLength * crestLength);
+          travelDerivative = derivative * curvedTravel / (envelopeWidth * envelopeWidth);
+        }
         const texelX = ((Math.floor(centerX) + offsetX) % size + size) % size;
         const texelZ = ((Math.floor(centerZ) + offsetZ) % size + size) % size;
         const index = texelZ * size + texelX;
-        heightField[index] = (heightField[index] ?? 0) + envelope * (1 - 0.5 * normalizedRadius);
+        heightField[index] = (heightField[index] ?? 0) + localHeight;
         slopeX[index] = (slopeX[index] ?? 0) + crestDerivative * crestX + travelDerivative * travelX;
         slopeZ[index] = (slopeZ[index] ?? 0) + crestDerivative * crestZ + travelDerivative * travelZ;
       }
