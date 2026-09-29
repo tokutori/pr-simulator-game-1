@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Mesh, MeshLambertMaterial } from "three";
-import { createBirdmanAirframe, wingDeflectionMeters } from "../../web/src/render/engines/three/birdman-airframe.js";
+import { CylinderGeometry, Group, Mesh, MeshLambertMaterial, Object3D, Vector3 } from "three";
+import { createBirdmanAirframe, wingDeflectionMeters, wingDihedralMeters } from "../../web/src/render/engines/three/birdman-airframe.js";
 
 describe("synthetic Birdman airframe", () => {
   it("bends both wing tips upward under the visual reference load", () => {
@@ -12,32 +12,102 @@ describe("synthetic Birdman airframe", () => {
     expect(wingDeflectionMeters(11.5, 13)).toBeGreaterThan(tip);
   });
 
+  it("has continuous dihedral breaks near 60% and 80% span", () => {
+    const span = 11.5;
+    const rise = (from: number, to: number): number =>
+      wingDihedralMeters(to * span) - wingDihedralMeters(from * span);
+    expect(rise(0.60, 0.61)).toBeGreaterThan(rise(0.59, 0.60) * 4);
+    expect(rise(0.80, 0.81)).toBeGreaterThan(rise(0.79, 0.80) * 2);
+    expect(wingDihedralMeters(0.6 * span)).toBeCloseTo(0.008 * 0.6 * span);
+    expect(wingDihedralMeters(0.8 * span)).toBeCloseTo(
+      wingDihedralMeters(0.6 * span) + 0.045 * 0.2 * span
+    );
+  });
+
   it("has finite airfoil geometry and animates only elevator and rudder", () => {
     const airframe = createBirdmanAirframe();
     const left = airframe.root.getObjectByName("left-wing") as Mesh;
     const right = airframe.root.getObjectByName("right-wing") as Mesh;
     const film = airframe.root.getObjectByName("left-trailing-film") as Mesh;
     const rib = airframe.root.getObjectByName("left-trailing-rib") as Mesh;
-    const cockpit = airframe.root.getObjectByName("enclosed-cockpit") as Mesh;
-    const canopy = airframe.root.getObjectByName("opaque-canopy") as Mesh;
+    const foam = airframe.root.getObjectByName("left-styrofoam-rib") as Mesh;
+    const stringer = airframe.root.getObjectByName("balsa-stringer") as Mesh;
+    const cockpit = airframe.root.getObjectByName("open-cockpit-frame");
+    const canopy = airframe.root.getObjectByName("transparent-canopy") as Mesh;
+    const fairing = airframe.root.getObjectByName("rear-cockpit-fairing") as Mesh;
+    const mainBeams: Object3D[] = [];
+    airframe.root.traverse((part) => {
+      if (part.name === "single-carbon-main-beam") mainBeams.push(part);
+    });
     const elevatorFilm = airframe.root.getObjectByName("left-elevator-film") as Mesh;
+    const tailLeading = airframe.root.getObjectByName("left-tail-leading") as Mesh;
+    const tailFoam = airframe.root.getObjectByName("elevator-styrofoam-rib") as Mesh;
+    const rudderFoam = airframe.root.getObjectByName("rudder-styrofoam-panel") as Mesh;
     const elevator = airframe.root.getObjectByName("elevator");
     const rudder = airframe.root.getObjectByName("rudder");
     expect(left).toBeInstanceOf(Mesh);
     expect(right).toBeInstanceOf(Mesh);
     expect(film).toBeInstanceOf(Mesh);
     expect(rib).toBeInstanceOf(Mesh);
-    expect(cockpit).toBeInstanceOf(Mesh);
+    expect(foam).toBeInstanceOf(Mesh);
+    expect(stringer).toBeInstanceOf(Mesh);
+    const namedCount = (name: string): number => {
+      let count = 0;
+      airframe.root.traverse((part) => { if (part.name === name) count++; });
+      return count;
+    };
+    expect(namedCount("left-styrofoam-rib")).toBe(22);
+    expect(namedCount("right-styrofoam-rib")).toBe(22);
+    expect(namedCount("elevator-styrofoam-rib")).toBe(16);
+    expect(namedCount("rudder-styrofoam-panel")).toBe(8);
+    expect(cockpit).toBeInstanceOf(Group);
+    expect(cockpit?.children.length).toBeGreaterThan(8);
+    for (const part of cockpit?.children ?? []) {
+      expect(((part as Mesh).material as MeshLambertMaterial).color.getHex()).toBe(0xe4e7e3);
+    }
     expect(canopy).toBeInstanceOf(Mesh);
+    expect(fairing).toBeInstanceOf(Mesh);
+    expect(mainBeams).toHaveLength(1);
+    const spar = airframe.root.getObjectByName("main-wing-spar") as Group;
+    expect(spar).toBeInstanceOf(Group);
+    expect(spar.children).toHaveLength(24);
+    airframe.root.updateMatrixWorld(true);
+    expect(mainBeams[0]?.localToWorld(new Vector3(0, -0.5, 0)).distanceTo(
+      (spar.children[0] as Mesh).localToWorld(new Vector3(0, -0.5, 0))
+    )).toBeLessThan(1e-5);
+    airframe.root.traverse((part) => {
+      if (!(part instanceof Mesh) || !(part.geometry instanceof CylinderGeometry)) return;
+      if (part.name === "single-carbon-main-beam" || part.parent === spar) return;
+      expect(part.geometry.parameters.radiusTop).toBeLessThanOrEqual(0.012);
+      expect(part.scale.y).toBeLessThan(2.3);
+    });
     expect(elevatorFilm).toBeInstanceOf(Mesh);
+    expect(tailLeading).toBeInstanceOf(Mesh);
+    expect(tailFoam).toBeInstanceOf(Mesh);
+    expect(rudderFoam).toBeInstanceOf(Mesh);
     expect((film.material as MeshLambertMaterial).transparent).toBe(true);
     expect((film.material as MeshLambertMaterial).opacity).toBeLessThan(0.3);
-    expect((canopy.material as MeshLambertMaterial).transparent).toBe(false);
+    expect((left.material as MeshLambertMaterial).color.getHex()).toBe(0x304c6b);
+    expect((foam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
+    expect((stringer.material as MeshLambertMaterial).color.getHex()).toBe(0xcdb483);
+    expect((canopy.material as MeshLambertMaterial).transparent).toBe(true);
+    expect((fairing.material as MeshLambertMaterial).transparent).toBe(false);
+    const canopyPositions = canopy.geometry.getAttribute("position");
+    for (let station = 1; station < 6; station++) {
+      expect(canopyPositions.getX(station * 25)).toBeGreaterThan(
+        canopyPositions.getX((station - 1) * 25)
+      );
+    }
     expect((elevatorFilm.material as MeshLambertMaterial).transparent).toBe(true);
+    expect((tailLeading.material as MeshLambertMaterial).color.getHex()).toBe(0x304c6b);
+    expect((tailFoam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
+    expect((rudderFoam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
     expect(airframe.root.getObjectByName("elevator-rib")).toBeInstanceOf(Mesh);
+    expect(airframe.root.getObjectByName("elevator-balsa-stringer")).toBeInstanceOf(Mesh);
     expect(rudder?.getObjectByName("rudder-front")).toBeInstanceOf(Mesh);
     expect(rudder?.getObjectByName("rudder-trailing-film")).toBeInstanceOf(Mesh);
     expect(rudder?.getObjectByName("rudder-rib")).toBeInstanceOf(Mesh);
+    expect(rudder?.getObjectByName("rudder-balsa-stringer")).toBeInstanceOf(Mesh);
     expect(airframe.root.getObjectByName("vertical-stabilizer")).toBeUndefined();
     expect(airframe.root.getObjectByName("pilot-head")).toBeUndefined();
     expect(elevator).toBeDefined();
@@ -47,9 +117,11 @@ describe("synthetic Birdman airframe", () => {
     const tipVertex = leftPosition.count - 1;
     const initialY = leftPosition.getY(tipVertex);
     const initialRibY = rib.position.y;
+    const initialFoamY = foam.position.y;
     airframe.setVisualState(13, 0.12, -0.08);
     expect(leftPosition.getY(tipVertex)).toBeGreaterThan(initialY);
     expect(rib.position.y).toBeGreaterThan(initialRibY);
+    expect(foam.position.y).toBeGreaterThan(initialFoamY);
     expect(elevator?.rotation.x).toBeCloseTo(-0.12);
     expect(rudder?.rotation.y).toBeCloseTo(-0.08);
     expect(leftPosition.count).toBe(rightPosition.count);

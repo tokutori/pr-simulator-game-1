@@ -62,6 +62,15 @@ export function wingDeflectionMeters(spanMeters: number, airspeedMetersPerSecond
     (24 * YOUNGS_MODULUS_PASCALS * SPAR_SECOND_MOMENT_METERS_FOURTH);
 }
 
+export function wingDihedralMeters(spanMeters: number): number {
+  const span = Math.max(0, Math.min(HALF_SPAN_METERS, spanMeters));
+  const firstBreak = 0.6 * HALF_SPAN_METERS;
+  const secondBreak = 0.8 * HALF_SPAN_METERS;
+  return 0.008 * Math.min(span, firstBreak) +
+    0.045 * Math.max(0, Math.min(span, secondBreak) - firstBreak) +
+    0.12 * Math.max(0, span - secondBreak);
+}
+
 function sectionProfile(chordFraction: number, camber: number, camberPosition: number, thickness: number):
   Readonly<{ upperX: number; upperY: number; lowerX: number; lowerY: number }> {
   const x = chordFraction;
@@ -83,7 +92,8 @@ function sectionProfile(chordFraction: number, camber: number, camberPosition: n
 }
 
 function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial): AirfoilHalf {
-  const spanSteps = shape.flex ? 28 : 10;
+  // Thirty sections place vertices exactly at the 60% and 80% dihedral breaks.
+  const spanSteps = shape.flex ? 30 : 10;
   const chordSteps = 16;
   const rowSize = chordSteps + 1;
   const surfaceSize = (spanSteps + 1) * rowSize;
@@ -101,7 +111,7 @@ function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial): Airfoi
         const distribution = (1 - Math.cos(Math.PI * station / chordSteps)) * 0.5;
         const x = shape.chordStart + (shape.chordEnd - shape.chordStart) * distribution;
         const profile = sectionProfile(x, shape.camber, shape.camberPosition, shape.thickness);
-        const y = shape.baseY + shape.dihedral * distance +
+        const y = shape.baseY + (shape.flex ? wingDihedralMeters(distance) : shape.dihedral * distance) +
           (upper ? profile.upperY : profile.lowerY) * chord;
         const z = leadingZ + (upper ? profile.upperX : profile.lowerX) * chord;
         vertices.push(shape.side * distance, y, z);
@@ -170,33 +180,37 @@ function finGeometry(outline: readonly (readonly [number, number])[], halfThickn
   return geometry;
 }
 
-interface CockpitStation {
+interface CanopyStation {
   readonly z: number;
   readonly centerY: number;
   readonly halfWidth: number;
-  readonly height: number;
+  readonly halfHeight: number;
 }
 
-function cockpitLoft(stations: readonly CockpitStation[], upperHalf: boolean): BufferGeometry {
-  const angularSteps = 16;
-  const rowSize = angularSteps + 1;
+function canopyPoint(station: CanopyStation, angle: number): Vector3 {
+  const rounded = (value: number): number => Math.sign(value) * Math.abs(value) ** 0.8;
+  return new Vector3(
+    station.halfWidth * rounded(Math.cos(angle)),
+    station.centerY + station.halfHeight * rounded(Math.sin(angle)),
+    station.z
+  );
+}
+
+function canopyGeometry(stations: readonly CanopyStation[]): BufferGeometry {
+  const circumferenceSteps = 24;
+  const rowSize = circumferenceSteps + 1;
   const vertices: number[] = [];
   const indices: number[] = [];
   for (const station of stations) {
-    for (let angleIndex = 0; angleIndex <= angularSteps; angleIndex++) {
-      const angle = angleIndex / angularSteps * Math.PI * (upperHalf ? 1 : 2);
-      vertices.push(
-        station.halfWidth * Math.cos(angle),
-        station.centerY + station.height * Math.sin(angle),
-        station.z
-      );
+    for (let step = 0; step <= circumferenceSteps; step++) {
+      vertices.push(...canopyPoint(station, step * Math.PI * 2 / circumferenceSteps).toArray());
     }
   }
   for (let section = 0; section < stations.length - 1; section++) {
-    for (let angleIndex = 0; angleIndex < angularSteps; angleIndex++) {
-      const a = section * rowSize + angleIndex;
+    for (let step = 0; step < circumferenceSteps; step++) {
+      const a = section * rowSize + step;
       const b = a + rowSize;
-      indices.push(a, b, a + 1, a + 1, b, b + 1);
+      indices.push(a, a + 1, b, a + 1, b + 1, b);
     }
   }
   const geometry = new BufferGeometry();
@@ -227,30 +241,95 @@ function wingRibPoint(side: -1 | 1, span: number, chordFraction: number, speed: 
   const meanY = (profile.upperY + profile.lowerY) * 0.5;
   return new Vector3(
     side * span,
-    -0.73 + 0.025 * span + meanY * chord + wingDeflectionMeters(span, speed),
+    -0.73 + wingDihedralMeters(span) + meanY * chord + wingDeflectionMeters(span, speed),
     -0.42 + 0.58 * spanFraction + chordFraction * chord
   );
+}
+
+function wingSparPoint(side: -1 | 1, span: number, speed: number): Vector3 {
+  const fraction = span / HALF_SPAN_METERS;
+  const chord = 1.6 + (0.55 - 1.6) * fraction;
+  return new Vector3(
+    side * span,
+    -0.73 + wingDihedralMeters(span) + wingDeflectionMeters(span, speed),
+    -0.42 + 0.58 * fraction + 0.25 * chord
+  );
+}
+
+function foamRibGeometry(span: number): BufferGeometry {
+  const fraction = span / HALF_SPAN_METERS;
+  const chord = 1.6 + (0.55 - 1.6) * fraction;
+  const leadingZ = -0.42 + 0.58 * fraction;
+  const baseY = -0.73 + wingDihedralMeters(span);
+  const stations = [0.58, 0.80, 0.995];
+  const outline: [number, number][] = [];
+  for (const chordFraction of stations) {
+    const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
+    outline.push([baseY + profile.upperY * chord, leadingZ + profile.upperX * chord]);
+  }
+  for (const chordFraction of [...stations].reverse()) {
+    const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
+    outline.push([baseY + profile.lowerY * chord, leadingZ + profile.lowerX * chord]);
+  }
+  return finGeometry(outline, 0.013);
+}
+
+function tailRibPoint(side: -1 | 1, span: number, chordFraction: number): Vector3 {
+  const fraction = span / 2.1;
+  const chord = 0.82 + (0.72 - 0.82) * fraction;
+  return new Vector3(
+    side * span,
+    0.02 * span,
+    -0.574 + 0.08 * fraction + chordFraction * chord
+  );
+}
+
+function tailFoamRibGeometry(span: number): BufferGeometry {
+  const fraction = span / 2.1;
+  const chord = 0.82 + (0.72 - 0.82) * fraction;
+  const leadingZ = -0.574 + 0.08 * fraction;
+  const baseY = 0.02 * span;
+  const stations = [0.70, 0.85, 0.995];
+  const outline: [number, number][] = [];
+  for (const chordFraction of stations) {
+    const profile = sectionProfile(chordFraction, 0, 0.4, 0.09);
+    outline.push([baseY + profile.upperY * chord, leadingZ + profile.upperX * chord]);
+  }
+  for (const chordFraction of [...stations].reverse()) {
+    const profile = sectionProfile(chordFraction, 0, 0.4, 0.09);
+    outline.push([baseY + profile.lowerY * chord, leadingZ + profile.lowerX * chord]);
+  }
+  return finGeometry(outline, 0.008);
 }
 
 export function createBirdmanAirframe(): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
-  const skin = new MeshLambertMaterial({ color: 0xe5e3d6, side: DoubleSide });
+  const skin = new MeshLambertMaterial({ color: 0x304c6b, side: DoubleSide });
   const trailingFilm = new MeshLambertMaterial({
     color: 0xd5ddd9, side: DoubleSide, transparent: true, opacity: 0.22, depthWrite: false
   });
-  const ribMaterial = new MeshLambertMaterial({ color: 0x84918d });
-  const tailSkin = new MeshLambertMaterial({ color: 0xdddccc, side: DoubleSide });
+  const ribMaterial = new MeshLambertMaterial({ color: 0xcdb483 });
+  const styrofoam = new MeshLambertMaterial({ color: 0x77b5d0, side: DoubleSide });
   const carbon = new MeshLambertMaterial({ color: 0x303b3a });
-  const fuselageSkin = new MeshLambertMaterial({ color: 0xd3d6cc, side: DoubleSide });
-  const canopySkin = new MeshLambertMaterial({ color: 0x3e5760, side: DoubleSide });
+  const whiteFrame = new MeshLambertMaterial({ color: 0xe4e7e3 });
+  const canopyFilm = new MeshLambertMaterial({
+    color: 0xd6e3e5, side: DoubleSide, transparent: true, opacity: 0.23, depthWrite: false
+  });
+  const canopyRim = new MeshLambertMaterial({ color: 0xb8c5c7 });
+  const fairingSkin = new MeshLambertMaterial({ color: 0xe1e3db, side: DoubleSide });
   const wings: AirfoilHalf[] = [];
-  const braces: { rod: Mesh; from: Vector3; to: Vector3; span: number }[] = [];
+  const wingSpar = new Group();
+  wingSpar.name = "main-wing-spar";
+  root.add(wingSpar);
+  const sparSegments: { rod: Mesh; side: -1 | 1; from: number; to: number }[] = [];
   const ribs: { rod: Mesh; side: -1 | 1; span: number; from: number; to: number }[] = [];
+  const foamRibs: { mesh: Mesh; span: number }[] = [];
+  const stringers: { rod: Mesh; side: -1 | 1; from: number; to: number; chordFraction: number }[] = [];
   for (const side of [-1, 1] as const) {
     const wingShape = {
       side, halfSpan: HALF_SPAN_METERS, rootChord: 1.6, tipChord: 0.55,
-      leadingZ: -0.42, sweep: 0.58, baseY: -0.73, dihedral: 0.025,
+      leadingZ: -0.42, sweep: 0.58, baseY: -0.73, dihedral: 0,
       camber: 0.04, camberPosition: 0.4, thickness: 0.12,
       flex: true
     };
@@ -261,8 +340,23 @@ export function createBirdmanAirframe(): BirdmanAirframe {
     film.mesh.name = side === -1 ? "left-trailing-film" : "right-trailing-film";
     root.add(film.mesh);
     wings.push(leadingWing, film);
-    for (let ribIndex = 1; ribIndex <= 11; ribIndex++) {
-      const span = ribIndex * 0.94;
+    for (let section = 0; section < 12; section++) {
+      const from = HALF_SPAN_METERS * section / 12;
+      const to = HALF_SPAN_METERS * (section + 1) / 12;
+      const radius = 0.055 + (0.018 - 0.055) * (section + 0.5) / 12;
+      const rod = addRod(wingSpar,
+        wingSparPoint(side, from, REFERENCE_AIRSPEED_METERS_PER_SECOND),
+        wingSparPoint(side, to, REFERENCE_AIRSPEED_METERS_PER_SECOND),
+        radius, carbon);
+      sparSegments.push({ rod, side, from, to });
+    }
+    for (let ribIndex = 1; ribIndex <= 22; ribIndex++) {
+      const span = HALF_SPAN_METERS * ribIndex / 23;
+      const foam = new Mesh(foamRibGeometry(span), styrofoam);
+      foam.name = side === -1 ? "left-styrofoam-rib" : "right-styrofoam-rib";
+      foam.position.set(side * span, wingDeflectionMeters(span, REFERENCE_AIRSPEED_METERS_PER_SECOND), 0);
+      root.add(foam);
+      foamRibs.push({ mesh: foam, span });
       for (const [from, to] of [[0.58, 0.79], [0.79, 1]] as const) {
         const rod = addRod(root,
           wingRibPoint(side, span, from, REFERENCE_AIRSPEED_METERS_PER_SECOND),
@@ -272,38 +366,71 @@ export function createBirdmanAirframe(): BirdmanAirframe {
         ribs.push({ rod, side, span, from, to });
       }
     }
-    for (const [from, to, radius, span] of [
-      [new Vector3(side * 0.28, -1.3, -0.7), new Vector3(side * 4.3, -0.73 + 4.3 * 0.025, 0.0), 0.023, 4.3],
-      [new Vector3(side * 0.25, -1.25, -0.4), new Vector3(side * 5.8, -0.73 + 5.8 * 0.025, 0.65), 0.012, 5.8]
-    ] as const) {
-      braces.push({ rod: addRod(root, from, to, radius, carbon), from, to, span });
+    for (const chordFraction of [0.58, 0.995]) {
+      for (let section = 0; section < 12; section++) {
+        const from = HALF_SPAN_METERS * section / 12;
+        const to = HALF_SPAN_METERS * (section + 1) / 12;
+        const rod = addRod(root,
+          wingRibPoint(side, from, chordFraction, REFERENCE_AIRSPEED_METERS_PER_SECOND),
+          wingRibPoint(side, to, chordFraction, REFERENCE_AIRSPEED_METERS_PER_SECOND),
+          0.006, ribMaterial);
+        rod.name = "balsa-stringer";
+        stringers.push({ rod, side, from, to, chordFraction });
+      }
     }
   }
-  addRod(root, new Vector3(0, -1.05, -1.8), new Vector3(0, -0.67, 5.15), 0.065, carbon);
-  addRod(root, new Vector3(-0.7, -0.74, 0.15), new Vector3(0, -1.3, -0.65), 0.035, carbon);
-  addRod(root, new Vector3(0.7, -0.74, 0.15), new Vector3(0, -1.3, -0.65), 0.035, carbon);
-  const cockpitShell = new Mesh(cockpitLoft([
-    { z: -2.35, centerY: -1.12, halfWidth: 0.015, height: 0.025 },
-    { z: -1.85, centerY: -1.11, halfWidth: 0.12, height: 0.12 },
-    { z: -1.35, centerY: -1.09, halfWidth: 0.25, height: 0.24 },
-    { z: -0.80, centerY: -1.09, halfWidth: 0.34, height: 0.34 },
-    { z: -0.15, centerY: -1.08, halfWidth: 0.33, height: 0.33 },
-    { z: 0.50, centerY: -1.03, halfWidth: 0.22, height: 0.23 },
-    { z: 1.20, centerY: -0.96, halfWidth: 0.08, height: 0.10 },
-    { z: 1.60, centerY: -0.90, halfWidth: 0.015, height: 0.025 }
-  ], false), fuselageSkin);
-  cockpitShell.name = "enclosed-cockpit";
-  root.add(cockpitShell);
-  const canopy = new Mesh(cockpitLoft([
-    { z: -1.47, centerY: -0.83, halfWidth: 0.015, height: 0.015 },
-    { z: -1.18, centerY: -0.82, halfWidth: 0.20, height: 0.14 },
-    { z: -0.77, centerY: -0.81, halfWidth: 0.27, height: 0.27 },
-    { z: -0.25, centerY: -0.80, halfWidth: 0.27, height: 0.28 },
-    { z: 0.25, centerY: -0.79, halfWidth: 0.21, height: 0.17 },
-    { z: 0.58, centerY: -0.78, halfWidth: 0.015, height: 0.015 }
-  ], true), canopySkin);
-  canopy.name = "opaque-canopy";
+  const cockpitFrame = new Group();
+  cockpitFrame.name = "open-cockpit-frame";
+  root.add(cockpitFrame);
+  for (const side of [-1, 1] as const) {
+    const upperFront = new Vector3(side * 0.30, -1.05, -1.10);
+    const upperRear = new Vector3(side * 0.30, -1.02, 0.62);
+    const lowerFront = new Vector3(side * 0.23, -1.42, -0.95);
+    const lowerRear = new Vector3(side * 0.23, -1.39, 0.42);
+    addRod(cockpitFrame, new Vector3(0, -1.22, -2.05), upperFront, 0.012, whiteFrame);
+    addRod(cockpitFrame, upperFront, upperRear, 0.012, whiteFrame);
+    addRod(cockpitFrame, lowerFront, lowerRear, 0.012, whiteFrame);
+    addRod(cockpitFrame, upperFront, lowerFront, 0.008, whiteFrame);
+    addRod(cockpitFrame, upperRear, lowerRear, 0.008, whiteFrame);
+    addRod(cockpitFrame, lowerFront, upperRear, 0.007, whiteFrame);
+  }
+  for (const z of [-0.95, 0.42]) {
+    addRod(cockpitFrame, new Vector3(-0.23, -1.40, z),
+      new Vector3(0.23, -1.40, z), 0.008, whiteFrame);
+  }
+  const mainBeam = addRod(root,
+    new Vector3(0, -0.73, -0.02), new Vector3(0, -0.57, 5.10), 0.075, carbon);
+  mainBeam.name = "single-carbon-main-beam";
+  const clearCanopyStations: readonly CanopyStation[] = [
+    { z: -2.06, centerY: -1.04, halfWidth: 0.035, halfHeight: 0.055 },
+    { z: -1.85, centerY: -1.03, halfWidth: 0.14, halfHeight: 0.17 },
+    { z: -1.60, centerY: -1.02, halfWidth: 0.25, halfHeight: 0.28 },
+    { z: -1.22, centerY: -1.01, halfWidth: 0.36, halfHeight: 0.36 },
+    { z: -0.82, centerY: -1.00, halfWidth: 0.45, halfHeight: 0.42 },
+    { z: -0.48, centerY: -0.99, halfWidth: 0.50, halfHeight: 0.45 }
+  ];
+  const canopy = new Mesh(canopyGeometry(clearCanopyStations), canopyFilm);
+  canopy.name = "transparent-canopy";
+  canopy.frustumCulled = false;
   root.add(canopy);
+  const rearFairing = new Mesh(canopyGeometry([
+    { z: -0.48, centerY: -0.99, halfWidth: 0.50, halfHeight: 0.45 },
+    { z: -0.19, centerY: -0.96, halfWidth: 0.50, halfHeight: 0.46 },
+    { z: 0.37, centerY: -0.93, halfWidth: 0.38, halfHeight: 0.39 },
+    { z: 0.93, centerY: -0.87, halfWidth: 0.22, halfHeight: 0.24 },
+    { z: 1.52, centerY: -0.82, halfWidth: 0.025, halfHeight: 0.04 }
+  ]), fairingSkin);
+  rearFairing.name = "rear-cockpit-fairing";
+  root.add(rearFairing);
+  const frontRim = clearCanopyStations[clearCanopyStations.length - 1];
+  if (frontRim !== undefined) {
+    for (let step = 0; step < 16; step++) {
+      addRod(root,
+        canopyPoint(frontRim, step * Math.PI * 2 / 16),
+        canopyPoint(frontRim, (step + 1) * Math.PI * 2 / 16),
+        0.009, canopyRim);
+    }
+  }
 
   const tail = new Group();
   tail.position.set(0, -0.52, 4.5);
@@ -314,7 +441,8 @@ export function createBirdmanAirframe(): BirdmanAirframe {
       leadingZ: 0, sweep: 0.08, baseY: 0, dihedral: 0.02,
       camber: 0, camberPosition: 0.4, thickness: 0.09, flex: false
     };
-    const stabilizer = airfoilHalf({ ...basis, chordStart: 0, chordEnd: 0.7 }, tailSkin);
+    const stabilizer = airfoilHalf({ ...basis, chordStart: 0, chordEnd: 0.7 }, skin);
+    stabilizer.mesh.name = side === -1 ? "left-tail-leading" : "right-tail-leading";
     tail.add(stabilizer.mesh);
   }
   const elevator = new Group();
@@ -330,15 +458,25 @@ export function createBirdmanAirframe(): BirdmanAirframe {
     }, trailingFilm);
     half.mesh.name = side === -1 ? "left-elevator-film" : "right-elevator-film";
     elevator.add(half.mesh);
-    for (const span of [0.35, 0.90, 1.45, 2.0]) {
-      const chord = 0.82 + (0.72 - 0.82) * span / 2.1;
-      const sweep = 0.08 * span / 2.1;
-      const y = 0.02 * span;
+    for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
+      const span = 2.1 * ribIndex / 9;
+      const foam = new Mesh(tailFoamRibGeometry(span), styrofoam);
+      foam.name = "elevator-styrofoam-rib";
+      foam.position.x = side * span;
+      elevator.add(foam);
       const rod = addRod(elevator,
-        new Vector3(side * span, y, -0.574 + sweep + 0.7 * chord),
-        new Vector3(side * span, y, -0.574 + sweep + chord),
+        tailRibPoint(side, span, 0.7),
+        tailRibPoint(side, span, 0.995),
         0.008, ribMaterial);
       rod.name = "elevator-rib";
+    }
+    for (let section = 0; section < 4; section++) {
+      const from = 2.1 * section / 4;
+      const to = 2.1 * (section + 1) / 4;
+      const rod = addRod(elevator,
+        tailRibPoint(side, from, 0.995), tailRibPoint(side, to, 0.995),
+        0.006, ribMaterial);
+      rod.name = "elevator-balsa-stringer";
     }
   }
   const rudder = new Group();
@@ -346,7 +484,7 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   tail.add(rudder);
   const finFront = new Mesh(finGeometry([
     [0, 0.02], [1.33, 0.25], [1.52, 0.36], [0, 0.39]
-  ], 0.045), tailSkin);
+  ], 0.045), skin);
   finFront.name = "rudder-front";
   rudder.add(finFront);
   const finFilm = new Mesh(finGeometry([
@@ -354,7 +492,8 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   ], 0.036), trailingFilm);
   finFilm.name = "rudder-trailing-film";
   rudder.add(finFilm);
-  for (const y of [0.25, 0.60, 0.95, 1.30]) {
+  for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
+    const y = 1.52 * ribIndex / 9;
     const fraction = y / 1.52;
     const rod = addRod(rudder,
       new Vector3(0, y, 0.39 - 0.03 * fraction),
@@ -362,6 +501,21 @@ export function createBirdmanAirframe(): BirdmanAirframe {
       0.009, ribMaterial);
     rod.name = "rudder-rib";
   }
+  for (let bay = 0; bay < 8; bay++) {
+    const lowY = bay * 1.52 / 8;
+    const highY = (bay + 1) * 1.52 / 8;
+    const frontZ = (y: number): number => 0.39 - 0.03 * y / 1.52;
+    const backZ = (y: number): number => 0.62 - 0.09 * y / 1.52;
+    const foam = new Mesh(finGeometry([
+      [lowY, frontZ(lowY)], [highY, frontZ(highY)], [lowY, backZ(lowY)]
+    ], 0.012), styrofoam);
+    foam.name = "rudder-styrofoam-panel";
+    rudder.add(foam);
+  }
+  const rudderStringer = addRod(rudder,
+    new Vector3(0, 0, 0.62), new Vector3(0, 1.52, 0.53),
+    0.006, ribMaterial);
+  rudderStringer.name = "rudder-balsa-stringer";
 
   let currentSpeed = Number.NaN;
   const setVisualState = (airspeedMetersPerSecond: number | null, elevatorRadians: number, rudderRadians: number): void => {
@@ -376,15 +530,23 @@ export function createBirdmanAirframe(): BirdmanAirframe {
         position.needsUpdate = true;
         wing.mesh.geometry.computeVertexNormals();
       }
-      for (const brace of braces) {
-        const bentEnd = brace.to.clone();
-        bentEnd.y += wingDeflectionMeters(brace.span, speed);
-        pointRod(brace.rod, brace.from, bentEnd);
-      }
       for (const rib of ribs) {
         pointRod(rib.rod,
           wingRibPoint(rib.side, rib.span, rib.from, speed),
           wingRibPoint(rib.side, rib.span, rib.to, speed));
+      }
+      for (const spar of sparSegments) {
+        pointRod(spar.rod,
+          wingSparPoint(spar.side, spar.from, speed),
+          wingSparPoint(spar.side, spar.to, speed));
+      }
+      for (const foam of foamRibs) {
+        foam.mesh.position.y = wingDeflectionMeters(foam.span, speed);
+      }
+      for (const stringer of stringers) {
+        pointRod(stringer.rod,
+          wingRibPoint(stringer.side, stringer.from, stringer.chordFraction, speed),
+          wingRibPoint(stringer.side, stringer.to, stringer.chordFraction, speed));
       }
     }
     elevator.rotation.x = -Math.max(-0.35, Math.min(0.35, elevatorRadians));
