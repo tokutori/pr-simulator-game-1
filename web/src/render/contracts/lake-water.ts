@@ -37,12 +37,41 @@ export interface LakeWaterQualityProfile {
   readonly meshSegments: number;
 }
 
+const lowLakeWaveIndices = Array.from({ length: 6 }, (_, bandIndex) => bandIndex * 3 + bandIndex % 3);
+const mediumLakeWaveIndices = [
+  ...lowLakeWaveIndices,
+  ...Array.from({ length: 4 }, (_, index) => {
+    const bandIndex = index + 1;
+    return bandIndex * 3 + (bandIndex + 1) % 3;
+  })
+].sort((a, b) => a - b);
+const lakeWaveQualityIndices: Readonly<Record<LakeWaterQuality, readonly number[]>> = Object.freeze({
+  low: Object.freeze(lowLakeWaveIndices),
+  medium: Object.freeze(mediumLakeWaveIndices),
+  high: Object.freeze(Array.from({ length: 18 }, (_, index) => index))
+});
+
 export function lakeWaterQualityProfile(quality: LakeWaterQuality): LakeWaterQualityProfile {
   switch (quality) {
     case "low": return Object.freeze({ componentCount: 6, meshSegments: 96 });
     case "medium": return Object.freeze({ componentCount: 10, meshSegments: 144 });
     case "high": return Object.freeze({ componentCount: 18, meshSegments: 224 });
   }
+}
+
+export function selectLakeWaveComponentsForQuality(
+  spectrum: LakeWaveSpectrum,
+  quality: LakeWaterQuality
+): readonly LakeWaveComponent[] {
+  const componentCount = lakeWaterQualityProfile(quality).componentCount;
+  if (spectrum.components.length !== 18) {
+    return Object.freeze(spectrum.components.slice(0, componentCount));
+  }
+  const indices = lakeWaveQualityIndices[quality].slice(0, componentCount);
+  return Object.freeze(indices.flatMap((index) => {
+    const component = spectrum.components[index];
+    return component === undefined ? [] : [component];
+  }));
 }
 
 /**
