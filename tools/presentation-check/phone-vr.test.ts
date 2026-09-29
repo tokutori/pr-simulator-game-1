@@ -353,6 +353,7 @@ class FakeRenderer implements RendererAdapter {
   setFlightPose(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
+  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose { return pose; }
   resize(): void {}
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
   setSelectRayHandler(): void {}

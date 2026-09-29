@@ -344,6 +344,10 @@ class FakeRenderer implements RendererAdapter {
 
   setCinematicCameraView(): void {}
 
+  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose {
+    return pose;
+  }
+
   resize(viewport: ViewportSize): void {
     this.lastViewport = viewport;
   }

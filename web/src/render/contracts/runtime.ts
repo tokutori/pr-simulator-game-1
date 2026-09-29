@@ -52,6 +52,7 @@ export interface RendererAdapter {
   setFlightPose(pose: FlightRenderPose | null): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   setCinematicCameraView(view: CinematicCameraView | null): void;
+  transformTrackingPose(pose: Pose): Pose;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;
