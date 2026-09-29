@@ -92,6 +92,8 @@ pub enum SessionPhase {
     Result,
     /// The finalized record is being inspected without advancing simulation state.
     Replay,
+    /// A separate finalized demonstration record is being played from Title.
+    Attract,
 }
 
 /// Classified reason that prevents a prepared session from becoming ready.
@@ -251,6 +253,11 @@ pub enum SessionSnapshot {
         /// Exclusive source of the replayed flight.
         source: SessionReplaySource,
     },
+    /// Read-only playback of the independent Title demonstration record.
+    Attract {
+        /// Scenario identity attached to the demonstration record.
+        scenario: SessionScenarioIdentity,
+    },
 }
 
 impl SessionSnapshot {
@@ -269,6 +276,7 @@ impl SessionSnapshot {
             Self::FlightPaused { reasons, .. } => SessionPhase::FlightPaused { reasons },
             Self::Result(_) => SessionPhase::Result,
             Self::Replay { .. } => SessionPhase::Replay,
+            Self::Attract { .. } => SessionPhase::Attract,
         }
     }
 
@@ -321,6 +329,7 @@ pub struct GameSession<'a> {
     flight_state: Option<FlightTickState>,
     result: Option<SessionResult>,
     record: Option<FlightRecord>,
+    attract_record: Option<FlightRecord>,
 }
 
 impl<'a> GameSession<'a> {
@@ -332,6 +341,7 @@ impl<'a> GameSession<'a> {
             flight_state: None,
             result: None,
             record: None,
+            attract_record: None,
         }
     }
 
@@ -381,6 +391,14 @@ impl<'a> GameSession<'a> {
                 };
                 SessionSnapshot::Replay { scenario, source }
             }
+            SessionPhase::Attract => SessionSnapshot::Attract {
+                scenario: self
+                    .attract_record
+                    .as_ref()
+                    .expect("attract phase must retain its demonstration record")
+                    .header()
+                    .scenario,
+            },
         }
     }
 
@@ -404,6 +422,10 @@ impl<'a> GameSession<'a> {
         ) {
             (Some(configuration), _, _) => Some(configuration.identity()),
             (None, Some(record), SessionPhase::Replay) => Some(record.header().scenario),
+            (None, _, SessionPhase::Attract) => match self.attract_record.as_ref() {
+                Some(record) => Some(record.header().scenario),
+                None => None,
+            },
             _ => None,
         }
     }
@@ -411,6 +433,71 @@ impl<'a> GameSession<'a> {
     /// Returns the immutable flight record after one has been initialized.
     pub const fn flight_record(&self) -> Option<&FlightRecord> {
         self.record.as_ref()
+    }
+
+    /// Returns the record associated with the current playback view.
+    pub const fn playback_record(&self) -> Option<&FlightRecord> {
+        if matches!(self.phase, SessionPhase::Attract) {
+            self.attract_record.as_ref()
+        } else {
+            self.record.as_ref()
+        }
+    }
+
+    /// Installs one finalized demonstration record without replacing player records.
+    pub fn install_attract_record(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
+        if self.phase != SessionPhase::Title
+            || self.attract_record.is_some()
+            || record.finalization().is_none()
+        {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.attract_record = Some(record);
+        Ok(())
+    }
+
+    /// Enters playback of the independent demonstration record from Title.
+    pub fn enter_attract(&mut self) -> Result<(), GameSessionError> {
+        if self.phase != SessionPhase::Title
+            || self
+                .attract_record
+                .as_ref()
+                .and_then(FlightRecord::finalization)
+                .is_none()
+        {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.phase = SessionPhase::Attract;
+        Ok(())
+    }
+
+    /// Returns from demonstration playback to Title without changing player records.
+    pub fn leave_attract(&mut self) -> Result<(), GameSessionError> {
+        if self.phase != SessionPhase::Attract {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.phase = SessionPhase::Title;
+        Ok(())
+    }
+
+    /// Moves a finalized result record out of a temporary session.
+    pub fn take_finalized_result_record(&mut self) -> Result<FlightRecord, GameSessionError> {
+        if self.phase != SessionPhase::Result
+            || self
+                .record
+                .as_ref()
+                .and_then(FlightRecord::finalization)
+                .is_none()
+        {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        self.configuration = None;
+        self.flight_state = None;
+        self.result = None;
+        self.phase = SessionPhase::Title;
+        self.record
+            .take()
+            .ok_or(GameSessionError::InvalidTransition)
     }
 
     /// Enters read-only playback while retaining the finalized result and record.

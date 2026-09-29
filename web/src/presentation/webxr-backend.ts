@@ -129,10 +129,11 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   }
 
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewerPose: Pose | null): BackendFrame {
-    this.lastViewerPose = viewerPose;
+    const presentationViewerPose = viewerPose === null ? null : this.renderer.transformTrackingPose(viewerPose);
+    this.lastViewerPose = presentationViewerPose;
     const panel = viewModel.panels[0] ?? null;
-    const headPose = viewerPose ?? IDENTITY_POSE;
-    if (viewerPose !== null) this.menuPlacement.open(viewerPose, 2.4);
+    const headPose = presentationViewerPose ?? IDENTITY_POSE;
+    if (presentationViewerPose !== null) this.menuPlacement.open(presentationViewerPose, 2.4);
     const menuPose = this.menuPlacement.current() ?? placeMenuPanel(headPose, 2.4);
     const worldFromPanel = panel === null ? menuPose : resolveAnchorPose({ kind: panel.anchor, localPose: panel.localPose }, {
       world: this.referenceFromWorld,
@@ -142,7 +143,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     });
     this.lastPanel = panel;
     this.lastPanelPose = worldFromPanel;
-    const gazeCursor = this.updateGaze(panel, worldFromPanel, viewerPose, timestampMs);
+    const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs);
     return Object.freeze({
       timestampMs,
       cameraPose: IDENTITY_POSE,

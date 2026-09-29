@@ -75,6 +75,54 @@ describe("Boot application state", () => {
     }).model).toBe(opening.model);
   });
 
+  it("loads and loops the independent Title Attract record", () => {
+    const title = readyModel(0);
+    const requested = updateApp(title, {
+      type: "ui-action", action: { type: "activate", controlId: "game-title-demo" }
+    });
+    expect(requested.effects).toEqual([
+      { type: "game-session-operation", operation: "enter-attract", requestId: 2 }
+    ]);
+    const entered = updateApp(requested.model, {
+      type: "game-operation-completed", requestId: 2, phaseCode: 10, controlModeCode: 0,
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    });
+    expect(entered.model.gameSession.phaseCode).toBe(10);
+    expect(entered.model.replayPlaying).toBe(true);
+    expect(entered.effects).toEqual([{ type: "load-flight-analysis", requestId: 1 }]);
+
+    const analysis = Object.freeze({
+      samples: Object.freeze([]), initialPilotPositionMeters: 0,
+      summary: Object.freeze({
+        sampleCount: 2, durationSeconds: 2, maximumAltitudeMeters: 10,
+        maximumAirspeedMetersPerSecond: 9, maximumGroundspeedMetersPerSecond: 10,
+        maximumAngleOfAttackRadians: null, maximumAbsoluteRollRadians: 0, score: null,
+        terminal: Object.freeze({ reason: "time-limit" as const, disposition: "complete" as const, timeSeconds: 2 })
+      })
+    });
+    const loaded = updateApp(entered.model, { type: "flight-analysis-loaded", requestId: 1, data: analysis });
+    expect(loaded.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
+    const looped = updateApp(loaded.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 2.1 });
+    expect(looped.model.analysisCursorTimeSeconds).toBe(0);
+    expect(looped.model.replayPlaying).toBe(true);
+    expect(looped.effects).toContainEqual({ type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0 });
+    expect(looped.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
+
+    const returning = updateApp(looped.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-attract-return" }
+    });
+    expect(returning.effects).toEqual([
+      { type: "game-session-operation", operation: "leave-attract", requestId: 3 }
+    ]);
+    const returned = updateApp(returning.model, {
+      type: "game-operation-completed", requestId: 3, phaseCode: 0, controlModeCode: 0,
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    });
+    expect(returned.model.gameSession.phaseCode).toBe(0);
+    expect(returned.model.replayPlaying).toBe(false);
+    expect(returned.model.replayClockGeneration).toBe(2);
+  });
+
   it("serializes permission requests and backend changes", () => {
     const ready = readyModel();
     const requested = updateApp(ready, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
@@ -367,19 +415,30 @@ describe("Boot application state", () => {
     expect(ended.effects).toHaveLength(2);
   });
 
-  it("allows Pilot and Chase selection only on the Screen backend", () => {
+  it("cycles Auto and manual camera selection on every presentation backend", () => {
     const replay: AppModel = readyModel(9);
-    const chase = updateApp(replay, {
+    const pilot = updateApp(replay, {
+      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+    });
+    expect(pilot.model.replayCameraMode).toBe("pilot");
+    const chase = updateApp(pilot.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
     });
     expect(chase.model.replayCameraMode).toBe("chase");
+    let selection = chase;
+    for (const mode of ["orbit", "platform", "shore", "overhead", "side", "front", "telephoto", "auto"]) {
+      selection = updateApp(selection.model, {
+        type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+      });
+      expect(selection.model.replayCameraMode).toBe(mode);
+    }
     const vrReplay: AppModel = {
       ...replay,
       presentation: Object.freeze({ type: "ready", mode: "webxr" })
     };
     expect(updateApp(vrReplay, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    }).model).toBe(vrReplay);
+    }).model.replayCameraMode).toBe("pilot");
   });
 
   it("persists an explicitly aborted flight on operation completion", () => {

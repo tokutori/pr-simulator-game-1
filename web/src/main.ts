@@ -23,7 +23,10 @@ import {
   queryFlightRecordSampleAt
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
+import { syntheticVenueMapForScenario } from "./game/synthetic-venue-map.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
+import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
+import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
 import type { UiAction } from "./render/contracts/ui.js";
 import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
@@ -63,19 +66,35 @@ function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
-  if (previousPhaseCode === 9 && gameSessionPhaseCode(model.gameSession) !== 9) flightController?.renderCurrentSnapshot();
+  if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
   renderModel();
   for (const effect of transition.effects) runEffect(effect);
 }
 
 function renderModel(): void {
-  const weatherCode = model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  // The attract record is a separate, fixed scenario-1 flight. Its water
+  // condition must not inherit the player's last setup selection.
+  const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
   flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
   flightHud.setInformationCode(model.difficulty.informationCode);
-  flightHud.setVisible(gameSessionPhaseCode(model.gameSession) === 5 || gameSessionPhaseCode(model.gameSession) === 6);
-  flightRenderer?.setFlightCameraMode(gameSessionPhaseCode(model.gameSession) === 9 ? model.replayCameraMode : "pilot");
-  if (gameSessionPhaseCode(model.gameSession) === 9) {
-    if (model.replayPose !== null) flightRenderer?.setFlightPose(model.replayPose);
+  flightHud.setVisible(phaseCode === 5 || phaseCode === 6);
+  const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
+  const cameraMode = phaseCode === 10
+    ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+    : phaseCode === 9
+      ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+      : "pilot";
+  const cameraPoints = syntheticVenueMapForScenario(model.configurationMetadata?.scenarioId ?? 1)?.cameraPoints ?? [];
+  const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
+    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis?.samples)
+    : null;
+  flightRenderer?.setCinematicCameraView(cinematicView);
+  flightRenderer?.setFlightCameraMode(cameraMode);
+  if (phaseCode === 9 || phaseCode === 10) {
+    flightRenderer?.setFlightPose(model.replayPose);
+  } else if (phaseCode <= 3 || phaseCode === 8 || (phaseCode === 7 && flightController === null)) {
+    flightRenderer?.setFlightPose(null);
   }
   if (model.presentation.type === "hidden") {
     screenUi.clear();
@@ -481,6 +500,12 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
         break;
       case "leave-replay":
         (session as unknown as { leave_replay(): void }).leave_replay();
+        break;
+      case "enter-attract":
+        session.enter_attract();
+        break;
+      case "leave-attract":
+        session.leave_attract();
         break;
       default:
         return assertNever(operation);

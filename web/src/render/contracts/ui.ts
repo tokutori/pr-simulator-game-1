@@ -117,6 +117,7 @@ export interface UiViewModel {
   readonly scene: GameScene;
   readonly title: string;
   readonly description: string;
+  readonly presentationStyle?: "default" | "cinematic";
   readonly activeOverlay: string | null;
   readonly panels: readonly UiPanel[];
 }

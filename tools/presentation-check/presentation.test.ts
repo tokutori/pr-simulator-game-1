@@ -343,6 +343,12 @@ class FakeRenderer implements RendererAdapter {
 
   setFlightCameraMode(): void {}
 
+  setCinematicCameraView(): void {}
+
+  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose {
+    return pose;
+  }
+
   resize(viewport: ViewportSize): void {
     this.lastViewport = viewport;
   }

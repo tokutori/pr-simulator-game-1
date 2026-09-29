@@ -202,7 +202,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   }
 
   currentFrame(timestampMs: number, viewModel: UiViewModel): BackendFrame {
-    const viewerPose = this.currentViewerPose(timestampMs);
+    const cameraPose = this.currentViewerPose(timestampMs);
+    const viewerPose = cameraPose === null ? null : this.renderer.transformTrackingPose(cameraPose);
     const panel = viewModel.panels[0] ?? null;
     const headPose = viewerPose ?? poseAtOrigin(this.latestViewerOrientation);
     if (viewerPose !== null) this.menuPlacement.open(viewerPose, 2.4);
@@ -222,7 +223,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
         : this.updateGaze(panel, panelPose, viewerPose, timestampMs);
     return Object.freeze({
       timestampMs,
-      cameraPose: headPose,
+      cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
       panelPose,
       panel,
       panelVisible: panel !== null && viewerPose !== null,

@@ -20,9 +20,10 @@ import {
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
 import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
-import { IDENTITY_POSE, quaternion, vec3 } from "../../contracts/math.js";
+import type { CinematicCameraView } from "../../contracts/camera.js";
+import { IDENTITY_POSE, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
-import { composePose } from "../../contracts/math.js";
+import { composePose, inversePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { flightRelativePose } from "./flight-pose.js";
@@ -190,6 +191,10 @@ export function createThreeRenderer(
   scene.add(aircraftRoot);
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   aircraftRoot.add(camera);
+  const externalCameraRig = new Group();
+  scene.add(externalCameraRig);
+  const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 2000);
+  externalCameraRig.add(fixedCamera);
   const cockpitMaterial = new MeshBasicMaterial({ color: 0x343f3d });
   const cockpitWing = new Mesh(new BoxGeometry(3.8, 0.055, 0.24), cockpitMaterial);
   cockpitWing.position.set(0, -0.58, -1.25);
@@ -197,6 +202,19 @@ export function createThreeRenderer(
   const cockpitNose = new Mesh(new BoxGeometry(0.16, 0.12, 1.7), cockpitMaterial);
   cockpitNose.position.set(0, -0.5, -1.95);
   aircraftRoot.add(cockpitNose);
+  const airframeMaterial = new MeshBasicMaterial({ color: 0xe8e6d7 });
+  const mainWing = new Mesh(new BoxGeometry(22, 0.12, 1.1), airframeMaterial);
+  mainWing.position.set(0, -0.75, 0.3);
+  aircraftRoot.add(mainWing);
+  const fuselage = new Mesh(new BoxGeometry(0.2, 0.22, 5), airframeMaterial);
+  fuselage.position.set(0, -0.62, 1);
+  aircraftRoot.add(fuselage);
+  const horizontalTail = new Mesh(new BoxGeometry(4, 0.08, 0.55), airframeMaterial);
+  horizontalTail.position.set(0, -0.58, 3.3);
+  aircraftRoot.add(horizontalTail);
+  const verticalTail = new Mesh(new BoxGeometry(0.08, 1.1, 0.55), airframeMaterial);
+  verticalTail.position.set(0, -0.15, 3.3);
+  aircraftRoot.add(verticalTail);
   let disposed = false;
   let loopRunning = false;
   let width = 0;
@@ -212,13 +230,19 @@ export function createThreeRenderer(
   let selectRayHandler: ((ray: SelectRay) => void) | null = null;
   let flightPose: FlightRenderPose | null = null;
   let flightCameraMode: FlightCameraMode = "pilot";
+  let fixedCameraView: CinematicCameraView | null = null;
+  const currentExternalCameraPose = (): Pose | null => {
+    if (flightPose === null || flightCameraMode === "pilot") return null;
+    if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
+    return flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")));
+  };
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(ray);
+    if (ray !== null) selectRayHandler(transformRay(ray, currentExternalCameraPose()));
   };
 
   const onSessionEnd = (): void => {
@@ -266,18 +290,26 @@ export function createThreeRenderer(
     render(frame: BackendFrame) {
       ensureActive(disposed);
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
-      const useChaseCamera = flightPose !== null && flightCameraMode === "chase" && !renderer.xr.isPresenting && stereoPresentation === null;
-      if (useChaseCamera) {
-        setPose(camera, poseFrdToThree(replayCameraPoseFrd("chase")));
-      } else {
-        const pilotEyePose = flightPose === null
-          ? IDENTITY_POSE
-          : pilotEyePoseThree(
-            SYNTHETIC_PILOT_EYE_POINT,
-            flightPose.pilotPositionMeters,
-            flightPose.initialPilotPositionMeters
-          );
-        setPose(camera, composePose(pilotEyePose, frame.cameraPose));
+      const externalCameraPose = currentExternalCameraPose();
+      const useExternalCamera = externalCameraPose !== null;
+      const fixedView = useExternalCamera && flightCameraMode !== "chase" ? fixedCameraView : null;
+      const pilotEyePose = flightPose === null
+        ? IDENTITY_POSE
+        : pilotEyePoseThree(
+          SYNTHETIC_PILOT_EYE_POINT,
+          flightPose.pilotPositionMeters,
+          flightPose.initialPilotPositionMeters
+        );
+      setPose(camera, composePose(pilotEyePose, frame.cameraPose));
+      const externalPose = externalCameraPose ?? IDENTITY_POSE;
+      setPose(externalCameraRig, externalPose);
+      setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
+      if (fixedView !== null && fixedCamera.fov !== fixedView.verticalFieldOfViewDegrees) {
+        fixedCamera.fov = fixedView.verticalFieldOfViewDegrees;
+        fixedCamera.updateProjectionMatrix();
+      } else if (fixedView === null && fixedCamera.fov !== 60) {
+        fixedCamera.fov = 60;
+        fixedCamera.updateProjectionMatrix();
       }
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
@@ -285,7 +317,13 @@ export function createThreeRenderer(
       // The non-flight scenic camera is at the origin. Keep its water below
       // eye level so amplified wave crests do not cut across the horizon.
       water.position.set(flightPose?.datumPositionNed.east ?? 0, flightPose === null ? -1.5 : 0, -(flightPose?.datumPositionNed.north ?? 0));
-      setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
+      if (useExternalCamera) {
+        externalCameraRig.add(panelMesh);
+        setPose(panelMesh, composePose(inversePose(externalPose), frame.panelPose));
+      } else {
+        scene.add(panelMesh);
+        setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
+      }
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
         panelTexture.needsUpdate = true;
@@ -300,12 +338,12 @@ export function createThreeRenderer(
         gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
       }
       if (stereoPresentation !== null && !renderer.xr.isPresenting) {
-        stereoEffect.render(scene, camera);
+        stereoEffect.render(scene, useExternalCamera ? fixedCamera : camera);
         renderer.setViewport(0, 0, width, height);
         renderer.setScissor(0, 0, width, height);
         renderer.setScissorTest(false);
       } else {
-        renderer.render(scene, camera);
+        renderer.render(scene, useExternalCamera ? fixedCamera : camera);
       }
     },
     resize(viewport: ViewportSize) {
@@ -343,6 +381,11 @@ export function createThreeRenderer(
       cockpitWing.geometry.dispose();
       cockpitNose.geometry.dispose();
       cockpitMaterial.dispose();
+      mainWing.geometry.dispose();
+      fuselage.geometry.dispose();
+      horizontalTail.geometry.dispose();
+      verticalTail.geometry.dispose();
+      airframeMaterial.dispose();
       renderer.dispose();
       disposed = true;
     },
@@ -372,6 +415,13 @@ export function createThreeRenderer(
     },
     setFlightCameraMode(mode: FlightCameraMode) {
       flightCameraMode = mode;
+    },
+    setCinematicCameraView(view: CinematicCameraView | null) {
+      fixedCameraView = view;
+    },
+    transformTrackingPose(pose: Pose): Pose {
+      const externalPose = currentExternalCameraPose();
+      return externalPose === null ? pose : composePose(externalPose, pose);
     }
   };
 
@@ -508,12 +558,24 @@ export function createThreeRenderer(
     else renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    fixedCamera.aspect = width / height;
+    fixedCamera.updateProjectionMatrix();
   }
 }
 
 function setPose(object: Object3D, pose: Pose): void {
   object.position.set(pose.position.x, pose.position.y, pose.position.z);
   object.quaternion.set(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
+}
+
+function transformRay(ray: SelectRay, worldFromTracking: Pose | null): SelectRay {
+  if (worldFromTracking === null) return ray;
+  const offset = rotateVec3(worldFromTracking.orientation, ray.origin);
+  return Object.freeze({
+    origin: vec3(offset.x + worldFromTracking.position.x, offset.y + worldFromTracking.position.y, offset.z + worldFromTracking.position.z),
+    direction: rotateVec3(worldFromTracking.orientation, ray.direction),
+    timestampMs: ray.timestampMs
+  });
 }
 
 function ensureActive(disposed: boolean): void {

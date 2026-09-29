@@ -40,6 +40,18 @@ fn session(maximum_ticks: u64) -> GameSession<'static> {
     session
 }
 
+fn finalized_demo_record() -> crate::FlightRecord {
+    let mut demo = session(4_000);
+    demo.start_countdown(1).unwrap();
+    demo.advance_countdown().unwrap();
+    demo.launch().unwrap();
+    while demo.snapshot().phase() != SessionPhase::Result {
+        let input = neutral_input(&demo);
+        demo.advance_flight_tick(input).unwrap();
+    }
+    demo.take_finalized_result_record().unwrap()
+}
+
 fn neutral_input(session: &GameSession<'_>) -> FlightFeedbackInput {
     let configuration = session.configuration.as_ref().unwrap();
     let aircraft = configuration.aircraft();
@@ -73,6 +85,30 @@ fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     assert_eq!(record.sample(0).unwrap().tick_index, 0);
     assert!(record.sample(0).unwrap().input_from_previous.is_none());
     assert_eq!(session.launch(), Err(GameSessionError::InvalidTransition));
+}
+
+#[test]
+fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
+    let mut session = GameSession::new();
+    assert_eq!(
+        session.enter_attract(),
+        Err(GameSessionError::InvalidTransition)
+    );
+    session
+        .install_attract_record(finalized_demo_record())
+        .unwrap();
+    session.enter_attract().unwrap();
+    assert!(matches!(
+        session.snapshot(),
+        SessionSnapshot::Attract { .. }
+    ));
+    assert!(session.flight_record().is_none());
+    assert!(session.playback_record().unwrap().sample_count() > 1);
+
+    session.leave_attract().unwrap();
+    assert_eq!(session.snapshot(), SessionSnapshot::Title);
+    assert!(session.flight_record().is_none());
+    session.enter_attract().unwrap();
 }
 
 #[test]

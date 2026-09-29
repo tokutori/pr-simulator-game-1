@@ -1,4 +1,5 @@
 import type { Pose, Vec2, Vec3 } from "./math.js";
+import type { CinematicCameraView } from "./camera.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 
@@ -36,7 +37,7 @@ export interface FlightRenderPose {
   readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }
 
-export type FlightCameraMode = "pilot" | "chase";
+export type FlightCameraMode = "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 
 export interface PanelCursor {
   readonly point: Vec2;
@@ -56,6 +57,8 @@ export interface RendererAdapter {
   setFlightPose(pose: FlightRenderPose | null): void;
   setLakeVisualCondition(condition: LakeVisualCondition): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
+  setCinematicCameraView(view: CinematicCameraView | null): void;
+  transformTrackingPose(pose: Pose): Pose;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;

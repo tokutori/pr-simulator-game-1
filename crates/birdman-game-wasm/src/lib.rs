@@ -2,10 +2,10 @@
 
 use birdman_game_core::{
     BodyVector, BriefingFailure, ControlMode, DistanceScore, DistanceScoreError, FbwAuthority,
-    FlightFeedbackInput, FlightRecordDisposition, FlightRecordPlaybackSample, FlightRecordSample,
-    FlightScenario, FlightTickOutcome, FlightTickState, GameSession, GameSessionConfiguration,
-    NedPoint, PauseReason, PilotPositionTarget, SessionEndReason, SessionPhase,
-    SessionScenarioIdentity, SessionSnapshot, SessionTerminalState, SurfaceCommands,
+    FlightFeedbackInput, FlightRecord, FlightRecordDisposition, FlightRecordPlaybackSample,
+    FlightRecordSample, FlightScenario, FlightTickOutcome, FlightTickState, GameSession,
+    GameSessionConfiguration, NedPoint, PauseReason, PilotPositionTarget, SessionEndReason,
+    SessionPhase, SessionScenarioIdentity, SessionSnapshot, SessionTerminalState, SurfaceCommands,
     SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
 };
 use birdman_game_format::{
@@ -84,13 +84,17 @@ impl GameSessionBridge {
     #[wasm_bindgen(constructor)]
     pub fn new(control_mode: u32) -> Result<GameSessionBridge, JsValue> {
         let (aircraft, scenarios, feedback) = playable_scenarios()?;
+        let mut session = GameSession::new();
+        session
+            .install_attract_record(build_demo_record()?)
+            .map_err(game_session_error)?;
         let difficulty = DifficultySettings::custom(
             InformationLevel::Full,
             assistance_from_control_mode(control_mode_from_code(control_mode)?),
             WeatherClass::Calm,
         );
         Ok(Self {
-            session: GameSession::new(),
+            session,
             scenarios,
             aircraft,
             feedback,
@@ -500,8 +504,18 @@ impl GameSessionBridge {
         Ok(())
     }
 
+    /// Enters the independent Rust-owned Title demonstration playback.
+    pub fn enter_attract(&mut self) -> Result<(), JsValue> {
+        self.session.enter_attract().map_err(game_session_error)
+    }
+
+    /// Stops demonstration playback and returns to Title without changing player records.
+    pub fn leave_attract(&mut self) -> Result<(), JsValue> {
+        self.session.leave_attract().map_err(game_session_error)
+    }
+
     /// Returns phase code: 0=Title, 1=Setup, 2=Preparing, 3=Ready, 4=Countdown,
-    /// 5=Flight, 6=Paused, 7=Result, 8=BriefingFailed, 9=Replay.
+    /// 5=Flight, 6=Paused, 7=Result, 8=BriefingFailed, 9=Replay, 10=Attract.
     pub fn phase_code(&self) -> u32 {
         phase_code(self.session.snapshot().phase())
     }
@@ -527,7 +541,7 @@ impl GameSessionBridge {
     /// Returns the number of samples retained by the session record.
     pub fn flight_record_sample_count(&self) -> u32 {
         self.session
-            .flight_record()
+            .playback_record()
             .map_or(0, |record| record.sample_count() as u32)
     }
 
@@ -535,7 +549,7 @@ impl GameSessionBridge {
     pub fn flight_record_sample(&self, index: u32) -> Result<Vec<f64>, JsValue> {
         let record = self
             .session
-            .flight_record()
+            .playback_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
         let sample = record
             .sample(index as usize)
@@ -547,7 +561,7 @@ impl GameSessionBridge {
     pub fn flight_record_samples_packed(&self) -> Result<Vec<f64>, JsValue> {
         let record = self
             .session
-            .flight_record()
+            .playback_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
         let capacity = record
             .sample_count()
@@ -568,7 +582,7 @@ impl GameSessionBridge {
     ) -> Result<Vec<f64>, JsValue> {
         let record = self
             .session
-            .flight_record()
+            .playback_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
         let sample = record
             .sample_at_time(u64::from(tick_index), fraction)
@@ -632,7 +646,7 @@ impl GameSessionBridge {
     pub fn flight_record_summary(&self) -> Result<Vec<f64>, JsValue> {
         let record = self
             .session
-            .flight_record()
+            .playback_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
         let summary = record.summary().map_err(|error| {
             JsValue::from_str(&format!("flight record summary failed: {error:?}"))
@@ -682,7 +696,7 @@ impl GameSessionBridge {
     pub fn flight_record_finalization(&self) -> Vec<f64> {
         let Some(finalization) = self
             .session
-            .flight_record()
+            .playback_record()
             .and_then(|record| record.finalization())
         else {
             return Vec::new();
@@ -1158,6 +1172,51 @@ fn playable_scenarios() -> Result<
     ))
 }
 
+fn build_demo_record() -> Result<FlightRecord, JsValue> {
+    let fixture = SyntheticPlayableFlight::try_new(10.5).map_err(synthetic_error)?;
+    let (aircraft, scenario, feedback, _) = fixture.into_parts();
+    let identity = SessionScenarioIdentity {
+        catalog_version: 1,
+        scenario_id: 1,
+        scenario_version: 1,
+        aircraft_model_version: 1,
+        environment_version: 1,
+        controller_profile_version: 1,
+        seed: 0xD3A0,
+    };
+    let configuration = GameSessionConfiguration::try_new(
+        scenario,
+        ControlMode::Manual,
+        feedback,
+        MAX_TICKS,
+        identity,
+    )
+    .map_err(game_session_error)?;
+    let mut demo = GameSession::new();
+    demo.open_setup().map_err(game_session_error)?;
+    demo.prepare_flight(configuration)
+        .map_err(game_session_error)?;
+    demo.mark_briefing_ready().map_err(game_session_error)?;
+    demo.start_countdown(1).map_err(game_session_error)?;
+    demo.advance_countdown().map_err(game_session_error)?;
+    demo.launch().map_err(game_session_error)?;
+    while demo.snapshot().phase() != SessionPhase::Result {
+        let pilot_position = PilotPositionTarget::try_new(&aircraft, 0.0)
+            .map_err(|error| JsValue::from_str(&format!("demo pilot input failed: {error:?}")))?;
+        let input = FlightFeedbackInput::new(
+            SurfaceCommands::try_new(0.0, 0.0, 0.0).map_err(|error| {
+                JsValue::from_str(&format!("demo surface input failed: {error:?}"))
+            })?,
+            BodyVector::zero(),
+            pilot_position,
+        );
+        demo.advance_flight_tick(input)
+            .map_err(game_session_error)?;
+    }
+    demo.take_finalized_result_record()
+        .map_err(game_session_error)
+}
+
 fn controller_profiles(
     feedback: birdman_game_core::BodyRateFeedbackConfig,
 ) -> Result<[ControllerProfile; 4], JsValue> {
@@ -1332,6 +1391,7 @@ fn phase_code(phase: SessionPhase) -> u32 {
         SessionPhase::FlightPaused { .. } => 6,
         SessionPhase::Result => 7,
         SessionPhase::Replay => 9,
+        SessionPhase::Attract => 10,
     }
 }
 
@@ -1379,7 +1439,8 @@ fn packed_session_snapshot(
         | SessionSnapshot::BriefingReady { .. }
         | SessionSnapshot::BriefingFailed { .. }
         | SessionSnapshot::Countdown { .. }
-        | SessionSnapshot::Replay { .. } => [0.0; SNAPSHOT_LENGTH],
+        | SessionSnapshot::Replay { .. }
+        | SessionSnapshot::Attract { .. } => [0.0; SNAPSHOT_LENGTH],
     };
     append_telemetry(packed, telemetry)
 }
@@ -1557,6 +1618,25 @@ mod tests {
             flight_record_sample_layout().split(',').count(),
             RECORD_SAMPLE_LENGTH
         );
+    }
+
+    #[test]
+    fn attract_uses_an_independent_record_without_exporting_or_changing_player_history() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        assert_eq!(bridge.phase_code(), 0);
+        assert_eq!(bridge.flight_record_sample_count(), 0);
+        bridge.enter_attract().unwrap();
+        assert_eq!(bridge.phase_code(), 10);
+        let demo_sample_count = bridge.flight_record_sample_count();
+        assert!(demo_sample_count > 100);
+        assert!(!bridge.flight_record_finalization().is_empty());
+        assert!(bridge.session.flight_record().is_none());
+
+        bridge.leave_attract().unwrap();
+        assert_eq!(bridge.phase_code(), 0);
+        assert_eq!(bridge.flight_record_sample_count(), 0);
+        bridge.enter_attract().unwrap();
+        assert_eq!(bridge.flight_record_sample_count(), demo_sample_count);
     }
 
     #[test]

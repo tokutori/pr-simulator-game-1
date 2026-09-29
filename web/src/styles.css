@@ -81,6 +81,37 @@ body {
   box-shadow: none;
 }
 
+.screen-ui-shell[data-mode="cinematic"] {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: min(21rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 1.5rem);
+  padding: 0.85rem;
+  background: rgb(16 36 43 / 78%);
+  font-size: 0.8rem;
+}
+
+.screen-ui-shell[data-mode="cinematic"] > h1,
+.screen-ui-shell[data-mode="cinematic"] > .screen-ui-description,
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-panel > h2 {
+  display: none;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-panel {
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-controls {
+  gap: 0.35rem;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-controls button {
+  min-height: 2rem;
+  padding: 0.35rem 0.5rem;
+}
+
 .screen-ui-shell[data-mode="analysis"] > h1,
 .screen-ui-shell[data-mode="analysis"] > .screen-ui-description,
 .screen-ui-panel[data-layout="normalized"] > h2 {
@@ -212,7 +243,8 @@ body {
 .flight-hud h2 { grid-area: title; font-size: 0.65rem; letter-spacing: 0.12em; }
 .flight-hud > output[aria-live] { grid-area: status; color: #e4dfbd; }
 .flight-hud-adi { grid-area: adi; display: block; width: 7.5rem; height: 5.65rem; }
-.flight-hud-adi.is-hidden { display: none; }
+.flight-hud-adi.is-hidden,
+.flight-hud-instrument[hidden] { display: none; }
 .flight-hud-readouts { grid-area: readings; white-space: pre-line; font-variant-numeric: tabular-nums; line-height: 1.55; }
 .flight-hud-instruments { grid-area: instruments; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem; }
 .flight-hud-instrument { display: grid; gap: 0.12rem; min-width: 0; padding: 0.25rem 0.35rem; border: 1px solid rgb(185 214 207 / 24%); border-radius: 0.3rem; background: rgb(8 24 30 / 46%); }

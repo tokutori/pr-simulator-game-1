@@ -21,7 +21,8 @@ describe("Game scene view model", () => {
     [5, "Flight"],
     [6, "Flight"],
     [7, "Result"],
-    [8, "Briefing"]
+    [8, "Briefing"],
+    [10, "Title"]
   ] as const)("maps phase %i to %s", (gamePhaseCode, scene) => {
     const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(gamePhaseCode) });
     const view = createGameViewModel(model, null);
@@ -66,10 +67,20 @@ describe("Game scene view model", () => {
       .toMatchObject({ kind: "button", enabled: false });
   });
 
+  it("shows the Attract return action while the Title demo is playing", () => {
+    const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(10), status: "" });
+    const controls = createGameViewModel(model, null).panels[0]?.controls;
+    expect(controls?.find((control) => control.id === "game-attract-status"))
+      .toMatchObject({ kind: "status", value: "自動再生中" });
+    expect(controls?.find((control) => control.id === "game-attract-return"))
+      .toMatchObject({ kind: "button", enabled: true });
+  });
+
   it("projects the Rust Replay phase with a shared record-time scrubber", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
       gameSession: sessionForPhase(9),
+      replayViewMode: "telemetry" as const,
       analysisCursorTimeSeconds: 1.25,
       flightAnalysis: Object.freeze({
         samples: Object.freeze([]),
@@ -90,7 +101,7 @@ describe("Game scene view model", () => {
       .toMatchObject({ kind: "button", enabled: true });
   });
 
-  it("exposes Pilot/Chase selection only for Screen Replay", () => {
+  it("exposes camera selection for Screen and VR Replay", () => {
     const base = {
       ...createInitialAppModel(),
       gameSession: sessionForPhase(9),
@@ -110,13 +121,13 @@ describe("Game scene view model", () => {
       presentation: Object.freeze({ type: "ready", mode: "screen" })
     }, null);
     expect(screenView.panels[0]?.controls.find((control) => control.id === "game-replay-camera"))
-      .toMatchObject({ kind: "button", label: "Camera: pilot", enabled: true });
+      .toMatchObject({ kind: "button", label: "Camera: Auto", enabled: true });
     const xrView = createGameViewModel({
       ...base,
       presentation: Object.freeze({ type: "ready", mode: "webxr" })
     }, null);
     expect(xrView.panels[0]?.controls.find((control) => control.id === "game-replay-camera"))
-      .toMatchObject({ kind: "button", enabled: false });
+      .toMatchObject({ kind: "button", enabled: true });
   });
 
   it("shows all three selected axes in Setup", () => {
