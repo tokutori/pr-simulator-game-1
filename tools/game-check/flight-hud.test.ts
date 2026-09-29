@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { FLIGHT_SNAPSHOT_LENGTH, parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { createFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import { drawVrFlightInstruments } from "../../web/src/presentation/vr-panel-canvas.js";
+import type { PanelDrawingContext } from "../../web/src/presentation/vr-panel-canvas.js";
 
 describe("flight HUD instruments", () => {
   it("derives axis readouts and gauge inputs from Rust telemetry", () => {
@@ -54,6 +56,48 @@ describe("flight HUD instruments", () => {
     expect(root.querySelector(".flight-hud-instrument-heading output")?.textContent).toBe("180°");
     expect(root.querySelector('[data-instrument="angle-of-attack"] polygon')?.getAttribute("points")).toBe("160,5 154,1 166,1");
     await window.happyDOM.abort();
+  });
+
+  it("renders the shared instrument model into the VR panel canvas", () => {
+    const drawnText: string[] = [];
+    let lineCount = 0;
+    const context: PanelDrawingContext = {
+      clearRect() {}, fillRect() {}, strokeRect() {}, moveTo() {},
+      lineTo(x, y) {
+        expect(Number.isFinite(x)).toBe(true);
+        expect(Number.isFinite(y)).toBe(true);
+        lineCount += 1;
+      },
+      fillText(text) { drawnText.push(text); },
+      beginPath() {}, closePath() {}, rect() {}, clip() {}, save() {}, restore() {}, fill() {},
+      stroke() {}, setFillStyle() {}, setStrokeStyle() {},
+      setFont() {}, setTextBaseline() {}, setLineWidth() {}, setGlobalAlpha() {}
+    };
+    const model = createFlightHudModel(flightSnapshot({
+      headingDegrees: 90,
+      pitchDegrees: 5,
+      rollDegrees: -10,
+      pilotPosition: 0.2,
+      windEast: 2,
+      angleOfAttackDegrees: 6
+    }), 0);
+
+    drawVrFlightInstruments(context, model);
+
+    expect(drawnText).toContain("ADI · PITCH / ROLL");
+    expect(drawnText).toContain("HDG");
+    expect(drawnText).toContain("PILOT CG · FORWARD / AFT");
+    expect(drawnText).toContain("WIND VECTOR");
+    expect(drawnText).toContain("ANGLE OF ATTACK");
+    expect(drawnText).toContain("90°");
+    expect(lineCount).toBeGreaterThan(20);
+
+    drawnText.length = 0;
+    drawVrFlightInstruments(context, createFlightHudModel(flightSnapshot(), 2));
+    expect(drawnText).toContain("FLIGHT DATA");
+    expect(drawnText).not.toContain("HDG");
+    expect(drawnText).not.toContain("WIND VECTOR");
+    expect(drawnText).not.toContain("ANGLE OF ATTACK");
   });
 });
 

@@ -1,5 +1,6 @@
 import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick } from "../render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../render/contracts/ui.js";
+import type { FlightHudModel } from "./flight-hud-model.js";
 
 export const VR_PANEL_PIXELS = Object.freeze({ width: 1024, height: 768 });
 
@@ -9,6 +10,12 @@ export interface PanelDrawingContext {
   fillText(text: string, x: number, y: number, maxWidth: number): void;
   strokeRect(x: number, y: number, width: number, height: number): void;
   beginPath(): void;
+  closePath(): void;
+  rect(x: number, y: number, width: number, height: number): void;
+  clip(): void;
+  save(): void;
+  restore(): void;
+  fill(): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
   stroke(): void;
@@ -18,6 +25,224 @@ export interface PanelDrawingContext {
   setTextBaseline(value: "middle"): void;
   setLineWidth(value: number): void;
   setGlobalAlpha(value: number): void;
+}
+
+export function drawVrFlightInstruments(context: PanelDrawingContext, model: FlightHudModel): void {
+  context.setGlobalAlpha(1);
+  context.setFillStyle("#d5e0dc");
+  context.setFont("500 22px system-ui, sans-serif");
+  context.setTextBaseline("middle");
+  context.fillText(model.status, 52, 151, 920);
+
+  const readoutLines = model.readouts.split("\n");
+  if (model.attitude !== null) {
+    drawInstrumentCard(context, 42, 174, 474, 326, "ADI · PITCH / ROLL");
+    if (readoutLines[0] !== undefined) {
+      context.setFillStyle("#f3f4e8");
+      context.setFont("500 19px system-ui, sans-serif");
+      context.fillText(readoutLines[0], 58, 205, 442);
+    }
+    drawVrAdi(context, model, { x: 58, y: 222, width: 442, height: 260 });
+  } else {
+    drawInstrumentCard(context, 42, 174, 940, 326, "FLIGHT DATA");
+    context.setFillStyle("#f3f4e8");
+    context.setFont("500 24px system-ui, sans-serif");
+    readoutLines.forEach((line, index) => {
+      context.fillText(line, 74, 258 + index * 56, 876);
+    });
+  }
+
+  if (model.headingDegrees !== null) {
+    drawInstrumentCard(context, 532, 174, 450, 102, "HDG");
+    drawHeadingTape(context, model.headingDegrees, 548, 209, 418, 54);
+  }
+  if (model.pilotPositionRatio !== null) {
+    drawInstrumentCard(context, 532, 290, 450, 88, "PILOT CG · FORWARD / AFT");
+    drawPilotPosition(context, model.pilotPositionRatio, 555, 337, 402);
+  }
+  if (model.windDirectionDegrees !== null && model.wind !== null) {
+    drawInstrumentCard(context, 532, 392, 214, 132, "WIND VECTOR");
+    drawWindVector(context, model.windDirectionDegrees, 602, 455, 43);
+    context.setFillStyle("#f3f4e8");
+    context.setFont("400 14px system-ui, sans-serif");
+    context.fillText(model.wind, 545, 507, 188);
+  }
+  if (model.angleOfAttackDegrees !== null) {
+    drawInstrumentCard(context, 762, 392, 220, 132, "ANGLE OF ATTACK");
+    context.setFillStyle("#f3f4e8");
+    context.setFont("600 25px system-ui, sans-serif");
+    context.fillText(model.angleOfAttack ?? "—", 785, 434, 175);
+    drawAngleOfAttack(context, model.angleOfAttackDegrees, 780, 476, 184);
+  }
+
+  if (model.telemetry !== "") {
+    context.setFillStyle("#f3f4e8");
+    context.setFont("400 17px system-ui, sans-serif");
+    context.fillText(model.telemetry, 52, 548, 920);
+  }
+}
+
+function drawInstrumentCard(
+  context: PanelDrawingContext,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  label: string
+): void {
+  context.setGlobalAlpha(1);
+  context.setFillStyle("#183139");
+  context.fillRect(x, y, width, height);
+  context.setStrokeStyle("#91b4b3");
+  context.setLineWidth(2);
+  context.strokeRect(x, y, width, height);
+  context.setFillStyle("#b9c9c2");
+  context.setFont("600 15px system-ui, sans-serif");
+  context.setTextBaseline("middle");
+  context.fillText(label, x + 12, y + 15, width - 24);
+}
+
+function drawVrAdi(
+  context: PanelDrawingContext,
+  model: FlightHudModel,
+  bounds: Readonly<{ x: number; y: number; width: number; height: number }>
+): void {
+  if (model.attitude === null) {
+    context.setFillStyle("#d5e0dc");
+    context.setFont("500 20px system-ui, sans-serif");
+    context.fillText("姿勢計器 unavailable", bounds.x + 12, bounds.y + bounds.height / 2, bounds.width - 24);
+    return;
+  }
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  const rollRadians = -model.attitude.rollDegrees * Math.PI / 180;
+  const direction = { x: Math.cos(rollRadians), y: Math.sin(rollRadians) };
+  const normal = { x: -direction.y, y: direction.x };
+  const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees)) * 2.2;
+  const horizonY = centerY + pitchShift;
+  const diagonal = Math.hypot(bounds.width, bounds.height) * 2;
+  const firstHorizonPoint = { x: centerX - direction.x * diagonal, y: horizonY - direction.y * diagonal };
+  const secondHorizonPoint = { x: centerX + direction.x * diagonal, y: horizonY + direction.y * diagonal };
+  context.save();
+  context.beginPath();
+  context.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+  context.clip();
+  context.setFillStyle("#397d9a");
+  context.fillRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  const normalReach = diagonal * 2;
+  context.beginPath();
+  context.moveTo(firstHorizonPoint.x, firstHorizonPoint.y);
+  context.lineTo(secondHorizonPoint.x, secondHorizonPoint.y);
+  context.lineTo(secondHorizonPoint.x + normal.x * normalReach, secondHorizonPoint.y + normal.y * normalReach);
+  context.lineTo(firstHorizonPoint.x + normal.x * normalReach, firstHorizonPoint.y + normal.y * normalReach);
+  context.closePath();
+  context.setFillStyle("#9a7047");
+  context.fill();
+  drawCanvasLine(context, firstHorizonPoint.x, firstHorizonPoint.y,
+    secondHorizonPoint.x, secondHorizonPoint.y, "#f3f4e8", 4);
+
+  for (const pitchMark of [-30, -20, -10, 10, 20, 30]) {
+    const offset = -pitchMark * 2.2;
+    const lineCenterX = centerX + normal.x * offset;
+    const lineCenterY = horizonY + normal.y * offset;
+    const halfLength = Math.abs(pitchMark) % 20 === 0 ? 48 : 30;
+    const first = { x: lineCenterX - direction.x * halfLength, y: lineCenterY - direction.y * halfLength };
+    const second = { x: lineCenterX + direction.x * halfLength, y: lineCenterY + direction.y * halfLength };
+    if (![first.x, first.y, second.x, second.y].every(Number.isFinite)) continue;
+    drawCanvasLine(context, first.x, first.y, second.x, second.y, "#d5e0dc", 2);
+  }
+  drawCanvasLine(context, centerX - 58, centerY, centerX - 18, centerY, "#ffd45c", 5);
+  drawCanvasLine(context, centerX - 18, centerY, centerX - 10, centerY - 10, "#ffd45c", 5);
+  drawCanvasLine(context, centerX - 10, centerY - 10, centerX + 10, centerY - 10, "#ffd45c", 5);
+  drawCanvasLine(context, centerX + 10, centerY - 10, centerX + 18, centerY, "#ffd45c", 5);
+  drawCanvasLine(context, centerX + 18, centerY, centerX + 58, centerY, "#ffd45c", 5);
+  drawCanvasLine(context, centerX, centerY - 10, centerX, centerY + 8, "#ffd45c", 5);
+  context.restore();
+  context.setStrokeStyle("#e8eee5");
+  context.setLineWidth(3);
+  context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  context.setFillStyle("#f3f4e8");
+  context.setFont("400 15px system-ui, sans-serif");
+  context.fillText(`PITCH ${model.attitude.pitchDegrees.toFixed(0)}° · ROLL ${model.attitude.rollDegrees.toFixed(0)}°`, bounds.x + 8, bounds.y + bounds.height - 4, bounds.width - 16);
+}
+
+function drawHeadingTape(context: PanelDrawingContext, headingDegrees: number, x: number, y: number, width: number, height: number): void {
+  const centerX = x + width / 2;
+  context.setFillStyle("#f3f4e8");
+  context.setFont("600 26px system-ui, sans-serif");
+  context.fillText(`${headingDegrees.toFixed(0)}°`, centerX - 36, y + 12, 72);
+  for (let offset = -60; offset <= 60; offset += 10) {
+    const tickX = centerX + offset * 3.2;
+    drawCanvasLine(context, tickX, y + 34, tickX, y + (offset % 30 === 0 ? height - 3 : height - 15),
+      offset % 30 === 0 ? "#f3f4e8" : "#91b4b3", offset % 30 === 0 ? 2 : 1);
+    if (offset % 30 === 0) {
+      context.setFillStyle("#d5e0dc");
+      context.setFont("400 13px system-ui, sans-serif");
+      context.fillText(String(normalizeBearing(headingDegrees + offset)), tickX - 16, y + 27, 32);
+    }
+  }
+  context.setFillStyle("#ffd45c");
+  context.fillRect(centerX - 2, y + 32, 4, height - 30);
+}
+
+function drawPilotPosition(context: PanelDrawingContext, ratio: number, x: number, y: number, width: number): void {
+  drawCanvasLine(context, x, y, x + width, y, "#b9c9c2", 3);
+  for (let index = 0; index <= 8; index += 1) {
+    const tickX = x + width * index / 8;
+    drawCanvasLine(context, tickX, y - 9, tickX, y + 9, "#b9c9c2", 1);
+  }
+  const indicatorX = x + (Math.max(-1, Math.min(1, ratio)) + 1) * width / 2;
+  context.setFillStyle("#ffd45c");
+  context.fillRect(indicatorX - 5, y - 17, 10, 18);
+  context.setFillStyle("#f3f4e8");
+  context.setFont("500 17px system-ui, sans-serif");
+  context.fillText("AFT", x, y + 27, 40);
+  context.fillText("FWD", x + width - 40, y + 27, 40);
+}
+
+function drawWindVector(context: PanelDrawingContext, directionDegrees: number, centerX: number, centerY: number, radius: number): void {
+  context.setStrokeStyle("#526c70");
+  context.setLineWidth(1);
+  context.beginPath();
+  context.moveTo(centerX - radius, centerY);
+  context.lineTo(centerX + radius, centerY);
+  context.moveTo(centerX, centerY - radius);
+  context.lineTo(centerX, centerY + radius);
+  context.stroke();
+  context.setFillStyle("#f3f4e8");
+  context.setFont("400 13px system-ui, sans-serif");
+  context.fillText("N", centerX - 5, centerY - radius - 8, 18);
+  const angle = directionDegrees * Math.PI / 180;
+  const endX = centerX + Math.sin(angle) * (radius - 8);
+  const endY = centerY - Math.cos(angle) * (radius - 8);
+  drawCanvasLine(context, centerX, centerY, endX, endY, "#ffd45c", 4);
+  const headAngle = Math.atan2(endY - centerY, endX - centerX);
+  drawCanvasLine(context, endX, endY, endX - 13 * Math.cos(headAngle - Math.PI / 6), endY - 13 * Math.sin(headAngle - Math.PI / 6), "#ffd45c", 4);
+  drawCanvasLine(context, endX, endY, endX - 13 * Math.cos(headAngle + Math.PI / 6), endY - 13 * Math.sin(headAngle + Math.PI / 6), "#ffd45c", 4);
+}
+
+function drawAngleOfAttack(context: PanelDrawingContext, angleDegrees: number, x: number, y: number, width: number): void {
+  drawCanvasLine(context, x, y, x + width, y, "#b9c9c2", 3);
+  for (let index = 0; index <= 6; index += 1) {
+    const tickX = x + width * index / 6;
+    drawCanvasLine(context, tickX, y - 8, tickX, y + 8, "#b9c9c2", 1);
+  }
+  const ratio = (Math.max(-10, Math.min(20, angleDegrees)) + 10) / 30;
+  context.setFillStyle("#ffd45c");
+  context.fillRect(x + width * ratio - 4, y - 13, 8, 16);
+}
+
+function drawCanvasLine(context: PanelDrawingContext, x1: number, y1: number, x2: number, y2: number, color: string, width: number): void {
+  context.setStrokeStyle(color);
+  context.setLineWidth(width);
+  context.beginPath();
+  context.moveTo(x1, y1);
+  context.lineTo(x2, y2);
+  context.stroke();
+}
+
+function normalizeBearing(degrees: number): number {
+  return ((Math.round(degrees) % 360) + 360) % 360;
 }
 
 export function drawVrPanel(

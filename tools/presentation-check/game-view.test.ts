@@ -118,7 +118,7 @@ describe("Game scene view model", () => {
     if (panel === undefined) throw new Error("Flight panel is missing");
     const controlIds = panel.controls.map((control) => control.id);
     expect(panel.anchor).toBe("cockpit");
-    expect(controlIds).toContain("game-flight-readouts");
+    expect(controlIds).not.toContain("game-flight-readouts");
     expect(controlIds).toContain("game-flight-pause");
     expect(controlIds).toContain("game-flight-abort");
     expect(new Set(controlIds).size).toBe(controlIds.length);
@@ -532,6 +532,12 @@ describe("Game scene view model", () => {
       fillText: (value) => commands.push(value),
       strokeRect: () => commands.push("rect"),
       beginPath: () => commands.push("path"),
+      closePath: () => undefined,
+      rect: () => undefined,
+      clip: () => undefined,
+      save: () => undefined,
+      restore: () => undefined,
+      fill: () => undefined,
       moveTo: () => undefined,
       lineTo: () => undefined,
       stroke: () => commands.push("stroke"),

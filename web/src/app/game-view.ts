@@ -4,8 +4,6 @@ import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiViewModel } from 
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
 import { syntheticVenueMapForScenario } from "../game/synthetic-venue-map.js";
-import { createFlightHudModel } from "../presentation/flight-hud-model.js";
-import type { InformationLevelCode } from "../presentation/flight-hud-model.js";
 import type {
   AppModel,
   ConfigurationMetadataUiState,
@@ -68,36 +66,6 @@ export function createGameViewModel(
       }
       (phaseCode === 6 ? buttons : flightButtons).forEach((entry) => controls.push(entry));
     } else if (snapshot !== null) {
-      const hud = createFlightHudModel(snapshot, informationLevelCode(model.difficulty.informationCode));
-      const flightStatus = phaseCode === 6 ? "一時停止中" : hud.status;
-      controls.push(Object.freeze({
-        ...status("game-flight-state", "FLIGHT", flightStatus),
-        rect: normalizedRect(0.04, 0.035, 0.92, 0.075)
-      }));
-      controls.push(Object.freeze({
-        ...status("game-flight-readouts", "速度・高度・姿勢", hud.readouts),
-        rect: normalizedRect(0.04, 0.125, 0.92, 0.12)
-      }));
-      if (hud.heading !== null) controls.push(Object.freeze({
-        ...status("game-flight-heading", "方位", hud.heading),
-        rect: normalizedRect(0.04, 0.26, 0.43, 0.075)
-      }));
-      if (hud.pilotPosition !== null) controls.push(Object.freeze({
-        ...status("game-flight-pilot-position", "パイロット重心", hud.pilotPosition),
-        rect: normalizedRect(0.51, 0.26, 0.45, 0.075)
-      }));
-      if (hud.wind !== null) controls.push(Object.freeze({
-        ...status("game-flight-wind", "風 N / E / D", hud.wind),
-        rect: normalizedRect(0.04, 0.35, 0.92, 0.075)
-      }));
-      if (hud.angleOfAttack !== null) controls.push(Object.freeze({
-        ...status("game-flight-angle-of-attack", "迎角", hud.angleOfAttack),
-        rect: normalizedRect(0.04, 0.44, 0.43, 0.075)
-      }));
-      if (hud.telemetry !== "") controls.push(Object.freeze({
-        ...status("game-flight-telemetry", "距離・飛行時間", hud.telemetry),
-        rect: normalizedRect(0.04, 0.53, 0.92, 0.12)
-      }));
       if (phaseCode === 6 && pauseOverlay === "settings") {
         controls.push(Object.freeze({
           ...status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"),
@@ -317,11 +285,6 @@ export function createGameViewModel(
       : null,
     panels: Object.freeze([panel])
   });
-}
-
-function informationLevelCode(value: number): InformationLevelCode {
-  if (value === 0 || value === 1 || value === 2 || value === 3) return value;
-  throw new RangeError("Information level code must lie in [0, 3]");
 }
 
 function createAnalysisChart(

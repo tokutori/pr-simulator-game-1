@@ -6,7 +6,7 @@ import type { AppEffect, AppMessage, AppModel, GameSessionOperation, GameSession
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserPanelContext } from "./presentation/browser-canvas.js";
-import { drawVrPanel, VR_PANEL_PIXELS } from "./presentation/vr-panel-canvas.js";
+import { drawVrFlightInstruments, drawVrPanel, VR_PANEL_PIXELS } from "./presentation/vr-panel-canvas.js";
 import { PresentationRuntime } from "./presentation/runtime.js";
 import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
@@ -25,6 +25,7 @@ import {
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
 import { syntheticVenueMapForScenario } from "./game/synthetic-venue-map.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
+import { createFlightHudModel } from "./presentation/flight-hud-model.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
@@ -61,10 +62,12 @@ const flightHud = new FlightHudAdapter(flightHudRoot, (snapshot) => {
   if (model.presentation.type !== "ready" || model.presentation.mode === "screen") return;
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   if ((phaseCode !== 5 && phaseCode !== 6) || snapshot.tick % 3 !== 0) return;
+  if (phaseCode === 6 && (model.gameSession.kind !== "paused-flight" || model.gameSession.overlay.kind !== "menu")) return;
   const panel = createGameViewModel(model, snapshot, model.flightAnalysis).panels[0];
   const context = panelCanvas.getContext("2d");
   if (panel !== undefined && context !== null) {
     drawVrPanel(browserPanelContext(context), panel, VR_PANEL_PIXELS.width, VR_PANEL_PIXELS.height);
+    drawVrFlightInstruments(browserPanelContext(context), flightHudModel(snapshot, phaseCode === 6));
   }
 });
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
@@ -115,7 +118,22 @@ function renderModel(): void {
   const context = panelCanvas.getContext("2d");
   if (panel !== undefined && context !== null) {
     drawVrPanel(browserPanelContext(context), panel, VR_PANEL_PIXELS.width, VR_PANEL_PIXELS.height);
+    const currentSnapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession);
+    if (model.presentation.type === "ready" && model.presentation.mode !== "screen" && currentSnapshot !== null &&
+        (phaseCode === 5 ||
+         (phaseCode === 6 && model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind === "menu"))) {
+      drawVrFlightInstruments(browserPanelContext(context), flightHudModel(currentSnapshot, phaseCode === 6));
+    }
   }
+}
+
+function flightHudModel(snapshot: FlightSnapshot, paused: boolean) {
+  const informationCode = model.difficulty.informationCode;
+  if (!Number.isInteger(informationCode) || informationCode < 0 || informationCode > 3) {
+    throw new RangeError("Information code must lie in [0, 3]");
+  }
+  const hud = createFlightHudModel(snapshot, informationCode as 0 | 1 | 2 | 3);
+  return paused ? Object.freeze({ ...hud, status: "一時停止中" }) : hud;
 }
 
 function runEffect(effect: AppEffect): void {
