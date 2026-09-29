@@ -34,6 +34,11 @@ export function drawVrFlightInstruments(context: PanelDrawingContext, model: Fli
   context.setFont("500 22px system-ui, sans-serif");
   context.setTextBaseline("middle");
   context.fillText(model.status, 52, 151, 920);
+  if (model.warning !== null) {
+    context.setFillStyle("#ff9b73");
+    context.setFont("700 18px system-ui, sans-serif");
+    context.fillText(model.warning, 52, 168, 920);
+  }
 
   const readoutLines = model.readouts.split("\n");
   if (model.attitude !== null) {
@@ -158,6 +163,13 @@ function drawVrAdi(
   drawCanvasLine(context, centerX + 10, centerY - 10, centerX + 18, centerY, "#ffd45c", 5);
   drawCanvasLine(context, centerX + 18, centerY, centerX + 58, centerY, "#ffd45c", 5);
   drawCanvasLine(context, centerX, centerY - 10, centerX, centerY + 8, "#ffd45c", 5);
+  if (model.flightPathAngleDegrees !== null) {
+    const markerY = centerY - Math.max(-30, Math.min(30, model.flightPathAngleDegrees)) * 2.2;
+    drawCanvasLine(context, centerX - 7, markerY, centerX, markerY - 7, "#7df4c5", 3);
+    drawCanvasLine(context, centerX, markerY - 7, centerX + 7, markerY, "#7df4c5", 3);
+    drawCanvasLine(context, centerX + 7, markerY, centerX, markerY + 7, "#7df4c5", 3);
+    drawCanvasLine(context, centerX, markerY + 7, centerX - 7, markerY, "#7df4c5", 3);
+  }
   context.restore();
   context.setStrokeStyle("#e8eee5");
   context.setLineWidth(3);

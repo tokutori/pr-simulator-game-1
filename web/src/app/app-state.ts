@@ -8,7 +8,7 @@ export interface StoredFlightRecordUiEntry {
   readonly savedAt: string;
 }
 
-export type GameSessionOperation =
+export type NamedGameSessionOperation =
   | "open-setup"
   | "set-control-manual"
   | "set-control-shared"
@@ -31,6 +31,9 @@ export type GameSessionOperation =
   | "leave-replay"
   | "enter-attract"
   | "leave-attract";
+
+export type GameSessionOperation = NamedGameSessionOperation
+  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean };
 
 export interface ReplayClockState {
   readonly timeSeconds: number;
@@ -124,13 +127,24 @@ export interface AppModel {
 export interface DifficultyUiState {
   readonly presetCode: number;
   readonly informationCode: number;
+  readonly hudProfile: HudProfileUiState;
   readonly assistanceCode: number;
   readonly weatherCode: number;
+}
+
+export interface HudProfileUiState {
+  readonly telemetry: boolean;
+  readonly attitude: boolean;
+  readonly wind: boolean;
+  readonly flightPath: boolean;
+  readonly angleOfAttack: boolean;
+  readonly warnings: boolean;
 }
 
 export interface ConfigurationMetadataUiState {
   readonly presetCode: number;
   readonly informationCode: number;
+  readonly hudProfile: HudProfileUiState;
   readonly assistanceCode: number;
   readonly weatherCode: number;
   readonly catalogVersion: number;
@@ -276,7 +290,7 @@ export function isStaleGameFlowActivation(
 }
 
 export function isGameFlowActivation(action: UiAction): boolean {
-  return action.type === "activate" && action.controlId.startsWith("game-");
+  return (action.type === "activate" || action.type === "set-toggle") && action.controlId.startsWith("game-");
 }
 
 export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshot | null {
@@ -330,7 +344,13 @@ export function createInitialAppModel(): AppModel {
     presentation: Object.freeze({ type: "uninitialized" }),
     gameSession: Object.freeze({ kind: "boot", phaseCode: -1 }),
     controlModeCode: 0,
-    difficulty: Object.freeze({ presetCode: 4, informationCode: 0, assistanceCode: 3, weatherCode: 0 }),
+    difficulty: Object.freeze({
+      presetCode: 4,
+      informationCode: 0,
+      hudProfile: fullHudProfile(),
+      assistanceCode: 3,
+      weatherCode: 0
+    }),
     configurationMetadata: null,
     flightAnalysis: null,
     pendingAnalysisRequestId: null,
@@ -700,6 +720,11 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   }
   if (action.type === "activate" && action.controlId.startsWith("game-title-open-record-")
       && model.pendingGameRequestId !== null) return transition(model);
+  if (action.type === "set-toggle") {
+    const cueCode = informationCueCode(action.controlId);
+    if (cueCode === null || gameSessionPhaseCode(model.gameSession) !== 1) return transition(model);
+    return beginGameOperation(model, { kind: "set-information-cue", cueCode, visible: action.value });
+  }
   if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 0 && model.pendingGameRequestId === null) {
     const match = /^game-title-open-record-(\d+)$/.exec(action.controlId);
     const id = match === null ? null : Number(match[1]);
@@ -854,11 +879,11 @@ function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model
   };
 }
 
-function operationForGameAction(phaseCode: number, controlId: string): GameSessionOperation | null {
+function operationForGameAction(phaseCode: number, controlId: string): NamedGameSessionOperation | null {
   if (controlId === "game-briefing-cancel" && (phaseCode === 2 || phaseCode === 3)) {
     return "cancel-briefing";
   }
-  const operations: Readonly<Record<string, readonly [number, GameSessionOperation]>> = {
+  const operations: Readonly<Record<string, readonly [number, NamedGameSessionOperation]>> = {
     "game-title-start": [0, "open-setup"],
     "game-setup-start": [1, "prepare"],
     "game-setup-mode-manual": [1, "set-control-manual"],
@@ -887,6 +912,18 @@ function operationForGameAction(phaseCode: number, controlId: string): GameSessi
   };
   const entry = operations[controlId];
   return entry !== undefined && entry[0] === phaseCode ? entry[1] : null;
+}
+
+function informationCueCode(controlId: string): number | null {
+  const cueCodes: Readonly<Record<string, number>> = {
+    "game-setup-information-telemetry": 0,
+    "game-setup-information-attitude": 1,
+    "game-setup-information-wind": 2,
+    "game-setup-information-flight-path": 3,
+    "game-setup-information-angle-of-attack": 4,
+    "game-setup-information-warnings": 5
+  };
+  return cueCodes[controlId] ?? null;
 }
 
 function beginGameOperation(model: AppModel, operation: GameSessionOperation): AppTransition {
@@ -1014,6 +1051,17 @@ function labelForMode(mode: PresentationMode): string {
 
 function withModel(model: AppModel, changes: Partial<AppModel>): AppModel {
   return Object.freeze({ ...model, ...changes });
+}
+
+function fullHudProfile(): HudProfileUiState {
+  return Object.freeze({
+    telemetry: true,
+    attitude: true,
+    wind: true,
+    flightPath: true,
+    angleOfAttack: true,
+    warnings: true
+  });
 }
 
 function transition(model: AppModel, effects: readonly AppEffect[] = []): AppTransition {

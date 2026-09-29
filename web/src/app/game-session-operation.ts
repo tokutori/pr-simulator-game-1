@@ -21,6 +21,7 @@ export interface GameSessionOperationPort {
   retry_briefing(): void;
   return_to_title(): void;
   set_control_mode(code: number): void;
+  set_information_cue(code: number, visible: boolean): void;
   start_countdown(ticks: number): void;
 }
 
@@ -33,6 +34,10 @@ export function executeGameSessionOperation(
   session: GameSessionOperationPort,
   operation: GameSessionOperation
 ): GameSessionOperationResult {
+  if (typeof operation !== "string") {
+    session.set_information_cue(operation.cueCode, operation.visible);
+    return { kind: "completed" };
+  }
   switch (operation) {
     case "open-setup":
       session.open_setup();

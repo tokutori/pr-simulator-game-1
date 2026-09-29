@@ -99,7 +99,7 @@ function renderModel(): void {
   // condition must not inherit the player's last setup selection.
   const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
   flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
-  flightHud.setInformationCode(model.difficulty.informationCode);
+  flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
   flightHud.setVisible(phaseCode === 5 || phaseCode === 6);
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
@@ -139,10 +139,10 @@ function renderModel(): void {
 
 function flightHudModel(snapshot: FlightSnapshot, paused: boolean) {
   const informationCode = model.difficulty.informationCode;
-  if (!Number.isInteger(informationCode) || informationCode < 0 || informationCode > 3) {
-    throw new RangeError("Information code must lie in [0, 3]");
+  if (!Number.isInteger(informationCode) || informationCode < 0 || informationCode > 4) {
+    throw new RangeError("Information code must lie in [0, 4]");
   }
-  const hud = createFlightHudModel(snapshot, informationCode as 0 | 1 | 2 | 3);
+  const hud = createFlightHudModel(snapshot, informationCode as 0 | 1 | 2 | 3 | 4, model.difficulty.hudProfile);
   return paused ? Object.freeze({ ...hud, status: "一時停止中" }) : hud;
 }
 
@@ -593,7 +593,7 @@ function dispatchGameOperationFailure(
     };
     const failureMessage = context === undefined
       ? message
-      : `${context.operation} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
+      : `${gameOperationLabel(context.operation)} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
     dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession });
   } catch (syncError: unknown) {
     dispatch({
@@ -602,6 +602,12 @@ function dispatchGameOperationFailure(
       message: `${message}; GameSession resync failed: ${errorMessage(syncError)}`
     });
   }
+}
+
+function gameOperationLabel(operation: GameSessionOperation): string {
+  return typeof operation === "string"
+    ? operation
+    : `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`;
 }
 
 function completeGameOperation(requestId: number, rawSnapshot?: ArrayLike<number>): void {
@@ -828,6 +834,7 @@ function readDifficulty(session: NonNullable<typeof gameSession>): AppModel["dif
   return Object.freeze({
     presetCode: session.difficulty_preset_code(),
     informationCode: session.information_level_code(),
+    hudProfile: readHudProfile(session.information_profile_codes()),
     assistanceCode: session.assistance_level_code(),
     weatherCode: session.weather_class_code()
   });
@@ -845,7 +852,7 @@ function readConfigurationMetadata(
     return model.configurationMetadata;
   }
   const values = session.configuration_metadata();
-  if (values.length !== 12) throw new RangeError("Resolved configuration metadata has an invalid length");
+  if (values.length !== 18) throw new RangeError("Resolved configuration metadata has an invalid length");
   const valueAt = (index: number): number => {
     const value = values[index];
     if (value === undefined || !Number.isInteger(value) || value < 0) {
@@ -853,9 +860,22 @@ function readConfigurationMetadata(
     }
     return value;
   };
+  const cueAt = (index: number): boolean => {
+    const value = valueAt(index);
+    if (value !== 0 && value !== 1) throw new RangeError("Resolved HUD cue metadata must be 0 or 1");
+    return value === 1;
+  };
   return Object.freeze({
     presetCode: valueAt(0),
     informationCode: valueAt(1),
+    hudProfile: Object.freeze({
+      telemetry: cueAt(12),
+      attitude: cueAt(13),
+      wind: cueAt(14),
+      flightPath: cueAt(15),
+      angleOfAttack: cueAt(16),
+      warnings: cueAt(17)
+    }),
     assistanceCode: valueAt(2),
     weatherCode: valueAt(3),
     catalogVersion: valueAt(4),
@@ -866,6 +886,23 @@ function readConfigurationMetadata(
     controllerProfileVersion: valueAt(9),
     seedLow: valueAt(10),
     seedHigh: valueAt(11)
+  });
+}
+
+function readHudProfile(values: ArrayLike<number>): AppModel["difficulty"]["hudProfile"] {
+  if (values.length !== 6) throw new RangeError("HUD profile must contain six cue values");
+  const valueAt = (index: number): boolean => {
+    const value = values[index];
+    if (value !== 0 && value !== 1) throw new RangeError("HUD profile cue values must be 0 or 1");
+    return value === 1;
+  };
+  return Object.freeze({
+    telemetry: valueAt(0),
+    attitude: valueAt(1),
+    wind: valueAt(2),
+    flightPath: valueAt(3),
+    angleOfAttack: valueAt(4),
+    warnings: valueAt(5)
   });
 }
 

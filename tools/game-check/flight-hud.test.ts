@@ -33,11 +33,39 @@ describe("flight HUD instruments", () => {
     expect(model.pilotPositionRatio).toBe(1);
   });
 
+  it("applies Custom cue visibility and derives flight-path and warning cues", () => {
+    const snapshot = flightSnapshot({ velocityNorth: 10, velocityDown: 1, terminal: 3 });
+    const profile = {
+      telemetry: false,
+      attitude: false,
+      wind: true,
+      flightPath: true,
+      angleOfAttack: true,
+      warnings: true
+    };
+    const model = createFlightHudModel(snapshot, 4, profile);
+
+    expect(model.attitude).toBeNull();
+    expect(model.heading).toBeNull();
+    expect(model.telemetry).toBe("");
+    expect(model.wind).not.toBeNull();
+    expect(model.angleOfAttack).not.toBeNull();
+    expect(model.flightPathAngleDegrees).toBeCloseTo(-Math.atan2(1, 10) * 180 / Math.PI);
+    expect(model.warning).toBe("AERODYNAMIC ENVELOPE");
+  });
+
   it("updates compass tape and axis gauges from each immutable snapshot", async () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
     const adapter = new FlightHudAdapter(root);
-    adapter.setInformationCode(0);
+    adapter.setInformationProfile(0, {
+      telemetry: true,
+      attitude: true,
+      wind: true,
+      flightPath: true,
+      angleOfAttack: true,
+      warnings: true
+    });
     adapter.render(flightSnapshot({
       pilotPosition: -0.2,
       windNorth: 0,
@@ -111,11 +139,17 @@ function flightSnapshot(overrides: {
   readonly rollDegrees?: number;
   readonly headingDegrees?: number;
   readonly angleOfAttackDegrees?: number | null;
+  readonly velocityNorth?: number;
+  readonly velocityDown?: number;
+  readonly terminal?: number;
 } = {}) {
   const values = new Array<number>(FLIGHT_SNAPSHOT_LENGTH).fill(0);
   values[7] = 1;
   values[11] = overrides.pilotPosition ?? 0;
+  values[4] = overrides.velocityNorth ?? 0;
+  values[6] = overrides.velocityDown ?? 0;
   values[19] = -1;
+  values[16] = overrides.terminal ?? 0;
   values[20] = 10;
   values[21] = overrides.airspeed ?? 10;
   values[22] = 10;

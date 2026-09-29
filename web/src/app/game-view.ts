@@ -1,6 +1,6 @@
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { normalizedRect } from "../render/contracts/ui.js";
-import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiViewModel } from "../render/contracts/ui.js";
+import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
 import { syntheticVenueMapForScenario } from "../game/synthetic-venue-map.js";
@@ -53,7 +53,7 @@ export function createGameViewModel(
   }
 
   const vrFlightPanel = (phaseCode === 5 || phaseCode === 6) && (activeMode === "webxr" || activeMode === "phone-vr");
-  const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
+  const controls: (UiButton | UiToggle | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
     ? []
     : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume))];
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
@@ -247,6 +247,42 @@ export function createGameViewModel(
       })]),
       Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
     );
+  } else if (phaseCode === 1 && model.difficulty.informationCode === 4) {
+    const cueColumnById = new Map([
+      ["game-setup-information-telemetry", 0],
+      ["game-setup-information-attitude", 1],
+      ["game-setup-information-wind", 0],
+      ["game-setup-information-flight-path", 1],
+      ["game-setup-information-angle-of-attack", 0],
+      ["game-setup-information-warnings", 1]
+    ]);
+    let cueIndex = 0;
+    buttons.forEach((entry) => {
+      if (entry.id === "game-state") {
+        controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.04, 0.025, 0.92, 0.055) }));
+        return;
+      }
+      const cueColumn = cueColumnById.get(entry.id);
+      if (cueColumn !== undefined) {
+        const row = Math.floor(cueIndex / 2);
+        cueIndex += 1;
+        controls.push(Object.freeze({
+          ...entry,
+          rect: normalizedRect(0.04 + cueColumn * 0.48, 0.285 + row * 0.075, 0.44, 0.065)
+        }));
+        return;
+      }
+      const yById: Readonly<Record<string, number>> = {
+        "game-setup-preset": 0.095,
+        "game-setup-information": 0.175,
+        "game-setup-assistance": 0.53,
+        "game-setup-weather": 0.61,
+        "game-setup-start": 0.71,
+        "game-setup-back": 0.80
+      };
+      const y = yById[entry.id];
+      if (y !== undefined) controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.08, y, 0.84, 0.07) }));
+    });
   } else if (phaseCode !== 5 && phaseCode !== 6 && !(phaseCode === 7 && model.resultTab === "analysis")) {
     let bottom = 0.795;
     buttons.forEach((entry) => {
@@ -563,19 +599,21 @@ function gameButtons(
   replayAvailable: boolean,
   canResume: boolean,
   pauseOverlay: "menu" | "settings" | "help" | null
-): UiButton[] {
+): (UiButton | UiToggle)[] {
   switch (phaseCode) {
     case 0:
       return [button("game-title-start", "飛行を設定", true), button("game-title-demo", "デモ飛行を見る", true)];
     case 1:
-      return [
+      const setupControls: (UiButton | UiToggle)[] = [
         button("game-setup-preset", `Preset: ${presetLabel(difficulty.presetCode)}`, true),
         button("game-setup-information", `Information: ${informationLabel(difficulty.informationCode)}`, true),
+        ...(difficulty.informationCode === 4 ? informationCueToggles(difficulty.hudProfile) : []),
         button("game-setup-assistance", `Assistance: ${assistanceLabel(difficulty.assistanceCode)}`, true),
         button("game-setup-weather", `Weather: ${weatherLabel(difficulty.weatherCode)}`, true),
         button("game-setup-start", "設定を確定してBriefingへ", true),
         button("game-setup-back", "Titleへ戻る", true)
       ];
+      return setupControls;
     case 2:
       return [button("game-briefing-cancel", "設定へ戻る", true)];
     case 3:
@@ -625,6 +663,16 @@ function gameButtons(
 function configurationSummary(metadata: ConfigurationMetadataUiState | null): string {
   if (metadata === null) return "解決済み設定metadataを取得できない";
   const axes = `${presetLabel(metadata.presetCode)} / ${informationLabel(metadata.informationCode)} / ${assistanceLabel(metadata.assistanceCode)} / ${weatherLabel(metadata.weatherCode)}`;
+  const cues = metadata.informationCode === 4
+    ? ` · HUD ${[
+      metadata.hudProfile.telemetry ? "Telemetry" : null,
+      metadata.hudProfile.attitude ? "Attitude" : null,
+      metadata.hudProfile.wind ? "Wind" : null,
+      metadata.hudProfile.flightPath ? "Flight path" : null,
+      metadata.hudProfile.angleOfAttack ? "AoA" : null,
+      metadata.hudProfile.warnings ? "Warnings" : null
+    ].filter((cue) => cue !== null).join(", ") || "none"}`
+    : "";
   const model = [
     `Catalog v${String(metadata.catalogVersion)}`,
     `Scenario ${String(metadata.scenarioId)} v${String(metadata.scenarioVersion)}`,
@@ -633,11 +681,26 @@ function configurationSummary(metadata: ConfigurationMetadataUiState | null): st
     `Controller v${String(metadata.controllerProfileVersion)}`,
     `Seed ${String(metadata.seedHigh)}:${String(metadata.seedLow)}`
   ].join(" · ");
-  return `${axes}\n${model}`;
+  return `${axes}${cues}\n${model}`;
 }
 
 function button(id: string, label: string, enabled: boolean): UiButton {
   return Object.freeze({ kind: "button", id, label, enabled, rect: normalizedRect(0.08, 0.72, 0.84, 0.075) });
+}
+
+function informationCueToggles(profile: DifficultyUiState["hudProfile"]): UiToggle[] {
+  return [
+    toggle("game-setup-information-telemetry", "速度・高度・距離・時間", profile.telemetry),
+    toggle("game-setup-information-attitude", "姿勢・方位", profile.attitude),
+    toggle("game-setup-information-wind", "風", profile.wind),
+    toggle("game-setup-information-flight-path", "飛行経路指示", profile.flightPath),
+    toggle("game-setup-information-angle-of-attack", "迎角", profile.angleOfAttack),
+    toggle("game-setup-information-warnings", "警告cue", profile.warnings)
+  ];
+}
+
+function toggle(id: string, label: string, value: boolean): UiToggle {
+  return Object.freeze({ kind: "toggle", id, label, value, enabled: true, rect: normalizedRect(0.08, 0.72, 0.84, 0.075) });
 }
 
 function formatSavedAt(value: string): string {
@@ -719,6 +782,7 @@ function informationLabel(code: number): string {
     case 1: return "Standard";
     case 2: return "Minimal";
     case 3: return "Realistic";
+    case 4: return "Custom";
     default: return "不明";
   }
 }

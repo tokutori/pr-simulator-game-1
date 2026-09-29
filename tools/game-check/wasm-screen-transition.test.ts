@@ -19,6 +19,18 @@ function initializeWasm(): void {
   wasmInitialized = true;
 }
 
+function hudProfile(session: GameSessionBridge) {
+  const values = session.information_profile_codes();
+  return {
+    telemetry: values[0] === 1,
+    attitude: values[1] === 1,
+    wind: values[2] === 1,
+    flightPath: values[3] === 1,
+    angleOfAttack: values[4] === 1,
+    warnings: values[5] === 1
+  };
+}
+
 describe("Screen UI to WebAssembly GameSession transitions", () => {
   it("completes the visible Title-to-Result-to-Retry flow through actual DOM clicks", async () => {
     initializeWasm();
@@ -41,6 +53,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
         difficulty: {
           presetCode: session.difficulty_preset_code(),
           informationCode: session.information_level_code(),
+          hudProfile: hudProfile(session),
           assistanceCode: session.assistance_level_code(),
           weatherCode: session.weather_class_code()
         },
@@ -88,6 +101,14 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       expect(model.gameSession.kind).toBe("title");
       activate("game-title-start");
       expect(model.gameSession.kind).toBe("setup");
+      for (let index = 0; index < 4; index += 1) activate("game-setup-information");
+      const windCue = root.querySelector('input[data-control-id="game-setup-information-wind"]') as unknown as HTMLInputElement | null;
+      if (windCue === null) throw new Error("Custom wind cue toggle is missing");
+      windCue.checked = false;
+      windCue.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
+      expect(session.information_level_code()).toBe(4);
+      expect(Array.from(session.information_profile_codes())).toEqual([1, 1, 0, 0, 0, 0]);
+      expect(model.difficulty.hudProfile.wind).toBe(false);
       activate("game-setup-start");
       expect(model.gameSession.kind).toBe("briefing-ready");
       activate("game-briefing-start");

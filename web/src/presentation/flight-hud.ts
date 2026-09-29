@@ -2,9 +2,11 @@ import type { FlightHudPort } from "../game/flight-controller.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { createFlightHudModel } from "./flight-hud-model.js";
 import type { InformationLevelCode } from "./flight-hud-model.js";
+import type { HudProfileUiState } from "../app/app-state.js";
 
 export class FlightHudAdapter implements FlightHudPort {
   private readonly status: HTMLOutputElement;
+  private readonly warning: HTMLOutputElement;
   private readonly telemetry: HTMLOutputElement;
   private readonly adi: SVGSVGElement;
   private readonly horizon: SVGGElement;
@@ -21,7 +23,9 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly pilotPositionIndicator: SVGPolygonElement;
   private readonly windNeedle: SVGGElement;
   private readonly angleIndicator: SVGPolygonElement;
+  private readonly flightPathIndicator: SVGCircleElement;
   private informationCode: InformationLevelCode = 0;
+  private informationProfile: HudProfileUiState = fullProfile;
 
   constructor(
     private readonly root: HTMLElement,
@@ -32,6 +36,8 @@ export class FlightHudAdapter implements FlightHudPort {
     heading.textContent = "FLIGHT";
     this.status = documentRef.createElement("output");
     this.status.setAttribute("aria-live", "polite");
+    this.warning = documentRef.createElement("output");
+    this.warning.className = "flight-hud-warning";
     this.telemetry = documentRef.createElement("output");
     this.telemetry.className = "flight-hud-telemetry";
     this.adi = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -75,7 +81,12 @@ export class FlightHudAdapter implements FlightHudPort {
     const aircraft = documentRef.createElementNS("http://www.w3.org/2000/svg", "path");
     aircraft.setAttribute("d", "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96");
     aircraft.setAttribute("fill", "none"); aircraft.setAttribute("stroke", "#ffd45c"); aircraft.setAttribute("stroke-width", "5"); aircraft.setAttribute("stroke-linecap", "round"); aircraft.setAttribute("stroke-linejoin", "round");
-    this.adi.append(defs, this.horizon, frame, aircraft);
+    this.flightPathIndicator = documentRef.createElementNS("http://www.w3.org/2000/svg", "circle");
+    this.flightPathIndicator.setAttribute("r", "5");
+    this.flightPathIndicator.setAttribute("fill", "none");
+    this.flightPathIndicator.setAttribute("stroke", "#7df4c5");
+    this.flightPathIndicator.setAttribute("stroke-width", "3");
+    this.adi.append(defs, this.horizon, frame, aircraft, this.flightPathIndicator);
     const instruments = documentRef.createElement("div");
     instruments.className = "flight-hud-instruments";
     const headingInstrument = instrumentOutput(documentRef, instruments, "HDG", "heading");
@@ -129,26 +140,35 @@ export class FlightHudAdapter implements FlightHudPort {
     controls.textContent = "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
-    root.replaceChildren(heading, this.status, this.adi, this.readouts, instruments, this.telemetry, controls);
+    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, controls);
     this.setVisible(false);
   }
 
-  setInformationCode(code: number): void {
-    if (!Number.isInteger(code) || code < 0 || code > 3) {
-      throw new RangeError("Information code must lie in [0, 3]");
+  setInformationProfile(code: number, profile: HudProfileUiState): void {
+    if (!Number.isInteger(code) || code < 0 || code > 4) {
+      throw new RangeError("Information code must lie in [0, 4]");
     }
     this.informationCode = code as InformationLevelCode;
+    this.informationProfile = profile;
   }
 
   render(snapshot: FlightSnapshot): void {
-    const model = createFlightHudModel(snapshot, this.informationCode);
+    const model = createFlightHudModel(snapshot, this.informationCode, this.informationProfile);
     this.status.textContent = model.status;
+    this.warning.textContent = model.warning ?? "";
+    this.warning.hidden = model.warning === null;
     if (model.attitude === null) {
       this.adi.classList.add("is-hidden");
     } else {
       this.adi.classList.remove("is-hidden");
     }
     this.readouts.textContent = model.readouts;
+    this.flightPathIndicator.setAttribute("visibility", model.flightPathAngleDegrees === null ? "hidden" : "visible");
+    if (model.flightPathAngleDegrees !== null) {
+      const y = 90 - Math.max(-30, Math.min(30, model.flightPathAngleDegrees)) * 2.2;
+      this.flightPathIndicator.setAttribute("cx", "120");
+      this.flightPathIndicator.setAttribute("cy", String(y));
+    }
     this.headingInstrument.hidden = model.heading === null;
     this.headingReadout.textContent = model.heading ?? "";
     if (model.headingDegrees !== null) renderHeadingScale(this.headingScale, model.headingDegrees);
@@ -186,6 +206,15 @@ export class FlightHudAdapter implements FlightHudPort {
     this.root.setAttribute("aria-hidden", String(!visible));
   }
 }
+
+const fullProfile: HudProfileUiState = Object.freeze({
+  telemetry: true,
+  attitude: true,
+  wind: true,
+  flightPath: true,
+  angleOfAttack: true,
+  warnings: true
+});
 
 function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement } {
   const cell = documentRef.createElement("div");

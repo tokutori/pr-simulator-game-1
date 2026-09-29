@@ -11,6 +11,14 @@ const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
 flightSnapshotValues[7] = 1;
 flightSnapshotValues[19] = -1;
 const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
+const fullHudProfile = Object.freeze({
+  telemetry: true,
+  attitude: true,
+  wind: true,
+  flightPath: true,
+  angleOfAttack: true,
+  warnings: true
+});
 
 describe("Boot application state", () => {
   it("drops stale game-flow activations after synchronizing a changed Rust phase", () => {
@@ -312,7 +320,7 @@ describe("Boot application state", () => {
 
     const completed = updateApp(setup.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 1, controlModeCode: 0,
-      difficulty: { presetCode: 1, informationCode: 1, assistanceCode: 1, weatherCode: 2 },
+      difficulty: { presetCode: 1, informationCode: 1, hudProfile: fullHudProfile, assistanceCode: 1, weatherCode: 2 },
       configurationMetadata: null,
       countdownRemaining: 0, snapshot: null
     });
@@ -320,7 +328,7 @@ describe("Boot application state", () => {
     expect(completed.model.pendingGameRequestId).toBeNull();
     const stale = updateApp(completed.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 7, controlModeCode: 2,
-      difficulty: { presetCode: 0, informationCode: 0, assistanceCode: 0, weatherCode: 1 },
+      difficulty: { presetCode: 0, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 1 },
       configurationMetadata: null,
       countdownRemaining: 0, snapshot: null
     });
@@ -416,7 +424,7 @@ describe("Boot application state", () => {
     expect(requested.effects).toEqual([{ type: "game-session-operation", operation: "cycle-assistance-level", requestId: 2 }]);
     const completed = updateApp(requested.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 1, controlModeCode: 2,
-      difficulty: { presetCode: 4, informationCode: 0, assistanceCode: 0, weatherCode: 0 },
+      difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 0 },
       configurationMetadata: null,
       countdownRemaining: 0, snapshot: null
     });
@@ -424,16 +432,32 @@ describe("Boot application state", () => {
     expect(completed.model.difficulty.assistanceCode).toBe(0);
   });
 
+  it("routes Custom HUD cue toggles through a Rust GameSession operation", () => {
+    const model = {
+      ...readyModel(1),
+      difficulty: { ...readyModel(1).difficulty, informationCode: 4, hudProfile: fullHudProfile }
+    };
+    const requested = updateApp(model, {
+      type: "ui-action",
+      action: { type: "set-toggle", controlId: "game-setup-information-wind", value: false }
+    });
+    expect(requested.effects).toEqual([{
+      type: "game-session-operation",
+      operation: { kind: "set-information-cue", cueCode: 2, visible: false },
+      requestId: 2
+    }]);
+  });
+
   it("retains resolved configuration metadata through Result projection", () => {
     const title = readyModel(7);
     const configurationMetadata = {
-      presetCode: 4, informationCode: 2, assistanceCode: 3, weatherCode: 4,
+      presetCode: 4, informationCode: 2, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 4,
       catalogVersion: 1, scenarioId: 5, scenarioVersion: 1, aircraftModelVersion: 1,
       environmentVersion: 5, controllerProfileVersion: 4, seedLow: 0, seedHigh: 0
     };
     const completed = updateApp(title, {
       type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
-      difficulty: { presetCode: 4, informationCode: 2, assistanceCode: 3, weatherCode: 4 },
+      difficulty: { presetCode: 4, informationCode: 2, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 4 },
       configurationMetadata, countdownRemaining: 0, snapshot: null
     });
     expect(completed.model.configurationMetadata).toEqual(configurationMetadata);
@@ -443,7 +467,7 @@ describe("Boot application state", () => {
     const flight = readyModel(5);
     const terminal = updateApp(flight, {
       type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
-      difficulty: { presetCode: 4, informationCode: 0, assistanceCode: 3, weatherCode: 0 },
+      difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
       configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
     expect(terminal.effects).toEqual([
@@ -717,7 +741,7 @@ describe("Boot application state", () => {
     });
     const completed = updateApp(requested.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 7, controlModeCode: 0,
-      difficulty: { presetCode: 4, informationCode: 0, assistanceCode: 3, weatherCode: 0 },
+      difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
       configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
     expect(completed.effects).toEqual([

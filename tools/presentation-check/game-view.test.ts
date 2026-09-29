@@ -228,7 +228,10 @@ describe("Game scene view model", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
       gameSession: sessionForPhase(1),
-      difficulty: Object.freeze({ presetCode: 4, informationCode: 2, assistanceCode: 0, weatherCode: 3 })
+      difficulty: Object.freeze({
+        presetCode: 4, informationCode: 2, hudProfile: createInitialAppModel().difficulty.hudProfile,
+        assistanceCode: 0, weatherCode: 3
+      })
     });
     const controls = createGameViewModel(model, null).panels[0]?.controls;
     expect(controls?.find((control) => control.id === "game-setup-preset")).toMatchObject({ label: "Preset: Custom" });
@@ -237,12 +240,35 @@ describe("Game scene view model", () => {
     expect(controls?.find((control) => control.id === "game-setup-weather")).toMatchObject({ label: "Weather: Synthetic Challenging" });
   });
 
+  it("shows independently configured HUD cues only for Custom Information", () => {
+    const base = createInitialAppModel();
+    const model = Object.freeze({
+      ...base,
+      gameSession: sessionForPhase(1),
+      difficulty: Object.freeze({
+        ...base.difficulty,
+        informationCode: 4,
+        hudProfile: Object.freeze({ ...base.difficulty.hudProfile, wind: false })
+      })
+    });
+    const controls = createGameViewModel(model, null).panels[0]?.controls;
+    expect(controls?.filter((control) => control.kind === "toggle")).toMatchObject([
+      { id: "game-setup-information-telemetry", value: true },
+      { id: "game-setup-information-attitude", value: true },
+      { id: "game-setup-information-wind", value: false },
+      { id: "game-setup-information-flight-path", value: true },
+      { id: "game-setup-information-angle-of-attack", value: true },
+      { id: "game-setup-information-warnings", value: true }
+    ]);
+  });
+
   it("shows resolved axes and model versions in Result", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
       gameSession: sessionForPhase(7),
       configurationMetadata: Object.freeze({
-        presetCode: 4, informationCode: 2, assistanceCode: 3, weatherCode: 4,
+        presetCode: 4, informationCode: 2, hudProfile: createInitialAppModel().difficulty.hudProfile,
+        assistanceCode: 3, weatherCode: 4,
         catalogVersion: 1, scenarioId: 5, scenarioVersion: 1, aircraftModelVersion: 1,
         environmentVersion: 5, controllerProfileVersion: 4, seedLow: 0, seedHigh: 0
       })
@@ -411,7 +437,8 @@ describe("Game scene view model", () => {
       })
     });
     const configurationMetadata = Object.freeze({
-      presetCode: 0, informationCode: 0, assistanceCode: 0, weatherCode: 0,
+      presetCode: 0, informationCode: 0, hudProfile: createInitialAppModel().difficulty.hudProfile,
+      assistanceCode: 0, weatherCode: 0,
       catalogVersion: 1, scenarioId: 1, scenarioVersion: 1, aircraftModelVersion: 1,
       environmentVersion: 1, controllerProfileVersion: 1, seedLow: 0, seedHigh: 0
     });
