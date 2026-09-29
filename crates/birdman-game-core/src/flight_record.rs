@@ -500,8 +500,8 @@ impl FlightRecord {
         Err(FlightRecordQueryError::OutsideRecordedRange)
     }
 
-    /// Calculates summary metrics from stored samples and finalization metadata.
-    pub fn summary(&self) -> Result<FlightRecordSummary, FlightRecordQueryError> {
+    /// Returns the elapsed time represented by the first and last retained samples.
+    pub fn duration_seconds(&self) -> Result<f64, FlightRecordQueryError> {
         let first = self
             .samples
             .first()
@@ -510,6 +510,44 @@ impl FlightRecord {
             .samples
             .last()
             .ok_or(FlightRecordQueryError::EmptyRecord)?;
+        Ok((sample_time(last) - sample_time(first)) / f64::from(self.header.physics_hz))
+    }
+
+    /// Returns an interpolated sample at elapsed seconds from the first retained sample.
+    pub fn sample_at_seconds(
+        &self,
+        time_seconds: f64,
+    ) -> Result<FlightRecordPlaybackSample, FlightRecordQueryError> {
+        if !time_seconds.is_finite() || time_seconds < 0.0 {
+            return Err(FlightRecordQueryError::InvalidTime);
+        }
+        let first = self
+            .samples
+            .first()
+            .ok_or(FlightRecordQueryError::EmptyRecord)?;
+        let last = self
+            .samples
+            .last()
+            .ok_or(FlightRecordQueryError::EmptyRecord)?;
+        let duration_seconds = self.duration_seconds()?;
+        if time_seconds > duration_seconds {
+            return Err(FlightRecordQueryError::OutsideRecordedRange);
+        }
+        let tick_time = if time_seconds == duration_seconds {
+            sample_time(last)
+        } else {
+            sample_time(first) + time_seconds * f64::from(self.header.physics_hz)
+        };
+        if !tick_time.is_finite() {
+            return Err(FlightRecordQueryError::InvalidTime);
+        }
+        let tick_index = tick_time as u64;
+        let fraction = tick_time - tick_index as f64;
+        self.sample_at_time(tick_index, fraction)
+    }
+
+    /// Calculates summary metrics from stored samples and finalization metadata.
+    pub fn summary(&self) -> Result<FlightRecordSummary, FlightRecordQueryError> {
         let maximum_angle_of_attack_rad = self
             .samples
             .iter()
@@ -517,8 +555,7 @@ impl FlightRecord {
             .reduce(f64::max);
         Ok(FlightRecordSummary {
             sample_count: self.samples.len(),
-            duration_seconds: (sample_time(last) - sample_time(first))
-                / f64::from(self.header.physics_hz),
+            duration_seconds: self.duration_seconds()?,
             maximum_altitude_m: self
                 .samples
                 .iter()
@@ -937,8 +974,14 @@ mod tests {
         ));
 
         let midpoint = record.sample_at_time(0, 0.5).unwrap();
+        let seconds_midpoint = record.sample_at_seconds(0.005).unwrap();
         let midpoint_position = midpoint.flight_state.datum_position_ned().components();
+        let seconds_midpoint_position = seconds_midpoint
+            .flight_state
+            .datum_position_ned()
+            .components();
         assert!((midpoint_position[0] - 1.0).abs() < 1.0e-12);
+        assert!((seconds_midpoint_position[0] - midpoint_position[0]).abs() < 1.0e-12);
         assert!((midpoint_position[2] - (initial_position[2] - 8.0) * 0.5).abs() < 1.0e-12);
         assert_eq!(midpoint.telemetry.altitude_m, 11.0);
         assert!((midpoint.telemetry.heading_rad.abs() - core::f64::consts::PI).abs() < 0.05);
@@ -947,6 +990,14 @@ mod tests {
         let summary = record.summary().unwrap();
         assert_eq!(summary.sample_count, 2);
         assert_eq!(summary.duration_seconds, 0.01);
+        assert_eq!(record.duration_seconds(), Ok(summary.duration_seconds));
+        assert_eq!(
+            record
+                .sample_at_seconds(summary.duration_seconds)
+                .unwrap()
+                .tick_index,
+            1
+        );
         assert_eq!(summary.maximum_altitude_m, 12.0);
         assert_eq!(summary.maximum_airspeed_mps, 12.0);
     }
@@ -966,6 +1017,18 @@ mod tests {
         record.begin(initial, telemetry).unwrap();
         assert_eq!(
             record.sample_at_time(1, 0.0),
+            Err(super::FlightRecordQueryError::OutsideRecordedRange)
+        );
+        assert_eq!(
+            record.sample_at_seconds(f64::NAN),
+            Err(super::FlightRecordQueryError::InvalidTime)
+        );
+        assert_eq!(
+            record.sample_at_seconds(-0.1),
+            Err(super::FlightRecordQueryError::InvalidTime)
+        );
+        assert_eq!(
+            record.sample_at_seconds(0.01),
             Err(super::FlightRecordQueryError::OutsideRecordedRange)
         );
     }

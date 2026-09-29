@@ -14,6 +14,7 @@ mod flight_control;
 mod flight_record;
 mod game_session;
 mod math;
+mod replay_clock;
 mod scenario;
 mod scoring;
 mod session_contract;
@@ -74,6 +75,7 @@ pub use math::{
     BodyFrame, BodyPoint, BodyVector, Frame, InertiaTensor, MathError, NedFrame, NedPoint,
     NedVector, Point3, UnitQuaternion, Vector3,
 };
+pub use replay_clock::{ReplayClock, ReplayClockError, ReplayRate};
 
 /// Number of fixed physics ticks per simulated second, independent of rendering.
 ///

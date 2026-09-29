@@ -4,8 +4,10 @@ use crate::flight_control::{
     BodyRateFeedbackConfig, ControlMode, body_rate_feedback_commands, mix_surface_commands,
 };
 use crate::flight_record::{
-    FlightRecord, FlightRecordError, FlightRecordHeader, FlightRecordInput, MAX_FLIGHT_RECORD_TICKS,
+    FlightRecord, FlightRecordError, FlightRecordHeader, FlightRecordInput, FlightRecordQueryError,
+    MAX_FLIGHT_RECORD_TICKS,
 };
+use crate::replay_clock::{ReplayClock, ReplayClockError};
 use crate::scenario::{FlightScenario, FlightTelemetry, FlightTelemetryError};
 use crate::scoring::{DistanceScore, DistanceScoreError, course_distance_score};
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
@@ -318,6 +320,10 @@ pub enum GameSessionError {
     Score(DistanceScoreError),
     /// The record could not retain a valid sample or terminal event.
     Record(FlightRecordError),
+    /// The playback cursor or rate was invalid for the current record.
+    PlaybackClock(ReplayClockError),
+    /// The playback record could not answer a query.
+    PlaybackQuery(FlightRecordQueryError),
     /// Required center-of-mass telemetry could not be sampled.
     Telemetry(FlightTelemetryError),
 }
@@ -330,6 +336,7 @@ pub struct GameSession<'a> {
     result: Option<SessionResult>,
     record: Option<FlightRecord>,
     attract_record: Option<FlightRecord>,
+    playback_clock: ReplayClock,
 }
 
 impl<'a> GameSession<'a> {
@@ -342,6 +349,7 @@ impl<'a> GameSession<'a> {
             result: None,
             record: None,
             attract_record: None,
+            playback_clock: ReplayClock::new(),
         }
     }
 
@@ -478,6 +486,8 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.phase = SessionPhase::Attract;
+        self.playback_clock = ReplayClock::new();
+        self.set_playback_playing(true)?;
         Ok(())
     }
 
@@ -486,6 +496,7 @@ impl<'a> GameSession<'a> {
         if self.phase != SessionPhase::Attract {
             return Err(GameSessionError::InvalidTransition);
         }
+        self.playback_clock.pause();
         self.phase = SessionPhase::Title;
         Ok(())
     }
@@ -516,6 +527,7 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.phase = SessionPhase::Replay;
+        self.playback_clock = ReplayClock::new();
         Ok(())
     }
 
@@ -531,6 +543,7 @@ impl<'a> GameSession<'a> {
         self.result = None;
         self.record = Some(record);
         self.phase = SessionPhase::Replay;
+        self.playback_clock = ReplayClock::new();
         Ok(())
     }
 
@@ -539,6 +552,7 @@ impl<'a> GameSession<'a> {
         if self.phase != SessionPhase::Replay {
             return Err(GameSessionError::InvalidTransition);
         }
+        self.playback_clock.pause();
         if self.result.is_some() {
             self.phase = SessionPhase::Result;
         } else {
@@ -546,6 +560,87 @@ impl<'a> GameSession<'a> {
             self.phase = SessionPhase::Title;
         }
         Ok(())
+    }
+
+    /// Returns the playback cursor when the session is in Replay or Attract.
+    pub const fn playback_clock(&self) -> Option<ReplayClock> {
+        if matches!(self.phase, SessionPhase::Replay | SessionPhase::Attract) {
+            Some(self.playback_clock)
+        } else {
+            None
+        }
+    }
+
+    /// Changes the playback rate while preserving the current record cursor.
+    pub fn set_playback_rate_code(&mut self, code: u32) -> Result<(), GameSessionError> {
+        self.require_playback_phase()?;
+        self.playback_clock
+            .set_rate_code(code)
+            .map_err(GameSessionError::PlaybackClock)
+    }
+
+    /// Starts or pauses playback using the current finalized record duration.
+    pub fn set_playback_playing(&mut self, playing: bool) -> Result<(), GameSessionError> {
+        self.require_playback_phase()?;
+        if playing {
+            let duration_seconds = self.playback_duration_seconds()?;
+            self.playback_clock
+                .play(duration_seconds)
+                .map_err(GameSessionError::PlaybackClock)
+        } else {
+            self.playback_clock.pause();
+            Ok(())
+        }
+    }
+
+    /// Seeks the playback cursor to a time within the current record.
+    pub fn seek_playback(&mut self, time_seconds: f64) -> Result<f64, GameSessionError> {
+        self.require_playback_phase()?;
+        let duration_seconds = self.playback_duration_seconds()?;
+        self.playback_clock
+            .seek(time_seconds, duration_seconds)
+            .map_err(GameSessionError::PlaybackClock)?;
+        Ok(self.playback_clock.time_seconds())
+    }
+
+    /// Advances playback time and wraps only for the independent Attract record.
+    pub fn advance_playback(&mut self, elapsed_seconds: f64) -> Result<f64, GameSessionError> {
+        self.require_playback_phase()?;
+        let duration_seconds = self.playback_duration_seconds()?;
+        self.playback_clock
+            .advance(
+                elapsed_seconds,
+                duration_seconds,
+                self.phase == SessionPhase::Attract,
+            )
+            .map_err(GameSessionError::PlaybackClock)
+    }
+
+    /// Queries an interpolated playback sample at elapsed seconds from the record start.
+    pub fn playback_sample_at_seconds(
+        &self,
+        time_seconds: f64,
+    ) -> Result<crate::FlightRecordPlaybackSample, GameSessionError> {
+        self.require_playback_phase()?;
+        self.playback_record()
+            .ok_or(GameSessionError::InvalidTransition)?
+            .sample_at_seconds(time_seconds)
+            .map_err(GameSessionError::PlaybackQuery)
+    }
+
+    fn require_playback_phase(&self) -> Result<(), GameSessionError> {
+        if matches!(self.phase, SessionPhase::Replay | SessionPhase::Attract) {
+            Ok(())
+        } else {
+            Err(GameSessionError::InvalidTransition)
+        }
+    }
+
+    fn playback_duration_seconds(&self) -> Result<f64, GameSessionError> {
+        self.playback_record()
+            .ok_or(GameSessionError::InvalidTransition)?
+            .duration_seconds()
+            .map_err(GameSessionError::PlaybackQuery)
     }
 
     /// Queries the sealed scenario wind without changing the simulation state.

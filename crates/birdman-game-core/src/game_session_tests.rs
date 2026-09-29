@@ -109,6 +109,15 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
     assert_eq!(session.snapshot(), SessionSnapshot::Title);
     assert!(session.flight_record().is_none());
     session.enter_attract().unwrap();
+    let clock = session.playback_clock().unwrap();
+    assert!(clock.is_playing());
+    let duration = session
+        .playback_record()
+        .unwrap()
+        .duration_seconds()
+        .unwrap();
+    assert_eq!(session.advance_playback(duration).unwrap(), 0.0);
+    assert!(session.playback_clock().unwrap().is_playing());
 }
 
 #[test]
@@ -188,10 +197,16 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     session.start_countdown(1).unwrap();
     session.advance_countdown().unwrap();
     session.launch().unwrap();
+    for _ in 0..3 {
+        session
+            .advance_flight_tick(neutral_input(&session))
+            .unwrap();
+    }
     session.abort_flight().unwrap();
     let result = session.snapshot().result();
     let record = session.flight_record().unwrap().sample_count();
     session.enter_replay().unwrap();
+    assert!(!session.playback_clock().unwrap().is_playing());
     assert_eq!(session.snapshot().phase(), SessionPhase::Replay);
     assert!(matches!(
         session.snapshot(),
@@ -201,11 +216,27 @@ fn replay_phase_retains_the_immutable_result_and_record() {
         }
     ));
     assert_eq!(session.flight_record().unwrap().sample_count(), record);
+    session.set_playback_rate_code(2).unwrap();
+    session.seek_playback(0.01).unwrap();
+    session.set_playback_playing(true).unwrap();
+    assert_eq!(session.advance_playback(0.01).unwrap(), 0.03);
+    let sample = session.playback_sample_at_seconds(0.03).unwrap();
+    assert_eq!(sample.tick_index, 3);
+    assert_eq!(
+        session.set_playback_rate_code(3),
+        Err(GameSessionError::PlaybackClock(
+            crate::ReplayClockError::UnsupportedRate
+        ))
+    );
     assert_eq!(
         session.advance_flight_tick(neutral_input(&session)),
         Err(GameSessionError::InvalidTransition)
     );
     session.leave_replay().unwrap();
+    assert_eq!(
+        session.set_playback_playing(true),
+        Err(GameSessionError::InvalidTransition)
+    );
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     assert_eq!(session.snapshot().result(), result);
 }
