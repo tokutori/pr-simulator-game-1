@@ -1595,9 +1595,22 @@ mod tests {
         SyntheticFlightSession, flight_record_sample_layout, validate_axes,
     };
     use birdman_game_core::{
-        BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, PilotPositionTarget,
-        SurfaceCommands, SyntheticPlayableFlight,
+        BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, MAX_FLIGHT_RECORD_SAMPLES,
+        PilotPositionTarget, SurfaceCommands, SyntheticPlayableFlight,
     };
+
+    const _: [(); 1_632_408] =
+        [(); core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES];
+
+    #[test]
+    fn maximum_bulk_record_transfer_payload_matches_the_layout_budget() {
+        assert_eq!(RECORD_SAMPLE_LENGTH, 51);
+        assert_eq!(MAX_FLIGHT_RECORD_SAMPLES, 4_001);
+        assert_eq!(
+            core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES,
+            1_632_408
+        );
+    }
 
     #[test]
     fn synthetic_session_returns_packed_finite_snapshot_and_rejects_invalid_input() {
