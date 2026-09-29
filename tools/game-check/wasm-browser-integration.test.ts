@@ -12,6 +12,26 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
 describe("generated WebAssembly browser binding", () => {
+  it("plays an independent Title demo without exporting it as a player flight", () => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    try {
+      expect(session.flight_record_sample_count()).toBe(0);
+      session.enter_attract();
+      expect(session.phase_code()).toBe(10);
+      expect(session.flight_record_sample_count()).toBeGreaterThan(100);
+      expect(session.flight_record_summary()[1]).toBeGreaterThan(0);
+      expect(session.flight_record_sample_at(0, 0)).toHaveLength(36);
+      expect(() => session.export_flight_record_json()).toThrow();
+
+      session.leave_attract();
+      expect(session.phase_code()).toBe(0);
+      expect(session.flight_record_sample_count()).toBe(0);
+    } finally {
+      session.free();
+    }
+  });
+
   it("runs a fixed-rate flight through fractional water contact", () => {
     initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
     expect(physics_hz()).toBe(100);

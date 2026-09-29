@@ -68,7 +68,7 @@ describe("Game scene view model", () => {
   });
 
   it("shows the Attract return action while the Title demo is playing", () => {
-    const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(10) });
+    const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(10), status: "" });
     const controls = createGameViewModel(model, null).panels[0]?.controls;
     expect(controls?.find((control) => control.id === "game-attract-status"))
       .toMatchObject({ kind: "status", value: "自動再生中" });
