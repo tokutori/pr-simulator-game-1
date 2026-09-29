@@ -813,22 +813,35 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.8 * finePoint.x + 0.6 * finePoint.y
   );
   vec4 fineSample = texture2D(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631));
+  vec2 ripplePoint = (worldXZ - drift * 0.87) * 5.2;
+  vec2 rippleRotated = vec2(
+    0.8 * ripplePoint.x - 0.6 * ripplePoint.y,
+    0.6 * ripplePoint.x + 0.8 * ripplePoint.y
+  );
+  vec4 rippleSample = texture2D(uDetailNear, rippleRotated / uDetailExtents.x + vec2(0.683, 0.173));
   vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
   vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
+  vec2 rippleRawSlope = (rippleSample.rg * 255.0 - 128.0) / 127.0;
   vec2 fineSlope = vec2(
     0.6 * fineRawSlope.x + 0.8 * fineRawSlope.y,
     -0.8 * fineRawSlope.x + 0.6 * fineRawSlope.y
   ) * 2.6 * 0.11;
-  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4 + fineSlope;
+  vec2 rippleSlope = vec2(
+    0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
+    -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
+  ) * 5.2 * 0.035;
+  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4 + fineSlope + rippleSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
   float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
   float farVariance = max(farSample.b / 2.5 - dot(farSlope, farSlope), 0.0);
   float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
+  float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
     + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance
-    + 2.6 * 2.6 * 0.11 * 0.11 * fineVariance;
+    + 2.6 * 2.6 * 0.11 * 0.11 * fineVariance
+    + 5.2 * 5.2 * 0.035 * 0.035 * rippleVariance;
   // Preserve visible fine-scale contrast as the pilot eye rises above the
   // water; projected waves otherwise lose nearly all of their normal detail.
   float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
