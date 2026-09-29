@@ -30,7 +30,7 @@ describe("synthetic Birdman airframe", () => {
     const left = airframe.root.getObjectByName("left-wing") as Mesh;
     const right = airframe.root.getObjectByName("right-wing") as Mesh;
     const film = airframe.root.getObjectByName("left-trailing-film") as Mesh;
-    const underSpar = airframe.root.getObjectByName("left-white-under-spar") as Mesh;
+    const rightFilm = airframe.root.getObjectByName("right-trailing-film") as Mesh;
     const rib = airframe.root.getObjectByName("left-trailing-rib") as Mesh;
     const foam = airframe.root.getObjectByName("left-styrofoam-rib") as Mesh;
     const stringer = airframe.root.getObjectByName("balsa-stringer") as Mesh;
@@ -50,7 +50,7 @@ describe("synthetic Birdman airframe", () => {
     expect(left).toBeInstanceOf(Mesh);
     expect(right).toBeInstanceOf(Mesh);
     expect(film).toBeInstanceOf(Mesh);
-    expect(underSpar).toBeInstanceOf(Mesh);
+    expect(rightFilm).toBeInstanceOf(Mesh);
     expect(rib).toBeInstanceOf(Mesh);
     expect(foam).toBeInstanceOf(Mesh);
     expect(stringer).toBeInstanceOf(Mesh);
@@ -88,17 +88,23 @@ describe("synthetic Birdman airframe", () => {
     expect(tailLeading).toBeInstanceOf(Mesh);
     expect(tailFoam).toBeInstanceOf(Mesh);
     expect(rudderFoam).toBeInstanceOf(Mesh);
-    expect((film.material as MeshLambertMaterial).transparent).toBe(true);
-    expect((film.material as MeshLambertMaterial).opacity).toBeLessThan(0.3);
-    expect(Array.isArray(left.material)).toBe(true);
+    for (const trailingFilm of [film, rightFilm]) {
+      expect((trailingFilm.material as MeshLambertMaterial).transparent).toBe(true);
+      expect((trailingFilm.material as MeshLambertMaterial).opacity).toBeLessThan(0.3);
+    }
+    for (const coveredWing of [left, right]) {
+      expect(Array.isArray(coveredWing.material)).toBe(true);
+      const materials = coveredWing.material as MeshLambertMaterial[];
+      expect(materials[1]?.map).toBeNull();
+      expect(materials[1]?.color.getHex()).toBe(0xf2f3ed);
+      expect(coveredWing.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 1]);
+    }
     const [wingCover, wingUnderside] = left.material as MeshLambertMaterial[];
     expect(wingUnderside?.map).toBeNull();
     expect(wingUnderside?.color.getHex()).toBe(0xf2f3ed);
     expect(left.geometry.groups.map((group) => group.materialIndex)).toEqual([0, 1, 1]);
     expect(left.geometry.groups[0]?.count).toBe(left.geometry.groups[1]?.count);
-    const underSparMaterials = underSpar.material as MeshLambertMaterial[];
-    expect(underSparMaterials[0]?.transparent).toBe(true);
-    expect(underSparMaterials[1]?.color.getHex()).toBe(0xf2f3ed);
+    expect(airframe.root.getObjectByName("left-white-under-spar")).toBeUndefined();
     expect(wingCover?.map).toBeInstanceOf(DataTexture);
     const coverPixels = (wingCover?.map as DataTexture).image.data as Uint8Array;
     let darkPixels = 0;
@@ -161,9 +167,7 @@ describe("synthetic Birdman airframe", () => {
     const wingFilm = airframe.root.getObjectByName("left-trailing-film") as Mesh;
     const filmPosition = wingFilm.geometry.getAttribute("position");
     const rootFilmChord = filmPosition.getZ(16) - filmPosition.getZ(0);
-    const underSparPosition = underSpar.geometry.getAttribute("position");
-    const rootUnderSparChord = underSparPosition.getZ(16) - underSparPosition.getZ(0);
-    expect(rootCoveredChord + rootUnderSparChord + rootFilmChord).toBeCloseTo(1.13, 1);
+    expect(rootCoveredChord + rootFilmChord).toBeCloseTo(1.13, 1);
     const section60 = 18 * 17;
     const section80 = 24 * 17;
     const chordAt = (section: number): number =>

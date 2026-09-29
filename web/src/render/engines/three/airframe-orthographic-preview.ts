@@ -15,7 +15,7 @@ interface ViewSpec {
 
 const specs: readonly ViewSpec[] = [
   { name: "top", position: [0, 20, 0], target: [0, 0, 0], up: [0, 0, -1], extent: 6.5 },
-  { name: "side", position: [20, 0, 1.6], target: [0, 0, 1.6], up: [0, 1, 0], extent: 2.5 },
+  { name: "side", position: [20, 0, 1.85], target: [0, 0, 1.85], up: [0, 1, 0], extent: 2.5 },
   { name: "front", position: [0, 0, -20], target: [0, 0, 0], up: [0, 1, 0], extent: 6.5 }
 ];
 
@@ -59,10 +59,12 @@ for (const spec of specs) {
     if (width === 0 || height === 0) return;
     renderer.setSize(width, height);
     const aspect = width / height;
-    camera.left = -spec.extent * aspect;
-    camera.right = spec.extent * aspect;
-    camera.top = spec.extent;
-    camera.bottom = -spec.extent;
+    const halfWidthNeeded = spec.name === "side" ? 3.5 : 11.5;
+    const halfHeight = Math.max(spec.extent, halfWidthNeeded / aspect);
+    camera.left = -halfHeight * aspect;
+    camera.right = halfHeight * aspect;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
     camera.updateProjectionMatrix();
     renderer.render(scene, camera);
   };

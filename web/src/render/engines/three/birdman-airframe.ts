@@ -29,7 +29,6 @@ const WING_ROOT_LEADING_Z = -0.42;
 const WING_LEADING_SWEEP_METERS = 0.24;
 const WING_ROOT_SPAR_Z = WING_ROOT_LEADING_Z + 0.25 * WING_ROOT_CHORD_METERS;
 const WING_COVERED_CHORD_FRACTION = 0.50;
-const WING_WHITE_UNDERSIDE_END_FRACTION = 0.65;
 const TAIL_HALF_SPAN_METERS = 1.58;
 const TAIL_ROOT_CHORD_METERS = 0.55;
 const TAIL_TIP_CHORD_METERS = 0.48;
@@ -97,26 +96,27 @@ function indigoWingTexture(side: -1 | 1): DataTexture {
       const weave = (grain - Math.floor(grain) - 0.5) * 11;
       const dye = 7 * Math.sin(span * 26 + chord * 9 + side) + 4 * Math.sin(span * 87 - chord * 23);
       let white = 0;
-      // The photograph shows broad, joined resist-dye strokes surrounding
-      // irregular dark islands, with isolated smaller marks toward the tip.
-      const centers = side < 0 ? [0.06, 0.23, 0.42, 0.63, 0.86] : [0.07, 0.25, 0.45, 0.66, 0.88];
+      // The photographed resist dye has uneven, joined brush marks rather
+      // than a row of equal circles. The two half wings are deliberately different.
+      const centers = side < 0 ? [0.08, 0.30, 0.47, 0.74, 0.89] : [0.09, 0.26, 0.54, 0.69, 0.92];
       for (const [ring, center] of centers.entries()) {
-        const along = (span - center) / (0.073 - 0.004 * ring + 0.006 * Math.sin(ring * 2.2 + side));
-        const across = (chord - 0.26 - 0.035 * Math.sin(ring * 1.7 + side)) / (0.22 - 0.012 * ring);
+        const along = (span - center) / (0.073 + 0.016 * Math.sin(ring * 2.2 + side));
+        const across = (chord - 0.26 - 0.055 * Math.sin(ring * 1.7 + side)) / (0.22 - 0.025 * Math.sin(ring * 1.4));
         const angle = Math.atan2(across, along);
         const radius = Math.hypot(along, across)
-          + 0.18 * Math.sin(angle * 3 + ring * 1.3)
-          + 0.10 * Math.sin(angle * 7 - ring * 0.7)
-          + 0.06 * Math.sin(angle * 15 + span * 83);
-        const rimWidth = 0.20 + 0.10 * Math.sin(angle * 5 + ring * 2.1);
-        const ringBand = smooth(0.72 - rimWidth, 0.72, radius)
-          * (1 - smooth(0.88 + rimWidth, 0.99 + rimWidth, radius));
+          + 0.22 * Math.sin(angle * 3 + ring * 1.3)
+          + 0.13 * Math.sin(angle * 7 - ring * 0.7)
+          + 0.07 * Math.sin(angle * 15 + span * 83);
+        const rimWidth = 0.22 + 0.09 * Math.sin(angle * 5 + ring * 2.1);
+        const ringBand = smooth(0.80 - rimWidth, 0.80, radius)
+          * (1 - smooth(0.84 + rimWidth, 1.00 + rimWidth, radius));
         white = Math.max(white, ringBand);
       }
-      const connectingStroke = Math.abs(chord - 0.41 - 0.045 * Math.sin(span * 24 + side * 0.8)
-        - 0.025 * Math.sin(span * 51 - side));
-      white = Math.max(white, (1 - smooth(0.012, 0.038, connectingStroke))
-        * (1 - smooth(0.31, 0.58, span)));
+      const connectingStroke = Math.abs(chord - 0.39 - 0.055 * Math.sin(span * 19 + side * 0.8)
+        - 0.025 * Math.sin(span * 47 - side));
+      const brushWidth = 0.02 + 0.01 * Math.sin(span * 37 + side);
+      white = Math.max(white, (1 - smooth(brushWidth, brushWidth + 0.025, connectingStroke))
+        * (1 - smooth(0.62, 0.82, span)));
       white *= 0.82 + 0.18 * Math.sin(span * 147 + chord * 71) * Math.sin(chord * 49 - span * 59);
       const index = (y * width + x) * 4;
       pixels[index] = Math.round((42 + dye + weave) * (1 - white) + (218 + weave * 0.4) * white);
@@ -486,17 +486,12 @@ export function createBirdmanAirframe(): BirdmanAirframe {
       side < 0 ? wingSkins.left : wingSkins.right, whiteWingUnderside);
     leadingWing.mesh.name = side === -1 ? "left-wing" : "right-wing";
     root.add(leadingWing.mesh);
-    const underSpar = airfoilHalf({ ...wingShape,
-      chordStart: WING_COVERED_CHORD_FRACTION, chordEnd: WING_WHITE_UNDERSIDE_END_FRACTION
-    }, trailingFilm, whiteWingUnderside);
-    underSpar.mesh.name = side === -1 ? "left-white-under-spar" : "right-white-under-spar";
-    root.add(underSpar.mesh);
     const film = airfoilHalf({ ...wingShape,
-      chordStart: WING_WHITE_UNDERSIDE_END_FRACTION, chordEnd: 1
+      chordStart: WING_COVERED_CHORD_FRACTION, chordEnd: 1
     }, trailingFilm);
     film.mesh.name = side === -1 ? "left-trailing-film" : "right-trailing-film";
     root.add(film.mesh);
-    wings.push(leadingWing, underSpar, film);
+    wings.push(leadingWing, film);
     for (let section = 0; section < 12; section++) {
       const from = HALF_SPAN_METERS * section / 12;
       const to = HALF_SPAN_METERS * (section + 1) / 12;
