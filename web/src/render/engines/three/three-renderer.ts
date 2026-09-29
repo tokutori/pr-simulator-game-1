@@ -8,6 +8,7 @@ import {
   Group,
   LinearFilter,
   DirectionalLight,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   PerspectiveCamera,
@@ -15,8 +16,12 @@ import {
   Scene,
   SRGBColorSpace,
   ShaderMaterial,
+  UniformsLib,
+  UniformsUtils,
+  Vector3,
   Vector4,
-  WebGLRenderer
+  WebGLRenderer,
+  WebGLRenderTarget
 } from "three";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
@@ -136,6 +141,7 @@ export function createThreeRenderer(
   lakeQuality: LakeWaterQuality = "high"
 ): ThreeRendererBundle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
+  renderer.shadowMap.enabled = true;
   const stereoEffect = new StereoEffect(renderer);
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.setClearColor(0x9fb0ad, 1);
@@ -143,17 +149,35 @@ export function createThreeRenderer(
   const scene = new Scene();
   const skyTexture = createLakeSkyTexture();
   scene.background = skyTexture;
-  scene.add(new AmbientLight(0xdceaf0, 1.15));
+  const ambient = new AmbientLight(0xdceaf0, 1.15);
+  ambient.layers.enable(1);
+  scene.add(ambient);
   const sun = new DirectionalLight(0xffefd8, 1.45);
   sun.position.set(-20, 35, -18);
+  sun.layers.enable(1);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -28;
+  sun.shadow.camera.right = 28;
+  sun.shadow.camera.top = 28;
+  sun.shadow.camera.bottom = -28;
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 160;
+  sun.shadow.normalBias = 0.025;
+  sun.shadow.bias = -0.0001;
+  sun.shadow.radius = 5;
   scene.add(sun);
+  scene.add(sun.target);
+  const sunOffset = new Vector3(-20, 35, -18);
 
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
   let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
   let lakeResources = createLakeVisualResources(activeLakeCondition, lakeQuality);
   const waterMaterial = new ShaderMaterial({
+    lights: true,
     uniforms: {
+      ...UniformsUtils.clone(UniformsLib.lights),
       uTimeSeconds: { value: 0 },
       uWindSpeed: { value: lakeResources.windSpeed },
       uWindVelocity: { value: new Vector4(activeLakeCondition.windEastMetersPerSecond, -activeLakeCondition.windNorthMetersPerSecond, 0, 0) },
@@ -169,7 +193,10 @@ export function createThreeRenderer(
       uWaterDark: { value: new Color(0x172831) },
       uWaterMid: { value: new Color(0x293b43) },
       uWaterLight: { value: new Color(0x50636a) },
-      uSunDirection: { value: new Vector4(0.42, 0.82, 0.38, 0) }
+      uSunDirection: { value: new Vector4(-0.42, 0.82, -0.38, 0) },
+      uReflectionTexture: { value: null },
+      uReflectionMatrix: { value: new Matrix4() },
+      uReflectionEnabled: { value: 0 }
     },
     vertexShader: lakeWaterVertexShader,
     fragmentShader: lakeWaterFragmentShader,
@@ -190,7 +217,26 @@ export function createThreeRenderer(
   };
   const water = new Mesh(waterGeometry, waterMaterial);
   water.frustumCulled = false;
+  water.receiveShadow = true;
   scene.add(water);
+  const reflectionTarget = new WebGLRenderTarget(512, 256, {
+    minFilter: LinearFilter,
+    magFilter: LinearFilter,
+    depthBuffer: true
+  });
+  reflectionTarget.texture.colorSpace = SRGBColorSpace;
+  const reflectionTextureUniform = waterMaterial.uniforms.uReflectionTexture;
+  if (reflectionTextureUniform === undefined) throw new Error("Lake reflection texture uniform is missing");
+  reflectionTextureUniform.value = reflectionTarget.texture;
+  const reflectionCamera = new PerspectiveCamera();
+  reflectionCamera.layers.set(1);
+  const reflectedPosition = new Vector3();
+  const reflectedForward = new Vector3();
+  const reflectedUp = new Vector3();
+  const reflectedTarget = new Vector3();
+  const reflectionMatrix = lakeUniform(waterMaterial, "uReflectionMatrix", new Matrix4()).value;
+  const reflectionEnabled = lakeUniform(waterMaterial, "uReflectionEnabled", 0);
+  const savedClearColor = new Color();
 
   const panelTexture = new CanvasTexture(panelCanvas);
   panelTexture.colorSpace = SRGBColorSpace;
@@ -212,6 +258,15 @@ export function createThreeRenderer(
   scene.add(aircraftRoot);
   const airframe = createBirdmanAirframe();
   aircraftRoot.add(airframe.root);
+  aircraftRoot.layers.enable(1);
+  airframe.root.traverse((object) => {
+    object.layers.enable(1);
+    if (object instanceof Mesh) {
+      // Transparent film admits light; its ribs, spar and opaque skin cast the silhouette.
+      const material = (object as Mesh).material;
+      object.castShadow = (Array.isArray(material) ? material : [material]).every((part) => !part.transparent);
+    }
+  });
   const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
   aircraftRoot.add(camera);
   const externalCameraRig = new Group();
@@ -325,6 +380,9 @@ export function createThreeRenderer(
       // The non-flight scenic camera is at the origin. Keep its water below
       // eye level so amplified wave crests do not cut across the horizon.
       water.position.set(flightPose?.datumPositionNed.east ?? 0, flightPose === null ? -1.5 : 0, -(flightPose?.datumPositionNed.north ?? 0));
+      // Keep the light's orthographic shadow volume around the moving airframe.
+      sun.target.position.copy(aircraftRoot.position);
+      sun.position.copy(aircraftRoot.position).add(sunOffset);
       if (useExternalCamera) {
         externalCameraRig.add(panelMesh);
         setPose(panelMesh, composePose(inversePose(externalPose), frame.panelPose));
@@ -344,6 +402,50 @@ export function createThreeRenderer(
       if (frame.gazeCursor !== null) {
         gazeCursor.position.set(frame.gazeCursor.point.x, frame.gazeCursor.point.y, 0.015);
         gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
+      }
+      scene.updateMatrixWorld(true);
+      const viewCamera = useExternalCamera ? fixedCamera : camera;
+      const waterLevel = water.position.y;
+      const eyePosition = viewCamera.getWorldPosition(reflectedPosition);
+      if (eyePosition.y > waterLevel + 0.05) {
+        // A real image of the airframe is rendered from the mirrored eye.
+        // The water shader projects each displaced water vertex into this view.
+        reflectionCamera.position.copy(eyePosition);
+        reflectionCamera.position.y = 2 * waterLevel - eyePosition.y;
+        viewCamera.getWorldDirection(reflectedForward);
+        reflectedForward.y *= -1;
+        reflectedUp.set(0, 1, 0).applyQuaternion(viewCamera.getWorldQuaternion(reflectionCamera.quaternion));
+        reflectedUp.y *= -1;
+        reflectionCamera.up.copy(reflectedUp);
+        reflectedTarget.copy(reflectionCamera.position).add(reflectedForward);
+        reflectionCamera.lookAt(reflectedTarget);
+        reflectionCamera.projectionMatrix.copy(viewCamera.projectionMatrix);
+        reflectionCamera.projectionMatrixInverse.copy(viewCamera.projectionMatrixInverse);
+        reflectionCamera.updateMatrixWorld(true);
+        reflectionMatrix.multiplyMatrices(reflectionCamera.projectionMatrix, reflectionCamera.matrixWorldInverse);
+        reflectionTarget.setSize(Math.max(256, Math.min(1024, Math.ceil(width * pixelRatio / 2))),
+          Math.max(128, Math.min(1024, Math.ceil(height * pixelRatio / 2))));
+        const previousTarget = renderer.getRenderTarget();
+        const previousBackground = scene.background;
+        const previousAlpha = renderer.getClearAlpha();
+        const previousXrEnabled = renderer.xr.enabled;
+        renderer.getClearColor(savedClearColor);
+        try {
+          scene.background = null;
+          renderer.xr.enabled = false;
+          renderer.setRenderTarget(reflectionTarget);
+          renderer.setClearColor(0x000000, 0);
+          renderer.clear();
+          renderer.render(scene, reflectionCamera);
+          reflectionEnabled.value = 1;
+        } finally {
+          renderer.setRenderTarget(previousTarget);
+          renderer.setClearColor(savedClearColor, previousAlpha);
+          renderer.xr.enabled = previousXrEnabled;
+          scene.background = previousBackground;
+        }
+      } else {
+        reflectionEnabled.value = 0;
       }
       if (stereoPresentation !== null && !renderer.xr.isPresenting) {
         stereoEffect.render(scene, useExternalCamera ? fixedCamera : camera);
@@ -384,6 +486,7 @@ export function createThreeRenderer(
       panelMaterial.dispose();
       waterGeometry.dispose();
       waterMaterial.dispose();
+      reflectionTarget.dispose();
       skyTexture.dispose();
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
@@ -682,6 +785,7 @@ mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed
 `;
 
 const lakeWaterVertexShader = /* glsl */ `
+uniform mat4 uReflectionMatrix;
 uniform float uTimeSeconds;
 uniform vec4 uWindVelocity;
 uniform float uDetailScale;
@@ -699,6 +803,8 @@ varying float vCompression;
 varying float vGridSpacing;
 varying vec2 vBaseXZ;
 varying vec2 vRepresentedSlope;
+varying vec4 vReflectionCoord;
+#include <shadowmap_pars_vertex>
 ${lakeWavePacketShader}
 
 void main() {
@@ -782,6 +888,11 @@ void main() {
   vec4 worldPosition = modelMatrix * vec4(p, 1.0);
   vWorldPosition = worldPosition.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
+  vReflectionCoord = uReflectionMatrix * worldPosition;
+  #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+    vDirectionalShadowCoord[0] = directionalShadowMatrix[0] *
+      (worldPosition + vec4(vWorldNormal * directionalLightShadows[0].shadowNormalBias, 0.0));
+  #endif
   vCrest = crest / max(slopeEnergy, 0.001);
   vCompression = clamp(1.0 - horizontalDeterminant, 0.0, 1.0);
   vGridSpacing = aGridSpacing;
@@ -802,6 +913,8 @@ uniform vec3 uWaterDark;
 uniform vec3 uWaterMid;
 uniform vec3 uWaterLight;
 uniform vec4 uSunDirection;
+uniform sampler2D uReflectionTexture;
+uniform float uReflectionEnabled;
 uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform sampler2D uSkyTexture;
@@ -813,6 +926,9 @@ varying float vCompression;
 varying float vGridSpacing;
 varying vec2 vBaseXZ;
 varying vec2 vRepresentedSlope;
+varying vec4 vReflectionCoord;
+#include <common>
+#include <shadowmap_pars_fragment>
 ${lakeWavePacketShader}
 
 vec3 lakeSkyRadiance(vec3 ray) {
@@ -927,7 +1043,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   return vec3(microSlope * scaledStrength, slopeMoment * scaledStrength * scaledStrength);
 }
 
-vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
+vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVisibility) {
   vec3 geometricNormal = normalize(vWorldNormal);
   float patches = lakeNoise(worldXZ * 0.17 + vec2(2.3, -7.1));
   vec2 microSlope = microDetail.xy;
@@ -949,12 +1065,13 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   float roughness = clamp(0.23 + uWindSpeed * 0.018 + sqrt(unresolvedVariance) * 0.6, 0.23, 0.62);
   float glitterLobe = pow(sunAlignment, mix(220.0, 45.0, roughness));
   float glitterNoise = 0.35 + 0.65 * clamp(sqrt(microDetail.z) * 3.0, 0.0, 1.0);
-  float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed);
-  float diffuse = 0.58 + 0.42 * max(dot(normal, normalize(vec3(-uSunDirection.x, uSunDirection.y, -uSunDirection.z))), 0.0);
+  float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed) * sunVisibility;
+  float diffuse = 0.58 + 0.42 * sunVisibility * max(dot(normal, normalize(uSunDirection.xyz)), 0.0);
   float sharpCrest = smoothstep(0.42, 0.76, vCompression);
   float crestLight = smoothstep(0.05, 1.05, vCrest) * sharpCrest * mix(0.35, 1.0, patches);
   vec3 base = mix(uWaterDark, uWaterMid, diffuse * 0.72);
   base = mix(base, uWaterLight, crestLight * 0.16 + patches * 0.07);
+  base *= mix(0.82, 1.0, sunVisibility);
   // Existing wave groups may remain steep after the local wind weakens.
   float whitecap = smoothstep(0.68, 0.84, vCompression) * smoothstep(0.7, 0.98, vCrest) * 0.12;
   // Dark water absorption must not also darken the reflected sky.
@@ -962,6 +1079,17 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   // Art-directed reflection strength for the dark reference water. This is
   // not a rough-surface BRDF and leaves a visible sky/water boundary.
   vec3 color = mix(base, reflection, fresnel * 0.45);
+  if (uReflectionEnabled > 0.5 && vReflectionCoord.w > 0.0) {
+    vec2 reflectedUv = vReflectionCoord.xy / vReflectionCoord.w * 0.5 + 0.5;
+    // Small surface-slope offsets break up the image along moving wave facets.
+    reflectedUv += totalSlope * 0.006;
+    if (all(greaterThanEqual(reflectedUv, vec2(0.0))) &&
+        all(lessThanEqual(reflectedUv, vec2(1.0)))) {
+      vec4 aircraftReflection = texture2D(uReflectionTexture, reflectedUv);
+      color = mix(color, aircraftReflection.rgb,
+        aircraftReflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
+    }
+  }
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
   color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
   float distanceToEye = length(cameraPosition.xz - worldXZ);
@@ -987,7 +1115,13 @@ void main() {
     lakeMicroDetail(center - footprintX + footprintY) +
     lakeMicroDetail(center + footprintX + footprintY)
   ) * 0.25;
-  vec3 color = sampleLakeColor(vWorldPosition.xz, waveSlope, microDetail);
+  float sunVisibility = 1.0;
+  #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+    sunVisibility = getShadow(directionalShadowMap[0], directionalLightShadows[0].shadowMapSize,
+      directionalLightShadows[0].shadowIntensity, directionalLightShadows[0].shadowBias,
+      directionalLightShadows[0].shadowRadius, vDirectionalShadowCoord[0]);
+  #endif
+  vec3 color = sampleLakeColor(vWorldPosition.xz, waveSlope, microDetail, sunVisibility);
   gl_FragColor = vec4(color, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
