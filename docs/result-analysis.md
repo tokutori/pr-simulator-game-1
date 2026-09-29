@@ -67,7 +67,7 @@ AoA、roll/pitch、pilot/FBW/actuatorの系列はAdvanced Analysisとして追�
 
 ## Cursor・性能・検証
 
-ResultとReplayで単一のrecord-time cursor値を共有し、seek範囲・補間sampleはRust core queryが返す。
+ResultとReplayで単一のrecord-time cursor値を共有し、seek範囲・補間sample・再生速度・再生状態はRust core queryが返す。Webはwall-clock schedulerと入力adapterを担当し、再生時刻を独立計算しない。
 coreは有効record区間外・非有限時刻・不正recordを拒否する。Webは受信値でcursor位置と描画を更新する。
 graph側のhover/dragは再生時刻だけを変更し、元record・physics・Personal Bestを更新しない。
 大量sampleは表示用に間引いてよいが、端点・極値・eventを保持する。

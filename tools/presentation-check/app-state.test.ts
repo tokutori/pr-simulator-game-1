@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionState, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -12,6 +12,24 @@ flightSnapshotValues[19] = -1;
 const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
 
 describe("Boot application state", () => {
+  it("drops stale game-flow activations after synchronizing a changed Rust phase", () => {
+    expect(isStaleGameFlowActivation(
+      { type: "activate", controlId: "game-flight-pause" },
+      5,
+      7
+    )).toBe(true);
+    expect(isStaleGameFlowActivation(
+      { type: "activate", controlId: "game-flight-pause" },
+      5,
+      5
+    )).toBe(false);
+    expect(isStaleGameFlowActivation(
+      { type: "activate", controlId: "boot-enter-webxr" },
+      0,
+      7
+    )).toBe(false);
+  });
+
   it("dispatches every enabled game-flow button from its rendered phase", () => {
     const models = [
       ...[0, 1, 2, 3, 4, 5, 8, 10].map((phaseCode) => readyModel(phaseCode)),
@@ -93,8 +111,15 @@ describe("Boot application state", () => {
       type: "game-operation-completed", requestId: 2, phaseCode: 9, controlModeCode: 0,
       difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
-    expect(entered.effects).toEqual([{ type: "load-flight-analysis", requestId: 1 }]);
+    expect(entered.effects).toEqual([
+      {
+        type: "control-replay-clock", requestId: 1, generation: 1,
+        command: { kind: "synchronize", seekTimeSeconds: null }
+      },
+      { type: "load-flight-analysis", requestId: 1 }
+    ]);
     expect(entered.model.gameSession.phaseCode).toBe(9);
+    expect(entered.model.pendingReplayClockRequestId).toBe(1);
     expect(updateApp(opening.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-title-open-record-4" }
     }).model).toBe(opening.model);
@@ -113,8 +138,19 @@ describe("Boot application state", () => {
       difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
     expect(entered.model.gameSession.phaseCode).toBe(10);
-    expect(entered.model.replayPlaying).toBe(true);
-    expect(entered.effects).toEqual([{ type: "load-flight-analysis", requestId: 1 }]);
+    expect(entered.model.replayPlaying).toBe(false);
+    expect(entered.effects).toEqual([
+      {
+        type: "control-replay-clock", requestId: 1, generation: 1,
+        command: { kind: "synchronize", seekTimeSeconds: null }
+      },
+      { type: "load-flight-analysis", requestId: 1 }
+    ]);
+    const synchronized = updateApp(entered.model, {
+      type: "replay-clock-command-completed", requestId: 1, generation: 1,
+      state: { timeSeconds: 0, rateCode: 1, playing: true }
+    });
+    expect(synchronized.model.replayPlaying).toBe(true);
 
     const analysis = Object.freeze({
       samples: Object.freeze([]), initialPilotPositionMeters: 0,
@@ -125,12 +161,20 @@ describe("Boot application state", () => {
         terminal: Object.freeze({ reason: "time-limit" as const, disposition: "complete" as const, timeSeconds: 2 })
       })
     });
-    const loaded = updateApp(entered.model, { type: "flight-analysis-loaded", requestId: 1, data: analysis });
+    const loaded = updateApp(synchronized.model, { type: "flight-analysis-loaded", requestId: 1, data: analysis });
     expect(loaded.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
-    const looped = updateApp(loaded.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 2.1 });
-    expect(looped.model.analysisCursorTimeSeconds).toBe(0);
+    const advancing = updateApp(loaded.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 2.1 });
+    expect(advancing.effects).toEqual([{
+      type: "control-replay-clock", requestId: 2, generation: 1,
+      command: { kind: "advance", elapsedSeconds: 2.1 }
+    }]);
+    const looped = updateApp(advancing.model, {
+      type: "replay-clock-command-completed", requestId: 2, generation: 1,
+      state: { timeSeconds: 0.1, rateCode: 1, playing: true }
+    });
+    expect(looped.model.analysisCursorTimeSeconds).toBeCloseTo(0.1);
     expect(looped.model.replayPlaying).toBe(true);
-    expect(looped.effects).toContainEqual({ type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0 });
+    expect(looped.effects).toContainEqual({ type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.1 });
     expect(looped.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
 
     const returning = updateApp(looped.model, {
@@ -399,15 +443,31 @@ describe("Boot application state", () => {
     });
     expect(entered.model.gameSession.phaseCode).toBe(9);
     expect(entered.model.resultTab).toBe("analysis");
-    expect(entered.effects).toEqual([{ type: "load-flight-replay-pose", requestId: 1, timeSeconds: 0.5 }]);
-    const sought = updateApp(entered.model, {
+    expect(entered.effects).toEqual([{
+      type: "control-replay-clock", requestId: 1, generation: 1,
+      command: { kind: "synchronize", seekTimeSeconds: 0.5 }
+    }]);
+    const synchronized = updateApp(entered.model, {
+      type: "replay-clock-command-completed", requestId: 1, generation: 1,
+      state: { timeSeconds: 0.5, rateCode: 1, playing: false }
+    });
+    expect(synchronized.effects).toEqual([
+      { type: "load-flight-replay-pose", requestId: 1, timeSeconds: 0.5 },
+      { type: "load-flight-analysis-cursor", requestId: 1, timeSeconds: 0.5 }
+    ]);
+    const sought = updateApp(synchronized.model, {
       type: "ui-action", action: { type: "set-range", controlId: "game-replay-cursor", value: 1.25 }
     });
-    expect(sought.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 1.25 },
-      { type: "load-flight-analysis-cursor", requestId: 1, timeSeconds: 1.25 }
-    ]);
-    const stale = updateApp(sought.model, {
+    expect(sought.model.analysisCursorTimeSeconds).toBe(0.5);
+    expect(sought.effects).toEqual([{
+      type: "control-replay-clock", requestId: 2, generation: 2,
+      command: { kind: "seek", timeSeconds: 1.25 }
+    }]);
+    const seekCompleted = updateApp(sought.model, {
+      type: "replay-clock-command-completed", requestId: 2, generation: 2,
+      state: { timeSeconds: 1.25, rateCode: 1, playing: false }
+    });
+    const stale = updateApp(seekCompleted.model, {
       type: "flight-replay-pose-loaded", requestId: 1,
       pose: {
         datumPositionNed: { north: 0, east: 0, down: 0 },
@@ -417,7 +477,7 @@ describe("Boot application state", () => {
     });
     expect(stale.model.replayPose).toBeNull();
     expect(stale.model.pendingReplayPoseRequestId).toBe(2);
-    const currentPose = updateApp(sought.model, {
+    const currentPose = updateApp(seekCompleted.model, {
       type: "flight-replay-pose-loaded", requestId: 2,
       pose: {
         datumPositionNed: { north: 12, east: 3, down: -8 },
@@ -461,27 +521,65 @@ describe("Boot application state", () => {
     const speed = updateApp(replay, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-speed-2" }
     });
-    expect(speed.model.replaySpeed).toBe(2);
-    const play = updateApp(speed.model, {
+    expect(speed.model.replaySpeed).toBe(1);
+    expect(speed.effects).toEqual([{
+      type: "control-replay-clock", requestId: 1, generation: 1,
+      command: { kind: "rate", rateCode: 2 }
+    }]);
+    const rateSet = updateApp(speed.model, {
+      type: "replay-clock-command-completed", requestId: 1, generation: 1,
+      state: { timeSeconds: 0.5, rateCode: 2, playing: false }
+    });
+    expect(rateSet.model.replaySpeed).toBe(2);
+    const play = updateApp(rateSet.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-play-pause" }
     });
-    expect(play.model.replayPlaying).toBe(true);
-    expect(play.effects).toEqual([{ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 }]);
-    const tick = updateApp(play.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 0.25 });
-    expect(tick.model.analysisCursorTimeSeconds).toBe(1);
-    expect(tick.model.pendingReplayPoseRequestId).toBe(1);
-    expect(tick.model.pendingAnalysisCursorRequestId).toBe(1);
-    expect(tick.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 1, timeSeconds: 1 },
-      { type: "load-flight-analysis-cursor", requestId: 1, timeSeconds: 1 },
-      { type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 }
+    expect(play.model.replayPlaying).toBe(false);
+    expect(play.effects).toEqual([{
+      type: "control-replay-clock", requestId: 2, generation: 2,
+      command: { kind: "play" }
+    }]);
+    const playing = updateApp(play.model, {
+      type: "replay-clock-command-completed", requestId: 2, generation: 2,
+      state: { timeSeconds: 0.5, rateCode: 2, playing: true }
+    });
+    expect(playing.model.replayPlaying).toBe(true);
+    expect(playing.effects).toEqual([
+      { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.5 },
+      { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 },
+      { type: "schedule-replay-clock-tick", generation: 2, delayMilliseconds: 50 }
     ]);
-    const pause = updateApp(tick.model, {
+    const tick = updateApp(playing.model, { type: "replay-clock-tick", generation: 2, elapsedSeconds: 0.25 });
+    expect(tick.model.analysisCursorTimeSeconds).toBe(0.5);
+    expect(tick.effects).toEqual([{
+      type: "control-replay-clock", requestId: 3, generation: 2,
+      command: { kind: "advance", elapsedSeconds: 0.25 }
+    }]);
+    const advanced = updateApp(tick.model, {
+      type: "replay-clock-command-completed", requestId: 3, generation: 2,
+      state: { timeSeconds: 1, rateCode: 2, playing: true }
+    });
+    expect(advanced.model.analysisCursorTimeSeconds).toBe(1);
+    expect(advanced.effects).toEqual([
+      { type: "load-flight-replay-pose", requestId: 3, timeSeconds: 1 },
+      { type: "load-flight-analysis-cursor", requestId: 3, timeSeconds: 1 },
+      { type: "schedule-replay-clock-tick", generation: 2, delayMilliseconds: 50 }
+    ]);
+    const pause = updateApp(advanced.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-play-pause" }
     });
-    expect(pause.model.replayPlaying).toBe(false);
-    const staleTick = updateApp(pause.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 1 });
-    expect(staleTick.model).toBe(pause.model);
+    expect(pause.model.replayPlaying).toBe(true);
+    expect(pause.effects).toEqual([{
+      type: "control-replay-clock", requestId: 4, generation: 3,
+      command: { kind: "pause" }
+    }]);
+    const paused = updateApp(pause.model, {
+      type: "replay-clock-command-completed", requestId: 4, generation: 3,
+      state: { timeSeconds: 1, rateCode: 2, playing: false }
+    });
+    expect(paused.model.replayPlaying).toBe(false);
+    const staleTick = updateApp(paused.model, { type: "replay-clock-tick", generation: 2, elapsedSeconds: 1 });
+    expect(staleTick.model).toBe(paused.model);
   });
 
   it("stops playback exactly at record end", () => {
@@ -498,11 +596,45 @@ describe("Boot application state", () => {
       ...readyModel(9), flightAnalysis,
       analysisCursorTimeSeconds: 1.9, replayPlaying: true, replaySpeed: 2, replayClockGeneration: 4
     };
-    const ended = updateApp(replay, { type: "replay-clock-tick", generation: 4, elapsedSeconds: 0.1 });
+    const advancing = updateApp(replay, { type: "replay-clock-tick", generation: 4, elapsedSeconds: 0.1 });
+    expect(advancing.effects).toEqual([{
+      type: "control-replay-clock", requestId: 1, generation: 4,
+      command: { kind: "advance", elapsedSeconds: 0.1 }
+    }]);
+    const ended = updateApp(advancing.model, {
+      type: "replay-clock-command-completed", requestId: 1, generation: 4,
+      state: { timeSeconds: 2, rateCode: 2, playing: false }
+    });
     expect(ended.model.analysisCursorTimeSeconds).toBe(2);
     expect(ended.model.replayPlaying).toBe(false);
-    expect(ended.model.replayClockGeneration).toBe(5);
+    expect(ended.model.replayClockGeneration).toBe(4);
     expect(ended.effects).toHaveLength(2);
+  });
+
+  it("ignores stale clock responses and stops after a failed Rust clock command", () => {
+    const pending: AppModel = {
+      ...readyModel(9),
+      pendingReplayClockRequestId: 3,
+      replayClockGeneration: 5,
+      replayPlaying: true
+    };
+    const stale = updateApp(pending, {
+      type: "replay-clock-command-completed", requestId: 2, generation: 5,
+      state: { timeSeconds: 1, rateCode: 1, playing: true }
+    });
+    expect(stale.model).toBe(pending);
+
+    const failed = updateApp(pending, {
+      type: "replay-clock-command-failed", requestId: 3, generation: 5,
+      message: "record cursor is outside the retained interval",
+      state: { timeSeconds: 0.5, rateCode: 2, playing: false }
+    });
+    expect(failed.model.pendingReplayClockRequestId).toBeNull();
+    expect(failed.model.analysisCursorTimeSeconds).toBe(0.5);
+    expect(failed.model.replaySpeed).toBe(2);
+    expect(failed.model.replayPlaying).toBe(false);
+    expect(failed.model.replayClockGeneration).toBe(6);
+    expect(failed.model.status).toContain("record cursor is outside");
   });
 
   it("cycles Auto and manual camera selection on every presentation backend", () => {

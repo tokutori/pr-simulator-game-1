@@ -4,11 +4,14 @@
 
 Result、Analysis、Replayは同一の確定済みFlightRecordを参照する。scoreとterminal dispositionもfinalization metadataに保持する。
 record型、tick sample追記、終端確定、domain validation、集計値はRust coreが所有する。
+Replay時刻・再生速度・再生状態もRust coreが所有する。Webは操作intentと経過wall-clock時間を送り、確定clock stateを表示へ投影する。
+秒単位のsample queryはRust coreでrecord時刻へ変換する。TypeScriptはsecondsをtick/fractionへ分解しない。
 recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
 coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。予約失敗は型付きerrorとしてReady遷移を拒否する。
 上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
 WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1からのmetadata移行と実ブラウザー操作は未検証である。
+WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
 ## Header
