@@ -29,7 +29,7 @@ import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
-import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
+import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile, selectLakeWaveComponentsForQuality } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
@@ -62,7 +62,7 @@ interface LakeVisualResources {
   readonly visualWaveHeight: number;
 }
 
-function createLakeVisualResources(condition: LakeVisualCondition): LakeVisualResources {
+function createLakeVisualResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeVisualResources {
   const windSpeed = Math.hypot(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond);
   if (!Number.isFinite(windSpeed) || windSpeed < 0.05 ||
       !Number.isFinite(condition.detailAmplitudeScale) || condition.detailAmplitudeScale <= 0 || condition.detailAmplitudeScale > 3 ||
@@ -71,9 +71,9 @@ function createLakeVisualResources(condition: LakeVisualCondition): LakeVisualRe
   }
   const directionX = condition.windEastMetersPerSecond / windSpeed;
   const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
-  // The same 18-band frequency grid is used at every quality level.
+  // The same 18-component spectrum is used at every quality level.
   const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
-  const renderedWaves = spectrum.components.slice(0, 6);
+  const renderedWaves = selectLakeWaveComponentsForQuality(spectrum, quality);
   const near = createLakeDetailLayer(64, 1400, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
@@ -133,7 +133,7 @@ export function createThreeRenderer(
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
   let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
-  let lakeResources = createLakeVisualResources(activeLakeCondition);
+  let lakeResources = createLakeVisualResources(activeLakeCondition, lakeQuality);
   const waterMaterial = new ShaderMaterial({
     uniforms: {
       uTimeSeconds: { value: 0 },
@@ -402,7 +402,7 @@ export function createThreeRenderer(
     setLakeVisualCondition(condition: LakeVisualCondition) {
       ensureActive(disposed);
       if (sameLakeVisualCondition(activeLakeCondition, condition)) return;
-      const next = createLakeVisualResources(condition);
+      const next = createLakeVisualResources(condition, lakeQuality);
       lakeUniforms.windSpeed.value = next.windSpeed;
       lakeUniforms.windVelocity.value.set(condition.windEastMetersPerSecond, -condition.windNorthMetersPerSecond, 0, 0);
       lakeUniforms.detailScale.value = condition.detailAmplitudeScale;
