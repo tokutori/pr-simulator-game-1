@@ -34,6 +34,16 @@ function cloudNoise(u: number, v: number, columns: number, rows: number): number
   return low * (1 - ty) + high * ty;
 }
 
+interface CumulusPatch {
+  readonly u: number;
+  readonly baseV: number;
+  readonly halfWidthU: number;
+  readonly heightV: number;
+  readonly lobeHeights: readonly number[];
+  readonly lobeOffsets: readonly number[];
+  readonly lobeWidths: readonly number[];
+}
+
 /** Shared, subdued sky radiance for the background and the lake reflection. */
 export function createLakeSkyTexture(): DataTexture {
   const width = 1024;
@@ -46,14 +56,34 @@ export function createLakeSkyTexture(): DataTexture {
     randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
     return randomState / 4294967296;
   };
-  // Finite patches avoid the panorama-wide smears produced by thresholding
-  // large noise cells. Their occupied solid angle is approximately 5%.
-  const clouds = Array.from({ length: 48 }, () => ({
-    u: random(),
-    v: 0.5 + (0.06 + random() * 0.28) / Math.PI,
-    radiusU: 0.009 + random() * 0.009,
-    radiusV: 0.007 + random() * 0.007
-  }));
+  // Fair-weather cumulus have a common flat condensation base and several
+  // rounded updraft lobes. Keep individual heaps small and separated.
+  const clouds: CumulusPatch[] = [];
+  for (let attempt = 0; attempt < 160 && clouds.length < 36; attempt++) {
+    const elevation = 0.04 + Math.pow(random(), 1.6) * 0.32;
+    const scale = 0.85 + elevation / 0.36;
+    const halfWidthU = (0.007 + random() * 0.008) * scale;
+    const seamMargin = halfWidthU + 0.002;
+    const patch: CumulusPatch = {
+      u: seamMargin + random() * (1 - 2 * seamMargin),
+      baseV: 0.5 + elevation / Math.PI,
+      halfWidthU,
+      heightV: (0.04 + random() * 0.05) * scale / Math.PI,
+      lobeHeights: [0.4 + random() * 0.5, 0.48 + random() * 0.52,
+        0.48 + random() * 0.52, 0.38 + random() * 0.55],
+      lobeOffsets: [-0.72 + random() * 0.3, -0.42 + random() * 0.36,
+        0.06 + random() * 0.38, 0.4 + random() * 0.34],
+      lobeWidths: [0.35 + random() * 0.26, 0.38 + random() * 0.3,
+        0.36 + random() * 0.3, 0.35 + random() * 0.26]
+    };
+    const overlaps = clouds.some((other) => {
+      const separation = Math.abs(patch.u - other.u);
+      const horizontal = Math.min(separation, 1 - separation);
+      return horizontal < (patch.halfWidthU + other.halfWidthU) * 0.82 &&
+        Math.abs(patch.baseV - other.baseV) < (patch.heightV + other.heightV) * 0.45;
+    });
+    if (!overlaps) clouds.push(patch);
+  }
   for (let row = 0; row < height; row++) {
     const v = (row + 0.5) / height;
     const latitude = (v - 0.5) * Math.PI;
@@ -64,29 +94,48 @@ export function createLakeSkyTexture(): DataTexture {
       const u = (column + 0.5) / width;
       const longitude = (u - 0.5) * Math.PI * 2;
       let cloudOpacity = 0;
-      if (latitude > 0 && latitude < 0.4) {
+      let cloudBrightness = 0;
+      if (latitude > 0 && latitude < 0.5) {
         for (const patch of clouds) {
           const separation = Math.abs(u - patch.u);
-          const dx = Math.min(separation, 1 - separation) / patch.radiusU;
-          const dy = (v - patch.v) / patch.radiusV;
-          const radiusSquared = dx * dx + dy * dy;
-          if (radiusSquared > 1.4) continue;
-          const billow = cloudNoise(u, v, 70, 85) * 0.65 + cloudNoise(u, v, 170, 230) * 0.35;
-          const opacity = smoothstep((1 - radiusSquared + (billow - 0.5) * 0.7) / 0.35) *
-            (0.55 + 0.45 * billow);
-          cloudOpacity = Math.max(cloudOpacity, opacity);
+          const x = (separation <= 0.5 ? u - patch.u : u - patch.u - Math.sign(u - patch.u))
+            / patch.halfWidthU;
+          const y = (v - patch.baseV) / patch.heightV;
+          if (Math.abs(x) > 1.08 || y < -0.07 || y > 1.08) continue;
+          let top = 0.18 * Math.sqrt(Math.max(0, 1 - x * x));
+          for (let lobe = 0; lobe < 4; lobe++) {
+            const localX = (x - (patch.lobeOffsets[lobe] ?? 0)) / (patch.lobeWidths[lobe] ?? 0.5);
+            top = Math.max(top, (patch.lobeHeights[lobe] ?? 0) *
+              Math.sqrt(Math.max(0, 1 - localX * localX)));
+          }
+          // The panorama spans 360 degrees horizontally and 180 vertically;
+          // twice as many columns as rows keeps the billows angularly round.
+          const billow = cloudNoise(u, v, 150, 75) * 0.55 + cloudNoise(u, v, 400, 200) * 0.45;
+          const edge = smoothstep((top - y + (billow - 0.5) * 0.16) / 0.11);
+          const base = smoothstep((y + 0.02) / 0.055);
+          const opacity = edge * base * (0.55 + 0.6 * billow);
+          if (opacity > cloudOpacity) {
+            cloudOpacity = opacity;
+            cloudBrightness = Math.max(0, Math.min(1,
+              0.23 + 0.58 * y / Math.max(top, 0.01) + (billow - 0.5) * 0.65));
+          }
         }
       }
-      const cloud = cloudOpacity * 18;
       const rayX = Math.cos(latitude) * Math.cos(longitude);
       const rayY = Math.sin(latitude);
       const rayZ = Math.cos(latitude) * Math.sin(longitude);
       const sunAlignment = Math.max(0, (rayX * sun[0] + rayY * sun[1] + rayZ * sun[2]) / sunLength);
       const sunGlow = Math.pow(sunAlignment, 120) * 14;
       const offset = (row * width + column) * 4;
-      pixels[offset] = Math.round(Math.max(0, Math.min(255, 177 - 70 * gradient + cloud * 1.6 + horizonHaze + sunGlow)));
-      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, 202 - 38 * gradient + cloud + horizonHaze + sunGlow * 0.8)));
-      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, 215 - 10 * gradient + cloud * 0.5 + horizonHaze + sunGlow * 0.55)));
+      const skyR = 177 - 70 * gradient + horizonHaze + sunGlow;
+      const skyG = 202 - 38 * gradient + horizonHaze + sunGlow * 0.8;
+      const skyB = 215 - 10 * gradient + horizonHaze + sunGlow * 0.55;
+      const cloudR = 134 + 95 * cloudBrightness;
+      const cloudG = 148 + 90 * cloudBrightness;
+      const cloudB = 157 + 80 * cloudBrightness;
+      pixels[offset] = Math.round(Math.max(0, Math.min(255, skyR * (1 - cloudOpacity) + cloudR * cloudOpacity)));
+      pixels[offset + 1] = Math.round(Math.max(0, Math.min(255, skyG * (1 - cloudOpacity) + cloudG * cloudOpacity)));
+      pixels[offset + 2] = Math.round(Math.max(0, Math.min(255, skyB * (1 - cloudOpacity) + cloudB * cloudOpacity)));
       pixels[offset + 3] = 255;
     }
   }
