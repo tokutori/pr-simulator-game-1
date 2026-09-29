@@ -28,9 +28,10 @@ import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
-import { createLakeWaveSpectrum, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
-import type { LakeWaterQuality } from "../../contracts/lake-water.js";
+import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
+import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
+import type { LakeDetailLayer } from "./lake-detail-texture.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -49,36 +50,36 @@ export interface ThreeRendererBundle {
 // The reference photograph has no metric scale. This affects appearance only;
 // the spectrum contract and the still-water contact plane retain their values.
 const LAKE_VISUAL_HEIGHT_SCALE = 8.0;
-// A single reference appearance is shared by the title, flight, and replay
-// scenes until the scenario provides a coherent wave-state descriptor.
-const LAKE_REFERENCE_WIND_NORTH = 0.54;
-const LAKE_REFERENCE_WIND_EAST = 1.07;
+interface LakeVisualResources {
+  readonly windSpeed: number;
+  readonly near: LakeDetailLayer;
+  readonly far: LakeDetailLayer;
+  readonly waveKAmplitude: readonly Vector4[];
+  readonly waveOmegaPhase: readonly Vector4[];
+  readonly waveCount: number;
+  readonly visualWaveHeight: number;
+}
 
-export function createThreeRenderer(
-  canvas: HTMLCanvasElement,
-  panelCanvas: HTMLCanvasElement,
-  xrSystem: XRSystem | null,
-  lakeQuality: LakeWaterQuality = "high"
-): ThreeRendererBundle {
-  const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
-  const stereoEffect = new StereoEffect(renderer);
-  renderer.outputColorSpace = SRGBColorSpace;
-  renderer.setClearColor(0x9fb0ad, 1);
-
-  const scene = new Scene();
-  scene.background = new Color(0x9fb0ad);
-
-  const waterQuality = lakeWaterQualityProfile(lakeQuality);
-  const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
-  // Keep the same frequency grid and wave state across quality profiles.
-  // Mesh density changes with quality; the appearance does not switch weather.
-  const lakeWaves = createLakeWaveSpectrum(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST, 600, 18);
-  const renderedWaves = lakeWaves.components.slice(0, 6);
-  const referenceWindSpeed = Math.hypot(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST);
-  const detailDirectionX = LAKE_REFERENCE_WIND_EAST / referenceWindSpeed;
-  const detailDirectionZ = -LAKE_REFERENCE_WIND_NORTH / referenceWindSpeed;
-  const detailNear = createLakeDetailLayer(64, 1400, 1717, detailDirectionX, detailDirectionZ);
-  const detailFar = createLakeDetailLayer(193, 2400, 2917, detailDirectionX, detailDirectionZ);
+function createLakeVisualResources(condition: LakeVisualCondition): LakeVisualResources {
+  const windSpeed = Math.hypot(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond);
+  if (!Number.isFinite(windSpeed) || windSpeed < 0.05 ||
+      !Number.isFinite(condition.detailAmplitudeScale) || condition.detailAmplitudeScale <= 0 || condition.detailAmplitudeScale > 3 ||
+      !Number.isSafeInteger(condition.patternSeed) || condition.patternSeed < 0) {
+    throw new RangeError("Invalid render-only lake visual condition");
+  }
+  const directionX = condition.windEastMetersPerSecond / windSpeed;
+  const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
+  // The same 18-band frequency grid is used at every quality level.
+  const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
+  const renderedWaves = spectrum.components.slice(0, 6);
+  const near = createLakeDetailLayer(64, 1400, 1717 + condition.patternSeed * 997, directionX, directionZ);
+  let far: LakeDetailLayer;
+  try {
+    far = createLakeDetailLayer(193, 2400, 2917 + condition.patternSeed * 991, directionX, directionZ);
+  } catch (error) {
+    near.texture.dispose();
+    throw error;
+  }
   const waveKAmplitude = Array.from({ length: 24 }, (_, index) => {
     const wave = renderedWaves[index];
     return wave === undefined ? new Vector4() : new Vector4(
@@ -97,18 +98,52 @@ export function createThreeRenderer(
       0
     );
   });
+  return {
+    windSpeed, near, far, waveKAmplitude, waveOmegaPhase,
+    waveCount: renderedWaves.length,
+    visualWaveHeight: spectrum.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE
+  };
+}
+
+function sameLakeVisualCondition(a: LakeVisualCondition, b: LakeVisualCondition): boolean {
+  return a.windNorthMetersPerSecond === b.windNorthMetersPerSecond &&
+    a.windEastMetersPerSecond === b.windEastMetersPerSecond &&
+    a.fetchMeters === b.fetchMeters &&
+    a.detailAmplitudeScale === b.detailAmplitudeScale &&
+    a.patternSeed === b.patternSeed;
+}
+
+export function createThreeRenderer(
+  canvas: HTMLCanvasElement,
+  panelCanvas: HTMLCanvasElement,
+  xrSystem: XRSystem | null,
+  lakeQuality: LakeWaterQuality = "high"
+): ThreeRendererBundle {
+  const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
+  const stereoEffect = new StereoEffect(renderer);
+  renderer.outputColorSpace = SRGBColorSpace;
+  renderer.setClearColor(0x9fb0ad, 1);
+
+  const scene = new Scene();
+  scene.background = new Color(0x9fb0ad);
+
+  const waterQuality = lakeWaterQualityProfile(lakeQuality);
+  const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
+  let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
+  let lakeResources = createLakeVisualResources(activeLakeCondition);
   const waterMaterial = new ShaderMaterial({
     uniforms: {
       uTimeSeconds: { value: 0 },
-      uWindSpeed: { value: referenceWindSpeed },
-      uWindDirection: { value: new Vector4(detailDirectionX, detailDirectionZ, 0, 0) },
-      uDetailNear: { value: detailNear.texture },
-      uDetailFar: { value: detailFar.texture },
-      uDetailExtents: { value: new Vector4(detailNear.extentMeters, detailFar.extentMeters, 0, 0) },
-      uWaveKAmplitude: { value: waveKAmplitude },
-      uWaveOmegaPhase: { value: waveOmegaPhase },
-      uWaveCount: { value: renderedWaves.length },
-      uVisualWaveHeight: { value: lakeWaves.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE },
+      uWindSpeed: { value: lakeResources.windSpeed },
+      uWindVelocity: { value: new Vector4(activeLakeCondition.windEastMetersPerSecond, -activeLakeCondition.windNorthMetersPerSecond, 0, 0) },
+      uDetailScale: { value: activeLakeCondition.detailAmplitudeScale },
+      uDetailNear: { value: lakeResources.near.texture },
+      uDetailFar: { value: lakeResources.far.texture },
+      uDetailExtents: { value: new Vector4(lakeResources.near.extentMeters, lakeResources.far.extentMeters, 0, 0) },
+      uWaveKAmplitude: { value: lakeResources.waveKAmplitude },
+      uWaveOmegaPhase: { value: lakeResources.waveOmegaPhase },
+      uWaveCount: { value: lakeResources.waveCount },
+      uVisualWaveHeight: { value: lakeResources.visualWaveHeight },
       uWaterDark: { value: new Color(0x172831) },
       uWaterMid: { value: new Color(0x293b43) },
       uWaterLight: { value: new Color(0x50636a) },
@@ -120,7 +155,16 @@ export function createThreeRenderer(
     depthTest: true
   });
   const lakeUniforms = {
-    time: lakeUniform(waterMaterial, "uTimeSeconds", 0)
+    time: lakeUniform(waterMaterial, "uTimeSeconds", 0),
+    windSpeed: lakeUniform(waterMaterial, "uWindSpeed", lakeResources.windSpeed),
+    windVelocity: lakeUniform(waterMaterial, "uWindVelocity", new Vector4()),
+    detailScale: lakeUniform(waterMaterial, "uDetailScale", 1),
+    detailNear: lakeUniform(waterMaterial, "uDetailNear", lakeResources.near.texture),
+    detailFar: lakeUniform(waterMaterial, "uDetailFar", lakeResources.far.texture),
+    waveKAmplitude: lakeUniform(waterMaterial, "uWaveKAmplitude", lakeResources.waveKAmplitude),
+    waveOmegaPhase: lakeUniform(waterMaterial, "uWaveOmegaPhase", lakeResources.waveOmegaPhase),
+    waveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
+    visualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight)
   };
   const water = new Mesh(waterGeometry, waterMaterial);
   water.frustumCulled = false;
@@ -294,8 +338,8 @@ export function createThreeRenderer(
       panelMaterial.dispose();
       waterGeometry.dispose();
       waterMaterial.dispose();
-      detailNear.texture.dispose();
-      detailFar.texture.dispose();
+      lakeResources.near.texture.dispose();
+      lakeResources.far.texture.dispose();
       cockpitWing.geometry.dispose();
       cockpitNose.geometry.dispose();
       cockpitMaterial.dispose();
@@ -307,6 +351,24 @@ export function createThreeRenderer(
     },
     setFlightPose(pose: FlightRenderPose | null) {
       flightPose = pose;
+    },
+    setLakeVisualCondition(condition: LakeVisualCondition) {
+      ensureActive(disposed);
+      if (sameLakeVisualCondition(activeLakeCondition, condition)) return;
+      const next = createLakeVisualResources(condition);
+      lakeUniforms.windSpeed.value = next.windSpeed;
+      lakeUniforms.windVelocity.value.set(condition.windEastMetersPerSecond, -condition.windNorthMetersPerSecond, 0, 0);
+      lakeUniforms.detailScale.value = condition.detailAmplitudeScale;
+      lakeUniforms.detailNear.value = next.near.texture;
+      lakeUniforms.detailFar.value = next.far.texture;
+      lakeUniforms.waveKAmplitude.value = next.waveKAmplitude;
+      lakeUniforms.waveOmegaPhase.value = next.waveOmegaPhase;
+      lakeUniforms.waveCount.value = next.waveCount;
+      lakeUniforms.visualWaveHeight.value = next.visualWaveHeight;
+      lakeResources.near.texture.dispose();
+      lakeResources.far.texture.dispose();
+      lakeResources = next;
+      activeLakeCondition = condition;
     },
     setFlightCameraMode(mode: FlightCameraMode) {
       flightCameraMode = mode;
@@ -557,7 +619,8 @@ mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed
 
 const lakeWaterVertexShader = /* glsl */ `
 uniform float uTimeSeconds;
-uniform vec4 uWindDirection;
+uniform vec4 uWindVelocity;
+uniform float uDetailScale;
 uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform vec4 uDetailExtents;
@@ -580,14 +643,14 @@ void main() {
   vec3 p = vec3(position.x, 0.0, -position.y);
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
   vBaseXZ = waveXZ;
-  vec2 detailDrift = uWindDirection.xy * uTimeSeconds;
+  vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
   vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.23) / uDetailExtents.y);
   float nearHeight = nearDetail.a - 128.0 / 255.0;
   float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
-  p.y += nearHeight * 0.65 * nearVisibility + farHeight * 0.4 * farVisibility;
+  p.y += (nearHeight * 0.65 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
   float slopeEnergy = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
@@ -603,8 +666,8 @@ void main() {
   float dhdz = 0.0;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
-  vec2 resolvedDetailSlope = nearSlope * (0.65 * nearVisibility)
-    + farSlope * (0.4 * farVisibility);
+  vec2 resolvedDetailSlope = (nearSlope * (0.65 * nearVisibility)
+    + farSlope * (0.4 * farVisibility)) * uDetailScale;
   dhdx += resolvedDetailSlope.x;
   dhdz += resolvedDetailSlope.y;
   float crest = 0.0;
@@ -664,7 +727,8 @@ void main() {
 
 const lakeWaterFragmentShader = /* glsl */ `
 uniform float uWindSpeed;
-uniform vec4 uWindDirection;
+uniform vec4 uWindVelocity;
+uniform float uDetailScale;
 uniform float uVisualWaveHeight;
 uniform float uTimeSeconds;
 uniform vec4 uWaveKAmplitude[24];
@@ -740,7 +804,7 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
 }
 
 vec3 lakeMicroDetail(vec2 worldXZ) {
-  vec2 drift = uWindDirection.xy * uTimeSeconds;
+  vec2 drift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
   vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.23) / uDetailExtents.y);
   vec2 finePoint = (worldXZ - drift * 0.7) * 2.6;
@@ -770,7 +834,8 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
   float detailGain = 1.0 + 2.0 * smoothstep(1.5, 7.0, eyeHeight);
   float strength = smoothstep(0.05, 0.6, uWindSpeed) * detailGain;
-  return vec3(microSlope * strength, slopeMoment * strength * strength);
+  float scaledStrength = strength * uDetailScale;
+  return vec3(microSlope * scaledStrength, slopeMoment * scaledStrength * scaledStrength);
 }
 
 vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {

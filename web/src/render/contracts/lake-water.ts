@@ -13,6 +13,23 @@ export interface LakeWaveSpectrum {
   readonly components: readonly LakeWaveComponent[];
 }
 
+/** Stable, render-only sea state for one selected synthetic weather scenario. */
+export interface LakeVisualCondition {
+  readonly windNorthMetersPerSecond: number;
+  readonly windEastMetersPerSecond: number;
+  readonly fetchMeters: number;
+  readonly detailAmplitudeScale: number;
+  readonly patternSeed: number;
+}
+
+export const DEFAULT_LAKE_VISUAL_CONDITION: LakeVisualCondition = Object.freeze({
+  windNorthMetersPerSecond: 0.54,
+  windEastMetersPerSecond: 1.07,
+  fetchMeters: 600,
+  detailAmplitudeScale: 1,
+  patternSeed: 0
+});
+
 export type LakeWaterQuality = "low" | "medium" | "high";
 
 export interface LakeWaterQualityProfile {
@@ -29,9 +46,9 @@ export function lakeWaterQualityProfile(quality: LakeWaterQuality): LakeWaterQua
 }
 
 /**
- * Creates a deterministic, finite-fetch wind-wave approximation from a fixed
- * scenario wind. The 600 m fetch is a temporary rendering bound matching the
- * current schematic water extent; scenario/environment data should replace it.
+ * Creates a deterministic, finite-fetch wind-wave approximation from a stable
+ * render-only condition. The caller provides fetch independently of mesh size;
+ * scenario/environment data should eventually replace the synthetic values.
  * It is deliberately not a physical forecast or a Lake Biwa observation.
  */
 export function createLakeWaveSpectrum(

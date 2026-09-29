@@ -225,6 +225,7 @@ class FakeRenderer implements RendererAdapter {
   stopLoop(): void {}
   render(): void {}
   setFlightPose(): void {}
+  setLakeVisualCondition(): void {}
   setFlightCameraMode(): void {}
   resize(): void {}
   setStereoPresentation(): void {}

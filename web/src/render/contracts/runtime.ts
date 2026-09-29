@@ -1,5 +1,6 @@
 import type { Pose, Vec2, Vec3 } from "./math.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
+import type { LakeVisualCondition } from "./lake-water.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -31,7 +32,7 @@ export interface FlightRenderPose {
   readonly initialPilotPositionMeters: number;
   /** Simulation clock, used by render-only environmental animation. */
   readonly simulationTimeSeconds?: number;
-  /** Scenario wind in NED; rendering may use it for a fixed visual wave spectrum. */
+  /** Instantaneous scenario wind in NED, kept separate from the stable visual wave state. */
   readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }
 
@@ -53,6 +54,7 @@ export interface RendererAdapter {
   stopLoop(): void;
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;
+  setLakeVisualCondition(condition: LakeVisualCondition): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;

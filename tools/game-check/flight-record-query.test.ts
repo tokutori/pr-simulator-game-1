@@ -187,7 +187,9 @@ describe("queryFlightRecordRenderPoseAt", () => {
       datumPositionNed: { north: 11.25, east: -3.75, down: -20 },
       attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
       pilotPositionMeters: 0.2,
-      initialPilotPositionMeters: -0.1
+      initialPilotPositionMeters: -0.1,
+      simulationTimeSeconds: 1.25,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0 }
     });
   });
 

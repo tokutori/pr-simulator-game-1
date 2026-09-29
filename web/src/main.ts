@@ -14,6 +14,7 @@ import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
 import { BrowserPilotInput, DEFAULT_PILOT_INPUT_CONFIGURATION } from "./game/browser-input.js";
 import { FlightController } from "./game/flight-controller.js";
+import { syntheticLakeVisualCondition } from "./game/synthetic-lake-condition.js";
 import { initializeGameSession } from "./game/wasm-flight.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import {
@@ -68,6 +69,8 @@ function dispatch(message: AppMessage): void {
 }
 
 function renderModel(): void {
+  const weatherCode = model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
+  flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
   flightHud.setInformationCode(model.difficulty.informationCode);
   flightHud.setVisible(gameSessionPhaseCode(model.gameSession) === 5 || gameSessionPhaseCode(model.gameSession) === 6);
   flightRenderer?.setFlightCameraMode(gameSessionPhaseCode(model.gameSession) === 9 ? model.replayCameraMode : "pilot");
@@ -162,6 +165,7 @@ function runEffect(effect: AppEffect): void {
     case "dispose-presentation": {
       const presentation = runtime;
       runtime = null;
+      flightRenderer = null;
       void presentation?.dispose();
       return;
     }
@@ -203,7 +207,10 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       try {
-        const scenarioId = readConfigurationMetadata(session)?.scenarioId ?? null;
+        // Archived records retain sampled wind but no live scenario wind field.
+        const scenarioId = session.is_archived_replay()
+          ? null
+          : readConfigurationMetadata(session)?.scenarioId ?? null;
         const analysis = loadFlightAnalysis(session, physicsHz, scenarioId);
         dispatch({ type: "flight-analysis-loaded", requestId: effect.requestId, data: analysis });
       } catch (error: unknown) {
@@ -704,7 +711,12 @@ function readConfigurationMetadata(
 ): AppModel["configurationMetadata"] {
   const phaseCode = session.phase_code();
   if (phaseCode < 2 || phaseCode > 9) return null;
-  if (model.configurationMetadata !== null) return model.configurationMetadata;
+  // A newly opened archive can replace a Result's configuration. Once Replay
+  // has been synchronized, its immutable identity may be reused.
+  if (model.configurationMetadata !== null &&
+      (!session.is_archived_replay() || gameSessionPhaseCode(model.gameSession) === 9)) {
+    return model.configurationMetadata;
+  }
   const values = session.configuration_metadata();
   if (values.length !== 12) throw new RangeError("Resolved configuration metadata has an invalid length");
   const valueAt = (index: number): number => {
