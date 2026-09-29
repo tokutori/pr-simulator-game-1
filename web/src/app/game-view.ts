@@ -247,7 +247,7 @@ export function createGameViewModel(
       })]),
       Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
     );
-  } else {
+  } else if (phaseCode !== 5 && phaseCode !== 6) {
     let bottom = 0.795;
     buttons.forEach((entry) => {
       const height = entry.id === "game-result-configuration" ? 0.11 : 0.075;

@@ -47,6 +47,22 @@ describe("Game scene view model", () => {
     expect(controls.some((control) => control.id === "game-state" || control.id === "game-flight-metrics")).toBe(false);
   });
 
+  it("renders one cockpit-anchored HUD and one set of controls in VR Flight", () => {
+    const model = Object.freeze({
+      ...createInitialAppModel(),
+      gameSession: sessionForPhase(5),
+      presentation: Object.freeze({ type: "ready" as const, mode: "webxr" as const })
+    });
+    const panel = createGameViewModel(model, flightSnapshot).panels[0];
+    if (panel === undefined) throw new Error("Flight panel is missing");
+    const controlIds = panel.controls.map((control) => control.id);
+    expect(panel.anchor).toBe("cockpit");
+    expect(controlIds).toContain("game-flight-readouts");
+    expect(controlIds).toContain("game-flight-pause");
+    expect(controlIds).toContain("game-flight-abort");
+    expect(new Set(controlIds).size).toBe(controlIds.length);
+  });
+
   it("lists recent persisted records in Title", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
