@@ -1,9 +1,11 @@
-import { IDENTITY_POSE } from "../render/contracts/math.js";
+import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
 import { syntheticVenueMapForScenario } from "../game/synthetic-venue-map.js";
+import { createFlightHudModel } from "../presentation/flight-hud-model.js";
+import type { InformationLevelCode } from "../presentation/flight-hud-model.js";
 import type {
   AppModel,
   ConfigurationMetadataUiState,
@@ -14,7 +16,7 @@ import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 
 export function createGameViewModel(
   model: AppModel,
-  _snapshot: FlightSnapshot | null,
+  snapshot: FlightSnapshot | null,
   analysis: FlightAnalysisData | null = model.flightAnalysis
 ): UiViewModel {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
@@ -48,9 +50,51 @@ export function createGameViewModel(
     buttons.push(button("boot-exit-vr", "VRを終了", true));
   }
 
-  const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10
+  const vrFlightPanel = (phaseCode === 5 || phaseCode === 6) && (activeMode === "webxr" || activeMode === "phone-vr");
+  const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
     ? []
     : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining))];
+  const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
+  if (phaseCode === 5 || phaseCode === 6) {
+    if (!vrFlightPanel) {
+      flightButtons.forEach((entry) => controls.push(entry));
+    } else if (snapshot !== null) {
+      const hud = createFlightHudModel(snapshot, informationLevelCode(model.difficulty.informationCode));
+      const flightStatus = phaseCode === 6 ? "一時停止中" : hud.status;
+      controls.push(Object.freeze({
+        ...status("game-flight-state", "FLIGHT", flightStatus),
+        rect: normalizedRect(0.04, 0.035, 0.92, 0.075)
+      }));
+      controls.push(Object.freeze({
+        ...status("game-flight-readouts", "速度・高度・姿勢", hud.readouts),
+        rect: normalizedRect(0.04, 0.125, 0.92, 0.12)
+      }));
+      if (hud.heading !== null) controls.push(Object.freeze({
+        ...status("game-flight-heading", "方位", hud.heading),
+        rect: normalizedRect(0.04, 0.26, 0.43, 0.075)
+      }));
+      if (hud.pilotPosition !== null) controls.push(Object.freeze({
+        ...status("game-flight-pilot-position", "パイロット重心", hud.pilotPosition),
+        rect: normalizedRect(0.51, 0.26, 0.45, 0.075)
+      }));
+      if (hud.wind !== null) controls.push(Object.freeze({
+        ...status("game-flight-wind", "風 N / E / D", hud.wind),
+        rect: normalizedRect(0.04, 0.35, 0.92, 0.075)
+      }));
+      if (hud.angleOfAttack !== null) controls.push(Object.freeze({
+        ...status("game-flight-angle-of-attack", "迎角", hud.angleOfAttack),
+        rect: normalizedRect(0.04, 0.44, 0.43, 0.075)
+      }));
+      if (hud.telemetry !== "") controls.push(Object.freeze({
+        ...status("game-flight-telemetry", "距離・飛行時間", hud.telemetry),
+        rect: normalizedRect(0.04, 0.53, 0.92, 0.12)
+      }));
+      flightButtons.forEach((entry, index) => controls.push(Object.freeze({
+        ...entry,
+        rect: normalizedRect(index === 0 ? 0.04 : 0.51, 0.78, 0.45, 0.13)
+      })));
+    }
+  }
   if (phaseCode === 7 && model.resultTab === "summary") {
     const result = status("game-result-analysis", "Summary", resultAnalysisSummary(analysis));
     controls.push(Object.freeze({ ...result, rect: normalizedRect(0.08, 0.15, 0.84, 0.085) }));
@@ -216,9 +260,9 @@ export function createGameViewModel(
   const panel: UiPanel = Object.freeze({
     id: "game-flow",
     title: "ゲーム進行",
-    anchor: "menu",
-    localPose: IDENTITY_POSE,
-    size: Object.freeze({ width: 2.4, height: 1.8 }),
+    anchor: vrFlightPanel ? "cockpit" : "menu",
+    localPose: vrFlightPanel ? pose(vec3(0, 0, -1.25), IDENTITY_POSE.orientation) : IDENTITY_POSE,
+    size: vrFlightPanel ? Object.freeze({ width: 0.95, height: 0.68 }) : Object.freeze({ width: 2.4, height: 1.8 }),
     controls: Object.freeze(controls)
   });
   return Object.freeze({
@@ -234,6 +278,11 @@ export function createGameViewModel(
     activeOverlay: phaseCode === 6 ? "Pause" : null,
     panels: Object.freeze([panel])
   });
+}
+
+function informationLevelCode(value: number): InformationLevelCode {
+  if (value === 0 || value === 1 || value === 2 || value === 3) return value;
+  throw new RangeError("Information level code must lie in [0, 3]");
 }
 
 function createAnalysisChart(

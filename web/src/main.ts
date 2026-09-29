@@ -57,7 +57,16 @@ let flightRenderer: RendererAdapter | null = null;
 let countdownGeneration = 0;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
-const flightHud = new FlightHudAdapter(flightHudRoot);
+const flightHud = new FlightHudAdapter(flightHudRoot, (snapshot) => {
+  if (model.presentation.type !== "ready" || model.presentation.mode === "screen") return;
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  if ((phaseCode !== 5 && phaseCode !== 6) || snapshot.tick % 3 !== 0) return;
+  const panel = createGameViewModel(model, snapshot, model.flightAnalysis).panels[0];
+  const context = panelCanvas.getContext("2d");
+  if (panel !== undefined && context !== null) {
+    drawVrPanel(browserPanelContext(context), panel, VR_PANEL_PIXELS.width, VR_PANEL_PIXELS.height);
+  }
+});
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatch({ type: "ui-action", action });
 });

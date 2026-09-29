@@ -19,7 +19,10 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly angleReadout: HTMLOutputElement;
   private informationCode: InformationLevelCode = 0;
 
-  constructor(private readonly root: HTMLElement) {
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly onRender: (snapshot: FlightSnapshot) => void = () => undefined
+  ) {
     const documentRef = root.ownerDocument;
     const heading = documentRef.createElement("h2");
     heading.textContent = "FLIGHT";
@@ -123,6 +126,7 @@ export class FlightHudAdapter implements FlightHudPort {
       const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
       this.horizon.setAttribute("transform", `rotate(${String(-model.attitude.rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);
     }
+    this.onRender(snapshot);
   }
 
   fail(message: string): void {

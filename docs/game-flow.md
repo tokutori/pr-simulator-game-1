@@ -19,7 +19,7 @@ world差し替え・context復旧・終了時には所有者がresourceを明示
 | FlightSetup | Rust format境界がpreset・Information・Assistance・Weatherを保持し、coreは確定したscenario/controllerとmodel identityをsealする | Start intent→Briefing、Back→Title |
 | Briefing | Rustが準備sessionと容量を確定し、Webが必要assetを取得 | Ready→Countdown、Back→FlightSetup |
 | Countdown | Rustが初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
-| Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、WebはInformation設定に応じて表示する | 終了→Result、Pause→同じFlight内で停止 |
+| Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、Webは同じFlightHudModelをScreen HUDとVRのcockpit panelへ投影する。VR panelはInformation設定に応じたtelemetryとPause/Abort操作を含む | 終了→Result、Pause→同じFlight内で停止 |
 | Result | Rustが確定したrecord・metricsを参照 | Replay、Retry→Briefing、Setup、Title |
 | Replay | Rust queryが確定recordを時刻指定で再生・seek | 戻るintent→Result |
 
