@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { CylinderGeometry, Group, Mesh, MeshLambertMaterial, Object3D, Vector3 } from "three";
+import { CylinderGeometry, DataTexture, Group, Mesh, MeshLambertMaterial, Object3D, Vector3 } from "three";
 import { createBirdmanAirframe, wingDeflectionMeters, wingDihedralMeters } from "../../web/src/render/engines/three/birdman-airframe.js";
 
 describe("synthetic Birdman airframe", () => {
   it("bends both wing tips upward under the visual reference load", () => {
-    const tip = wingDeflectionMeters(11.5, 9.5);
+    const halfSpan = 20.863 / 2;
+    const tip = wingDeflectionMeters(halfSpan, 9.5);
     expect(tip).toBeGreaterThan(0.3);
     expect(tip).toBeLessThan(0.8);
     expect(wingDeflectionMeters(0, 9.5)).toBe(0);
     expect(wingDeflectionMeters(6, 9.5)).toBeLessThan(tip);
-    expect(wingDeflectionMeters(11.5, 13)).toBeGreaterThan(tip);
+    expect(wingDeflectionMeters(halfSpan, 13)).toBeGreaterThan(tip);
   });
 
   it("has continuous dihedral breaks near 60% and 80% span", () => {
-    const span = 11.5;
+    const span = 20.863 / 2;
     const rise = (from: number, to: number): number =>
       wingDihedralMeters(to * span) - wingDihedralMeters(from * span);
     expect(rise(0.60, 0.61)).toBeGreaterThan(rise(0.59, 0.60) * 4);
@@ -87,7 +88,17 @@ describe("synthetic Birdman airframe", () => {
     expect(rudderFoam).toBeInstanceOf(Mesh);
     expect((film.material as MeshLambertMaterial).transparent).toBe(true);
     expect((film.material as MeshLambertMaterial).opacity).toBeLessThan(0.3);
-    expect((left.material as MeshLambertMaterial).color.getHex()).toBe(0x304c6b);
+    const wingCover = left.material as MeshLambertMaterial;
+    expect(wingCover.map).toBeInstanceOf(DataTexture);
+    const coverPixels = (wingCover.map as DataTexture).image.data as Uint8Array;
+    let darkPixels = 0;
+    let lightPixels = 0;
+    for (let pixel = 0; pixel < coverPixels.length; pixel += 4) {
+      if ((coverPixels[pixel] ?? 255) < 100) darkPixels++;
+      if ((coverPixels[pixel] ?? 0) > 190) lightPixels++;
+    }
+    expect(darkPixels).toBeGreaterThan(0);
+    expect(lightPixels).toBeGreaterThan(0);
     expect((foam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
     expect((stringer.material as MeshLambertMaterial).color.getHex()).toBe(0xcdb483);
     expect((canopy.material as MeshLambertMaterial).transparent).toBe(true);
@@ -114,6 +125,12 @@ describe("synthetic Birdman airframe", () => {
     expect(rudder).toBeDefined();
     const leftPosition = left.geometry.getAttribute("position");
     const rightPosition = right.geometry.getAttribute("position");
+    const tipStart = 30 * 17;
+    expect(rightPosition.getX(tipStart) - leftPosition.getX(tipStart)).toBeCloseTo(20.863, 3);
+    const rootCoveredChord = leftPosition.getZ(16) - leftPosition.getZ(0);
+    const tipCoveredChord = leftPosition.getZ(tipStart + 16) - leftPosition.getZ(tipStart);
+    expect(rootCoveredChord).toBeGreaterThan(tipCoveredChord * 2.5);
+    expect((airframe.root.getObjectByName("rudder") as Group).parent?.position.z).toBeCloseTo(4.25);
     const tipVertex = leftPosition.count - 1;
     const initialY = leftPosition.getY(tipVertex);
     const initialRibY = rib.position.y;

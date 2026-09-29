@@ -1,15 +1,36 @@
 import {
   BufferGeometry,
   CylinderGeometry,
+  DataTexture,
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  LinearFilter,
+  LinearMipmapLinearFilter,
   Mesh,
   MeshLambertMaterial,
+  RGBAFormat,
+  SRGBColorSpace,
+  UnsignedByteType,
   Vector3
 } from "three";
 
-const HALF_SPAN_METERS = 11.5;
+// tokutori_2026 three-view reference: measured tip-to-tip span is 20,863 mm.
+const HALF_SPAN_METERS = 20.863 / 2;
+// Chords, tail span, and longitudinal stations are scaled estimates from the
+// supplied orthographic images; only the full wing span has a stated dimension.
+const WING_ROOT_CHORD_METERS = 1.10;
+const WING_TIP_CHORD_METERS = 0.40;
+const WING_ROOT_LEADING_Z = -0.42;
+const WING_LEADING_SWEEP_METERS = (WING_ROOT_CHORD_METERS - WING_TIP_CHORD_METERS) / 2;
+const WING_ROOT_SPAR_Z = WING_ROOT_LEADING_Z + 0.25 * WING_ROOT_CHORD_METERS;
+const TAIL_HALF_SPAN_METERS = 1.58;
+const TAIL_ROOT_CHORD_METERS = 0.55;
+const TAIL_TIP_CHORD_METERS = 0.48;
+const TAIL_LEADING_SWEEP_METERS = 0.03;
+const TAIL_Z_METERS = 4.25;
+const ELEVATOR_HINGE_FRACTION = 0.7;
+const ELEVATOR_HINGE_Z = TAIL_ROOT_CHORD_METERS * ELEVATOR_HINGE_FRACTION;
 const REFERENCE_AIRSPEED_METERS_PER_SECOND = 9.5;
 const YOUNGS_MODULUS_PASCALS = 45e9;
 const SPAR_SECOND_MOMENT_METERS_FOURTH = 4e-6;
@@ -37,6 +58,63 @@ interface AirfoilShape {
   readonly chordStart: number;
   readonly chordEnd: number;
   readonly flex: boolean;
+}
+
+function mainWingChord(span: number): number {
+  return WING_ROOT_CHORD_METERS +
+    (WING_TIP_CHORD_METERS - WING_ROOT_CHORD_METERS) * span / HALF_SPAN_METERS;
+}
+
+function mainWingLeadingZ(span: number): number {
+  return WING_ROOT_LEADING_Z + WING_LEADING_SWEEP_METERS * span / HALF_SPAN_METERS;
+}
+
+function tailChord(span: number): number {
+  return TAIL_ROOT_CHORD_METERS +
+    (TAIL_TIP_CHORD_METERS - TAIL_ROOT_CHORD_METERS) * span / TAIL_HALF_SPAN_METERS;
+}
+
+function indigoWingTexture(): DataTexture {
+  const width = 1024;
+  const height = 256;
+  const pixels = new Uint8Array(width * height * 4);
+  const smooth = (from: number, to: number, value: number): number => {
+    const t = Math.max(0, Math.min(1, (value - from) / (to - from)));
+    return t * t * (3 - 2 * t);
+  };
+  for (let y = 0; y < height; y++) {
+    const chord = (y + 0.5) / height;
+    for (let x = 0; x < width; x++) {
+      const span = (x + 0.5) / width;
+      const grain = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      const weave = (grain - Math.floor(grain) - 0.5) * 11;
+      const dye = 5 * Math.sin(span * 83 + chord * 17) + 4 * Math.sin(span * 163 - chord * 31);
+      let white = 0;
+      for (let ring = 0; ring < 8; ring++) {
+        const center = (ring + 0.54) / 8;
+        const along = (span - center) / 0.038;
+        const across = (chord - 0.27) / 0.155;
+        const angle = Math.atan2(across, along);
+        const radius = Math.hypot(along, across)
+          + 0.065 * Math.sin(angle * 7 + ring * 1.3)
+          + 0.04 * Math.sin(angle * 13 - ring * 0.7);
+        const ringBand = smooth(0.73, 0.81, radius) * (1 - smooth(1.07, 1.16, radius));
+        white = Math.max(white, ringBand);
+      }
+      const index = (y * width + x) * 4;
+      pixels[index] = Math.round((42 + dye + weave) * (1 - white) + (218 + weave * 0.4) * white);
+      pixels[index + 1] = Math.round((63 + dye + weave) * (1 - white) + (224 + weave * 0.4) * white);
+      pixels[index + 2] = Math.round((86 + dye + weave) * (1 - white) + (218 + weave * 0.4) * white);
+      pixels[index + 3] = 255;
+    }
+  }
+  const texture = new DataTexture(pixels, width, height, RGBAFormat, UnsignedByteType);
+  texture.colorSpace = SRGBColorSpace;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 export interface BirdmanAirframe {
@@ -98,6 +176,7 @@ function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial): Airfoi
   const rowSize = chordSteps + 1;
   const surfaceSize = (spanSteps + 1) * rowSize;
   const vertices: number[] = [];
+  const uvs: number[] = [];
   const baseY: number[] = [];
   const span: number[] = [];
   const indices: number[] = [];
@@ -115,6 +194,7 @@ function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial): Airfoi
           (upper ? profile.upperY : profile.lowerY) * chord;
         const z = leadingZ + (upper ? profile.upperX : profile.lowerX) * chord;
         vertices.push(shape.side * distance, y, z);
+        uvs.push(fraction, x);
         baseY.push(y);
         span.push(shape.flex ? distance : 0);
       }
@@ -152,6 +232,7 @@ function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial): Airfoi
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   const mesh = new Mesh(geometry, material);
@@ -235,31 +316,28 @@ function addRod(parent: Group, from: Vector3, to: Vector3, radius: number, mater
 }
 
 function wingRibPoint(side: -1 | 1, span: number, chordFraction: number, speed: number): Vector3 {
-  const spanFraction = span / HALF_SPAN_METERS;
-  const chord = 1.6 + (0.55 - 1.6) * spanFraction;
+  const chord = mainWingChord(span);
   const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
   const meanY = (profile.upperY + profile.lowerY) * 0.5;
   return new Vector3(
     side * span,
     -0.73 + wingDihedralMeters(span) + meanY * chord + wingDeflectionMeters(span, speed),
-    -0.42 + 0.58 * spanFraction + chordFraction * chord
+    mainWingLeadingZ(span) + chordFraction * chord
   );
 }
 
 function wingSparPoint(side: -1 | 1, span: number, speed: number): Vector3 {
-  const fraction = span / HALF_SPAN_METERS;
-  const chord = 1.6 + (0.55 - 1.6) * fraction;
+  const chord = mainWingChord(span);
   return new Vector3(
     side * span,
     -0.73 + wingDihedralMeters(span) + wingDeflectionMeters(span, speed),
-    -0.42 + 0.58 * fraction + 0.25 * chord
+    mainWingLeadingZ(span) + 0.25 * chord
   );
 }
 
 function foamRibGeometry(span: number): BufferGeometry {
-  const fraction = span / HALF_SPAN_METERS;
-  const chord = 1.6 + (0.55 - 1.6) * fraction;
-  const leadingZ = -0.42 + 0.58 * fraction;
+  const chord = mainWingChord(span);
+  const leadingZ = mainWingLeadingZ(span);
   const baseY = -0.73 + wingDihedralMeters(span);
   const stations = [0.58, 0.80, 0.995];
   const outline: [number, number][] = [];
@@ -275,19 +353,19 @@ function foamRibGeometry(span: number): BufferGeometry {
 }
 
 function tailRibPoint(side: -1 | 1, span: number, chordFraction: number): Vector3 {
-  const fraction = span / 2.1;
-  const chord = 0.82 + (0.72 - 0.82) * fraction;
+  const fraction = span / TAIL_HALF_SPAN_METERS;
+  const chord = tailChord(span);
   return new Vector3(
     side * span,
     0.02 * span,
-    -0.574 + 0.08 * fraction + chordFraction * chord
+    -ELEVATOR_HINGE_Z + TAIL_LEADING_SWEEP_METERS * fraction + chordFraction * chord
   );
 }
 
 function tailFoamRibGeometry(span: number): BufferGeometry {
-  const fraction = span / 2.1;
-  const chord = 0.82 + (0.72 - 0.82) * fraction;
-  const leadingZ = -0.574 + 0.08 * fraction;
+  const fraction = span / TAIL_HALF_SPAN_METERS;
+  const chord = tailChord(span);
+  const leadingZ = -ELEVATOR_HINGE_Z + TAIL_LEADING_SWEEP_METERS * fraction;
   const baseY = 0.02 * span;
   const stations = [0.70, 0.85, 0.995];
   const outline: [number, number][] = [];
@@ -305,6 +383,8 @@ function tailFoamRibGeometry(span: number): BufferGeometry {
 export function createBirdmanAirframe(): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
+  const wingPattern = indigoWingTexture();
+  const wingSkin = new MeshLambertMaterial({ color: 0xffffff, map: wingPattern, side: DoubleSide });
   const skin = new MeshLambertMaterial({ color: 0x304c6b, side: DoubleSide });
   const trailingFilm = new MeshLambertMaterial({
     color: 0xd5ddd9, side: DoubleSide, transparent: true, opacity: 0.22, depthWrite: false
@@ -328,12 +408,12 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   const stringers: { rod: Mesh; side: -1 | 1; from: number; to: number; chordFraction: number }[] = [];
   for (const side of [-1, 1] as const) {
     const wingShape = {
-      side, halfSpan: HALF_SPAN_METERS, rootChord: 1.6, tipChord: 0.55,
-      leadingZ: -0.42, sweep: 0.58, baseY: -0.73, dihedral: 0,
+      side, halfSpan: HALF_SPAN_METERS, rootChord: WING_ROOT_CHORD_METERS, tipChord: WING_TIP_CHORD_METERS,
+      leadingZ: WING_ROOT_LEADING_Z, sweep: WING_LEADING_SWEEP_METERS, baseY: -0.73, dihedral: 0,
       camber: 0.04, camberPosition: 0.4, thickness: 0.12,
       flex: true
     };
-    const leadingWing = airfoilHalf({ ...wingShape, chordStart: 0, chordEnd: 0.58 }, skin);
+    const leadingWing = airfoilHalf({ ...wingShape, chordStart: 0, chordEnd: 0.58 }, wingSkin);
     leadingWing.mesh.name = side === -1 ? "left-wing" : "right-wing";
     root.add(leadingWing.mesh);
     const film = airfoilHalf({ ...wingShape, chordStart: 0.58, chordEnd: 1 }, trailingFilm);
@@ -383,42 +463,42 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   cockpitFrame.name = "open-cockpit-frame";
   root.add(cockpitFrame);
   for (const side of [-1, 1] as const) {
-    const upperFront = new Vector3(side * 0.30, -1.05, -1.10);
-    const upperRear = new Vector3(side * 0.30, -1.02, 0.62);
-    const lowerFront = new Vector3(side * 0.23, -1.42, -0.95);
-    const lowerRear = new Vector3(side * 0.23, -1.39, 0.42);
-    addRod(cockpitFrame, new Vector3(0, -1.22, -2.05), upperFront, 0.012, whiteFrame);
+    const upperFront = new Vector3(side * 0.22, -1.05, -0.75);
+    const upperRear = new Vector3(side * 0.22, -1.02, 0.52);
+    const lowerFront = new Vector3(side * 0.18, -1.42, -0.65);
+    const lowerRear = new Vector3(side * 0.18, -1.39, 0.35);
+    addRod(cockpitFrame, new Vector3(0, -1.22, -1.25), upperFront, 0.012, whiteFrame);
     addRod(cockpitFrame, upperFront, upperRear, 0.012, whiteFrame);
     addRod(cockpitFrame, lowerFront, lowerRear, 0.012, whiteFrame);
     addRod(cockpitFrame, upperFront, lowerFront, 0.008, whiteFrame);
     addRod(cockpitFrame, upperRear, lowerRear, 0.008, whiteFrame);
     addRod(cockpitFrame, lowerFront, upperRear, 0.007, whiteFrame);
   }
-  for (const z of [-0.95, 0.42]) {
-    addRod(cockpitFrame, new Vector3(-0.23, -1.40, z),
-      new Vector3(0.23, -1.40, z), 0.008, whiteFrame);
+  for (const z of [-0.65, 0.35]) {
+    addRod(cockpitFrame, new Vector3(-0.18, -1.40, z),
+      new Vector3(0.18, -1.40, z), 0.008, whiteFrame);
   }
   const mainBeam = addRod(root,
-    new Vector3(0, -0.73, -0.02), new Vector3(0, -0.57, 5.10), 0.075, carbon);
+    new Vector3(0, -0.73, WING_ROOT_SPAR_Z), new Vector3(0, -0.57, 4.75), 0.075, carbon);
   mainBeam.name = "single-carbon-main-beam";
   const clearCanopyStations: readonly CanopyStation[] = [
-    { z: -2.06, centerY: -1.04, halfWidth: 0.035, halfHeight: 0.055 },
-    { z: -1.85, centerY: -1.03, halfWidth: 0.14, halfHeight: 0.17 },
-    { z: -1.60, centerY: -1.02, halfWidth: 0.25, halfHeight: 0.28 },
-    { z: -1.22, centerY: -1.01, halfWidth: 0.36, halfHeight: 0.36 },
-    { z: -0.82, centerY: -1.00, halfWidth: 0.45, halfHeight: 0.42 },
-    { z: -0.48, centerY: -0.99, halfWidth: 0.50, halfHeight: 0.45 }
+    { z: -1.25, centerY: -1.04, halfWidth: 0.025, halfHeight: 0.045 },
+    { z: -1.10, centerY: -1.03, halfWidth: 0.09, halfHeight: 0.13 },
+    { z: -0.92, centerY: -1.02, halfWidth: 0.17, halfHeight: 0.22 },
+    { z: -0.70, centerY: -1.01, halfWidth: 0.24, halfHeight: 0.31 },
+    { z: -0.48, centerY: -1.00, halfWidth: 0.28, halfHeight: 0.35 },
+    { z: -0.25, centerY: -0.99, halfWidth: 0.31, halfHeight: 0.37 }
   ];
   const canopy = new Mesh(canopyGeometry(clearCanopyStations), canopyFilm);
   canopy.name = "transparent-canopy";
   canopy.frustumCulled = false;
   root.add(canopy);
   const rearFairing = new Mesh(canopyGeometry([
-    { z: -0.48, centerY: -0.99, halfWidth: 0.50, halfHeight: 0.45 },
-    { z: -0.19, centerY: -0.96, halfWidth: 0.50, halfHeight: 0.46 },
-    { z: 0.37, centerY: -0.93, halfWidth: 0.38, halfHeight: 0.39 },
-    { z: 0.93, centerY: -0.87, halfWidth: 0.22, halfHeight: 0.24 },
-    { z: 1.52, centerY: -0.82, halfWidth: 0.025, halfHeight: 0.04 }
+    { z: -0.25, centerY: -0.99, halfWidth: 0.31, halfHeight: 0.37 },
+    { z: 0.05, centerY: -0.96, halfWidth: 0.33, halfHeight: 0.40 },
+    { z: 0.45, centerY: -0.93, halfWidth: 0.29, halfHeight: 0.36 },
+    { z: 0.86, centerY: -0.87, halfWidth: 0.19, halfHeight: 0.23 },
+    { z: 1.22, centerY: -0.82, halfWidth: 0.025, halfHeight: 0.04 }
   ]), fairingSkin);
   rearFairing.name = "rear-cockpit-fairing";
   root.add(rearFairing);
@@ -433,12 +513,12 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   }
 
   const tail = new Group();
-  tail.position.set(0, -0.52, 4.5);
+  tail.position.set(0, -0.52, TAIL_Z_METERS);
   root.add(tail);
   for (const side of [-1, 1] as const) {
     const basis = {
-      side, halfSpan: 2.1, rootChord: 0.82, tipChord: 0.72,
-      leadingZ: 0, sweep: 0.08, baseY: 0, dihedral: 0.02,
+      side, halfSpan: TAIL_HALF_SPAN_METERS, rootChord: TAIL_ROOT_CHORD_METERS, tipChord: TAIL_TIP_CHORD_METERS,
+      leadingZ: 0, sweep: TAIL_LEADING_SWEEP_METERS, baseY: 0, dihedral: 0.02,
       camber: 0, camberPosition: 0.4, thickness: 0.09, flex: false
     };
     const stabilizer = airfoilHalf({ ...basis, chordStart: 0, chordEnd: 0.7 }, skin);
@@ -447,32 +527,32 @@ export function createBirdmanAirframe(): BirdmanAirframe {
   }
   const elevator = new Group();
   elevator.name = "elevator";
-  elevator.position.set(0, 0, 0.574);
+  elevator.position.set(0, 0, ELEVATOR_HINGE_Z);
   tail.add(elevator);
   for (const side of [-1, 1] as const) {
     const half = airfoilHalf({
-      side, halfSpan: 2.1, rootChord: 0.82, tipChord: 0.72,
-      leadingZ: -0.574, sweep: 0.08, baseY: 0, dihedral: 0.02,
+      side, halfSpan: TAIL_HALF_SPAN_METERS, rootChord: TAIL_ROOT_CHORD_METERS, tipChord: TAIL_TIP_CHORD_METERS,
+      leadingZ: -ELEVATOR_HINGE_Z, sweep: TAIL_LEADING_SWEEP_METERS, baseY: 0, dihedral: 0.02,
       camber: 0, camberPosition: 0.4, thickness: 0.09,
-      chordStart: 0.7, chordEnd: 1, flex: false
+      chordStart: ELEVATOR_HINGE_FRACTION, chordEnd: 1, flex: false
     }, trailingFilm);
     half.mesh.name = side === -1 ? "left-elevator-film" : "right-elevator-film";
     elevator.add(half.mesh);
     for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
-      const span = 2.1 * ribIndex / 9;
+      const span = TAIL_HALF_SPAN_METERS * ribIndex / 9;
       const foam = new Mesh(tailFoamRibGeometry(span), styrofoam);
       foam.name = "elevator-styrofoam-rib";
       foam.position.x = side * span;
       elevator.add(foam);
       const rod = addRod(elevator,
-        tailRibPoint(side, span, 0.7),
+        tailRibPoint(side, span, ELEVATOR_HINGE_FRACTION),
         tailRibPoint(side, span, 0.995),
         0.008, ribMaterial);
       rod.name = "elevator-rib";
     }
     for (let section = 0; section < 4; section++) {
-      const from = 2.1 * section / 4;
-      const to = 2.1 * (section + 1) / 4;
+      const from = TAIL_HALF_SPAN_METERS * section / 4;
+      const to = TAIL_HALF_SPAN_METERS * (section + 1) / 4;
       const rod = addRod(elevator,
         tailRibPoint(side, from, 0.995), tailRibPoint(side, to, 0.995),
         0.006, ribMaterial);
@@ -567,6 +647,7 @@ export function createBirdmanAirframe(): BirdmanAirframe {
       });
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
+      wingPattern.dispose();
     }
   };
 }
