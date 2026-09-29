@@ -22,8 +22,10 @@ import {
   queryFlightRecordSampleAt
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
+import { syntheticVenueMapForScenario } from "./game/synthetic-venue-map.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
-import { resolveReplayCameraMode } from "./render/camera/camera-director.js";
+import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
+import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
 import type { UiAction } from "./render/contracts/ui.js";
 import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
@@ -69,16 +71,22 @@ function dispatch(message: AppMessage): void {
 }
 
 function renderModel(): void {
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
   flightHud.setInformationCode(model.difficulty.informationCode);
-  flightHud.setVisible(gameSessionPhaseCode(model.gameSession) === 5 || gameSessionPhaseCode(model.gameSession) === 6);
-  const replayCameraMode = resolveReplayCameraMode(
-    model.replayCameraMode,
-    model.flightAnalysis,
-    model.analysisCursorTimeSeconds,
-    model.presentation.type === "ready" ? model.presentation.mode : "screen"
-  );
-  flightRenderer?.setFlightCameraMode([9, 10].includes(gameSessionPhaseCode(model.gameSession)) ? replayCameraMode : "pilot");
-  if ([9, 10].includes(gameSessionPhaseCode(model.gameSession))) {
+  flightHud.setVisible(phaseCode === 5 || phaseCode === 6);
+  const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
+  const cameraMode = phaseCode === 10
+    ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+    : phaseCode === 9
+      ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+      : "pilot";
+  const cameraPoints = syntheticVenueMapForScenario(model.configurationMetadata?.scenarioId ?? 1)?.cameraPoints ?? [];
+  const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
+    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis?.samples)
+    : null;
+  flightRenderer?.setCinematicCameraView(cinematicView);
+  flightRenderer?.setFlightCameraMode(cameraMode);
+  if (phaseCode === 9 || phaseCode === 10) {
     if (model.replayPose !== null) flightRenderer?.setFlightPose(model.replayPose);
   }
   if (model.presentation.type === "hidden") {

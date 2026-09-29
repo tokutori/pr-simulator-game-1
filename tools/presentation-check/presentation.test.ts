@@ -342,6 +342,8 @@ class FakeRenderer implements RendererAdapter {
 
   setFlightCameraMode(): void {}
 
+  setCinematicCameraView(): void {}
+
   resize(viewport: ViewportSize): void {
     this.lastViewport = viewport;
   }

@@ -1,4 +1,5 @@
 import type { Pose, Vec2, Vec3 } from "./math.js";
+import type { CinematicCameraView } from "./camera.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
@@ -31,7 +32,7 @@ export interface FlightRenderPose {
   readonly initialPilotPositionMeters: number;
 }
 
-export type FlightCameraMode = "pilot" | "chase";
+export type FlightCameraMode = "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 
 export interface PanelCursor {
   readonly point: Vec2;
@@ -50,6 +51,7 @@ export interface RendererAdapter {
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
+  setCinematicCameraView(view: CinematicCameraView | null): void;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;

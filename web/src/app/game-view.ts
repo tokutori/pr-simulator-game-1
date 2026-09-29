@@ -527,7 +527,7 @@ function formatSavedAt(value: string): string {
 }
 
 function replayCameraLabel(mode: AppModel["replayCameraMode"]): string {
-  return mode === "auto" ? "Auto" : mode === "pilot" ? "Pilot" : "Chase";
+  return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
 function status(id: string, label: string, value: string): UiStatus {

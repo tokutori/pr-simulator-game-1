@@ -425,10 +425,13 @@ describe("Boot application state", () => {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
     });
     expect(chase.model.replayCameraMode).toBe("chase");
-    const automatic = updateApp(chase.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    });
-    expect(automatic.model.replayCameraMode).toBe("auto");
+    let selection = chase;
+    for (const mode of ["orbit", "platform", "shore", "overhead", "side", "front", "telephoto", "auto"]) {
+      selection = updateApp(selection.model, {
+        type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+      });
+      expect(selection.model.replayCameraMode).toBe(mode);
+    }
     const vrReplay: AppModel = {
       ...replay,
       presentation: Object.freeze({ type: "ready", mode: "webxr" })

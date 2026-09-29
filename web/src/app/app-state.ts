@@ -576,11 +576,10 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 9) {
     if (action.controlId === "game-replay-camera") {
       if (model.presentation.type !== "ready" || model.presentation.mode !== "screen") return transition(model);
-      const nextCameraMode = model.replayCameraMode === "auto"
-        ? "pilot"
-        : model.replayCameraMode === "pilot"
-          ? "chase"
-          : "auto";
+      const cameraModes: readonly AppModel["replayCameraMode"][] = [
+        "auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"
+      ];
+      const nextCameraMode = cameraModes[(cameraModes.indexOf(model.replayCameraMode) + 1) % cameraModes.length] ?? "auto";
       return transition(withModel(model, { replayCameraMode: nextCameraMode }));
     }
     if (action.controlId === "game-replay-play-pause") {

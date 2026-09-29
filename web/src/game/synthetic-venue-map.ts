@@ -24,6 +24,8 @@ export interface SyntheticVenueMap {
   readonly sourceNote: "schematic-only-not-geographic-data";
   readonly lines: readonly SyntheticMapLine[];
   readonly landmarks: readonly SyntheticMapLandmark[];
+  readonly cameraPoints: readonly FixedCameraPoint[];
+  readonly cameraPointsSha256: string;
 }
 
 const SYNTHETIC_TRAINING_BASIN: SyntheticVenueMap = Object.freeze({
@@ -62,7 +64,13 @@ const SYNTHETIC_TRAINING_BASIN: SyntheticVenueMap = Object.freeze({
       color: "#a9c986",
       point: Object.freeze({ northMeters: 120, eastMeters: 26 })
     })
-  ])
+  ]),
+  cameraPoints: Object.freeze([
+    Object.freeze({ id: "platform", northMeters: -16, eastMeters: -18, altitudeMeters: 14 }),
+    Object.freeze({ id: "shore", northMeters: 85, eastMeters: -92, altitudeMeters: 26 }),
+    Object.freeze({ id: "telephoto", northMeters: 230, eastMeters: 82, altitudeMeters: 35 })
+  ]),
+  cameraPointsSha256: "8a276ef8eb32b206fff17ba7079bec04ed4695c1f00374087824bdef18510abd"
 });
 
 export function syntheticVenueMapForScenario(scenarioId: number): SyntheticVenueMap | null {
@@ -70,3 +78,4 @@ export function syntheticVenueMapForScenario(scenarioId: number): SyntheticVenue
     ? SYNTHETIC_TRAINING_BASIN
     : null;
 }
+import type { FixedCameraPoint } from "../render/contracts/camera.js";

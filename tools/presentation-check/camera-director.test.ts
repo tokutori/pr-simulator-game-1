@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveReplayCameraMode } from "../../web/src/render/camera/camera-director.js";
+import { resolveAttractCameraMode, resolveReplayCameraMode } from "../../web/src/render/camera/camera-director.js";
 import type { FlightAnalysisData } from "../../web/src/game/flight-record-query.js";
 
 const analysis: FlightAnalysisData = Object.freeze({
@@ -26,10 +26,10 @@ const analysis: FlightAnalysisData = Object.freeze({
 
 describe("replay camera director", () => {
   it("selects event-bound shots deterministically from record time", () => {
-    expect(resolveReplayCameraMode("auto", analysis, 0.5, "screen")).toBe("chase");
+    expect(resolveReplayCameraMode("auto", analysis, 0.5, "screen")).toBe("platform");
     expect(resolveReplayCameraMode("auto", analysis, 4, "screen")).toBe("pilot");
-    expect(resolveReplayCameraMode("auto", analysis, 7, "screen")).toBe("chase");
-    expect(resolveReplayCameraMode("auto", analysis, 10, "screen")).toBe("chase");
+    expect(resolveReplayCameraMode("auto", analysis, 7, "screen")).toBe("side");
+    expect(resolveReplayCameraMode("auto", analysis, 10, "screen")).toBe("shore");
   });
 
   it("produces the same camera at shared record times across frame rates", () => {
@@ -44,6 +44,7 @@ describe("replay camera director", () => {
     expect(resolveReplayCameraMode("chase", analysis, 4, "screen")).toBe("chase");
     expect(resolveReplayCameraMode("auto", analysis, 0, "webxr")).toBe("pilot");
     expect(resolveReplayCameraMode("auto", analysis, 0, "phone-vr")).toBe("pilot");
+    expect(resolveReplayCameraMode("shore", analysis, 4, "webxr")).toBe("pilot");
   });
 
   it("handles short records without indexing outside the sample range", () => {
@@ -53,8 +54,17 @@ describe("replay camera director", () => {
       summary: Object.freeze({ ...analysis.summary, sampleCount: 2, durationSeconds: 0.4,
         terminal: Object.freeze({ reason: "water-contact" as const, disposition: "complete" as const, timeSeconds: 0.4 }) })
     });
-    expect(resolveReplayCameraMode("auto", short, 0.2, "screen")).toBe("chase");
-    expect(resolveReplayCameraMode("auto", short, 5, "screen")).toBe("chase");
+    expect(resolveReplayCameraMode("auto", short, 0.2, "screen")).toBe("side");
+    expect(resolveReplayCameraMode("auto", short, 5, "screen")).toBe("shore");
+  });
+
+  it("uses launch, distance, and terminal shots for Attract without frame history", () => {
+    expect(resolveAttractCameraMode(analysis, 0, "screen")).toBe("platform");
+    expect(resolveAttractCameraMode(analysis, 2, "screen")).toBe("chase");
+    expect(resolveAttractCameraMode(analysis, 5, "screen")).toBe("side");
+    expect(resolveAttractCameraMode(analysis, 8, "screen")).toBe("shore");
+    expect(resolveAttractCameraMode(analysis, 10, "screen")).toBe("telephoto");
+    expect(resolveAttractCameraMode(analysis, 10, "webxr")).toBe("pilot");
   });
 });
 
