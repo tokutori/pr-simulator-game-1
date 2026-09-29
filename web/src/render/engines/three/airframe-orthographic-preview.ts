@@ -41,7 +41,7 @@ for (const spec of specs) {
   if (panel === null) throw new Error(`Missing ${spec.name} orthographic panel`);
   const scene = new Scene();
   scene.background = new Color(0x363c42);
-  scene.add(createBirdmanAirframe().root);
+  scene.add(createBirdmanAirframe(() => requestAnimationFrame(render)).root);
   addScaleGrid(scene, spec.name);
   scene.add(new AmbientLight(0xffffff, 2));
   const sun = new DirectionalLight(0xffffff, 2);

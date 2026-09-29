@@ -80,7 +80,7 @@ function tailChord(span: number): number {
     (TAIL_TIP_CHORD_METERS - TAIL_ROOT_CHORD_METERS) * span / TAIL_HALF_SPAN_METERS;
 }
 
-function indigoWingTexture(side: -1 | 1): DataTexture {
+function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTexture {
   const width = 1024;
   const height = 256;
   const pixels = new Uint8Array(width * height * 4);
@@ -131,6 +131,35 @@ function indigoWingTexture(side: -1 | 1): DataTexture {
   texture.minFilter = LinearMipmapLinearFilter;
   texture.generateMipmaps = true;
   texture.needsUpdate = true;
+  if (typeof Image !== "undefined" && typeof document !== "undefined") {
+    const decal = new Image();
+    decal.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height / 2;
+      const context = canvas.getContext("2d");
+      if (context === null) return;
+      if (side < 0) {
+        context.translate(width, 0);
+        context.scale(-1, 1);
+      }
+      // The generated decal has two wing halves and large transparent margins.
+      context.drawImage(decal, side < 0 ? 32 : 1085, 280, 1051, 148,
+        0, 0, width, height / 2);
+      const decalPixels = context.getImageData(0, 0, width, height / 2).data;
+      for (let pixel = 0; pixel < decalPixels.length; pixel += 4) {
+        const alpha = (decalPixels[pixel + 3] ?? 0) / 255;
+        const grain = ((pixel / 4 * 0.61803398875) % 1 - 0.5) * 8;
+        pixels[pixel] = Math.round((42 + grain) * (1 - alpha) + 220 * alpha);
+        pixels[pixel + 1] = Math.round((63 + grain) * (1 - alpha) + 224 * alpha);
+        pixels[pixel + 2] = Math.round((86 + grain) * (1 - alpha) + 218 * alpha);
+      }
+      texture.needsUpdate = true;
+      onVisualReady?.();
+    };
+    decal.onerror = () => { console.warn("Wing dye decal could not be loaded; using the procedural pattern."); };
+    decal.src = new URL("../../../../../assets/indigo-resist-decal.png", import.meta.url).href;
+  }
   return texture;
 }
 
@@ -443,10 +472,12 @@ function tailFoamRibGeometry(span: number): BufferGeometry {
   return finGeometry(outline, 0.008);
 }
 
-export function createBirdmanAirframe(): BirdmanAirframe {
+export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
-  const wingPatterns = { left: indigoWingTexture(-1), right: indigoWingTexture(1) };
+  const wingPatterns = {
+    left: indigoWingTexture(-1, onVisualReady), right: indigoWingTexture(1, onVisualReady)
+  };
   const wingSkins = {
     left: new MeshLambertMaterial({ color: 0xffffff, map: wingPatterns.left, side: DoubleSide }),
     right: new MeshLambertMaterial({ color: 0xffffff, map: wingPatterns.right, side: DoubleSide })
