@@ -663,7 +663,8 @@ impl GameSessionBridge {
             .sample_count()
             .checked_mul(RECORD_SAMPLE_LENGTH)
             .ok_or_else(|| JsValue::from_str("flight record transfer size overflowed"))?;
-        let mut packed = Vec::with_capacity(capacity);
+        let mut packed = reserve_record_transfer_buffer(capacity)
+            .ok_or_else(|| JsValue::from_str("flight record transfer buffer allocation failed"))?;
         for sample in record.samples() {
             packed.extend_from_slice(&pack_flight_record_sample(sample));
         }
@@ -1083,6 +1084,12 @@ fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE
         telemetry.composite_cg_position_ned_m.components()[2],
     ]);
     packed
+}
+
+fn reserve_record_transfer_buffer(capacity: usize) -> Option<Vec<f64>> {
+    let mut packed = Vec::new();
+    packed.try_reserve_exact(capacity).ok()?;
+    Some(packed)
 }
 
 fn pack_flight_record_playback_sample(
@@ -1610,6 +1617,11 @@ mod tests {
             core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES,
             1_632_408
         );
+    }
+
+    #[test]
+    fn record_transfer_capacity_overflow_is_reported_as_an_adapter_error() {
+        assert!(super::reserve_record_transfer_buffer(usize::MAX).is_none());
     }
 
     #[test]
