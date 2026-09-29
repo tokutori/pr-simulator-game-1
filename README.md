@@ -16,7 +16,7 @@ BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control mode�
 
 現在の作業差分では、keyboard/gamepad入力、fixed-tick更新、HUD、fractional water-contactに加え、Rust `GameSession`のTitle・Setup・Briefing・Countdown・Flight・Result・Replay遷移をWASM／Screen UIへ接続している。SetupではInformation・Assistance・Weatherの各軸とpresetを選択でき、解決結果をRustのflight制御・scenarioへ反映する。Rust coreは初期sample・tick入力・終端状態を記録し、`birdman-game-format`のJSON schema version 1とWASM exportを提供する。WebはResult確定時にIndexedDBへ保存し、Rust由来summaryを表示する。保存recordはTitleに最新3件を表示し、選択時はRust GameSessionでarchiveを検証してReplayへ遷移する。Analysis graphは水平map、altitude/speed系列、共有cursor、固定高度の5×5 wind queryを備える。模式的な湖岸・platform・地物は非地理データとして管理する。Replayは確定recordのseek、Result Analysis cursor同期、Rust補間pose、連続再生・速度選択、Screen上のPilot/Chase選択を実装した。追加Replay rig、生成WASM宣言の更新、実ブラウザー受入は未完了であり、BPG-007は未完了である。
 
-FlightRecordの永続record読出しUI、追加Replay rig、Attract、実環境データ、Pages公開は後続BPGで実装する。Replayには連続再生・速度選択とScreen上のPilot/Chase切替がある。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。
+FlightRecordの永続record読出しUI、追加Replay rig、Attract、実環境データ、公開受入検証は後続BPGで実装する。Replayには連続再生・速度選択とScreen上のPilot/Chase切替がある。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境
@@ -41,6 +41,8 @@ npm run dev
 ```
 
 Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。現行差分にはGameSessionを含む基本Scene遷移があるが、生成bindingの更新、実ブラウザー上のWebGL操作確認、全gameplay loopの受入、実機検証は未完了である。
+
+`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。公開前にはBPG-013の配布条件と実ブラウザー受入を確認する。
 
 ## 設計資料
 
