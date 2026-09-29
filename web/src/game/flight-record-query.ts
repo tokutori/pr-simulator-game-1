@@ -146,7 +146,12 @@ export function queryFlightRecordRenderPoseAt(
     }),
     attitudeBodyToNed: Object.freeze(quaternion),
     pilotPositionMeters: valueAt(layout.pilotPosition),
-    initialPilotPositionMeters
+    initialPilotPositionMeters,
+    simulationTimeSeconds: timeSeconds,
+    windVelocityNedMetersPerSecond: Object.freeze({
+      north: valueAt(layout.windNorth),
+      east: valueAt(layout.windEast)
+    })
   });
 }
 

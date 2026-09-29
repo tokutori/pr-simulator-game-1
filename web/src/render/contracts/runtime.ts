@@ -29,6 +29,10 @@ export interface FlightRenderPose {
   readonly attitudeBodyToNed: Readonly<{ w: number; x: number; y: number; z: number }>;
   readonly pilotPositionMeters: number;
   readonly initialPilotPositionMeters: number;
+  /** Simulation clock, used by render-only environmental animation. */
+  readonly simulationTimeSeconds?: number;
+  /** Scenario wind in NED; rendering may use it for a fixed visual wave spectrum. */
+  readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }
 
 export type FlightCameraMode = "pilot" | "chase";

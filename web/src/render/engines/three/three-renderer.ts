@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   CanvasTexture,
   CircleGeometry,
   Color,
@@ -12,6 +13,8 @@ import {
   PlaneGeometry,
   Scene,
   SRGBColorSpace,
+  ShaderMaterial,
+  Vector4,
   WebGLRenderer
 } from "three";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
@@ -25,6 +28,9 @@ import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
+import { createLakeWaveSpectrum, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
+import type { LakeWaterQuality } from "../../contracts/lake-water.js";
+import { createLakeDetailLayer } from "./lake-detail-texture.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -40,25 +46,81 @@ export interface ThreeRendererBundle {
   readonly webxr: WebXrSessionPort;
 }
 
+// The reference photograph has no metric scale. This affects appearance only;
+// the spectrum contract and the still-water contact plane retain their values.
+const LAKE_VISUAL_HEIGHT_SCALE = 8.0;
+// A single reference appearance is shared by the title, flight, and replay
+// scenes until the scenario provides a coherent wave-state descriptor.
+const LAKE_REFERENCE_WIND_NORTH = 1.2;
+const LAKE_REFERENCE_WIND_EAST = 2.4;
+
 export function createThreeRenderer(
   canvas: HTMLCanvasElement,
   panelCanvas: HTMLCanvasElement,
-  xrSystem: XRSystem | null
+  xrSystem: XRSystem | null,
+  lakeQuality: LakeWaterQuality = "high"
 ): ThreeRendererBundle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
   const stereoEffect = new StereoEffect(renderer);
   renderer.outputColorSpace = SRGBColorSpace;
-  renderer.setClearColor(0x8aadb0, 1);
+  renderer.setClearColor(0x9fb0ad, 1);
 
   const scene = new Scene();
-  scene.background = new Color(0x8aadb0);
+  scene.background = new Color(0x9fb0ad);
 
-  const water = new Mesh(
-    new PlaneGeometry(600, 600),
-    new MeshBasicMaterial({ color: 0x527e82 })
-  );
-  water.rotation.x = -Math.PI / 2;
-  water.position.y = 0;
+  const waterQuality = lakeWaterQualityProfile(lakeQuality);
+  const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
+  const lakeWaves = createLakeWaveSpectrum(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST, 600, waterQuality.componentCount);
+  const referenceWindSpeed = Math.hypot(LAKE_REFERENCE_WIND_NORTH, LAKE_REFERENCE_WIND_EAST);
+  const detailDirectionX = LAKE_REFERENCE_WIND_EAST / referenceWindSpeed;
+  const detailDirectionZ = -LAKE_REFERENCE_WIND_NORTH / referenceWindSpeed;
+  const detailNear = createLakeDetailLayer(64, 2300, 1717, detailDirectionX, detailDirectionZ);
+  const detailFar = createLakeDetailLayer(93, 1800, 2917, detailDirectionX, detailDirectionZ);
+  const waveKAmplitude = Array.from({ length: 24 }, (_, index) => {
+    const wave = lakeWaves.components[index];
+    return wave === undefined ? new Vector4() : new Vector4(
+      wave.directionEast,
+      -wave.directionNorth,
+      wave.waveNumberRadiansPerMeter,
+      wave.amplitudeMeters * lakeVisualAmplitudeScale(wave.waveNumberRadiansPerMeter)
+    );
+  });
+  const waveOmegaPhase = Array.from({ length: 24 }, (_, index) => {
+    const wave = lakeWaves.components[index];
+    return wave === undefined ? new Vector4() : new Vector4(
+      wave.angularFrequencyRadiansPerSecond,
+      wave.phaseRadians,
+      0,
+      0
+    );
+  });
+  const waterMaterial = new ShaderMaterial({
+    uniforms: {
+      uTimeSeconds: { value: 0 },
+      uWindSpeed: { value: referenceWindSpeed },
+      uWindDirection: { value: new Vector4(detailDirectionX, detailDirectionZ, 0, 0) },
+      uDetailNear: { value: detailNear.texture },
+      uDetailFar: { value: detailFar.texture },
+      uDetailExtents: { value: new Vector4(detailNear.extentMeters, detailFar.extentMeters, 0, 0) },
+      uWaveKAmplitude: { value: waveKAmplitude },
+      uWaveOmegaPhase: { value: waveOmegaPhase },
+      uWaveCount: { value: lakeWaves.components.length },
+      uVisualWaveHeight: { value: lakeWaves.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE },
+      uWaterDark: { value: new Color(0x172831) },
+      uWaterMid: { value: new Color(0x293b43) },
+      uWaterLight: { value: new Color(0x50636a) },
+      uSunDirection: { value: new Vector4(0.42, 0.82, 0.38, 0) }
+    },
+    vertexShader: lakeWaterVertexShader,
+    fragmentShader: lakeWaterFragmentShader,
+    depthWrite: true,
+    depthTest: true
+  });
+  const lakeUniforms = {
+    time: lakeUniform(waterMaterial, "uTimeSeconds", 0)
+  };
+  const water = new Mesh(waterGeometry, waterMaterial);
+  water.frustumCulled = false;
   scene.add(water);
 
   const panelTexture = new CanvasTexture(panelCanvas);
@@ -171,6 +233,11 @@ export function createThreeRenderer(
         setPose(camera, composePose(pilotEyePose, frame.cameraPose));
       }
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
+      const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
+      lakeUniforms.time.value = simulationTimeSeconds;
+      // The non-flight scenic camera is at the origin. Keep its water below
+      // eye level so amplified wave crests do not cut across the horizon.
+      water.position.set(flightPose?.datumPositionNed.east ?? 0, flightPose === null ? -1.5 : 0, -(flightPose?.datumPositionNed.north ?? 0));
       setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
@@ -222,8 +289,10 @@ export function createThreeRenderer(
       gazeCursorMaterial.dispose();
       panelGeometry.dispose();
       panelMaterial.dispose();
-      water.geometry.dispose();
-      water.material.dispose();
+      waterGeometry.dispose();
+      waterMaterial.dispose();
+      detailNear.texture.dispose();
+      detailFar.texture.dispose();
       cockpitWing.geometry.dispose();
       cockpitNose.geometry.dispose();
       cockpitMaterial.dispose();
@@ -386,6 +455,43 @@ function ensureActive(disposed: boolean): void {
   if (disposed) throw new Error("Three.js renderer has been disposed");
 }
 
+function lakeUniform<T>(material: ShaderMaterial, name: string, expectedValue: T): { value: T } {
+  const uniform = material.uniforms[name];
+  if (uniform === undefined) throw new Error(`Lake shader uniform is missing: ${name}`);
+  if (typeof uniform.value !== typeof expectedValue) throw new TypeError(`Lake shader uniform has an unexpected value type: ${name}`);
+  return uniform as { value: T };
+}
+
+function lakeVisualAmplitudeScale(waveNumberRadiansPerMeter: number): number {
+  const shortWaveWeight = Math.max(0, Math.min(1, (waveNumberRadiansPerMeter - 1.5) / 4.5));
+  const smoothWeight = shortWaveWeight * shortWaveWeight * (3 - 2 * shortWaveWeight);
+  return 1.8 + (LAKE_VISUAL_HEIGHT_SCALE - 1.8) * smoothWeight;
+}
+
+function createLakeGeometry(segments: number): PlaneGeometry {
+  const extent = 6000;
+  const geometry = new PlaneGeometry(extent, extent, segments, segments);
+  const positions = geometry.getAttribute("position");
+  const spacing = new Float32Array(positions.count);
+  const halfWidth = extent / 2;
+  // Preserve the former near-eye spacing while extending the lake beyond the
+  // camera far plane in every horizontal viewing direction.
+  const exponent = 7.2;
+  const denominator = Math.expm1(exponent);
+  const map = (coordinate: number): number => Math.sign(coordinate) * halfWidth * Math.expm1(exponent * Math.abs(coordinate) / halfWidth) / denominator;
+  const localStep = (coordinate: number): number => extent / segments * exponent * Math.exp(exponent * Math.abs(coordinate) / halfWidth) / denominator;
+  for (let index = 0; index < positions.count; index++) {
+    const x = positions.getX(index);
+    const y = positions.getY(index);
+    spacing[index] = Math.max(localStep(x), localStep(y));
+    positions.setXY(index, map(x), map(y));
+  }
+  positions.needsUpdate = true;
+  geometry.setAttribute("aGridSpacing", new BufferAttribute(spacing, 1));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -403,3 +509,277 @@ function sessionFromState(state: ThreeWebXrState): XRSession | null {
       return null;
   }
 }
+
+const lakeWavePacketShader = /* glsl */ `
+float lakeWaveHash(vec2 cell) {
+  return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+vec3 lakeValueNoise(vec2 point) {
+  vec2 cell = floor(point);
+  vec2 fraction = fract(point);
+  vec2 blend = fraction * fraction * (3.0 - 2.0 * fraction);
+  vec2 blendGradient = 6.0 * fraction * (1.0 - fraction);
+  float a = lakeWaveHash(cell);
+  float b = lakeWaveHash(cell + vec2(1.0, 0.0));
+  float c = lakeWaveHash(cell + vec2(0.0, 1.0));
+  float d = lakeWaveHash(cell + vec2(1.0, 1.0));
+  float value = mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
+  vec2 gradient = vec2(
+    blendGradient.x * mix(b - a, d - c, blend.y),
+    blendGradient.y * mix(c - a, d - b, blend.x)
+  );
+  return vec3(value * 2.0 - 1.0, gradient * 2.0);
+}
+
+mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed) {
+  vec2 across = vec2(-direction.y, direction.x);
+  float frequency = max(0.11, waveNumber * 0.055);
+  vec2 coordinate = vec2(dot(point, across), dot(point, direction)) * frequency + vec2(seed * 1.7, seed * 2.3);
+  vec2 secondCoordinate = vec2(coordinate.x * 1.7 + coordinate.y * 0.37,
+    coordinate.y * 1.9 - coordinate.x * 0.24) + vec2(13.7, -8.2);
+  vec3 broad = lakeValueNoise(coordinate);
+  vec3 fine = lakeValueNoise(secondCoordinate);
+  vec2 broadGradient = frequency * (across * broad.y + direction * broad.z);
+  vec2 fineGradient = frequency * (fine.y * (across * 1.7 + direction * 0.37)
+    + fine.z * (across * -0.24 + direction * 1.9));
+  // Shared, two-scale noise bends and interrupts crests without an empty mask.
+  float packet = 1.0 + 0.38 * broad.x + 0.12 * fine.x;
+  vec2 packetGradient = 0.38 * broadGradient + 0.12 * fineGradient;
+  float offset = 4.6 * broad.x + 1.4 * fine.x;
+  vec2 offsetGradient = 4.6 * broadGradient + 1.4 * fineGradient;
+  return mat3(vec3(packet, packetGradient), vec3(offset, offsetGradient), vec3(0.0));
+}
+`;
+
+const lakeWaterVertexShader = /* glsl */ `
+uniform float uTimeSeconds;
+uniform vec4 uWaveKAmplitude[24];
+uniform vec4 uWaveOmegaPhase[24];
+uniform int uWaveCount;
+attribute float aGridSpacing;
+varying vec3 vWorldPosition;
+varying vec3 vWorldNormal;
+varying float vCrest;
+varying float vCompression;
+varying float vGridSpacing;
+${lakeWavePacketShader}
+
+void main() {
+  // PlaneGeometry's XY winding points +Z; reversing its second axis while
+  // mapping to world XZ keeps the resulting top face wound toward +Y.
+  vec3 p = vec3(position.x, 0.0, -position.y);
+  vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
+  float slopeEnergy = 0.0;
+  for (int i = 0; i < 24; i++) {
+    if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
+  }
+  // Limit horizontal displacement as the combined wave steepness rises.
+  // Gerstner displacement gathers vertices near each sharp crest.
+  float q = min(4.5, 0.56 / max(3.1 * slopeEnergy, 0.001));
+  float dxx = 1.0;
+  float dxz = 0.0;
+  float dzx = 0.0;
+  float dzz = 1.0;
+  float dhdx = 0.0;
+  float dhdz = 0.0;
+  float crest = 0.0;
+  for (int i = 0; i < 24; i++) {
+    if (i < uWaveCount) {
+      vec4 ka = uWaveKAmplitude[i];
+      vec4 op = uWaveOmegaPhase[i];
+      vec2 direction = ka.xy;
+      float k = ka.z;
+      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * aGridSpacing);
+      mat3 modulation = lakeWaveModulation(waveXZ, direction, k, op.y);
+      vec3 packet = modulation[0];
+      vec3 warp = modulation[1];
+      float baseAmplitude = ka.w * geometricVisibility;
+      float a = baseAmplitude * packet.x;
+      vec2 amplitudeGradient = baseAmplitude * packet.yz;
+      float phase = k * dot(direction, waveXZ) + warp.x - op.x * uTimeSeconds + op.y;
+      vec2 phaseGradient = k * direction + warp.yz;
+      float s = sin(phase);
+      float c = cos(phase);
+      // A cubic offset sine gives a narrow crest and a broad trough. 0.625 is
+      // twice the cycle mean of ((1 + sin(phase)) / 2)^3, so mean height is zero.
+      float crestBasis = 0.5 + 0.5 * s;
+      p.xz += q * a * direction * c;
+      p.y += a * (2.0 * crestBasis * crestBasis * crestBasis - 0.625);
+      vec2 horizontalGradient = q * (c * amplitudeGradient - a * s * phaseGradient);
+      dxx += direction.x * horizontalGradient.x;
+      dxz += direction.x * horizontalGradient.y;
+      dzx += direction.y * horizontalGradient.x;
+      dzz += direction.y * horizontalGradient.y;
+      vec2 heightGradient = a * 3.0 * crestBasis * crestBasis * c * phaseGradient
+        + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
+      dhdx += heightGradient.x;
+      dhdz += heightGradient.y;
+      crest += s * k * a;
+    }
+  }
+  vec3 tangentX = vec3(dxx, dhdx, dzx);
+  vec3 tangentZ = vec3(dxz, dhdz, dzz);
+  vec3 localNormal = normalize(cross(tangentZ, tangentX));
+  vec4 worldPosition = modelMatrix * vec4(p, 1.0);
+  vWorldPosition = worldPosition.xyz;
+  vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
+  vCrest = crest / max(slopeEnergy, 0.001);
+  vCompression = clamp(1.0 - (dxx * dzz - dxz * dzx), 0.0, 1.0);
+  vGridSpacing = aGridSpacing;
+  gl_Position = projectionMatrix * viewMatrix * worldPosition;
+}
+`;
+
+const lakeWaterFragmentShader = /* glsl */ `
+uniform float uWindSpeed;
+uniform vec4 uWindDirection;
+uniform float uVisualWaveHeight;
+uniform float uTimeSeconds;
+uniform vec4 uWaveKAmplitude[24];
+uniform vec4 uWaveOmegaPhase[24];
+uniform int uWaveCount;
+uniform vec3 uWaterDark;
+uniform vec3 uWaterMid;
+uniform vec3 uWaterLight;
+uniform vec4 uSunDirection;
+uniform sampler2D uDetailNear;
+uniform sampler2D uDetailFar;
+uniform vec4 uDetailExtents;
+varying vec3 vWorldPosition;
+varying vec3 vWorldNormal;
+varying float vCrest;
+varying float vCompression;
+varying float vGridSpacing;
+${lakeWavePacketShader}
+
+vec3 analyticSky(vec3 ray) {
+  float elevation = clamp(ray.y * 0.5 + 0.5, 0.0, 1.0);
+  vec3 horizon = vec3(0.54, 0.64, 0.66);
+  vec3 zenith = vec3(0.18, 0.36, 0.52);
+  vec3 sky = mix(horizon, zenith, pow(elevation, 0.72));
+  float sun = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 900.0);
+  float glow = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 32.0);
+  return sky + vec3(1.0, 0.72, 0.43) * (sun * 12.0 + glow * 0.12);
+}
+
+float lakeNoise(vec2 point) {
+  vec2 cell = floor(point);
+  vec2 blend = fract(point);
+  blend = blend * blend * (3.0 - 2.0 * blend);
+  float a = fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
+  float b = fract(sin(dot(cell + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+  float c = fract(sin(dot(cell + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+  float d = fract(sin(dot(cell + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+  return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
+}
+
+vec2 lakeWaveSlope(vec2 worldXZ) {
+  // Add only wave detail that the vertex grid cannot resolve. Derivative based
+  // filtering fades subpixel wavelengths smoothly as they recede from the eye.
+  float waveSlopeX = 0.0;
+  float waveSlopeZ = 0.0;
+  for (int i = 0; i < 24; i++) {
+    if (i < uWaveCount) {
+      vec4 ka = uWaveKAmplitude[i];
+      vec4 op = uWaveOmegaPhase[i];
+      float k = ka.z;
+      vec2 direction = ka.xy;
+      mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
+      vec3 warp = modulation[1];
+      float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
+      vec2 phaseGradient = k * direction + warp.yz;
+      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vGridSpacing);
+      float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
+      // Transfer waves that outgrow the mesh to the pixel normal. A weak
+      // transfer creates an empty band wherever geometric detail ends.
+      float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
+      float crestBasis = 0.5 + 0.5 * sin(phase);
+      vec3 packet = modulation[0];
+      vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient
+        + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * packet.yz) * normalWeight;
+      waveSlopeX += gradient.x;
+      waveSlopeZ += gradient.y;
+    }
+  }
+  return vec2(waveSlopeX, waveSlopeZ);
+}
+
+vec3 lakeMicroDetail(vec2 worldXZ) {
+  vec2 drift = uWindDirection.xy * uTimeSeconds;
+  vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
+  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.23) / uDetailExtents.y);
+  vec2 nearSlope = nearSample.rg * 2.0 - 1.0;
+  vec2 farSlope = farSample.rg * 2.0 - 1.0;
+  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4;
+  // Blue stores slope squared. Mipmaps preserve the variance of unresolved
+  // wavelets even after their mean slope approaches zero.
+  float nearVariance = max(nearSample.b - dot(nearSlope, nearSlope), 0.0);
+  float farVariance = max(farSample.b - dot(farSlope, farSlope), 0.0);
+  float slopeMoment = dot(microSlope, microSlope)
+    + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance;
+  // Preserve visible fine-scale contrast as the pilot eye rises above the
+  // water; projected waves otherwise lose nearly all of their normal detail.
+  float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
+  float detailGain = 1.0 + 2.0 * smoothstep(1.5, 7.0, eyeHeight);
+  float strength = smoothstep(0.05, 0.6, uWindSpeed) * detailGain;
+  return vec3(microSlope * strength, slopeMoment * strength * strength);
+}
+
+vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
+  vec3 geometricNormal = normalize(vWorldNormal);
+  float patches = lakeNoise(worldXZ * 0.17 + vec2(2.3, -7.1));
+  vec2 microSlope = microDetail.xy;
+  float unresolvedVariance = max(microDetail.z - dot(microSlope, microSlope), 0.0);
+  vec3 normal = normalize(geometricNormal + vec3(-waveSlope.x - microSlope.x, 0.0, -waveSlope.y - microSlope.y));
+  vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
+  vec3 reflectedDirection = reflect(-viewDirection, normal);
+  vec3 reflection = analyticSky(reflectedDirection);
+  float ndv = max(dot(normal, viewDirection), 0.0);
+  float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  float sunAlignment = max(dot(reflectedDirection, normalize(uSunDirection.xyz)), 0.0);
+  float roughness = clamp(0.23 + uWindSpeed * 0.018 + sqrt(unresolvedVariance) * 0.6, 0.23, 0.62);
+  float glitterLobe = pow(sunAlignment, mix(220.0, 45.0, roughness));
+  float glitterNoise = 0.35 + 0.65 * clamp(sqrt(microDetail.z) * 3.0, 0.0, 1.0);
+  float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed);
+  float diffuse = 0.58 + 0.42 * max(dot(normal, normalize(vec3(-uSunDirection.x, uSunDirection.y, -uSunDirection.z))), 0.0);
+  float sharpCrest = smoothstep(0.42, 0.76, vCompression);
+  float crestLight = smoothstep(0.05, 1.05, vCrest) * sharpCrest * mix(0.35, 1.0, patches);
+  vec3 base = mix(uWaterDark, uWaterMid, diffuse * 0.72);
+  base = mix(base, uWaterLight, crestLight * 0.16 + patches * 0.07);
+  // Existing wave groups may remain steep after the local wind weakens.
+  float whitecap = smoothstep(0.68, 0.84, vCompression) * smoothstep(0.7, 0.98, vCrest) * 0.12;
+  vec3 color = mix(base, reflection, 0.08 + 0.42 * fresnel);
+  float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
+  color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
+  float distanceToEye = length(cameraPosition.xz - worldXZ);
+  // Match the dark water in the visual reference without dimming the sky.
+  color *= vec3(0.29, 0.34, 0.37);
+  color += vec3(1.0, 0.78, 0.52) * glitter * 0.7;
+  color = mix(color, vec3(0.38, 0.43, 0.43), whitecap * 0.28);
+  // Airlight belongs after the water tint. Tinting the haze made the horizon
+  // darker than the foreground and produced a black horizontal band.
+  float atmosphericFade = smoothstep(300.0, 1600.0, distanceToEye);
+  vec3 hazeColor = vec3(0.12, 0.18, 0.20);
+  color = mix(color, hazeColor, atmosphericFade * 0.16);
+  return color;
+}
+
+void main() {
+  vec2 footprintX = dFdx(vWorldPosition.xz) * 0.25;
+  vec2 footprintY = dFdy(vWorldPosition.xz) * 0.25;
+  vec2 center = vWorldPosition.xz;
+  vec2 waveSlope = lakeWaveSlope(center);
+  // Supersample subpixel normal detail, then shade the filtered normal once.
+  vec3 microDetail = (
+    lakeMicroDetail(center - footprintX - footprintY) +
+    lakeMicroDetail(center + footprintX - footprintY) +
+    lakeMicroDetail(center - footprintX + footprintY) +
+    lakeMicroDetail(center + footprintX + footprintY)
+  ) * 0.25;
+  vec3 color = sampleLakeColor(center, waveSlope, microDetail);
+  gl_FragColor = vec4(color, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}
+`;
