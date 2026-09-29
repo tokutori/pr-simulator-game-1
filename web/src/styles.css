@@ -66,6 +66,25 @@ body {
   box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
 }
 
+.build-version {
+  display: block;
+  margin-top: 0.9rem;
+  color: #b9c9c2;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.screen-ui-shell[data-mode="analysis"] > .build-version {
+  position: fixed;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  background: rgb(16 36 43 / 80%);
+}
+
 .screen-ui-shell[data-mode="analysis"] {
   position: fixed;
   inset: 0;

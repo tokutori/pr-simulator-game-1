@@ -1,4 +1,5 @@
 import { actionForControl } from "./panel-interaction.js";
+import { APP_BUILD_LABEL } from "./build-info.js";
 import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick } from "../render/contracts/ui.js";
 import type { UiActionDispatcher, UiControl, UiPanel, UiViewModel } from "../render/contracts/ui.js";
 import {
@@ -49,6 +50,10 @@ export class ScreenUiAdapter {
     description.textContent = viewModel.description;
     shell.append(heading, description);
     for (const panel of viewModel.panels) shell.append(this.createPanel(documentRef, panel));
+    const build = documentRef.createElement("small");
+    build.className = "build-version";
+    build.textContent = APP_BUILD_LABEL;
+    shell.append(build);
     const nextVNode = h("div.screen-ui-mount", [keyDomTree(shell)]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
   }

@@ -1,3 +1,4 @@
+import { APP_BUILD_LABEL } from "./build-info.js";
 import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick } from "../render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../render/contracts/ui.js";
 import type { FlightHudModel } from "./flight-hud-model.js";
@@ -268,6 +269,9 @@ export function drawVrPanel(
   context.lineTo(width * 0.92, height * 0.16);
   context.stroke();
   for (const control of panel.controls) drawControl(context, control, width, height);
+  context.setFillStyle("#b9c9c2");
+  context.setFont("400 16px system-ui, sans-serif");
+  context.fillText(APP_BUILD_LABEL, width * 0.08, height * 0.96, width * 0.84);
 }
 
 function drawControl(context: PanelDrawingContext, control: UiControl, width: number, height: number): void {
