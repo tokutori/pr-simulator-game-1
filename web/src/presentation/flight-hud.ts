@@ -104,7 +104,11 @@ export class FlightHudAdapter implements FlightHudPort {
   render(snapshot: FlightSnapshot): void {
     const model = createFlightHudModel(snapshot, this.informationCode);
     this.status.textContent = model.status;
-    this.adi.classList.toggle("is-hidden", model.attitude === null);
+    if (model.attitude === null) {
+      this.adi.classList.add("is-hidden");
+    } else {
+      this.adi.classList.remove("is-hidden");
+    }
     this.readouts.textContent = model.readouts;
     this.headingInstrument.hidden = model.heading === null;
     this.headingReadout.textContent = model.heading ?? "";
