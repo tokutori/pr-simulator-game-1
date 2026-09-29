@@ -246,7 +246,7 @@ describe("generated WebAssembly browser binding", () => {
         try {
           result = executeGameSessionOperation(session, effect.operation);
         } catch (error: unknown) {
-          throw new Error(`${controlId} (${effect.operation}) failed: ${String(error)}`, { cause: error });
+          throw new Error(`${controlId} failed: ${String(error)}`, { cause: error });
         }
         model = requested.model;
         return { requestId: requested.model.pendingGameRequestId as number, result };

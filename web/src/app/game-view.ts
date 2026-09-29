@@ -603,7 +603,7 @@ function gameButtons(
   switch (phaseCode) {
     case 0:
       return [button("game-title-start", "飛行を設定", true), button("game-title-demo", "デモ飛行を見る", true)];
-    case 1:
+    case 1: {
       const setupControls: (UiButton | UiToggle)[] = [
         button("game-setup-preset", `Preset: ${presetLabel(difficulty.presetCode)}`, true),
         button("game-setup-information", `Information: ${informationLabel(difficulty.informationCode)}`, true),
@@ -614,6 +614,7 @@ function gameButtons(
         button("game-setup-back", "Titleへ戻る", true)
       ];
       return setupControls;
+    }
     case 2:
       return [button("game-briefing-cancel", "設定へ戻る", true)];
     case 3:
