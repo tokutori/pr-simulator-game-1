@@ -670,8 +670,9 @@ varying vec2 vBaseXZ;
 ${lakeWavePacketShader}
 
 vec3 analyticSky(vec3 ray) {
-  float elevation = clamp(ray.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 horizon = vec3(0.54, 0.64, 0.66);
+  float elevation = clamp(ray.y, 0.0, 1.0);
+  // Match the clear/background color at the horizon in linear space.
+  vec3 horizon = vec3(0.35, 0.43, 0.42);
   vec3 zenith = vec3(0.18, 0.36, 0.52);
   vec3 sky = mix(horizon, zenith, pow(elevation, 0.72));
   float sun = pow(max(dot(normalize(ray), normalize(uSunDirection.xyz)), 0.0), 900.0);
@@ -778,12 +779,14 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail) {
   base = mix(base, uWaterLight, crestLight * 0.16 + patches * 0.07);
   // Existing wave groups may remain steep after the local wind weakens.
   float whitecap = smoothstep(0.68, 0.84, vCompression) * smoothstep(0.7, 0.98, vCrest) * 0.12;
-  vec3 color = mix(base, reflection, 0.08 + 0.42 * fresnel);
+  // Dark water absorption must not also darken the reflected sky.
+  base *= vec3(0.29, 0.34, 0.37);
+  // Art-directed reflection strength for the dark reference water. This is
+  // not a rough-surface BRDF and leaves a visible sky/water boundary.
+  vec3 color = mix(base, reflection, fresnel * 0.55);
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
   color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
   float distanceToEye = length(cameraPosition.xz - worldXZ);
-  // Match the dark water in the visual reference without dimming the sky.
-  color *= vec3(0.29, 0.34, 0.37);
   color += vec3(1.0, 0.78, 0.52) * glitter * 0.7;
   color = mix(color, vec3(0.38, 0.43, 0.43), whitecap * 0.28);
   // Airlight belongs after the water tint. Tinting the haze made the horizon
