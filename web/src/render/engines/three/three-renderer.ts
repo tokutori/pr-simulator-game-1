@@ -93,10 +93,10 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
     const directionCount = directionCountByBand[band] ?? 0;
     return directionCount > 0 ? Math.sqrt(3 / directionCount) : 1;
   });
-  const near = createLakeDetailLayer(64, 1400, 1717 + condition.patternSeed * 997, directionX, directionZ);
+  const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
-    far = createLakeDetailLayer(193, 2400, 2917 + condition.patternSeed * 991, directionX, directionZ);
+    far = createLakeDetailLayer(193, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ);
   } catch (error) {
     near.texture.dispose();
     throw error;
@@ -818,7 +818,7 @@ void main() {
   vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.73) / uDetailExtents.y);
   float nearHeight = nearDetail.a - 128.0 / 255.0;
   float farHeight = farDetail.a - 128.0 / 255.0;
-  float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
+  float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
   p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
   float slopeEnergy = 0.0;
