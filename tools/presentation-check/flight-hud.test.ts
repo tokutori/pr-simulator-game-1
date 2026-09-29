@@ -46,7 +46,7 @@ describe("Flight HUD DOM lifecycle", () => {
     const hud = new FlightHudAdapter(root as unknown as HTMLElement);
     const nodes = [...root.children];
 
-    expect(root.children).toHaveLength(7);
+    expect(root.children).toHaveLength(8);
     hud.setVisible(true);
     const firstValues = new Array<number>(33).fill(0);
     firstValues[7] = 1;
@@ -83,7 +83,7 @@ describe("Flight HUD DOM lifecycle", () => {
     expect(root.attributes.get("aria-hidden")).toBe("false");
     expect(root.children).toEqual(nodes);
     expect(nodes[1]?.textContent).toBe("時間制限");
-    const instruments = nodes[4]?.children;
+    const instruments = nodes.find((node) => node.className === "flight-hud-instruments")?.children;
     expect(instruments?.[0]?.children[1]?.textContent).toBe("17°");
     expect(instruments?.[1]?.children[1]?.textContent).toBe("+0.00 m");
     expect(instruments?.[2]?.children[1]?.textContent).toBe("N 2.0 · E -1.0 · D 0.5 m/s");
