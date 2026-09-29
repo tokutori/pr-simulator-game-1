@@ -722,7 +722,7 @@ void main() {
   float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
-  p.y += (nearHeight * 0.65 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
+  p.y += (nearHeight * 0.8 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
   float slopeEnergy = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
@@ -738,7 +738,7 @@ void main() {
   float dhdz = 0.0;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
-  vec2 resolvedDetailSlope = (nearSlope * (0.65 * nearVisibility)
+  vec2 resolvedDetailSlope = (nearSlope * (0.8 * nearVisibility)
     + farSlope * (0.4 * farVisibility)) * uDetailScale;
   dhdx += resolvedDetailSlope.x;
   dhdz += resolvedDetailSlope.y;
@@ -915,7 +915,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
     -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
   ) * 5.2 * rippleAmplitude;
-  vec2 microSlope = nearSlope * 0.65 + farSlope * 0.4 + fineSlope + rippleSlope;
+  vec2 microSlope = nearSlope * 0.8 + farSlope * 0.4 + fineSlope + rippleSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
   float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
@@ -923,7 +923,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
   float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
-    + 0.65 * 0.65 * nearVariance + 0.4 * 0.4 * farVariance
+    + 0.8 * 0.8 * nearVariance + 0.4 * 0.4 * farVariance
     + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
     + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
   // Preserve visible fine-scale contrast as the pilot eye rises above the
