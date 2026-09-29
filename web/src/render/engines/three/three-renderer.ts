@@ -89,7 +89,7 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
   const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
-    far = createLakeDetailLayer(193, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ);
+    far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ);
   } catch (error) {
     near.texture.dispose();
     throw error;
@@ -723,12 +723,12 @@ void main() {
   vBaseXZ = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
-  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.73) / uDetailExtents.y);
+  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
   float nearHeight = nearDetail.a - 128.0 / 255.0;
   float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
-  p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
+  p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.55 * farVisibility) * uDetailScale;
   float slopeEnergy = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
@@ -745,7 +745,7 @@ void main() {
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 resolvedDetailSlope = (nearSlope * (0.6 * nearVisibility)
-    + farSlope * (0.4 * farVisibility)) * uDetailScale;
+    + farSlope * (0.55 * farVisibility)) * uDetailScale;
   dhdx += resolvedDetailSlope.x;
   dhdz += resolvedDetailSlope.y;
   float crest = 0.0;
@@ -885,8 +885,8 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
   // These compact gravity-wave bands use phase-speed ratios proportional to
-  // sqrt(wavelength): far/near/fine/ripple = 0.73/0.42/0.26/0.18.
-  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.73) / uDetailExtents.y);
+  // sqrt(wavelength): far/near/fine/ripple = 0.89/0.42/0.26/0.18.
+  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.89) / uDetailExtents.y);
   // Each rotated octave advects along its rotated propagation direction.
   // Reusing the unrotated drift makes oblique crests slide sideways.
   vec2 fineDrift = vec2(
@@ -921,7 +921,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
     -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
   ) * 5.2 * rippleAmplitude;
-  vec2 microSlope = nearSlope * 0.6 + farSlope * 0.4 + fineSlope + rippleSlope;
+  vec2 microSlope = nearSlope * 0.6 + farSlope * 0.55 + fineSlope + rippleSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
   float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
@@ -929,7 +929,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
   float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
-    + 0.6 * 0.6 * nearVariance + 0.4 * 0.4 * farVariance
+    + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
     + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
     + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
   float strength = smoothstep(0.05, 0.6, uWindSpeed);
