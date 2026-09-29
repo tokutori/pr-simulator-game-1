@@ -124,7 +124,7 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 失敗tickの状態は保存しない。初期化失敗で有効sampleがない場合はrecord unavailableとする。
 不完全recordも有効区間の解析に使用できるが、通常のPersonal Bestへ登録しない。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
-Rust coreの`personal_best_candidate_score()`はこの適格性だけを判定し、canonical configuration keyによる比較は別契約である。
+Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。両者ともcanonical configuration keyによる比較は行わない。
 
 初期Replayはsnapshot再生とする。並進値を補間し、姿勢はquaternionの最短経路で補間する。
 pause、seek、速度変更、逆方向操作はplayback clockだけへ作用し、物理を再積分しない。

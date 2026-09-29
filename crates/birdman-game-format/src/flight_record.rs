@@ -513,6 +513,38 @@ impl FlightRecordDocument {
             .map_err(|_| FlightRecordFormatError::InvalidRecord)
     }
 
+    /// Returns a score eligible for later Personal Best key comparison.
+    ///
+    /// Records predating the current score and physics model versions remain readable, but
+    /// cannot be compared with records whose scoring or physical semantics are known. This
+    /// method does not establish or compare the canonical configuration key.
+    pub fn personal_best_candidate_score(
+        &self,
+    ) -> Result<Option<DistanceScore>, FlightRecordFormatError> {
+        self.validate()?;
+        if self.schema_version != FLIGHT_RECORD_SCHEMA_VERSION
+            || self.header.score_definition_version
+                != Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+            || self.header.physics_model_version != Some(birdman_game_core::PHYSICS_MODEL_VERSION)
+        {
+            return Ok(None);
+        }
+        let Some(finalization) = &self.finalization else {
+            return Ok(None);
+        };
+        if finalization.reason != FlightRecordEndReasonDocument::WaterContact
+            || finalization.disposition != FlightRecordDispositionDocument::Complete
+        {
+            return Ok(None);
+        }
+        let Some([course, cross_track, net]) = finalization.score_m else {
+            return Ok(None);
+        };
+        DistanceScore::try_from_recorded(course, cross_track, net)
+            .map(Some)
+            .map_err(|_| FlightRecordFormatError::InvalidRecord)
+    }
+
     /// Decodes bounded JSON and validates its version and domain invariants.
     pub fn decode_json(input: &[u8]) -> Result<Self, FlightRecordFormatError> {
         if input.len() > MAX_FLIGHT_RECORD_JSON_BYTES {
@@ -854,7 +886,8 @@ mod tests {
     use crate::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
     use birdman_game_core::{
         BodyVector, ControlMode, FlightFeedbackInput, GameSession, GameSessionConfiguration,
-        PilotPositionTarget, SessionScenarioIdentity, SurfaceCommands, SyntheticPlayableFlight,
+        PilotPositionTarget, SessionPhase, SessionScenarioIdentity, SurfaceCommands,
+        SyntheticPlayableFlight,
     };
 
     fn completed_record() -> FlightRecordDocument {
@@ -896,6 +929,54 @@ mod tests {
         session.abort_flight().unwrap();
         FlightRecordDocument::from_record(
             session.flight_record().unwrap(),
+            DifficultySettings::custom(
+                InformationLevel::Full,
+                AssistanceLevel::Manual,
+                WeatherClass::Calm,
+            ),
+        )
+        .unwrap()
+    }
+
+    fn water_contact_record() -> FlightRecordDocument {
+        let (aircraft, scenario, feedback, _) =
+            SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
+        let identity = SessionScenarioIdentity {
+            catalog_version: 1,
+            scenario_id: 1,
+            scenario_version: 1,
+            aircraft_model_version: 1,
+            environment_version: 1,
+            controller_profile_version: 1,
+            seed: 17,
+        };
+        let configuration = GameSessionConfiguration::try_new(
+            scenario,
+            ControlMode::Manual,
+            feedback,
+            4_000,
+            identity,
+        )
+        .unwrap();
+        let mut session = GameSession::new();
+        session.open_setup().unwrap();
+        session.prepare_flight(configuration).unwrap();
+        session.mark_briefing_ready().unwrap();
+        session.start_countdown(1).unwrap();
+        session.advance_countdown().unwrap();
+        session.launch().unwrap();
+        while session.snapshot().phase() != SessionPhase::Result {
+            let position = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+            session
+                .advance_flight_tick(FlightFeedbackInput::new(
+                    SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                    BodyVector::zero(),
+                    position,
+                ))
+                .unwrap();
+        }
+        FlightRecordDocument::from_record(
+            &session.take_finalized_result_record().unwrap(),
             DifficultySettings::custom(
                 InformationLevel::Full,
                 AssistanceLevel::Manual,
@@ -958,6 +1039,22 @@ mod tests {
         assert_eq!(
             FlightRecordDocument::decode_json(&encoded).unwrap(),
             document
+        );
+    }
+
+    #[test]
+    fn personal_best_candidate_requires_current_schema_and_complete_water_contact() {
+        let contact = water_contact_record();
+        assert!(contact.personal_best_candidate_score().unwrap().is_some());
+
+        let mut legacy = contact;
+        legacy.schema_version = 3;
+        legacy.header.physics_model_version = None;
+        assert_eq!(legacy.personal_best_candidate_score().unwrap(), None);
+
+        assert_eq!(
+            completed_record().personal_best_candidate_score().unwrap(),
+            None
         );
     }
 
