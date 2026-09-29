@@ -48,7 +48,7 @@ export function createGameViewModel(
     buttons.push(button("boot-exit-vr", "VRを終了", true));
   }
 
-  const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5
+  const controls: (UiButton | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10
     ? []
     : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining))];
   if (phaseCode === 7 && model.resultTab === "summary") {
@@ -93,13 +93,58 @@ export function createGameViewModel(
         model.configurationMetadata?.scenarioId ?? null
       ));
     }
+  } else if (phaseCode === 9 && model.replayViewMode === "analysis") {
+    controls.push(
+      Object.freeze({ ...button("game-replay-view-mode", "表示: Analysis", true), rect: normalizedRect(0.02, 0.035, 0.22, 0.06) }),
+      Object.freeze({ ...button("game-analysis-map", model.analysisChart === "map" ? "● Map" : "Map", true), rect: normalizedRect(0.26, 0.035, 0.22, 0.06) }),
+      Object.freeze({ ...button("game-analysis-altitude", model.analysisChart === "altitude" ? "● Altitude" : "Altitude", true), rect: normalizedRect(0.50, 0.035, 0.22, 0.06) }),
+      Object.freeze({ ...button("game-analysis-speed", model.analysisChart === "speed" ? "● Speed" : "Speed", true), rect: normalizedRect(0.74, 0.035, 0.24, 0.06) })
+    );
+    if (analysis !== null) controls.push(createAnalysisChart(
+      analysis,
+      model.analysisChart,
+      model.analysisCursorSample,
+      model.configurationMetadata?.scenarioId ?? null,
+      normalizedRect(0.04, 0.12, 0.92, 0.59)
+    ));
+    else controls.push(Object.freeze({
+      ...status("game-replay-analysis-loading", "Analysis", "FlightRecordを取得している"),
+      rect: normalizedRect(0.08, 0.30, 0.84, 0.24)
+    }));
+    controls.push(
+      Object.freeze({
+        ...button("game-replay-play-pause", model.replayPlaying ? "Pause" : "Play", analysis !== null),
+        rect: normalizedRect(0.04, 0.74, 0.15, 0.06)
+      }),
+      Object.freeze({
+        kind: "range",
+        id: "game-replay-cursor",
+        label: "Replay time (s)",
+        value: model.analysisCursorTimeSeconds,
+        minimum: 0,
+        maximum: Math.max(analysis?.summary.durationSeconds ?? 0, 0.01),
+        step: 0.01,
+        enabled: analysis !== null,
+        rect: normalizedRect(0.21, 0.74, 0.75, 0.06)
+      }),
+      Object.freeze({
+        ...status("game-replay-analysis-cursor-values", "At cursor", model.analysisCursorSample === null ? "記録時刻を読み込み中" : cursorReadout(model.analysisCursorSample)),
+        rect: normalizedRect(0.04, 0.82, 0.92, 0.075)
+      }),
+      Object.freeze({
+        ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
+        rect: normalizedRect(0.04, 0.91, 0.32, 0.06)
+      }),
+      Object.freeze({ ...button("game-replay-return", "Resultへ戻る", true), rect: normalizedRect(0.64, 0.91, 0.32, 0.06) })
+    );
   } else if (phaseCode === 9) {
     const durationSeconds = analysis?.summary.durationSeconds ?? 0;
+    const isCinematic = model.replayViewMode === "cinematic";
     controls.push(Object.freeze({
       ...status("game-replay-time", "Record time", `${model.analysisCursorTimeSeconds.toFixed(2)} / ${durationSeconds.toFixed(2)} s`),
-      rect: normalizedRect(0.08, 0.62, 0.84, 0.08)
+      rect: normalizedRect(0.04, 0.62, 0.92, 0.08)
     }));
-    if (analysis !== null) controls.push(Object.freeze({
+    if (!isCinematic && analysis !== null) controls.push(Object.freeze({
       kind: "range",
       id: "game-replay-cursor",
       label: "Replay time (s)",
@@ -108,41 +153,55 @@ export function createGameViewModel(
       maximum: Math.max(durationSeconds, 0.01),
       step: 0.01,
       enabled: true,
-      rect: normalizedRect(0.08, 0.52, 0.84, 0.07)
+      rect: normalizedRect(0.04, 0.52, 0.92, 0.07)
     }));
-    if (model.pendingReplayPoseRequestId !== null || model.replayPose === null) {
+    if (!isCinematic && (model.pendingReplayPoseRequestId !== null || model.replayPose === null)) {
       controls.push(Object.freeze({
         ...status("game-replay-pose-status", "Replay", "記録済みposeを取得している"),
-        rect: normalizedRect(0.08, 0.40, 0.84, 0.08)
+        rect: normalizedRect(0.04, 0.40, 0.92, 0.08)
       }));
     }
     controls.push(
       Object.freeze({
+        ...button("game-replay-view-mode", `表示: ${isCinematic ? "Cinematic" : "Telemetry"}`, true),
+        rect: normalizedRect(0.04, 0.84, 0.92, 0.07)
+      }),
+      Object.freeze({
         ...button("game-replay-play-pause", model.replayPlaying ? "Pause" : "Play", analysis !== null),
-        rect: normalizedRect(0.08, 0.31, 0.30, 0.07)
+        rect: normalizedRect(0.04, 0.31, 0.30, 0.07)
       }),
       Object.freeze({
         ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready" && model.presentation.mode === "screen"),
-        rect: normalizedRect(0.40, 0.31, 0.52, 0.07)
+        rect: normalizedRect(0.36, 0.31, 0.60, 0.07)
       }),
-      Object.freeze({
-        ...button("game-replay-speed-0_5", model.replaySpeed === 0.5 ? "● 0.5×" : "0.5×", true),
-        rect: normalizedRect(0.08, 0.22, 0.25, 0.07)
-      }),
-      Object.freeze({
-        ...button("game-replay-speed-1", model.replaySpeed === 1 ? "● 1×" : "1×", true),
-        rect: normalizedRect(0.375, 0.22, 0.25, 0.07)
-      }),
-      Object.freeze({
-        ...button("game-replay-speed-2", model.replaySpeed === 2 ? "● 2×" : "2×", true),
-        rect: normalizedRect(0.67, 0.22, 0.25, 0.07)
-      })
+      ...(!isCinematic ? [
+        Object.freeze({
+          ...button("game-replay-speed-0_5", model.replaySpeed === 0.5 ? "● 0.5×" : "0.5×", true),
+          rect: normalizedRect(0.04, 0.22, 0.29, 0.07)
+        }),
+        Object.freeze({
+          ...button("game-replay-speed-1", model.replaySpeed === 1 ? "● 1×" : "1×", true),
+          rect: normalizedRect(0.355, 0.22, 0.29, 0.07)
+        }),
+        Object.freeze({
+          ...button("game-replay-speed-2", model.replaySpeed === 2 ? "● 2×" : "2×", true),
+          rect: normalizedRect(0.67, 0.22, 0.29, 0.07)
+        })
+      ] : [])
     );
-    buttons.forEach((entry) => controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.08, 0.12, 0.84, 0.075) })));
+    buttons.forEach((entry) => controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.04, 0.12, 0.92, 0.075) })));
   } else if (phaseCode === 10) {
     controls.push(
-      Object.freeze({ ...status("game-attract-status", "Demo", model.status || "自動再生中"), rect: normalizedRect(0.08, 0.72, 0.84, 0.08) }),
-      Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.08, 0.60, 0.84, 0.075) })
+      Object.freeze({ ...status("game-attract-status", "Demo", model.status || "自動再生中"), rect: normalizedRect(0.04, 0.72, 0.92, 0.08) }),
+      Object.freeze({
+        ...status("game-attract-time", "Record time", `${model.analysisCursorTimeSeconds.toFixed(2)} / ${(analysis?.summary.durationSeconds ?? 0).toFixed(2)} s`),
+        rect: normalizedRect(0.04, 0.62, 0.92, 0.07)
+      }),
+      ...(model.analysisCursorSample === null ? [] : [Object.freeze({
+        ...status("game-attract-distance", "Distance", `${Math.hypot(model.analysisCursorSample.northMeters, model.analysisCursorSample.eastMeters).toFixed(1)} m`),
+        rect: normalizedRect(0.04, 0.52, 0.92, 0.07)
+      })]),
+      Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
     );
   } else {
     let bottom = 0.795;
@@ -171,6 +230,7 @@ export function createGameViewModel(
         model.storedFlightRecords.length > 0 ? `保存FlightRecord ${String(model.storedFlightRecords.length)}件` : ""]
         .filter(Boolean).join(" · ")
       : descriptionForPhase(phaseCode, model.difficulty, countdownRemaining),
+    presentationStyle: phaseCode === 10 || (phaseCode === 9 && model.replayViewMode !== "analysis") ? "cinematic" : "default",
     activeOverlay: phaseCode === 6 ? "Pause" : null,
     panels: Object.freeze([panel])
   });
@@ -180,7 +240,8 @@ function createAnalysisChart(
   analysis: FlightAnalysisData,
   chart: AppModel["analysisChart"],
   cursorSample: AppModel["analysisCursorSample"],
-  scenarioId: number | null
+  scenarioId: number | null,
+  rect = normalizedRect(0.08, 0.22, 0.84, 0.30)
 ): UiChart {
   const samples = analysis.samples;
   if (chart === "map") {
@@ -275,7 +336,7 @@ function createAnalysisChart(
     return chartControl("game-analysis-plot", "水平軌跡", "東 E (m)", "北 N (m)", series,
     centerEast - halfRange, centerEast + halfRange, centerNorth - halfRange, centerNorth + halfRange, true,
     null, cursorSample === null ? [] : [{ x: cursorSample.eastMeters, y: cursorSample.northMeters }],
-    vectors, markers, timeMarkers, []);
+    vectors, markers, timeMarkers, [], rect);
   }
   if (chart === "altitude") {
     const launchAltitude = samples[0]?.altitudeMeters ?? 0;
@@ -288,7 +349,7 @@ function createAnalysisChart(
     modelTimeCursor(analysis, cursorSample), cursorSample === null ? [] : [{ x: cursorSample.timeSeconds, y: cursorSample.altitudeMeters }], [], [], [], [
       { value: 0, label: "静水面", color: "#85c7e8" },
       { value: launchAltitude, label: `発進高度 ${launchAltitude.toFixed(1)} m`, color: "#f2b35e" }
-    ]);
+    ], rect);
   }
   const [minimum, maximum] = paddedRange(samples.flatMap((sample) => [sample.airspeedMetersPerSecond, sample.groundspeedMetersPerSecond]));
   return chartControl("game-analysis-plot", "Airspeed / Groundspeed", "Time (s)", "Speed (m/s)", [
@@ -306,7 +367,7 @@ function createAnalysisChart(
   modelTimeCursor(analysis, cursorSample), cursorSample === null ? [] : [
     { x: cursorSample.timeSeconds, y: cursorSample.airspeedMetersPerSecond },
     { x: cursorSample.timeSeconds, y: cursorSample.groundspeedMetersPerSecond }
-  ], [], [], [], []);
+  ], [], [], [], [], rect);
 }
 
 function mapTimeMarkers(
@@ -354,7 +415,8 @@ function chartControl(
   vectors: UiChart["vectors"],
   markers: UiChart["markers"],
   timeMarkers: UiChart["timeMarkers"],
-  referenceLines: UiChart["referenceLines"]
+  referenceLines: UiChart["referenceLines"],
+  rect = normalizedRect(0.08, 0.22, 0.84, 0.30)
 ): UiChart {
   return Object.freeze({
     kind: "chart",
@@ -389,7 +451,7 @@ function chartControl(
       points: Object.freeze(entry.points.map((point) => Object.freeze(point)))
     }))),
     enabled: false,
-    rect: normalizedRect(0.08, 0.22, 0.84, 0.30)
+    rect
   });
 }
 

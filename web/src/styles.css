@@ -81,6 +81,37 @@ body {
   box-shadow: none;
 }
 
+.screen-ui-shell[data-mode="cinematic"] {
+  position: fixed;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: min(21rem, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 1.5rem);
+  padding: 0.85rem;
+  background: rgb(16 36 43 / 78%);
+  font-size: 0.8rem;
+}
+
+.screen-ui-shell[data-mode="cinematic"] > h1,
+.screen-ui-shell[data-mode="cinematic"] > .screen-ui-description,
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-panel > h2 {
+  display: none;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-panel {
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-controls {
+  gap: 0.35rem;
+}
+
+.screen-ui-shell[data-mode="cinematic"] .screen-ui-controls button {
+  min-height: 2rem;
+  padding: 0.35rem 0.5rem;
+}
+
 .screen-ui-shell[data-mode="analysis"] > h1,
 .screen-ui-shell[data-mode="analysis"] > .screen-ui-description,
 .screen-ui-panel[data-layout="normalized"] > h2 {

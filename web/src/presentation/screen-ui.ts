@@ -38,6 +38,8 @@ export class ScreenUiAdapter {
     shell.dataset.scene = viewModel.scene;
     if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) {
       shell.dataset.mode = "analysis";
+    } else if (viewModel.presentationStyle === "cinematic") {
+      shell.dataset.mode = "cinematic";
     }
     if (viewModel.activeOverlay !== null) shell.dataset.overlay = viewModel.activeOverlay;
     const heading = documentRef.createElement("h1");

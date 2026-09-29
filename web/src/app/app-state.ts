@@ -81,6 +81,7 @@ export interface AppModel {
   readonly pendingReplayPoseRequestId: number | null;
   readonly nextReplayPoseRequestId: number;
   readonly replayPlaying: boolean;
+  readonly replayViewMode: "cinematic" | "telemetry" | "analysis";
   readonly replaySpeed: 0.5 | 1 | 2;
   readonly replayClockGeneration: number;
   readonly replayCameraMode: "auto" | FlightCameraMode;
@@ -259,6 +260,7 @@ export function createInitialAppModel(): AppModel {
     pendingReplayPoseRequestId: null,
     nextReplayPoseRequestId: 1,
     replayPlaying: false,
+    replayViewMode: "cinematic",
     replaySpeed: 1,
     replayClockGeneration: 0,
     replayCameraMode: "auto",
@@ -423,6 +425,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         pendingReplayPoseRequestId: replayPoseRequestId,
         nextReplayPoseRequestId: replayPoseRequestId === null ? model.nextReplayPoseRequestId : replayPoseRequestId + 1,
         replayPlaying: nextPhaseCode === 10 ? true : nextPhaseCode === 9 ? enteringReplay ? false : model.replayPlaying : false,
+        replayViewMode: enteringReplay ? "cinematic" : model.replayViewMode,
         replayClockGeneration: enteringAttract
           ? model.replayClockGeneration + 1
           : [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1
@@ -556,24 +559,30 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
       nextAnalysisCursorRequestId: requestId + 1
     }), [{ type: "load-flight-analysis-cursor", requestId, timeSeconds }]);
   }
-  if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 7) {
+  if (action.type === "activate" && [7, 9].includes(gameSessionPhaseCode(model.gameSession))) {
     if (action.controlId === "game-result-open-analysis") {
       return transition(withModel(model, { resultTab: "analysis" }));
     }
     if (action.controlId === "game-result-open-summary") {
       return transition(withModel(model, { resultTab: "summary" }));
     }
-    if (action.controlId === "game-analysis-map") {
+    if (action.controlId === "game-analysis-map" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
       return transition(withModel(model, { analysisChart: "map" }));
     }
-    if (action.controlId === "game-analysis-altitude") {
+    if (action.controlId === "game-analysis-altitude" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
       return transition(withModel(model, { analysisChart: "altitude" }));
     }
-    if (action.controlId === "game-analysis-speed") {
+    if (action.controlId === "game-analysis-speed" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
       return transition(withModel(model, { analysisChart: "speed" }));
     }
   }
   if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 9) {
+    if (action.controlId === "game-replay-view-mode") {
+      const nextMode = model.replayViewMode === "cinematic"
+        ? "telemetry"
+        : model.replayViewMode === "telemetry" ? "analysis" : "cinematic";
+      return transition(withModel(model, { replayViewMode: nextMode }));
+    }
     if (action.controlId === "game-replay-camera") {
       if (model.presentation.type !== "ready" || model.presentation.mode !== "screen") return transition(model);
       const cameraModes: readonly AppModel["replayCameraMode"][] = [
