@@ -9,8 +9,8 @@ use birdman_game_core::{
     SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
 };
 use birdman_game_format::{
-    AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, InformationLevel,
-    ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
+    AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, HudCue, HudProfile,
+    InformationLevel, ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
     ScenarioModelCatalog, WeatherClass, resolve_configuration,
 };
 use wasm_bindgen::{JsValue, prelude::*};
@@ -151,7 +151,7 @@ impl GameSessionBridge {
         Ok(())
     }
 
-    /// Selects the Information axis; 0=Full, 1=Standard, 2=Minimal, 3=Realistic.
+    /// Selects the Information axis; 0=Full through 4=Custom.
     pub fn set_information_level(&mut self, code: u32) -> Result<(), JsValue> {
         self.require_setup()?;
         let level = match code {
@@ -159,9 +159,10 @@ impl GameSessionBridge {
             1 => InformationLevel::Standard,
             2 => InformationLevel::Minimal,
             3 => InformationLevel::Realistic,
+            4 => InformationLevel::Custom,
             _ => {
                 return Err(JsValue::from_str(
-                    "information level code must be in [0, 3]",
+                    "information level code must be in [0, 4]",
                 ));
             }
         };
@@ -200,7 +201,37 @@ impl GameSessionBridge {
     /// Advances the Information axis and marks the selection Custom.
     pub fn cycle_information_level(&mut self) -> Result<(), JsValue> {
         self.require_setup()?;
-        self.set_information_level((self.information_level_code() + 1) % 4)
+        self.set_information_level((self.information_level_code() + 1) % 5)
+    }
+
+    /// Selects one of six Custom HUD cues by code and explicit visibility.
+    pub fn set_information_cue(&mut self, code: u32, visible: bool) -> Result<(), JsValue> {
+        self.require_setup()?;
+        let cue = match code {
+            0 => HudCue::Telemetry,
+            1 => HudCue::Attitude,
+            2 => HudCue::Wind,
+            3 => HudCue::FlightPath,
+            4 => HudCue::AngleOfAttack,
+            5 => HudCue::Warnings,
+            _ => return Err(JsValue::from_str("HUD cue code must lie in [0, 5]")),
+        };
+        self.difficulty = self.difficulty.with_hud_cue(cue, visible);
+        self.resolved_configuration = None;
+        Ok(())
+    }
+
+    /// Returns six Custom HUD cue visibility values in stable cue-code order.
+    pub fn information_profile_codes(&self) -> Vec<u32> {
+        let profile = self.difficulty.hud_profile();
+        vec![
+            u32::from(profile.telemetry()),
+            u32::from(profile.attitude()),
+            u32::from(profile.wind()),
+            u32::from(profile.flight_path()),
+            u32::from(profile.angle_of_attack()),
+            u32::from(profile.warnings()),
+        ]
     }
 
     /// Advances the Assistance axis and marks the selection Custom.
@@ -231,7 +262,7 @@ impl GameSessionBridge {
         }
     }
 
-    /// Returns Information axis code: 0=Full, 1=Standard, 2=Minimal, 3=Realistic.
+    /// Returns Information axis code: 0=Full through 4=Custom.
     pub fn information_level_code(&self) -> u32 {
         information_code(self.difficulty.information())
     }
@@ -248,9 +279,8 @@ impl GameSessionBridge {
 
     /// Returns the resolved difficulty and model identity used by this session.
     ///
-    /// Layout: preset, information, assistance, weather, scenario-catalog-version,
-    /// scenario-id, scenario-version, aircraft-version, environment-version,
-    /// controller-profile-version, seed-low, seed-high.
+    /// Layout: preset, information, assistance, weather, scenario identity,
+    /// seed-low/high, then six HUD cue visibility codes.
     pub fn configuration_metadata(&self) -> Result<Vec<u32>, JsValue> {
         let identity = self.session.configuration_identity().ok_or_else(|| {
             JsValue::from_str("resolved configuration is unavailable before Briefing")
@@ -268,6 +298,12 @@ impl GameSessionBridge {
             identity.controller_profile_version,
             identity.seed as u32,
             (identity.seed >> 32) as u32,
+            u32::from(self.difficulty.hud_profile().telemetry()),
+            u32::from(self.difficulty.hud_profile().attitude()),
+            u32::from(self.difficulty.hud_profile().wind()),
+            u32::from(self.difficulty.hud_profile().flight_path()),
+            u32::from(self.difficulty.hud_profile().angle_of_attack()),
+            u32::from(self.difficulty.hud_profile().warnings()),
         ])
     }
 
@@ -283,11 +319,21 @@ impl GameSessionBridge {
             birdman_game_format::FlightRecordPresetDocument::Realistic => 3,
             birdman_game_format::FlightRecordPresetDocument::Custom => 4,
         };
-        let settings = DifficultySettings::custom(
+        let mut settings = DifficultySettings::custom(
             information_from_record(difficulty.information),
             assistance_from_record(difficulty.assistance),
             weather_from_record(difficulty.weather),
         );
+        if let Some(profile) = difficulty.hud_profile {
+            settings = settings.with_hud_profile(HudProfile::new(
+                profile.telemetry,
+                profile.attitude,
+                profile.wind,
+                profile.flight_path,
+                profile.angle_of_attack,
+                profile.warnings,
+            ));
+        }
         let record = document
             .to_finalized_core_record()
             .map_err(flight_record_format_error)?;
@@ -1329,6 +1375,7 @@ fn information_code(level: InformationLevel) -> u32 {
         InformationLevel::Standard => 1,
         InformationLevel::Minimal => 2,
         InformationLevel::Realistic => 3,
+        InformationLevel::Custom => 4,
     }
 }
 
@@ -1344,6 +1391,7 @@ fn information_from_record(
         birdman_game_format::FlightRecordInformationDocument::Realistic => {
             InformationLevel::Realistic
         }
+        birdman_game_format::FlightRecordInformationDocument::Custom => InformationLevel::Custom,
     }
 }
 
@@ -1595,6 +1643,10 @@ mod tests {
     fn bridge_exposes_the_rust_owned_flight_record_and_finalization() {
         let mut bridge = GameSessionBridge::new(0).unwrap();
         bridge.open_setup().unwrap();
+        bridge.set_information_level(4).unwrap();
+        bridge.set_information_cue(2, false).unwrap();
+        assert_eq!(bridge.information_level_code(), 4);
+        assert_eq!(bridge.information_profile_codes(), [1, 1, 0, 1, 1, 1]);
         bridge.prepare().unwrap();
         assert_eq!(bridge.flight_record_sample_count(), 0);
         bridge.mark_briefing_ready().unwrap();
@@ -1640,6 +1692,11 @@ mod tests {
             birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
         assert_eq!(decoded.samples.len(), 2);
         assert!(decoded.finalization.is_some());
+        assert_eq!(
+            decoded.header.difficulty.information,
+            birdman_game_format::FlightRecordInformationDocument::Custom
+        );
+        assert_eq!(decoded.header.difficulty.hud_profile.unwrap().wind, false);
         let mut archived = GameSessionBridge::new(0).unwrap();
         archived.open_archived_flight_record(&encoded).unwrap();
         assert_eq!(archived.phase_code(), 9);
@@ -1867,7 +1924,10 @@ mod tests {
         bridge.prepare().unwrap();
         bridge.mark_briefing_ready().unwrap();
         let resolved = bridge.configuration_metadata().unwrap();
-        assert_eq!(&resolved[..], &[4, 2, 3, 4, 1, 5, 1, 1, 5, 4, 0, 0]);
+        assert_eq!(
+            &resolved[..],
+            &[4, 2, 3, 4, 1, 5, 1, 1, 5, 4, 0, 0, 1, 0, 0, 0, 0, 0]
+        );
         bridge.start_countdown(1).unwrap();
         bridge.advance_countdown().unwrap();
         let launch = bridge.launch().unwrap();

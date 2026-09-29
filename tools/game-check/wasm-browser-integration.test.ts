@@ -13,6 +13,18 @@ import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
+function hudProfile(session: GameSessionBridge) {
+  const values = session.information_profile_codes();
+  return {
+    telemetry: values[0] === 1,
+    attitude: values[1] === 1,
+    wind: values[2] === 1,
+    flightPath: values[3] === 1,
+    angleOfAttack: values[4] === 1,
+    warnings: values[5] === 1
+  };
+}
+
 describe("generated WebAssembly browser binding", () => {
   it("plays an independent Title demo without exporting it as a player flight", () => {
     initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
@@ -206,6 +218,7 @@ describe("generated WebAssembly browser binding", () => {
           difficulty: {
             presetCode: session.difficulty_preset_code(),
             informationCode: session.information_level_code(),
+            hudProfile: hudProfile(session),
             assistanceCode: session.assistance_level_code(),
             weatherCode: session.weather_class_code()
           },
@@ -248,6 +261,7 @@ describe("generated WebAssembly browser binding", () => {
           difficulty: {
             presetCode: session.difficulty_preset_code(),
             informationCode: session.information_level_code(),
+            hudProfile: hudProfile(session),
             assistanceCode: session.assistance_level_code(),
             weatherCode: session.weather_class_code()
           },
