@@ -10,10 +10,15 @@ use birdman_game_core::{
 };
 use birdman_game_format::{
     AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, HudCue, HudProfile,
-    InformationLevel, ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
-    ScenarioModelCatalog, WeatherClass, resolve_configuration,
+    InformationLevel, PersonalBestContentHashes, ResolvedConfiguration, ScenarioCatalog,
+    ScenarioCatalogEntry, ScenarioModel, ScenarioModelCatalog, WeatherClass,
+    canonical_personal_best_key, resolve_configuration,
 };
 use wasm_bindgen::{JsValue, prelude::*};
+
+mod personal_best_fingerprints {
+    include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
+}
 
 const MAX_TICKS: u64 = 4_000;
 const SURFACE_COMMAND_LIMIT_RAD: f64 = 0.04;
@@ -832,12 +837,38 @@ impl GameSessionBridge {
             .session
             .flight_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
-        let settings = self
+        let resolved = *self
             .resolved_configuration
             .as_ref()
-            .ok_or_else(|| JsValue::from_str("resolved flight settings are unavailable"))?
-            .difficulty;
-        let document = birdman_game_format::FlightRecordDocument::from_record(record, settings)
+            .ok_or_else(|| JsValue::from_str("resolved flight settings are unavailable"))?;
+        let mut document =
+            birdman_game_format::FlightRecordDocument::from_record(record, resolved.difficulty)
+                .map_err(flight_record_format_error)?;
+        let scenario_id = resolved
+            .scenario
+            .scenario_id
+            .checked_sub(1)
+            .ok_or_else(|| JsValue::from_str("resolved scenario index is invalid"))?;
+        let scenario_index = usize::try_from(scenario_id)
+            .map_err(|_| JsValue::from_str("resolved scenario index is invalid"))?;
+        let scenario = self
+            .scenarios
+            .get(scenario_index)
+            .ok_or_else(|| JsValue::from_str("resolved scenario is unavailable"))?;
+        let key = canonical_personal_best_key(
+            &document,
+            resolved,
+            scenario.course_axis(),
+            PersonalBestContentHashes {
+                scenario: personal_best_fingerprints::SCENARIO_SOURCE_FINGERPRINT,
+                aircraft: personal_best_fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
+                environment: personal_best_fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
+                physics_build: personal_best_fingerprints::PHYSICS_BUILD_FINGERPRINT,
+            },
+        )
+        .map_err(flight_record_format_error)?;
+        document = document
+            .with_personal_best_key(key)
             .map_err(flight_record_format_error)?;
         let encoded = document.encode_json().map_err(flight_record_format_error)?;
         String::from_utf8(encoded)
@@ -1717,6 +1748,7 @@ mod tests {
             birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
         assert_eq!(decoded.samples.len(), 2);
         assert!(decoded.finalization.is_some());
+        assert_eq!(decoded.personal_best_key(), None);
         assert_eq!(
             decoded.header.difficulty.information,
             birdman_game_format::FlightRecordInformationDocument::Custom
@@ -1772,6 +1804,32 @@ mod tests {
             flight_record_sample_layout().split(',').count(),
             RECORD_SAMPLE_LENGTH
         );
+    }
+
+    #[test]
+    fn completed_water_contact_export_persists_a_deterministic_personal_best_key() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        for _ in 0..super::MAX_TICKS {
+            if bridge.phase_code() == 7 {
+                break;
+            }
+            bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+        }
+        assert_eq!(bridge.phase_code(), 7);
+
+        let first = bridge.export_flight_record_json().unwrap();
+        let second = bridge.export_flight_record_json().unwrap();
+        assert_eq!(first, second);
+        let document =
+            birdman_game_format::FlightRecordDocument::decode_json(first.as_bytes()).unwrap();
+        assert!(document.personal_best_candidate_score().unwrap().is_some());
+        assert!(document.personal_best_key().is_some());
     }
 
     #[test]

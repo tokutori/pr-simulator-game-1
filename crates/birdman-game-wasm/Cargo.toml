@@ -14,5 +14,8 @@ birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 wasm-bindgen.workspace = true
 
+[build-dependencies]
+sha2.workspace = true
+
 [lints]
 workspace = true
