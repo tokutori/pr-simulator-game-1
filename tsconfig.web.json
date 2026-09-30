@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2023", "ESNext.Disposable", "DOM", "DOM.Iterable"],
+    "resolveJsonModule": true,
     "types": ["webxr"]
   },
   "include": ["web/src/**/*.ts"]

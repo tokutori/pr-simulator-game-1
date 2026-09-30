@@ -2,7 +2,7 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["node_modules/**", "target/**", "web/dist/**", "web/pkg/**", ".local/**"] },
+  { ignores: ["node_modules/**", "target/**", "web/dist/**", "web/pkg/**", ".local/**", ".tmp/**"] },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked.map((config) => ({ ...config, files: ["**/*.ts"] })),
   {

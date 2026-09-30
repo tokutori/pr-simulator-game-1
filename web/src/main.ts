@@ -32,7 +32,7 @@ import {
   queryFlightRecordSampleAt
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
-import { syntheticVenueMapForScenario } from "./game/synthetic-venue-map.js";
+import { venueMapForScenario } from "./game/biwa-venue-map.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { createFlightHudModel } from "./presentation/flight-hud-model.js";
@@ -107,7 +107,7 @@ function renderModel(): void {
     : phaseCode === 9
       ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
       : "pilot";
-  const cameraPoints = syntheticVenueMapForScenario(model.configurationMetadata?.scenarioId ?? 1)?.cameraPoints ?? [];
+  const cameraPoints = venueMapForScenario(model.configurationMetadata?.scenarioId ?? 1)?.cameraPoints ?? [];
   const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
     ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis?.samples)
     : null;

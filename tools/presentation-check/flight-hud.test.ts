@@ -89,4 +89,17 @@ describe("Flight HUD DOM lifecycle", () => {
     expect(instruments?.[2]?.children[1]?.textContent).toBe("N 2.0 · E -1.0 · D 0.5 m/s");
     expect(instruments?.[3]?.children[1]?.textContent).toBe("5.7°");
   });
+
+  it("shows Copernicus source and processing notices by default", () => {
+    const root = new TestElement(new TestDocument());
+    new FlightHudAdapter(root as unknown as HTMLElement);
+    const attribution = root.children.find((node) => node.className === "flight-hud-attributions");
+    const sourceNotice = attribution?.children.find((node) => node.className === "flight-hud-attribution-link" && node.textContent?.startsWith("© DLR e.V."));
+    const licenseNotice = attribution?.children.find((node) => node.className === "flight-hud-attribution-notice");
+
+    expect(sourceNotice?.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
+    expect(licenseNotice?.attributes.get("open")).toBeUndefined();
+    expect(licenseNotice?.children[1]?.textContent).toBe("produced using Copernicus WorldDEM-30.");
+    expect(licenseNotice?.children[2]?.textContent).toContain("do not incur any liability");
+  });
 });

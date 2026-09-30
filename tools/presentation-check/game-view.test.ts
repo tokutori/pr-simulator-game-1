@@ -372,6 +372,16 @@ describe("Game scene view model", () => {
       expect(chart.xAxisLabel).toBe("東 E (m)");
       expect(chart.equalAxisScale).toBe(true);
       expect(chart.series[0]?.points[1]).toEqual({ x: 6, y: 8 });
+      expect(chart.xMaximum - chart.xMinimum).toBeCloseTo(chart.yMaximum - chart.yMinimum);
+      expect((chart.yMaximum - chart.yMinimum) * 0.75).toBeCloseTo(8);
+      for (const series of chart.series.slice(1)) {
+        for (const point of series.points) {
+          expect(point.x).toBeGreaterThanOrEqual(chart.xMinimum);
+          expect(point.x).toBeLessThanOrEqual(chart.xMaximum);
+          expect(point.y).toBeGreaterThanOrEqual(chart.yMinimum);
+          expect(point.y).toBeLessThanOrEqual(chart.yMaximum);
+        }
+      }
       expect(chart.vectors[0]?.label).toContain("矢印は空気の移動先");
       expect(chart.series[0]?.segmentColors).toHaveLength(1);
       const wind = chart.vectors[0];
@@ -455,13 +465,10 @@ describe("Game scene view model", () => {
       throw new Error("Analysis map is missing");
     }
     expect(knownScenarioChart.series.map((series) => series.label)).toContain(
-      "Synthetic shoreline (schematic; not geographic data)"
+      "発進台"
     );
-    expect(knownScenarioChart.series.map((series) => series.label)).toContain(
-      "Synthetic platform (schematic; not geographic data)"
-    );
-    expect(knownScenarioChart.markers.map((marker) => marker.label)).toContain(
-      "Synthetic islet (schematic; not geographic data)"
+    expect(knownScenarioChart.series.map((series) => series.label)).not.toContain(
+      "彦根 湖岸線（OSM）"
     );
     expect(unknownScenarioChart.series).toHaveLength(1);
     expect(unknownScenarioChart.markers).toHaveLength(2);

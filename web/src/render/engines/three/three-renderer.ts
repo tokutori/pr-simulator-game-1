@@ -5,7 +5,9 @@ import {
   CircleGeometry,
   Color,
   DoubleSide,
+  Float32BufferAttribute,
   Group,
+  Fog,
   LinearFilter,
   DirectionalLight,
   Matrix4,
@@ -27,7 +29,7 @@ import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
 import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import type { CinematicCameraView } from "../../contracts/camera.js";
-import { IDENTITY_POSE, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
+import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import { composePose, inversePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
@@ -60,6 +62,34 @@ export interface ThreeRendererBundle {
 // The reference photograph has no metric scale. This affects appearance only;
 // the spectrum contract and the still-water contact plane retain their values.
 const LAKE_VISUAL_HEIGHT_SCALE = 8.0;
+// Place Takeshima just outside the centered title panel at every viewport
+// aspect ratio. Its bearing is computed from the OSM island outline.
+const TITLE_SCREEN_ISLAND_BEARING_RADIANS = 272.16851686166876 * Math.PI / 180;
+const TITLE_SCREEN_VERTICAL_FOV_RADIANS = 60 * Math.PI / 180;
+const TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS = 42 * 16;
+const TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS = 32;
+const TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS = 24;
+const TITLE_SCREEN_PITCH_HALF_RADIANS = 3 * Math.PI / 180;
+
+export function titleScreenCameraPoseForViewport(width: number, height: number): Pose {
+  if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+    throw new RangeError("Viewport dimensions must be positive");
+  }
+  const aspectRatio = width / height;
+  const horizontalHalfFov = Math.atan(Math.tan(TITLE_SCREEN_VERTICAL_FOV_RADIANS / 2) * aspectRatio);
+  const panelWidth = Math.min(TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS, width - TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS);
+  const panelHalfWidthNdc = panelWidth / width;
+  const targetIslandX = -Math.min(0.98, panelHalfWidthNdc + TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS / width);
+  const islandRelativeBearing = Math.atan(targetIslandX * Math.tan(horizontalHalfFov));
+  const yaw = islandRelativeBearing - TITLE_SCREEN_ISLAND_BEARING_RADIANS;
+  return pose(
+    vec3(0, 12, 0),
+    multiplyQuaternion(
+      quaternion(Math.cos(yaw / 2), 0, Math.sin(yaw / 2), 0),
+      quaternion(Math.cos(TITLE_SCREEN_PITCH_HALF_RADIANS), -Math.sin(TITLE_SCREEN_PITCH_HALF_RADIANS), 0, 0)
+    )
+  );
+}
 interface LakeVisualResources {
   readonly windSpeed: number;
   readonly near: LakeDetailLayer;
@@ -150,6 +180,8 @@ export function createThreeRenderer(
   const scene = new Scene();
   const skyTexture = createLakeSkyTexture();
   scene.background = skyTexture;
+  const lakeFog = new Fog(0x9aafb1, 14_000, 80_000);
+  scene.fog = lakeFog;
   const ambient = new AmbientLight(0xdceaf0, 1.15);
   ambient.layers.enable(1);
   scene.add(ambient);
@@ -194,10 +226,17 @@ export function createThreeRenderer(
       uWaterDark: { value: new Color(0x172831) },
       uWaterMid: { value: new Color(0x293b43) },
       uWaterLight: { value: new Color(0x50636a) },
+      uHazeColor: { value: lakeFog.color },
+      uHazeRange: { value: new Vector4(lakeFog.near, lakeFog.far, 0, 0) },
       uSunDirection: { value: new Vector4(-0.42, 0.82, -0.38, 0) },
       uReflectionTexture: { value: null },
       uReflectionMatrix: { value: new Matrix4() },
-      uReflectionEnabled: { value: 0 }
+      uReflectionEnabled: { value: 0 },
+      uWaterBackingClip: { value: 0 },
+      uWaterBackingCenter: { value: new Vector4(0, 0, 0, 0) },
+      // Leave a 100 m overlap behind the foreground mesh for its small
+      // horizontal wave displacement at the last vertices.
+      uWaterBackingInnerExtent: { value: 2900 }
     },
     vertexShader: lakeWaterVertexShader,
     fragmentShader: lakeWaterFragmentShader,
@@ -216,6 +255,54 @@ export function createThreeRenderer(
     waveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
     visualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight)
   };
+  const farWaterGeometry = new PlaneGeometry(160_000, 160_000);
+  farWaterGeometry.setAttribute("aGridSpacing", new Float32BufferAttribute([1_200, 1_200, 1_200, 1_200], 1));
+  const farWaterUniforms = {
+    ...UniformsUtils.clone(UniformsLib.lights),
+    uTimeSeconds: lakeUniform(waterMaterial, "uTimeSeconds", 0),
+    uWindSpeed: lakeUniform(waterMaterial, "uWindSpeed", lakeResources.windSpeed),
+    uWindVelocity: lakeUniform(waterMaterial, "uWindVelocity", new Vector4()),
+    uDetailScale: lakeUniform(waterMaterial, "uDetailScale", 1),
+    uDetailNear: lakeUniform(waterMaterial, "uDetailNear", lakeResources.near.texture),
+    uDetailFar: lakeUniform(waterMaterial, "uDetailFar", lakeResources.far.texture),
+    uDetailExtents: lakeUniform(waterMaterial, "uDetailExtents", new Vector4()),
+    uSkyTexture: lakeUniform(waterMaterial, "uSkyTexture", skyTexture),
+    uWaveKAmplitude: lakeUniform(waterMaterial, "uWaveKAmplitude", lakeResources.waveKAmplitude),
+    uWaveOmegaPhase: lakeUniform(waterMaterial, "uWaveOmegaPhase", lakeResources.waveOmegaPhase),
+    uWaveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
+    uVisualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight),
+    uWaterDark: lakeUniform(waterMaterial, "uWaterDark", new Color(0x172831)),
+    uWaterMid: lakeUniform(waterMaterial, "uWaterMid", new Color(0x293b43)),
+    uWaterLight: lakeUniform(waterMaterial, "uWaterLight", new Color(0x50636a)),
+    uHazeColor: lakeUniform(waterMaterial, "uHazeColor", lakeFog.color),
+    uHazeRange: lakeUniform(waterMaterial, "uHazeRange", new Vector4()),
+    uSunDirection: lakeUniform(waterMaterial, "uSunDirection", new Vector4()),
+    uReflectionMatrix: lakeUniform(waterMaterial, "uReflectionMatrix", new Matrix4()),
+    uReflectionTexture: { value: null },
+    uReflectionEnabled: { value: 0 },
+    uWaterBackingCenter: { value: new Vector4() },
+    uWaterBackingInnerExtent: { value: 2900 },
+    uWaterBackingClip: { value: 1 }
+  };
+  const farWaterMaterial = new ShaderMaterial({
+    lights: true,
+    uniforms: farWaterUniforms,
+    vertexShader: lakeFilteredWaterVertexShader,
+    fragmentShader: lakeWaterFragmentShader,
+    side: DoubleSide,
+    depthWrite: false,
+    depthTest: true
+  });
+  const farWaterBackingCenter = lakeUniform(farWaterMaterial, "uWaterBackingCenter", new Vector4()).value;
+  const farWater = new Mesh(farWaterGeometry, farWaterMaterial);
+  farWater.name = "lake-biwa-distant-water-backing";
+  // Draw the non-depth-writing backing first so the animated mesh always
+  // shades the intentional overlap region afterward.
+  farWater.renderOrder = -1;
+  // Use the same datum as the animated foreground and shoreline transition.
+  farWater.position.y = 0;
+  farWater.frustumCulled = false;
+  scene.add(farWater);
   const water = new Mesh(waterGeometry, waterMaterial);
   water.frustumCulled = false;
   water.receiveShadow = true;
@@ -270,11 +357,12 @@ export function createThreeRenderer(
       object.castShadow = (Array.isArray(material) ? material : [material]).every((part) => !part.transparent);
     }
   });
-  const camera = new PerspectiveCamera(60, 1, 0.05, 2000);
+  const camera = new PerspectiveCamera(60, 1, 0.05, 100_000);
   aircraftRoot.add(camera);
+  let titleCameraPose = titleScreenCameraPoseForViewport(1, 1);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
-  const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 2000);
+  const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 100_000);
   externalCameraRig.add(fixedCamera);
   let disposed = false;
   let loopRunning = false;
@@ -361,7 +449,11 @@ export function createThreeRenderer(
           flightPose.pilotPositionMeters,
           flightPose.initialPilotPositionMeters
         );
-      setPose(camera, composePose(pilotEyePose, frame.cameraPose));
+      const cameraPose = composePose(pilotEyePose, frame.cameraPose);
+      setPose(camera, composePose(
+        flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE,
+        cameraPose
+      ));
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
@@ -380,10 +472,14 @@ export function createThreeRenderer(
       );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;
-      // The non-flight scenic camera is at the origin. Keep its water below
-      // eye level so amplified wave crests do not cut across the horizon.
-      water.position.set(flightPose?.datumPositionNed.east ?? 0, flightPose === null ? -1.5 : 0, -(flightPose?.datumPositionNed.north ?? 0));
-      venue.group.visible = flightPose !== null;
+      // Flight and title scenes share the lake's 0 m datum; the shoreline
+      // transition mesh rises from that plane into valid land elevation data.
+      water.position.set(flightPose?.datumPositionNed.east ?? 0, 0, -(flightPose?.datumPositionNed.north ?? 0));
+      farWater.position.set(flightPose?.datumPositionNed.east ?? 0, 0, -(flightPose?.datumPositionNed.north ?? 0));
+      farWaterBackingCenter.set(farWater.position.x, farWater.position.z, 0, 0);
+      // Terrain, shoreline, and islands are part of the shared world in every
+      // scene; only the aircraft pose is absent on the title screen.
+      venue.group.visible = true;
       // Keep the light's orthographic shadow volume around the moving airframe.
       sun.target.position.copy(aircraftRoot.position);
       sun.position.copy(aircraftRoot.position).add(sunOffset);
@@ -490,6 +586,8 @@ export function createThreeRenderer(
       panelMaterial.dispose();
       waterGeometry.dispose();
       waterMaterial.dispose();
+      farWaterGeometry.dispose();
+      farWaterMaterial.dispose();
       reflectionTarget.dispose();
       skyTexture.dispose();
       lakeResources.near.texture.dispose();
@@ -668,6 +766,7 @@ export function createThreeRenderer(
     else renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    titleCameraPose = titleScreenCameraPoseForViewport(width, height);
     fixedCamera.aspect = width / height;
     fixedCamera.updateProjectionMatrix();
   }
@@ -905,6 +1004,36 @@ void main() {
 }
 `;
 
+const lakeFilteredWaterVertexShader = /* glsl */ `
+uniform mat4 uReflectionMatrix;
+attribute float aGridSpacing;
+varying vec3 vWorldPosition;
+varying vec3 vWorldNormal;
+varying float vCrest;
+varying float vCompression;
+varying float vGridSpacing;
+varying vec2 vBaseXZ;
+varying vec2 vRepresentedSlope;
+varying vec4 vReflectionCoord;
+#include <shadowmap_pars_vertex>
+void main() {
+  vec4 worldPosition = modelMatrix * vec4(position.x, 0.0, -position.y, 1.0);
+  vWorldPosition = worldPosition.xyz;
+  vWorldNormal = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
+  vCrest = 0.0;
+  vCompression = 0.0;
+  vGridSpacing = aGridSpacing;
+  vBaseXZ = worldPosition.xz;
+  vRepresentedSlope = vec2(0.0);
+  vReflectionCoord = uReflectionMatrix * worldPosition;
+  #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+    vDirectionalShadowCoord[0] = directionalShadowMatrix[0] *
+      (worldPosition + vec4(vWorldNormal * directionalLightShadows[0].shadowNormalBias, 0.0));
+  #endif
+  gl_Position = projectionMatrix * viewMatrix * worldPosition;
+}
+`;
+
 const lakeWaterFragmentShader = /* glsl */ `
 uniform float uWindSpeed;
 uniform vec4 uWindVelocity;
@@ -917,6 +1046,8 @@ uniform int uWaveCount;
 uniform vec3 uWaterDark;
 uniform vec3 uWaterMid;
 uniform vec3 uWaterLight;
+uniform vec3 uHazeColor;
+uniform vec4 uHazeRange;
 uniform vec4 uSunDirection;
 uniform sampler2D uReflectionTexture;
 uniform float uReflectionEnabled;
@@ -924,6 +1055,9 @@ uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform sampler2D uSkyTexture;
 uniform vec4 uDetailExtents;
+uniform float uWaterBackingClip;
+uniform vec4 uWaterBackingCenter;
+uniform float uWaterBackingInnerExtent;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying float vCrest;
@@ -1049,7 +1183,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
 }
 
 vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVisibility) {
-  vec3 geometricNormal = normalize(vWorldNormal);
+  vec3 geometricNormal = normalize(vWorldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
   float patches = lakeNoise(worldXZ * 0.17 + vec2(2.3, -7.1));
   vec2 microSlope = microDetail.xy;
   float unresolvedVariance = max(microDetail.z - dot(microSlope, microSlope), 0.0);
@@ -1097,18 +1231,22 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
   }
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
   color = mix(color, color * vec3(0.92, 0.97, 1.04), depthTint * 0.12);
-  float distanceToEye = length(cameraPosition.xz - worldXZ);
   color += vec3(1.0, 0.78, 0.52) * glitter * 0.15;
   color = mix(color, vec3(0.38, 0.43, 0.43), whitecap * 0.28);
-  // Airlight belongs after the water tint. Tinting the haze made the horizon
-  // darker than the foreground and produced a black horizontal band.
-  float atmosphericFade = smoothstep(300.0, 1600.0, distanceToEye);
-  vec3 hazeColor = vec3(0.12, 0.18, 0.20);
-  color = mix(color, hazeColor, atmosphericFade * 0.16);
+  // Use the scene's same fog curve and sky-colored airlight so distant water
+  // fades into the far shore without a separate dark horizon band.
+  float distanceToEye = length(cameraPosition - vWorldPosition);
+  float atmosphericFade = smoothstep(uHazeRange.x, uHazeRange.y, distanceToEye);
+  color = mix(color, uHazeColor, atmosphericFade);
   return color;
 }
 
 void main() {
+  // The 160 km calm backing supplies only the area beyond the 6 km animated
+  // plane. Clipping its center prevents coplanar overlap from flattening wave
+  // troughs or creating a visible square transition.
+  if (uWaterBackingClip > 0.5 &&
+      all(lessThan(abs(vBaseXZ - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
   vec2 footprintX = dFdx(vBaseXZ) * 0.25;
   vec2 footprintY = dFdy(vBaseXZ) * 0.25;
   vec2 center = vBaseXZ;

@@ -10,6 +10,9 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly telemetry: HTMLOutputElement;
   private readonly location: HTMLOutputElement;
   private readonly mapAttribution: HTMLAnchorElement;
+  private readonly terrainAttribution: HTMLAnchorElement;
+  private readonly copernicusAttribution: HTMLAnchorElement;
+  private readonly copernicusLicenseNotice: HTMLDetailsElement;
   private readonly adi: SVGSVGElement;
   private readonly horizon: SVGGElement;
   private readonly readouts: HTMLOutputElement;
@@ -49,6 +52,28 @@ export class FlightHudAdapter implements FlightHudPort {
     this.mapAttribution.href = "https://www.openstreetmap.org/copyright";
     this.mapAttribution.target = "_blank";
     this.mapAttribution.rel = "noopener noreferrer";
+    this.terrainAttribution = documentRef.createElement("a");
+    this.terrainAttribution.className = "flight-hud-attribution-link";
+    this.terrainAttribution.href = "https://earth.jaxa.jp/en/data/policy/";
+    this.terrainAttribution.target = "_blank";
+    this.terrainAttribution.rel = "noopener noreferrer";
+    this.terrainAttribution.textContent = "地形 AW3D30 (JAXA)";
+    this.copernicusAttribution = documentRef.createElement("a");
+    this.copernicusAttribution.className = "flight-hud-attribution-link";
+    this.copernicusAttribution.href = "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM";
+    this.copernicusAttribution.target = "_blank";
+    this.copernicusAttribution.rel = "noopener noreferrer";
+    this.copernicusAttribution.textContent = "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.";
+    this.copernicusLicenseNotice = documentRef.createElement("details");
+    this.copernicusLicenseNotice.className = "flight-hud-attribution-notice";
+    this.copernicusLicenseNotice.open = true;
+    const licenseSummary = documentRef.createElement("summary");
+    licenseSummary.textContent = "Copernicus GLO-30 利用条件";
+    const modifiedNotice = documentRef.createElement("p");
+    modifiedNotice.textContent = "produced using Copernicus WorldDEM-30.";
+    const liabilityNotice = documentRef.createElement("p");
+    liabilityNotice.textContent = "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.";
+    this.copernicusLicenseNotice.append(licenseSummary, modifiedNotice, liabilityNotice);
     this.adi = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.adi.setAttribute("viewBox", "0 0 240 180");
     this.adi.setAttribute("role", "img");
@@ -147,9 +172,12 @@ export class FlightHudAdapter implements FlightHudPort {
     const controls = documentRef.createElement("p");
     controls.className = "flight-hud-controls";
     controls.textContent = "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
+    const attributions = documentRef.createElement("div");
+    attributions.className = "flight-hud-attributions";
+    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice);
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
-    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, this.mapAttribution, controls);
+    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, controls);
     this.setVisible(false);
   }
 

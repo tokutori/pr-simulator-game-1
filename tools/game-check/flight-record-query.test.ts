@@ -9,6 +9,7 @@ import {
   FLIGHT_RECORD_FINALIZATION_LAYOUT,
   type FlightRecordQueryPort
 } from "../../web/src/game/flight-record-query.js";
+import { venueMapForScenario } from "../../web/src/game/biwa-venue-map.js";
 
 class PackedFlightRecord implements FlightRecordQueryPort {
   lastSecondsQuery: number | null = null;
@@ -141,13 +142,26 @@ describe("loadFlightAnalysis", () => {
   it("queries a fixed-altitude Rust wind cross-section for a known scenario", () => {
     const record = new PackedFlightRecord([sample(0, 0), sample(1, 0)]);
     const analysis = loadFlightAnalysis(record, 100, 1);
+    const venue = venueMapForScenario(1);
+    if (venue === null) throw new Error("Known scenario has no geographic venue");
     expect(analysis.windGrid?.altitudeMeters).toBe(10);
     expect(analysis.windGrid?.samples).toHaveLength(25);
+    const points = [...venue.lines.flatMap((line) => line.points), ...venue.landmarks.map((landmark) => landmark.point)];
+    const northValues = [...points.map((point) => point.northMeters), 0, 0.01];
+    const eastValues = [...points.map((point) => point.eastMeters), 0, 0.01];
+    const halfRange = Math.max(
+      Math.max(...northValues) - Math.min(...northValues),
+      Math.max(...eastValues) - Math.min(...eastValues), 2
+    ) / 2;
+    const centerNorth = (Math.max(...northValues) + Math.min(...northValues)) / 2;
+    const centerEast = (Math.max(...eastValues) + Math.min(...eastValues)) / 2;
     expect(analysis.windGrid?.samples[0]).toMatchObject({
-      northMeters: -34, eastMeters: -77,
+      northMeters: centerNorth - halfRange, eastMeters: centerEast - halfRange,
       windNorthMetersPerSecond: 1, windEastMetersPerSecond: -2, windDownMetersPerSecond: 0.5
     });
-    expect(analysis.windGrid?.samples[24]).toMatchObject({ northMeters: 120, eastMeters: 77 });
+    expect(analysis.windGrid?.samples[24]).toMatchObject({
+      northMeters: centerNorth + halfRange, eastMeters: centerEast + halfRange
+    });
   });
 
   it("does not query synthetic wind geometry for an unknown scenario", () => {

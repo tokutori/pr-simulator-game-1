@@ -21,10 +21,50 @@ processing = "Generated orthographic indigo fabric and hand-painted Tokushima Un
 
 [[assets]]
 path = "assets/biwa-shoreline.json"
-sha256 = "2e0c09f9825fa26312f2c98e9a0ee541d326620e884d0fa18743411ac7e1da19"
-source = "OpenStreetMap Lake Biwa relation 63499, outer way 41696803, API map export near the launch coordinate"
-source_version = "way version 47, 2026-02-23T09:13:17Z; fetched 2026-09-30"
+sha256 = "e1f0894b0edaf1d986c0de1f70fcabba0c5aa83d05c7772674d9fd7e384a1eb7"
+source = "OpenStreetMap Lake Biwa relation 63499, clipped outer shoreline ways and inner island rings"
+source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
 license = "ODbL-1.0"
 license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
 attribution = "© OpenStreetMap contributors"
-processing = "tools/world-build/build_biwa_shoreline.py; origin WGS84 35.294075,136.254448; water datum 0 m; 2 m Douglas-Peucker simplification; source XML excluded"
+processing = "tools/world-build/build_biwa_world.py; origin WGS84 35.294075,136.254448; 2 m launch-area, 20 m distant shoreline and 8 m island Douglas-Peucker simplification preserving at least three distinct points per closed island ring; source XML excluded"
+
+[[assets]]
+path = "assets/biwa-analysis-map.json"
+sha256 = "1eb207b851062f20a200b662cc477994f490b3e7f9a0f39e4ffa66e1a87c3bd9"
+source = "OpenStreetMap Lake Biwa relation 63499, local shoreline crop around the Hikone launch point"
+source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
+license = "ODbL-1.0"
+license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
+attribution = "© OpenStreetMap contributors"
+processing = "tools/world-build/build_biwa_world.py; 3 km × 3 km shoreline crop; local NED camera points are approximate, not surveyed; point hash recorded in asset"
+
+[[assets]]
+path = "assets/biwa-terrain.json"
+sha256 = "3dc41ea7060ecbf4c7755800aed48af13fdef3dfb61dbd4bd3167fa0a07ffa81"
+source = "JAXA Earth API AW3D30 COG and mask tiles E135-N35/E136-N35; Copernicus DEM GLO-30 Public COG tiles N35-E135/N35-E136"
+source_version = "AW3D30 v3.2 2021-02 collection; Copernicus DEM GLO-30 Public 2021 release; Copernicus tile SHA-256 values are recorded in the asset"
+license = "JAXA Research Data Terms of Use; Copernicus WorldDEM-30 free and open license"
+license_url = "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM; https://earth.jaxa.jp/en/data/policy/"
+attribution = "AW3D30 (JAXA); produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved."
+processing = "tools/world-build/build_biwa_world.py; AW3D30 mask classes 0 and 12 preferred; GSI DTM class 4 excluded; Copernicus GLO-30 fills only missing vertices classified as land by the OSM mask; +0.3 m local median alignment from 8,828 co-located land samples, not a geodetic datum conversion; 300 m broad grid, 12.06 km square native 30 m flight and shore grid, four 30 m island grids plus a 10 m sampling grid for OSM wooded islet 1156534005, four 90 m opposite-shore peak grids; source COGs excluded"
+
+[[assets]]
+path = "assets/biwa-land-mask.json"
+sha256 = "b079091933d005429762805c534de83609f43a07b5a35069a22260c12bc0af00"
+source = "OpenStreetMap Lake Biwa relation 63499 outer water ring and inner island rings"
+source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
+license = "ODbL-1.0"
+license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
+attribution = "© OpenStreetMap contributors"
+processing = "tools/world-build/build_biwa_world.py; land/water classification sampled at AW3D30 terrain grid vertices using valid closed OSM island rings and packed four samples per hexadecimal digit; raw OSM XML excluded"
+
+[[assets]]
+path = "assets/biwa-venue-features.json"
+sha256 = "726e3ff5c9b1ed8e18d5d5a73507d77cdfa4f8b8a74c74677cbf16dde106d029"
+source = "OpenStreetMap API local map snapshot around Matsubara launch venue"
+source_version = "snapshot SHA-256 recorded in asset; fetched 2026-09-30"
+license = "ODbL-1.0"
+license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
+attribution = "© OpenStreetMap contributors"
+processing = "tools/world-build/build_biwa_world.py; WGS84 origin 35.294075,136.254448; 3 km square; beach, woodland, tree-row, pier, quay and breakwater ways; source OSM XML excluded"

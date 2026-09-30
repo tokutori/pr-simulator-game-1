@@ -109,6 +109,30 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 ## 表示・性能・配布
 
 BPG-010の湖面描画は地形・空に依存しない簡易world上で先行受入する。静止・前進・横移動とpitch/roll変化を与え、world-spaceの波面・反射・表面模様から移動方向・速度変化・姿勢変化を識別できることを目視確認する。描画と静水面接触判定が独立していることも確認する。続くBPG-009では対岸稜線・cockpit/wing基準・近景optic flow・中景landmarkを段階的に有効化し、pitch・roll・yaw・速度・高度・scaleの手掛かりと500 m移動時のparallaxを確認する。BPG-011では稜線視認性を維持するhazeをcloud detailより先に調整し、reflectionへの空・雲の反映も評価する。
+`lake-venue-parallax.test.ts` はOSM由来の多景島detail patchとAW3D30北西側稜線の位置を三次元camera projectionへ通し、500 m移動時に近景のscreen displacementが遠景より大きいことを回帰確認する。`lake-venue-mesh.test.ts` は岸線transition meshの沖側underlapからDEM outer ringまで各頂点が三角形に接続されること、上向きface、離陸海岸のnodata band、対岸北岸の広いDSM欠損帯、主要4島すべての連続した岸線遷移を検査する。水域マスクで有効DSM標高を除外し、疎な標本しかない多景島・オコノ洲はOSM輪郭内を半格子間隔で補間する回帰条件も含む。2026-09-30、local 5198のTitleとReplay Pilot/Chase初期視点を画面確認し、水面・湖岸・対岸地形が同時表示され、岸線underlap拡張後のTitleでも見える範囲に明瞭な隙間がないことを確認した。この画面確認はパネル外余白へ多景島を合わせるカメラ変更前のbuild `4753456b` に対する証拠である。現行Title cameraはOSM島輪郭の中心方位272.17°とviewport寸法からyawを決め、多景島を中央パネル左端から24 px離して配置する。`three-renderer-camera.test.ts` は320〜1920 px幅の5画面寸法で投影位置を検査するが、実画面は新カメラ変更後に未確認である。幾何・投影テストだけでは姿勢・高度を変えた実画面の視認性、500 m飛行中の実描画parallax、全湖岸の稜線誤差受入を満たさない。地形・湖岸・島はTitle背景でもFlight/Replayと同じworldに表示する。
+2026-09-30に岸線の短いオープン端を閉じる処理を追加し、`lake-venue-mesh.test.ts`で該当する北西岸の全サンプルとmesh vertex接続を検査する。local 5198のTitleとDemo Replayの開始直後・飛行約16秒の1280×720表示で水面・湖岸・対岸稜線を再確認し、確認した範囲では背景へ抜ける明瞭な隙間がない。全湖岸を近接飛行する画面確認と、傾斜・高度を変えた系統的なvisual sweepは未実施である。
+湖岸meshの回帰試験には、OSMの短いline fragmentで陸側metadataが局所反転した西岸も追加した。明示的なOSM land maskを使って陸側を再探索し、同区間の全sample profileと頂点接続を確認する。
+
+2026-09-30、対岸4峰のAW3D30 30 m patchに含まれる最高標高sampleの周囲90 m四方を、国土地理院[サーバーサイド標高API](https://maps.gsi.go.jp/development/elevation_s.html)で独立照合した。各patchの最高sampleを中心に南北・東西±30 mの9点を取得し、`build_biwa_world.py`と同じ局所投影（緯度111,132 m/度、経度111,320×cos(35.294075°) m/度）で照合した。9点すべてでAPIの`hsrc`は「1m（レーザ）」だった。中心値を各面から差し引いた相対プロファイルRMSEとAPI側最大点のずれは次の通りである。
+
+| AW3D30 patch | 相対profile RMSE | API側最大点のずれ（北, 東） |
+|---|---:|---:|
+| 北西 | 3.89 m | +30 m, +30 m |
+| 北 | 2.56 m | 0 m, 0 m |
+| 北西遠方 | 6.82 m | 0 m, 0 m |
+| 西 | 2.74 m | 0 m, 0 m |
+
+この9点照合は山頂付近の短距離な形状比較であり、稜線全体の位置・標高誤差ではない。中心差し引きにより一定の鉛直datum差は除かれるが、DSMとAPI側DEMの表面定義、空間解像度、取得時期の差は残る。したがって値をAW3D30へ上書きせず、地形の独立確認が部分的に済んだ証拠として扱う。GSI APIは返却内容を変更・停止する可能性があるため、実行時依存にはせず、出典と取得日をこの検証記録に残す。
+2026-09-30、local 5198の現行worktreeを新規ブラウザータブで開き、1280×720のTitle画面とDemo Replayの9.5秒・約93 m地点を目視確認した。Titleでは対岸地形が表示され、Replayでは湖面と対岸稜線が連続して見え、確認した範囲に明瞭な水面・地形間の背景抜けはなかった。既存の撮影記録はカメラ位置変更前のため、今回の確認を現行画面の証拠として追記する。傾斜・高度・全湖岸を網羅した検査ではない。
+2026-09-30、全40本のopen shorelineと17島輪郭をサンプル単位で集計した結果、標高transitionが作れない41サンプルは沖の白石を構成する4輪郭だけに集中していた。対応AW3D30画素は有効な地形クラスではなく、既存DSMから岩の高さを作れない。これらはOSMの4輪郭と高島市公表の最高14 mを使う描画専用岩礁meshで覆い、他の高さは輪郭面積による推定値とした。transition試験は通常のopen coastと標高を持つ全島でサンプルを完全接続し、別試験で4岩礁の輪郭・水面下underlap・14 m上限を検査する。離陸地点の湖岸では遷移帯を構成する各パネルの中心点が実際の三角形内に入ることも回帰検査する。変更後のlocal 5198・1280×720 Titleでは見える範囲の水面と湖岸が連続し、目視できる背景抜けはなかった。沖の白石を正面から捉えた近接画面と全湖岸のvisual sweepは未実施である。
+2026-09-30、実会場の `platform`・`shore`・`telephoto` camera pointと記録飛行開始位置から生成したcamera poseで、沖島・多景島・対岸西側稜線・北側稜線の標高ピークが指定画角に入ることを `lake-venue-parallax.test.ts` で検査した。これは実際のworld座標・camera pointを用いた投影試験であり、mesh rasterization、遮蔽、実画面上の視認性を証明しない。画面撮影を伴うmulti-view visual sweepは引き続き必要である。
+
+2026-09-30、local 5198のbuild `4753456b`を1280×720の新規タブで確認し、TitleとDemo Replay 2.55秒・5.95秒時点の画面確認を行った。画面上で水面・対岸地形は連続し、確認範囲に明瞭な背景抜けは見えなかった。これは遠景の斜め視点であり、島岸や特定の湖岸区間を近接確認した結果ではない。同日に陸側の遷移距離を全40 shoreline fragmentで監査し、断片33の一部で最大2,398 mに達することを確認した。該当位置の岸線サンプル（N=-4,954.7 m, E=-5,531.3 m）から外端（N=-3,546.1 m, E=-3,590.6 m）までの遷移面が接続され、外端標高は約3.04 mだった。これは描画上の接続を示すもので、欠測帯の実地形を裏付ける測量値ではない。高密度の近接visual QAは残る。
+
+2026-09-30、同じlocal 5198を再確認し、Demo Replay 16.31秒・161.4 m地点で水面、機体、対岸の同時表示を撮影した。画面上では水面と対岸の間に明瞭な空抜けは見えなかった。これは遠距離視点の一例であり、個別湖岸の近接状態や全方位を検査したものではない。
+
+2026-09-30、変更中worktreeで `npm.cmd run verify` が成功した。typecheck、lint、30 test files / 264 tests、repository checks、production buildが通過し、Three.js renderer chunkの500 kB超過警告だけが残った。全Issueの視覚受入や上記欠測帯の実地形一致を証明する検査ではない。
+2026-09-30、水面と地形の継ぎ目対策として、離陸地点周囲の30 m DEM patchを3 km角から12 km角へ拡張した。これにより近傍の低密度 shoreline transition が通常沿岸に重ならない範囲へ広がり、陸側の近接地形探索はOSM land maskで水域のDSM値を避ける。open shorelineの端点付近ではこの探索を止め、隣接する面との連続性を維持する。全shoreline sampleの幅監査では、12 km local patch範囲内の最大transition幅が335.44 m、600 m超が0件となった。離陸海岸のfragment 33は従来最大約2,398 mだった箇所が約335 mまで短縮した。一方、patch外の遠隔海岸には最大約2,404 mの広いtransitionが残る。これは今回の近岸の隙間対策が全湖岸の地形形状を解決した意味ではない。現行worktreeで `npm.cmd run verify` はtypecheck、lint、30 test files / 264 tests、repository checks、production buildまで成功した。local 5198のTitleおよびDemo Replay開始直後を1280×720で確認し、表示範囲には明瞭な水面・地形間の隙間が見えなかった。高密度の近接・全方位visual sweepは未実施である。
 BPG-012ではframe-time分布、画質振動、physics allocationと実行時間、download量を計測する。
 BPG-013ではsubpath、WASM MIME、cache、asset帰属、keyboard/gamepad、browser smoke testを検証する。
 未確認の端末・browserは明記する。実機同定・物理HIL検証をこれらの合格に含めない。

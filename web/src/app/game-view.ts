@@ -3,7 +3,7 @@ import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
-import { syntheticVenueMapForScenario } from "../game/synthetic-venue-map.js";
+import { venueMapForScenario } from "../game/biwa-venue-map.js";
 import type {
   AppModel,
   ConfigurationMetadataUiState,
@@ -323,6 +323,73 @@ export function createGameViewModel(
   });
 }
 
+function clipMapSegment(
+  start: Readonly<{ x: number; y: number }>,
+  end: Readonly<{ x: number; y: number }>,
+  minimumX: number,
+  maximumX: number,
+  minimumY: number,
+  maximumY: number
+): Readonly<{ start: Readonly<{ x: number; y: number }>; end: Readonly<{ x: number; y: number }> }> | null {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  let lower = 0;
+  let upper = 1;
+  for (const [p, q] of [
+    [-deltaX, start.x - minimumX], [deltaX, maximumX - start.x],
+    [-deltaY, start.y - minimumY], [deltaY, maximumY - start.y]
+  ] as const) {
+    if (p === 0) {
+      if (q < 0) return null;
+      continue;
+    }
+    const ratio = q / p;
+    if (p < 0) lower = Math.max(lower, ratio);
+    else upper = Math.min(upper, ratio);
+    if (lower > upper) return null;
+  }
+  return {
+    start: { x: start.x + lower * deltaX, y: start.y + lower * deltaY },
+    end: { x: start.x + upper * deltaX, y: start.y + upper * deltaY }
+  };
+}
+
+function clipMapPolyline(
+  points: readonly Readonly<{ x: number; y: number }>[],
+  minimumX: number,
+  maximumX: number,
+  minimumY: number,
+  maximumY: number
+): readonly (readonly Readonly<{ x: number; y: number }>[])[] {
+  const fragments: Readonly<{ x: number; y: number }>[][] = [];
+  let current: Readonly<{ x: number; y: number }>[] = [];
+  const append = (point: Readonly<{ x: number; y: number }>) => {
+    const previous = current[current.length - 1];
+    if (previous === undefined || Math.hypot(point.x - previous.x, point.y - previous.y) > 1e-8) current.push(point);
+  };
+  const finish = () => {
+    if (current.length > 1) fragments.push(current);
+    current = [];
+  };
+  for (let index = 0; index < points.length - 1; index++) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (start === undefined || end === undefined) continue;
+    const clipped = clipMapSegment(start, end, minimumX, maximumX, minimumY, maximumY);
+    if (clipped === null) {
+      finish();
+      continue;
+    }
+    const previous = current[current.length - 1];
+    if (previous !== undefined && Math.hypot(clipped.start.x - previous.x, clipped.start.y - previous.y) > 1e-8) finish();
+    append(clipped.start);
+    append(clipped.end);
+    if (Math.hypot(clipped.end.x - end.x, clipped.end.y - end.y) > 1e-8) finish();
+  }
+  finish();
+  return fragments;
+}
+
 function createAnalysisChart(
   analysis: FlightAnalysisData,
   chart: AppModel["analysisChart"],
@@ -332,16 +399,15 @@ function createAnalysisChart(
 ): UiChart {
   const samples = analysis.samples;
   if (chart === "map") {
-    const venue = scenarioId === null ? null : syntheticVenueMapForScenario(scenarioId);
-    const venuePoints = venue === null ? [] : [
-      ...venue.lines.flatMap((line) => line.points),
-      ...venue.landmarks.map((landmark) => landmark.point)
-    ];
-    const north = [...samples.map((sample) => sample.northMeters), ...venuePoints.map((point) => point.northMeters)];
-    const east = [...samples.map((sample) => sample.eastMeters), ...venuePoints.map((point) => point.eastMeters)];
+    const venue = scenarioId === null ? null : venueMapForScenario(scenarioId);
+    const north = samples.map((sample) => sample.northMeters);
+    const east = samples.map((sample) => sample.eastMeters);
     const centerNorth = (Math.min(...north) + Math.max(...north)) / 2;
     const centerEast = (Math.min(...east) + Math.max(...east)) / 2;
-    const baseHalfRange = Math.max(Math.max(...north) - Math.min(...north), Math.max(...east) - Math.min(...east), 2) / 2;
+    const trackSpan = Math.max(Math.max(...north) - Math.min(...north), Math.max(...east) - Math.min(...east), 2);
+    const baseHalfRange = trackSpan / 2;
+    // Keep the longest trajectory dimension at 75% of the square map viewport.
+    const halfRange = baseHalfRange / 0.75;
     const windSpeed = cursorSample === null ? 0 : Math.hypot(
       cursorSample.windNorthMetersPerSecond,
       cursorSample.windEastMetersPerSecond
@@ -352,9 +418,6 @@ function createAnalysisChart(
       x: cursorSample.eastMeters + cursorSample.windEastMetersPerSecond * windScale,
       y: cursorSample.northMeters + cursorSample.windNorthMetersPerSecond * windScale
     };
-    const halfRange = vectorEnd === null
-      ? baseHalfRange
-      : Math.max(baseHalfRange, Math.abs(vectorEnd.x - centerEast), Math.abs(vectorEnd.y - centerNorth)) / 0.9;
     const timeMarkers = mapTimeMarkers(samples, analysis.summary.durationSeconds);
     const windGrid = analysis.windGrid;
     const gridMaximumHorizontalWind = windGrid === null || windGrid === undefined
@@ -379,11 +442,18 @@ function createAnalysisChart(
       points: samples.map((sample) => ({ x: sample.eastMeters, y: sample.northMeters })),
       segmentColors: samples.slice(0, -1).map((_, index) => progressColor(samples.length <= 2 ? 0.5 : index / (samples.length - 2)))
     }];
-    venue?.lines.forEach((line) => series.push({
-      label: line.label,
-      color: line.color,
-      points: line.points.map((point) => ({ x: point.eastMeters, y: point.northMeters }))
-    }));
+    venue?.lines.forEach((line) => {
+      const fragments = clipMapPolyline(
+        line.points.map((point) => ({ x: point.eastMeters, y: point.northMeters })),
+        centerEast - halfRange, centerEast + halfRange, centerNorth - halfRange, centerNorth + halfRange
+      );
+      fragments.forEach((points, index) => series.push({ label: index === 0 ? line.label : "", color: line.color, points }));
+    });
+    const clipVector = (start: Readonly<{ x: number; y: number }>, end: Readonly<{ x: number; y: number }>) =>
+      clipMapSegment(start, end, centerEast - halfRange, centerEast + halfRange, centerNorth - halfRange, centerNorth + halfRange);
+    const selectedWind = windSpeed === 0 || vectorEnd === null
+      ? null
+      : clipVector({ x: cursorSample?.eastMeters ?? 0, y: cursorSample?.northMeters ?? 0 }, vectorEnd);
     const markers = [
       { label: "Start", color: "#f3f4e8", point: { x: samples[0]?.eastMeters ?? 0, y: samples[0]?.northMeters ?? 0 } },
       {
@@ -391,7 +461,9 @@ function createAnalysisChart(
         color: "#f29c78",
         point: { x: samples[samples.length - 1]?.eastMeters ?? 0, y: samples[samples.length - 1]?.northMeters ?? 0 }
       },
-      ...(venue?.landmarks.map((landmark) => ({
+      ...(venue?.landmarks.filter((landmark) => landmark.point.eastMeters >= centerEast - halfRange &&
+        landmark.point.eastMeters <= centerEast + halfRange && landmark.point.northMeters >= centerNorth - halfRange &&
+        landmark.point.northMeters <= centerNorth + halfRange).map((landmark) => ({
         label: landmark.label,
         color: landmark.color,
         point: { x: landmark.point.eastMeters, y: landmark.point.northMeters }
@@ -401,22 +473,26 @@ function createAnalysisChart(
       ...(cursorSample === null ? [] : [{
         label: `選択sampleの風 · h ${cursorSample.altitudeMeters.toFixed(1)} m · 矢印は空気の移動先 · ${windScale.toFixed(1)} m/(m/s)`,
         color: "#f2b35e",
-        start: windSpeed === 0 || vectorEnd === null ? null : { x: cursorSample.eastMeters, y: cursorSample.northMeters },
-        end: windSpeed === 0 ? null : vectorEnd
+        start: selectedWind?.start ?? null,
+        end: selectedWind?.end ?? null
       }]),
       ...(windGrid === null || windGrid === undefined ? [] : windGrid.samples.map((sample, index) => {
         const horizontalSpeed = Math.hypot(sample.windNorthMetersPerSecond, sample.windEastMetersPerSecond);
         const hasHorizontalWind = horizontalSpeed > 0 && gridWindScale > 0;
+        const clipped = hasHorizontalWind ? clipVector(
+          { x: sample.eastMeters, y: sample.northMeters },
+          {
+            x: sample.eastMeters + sample.windEastMetersPerSecond * gridWindScale,
+            y: sample.northMeters + sample.windNorthMetersPerSecond * gridWindScale
+          }
+        ) : null;
         return {
           label: index === 0
             ? `風断面 h ${windGrid.altitudeMeters.toFixed(1)} m · W_D ${verticalWindDescription} m/s · 矢印は空気の移動先 · 1 m/s = ${gridWindScale.toFixed(1)} m`
             : "",
           color: "#c7eb72",
-          start: hasHorizontalWind ? { x: sample.eastMeters, y: sample.northMeters } : null,
-          end: hasHorizontalWind ? {
-            x: sample.eastMeters + sample.windEastMetersPerSecond * gridWindScale,
-            y: sample.northMeters + sample.windNorthMetersPerSecond * gridWindScale
-          } : null
+          start: clipped?.start ?? null,
+          end: clipped?.end ?? null
         };
       }))
     ];

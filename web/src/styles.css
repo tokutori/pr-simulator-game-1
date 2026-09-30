@@ -282,7 +282,12 @@ body {
 .flight-hud-instrument-wind svg { width: 3.5rem; height: 3.5rem; justify-self: center; }
 .flight-hud-telemetry { grid-area: telemetry; color: #d1ddd5; line-height: 1.45; }
 .flight-hud-location { grid-area: location; color: #c6d9df; font-variant-numeric: tabular-nums; }
-.flight-hud-attribution { grid-area: attribution; color: #c6d9df; font-size: 0.65rem; pointer-events: auto; }
+.flight-hud-attributions { grid-area: attribution; display: flex; flex-wrap: wrap; gap: 0.15rem 0.45rem; font-size: 0.65rem; }
+.flight-hud-attribution,
+.flight-hud-attribution-link { color: #c6d9df; pointer-events: auto; }
+.flight-hud-attribution-notice { flex-basis: 100%; color: #c6d9df; line-height: 1.35; pointer-events: auto; }
+.flight-hud-attribution-notice summary { cursor: pointer; }
+.flight-hud-attribution-notice p { margin: 0.25rem 0 0; }
 .flight-hud-controls { grid-area: controls; color: #b9c9c2; font-size: 0.65rem; }
 
 .screen-ui-shell h1,

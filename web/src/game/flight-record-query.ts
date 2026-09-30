@@ -1,4 +1,4 @@
-import { syntheticVenueMapForScenario } from "./synthetic-venue-map.js";
+import { venueMapForScenario } from "./biwa-venue-map.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
 
 export const FLIGHT_RECORD_SAMPLE_LAYOUT = Object.freeze({
@@ -264,7 +264,7 @@ function queryFlightAnalysisWindGrid(
   scenarioId: number
 ): FlightAnalysisWindGrid | null {
   const windGridQuery = record.flight_analysis_wind_grid_packed;
-  const venue = syntheticVenueMapForScenario(scenarioId);
+  const venue = venueMapForScenario(scenarioId);
   const firstSample = samples[0];
   if (windGridQuery === undefined || venue === null || firstSample === undefined) return null;
   const points = [
