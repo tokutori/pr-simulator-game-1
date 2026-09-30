@@ -155,6 +155,55 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       });
       activate("game-result-retry");
       expect(model.gameSession.kind).toBe("briefing-ready");
+
+      activate("game-briefing-cancel");
+      expect(model.gameSession.kind).toBe("setup");
+      activate("game-setup-start");
+      expect(model.gameSession.kind).toBe("briefing-ready");
+      activate("game-briefing-cancel");
+      expect(model.gameSession.kind).toBe("setup");
+      activate("game-setup-back");
+      expect(model.gameSession.kind).toBe("title");
+      activate("game-title-demo");
+      expect(model.gameSession.kind).toBe("attract");
+      activate("game-attract-return");
+      expect(model.gameSession.kind).toBe("title");
+
+      activate("game-title-start");
+      activate("game-setup-start");
+      activate("game-briefing-start");
+      expect(model.gameSession.kind).toBe("countdown");
+      activate("game-countdown-cancel");
+      expect(model.gameSession.kind).toBe("briefing-ready");
+      activate("game-briefing-start");
+      while (session.countdown_remaining() > 0) session.advance_countdown();
+      session.launch();
+      render();
+      expect(model.gameSession.kind).toBe("flight");
+      activate("game-flight-pause");
+      expect(model.gameSession.kind).toBe("paused-flight");
+      activate("game-pause-open-settings");
+      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("settings");
+      activate("game-pause-settings-back");
+      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("menu");
+      activate("game-flight-resume");
+      expect(model.gameSession.kind).toBe("flight");
+      activate("game-flight-abort");
+      expect(model.gameSession.kind).toBe("result");
+
+      const analysisRequestId = model.pendingAnalysisRequestId;
+      if (analysisRequestId === null) throw new Error("Result analysis request was not created");
+      const analysis = loadFlightAnalysis(session, physics_hz());
+      model = updateApp(model, { type: "flight-analysis-loaded", requestId: analysisRequestId, data: analysis }).model;
+      adapter.render(createGameViewModel(model, model.gameSession.kind === "result" ? model.gameSession.snapshot : null, model.flightAnalysis));
+      activate("game-result-replay");
+      expect(model.gameSession.kind).toBe("replay");
+      activate("game-replay-return");
+      expect(model.gameSession.kind).toBe("result");
+      activate("game-result-setup");
+      expect(model.gameSession.kind).toBe("setup");
+      activate("game-setup-back");
+      expect(model.gameSession.kind).toBe("title");
     } finally {
       session.free();
       await window.happyDOM.abort();
