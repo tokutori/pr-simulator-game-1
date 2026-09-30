@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   GameSessionBridge,
+  PersonalBestSelectionBridge,
   compare_personal_best_json,
   initSync,
   physics_hz
@@ -94,6 +95,19 @@ describe("generated WebAssembly browser binding", () => {
         header: { ...record.header, personal_best_key: Array.from({ length: 32 }, () => 0) }
       };
       expect(compare_personal_best_json(recordJson, JSON.stringify(otherKeyRecord))).toBe(3);
+      const selection = new PersonalBestSelectionBridge(recordJson);
+      try {
+        expect(selection.is_eligible()).toBe(true);
+        expect(selection.key_hex()).toMatch(/^[0-9a-f]{64}$/);
+        expect(selection.candidate_is_best()).toBe(true);
+        selection.consider_existing(12, recordJson);
+        expect(selection.candidate_is_best()).toBe(false);
+        expect(selection.selected_existing_id()).toBe(12);
+        expect(() => { selection.consider_existing(0, recordJson); })
+          .toThrow("Stored FlightRecord ID is invalid");
+      } finally {
+        selection.free();
+      }
       session.retry();
       expect(session.phase_code()).toBe(3);
       session.open_setup();

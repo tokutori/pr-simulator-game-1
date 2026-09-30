@@ -927,8 +927,8 @@ mod tests {
     use super::{FlightRecordDocument, FlightRecordFormatError};
     use crate::{
         AssistanceLevel, ControllerProfile, DifficultySettings, InformationLevel,
-        PersonalBestContentHashes, ResolvedConfiguration, ScenarioSelection, WeatherClass,
-        canonical_personal_best_key, compare_personal_best_records,
+        PersonalBestContentHashes, PersonalBestSelection, ResolvedConfiguration, ScenarioSelection,
+        WeatherClass, canonical_personal_best_key, compare_personal_best_records,
     };
     use birdman_game_core::{
         BodyRateFeedbackConfig, BodyVector, ControlMode, CourseAxis, FlightFeedbackInput,
@@ -1175,6 +1175,37 @@ mod tests {
         assert_eq!(
             compare_personal_best_records(&candidate, &ineligible).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn personal_best_selection_keeps_an_existing_tie_and_ignores_other_keys() {
+        use birdman_game_core::PersonalBestKey;
+
+        let candidate = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        let equal = candidate.clone();
+        let different = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([2; 32])))
+            .unwrap();
+        let mut selection = PersonalBestSelection::try_new(&candidate).unwrap().unwrap();
+
+        selection.consider_existing(8, &different).unwrap();
+        assert_eq!(selection.selected_existing_id(), None);
+
+        selection.consider_existing(7, &equal).unwrap();
+        assert_eq!(selection.selected_existing_id(), Some(7));
+        selection.consider_existing(9, &equal).unwrap();
+        assert_eq!(selection.selected_existing_id(), Some(7));
+        assert_eq!(selection.key(), PersonalBestKey::from_digest([1; 32]));
+        assert_eq!(
+            PersonalBestSelection::try_new(&completed_record()).unwrap(),
+            None
+        );
+        assert_eq!(
+            selection.consider_existing(0, &equal),
+            Err(FlightRecordFormatError::InvalidRecord)
         );
     }
 

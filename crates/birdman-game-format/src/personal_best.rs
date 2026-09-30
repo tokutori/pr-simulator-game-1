@@ -1,3 +1,4 @@
+use birdman_game_core::DistanceScore;
 use birdman_game_core::{
     ControlMode, CourseAxis, PersonalBestComparison, PersonalBestKey, compare_personal_best,
 };
@@ -19,6 +20,75 @@ pub struct PersonalBestContentHashes {
     pub environment: [u8; 32],
     /// Hash of the Rust physics implementation build.
     pub physics_build: [u8; 32],
+}
+
+/// Incrementally selects the best eligible record for one canonical configuration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PersonalBestSelection {
+    key: PersonalBestKey,
+    best_score: DistanceScore,
+    selected_existing_id: Option<u64>,
+}
+
+impl PersonalBestSelection {
+    /// Starts selection with a new record, or returns `None` when it is ineligible.
+    pub fn try_new(
+        candidate: &FlightRecordDocument,
+    ) -> Result<Option<Self>, FlightRecordFormatError> {
+        candidate.validate()?;
+        let Some(key) = candidate.personal_best_key() else {
+            return Ok(None);
+        };
+        let Some(score) = candidate.personal_best_candidate_score()? else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            key,
+            best_score: score,
+            selected_existing_id: None,
+        }))
+    }
+
+    /// Considers one persisted record while retaining deterministic first-winner ties.
+    pub fn consider_existing(
+        &mut self,
+        id: u64,
+        existing: &FlightRecordDocument,
+    ) -> Result<(), FlightRecordFormatError> {
+        if id == 0 {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        existing.validate()?;
+        let Some(key) = existing.personal_best_key() else {
+            return Ok(());
+        };
+        let Some(score) = existing.personal_best_candidate_score()? else {
+            return Ok(());
+        };
+        match compare_personal_best(self.key, self.best_score, key, score) {
+            PersonalBestComparison::ExistingWins => {
+                self.best_score = score;
+                self.selected_existing_id = Some(id);
+            }
+            PersonalBestComparison::EqualScore if self.selected_existing_id.is_none() => {
+                self.selected_existing_id = Some(id);
+            }
+            PersonalBestComparison::CandidateWins
+            | PersonalBestComparison::EqualScore
+            | PersonalBestComparison::DifferentConfiguration => {}
+        }
+        Ok(())
+    }
+
+    /// Returns the canonical key used to group this selection.
+    pub const fn key(self) -> PersonalBestKey {
+        self.key
+    }
+
+    /// Returns the selected existing record ID, or `None` when the new record wins.
+    pub const fn selected_existing_id(self) -> Option<u64> {
+        self.selected_existing_id
+    }
 }
 
 /// Compares two validated records when both carry eligible scores and canonical keys.
