@@ -43,6 +43,16 @@ JAXA Research Data Terms of Useは、条件に従うデータの利用・改変�
 環境風と波浪較正には、AMeDAS、ERA5、琵琶湖局地風研究、水資源機構資料を引き続き候補とする。広域衛星textureは必須としない。
 Typical scenarioの選定期間、統計量、方位、鉛直風はBPG-008で決定する。
 
+## BPG-008の風データ選定
+
+気象庁の[彦根観測点における1991～2020年平年値](https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=)では、7月の平均風速は2.5 m/s、最多風向は北西である。これは地上観測点の月平均・最多風向であり、湖上の瞬間風、飛行高度の風、全期間に共通する卓越風を意味しない。BPG-008のTypical Julyにおける観測根拠の基準値として使用し、scenarioの各時刻・位置へそのまま割り当てない。
+
+琵琶湖上の風は一様でない。[Endoh et al. (1995)](https://www.jstage.jst.go.jp/article/rikusui1931/56/4/56_4_269/_article) は複数船舶による湖上同時観測を含む解析から、北部と南部で異なる風のcurlを報告している。ただし論文要旨だけから飛行領域の数値勾配を復元できないため、その係数をscenarioへ転記しない。[Edagawa (1992)](https://www.jstage.jst.go.jp/article/grj1984a/65/10/65_10_735/_article/-char/en) の北湖北岸観測では、弱い一般風の下で夕刻に発達する北寄り局地風の平均風速3.5 m/s・継続約5時間が報告され、別の条件下のDashikazeは7～11 m/sだった。これらは地点・時間帯・気象条件に依存する事例であり、7月のTypicalやゲームのNearLimitへ直接流用しない。
+
+気象庁のコンテンツは、個別の権利表示がない限り[公共データ利用規約](https://www.jma.go.jp/jma/kishou/info/coment.html)に準拠する。配布する加工データには出典と加工の明示を付す。J-STAGE論文は風場の非一様性を示す質的根拠として引用し、論文図表や観測値の再配布は行わない。
+
+気象庁「過去の気象データ検索・彦根・平年値（1991～2020年）」の7月値を2026-09-30に確認した。風向は吹いてくる方位として保持し、NED速度へ変換する際に符号を反転する。Typicalの地上基準風は2.5 m/s・北西を観測アンカーとする。Calm、Mild、Challenging、NearLimitの速度範囲はこの月平均から統計的に導出できないため、追加の観測系列を解析するまでゲーム調整値と明記する。湖上の空間勾配、鉛直流、飛行高度補正、風の持続性も観測値と区別した仮定としてmetadataへ記録する。
+
 処理は取得、範囲切り出し、座標・標高基準の統一、NED変換、LOD生成、量子化、圧縮、hash作成の順とする。
 raw dataは配布artifactと区別し、runtimeに取得処理を含めない。
 再生成に必要なsource version・tool version・パラメータ・originを保存する。
