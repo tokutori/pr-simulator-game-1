@@ -883,11 +883,15 @@ impl From<FlightRecordDisposition> for FlightRecordDispositionDocument {
 #[cfg(test)]
 mod tests {
     use super::{FlightRecordDocument, FlightRecordFormatError};
-    use crate::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
+    use crate::{
+        AssistanceLevel, ControllerProfile, DifficultySettings, InformationLevel,
+        PersonalBestContentHashes, ResolvedConfiguration, ScenarioSelection, WeatherClass,
+        canonical_personal_best_key,
+    };
     use birdman_game_core::{
-        BodyVector, ControlMode, FlightFeedbackInput, GameSession, GameSessionConfiguration,
-        PilotPositionTarget, SessionPhase, SessionScenarioIdentity, SurfaceCommands,
-        SyntheticPlayableFlight,
+        BodyRateFeedbackConfig, BodyVector, ControlMode, CourseAxis, FlightFeedbackInput,
+        GameSession, GameSessionConfiguration, PilotPositionTarget, SessionPhase,
+        SessionScenarioIdentity, SurfaceCommands, SyntheticPlayableFlight,
     };
 
     fn completed_record() -> FlightRecordDocument {
@@ -1213,6 +1217,113 @@ mod tests {
         assert_eq!(
             FlightRecordDocument::decode_json(&oversized),
             Err(FlightRecordFormatError::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn canonical_personal_best_key_tracks_physics_identity_and_launch_state() {
+        let record = water_contact_record();
+        let settings = DifficultySettings::custom(
+            InformationLevel::Full,
+            AssistanceLevel::Manual,
+            WeatherClass::Calm,
+        );
+        let feedback = BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).unwrap();
+        let configuration = ResolvedConfiguration {
+            difficulty: settings,
+            controller: ControllerProfile::try_new(
+                AssistanceLevel::Manual,
+                ControlMode::Manual,
+                feedback,
+                1,
+            )
+            .unwrap(),
+            scenario: ScenarioSelection {
+                catalog_version: 1,
+                scenario_id: 1,
+                scenario_version: 1,
+                aircraft_model_version: 1,
+                environment_version: 1,
+                seed: 17,
+                weather: WeatherClass::Calm,
+            },
+        };
+        let content_hashes = PersonalBestContentHashes {
+            scenario: [1; 32],
+            aircraft: [2; 32],
+            environment: [3; 32],
+            physics_build: [4; 32],
+        };
+        let course_axis = CourseAxis::try_new(1.0, 0.0).unwrap();
+
+        let first =
+            canonical_personal_best_key(&record, configuration, course_axis, content_hashes)
+                .unwrap()
+                .unwrap();
+        let repeated =
+            canonical_personal_best_key(&record, configuration, course_axis, content_hashes)
+                .unwrap()
+                .unwrap();
+        let changed_hashes = canonical_personal_best_key(
+            &record,
+            configuration,
+            course_axis,
+            PersonalBestContentHashes {
+                aircraft: [9; 32],
+                ..content_hashes
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let changed_course_axis = canonical_personal_best_key(
+            &record,
+            configuration,
+            CourseAxis::try_new(0.0, 1.0).unwrap(),
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+        let changed_controller = canonical_personal_best_key(
+            &record,
+            ResolvedConfiguration {
+                controller: ControllerProfile::try_new(
+                    AssistanceLevel::Manual,
+                    ControlMode::Manual,
+                    BodyRateFeedbackConfig::try_new([0.3; 3], [0.2; 3]).unwrap(),
+                    1,
+                )
+                .unwrap(),
+                ..configuration
+            },
+            course_axis,
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+        let mut shifted_launch = record.clone();
+        for sample in &mut shifted_launch.samples {
+            sample.datum_position_ned_m[0] += 1.0;
+            sample.telemetry.composite_cg_position_ned_m[0] += 1.0;
+        }
+        let shifted_launch_key = canonical_personal_best_key(
+            &shifted_launch,
+            configuration,
+            course_axis,
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, changed_hashes);
+        assert_ne!(first, changed_course_axis);
+        assert_ne!(first, changed_controller);
+        assert_ne!(first, shifted_launch_key);
+        assert!(
+            completed_record()
+                .personal_best_candidate_score()
+                .unwrap()
+                .is_none()
         );
     }
 }

@@ -43,6 +43,16 @@ impl BodyRateFeedbackConfig {
             command_limits_rad,
         })
     }
+
+    /// Returns the roll, pitch, and yaw feedback gains in seconds.
+    pub const fn gains_seconds(self) -> [f64; 3] {
+        self.gains_seconds
+    }
+
+    /// Returns the roll, pitch, and yaw command limits in radians.
+    pub const fn command_limits_rad(self) -> [f64; 3] {
+        self.command_limits_rad
+    }
 }
 
 /// Converts explicit body angular-rate targets into bounded FBW surface commands.
