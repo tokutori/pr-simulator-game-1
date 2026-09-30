@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IDBFactory } from "fake-indexeddb";
 import {
   FlightRecordRepository,
   IndexedDbFlightRecordPersistence,
@@ -150,6 +151,59 @@ describe("FlightRecordRepository", () => {
     expect(database.cursorCount()).toBe(1);
   });
 
+  it("upgrades a version-three database and rebuilds its canonical index", async () => {
+    const factory = new IDBFactory();
+    const databaseName = `flight-record-upgrade-${String(Date.now())}-${String(Math.random())}`;
+    await seedVersionThreeDatabase(factory, databaseName, [{
+      id: 1,
+      savedAt: "2026-09-29T00:00:00.000Z",
+      json: JSON.stringify({ schema_version: 5 })
+    }]);
+    const repository = new FlightRecordRepository(
+      new IndexedDbFlightRecordPersistence(factory, databaseName),
+      undefined,
+      () => new TestPersonalBestSelection()
+    );
+
+    await expect(repository.list()).resolves.toEqual([
+      { id: 1, savedAt: "2026-09-29T00:00:00.000Z", personalBest: true }
+    ]);
+    await expect(readDatabaseVersion(factory, databaseName)).resolves.toBe(4);
+    const database = await openTestDatabase(factory, databaseName);
+    try {
+      expect([...database.objectStoreNames]).toEqual([
+        "personalBestIndexState",
+        "personalBests",
+        "recordMetadata",
+        "records"
+      ]);
+      const transaction = database.transaction("personalBests", "readonly");
+      const indexRequest = transaction.objectStore("personalBests").get("a".repeat(64));
+      await expect(requestResult(indexRequest)).resolves.toEqual({ key: "a".repeat(64), recordId: 1 });
+    } finally {
+      database.close();
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it("rolls back the record insert when metadata insertion fails", async () => {
+    const factory = new IDBFactory();
+    const databaseName = `flight-record-rollback-${String(Date.now())}-${String(Math.random())}`;
+    await seedVersionThreeDatabase(factory, databaseName, [], [{ id: 1, savedAt: "stale" }]);
+    const repository = new FlightRecordRepository(
+      new IndexedDbFlightRecordPersistence(factory, databaseName),
+      undefined,
+      () => new TestPersonalBestSelection()
+    );
+
+    await expect(repository.saveFrom({ export_flight_record_json: () => finalizedRecord })).rejects.toThrow();
+    await expect(repository.load(1)).resolves.toBeNull();
+    await expect(repository.list()).resolves.toEqual([
+      { id: 1, savedAt: "stale", personalBest: false }
+    ]);
+    await deleteDatabase(factory, databaseName);
+  });
+
   it.each([
     "not-json",
     JSON.stringify({ schema_version: 2, header: [], samples: [{}], finalization: {} }),
@@ -242,6 +296,64 @@ class TestPersonalBestSelection implements PersonalBestSelectionPort {
   selected_existing_id(): number {
     return this.existingId ?? 0;
   }
+}
+
+async function seedVersionThreeDatabase(
+  factory: IDBFactory,
+  databaseName: string,
+  records: readonly StoredFlightRecord[],
+  metadata: readonly { readonly id: number; readonly savedAt: string }[] = records.map(({ id, savedAt }) => ({ id, savedAt }))
+): Promise<void> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = factory.open(databaseName, 3);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore("records", { keyPath: "id", autoIncrement: true });
+      request.result.createObjectStore("recordMetadata", { keyPath: "id" });
+    };
+    request.onsuccess = () => { resolve(request.result); };
+    request.onerror = () => { reject(request.error ?? new Error("Failed to seed IndexedDB")); };
+  });
+  const transaction = database.transaction(["records", "recordMetadata"], "readwrite");
+  for (const record of records) transaction.objectStore("records").put(record);
+  for (const entry of metadata) transaction.objectStore("recordMetadata").put(entry);
+  await new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => { resolve(); };
+    transaction.onabort = () => { reject(transaction.error ?? new Error("Failed to seed IndexedDB")); };
+    transaction.onerror = () => { reject(transaction.error ?? new Error("Failed to seed IndexedDB")); };
+  });
+  database.close();
+}
+
+async function openTestDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = factory.open(databaseName);
+    request.onsuccess = () => { resolve(request.result); };
+    request.onerror = () => { reject(request.error ?? new Error("Failed to open IndexedDB")); };
+  });
+}
+
+async function readDatabaseVersion(factory: IDBFactory, databaseName: string): Promise<number> {
+  const database = await openTestDatabase(factory, databaseName);
+  try {
+    return database.version;
+  } finally {
+    database.close();
+  }
+}
+
+function requestResult<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => { resolve(request.result); };
+    request.onerror = () => { reject(request.error ?? new Error("IndexedDB request failed")); };
+  });
+}
+
+async function deleteDatabase(factory: IDBFactory, databaseName: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const request = factory.deleteDatabase(databaseName);
+    request.onsuccess = () => { resolve(); };
+    request.onerror = () => { reject(request.error ?? new Error("Failed to delete IndexedDB")); };
+  });
 }
 
 function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
