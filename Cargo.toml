@@ -16,6 +16,7 @@ libm = "=0.2.16"
 wasm-bindgen = "=0.2.129"
 serde = { version = "=1.0.229", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "=1.0.151", default-features = false, features = ["alloc", "float_roundtrip"] }
+sha2 = { version = "=0.11.0", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

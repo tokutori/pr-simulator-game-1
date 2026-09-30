@@ -6,6 +6,7 @@ import type { FlightAnalysisData, FlightAnalysisSample } from "../game/flight-re
 export interface StoredFlightRecordUiEntry {
   readonly id: number;
   readonly savedAt: string;
+  readonly personalBest: boolean;
 }
 
 export type NamedGameSessionOperation =

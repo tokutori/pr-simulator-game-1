@@ -6,14 +6,18 @@ use alloc::vec::Vec;
 use birdman_game_core::{
     ActuatorState, BodyVector, DistanceScore, FlightRecord, FlightRecordDisposition,
     FlightRecordFinalization, FlightRecordHeader, FlightRecordInput, FlightRecordSample,
-    FlightState, NedPoint, NedVector, SessionEndReason, SessionScenarioIdentity, SurfaceCommands,
-    UnitQuaternion,
+    FlightState, NedPoint, NedVector, PersonalBestKey, SessionEndReason, SessionScenarioIdentity,
+    SurfaceCommands, UnitQuaternion,
 };
 use serde::{Deserialize, Serialize};
 
 /// Current external flight-record schema version.
-pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 2;
+pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 5;
 const LEGACY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
+const CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 2;
+const SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 3;
+const PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 4;
+const PERSONAL_BEST_KEY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 5;
 
 /// Maximum encoded JSON size accepted by the decoder.
 pub const MAX_FLIGHT_RECORD_JSON_BYTES: usize = 16 * 1024 * 1024;
@@ -56,6 +60,15 @@ pub struct FlightRecordHeaderDocument {
     pub maximum_flight_ticks: u64,
     /// Physics frequency in samples per second.
     pub physics_hz: u32,
+    /// Distance-score definition used to produce the finalized score; absent in schemas 1 and 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_definition_version: Option<u32>,
+    /// Physical equations and integration semantics; absent before schema 4.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics_model_version: Option<u32>,
+    /// Canonical SHA-256 key for eligible Personal Best comparisons; absent before schema 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_best_key: Option<[u8; 32]>,
 }
 
 /// Resolved setup settings required to interpret a recorded flight.
@@ -324,6 +337,9 @@ impl FlightRecordDocument {
                 seed: identity.seed,
                 maximum_flight_ticks: header.maximum_flight_ticks,
                 physics_hz: header.physics_hz,
+                score_definition_version: Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION),
+                physics_model_version: Some(birdman_game_core::PHYSICS_MODEL_VERSION),
+                personal_best_key: None,
             },
             samples,
             finalization,
@@ -336,7 +352,11 @@ impl FlightRecordDocument {
     pub fn validate(&self) -> Result<(), FlightRecordFormatError> {
         if !matches!(
             self.schema_version,
-            LEGACY_FLIGHT_RECORD_SCHEMA_VERSION | FLIGHT_RECORD_SCHEMA_VERSION
+            LEGACY_FLIGHT_RECORD_SCHEMA_VERSION
+                | CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION
+                | SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
+                | PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION
+                | FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -345,9 +365,21 @@ impl FlightRecordDocument {
         if (self.schema_version == LEGACY_FLIGHT_RECORD_SCHEMA_VERSION
             && (matches!(information, FlightRecordInformationDocument::Custom)
                 || has_custom_hud_profile))
-            || (self.schema_version == FLIGHT_RECORD_SCHEMA_VERSION
+            || (self.schema_version >= CUSTOM_HUD_FLIGHT_RECORD_SCHEMA_VERSION
                 && matches!(information, FlightRecordInformationDocument::Custom)
                     != has_custom_hud_profile)
+            || (self.schema_version >= SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.score_definition_version
+                    != Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION))
+            || (self.schema_version < SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.score_definition_version.is_some())
+            || (self.schema_version >= PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.physics_model_version
+                    != Some(birdman_game_core::PHYSICS_MODEL_VERSION))
+            || (self.schema_version < PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.physics_model_version.is_some())
+            || (self.schema_version < PERSONAL_BEST_KEY_FLIGHT_RECORD_SCHEMA_VERSION
+                && self.header.personal_best_key.is_some())
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -419,7 +451,40 @@ impl FlightRecordDocument {
                 return Err(FlightRecordFormatError::InvalidRecord);
             }
         }
+        let personal_best_finalization_is_eligible =
+            self.finalization.as_ref().is_some_and(|finalization| {
+                finalization.reason == FlightRecordEndReasonDocument::WaterContact
+                    && finalization.disposition == FlightRecordDispositionDocument::Complete
+                    && finalization
+                        .score_m
+                        .is_some_and(|[course, cross_track, net]| {
+                            DistanceScore::try_from_recorded(course, cross_track, net).is_ok()
+                        })
+            });
+        if self.header.personal_best_key.is_some()
+            && (self.schema_version != FLIGHT_RECORD_SCHEMA_VERSION
+                || !personal_best_finalization_is_eligible)
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
         Ok(())
+    }
+
+    /// Attaches a canonical Personal Best key to an otherwise validated record document.
+    pub fn with_personal_best_key(
+        mut self,
+        key: Option<PersonalBestKey>,
+    ) -> Result<Self, FlightRecordFormatError> {
+        self.header.personal_best_key = key.map(PersonalBestKey::digest);
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Returns the persisted canonical Personal Best key, if present.
+    pub fn personal_best_key(&self) -> Option<PersonalBestKey> {
+        self.header
+            .personal_best_key
+            .map(PersonalBestKey::from_digest)
     }
 
     /// Encodes the validated document as bounded-size JSON bytes.
@@ -487,6 +552,38 @@ impl FlightRecordDocument {
             score,
         };
         FlightRecord::try_from_finalized_samples(header, samples, finalization)
+            .map_err(|_| FlightRecordFormatError::InvalidRecord)
+    }
+
+    /// Returns a score eligible for later Personal Best key comparison.
+    ///
+    /// Records predating the current score and physics model versions remain readable, but
+    /// cannot be compared with records whose scoring or physical semantics are known. This
+    /// method does not establish or compare the canonical configuration key.
+    pub fn personal_best_candidate_score(
+        &self,
+    ) -> Result<Option<DistanceScore>, FlightRecordFormatError> {
+        self.validate()?;
+        if self.schema_version != FLIGHT_RECORD_SCHEMA_VERSION
+            || self.header.score_definition_version
+                != Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+            || self.header.physics_model_version != Some(birdman_game_core::PHYSICS_MODEL_VERSION)
+        {
+            return Ok(None);
+        }
+        let Some(finalization) = &self.finalization else {
+            return Ok(None);
+        };
+        if finalization.reason != FlightRecordEndReasonDocument::WaterContact
+            || finalization.disposition != FlightRecordDispositionDocument::Complete
+        {
+            return Ok(None);
+        }
+        let Some([course, cross_track, net]) = finalization.score_m else {
+            return Ok(None);
+        };
+        DistanceScore::try_from_recorded(course, cross_track, net)
+            .map(Some)
             .map_err(|_| FlightRecordFormatError::InvalidRecord)
     }
 
@@ -828,10 +925,15 @@ impl From<FlightRecordDisposition> for FlightRecordDispositionDocument {
 #[cfg(test)]
 mod tests {
     use super::{FlightRecordDocument, FlightRecordFormatError};
-    use crate::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
+    use crate::{
+        AssistanceLevel, ControllerProfile, DifficultySettings, InformationLevel,
+        PersonalBestContentHashes, PersonalBestSelection, ResolvedConfiguration, ScenarioSelection,
+        WeatherClass, canonical_personal_best_key, compare_personal_best_records,
+    };
     use birdman_game_core::{
-        BodyVector, ControlMode, FlightFeedbackInput, GameSession, GameSessionConfiguration,
-        PilotPositionTarget, SessionScenarioIdentity, SurfaceCommands, SyntheticPlayableFlight,
+        BodyRateFeedbackConfig, BodyVector, ControlMode, CourseAxis, FlightFeedbackInput,
+        GameSession, GameSessionConfiguration, PilotPositionTarget, SessionPhase,
+        SessionScenarioIdentity, SurfaceCommands, SyntheticPlayableFlight,
     };
 
     fn completed_record() -> FlightRecordDocument {
@@ -882,6 +984,54 @@ mod tests {
         .unwrap()
     }
 
+    fn water_contact_record() -> FlightRecordDocument {
+        let (aircraft, scenario, feedback, _) =
+            SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
+        let identity = SessionScenarioIdentity {
+            catalog_version: 1,
+            scenario_id: 1,
+            scenario_version: 1,
+            aircraft_model_version: 1,
+            environment_version: 1,
+            controller_profile_version: 1,
+            seed: 17,
+        };
+        let configuration = GameSessionConfiguration::try_new(
+            scenario,
+            ControlMode::Manual,
+            feedback,
+            4_000,
+            identity,
+        )
+        .unwrap();
+        let mut session = GameSession::new();
+        session.open_setup().unwrap();
+        session.prepare_flight(configuration).unwrap();
+        session.mark_briefing_ready().unwrap();
+        session.start_countdown(1).unwrap();
+        session.advance_countdown().unwrap();
+        session.launch().unwrap();
+        while session.snapshot().phase() != SessionPhase::Result {
+            let position = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+            session
+                .advance_flight_tick(FlightFeedbackInput::new(
+                    SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                    BodyVector::zero(),
+                    position,
+                ))
+                .unwrap();
+        }
+        FlightRecordDocument::from_record(
+            &session.take_finalized_result_record().unwrap(),
+            DifficultySettings::custom(
+                InformationLevel::Full,
+                AssistanceLevel::Manual,
+                WeatherClass::Calm,
+            ),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn record_json_round_trip_preserves_samples_inputs_and_finalization() {
         let document = completed_record();
@@ -918,7 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_hud_profile_round_trips_in_schema_two() {
+    fn custom_hud_profile_score_and_physics_versions_round_trip_in_schema_five() {
         let mut document = completed_record();
         document.header.difficulty.information =
             super::super::FlightRecordInformationDocument::Custom;
@@ -930,6 +1080,15 @@ mod tests {
             angle_of_attack: true,
             warnings: false,
         });
+        assert_eq!(document.schema_version, 5);
+        assert_eq!(
+            document.header.score_definition_version,
+            Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+        );
+        assert_eq!(
+            document.header.physics_model_version,
+            Some(birdman_game_core::PHYSICS_MODEL_VERSION)
+        );
         document.validate().unwrap();
         let encoded = document.encode_json().unwrap();
         assert_eq!(
@@ -939,10 +1098,139 @@ mod tests {
     }
 
     #[test]
+    fn personal_best_candidate_requires_current_schema_and_complete_water_contact() {
+        let contact = water_contact_record();
+        assert!(contact.personal_best_candidate_score().unwrap().is_some());
+
+        let mut legacy = contact;
+        legacy.schema_version = 3;
+        legacy.header.physics_model_version = None;
+        assert_eq!(legacy.personal_best_candidate_score().unwrap(), None);
+
+        assert_eq!(
+            completed_record().personal_best_candidate_score().unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn personal_best_key_round_trips_only_for_eligible_records() {
+        use birdman_game_core::PersonalBestKey;
+
+        let record = water_contact_record();
+        let key = PersonalBestKey::from_digest([9; 32]);
+        let keyed = record.clone().with_personal_best_key(Some(key)).unwrap();
+        assert_eq!(keyed.personal_best_key(), Some(key));
+        let decoded = FlightRecordDocument::decode_json(&keyed.encode_json().unwrap()).unwrap();
+        assert_eq!(decoded, keyed);
+        assert_eq!(decoded.personal_best_key(), Some(key));
+
+        let mut schema_four: serde_json::Value =
+            serde_json::from_slice(&record.encode_json().unwrap()).unwrap();
+        schema_four["schema_version"] = serde_json::Value::from(4);
+        schema_four["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("personal_best_key");
+        let decoded =
+            FlightRecordDocument::decode_json(&serde_json::to_vec(&schema_four).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, 4);
+        assert_eq!(decoded.header.personal_best_key, None);
+        assert_eq!(decoded.personal_best_candidate_score().unwrap(), None);
+
+        let mut legacy_with_key = schema_four;
+        legacy_with_key["header"]["personal_best_key"] =
+            serde_json::to_value(key.digest()).unwrap();
+        assert_eq!(
+            FlightRecordDocument::decode_json(&serde_json::to_vec(&legacy_with_key).unwrap()),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+
+        assert_eq!(
+            completed_record().with_personal_best_key(Some(key)),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+
+    #[test]
+    fn stored_personal_best_comparison_requires_two_keyed_eligible_records() {
+        use birdman_game_core::{PersonalBestComparison, PersonalBestKey};
+
+        let candidate = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        let existing = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &existing).unwrap(),
+            Some(PersonalBestComparison::EqualScore)
+        );
+
+        let different_configuration = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([2; 32])))
+            .unwrap();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &different_configuration).unwrap(),
+            Some(PersonalBestComparison::DifferentConfiguration)
+        );
+
+        let missing_key = water_contact_record();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &missing_key).unwrap(),
+            None
+        );
+        let ineligible = completed_record();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &ineligible).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn personal_best_selection_keeps_an_existing_tie_and_ignores_other_keys() {
+        use birdman_game_core::PersonalBestKey;
+
+        let candidate = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        let equal = candidate.clone();
+        let different = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([2; 32])))
+            .unwrap();
+        let mut selection = PersonalBestSelection::try_new(&candidate).unwrap().unwrap();
+
+        selection.consider_existing(8, &different).unwrap();
+        assert_eq!(selection.selected_existing_id(), None);
+
+        selection.consider_existing(7, &equal).unwrap();
+        assert_eq!(selection.selected_existing_id(), Some(7));
+        selection.consider_existing(9, &equal).unwrap();
+        assert_eq!(selection.selected_existing_id(), Some(7));
+        assert_eq!(selection.key(), PersonalBestKey::from_digest([1; 32]));
+        assert_eq!(
+            PersonalBestSelection::try_new(&completed_record()).unwrap(),
+            None
+        );
+        assert_eq!(
+            selection.consider_existing(0, &equal),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+
+    #[test]
     fn schema_one_records_without_hud_profile_remain_readable() {
         let mut value: serde_json::Value =
             serde_json::from_slice(&completed_record().encode_json().unwrap()).unwrap();
         value["schema_version"] = serde_json::Value::from(1);
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("score_definition_version");
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
         value["header"]["difficulty"]
             .as_object_mut()
             .unwrap()
@@ -955,6 +1243,88 @@ mod tests {
             super::super::FlightRecordInformationDocument::Full
         );
         assert_eq!(decoded.header.difficulty.hud_profile, None);
+        assert_eq!(decoded.header.score_definition_version, None);
+        assert_eq!(decoded.header.physics_model_version, None);
+    }
+
+    #[test]
+    fn schema_two_custom_hud_records_remain_readable_without_score_version() {
+        let mut document = completed_record();
+        document.header.difficulty.information =
+            super::super::FlightRecordInformationDocument::Custom;
+        document.header.difficulty.hud_profile = Some(super::FlightRecordHudProfileDocument {
+            telemetry: true,
+            attitude: true,
+            wind: false,
+            flight_path: false,
+            angle_of_attack: false,
+            warnings: false,
+        });
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&document.encode_json().unwrap()).unwrap();
+        value["schema_version"] = serde_json::Value::from(2);
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("score_definition_version");
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
+        let decoded =
+            FlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, 2);
+        assert_eq!(
+            decoded.header.difficulty.information,
+            super::super::FlightRecordInformationDocument::Custom
+        );
+        assert!(decoded.header.difficulty.hud_profile.is_some());
+        assert_eq!(decoded.header.score_definition_version, None);
+        assert_eq!(decoded.header.physics_model_version, None);
+    }
+
+    #[test]
+    fn schema_three_score_records_remain_readable_without_physics_model_version() {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&completed_record().encode_json().unwrap()).unwrap();
+        value["schema_version"] = serde_json::Value::from(3);
+        value["header"]
+            .as_object_mut()
+            .unwrap()
+            .remove("physics_model_version");
+        let decoded =
+            FlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, 3);
+        assert_eq!(
+            decoded.header.score_definition_version,
+            Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
+        );
+        assert_eq!(decoded.header.physics_model_version, None);
+    }
+
+    #[test]
+    fn schema_four_rejects_unknown_score_and_physics_versions() {
+        let mut document = completed_record();
+        document.header.score_definition_version =
+            Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION + 1);
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+
+        let mut document = completed_record();
+        document.header.physics_model_version = Some(birdman_game_core::PHYSICS_MODEL_VERSION + 1);
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+
+        let mut document = completed_record();
+        document.header.physics_model_version = None;
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
     }
 
     #[test]
@@ -1003,6 +1373,113 @@ mod tests {
         assert_eq!(
             FlightRecordDocument::decode_json(&oversized),
             Err(FlightRecordFormatError::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn canonical_personal_best_key_tracks_physics_identity_and_launch_state() {
+        let record = water_contact_record();
+        let settings = DifficultySettings::custom(
+            InformationLevel::Full,
+            AssistanceLevel::Manual,
+            WeatherClass::Calm,
+        );
+        let feedback = BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).unwrap();
+        let configuration = ResolvedConfiguration {
+            difficulty: settings,
+            controller: ControllerProfile::try_new(
+                AssistanceLevel::Manual,
+                ControlMode::Manual,
+                feedback,
+                1,
+            )
+            .unwrap(),
+            scenario: ScenarioSelection {
+                catalog_version: 1,
+                scenario_id: 1,
+                scenario_version: 1,
+                aircraft_model_version: 1,
+                environment_version: 1,
+                seed: 17,
+                weather: WeatherClass::Calm,
+            },
+        };
+        let content_hashes = PersonalBestContentHashes {
+            scenario: [1; 32],
+            aircraft: [2; 32],
+            environment: [3; 32],
+            physics_build: [4; 32],
+        };
+        let course_axis = CourseAxis::try_new(1.0, 0.0).unwrap();
+
+        let first =
+            canonical_personal_best_key(&record, configuration, course_axis, content_hashes)
+                .unwrap()
+                .unwrap();
+        let repeated =
+            canonical_personal_best_key(&record, configuration, course_axis, content_hashes)
+                .unwrap()
+                .unwrap();
+        let changed_hashes = canonical_personal_best_key(
+            &record,
+            configuration,
+            course_axis,
+            PersonalBestContentHashes {
+                aircraft: [9; 32],
+                ..content_hashes
+            },
+        )
+        .unwrap()
+        .unwrap();
+        let changed_course_axis = canonical_personal_best_key(
+            &record,
+            configuration,
+            CourseAxis::try_new(0.0, 1.0).unwrap(),
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+        let changed_controller = canonical_personal_best_key(
+            &record,
+            ResolvedConfiguration {
+                controller: ControllerProfile::try_new(
+                    AssistanceLevel::Manual,
+                    ControlMode::Manual,
+                    BodyRateFeedbackConfig::try_new([0.3; 3], [0.2; 3]).unwrap(),
+                    1,
+                )
+                .unwrap(),
+                ..configuration
+            },
+            course_axis,
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+        let mut shifted_launch = record.clone();
+        for sample in &mut shifted_launch.samples {
+            sample.datum_position_ned_m[0] += 1.0;
+            sample.telemetry.composite_cg_position_ned_m[0] += 1.0;
+        }
+        let shifted_launch_key = canonical_personal_best_key(
+            &shifted_launch,
+            configuration,
+            course_axis,
+            content_hashes,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, changed_hashes);
+        assert_ne!(first, changed_course_axis);
+        assert_ne!(first, changed_controller);
+        assert_ne!(first, shifted_launch_key);
+        assert!(
+            completed_record()
+                .personal_best_candidate_score()
+                .unwrap()
+                .is_none()
         );
     }
 }

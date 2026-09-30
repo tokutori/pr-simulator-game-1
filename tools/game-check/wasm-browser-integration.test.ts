@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import {
+  GameSessionBridge,
+  PersonalBestSelectionBridge,
+  compare_personal_best_json,
+  initSync,
+  physics_hz
+} from "../../web/pkg/birdman_game_wasm.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
 import { BrowserPilotInput } from "../../web/src/game/browser-input.js";
@@ -80,6 +86,28 @@ describe("generated WebAssembly browser binding", () => {
       expect(snapshot.contactFraction).toBeLessThanOrEqual(1);
       expect(snapshot.scoreCourseMeters).toBeGreaterThanOrEqual(200);
       expect(session.advance_tick(0, 0, 0, 0)).toEqual(session.snapshot());
+      const recordJson = session.export_flight_record_json();
+      const record = JSON.parse(recordJson) as { readonly header: { readonly personal_best_key: number[] } };
+      expect(record.header.personal_best_key).toHaveLength(32);
+      expect(compare_personal_best_json(recordJson, recordJson)).toBe(2);
+      const otherKeyRecord = {
+        ...record,
+        header: { ...record.header, personal_best_key: Array.from({ length: 32 }, () => 0) }
+      };
+      expect(compare_personal_best_json(recordJson, JSON.stringify(otherKeyRecord))).toBe(3);
+      const selection = new PersonalBestSelectionBridge(recordJson);
+      try {
+        expect(selection.is_eligible()).toBe(true);
+        expect(selection.key_hex()).toMatch(/^[0-9a-f]{64}$/);
+        expect(selection.candidate_is_best()).toBe(true);
+        selection.consider_existing(12, recordJson);
+        expect(selection.candidate_is_best()).toBe(false);
+        expect(selection.selected_existing_id()).toBe(12);
+        expect(() => { selection.consider_existing(0, recordJson); })
+          .toThrow("Stored FlightRecord ID is invalid");
+      } finally {
+        selection.free();
+      }
       session.retry();
       expect(session.phase_code()).toBe(3);
       session.open_setup();

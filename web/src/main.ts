@@ -24,7 +24,7 @@ import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-ga
 import { BrowserPilotInput, DEFAULT_PILOT_INPUT_CONFIGURATION } from "./game/browser-input.js";
 import { FlightController } from "./game/flight-controller.js";
 import { syntheticLakeVisualCondition } from "./game/synthetic-lake-condition.js";
-import { initializeGameSession } from "./game/wasm-flight.js";
+import { createPersonalBestSelection, initializeGameSession } from "./game/wasm-flight.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import {
   loadFlightAnalysis,
@@ -718,7 +718,17 @@ async function persistFlightRecord(
     const saved = await repository.saveFrom(session);
     dispatch({ type: "refresh-stored-flight-records" });
     if (gameSession === session && session.phase_code() === 7) {
-      dispatch({ type: "game-session-status", message: `FlightRecord ${String(saved.id)}を保存した` });
+      const personalBestMessage = saved.personalBest.kind === "candidate"
+        ? "Personal Bestを更新した"
+        : saved.personalBest.kind === "existing"
+          ? `Personal Best ${String(saved.personalBest.id)}を維持した`
+          : saved.personalBest.kind === "ineligible"
+            ? "Personal Best対象外の記録である"
+            : "";
+      dispatch({
+        type: "game-session-status",
+        message: `FlightRecord ${String(saved.id)}を保存した${personalBestMessage.length > 0 ? `。${personalBestMessage}` : ""}`
+      });
     }
   } catch (error: unknown) {
     if (gameSession === session && session.phase_code() === 7) {
@@ -728,7 +738,11 @@ async function persistFlightRecord(
 }
 
 function createFlightRecordRepository(): FlightRecordRepository {
-  return new FlightRecordRepository(new IndexedDbFlightRecordPersistence(window.indexedDB));
+  return new FlightRecordRepository(
+    new IndexedDbFlightRecordPersistence(window.indexedDB),
+    undefined,
+    createPersonalBestSelection
+  );
 }
 
 function dispatchUiAction(action: UiAction): void {

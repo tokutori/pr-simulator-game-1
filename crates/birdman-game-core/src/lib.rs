@@ -14,6 +14,7 @@ mod flight_control;
 mod flight_record;
 mod game_session;
 mod math;
+mod personal_best;
 mod replay_clock;
 mod scenario;
 mod scoring;
@@ -75,6 +76,7 @@ pub use math::{
     BodyFrame, BodyPoint, BodyVector, Frame, InertiaTensor, MathError, NedFrame, NedPoint,
     NedVector, Point3, UnitQuaternion, Vector3,
 };
+pub use personal_best::{PersonalBestComparison, PersonalBestKey, compare_personal_best};
 pub use replay_clock::{ReplayClock, ReplayClockError, ReplayRate};
 
 /// Number of fixed physics ticks per simulated second, independent of rendering.
@@ -83,6 +85,12 @@ pub use replay_clock::{ReplayClock, ReplayClockError, ReplayRate};
 /// assert_eq!(birdman_game_core::PHYSICS_HZ, 100);
 /// ```
 pub const PHYSICS_HZ: u32 = 100;
+
+/// Version of the physical equations and integration semantics used by this core.
+///
+/// Increment when the same validated model and tick-input sequence can produce a
+/// different physical trajectory or terminal state.
+pub const PHYSICS_MODEL_VERSION: u32 = 1;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;

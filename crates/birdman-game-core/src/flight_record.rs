@@ -455,6 +455,22 @@ impl FlightRecord {
         self.finalization
     }
 
+    /// Returns the score eligible for an initial Personal Best candidate.
+    ///
+    /// Only a finalized, complete water-contact record with a score is eligible.
+    /// This does not compare the record against a configuration key or other records.
+    pub const fn personal_best_candidate_score(&self) -> Option<DistanceScore> {
+        match self.finalization {
+            Some(finalization)
+                if matches!(finalization.reason, SessionEndReason::WaterContact)
+                    && matches!(finalization.disposition, FlightRecordDisposition::Complete) =>
+            {
+                finalization.score
+            }
+            _ => None,
+        }
+    }
+
     /// Returns an interpolated snapshot at an exact tick and fractional tick.
     pub fn sample_at_time(
         &self,
@@ -842,6 +858,8 @@ mod tests {
         FlightTickState, Gravity, PilotPositionTarget, SurfaceCommands, WindField,
     };
 
+    const _: [(); 424] = [(); core::mem::size_of::<super::FlightRecordSample>()];
+
     #[test]
     fn reserved_record_retains_initial_and_monotonic_integer_samples() {
         let (header, initial, telemetry) = fixture();
@@ -855,6 +873,48 @@ mod tests {
             Err(FlightRecordError::InvalidTime)
         );
         assert_eq!(record.sample_count(), 1);
+    }
+
+    #[test]
+    fn maximum_record_sample_payload_matches_the_documented_budget() {
+        let sample_size = core::mem::size_of::<super::FlightRecordSample>();
+        assert_eq!(sample_size, 424);
+        assert_eq!(sample_size * super::MAX_FLIGHT_RECORD_SAMPLES, 1_696_424);
+    }
+
+    #[test]
+    fn tick_append_keeps_the_preallocated_sample_buffer() {
+        let (header, initial, telemetry) = fixture();
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(2.0, 3.0, 4.0).unwrap(),
+            1.0,
+            -0.2,
+            -0.5,
+            0.5,
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        let actuator_limits = [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3];
+        let next = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits,
+            1,
+            initial.flight_state(),
+            initial.actuator_state(),
+        )
+        .unwrap();
+        let mut record = FlightRecord::try_new(header).unwrap();
+        record.begin(initial, telemetry).unwrap();
+        let buffer = record.samples.as_ptr();
+        let capacity = record.samples.capacity();
+
+        record.append_tick(next, input(), telemetry).unwrap();
+
+        assert_eq!(record.samples.as_ptr(), buffer);
+        assert_eq!(record.samples.capacity(), capacity);
+        assert_eq!(record.sample_count(), 2);
     }
 
     #[test]
@@ -877,6 +937,29 @@ mod tests {
             record.append_tick(initial, input(), telemetry),
             Err(FlightRecordError::AlreadyFinalized)
         );
+    }
+
+    #[test]
+    fn personal_best_candidate_requires_scored_water_contact() {
+        let (header, initial, telemetry) = fixture();
+        let score = crate::DistanceScore::try_from_recorded(100.0, 0.0, 100.0).unwrap();
+
+        let mut unfinished = FlightRecord::try_new(header).unwrap();
+        unfinished.begin(initial, telemetry).unwrap();
+        assert_eq!(unfinished.personal_best_candidate_score(), None);
+
+        for (reason, score, expected) in [
+            (SessionEndReason::WaterContact, Some(score), Some(score)),
+            (SessionEndReason::WaterContact, None, None),
+            (SessionEndReason::TimeLimit, Some(score), None),
+            (SessionEndReason::ManualAbort, Some(score), None),
+            (SessionEndReason::FatalSimulationError, None, None),
+        ] {
+            let mut record = FlightRecord::try_new(header).unwrap();
+            record.begin(initial, telemetry).unwrap();
+            record.finalize(reason, 0, 0.0, score).unwrap();
+            assert_eq!(record.personal_best_candidate_score(), expected);
+        }
     }
 
     #[test]

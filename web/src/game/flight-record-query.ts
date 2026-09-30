@@ -226,17 +226,15 @@ export function loadFlightAnalysis(
   if (!Number.isSafeInteger(expectedLength) || packedSamples.length !== expectedLength) {
     throw new TypeError("Rust flight record transfer has an incompatible sample count");
   }
+  requirePackedLength(packedSamples, expectedLength, "flight samples");
   const samples: FlightAnalysisSample[] = [];
   let previousTimeSeconds = -Infinity;
   for (let index = 0; index < sampleCount; index += 1) {
     const offset = index * FLIGHT_RECORD_SAMPLE_LAYOUT.length;
-    const packed = packedSamples.slice(offset, offset + FLIGHT_RECORD_SAMPLE_LAYOUT.length);
-    requirePackedLength(packed, FLIGHT_RECORD_SAMPLE_LAYOUT.length, "flight sample");
     const layout = FLIGHT_RECORD_SAMPLE_LAYOUT;
-    const tick = packed[layout.tick];
-    const fraction = packed[layout.fraction];
-    if (tick === undefined || fraction === undefined || !Number.isSafeInteger(tick)
-        || tick < 0 || fraction < 0 || fraction > 1) {
+    const tick = required(packedSamples, layout.tick, offset);
+    const fraction = required(packedSamples, layout.fraction, offset);
+    if (!Number.isSafeInteger(tick) || tick < 0 || fraction < 0 || fraction > 1) {
       throw new TypeError("Flight record sample has invalid time");
     }
     const timeSeconds = (tick + fraction) / physicsHz;
@@ -244,7 +242,7 @@ export function loadFlightAnalysis(
       throw new TypeError("Flight record samples are not strictly chronological");
     }
     previousTimeSeconds = timeSeconds;
-    samples.push(decodeAnalysisSample(packed, layout, physicsHz));
+    samples.push(decodeAnalysisSample(packedSamples, layout, physicsHz, offset));
   }
   const summary = decodeSummary(record.flight_record_summary(), record.flight_record_finalization(), physicsHz);
   const initialPilotPositionMeters = required(packedSamples, FLIGHT_RECORD_SAMPLE_LAYOUT.pilotPosition);
@@ -309,12 +307,14 @@ function queryFlightAnalysisWindGrid(
 function decodeAnalysisSample(
   packed: Float64Array | number[],
   layout: typeof FLIGHT_RECORD_SAMPLE_LAYOUT | typeof FLIGHT_RECORD_PLAYBACK_LAYOUT,
-  physicsHz: number
+  physicsHz: number,
+  offset = 0
 ): FlightAnalysisSample {
-  const tick = required(packed, layout.tick);
-  const fraction = required(packed, layout.fraction);
-  const angleOfAttackFlag = required(packed, layout.angleOfAttackDefined);
-  const sideslipFlag = required(packed, layout.sideslipDefined);
+  const valueAt = (index: number): number => required(packed, index, offset);
+  const tick = valueAt(layout.tick);
+  const fraction = valueAt(layout.fraction);
+  const angleOfAttackFlag = valueAt(layout.angleOfAttackDefined);
+  const sideslipFlag = valueAt(layout.sideslipDefined);
   if (!Number.isSafeInteger(tick) || tick < 0 || fraction < 0 || fraction > 1
       || ![0, 1].includes(angleOfAttackFlag) || ![0, 1].includes(sideslipFlag)) {
     throw new TypeError("Flight record sample has invalid time or diagnostic flags");
@@ -323,19 +323,19 @@ function decodeAnalysisSample(
   const eastIndex = "cgEast" in layout ? layout.cgEast : layout.east;
   return Object.freeze({
     timeSeconds: (tick + fraction) / physicsHz,
-    northMeters: required(packed, northIndex),
-    eastMeters: required(packed, eastIndex),
-    altitudeMeters: required(packed, layout.altitude),
-    airspeedMetersPerSecond: required(packed, layout.airspeed),
-    groundspeedMetersPerSecond: required(packed, layout.groundspeed),
-    windNorthMetersPerSecond: required(packed, layout.windNorth),
-    windEastMetersPerSecond: required(packed, layout.windEast),
-    windDownMetersPerSecond: required(packed, layout.windDown),
-    angleOfAttackRadians: angleOfAttackFlag === 1 ? required(packed, layout.angleOfAttack) : null,
-    sideslipRadians: sideslipFlag === 1 ? required(packed, layout.sideslip) : null,
-    rollRadians: required(packed, layout.roll),
-    pitchRadians: required(packed, layout.pitch),
-    headingRadians: required(packed, layout.heading)
+    northMeters: valueAt(northIndex),
+    eastMeters: valueAt(eastIndex),
+    altitudeMeters: valueAt(layout.altitude),
+    airspeedMetersPerSecond: valueAt(layout.airspeed),
+    groundspeedMetersPerSecond: valueAt(layout.groundspeed),
+    windNorthMetersPerSecond: valueAt(layout.windNorth),
+    windEastMetersPerSecond: valueAt(layout.windEast),
+    windDownMetersPerSecond: valueAt(layout.windDown),
+    angleOfAttackRadians: angleOfAttackFlag === 1 ? valueAt(layout.angleOfAttack) : null,
+    sideslipRadians: sideslipFlag === 1 ? valueAt(layout.sideslip) : null,
+    rollRadians: valueAt(layout.roll),
+    pitchRadians: valueAt(layout.pitch),
+    headingRadians: valueAt(layout.heading)
   });
 }
 
@@ -421,14 +421,21 @@ function decodeSummary(
   });
 }
 
-function required(values: Float64Array | number[], index: number): number {
-  const value = values[index];
-  if (value === undefined || !Number.isFinite(value)) throw new TypeError(`Flight record field ${String(index)} is non-finite`);
+function required(values: Float64Array | number[], index: number, offset = 0): number {
+  const absoluteIndex = index + offset;
+  const value = values[absoluteIndex];
+  if (value === undefined || !Number.isFinite(value)) throw new TypeError(`Flight record field ${String(absoluteIndex)} is non-finite`);
   return value;
 }
 
 function requirePackedLength(values: Float64Array | number[], expected: number, label: string): void {
-  if (values.length !== expected || Array.from(values).some((value) => !Number.isFinite(value))) {
+  if (values.length !== expected) {
     throw new TypeError(`Rust ${label} layout is incompatible or non-finite`);
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === undefined || !Number.isFinite(value)) {
+      throw new TypeError(`Rust ${label} layout is incompatible or non-finite`);
+    }
   }
 }

@@ -124,10 +124,11 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
     const directionCount = directionCountByBand[band] ?? 0;
     return directionCount > 0 ? Math.sqrt(3 / directionCount) : 1;
   });
-  const near = createLakeDetailLayer(64, 1400, 1717 + condition.patternSeed * 997, directionX, directionZ);
+  const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
   let far: LakeDetailLayer;
   try {
-    far = createLakeDetailLayer(193, 2400, 2917 + condition.patternSeed * 991, directionX, directionZ);
+    far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ,
+      { count: 900, featureScaleMeters: 4.5, heightScale: 0.5 });
   } catch (error) {
     near.texture.dispose();
     throw error;
@@ -919,12 +920,12 @@ void main() {
   vBaseXZ = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
-  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.73) / uDetailExtents.y);
+  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
   float nearHeight = nearDetail.a - 128.0 / 255.0;
   float farHeight = farDetail.a - 128.0 / 255.0;
-  float nearVisibility = 1.0 - smoothstep(0.3, 0.9, aGridSpacing);
+  float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
-  p.y += (nearHeight * 0.8 * nearVisibility + farHeight * 0.4 * farVisibility) * uDetailScale;
+  p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.55 * farVisibility) * uDetailScale;
   float slopeEnergy = 0.0;
   for (int i = 0; i < 24; i++) {
     if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
@@ -940,8 +941,8 @@ void main() {
   float dhdz = 0.0;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
-  vec2 resolvedDetailSlope = (nearSlope * (0.8 * nearVisibility)
-    + farSlope * (0.4 * farVisibility)) * uDetailScale;
+  vec2 resolvedDetailSlope = (nearSlope * (0.6 * nearVisibility)
+    + farSlope * (0.55 * farVisibility)) * uDetailScale;
   dhdx += resolvedDetailSlope.x;
   dhdz += resolvedDetailSlope.y;
   float crest = 0.0;
@@ -1121,13 +1122,13 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
 }
 
 vec3 lakeMicroDetail(vec2 worldXZ) {
-  const float fineAmplitude = 0.16;
-  const float rippleAmplitude = 0.055;
+  const float fineAmplitude = 0.4;
+  const float rippleAmplitude = 0.1;
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
   // These compact gravity-wave bands use phase-speed ratios proportional to
-  // sqrt(wavelength): far/near/fine/ripple = 0.73/0.42/0.26/0.18.
-  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.73) / uDetailExtents.y);
+  // sqrt(wavelength): far/near/fine/ripple = 0.89/0.42/0.26/0.18.
+  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.89) / uDetailExtents.y);
   // Each rotated octave advects along its rotated propagation direction.
   // Reusing the unrotated drift makes oblique crests slide sideways.
   vec2 fineDrift = vec2(
@@ -1162,7 +1163,7 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
     -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
   ) * 5.2 * rippleAmplitude;
-  vec2 microSlope = nearSlope * 0.8 + farSlope * 0.4 + fineSlope + rippleSlope;
+  vec2 microSlope = nearSlope * 0.6 + farSlope * 0.55 + fineSlope + rippleSlope;
   // Blue stores slope squared. Mipmaps preserve the variance of unresolved
   // wavelets even after their mean slope approaches zero.
   float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
@@ -1170,14 +1171,10 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
   float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
   float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
   float slopeMoment = dot(microSlope, microSlope)
-    + 0.8 * 0.8 * nearVariance + 0.4 * 0.4 * farVariance
+    + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
     + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
     + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
-  // Preserve visible fine-scale contrast as the pilot eye rises above the
-  // water; projected waves otherwise lose nearly all of their normal detail.
-  float eyeHeight = max(cameraPosition.y - vWorldPosition.y, 0.0);
-  float detailGain = 1.0 + 2.0 * smoothstep(1.5, 7.0, eyeHeight);
-  float strength = smoothstep(0.05, 0.6, uWindSpeed) * detailGain;
+  float strength = smoothstep(0.05, 0.6, uWindSpeed);
   float scaledStrength = strength * uDetailScale;
   return vec3(microSlope * scaledStrength, slopeMoment * scaledStrength * scaledStrength);
 }
@@ -1193,13 +1190,16 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
   vec2 totalSlope = geometricSlope + waveSlope + microSlope - vRepresentedSlope;
   vec3 normal = normalize(vec3(-totalSlope.x, 1.0, -totalSlope.y));
   vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
-  vec3 reflectedDirection = reflect(-viewDirection, normal);
-  vec3 reflection = lakeSkyRadiance(reflectedDirection);
-  // Normal-map facets facing away from the eye are not visible. Use the
-  // resolved surface for the Fresnel weight while retaining normal detail
-  // in the reflected direction until a visibility-aware BRDF is available.
   float ndv = max(dot(geometricNormal, viewDirection), 0.0);
-  float fresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  float geometricFresnel = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  float facetNdotV = dot(normal, viewDirection);
+  float facetFresnel = 0.02 + 0.98 * pow(1.0 - max(facetNdotV, 0.0), 5.0);
+  float rayVisibility = smoothstep(0.0, 0.18, facetNdotV);
+  float fresnelVisibility = rayVisibility * smoothstep(0.03, 0.22, ndv);
+  vec3 reflectedDirection = normalize(mix(reflect(-viewDirection, geometricNormal),
+    reflect(-viewDirection, normal), rayVisibility));
+  vec3 reflection = lakeSkyRadiance(reflectedDirection);
+  float fresnel = mix(geometricFresnel, facetFresnel, 0.4 * fresnelVisibility);
   float sunAlignment = max(dot(reflectedDirection, normalize(uSunDirection.xyz)), 0.0);
   float roughness = clamp(0.23 + uWindSpeed * 0.018 + sqrt(unresolvedVariance) * 0.6, 0.23, 0.62);
   float glitterLobe = pow(sunAlignment, mix(220.0, 45.0, roughness));

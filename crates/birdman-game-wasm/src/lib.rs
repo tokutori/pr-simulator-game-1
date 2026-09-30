@@ -9,11 +9,17 @@ use birdman_game_core::{
     SyntheticFlightError, SyntheticPlayableFlight, course_distance_score,
 };
 use birdman_game_format::{
-    AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, HudCue, HudProfile,
-    InformationLevel, ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
-    ScenarioModelCatalog, WeatherClass, resolve_configuration,
+    AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, FlightRecordDocument,
+    HudCue, HudProfile, InformationLevel, PersonalBestContentHashes, PersonalBestSelection,
+    ResolvedConfiguration, ScenarioCatalog, ScenarioCatalogEntry, ScenarioModel,
+    ScenarioModelCatalog, WeatherClass, canonical_personal_best_key,
+    compare_personal_best_records as compare_personal_best_documents, resolve_configuration,
 };
 use wasm_bindgen::{JsValue, prelude::*};
+
+mod personal_best_fingerprints {
+    include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
+}
 
 const MAX_TICKS: u64 = 4_000;
 const SURFACE_COMMAND_LIMIT_RAD: f64 = 0.04;
@@ -63,6 +69,94 @@ const WEATHER_SCENARIO_ENTRIES: [ScenarioCatalogEntry; 5] = [
 #[wasm_bindgen]
 pub fn physics_hz() -> u32 {
     birdman_game_core::PHYSICS_HZ
+}
+
+/// Compares stored record JSON documents: 0=candidate wins, 1=existing wins,
+/// 2=equal score, 3=different configuration, 4=ineligible record pair.
+#[wasm_bindgen]
+pub fn compare_personal_best_json(
+    candidate_json: &str,
+    existing_json: &str,
+) -> Result<u32, JsValue> {
+    let candidate =
+        birdman_game_format::FlightRecordDocument::decode_json(candidate_json.as_bytes())
+            .map_err(flight_record_format_error)?;
+    let existing = birdman_game_format::FlightRecordDocument::decode_json(existing_json.as_bytes())
+        .map_err(flight_record_format_error)?;
+    let comparison = compare_personal_best_documents(&candidate, &existing)
+        .map_err(flight_record_format_error)?;
+    Ok(match comparison {
+        Some(birdman_game_core::PersonalBestComparison::CandidateWins) => 0,
+        Some(birdman_game_core::PersonalBestComparison::ExistingWins) => 1,
+        Some(birdman_game_core::PersonalBestComparison::EqualScore) => 2,
+        Some(birdman_game_core::PersonalBestComparison::DifferentConfiguration) => 3,
+        None => 4,
+    })
+}
+
+/// Holds Rust-owned Personal Best selection state while a browser adapter scans stored records.
+#[wasm_bindgen]
+pub struct PersonalBestSelectionBridge {
+    selection: Option<PersonalBestSelection>,
+}
+
+#[wasm_bindgen]
+impl PersonalBestSelectionBridge {
+    /// Starts selection from the candidate JSON document.
+    #[wasm_bindgen(constructor)]
+    pub fn new(candidate_json: &str) -> Result<PersonalBestSelectionBridge, JsValue> {
+        let candidate = FlightRecordDocument::decode_json(candidate_json.as_bytes())
+            .map_err(flight_record_format_error)?;
+        let selection =
+            PersonalBestSelection::try_new(&candidate).map_err(flight_record_format_error)?;
+        Ok(Self { selection })
+    }
+
+    /// Adds a stored record to the Rust-owned comparison state.
+    pub fn consider_existing(&mut self, id: f64, existing_json: &str) -> Result<(), JsValue> {
+        if !id.is_finite() || id.fract() != 0.0 || !(1.0..=9_007_199_254_740_991.0).contains(&id) {
+            return Err(JsValue::from_str("Stored FlightRecord ID is invalid"));
+        }
+        let Some(selection) = &mut self.selection else {
+            return Ok(());
+        };
+        let existing = FlightRecordDocument::decode_json(existing_json.as_bytes())
+            .map_err(flight_record_format_error)?;
+        selection
+            .consider_existing(id as u64, &existing)
+            .map_err(flight_record_format_error)
+    }
+
+    /// Returns whether the candidate is eligible for Personal Best selection.
+    pub fn is_eligible(&self) -> bool {
+        self.selection.is_some()
+    }
+
+    /// Returns the stable lowercase hexadecimal configuration key, or an empty string.
+    pub fn key_hex(&self) -> String {
+        let Some(selection) = self.selection else {
+            return String::new();
+        };
+        selection
+            .key()
+            .digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// Returns whether the candidate currently wins over all considered stored records.
+    pub fn candidate_is_best(&self) -> bool {
+        self.selection
+            .is_some_and(|selection| selection.selected_existing_id().is_none())
+    }
+
+    /// Returns the selected stored record ID, or zero when the candidate wins or is ineligible.
+    pub fn selected_existing_id(&self) -> f64 {
+        self.selection
+            .and_then(PersonalBestSelection::selected_existing_id)
+            .map_or(0.0, |id| id as f64)
+    }
 }
 
 /// Owns the Rust game lifecycle for one synthetic browser session.
@@ -663,7 +757,8 @@ impl GameSessionBridge {
             .sample_count()
             .checked_mul(RECORD_SAMPLE_LENGTH)
             .ok_or_else(|| JsValue::from_str("flight record transfer size overflowed"))?;
-        let mut packed = Vec::with_capacity(capacity);
+        let mut packed = reserve_record_transfer_buffer(capacity)
+            .ok_or_else(|| JsValue::from_str("flight record transfer buffer allocation failed"))?;
         for sample in record.samples() {
             packed.extend_from_slice(&pack_flight_record_sample(sample));
         }
@@ -831,12 +926,38 @@ impl GameSessionBridge {
             .session
             .flight_record()
             .ok_or_else(|| JsValue::from_str("flight record is unavailable"))?;
-        let settings = self
+        let resolved = *self
             .resolved_configuration
             .as_ref()
-            .ok_or_else(|| JsValue::from_str("resolved flight settings are unavailable"))?
-            .difficulty;
-        let document = birdman_game_format::FlightRecordDocument::from_record(record, settings)
+            .ok_or_else(|| JsValue::from_str("resolved flight settings are unavailable"))?;
+        let mut document =
+            birdman_game_format::FlightRecordDocument::from_record(record, resolved.difficulty)
+                .map_err(flight_record_format_error)?;
+        let scenario_id = resolved
+            .scenario
+            .scenario_id
+            .checked_sub(1)
+            .ok_or_else(|| JsValue::from_str("resolved scenario index is invalid"))?;
+        let scenario_index = usize::try_from(scenario_id)
+            .map_err(|_| JsValue::from_str("resolved scenario index is invalid"))?;
+        let scenario = self
+            .scenarios
+            .get(scenario_index)
+            .ok_or_else(|| JsValue::from_str("resolved scenario is unavailable"))?;
+        let key = canonical_personal_best_key(
+            &document,
+            resolved,
+            scenario.course_axis(),
+            PersonalBestContentHashes {
+                scenario: personal_best_fingerprints::SCENARIO_SOURCE_FINGERPRINT,
+                aircraft: personal_best_fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
+                environment: personal_best_fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
+                physics_build: personal_best_fingerprints::PHYSICS_BUILD_FINGERPRINT,
+            },
+        )
+        .map_err(flight_record_format_error)?;
+        document = document
+            .with_personal_best_key(key)
             .map_err(flight_record_format_error)?;
         let encoded = document.encode_json().map_err(flight_record_format_error)?;
         String::from_utf8(encoded)
@@ -1083,6 +1204,12 @@ fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE
         telemetry.composite_cg_position_ned_m.components()[2],
     ]);
     packed
+}
+
+fn reserve_record_transfer_buffer(capacity: usize) -> Option<Vec<f64>> {
+    let mut packed = Vec::new();
+    packed.try_reserve_exact(capacity).ok()?;
+    Some(packed)
 }
 
 fn pack_flight_record_playback_sample(
@@ -1591,13 +1718,32 @@ fn end_reason_code(reason: SessionEndReason) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GameSessionBridge, PLAYBACK_SAMPLE_LENGTH, RECORD_SAMPLE_LENGTH, SNAPSHOT_LENGTH,
-        SyntheticFlightSession, flight_record_sample_layout, validate_axes,
+        GameSessionBridge, PLAYBACK_SAMPLE_LENGTH, PersonalBestSelectionBridge,
+        RECORD_SAMPLE_LENGTH, SNAPSHOT_LENGTH, SyntheticFlightSession, compare_personal_best_json,
+        flight_record_sample_layout, validate_axes,
     };
     use birdman_game_core::{
-        BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, PilotPositionTarget,
-        SurfaceCommands, SyntheticPlayableFlight,
+        BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, MAX_FLIGHT_RECORD_SAMPLES,
+        PilotPositionTarget, SurfaceCommands, SyntheticPlayableFlight,
     };
+
+    const _: [(); 1_632_408] =
+        [(); core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES];
+
+    #[test]
+    fn maximum_bulk_record_transfer_payload_matches_the_layout_budget() {
+        assert_eq!(RECORD_SAMPLE_LENGTH, 51);
+        assert_eq!(MAX_FLIGHT_RECORD_SAMPLES, 4_001);
+        assert_eq!(
+            core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES,
+            1_632_408
+        );
+    }
+
+    #[test]
+    fn record_transfer_capacity_overflow_is_reported_as_an_adapter_error() {
+        assert!(super::reserve_record_transfer_buffer(usize::MAX).is_none());
+    }
 
     #[test]
     fn synthetic_session_returns_packed_finite_snapshot_and_rejects_invalid_input() {
@@ -1688,10 +1834,12 @@ mod tests {
         assert_eq!(finalization[2], 1.0);
         assert_eq!(finalization[4], 1.0);
         let encoded = bridge.export_flight_record_json().unwrap();
+        assert_eq!(compare_personal_best_json(&encoded, &encoded).unwrap(), 4);
         let decoded =
             birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
         assert_eq!(decoded.samples.len(), 2);
         assert!(decoded.finalization.is_some());
+        assert_eq!(decoded.personal_best_key(), None);
         assert_eq!(
             decoded.header.difficulty.information,
             birdman_game_format::FlightRecordInformationDocument::Custom
@@ -1755,6 +1903,57 @@ mod tests {
             flight_record_sample_layout().split(',').count(),
             RECORD_SAMPLE_LENGTH
         );
+    }
+
+    #[test]
+    fn completed_water_contact_export_persists_a_deterministic_personal_best_key() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        for _ in 0..super::MAX_TICKS {
+            if bridge.phase_code() == 7 {
+                break;
+            }
+            bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+        }
+        assert_eq!(bridge.phase_code(), 7);
+
+        let first = bridge.export_flight_record_json().unwrap();
+        let second = bridge.export_flight_record_json().unwrap();
+        assert_eq!(first, second);
+        let document =
+            birdman_game_format::FlightRecordDocument::decode_json(first.as_bytes()).unwrap();
+        assert!(document.personal_best_candidate_score().unwrap().is_some());
+        assert!(document.personal_best_key().is_some());
+        assert_eq!(
+            super::compare_personal_best_json(&first, &second).unwrap(),
+            2
+        );
+        let different_configuration = document
+            .clone()
+            .with_personal_best_key(Some(birdman_game_core::PersonalBestKey::from_digest(
+                [0; 32],
+            )))
+            .unwrap()
+            .encode_json()
+            .unwrap();
+        let different_configuration = String::from_utf8(different_configuration).unwrap();
+        assert_eq!(
+            super::compare_personal_best_json(&first, &different_configuration).unwrap(),
+            3
+        );
+
+        let mut selection = PersonalBestSelectionBridge::new(&first).unwrap();
+        assert!(selection.is_eligible());
+        assert_eq!(selection.key_hex().len(), 64);
+        assert!(selection.candidate_is_best());
+        selection.consider_existing(12.0, &first).unwrap();
+        assert!(!selection.candidate_is_best());
+        assert_eq!(selection.selected_existing_id(), 12.0);
     }
 
     #[test]

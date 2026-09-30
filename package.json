@@ -31,6 +31,7 @@
     "@types/three": "0.186.0",
     "@types/webxr": "0.5.24",
     "eslint": "10.11.0",
+    "fake-indexeddb": "6.2.5",
     "happy-dom": "20.14.5",
     "smol-toml": "1.9.0",
     "tsx": "4.23.15",

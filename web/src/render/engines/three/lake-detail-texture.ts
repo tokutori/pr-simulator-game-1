@@ -5,17 +5,24 @@ export interface LakeDetailLayer {
   readonly extentMeters: number;
 }
 
+interface BroaderWavelets {
+  readonly count: number;
+  readonly featureScaleMeters: number;
+  readonly heightScale: number;
+}
+
 /** Builds a periodic normal field from finite-length height wavelets once. */
 export function createLakeDetailLayer(
   extentMeters: number,
   waveletCount: number,
   seed: number,
   directionX: number,
-  directionZ: number
+  directionZ: number,
+  broaderWavelets?: BroaderWavelets
 ): LakeDetailLayer {
   const size = 512;
   const texelMeters = extentMeters / size;
-  const featureScale = extentMeters / 64;
+  const featureScale = extentMeters / 96;
   const heightField = new Float32Array(size * size);
   const slopeX = new Float32Array(size * size);
   const slopeZ = new Float32Array(size * size);
@@ -25,28 +32,35 @@ export function createLakeDetailLayer(
     return randomState / 4294967296;
   };
 
-  for (let wavelet = 0; wavelet < waveletCount; wavelet++) {
+  for (let wavelet = 0; wavelet < waveletCount + (broaderWavelets?.count ?? 0); wavelet++) {
+    const broader = wavelet >= waveletCount;
+    const localFeatureScale = broader ? (broaderWavelets?.featureScaleMeters ?? featureScale) : featureScale;
     const shapeBits = Math.imul(wavelet ^ seed, 0x9e3779b1) >>> 0;
-    const crestlet = shapeBits / 4294967296 < 0.42;
+    const crestlet = shapeBits / 4294967296 < 0.6;
     const centerX = random() * size;
     const centerZ = random() * size;
+    const centerCellX = Math.floor(centerX);
+    const centerCellZ = Math.floor(centerZ);
+    const centerFractionX = centerX - centerCellX;
+    const centerFractionZ = centerZ - centerCellZ;
     const angle = (random() - 0.5) * 1.8;
     const travelX = directionX * Math.cos(angle) - directionZ * Math.sin(angle);
     const travelZ = directionZ * Math.cos(angle) + directionX * Math.sin(angle);
     const crestX = -travelZ;
     const crestZ = travelX;
-    const crestLength = (crestlet ? 0.48 + random() * 0.24 : 0.3 + random() * 0.35) * featureScale;
-    const envelopeWidth = (crestlet ? 0.45 + random() * 0.2 : 0.4 + random() * 0.5) * featureScale;
-    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(featureScale)) * (crestlet ? 1.2 : 1);
-    const bend = crestlet ? (((shapeBits >>> 8) & 255) / 255 - 0.5) * 0.18 : 0;
+    const crestLength = (crestlet ? 0.6 + random() * 0.25 : 0.3 + random() * 0.35) * localFeatureScale;
+    const envelopeWidth = (crestlet ? 0.35 + random() * 0.15 : 0.4 + random() * 0.5) * localFeatureScale;
+    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(localFeatureScale))
+      * (crestlet ? 1.2 : 1) * (broader ? (broaderWavelets?.heightScale ?? 1) : 1);
+    const bend = crestlet ? (((shapeBits >>> 8) & 255) / 255 - 0.5) * 0.25 : 0;
     const waveNumber = 1.8 / envelopeWidth;
     const carrierMean = Math.exp(-0.5 * 1.8 * 1.8);
     const radius = Math.ceil(4 * Math.max(crestLength, envelopeWidth) / texelMeters);
 
     for (let offsetZ = -radius; offsetZ <= radius; offsetZ++) {
       for (let offsetX = -radius; offsetX <= radius; offsetX++) {
-        const deltaX = offsetX * texelMeters;
-        const deltaZ = offsetZ * texelMeters;
+        const deltaX = (offsetX - centerFractionX) * texelMeters;
+        const deltaZ = (offsetZ - centerFractionZ) * texelMeters;
         const alongCrest = deltaX * crestX + deltaZ * crestZ;
         const alongTravel = deltaX * travelX + deltaZ * travelZ;
         const curvedTravel = alongTravel - bend * alongCrest * alongCrest / crestLength;
@@ -73,8 +87,8 @@ export function createLakeDetailLayer(
           crestDerivative = derivative * alongCrest / (crestLength * crestLength);
           travelDerivative = derivative * curvedTravel / (envelopeWidth * envelopeWidth);
         }
-        const texelX = ((Math.floor(centerX) + offsetX) % size + size) % size;
-        const texelZ = ((Math.floor(centerZ) + offsetZ) % size + size) % size;
+        const texelX = ((centerCellX + offsetX) % size + size) % size;
+        const texelZ = ((centerCellZ + offsetZ) % size + size) % size;
         const index = texelZ * size + texelX;
         heightField[index] = (heightField[index] ?? 0) + localHeight;
         slopeX[index] = (slopeX[index] ?? 0) + crestDerivative * crestX + travelDerivative * travelX;

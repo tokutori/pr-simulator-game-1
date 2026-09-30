@@ -9,6 +9,7 @@ import { executeGameSessionOperation } from "../../web/src/app/game-session-oper
 import type { AppEffect, AppModel, GameSessionProjection } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSampleAt } from "../../web/src/game/flight-record-query.js";
+import { FlightRecordRepository } from "../../web/src/game/flight-record-store.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 let wasmInitialized = false;
@@ -125,6 +126,33 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       expect(snapshot.terminal).toBe("water-contact");
       render();
       expect(model.gameSession.kind).toBe("result");
+      const persistedRecords: { readonly json: string; readonly savedAt: string }[] = [];
+      const repository = new FlightRecordRepository({
+        add: (json: string, savedAt: string) => {
+          persistedRecords.push({ json, savedAt });
+          return Promise.resolve(persistedRecords.length);
+        },
+        get: () => Promise.resolve(null),
+        getAll: () => Promise.resolve([])
+      });
+      const saved = await repository.saveFrom(session);
+      const document = JSON.parse(saved.json) as {
+        readonly schema_version: number;
+        readonly header: {
+          readonly difficulty: { readonly hud_profile: unknown };
+          readonly physics_model_version: number;
+        };
+      };
+      expect(document.schema_version).toBe(5);
+      expect(document.header.physics_model_version).toBe(1);
+      expect(document.header.difficulty.hud_profile).toEqual({
+        telemetry: true,
+        attitude: true,
+        wind: false,
+        flight_path: false,
+        angle_of_attack: false,
+        warnings: false
+      });
       activate("game-result-retry");
       expect(model.gameSession.kind).toBe("briefing-ready");
     } finally {

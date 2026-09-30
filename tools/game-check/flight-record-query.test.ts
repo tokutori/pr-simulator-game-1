@@ -169,6 +169,33 @@ describe("loadFlightAnalysis", () => {
     expect(analysis.windGrid).toBeNull();
   });
 
+  it("decodes a maximum-size packed transfer without slicing per-sample buffers", () => {
+    const sampleCount = 4_001;
+    const sampleWidth = FLIGHT_RECORD_SAMPLE_LAYOUT.length;
+    const packedSamples = new Float64Array(sampleCount * sampleWidth);
+    for (let index = 0; index < sampleCount; index += 1) {
+      packedSamples[index * sampleWidth + FLIGHT_RECORD_SAMPLE_LAYOUT.tick] = index;
+    }
+    Object.defineProperty(packedSamples, "slice", {
+      value: () => { throw new Error("packed sample buffer must not be copied per sample"); }
+    });
+    const summary = Float64Array.from([sampleCount, 40, 11, 12, 13, 0, 0, 0.1, 1, 10, -2, 10.2]);
+    const finalization = Float64Array.from([1, 0, 4_000, 0, 1, 10, -2]);
+    const record: FlightRecordQueryPort = {
+      flight_record_sample_count: () => sampleCount,
+      flight_record_samples_packed: () => packedSamples,
+      flight_record_summary: () => summary,
+      flight_record_sample_at_seconds: () => new Float64Array(FLIGHT_RECORD_PLAYBACK_LAYOUT.length),
+      flight_record_finalization: () => finalization
+    };
+
+    const analysis = loadFlightAnalysis(record, 100);
+
+    expect(analysis.samples).toHaveLength(sampleCount);
+    expect(analysis.samples[0]?.timeSeconds).toBe(0);
+    expect(analysis.samples.at(-1)?.timeSeconds).toBe(40);
+  });
+
   it("rejects malformed packed wind grid data", () => {
     const record = new PackedFlightRecord([sample(0, 0)]);
     record.flight_analysis_wind_grid_packed = () => Array<number>(124).fill(0);

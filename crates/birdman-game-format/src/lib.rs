@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod flight_record;
+mod personal_best;
 
 pub use flight_record::{
     FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
@@ -12,6 +13,10 @@ pub use flight_record::{
     FlightRecordHudProfileDocument, FlightRecordInformationDocument, FlightRecordInputDocument,
     FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordTelemetryDocument,
     FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
+};
+pub use personal_best::{
+    PersonalBestContentHashes, PersonalBestSelection, canonical_personal_best_key,
+    compare_personal_best_records,
 };
 
 use birdman_game_core::{BodyRateFeedbackConfig, ControlMode, FbwAuthority, FlightScenario};

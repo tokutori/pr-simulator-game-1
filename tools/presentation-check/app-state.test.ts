@@ -126,11 +126,13 @@ describe("Boot application state", () => {
     const refreshed = updateApp(ready, { type: "refresh-stored-flight-records" });
     expect(refreshed.effects).toEqual([{ type: "load-stored-flight-records", requestId: 2 }]);
     const stale = updateApp(refreshed.model, {
-      type: "stored-flight-records-loaded", requestId: 1, records: [{ id: 8, savedAt: "2026-09-28T00:00:00.000Z" }]
+      type: "stored-flight-records-loaded", requestId: 1,
+      records: [{ id: 8, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }]
     });
     expect(stale.model).toBe(refreshed.model);
     const loaded = updateApp(refreshed.model, {
-      type: "stored-flight-records-loaded", requestId: 2, records: [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z" }]
+      type: "stored-flight-records-loaded", requestId: 2,
+      records: [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }]
     });
     expect(loaded.model.storedFlightRecords.map((record) => record.id)).toEqual([9]);
   });
@@ -138,7 +140,7 @@ describe("Boot application state", () => {
   it("opens a selected stored record through the Rust-owned Replay phase", () => {
     const ready = updateApp(readyModel(0), {
       type: "stored-flight-records-loaded", requestId: 1,
-      records: [{ id: 4, savedAt: "2026-09-28T00:00:00.000Z" }]
+      records: [{ id: 4, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }]
     }).model;
     const opening = updateApp(ready, {
       type: "ui-action", action: { type: "activate", controlId: "game-title-open-record-4" }
