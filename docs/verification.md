@@ -133,6 +133,8 @@ BPG-010の湖面描画は地形・空に依存しない簡易world上で先行�
 
 2026-09-30、変更中worktreeで `npm.cmd run verify` が成功した。typecheck、lint、30 test files / 264 tests、repository checks、production buildが通過し、Three.js renderer chunkの500 kB超過警告だけが残った。全Issueの視覚受入や上記欠測帯の実地形一致を証明する検査ではない。
 2026-09-30、水面と地形の継ぎ目対策として、離陸地点周囲の30 m DEM patchを3 km角から12 km角へ拡張した。これにより近傍の低密度 shoreline transition が通常沿岸に重ならない範囲へ広がり、陸側の近接地形探索はOSM land maskで水域のDSM値を避ける。open shorelineの端点付近ではこの探索を止め、隣接する面との連続性を維持する。全shoreline sampleの幅監査では、12 km local patch範囲内の最大transition幅が335.44 m、600 m超が0件となった。離陸海岸のfragment 33は従来最大約2,398 mだった箇所が約335 mまで短縮した。一方、patch外の遠隔海岸には最大約2,404 mの広いtransitionが残る。これは今回の近岸の隙間対策が全湖岸の地形形状を解決した意味ではない。現行worktreeで `npm.cmd run verify` はtypecheck、lint、30 test files / 264 tests、repository checks、production buildまで成功した。local 5198のTitleおよびDemo Replay開始直後を1280×720で確認し、表示範囲には明瞭な水面・地形間の隙間が見えなかった。高密度の近接・全方位visual sweepは未実施である。
+
+2026-09-30、`lake-venue-parallax.test.ts` の北・西・北西の稜線投影検査を、runtimeの `flightRelativePose` と `pilotEyePoseThree` を通すPilot cameraへ変更した。北西稜線のpeakはheading 310–320°、pitch ±5°、roll ±5°、高度10–30 mの各条件で、視野中央のNDC ±0.45以内かつnear/far clip内に入る。北西へ500 m移動したときに多景島の投影移動量が遠景稜線の3倍を超えることも確認する。対象test fileは6件成功した。これは姿勢・高度変更時の幾何投影と相対parallaxのsoftware回帰検査であり、地形meshの遮蔽、画素上のコントラスト、実画面の判読性を証明しない。実画面の新規camera条件での確認、近接する島岸・全湖岸の視認性、全稜線の誤差受入は未完了である。
 BPG-012ではframe-time分布、画質振動、physics allocationと実行時間、download量を計測する。
 BPG-013ではsubpath、WASM MIME、cache、asset帰属、keyboard/gamepad、browser smoke testを検証する。
 未確認の端末・browserは明記する。実機同定・物理HIL検証をこれらの合格に含めない。

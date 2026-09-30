@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import shoreline from "../../../../../assets/biwa-shoreline.json";
 import terrain from "../../../../../assets/biwa-terrain.json";
 import { cinematicCameraView } from "../../camera/cinematic-camera.js";
+import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
+import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../contracts/math.js";
+import type { FlightRenderPose } from "../../contracts/runtime.js";
 import { venueMapForScenario } from "../../../game/biwa-venue-map.js";
+import { flightRelativePose } from "./flight-pose.js";
 import type { FlightCameraMode } from "../../contracts/runtime.js";
 
 interface Grid {
@@ -39,27 +43,8 @@ function peakInGrid(grid: Grid, include: (point: WorldPoint) => boolean): WorldP
   return peak;
 }
 
-function cameraForNorthwestOffset(distanceMeters: number): PerspectiveCamera {
-  const forwardNorth = Math.SQRT1_2;
-  const forwardEast = -Math.SQRT1_2;
-  const north = distanceMeters * forwardNorth;
-  const east = distanceMeters * forwardEast;
-  const camera = new PerspectiveCamera(70, 16 / 9, 1, 100_000);
-  camera.position.set(east, 30, -north);
-  camera.lookAt(east + forwardEast * 100, 30, -north - forwardNorth * 100);
-  camera.updateMatrixWorld();
-  return camera;
-}
-
 function cameraForBearing(bearingDegrees: number): PerspectiveCamera {
-  const bearing = bearingDegrees * Math.PI / 180;
-  const forwardNorth = Math.cos(bearing);
-  const forwardEast = Math.sin(bearing);
-  const camera = new PerspectiveCamera(70, 16 / 9, 1, 100_000);
-  camera.position.set(0, 12, 0);
-  camera.lookAt(forwardEast * 100, 12, -forwardNorth * 100);
-  camera.updateMatrixWorld();
-  return camera;
+  return pilotCameraForFlight(0, 0, 12, bearingDegrees, 0, 0);
 }
 
 function projectedHorizontal(point: WorldPoint, camera: PerspectiveCamera): number {
@@ -81,6 +66,40 @@ function cameraForVenueView(mode: "platform" | "shore" | "telephoto"): Perspecti
   camera.position.set(view.pose.position.x, view.pose.position.y, view.pose.position.z);
   camera.quaternion.set(view.pose.orientation.x, view.pose.orientation.y, view.pose.orientation.z, view.pose.orientation.w);
   camera.updateProjectionMatrix();
+  camera.updateMatrixWorld();
+  return camera;
+}
+
+function pilotCameraForFlight(
+  north: number,
+  east: number,
+  height: number,
+  headingDegrees: number,
+  pitchDegrees: number,
+  rollDegrees: number
+): PerspectiveCamera {
+  const heading = headingDegrees * Math.PI / 180;
+  const pitch = pitchDegrees * Math.PI / 180;
+  const roll = rollDegrees * Math.PI / 180;
+  // NED heading rotates around down; positive pitch and roll follow the flight contract.
+  const bodyToNed = multiplyQuaternion(
+    multiplyQuaternion(
+      quaternion(Math.cos(heading / 2), 0, 0, Math.sin(heading / 2)),
+      quaternion(Math.cos(pitch / 2), 0, Math.sin(pitch / 2), 0)
+    ),
+    quaternion(Math.cos(roll / 2), Math.sin(roll / 2), 0, 0)
+  );
+  const flight: FlightRenderPose = {
+    datumPositionNed: { north, east, down: -height },
+    attitudeBodyToNed: bodyToNed,
+    pilotPositionMeters: 0,
+    initialPilotPositionMeters: 0
+  };
+  const aircraftPose = flightRelativePose(flight, IDENTITY_POSE);
+  const eyePose = composePose(aircraftPose, pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0));
+  const camera = new PerspectiveCamera(60, 16 / 9, 0.05, 100_000);
+  camera.position.set(eyePose.position.x, eyePose.position.y, eyePose.position.z);
+  camera.quaternion.set(eyePose.orientation.x, eyePose.orientation.y, eyePose.orientation.z, eyePose.orientation.w);
   camera.updateMatrixWorld();
   return camera;
 }
@@ -199,8 +218,8 @@ describe("Lake Biwa terrain parallax", () => {
       return distance >= 12_000 && distance <= 42_000 && bearingDegrees >= 300 && bearingDegrees <= 330;
     });
 
-    const initialCamera = cameraForNorthwestOffset(0);
-    const movedCamera = cameraForNorthwestOffset(500);
+    const initialCamera = pilotCameraForFlight(0, 0, 10, 315, 0, 0);
+    const movedCamera = pilotCameraForFlight(500 / Math.sqrt(2), -500 / Math.sqrt(2), 10, 315, 0, 0);
     const nearShift = Math.abs(projectedHorizontal(nearIsland, movedCamera) - projectedHorizontal(nearIsland, initialCamera));
     const farShift = Math.abs(projectedHorizontal(farRidge, movedCamera) - projectedHorizontal(farRidge, initialCamera));
 
@@ -208,5 +227,28 @@ describe("Lake Biwa terrain parallax", () => {
     expect(farRidge.height).toBeGreaterThan(500);
     expect(nearShift).toBeGreaterThan(farShift * 3);
     expect(farShift).toBeGreaterThan(0);
+  });
+
+  it("keeps the northwest ridge visible through pilot heading, pitch, roll, and altitude changes", () => {
+    const ridgePatch = terrain.finePatches.find((patch) => patch.id === "terrain-patch-ridge-northwest");
+    if (ridgePatch === undefined) throw new TypeError("Missing northwest ridge detail patch");
+    const ridge = peakInGrid(ridgePatch, () => true);
+    const states = [
+      { heading: 315, pitch: 0, roll: 0, height: 10 },
+      { heading: 310, pitch: -5, roll: 5, height: 10 },
+      { heading: 320, pitch: 5, roll: -5, height: 10 },
+      { heading: 315, pitch: 0, roll: 0, height: 30 }
+    ] as const;
+
+    for (const state of states) {
+      const projected = new Vector3(ridge.east, ridge.height, -ridge.north)
+        .project(pilotCameraForFlight(0, 0, state.height, state.heading, state.pitch, state.roll));
+      expect(projected.x, `${JSON.stringify(state)} ridge horizontal position`).toBeGreaterThan(-0.45);
+      expect(projected.x, `${JSON.stringify(state)} ridge horizontal position`).toBeLessThan(0.45);
+      expect(projected.y, `${JSON.stringify(state)} ridge vertical position`).toBeGreaterThan(-0.45);
+      expect(projected.y, `${JSON.stringify(state)} ridge vertical position`).toBeLessThan(0.45);
+      expect(projected.z, `${JSON.stringify(state)} ridge depth`).toBeGreaterThan(-1);
+      expect(projected.z, `${JSON.stringify(state)} ridge depth`).toBeLessThan(1);
+    }
   });
 });
