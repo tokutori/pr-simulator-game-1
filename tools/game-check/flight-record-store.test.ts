@@ -121,6 +121,35 @@ describe("FlightRecordRepository", () => {
     expect(database.personalBests.get("a".repeat(64))?.recordId).toBe(2);
   });
 
+  it("rebuilds the canonical Personal Best index once for pre-index records", async () => {
+    const database = memoryIndexedDb([
+      { id: 1, savedAt: "2026-09-28T00:00:00.000Z", json: finalizedRecord },
+      { id: 2, savedAt: "2026-09-29T00:00:00.000Z", json: finalizedRecord }
+    ]);
+    const selections: TestPersonalBestSelection[] = [];
+    const repository = new FlightRecordRepository(
+      new IndexedDbFlightRecordPersistence(database.factory),
+      undefined,
+      () => {
+        const selection = new TestPersonalBestSelection();
+        selections.push(selection);
+        return selection;
+      }
+    );
+
+    await expect(repository.list()).resolves.toEqual([
+      { id: 2, savedAt: "2026-09-29T00:00:00.000Z", personalBest: true },
+      { id: 1, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }
+    ]);
+    expect(database.personalBests.get("a".repeat(64))).toEqual({ key: "a".repeat(64), recordId: 2 });
+    expect(database.personalBestIndexInitialized()).toBe(true);
+    expect(database.cursorCount()).toBe(1);
+    expect(selections.every(({ freed }) => freed)).toBe(true);
+
+    await repository.list();
+    expect(database.cursorCount()).toBe(1);
+  });
+
   it.each([
     "not-json",
     JSON.stringify({ schema_version: 2, header: [], samples: [{}], finalization: {} }),
@@ -168,7 +197,7 @@ describe("FlightRecordRepository", () => {
       { id: 3, savedAt: "2026-09-30T00:00:00.000Z" },
       { id: "invalid", savedAt: "2026-09-30T00:00:00.000Z" }
     ]));
-    await expect(malformed.getAll()).rejects.toThrow("IndexedDB record metadata or Personal Best index is malformed");
+    await expect(malformed.getAll()).rejects.toThrow("IndexedDB record metadata is malformed");
 
     const missing = new IndexedDbFlightRecordPersistence(indexedDbFactoryWithReadResult("records", undefined));
     await expect(missing.get(3)).resolves.toBeNull();
@@ -225,6 +254,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
   const records = [...initialRecords];
   const metadata = initialRecords.map(({ id, savedAt }) => ({ id, savedAt }));
   const personalBests = new Map<string, { readonly key: string; readonly recordId: number }>();
+  let personalBestIndexInitialized = false;
   let nextId = Math.max(0, ...records.map(({ id }) => id)) + 1;
   let cursorCount = 0;
 
@@ -267,14 +297,23 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             }),
             get: (key: string | number) => request(() => name === "records"
               ? records.find((record) => record.id === key)
-              : personalBests.get(String(key))),
+              : name === "personalBestIndexState"
+                ? personalBestIndexInitialized && key === "canonical-v1" ? { key } : undefined
+                : personalBests.get(String(key))),
             getAll: () => request(() => name === "records"
               ? [...records]
               : name === "recordMetadata" ? [...metadata] : [...personalBests.values()]),
-            put: (value: { readonly key: string; readonly recordId: number }) => request(() => {
-              if (name !== "personalBests") throw new Error(`Unexpected put to ${name}`);
-              personalBests.set(value.key, value);
+            put: (value: { readonly key: string; readonly recordId?: number }) => request(() => {
+              if (name === "personalBests" && value.recordId !== undefined) {
+                personalBests.set(value.key, { key: value.key, recordId: value.recordId });
+              } else if (name === "personalBestIndexState" && value.key === "canonical-v1") {
+                personalBestIndexInitialized = true;
+              } else throw new Error(`Unexpected put to ${name}`);
               return value.key;
+            }),
+            clear: () => request(() => {
+              if (name !== "personalBests") throw new Error(`Unexpected clear of ${name}`);
+              personalBests.clear();
             }),
             openCursor: () => {
               cursorCount += 1;
@@ -345,7 +384,8 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
     records: () => records,
     metadata: () => metadata,
     personalBests,
-    cursorCount: () => cursorCount
+    cursorCount: () => cursorCount,
+    personalBestIndexInitialized: () => personalBestIndexInitialized
   };
 }
 
@@ -364,6 +404,7 @@ function indexedDbFactoryWithReadResult(storeName: string, result: unknown, pers
     oncomplete: ((event: Event) => void) | null;
     onabort: ((event: Event) => void) | null;
     onerror: ((event: Event) => void) | null;
+    abort: () => void;
     objectStore: (name: string) => {
       get: (key: number) => ReturnType<typeof makeRequest>;
       getAll: () => ReturnType<typeof makeRequest>;
@@ -372,6 +413,9 @@ function indexedDbFactoryWithReadResult(storeName: string, result: unknown, pers
     oncomplete: null,
     onabort: null,
     onerror: null,
+    abort: () => {
+      queueMicrotask(() => transaction.onabort?.(new Event("abort")));
+    },
     objectStore: (name) => ({
       get: () => makeRequest(name === storeName ? result : undefined),
       getAll: () => makeRequest(name === "personalBests" ? personalBests : result)

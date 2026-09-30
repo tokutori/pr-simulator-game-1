@@ -36,7 +36,7 @@ export interface SavedFlightRecord extends StoredFlightRecord {
 export interface FlightRecordPersistencePort {
   add(json: string, savedAt: string, selection?: PersonalBestSelectionPort): Promise<number>;
   get(id: number): Promise<StoredFlightRecord | null>;
-  getAll(): Promise<readonly StoredFlightRecordSummary[]>;
+  getAll(createSelection?: (json: string) => PersonalBestSelectionPort): Promise<readonly StoredFlightRecordSummary[]>;
 }
 
 const maximumRecordBytes = 16 * 1024 * 1024;
@@ -67,7 +67,7 @@ export class FlightRecordRepository {
   }
 
   async list(): Promise<readonly StoredFlightRecordSummary[]> {
-    const records = await this.persistence.getAll();
+    const records = await this.persistence.getAll(this.createSelection);
     return Object.freeze([...records]
       .sort((left, right) => right.id - left.id)
       .map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
@@ -209,27 +209,74 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     }));
   }
 
-  async getAll(): Promise<readonly StoredFlightRecordSummary[]> {
+  async getAll(
+    createSelection?: (json: string) => PersonalBestSelectionPort
+  ): Promise<readonly StoredFlightRecordSummary[]> {
     return this.withDatabase((database) => new Promise<readonly StoredFlightRecordSummary[]>((resolve, reject) => {
-      const transaction = database.transaction(["recordMetadata", "personalBests"], "readonly");
+      const transaction = createSelection === undefined
+        ? database.transaction(["recordMetadata", "personalBests"], "readonly")
+        : database.transaction(["records", "recordMetadata", "personalBests", "personalBestIndexState"], "readwrite");
       const metadataRequest = transaction.objectStore("recordMetadata").getAll();
-      const personalBestRequest = transaction.objectStore("personalBests").getAll();
+      const personalBests = transaction.objectStore("personalBests");
       let metadata: readonly StoredFlightRecordMetadata[] | null = null;
       let personalBestRecordIds: ReadonlySet<number> | null = null;
+      let failure: Error | null = null;
+      const abort = (error: unknown): void => {
+        failure = error instanceof Error ? error : new Error(String(error));
+        transaction.abort();
+      };
+      const readPersonalBestIndex = (): void => {
+        const personalBestRequest = personalBests.getAll();
+        personalBestRequest.onsuccess = () => {
+          const result: unknown = personalBestRequest.result;
+          if (Array.isArray(result) && result.every(isPersonalBestEntry)) {
+            personalBestRecordIds = new Set(result.map(({ recordId }) => recordId));
+          } else abort(new TypeError("IndexedDB Personal Best index is malformed"));
+        };
+        personalBestRequest.onerror = () => {
+          abort(personalBestRequest.error ?? new Error("IndexedDB Personal Best list failed"));
+        };
+      };
+      const resolvePersonalBestIndex = (): void => {
+        if (createSelection === undefined) {
+          readPersonalBestIndex();
+          return;
+        }
+        const stateStore = transaction.objectStore("personalBestIndexState");
+        const stateRequest = stateStore.get("canonical-v1");
+        stateRequest.onsuccess = () => {
+          const state: unknown = stateRequest.result;
+          if (state === undefined) {
+            rebuildPersonalBestIndex(
+              transaction,
+              personalBests,
+              stateStore,
+              createSelection,
+              (recordIds) => { personalBestRecordIds = recordIds; },
+              abort
+            );
+            return;
+          }
+          if (!isPersonalBestIndexState(state)) {
+            abort(new TypeError("IndexedDB Personal Best index state is malformed"));
+            return;
+          }
+          readPersonalBestIndex();
+        };
+        stateRequest.onerror = () => {
+          abort(stateRequest.error ?? new Error("IndexedDB Personal Best index state read failed"));
+        };
+      };
       metadataRequest.onsuccess = () => {
         const result: unknown = metadataRequest.result;
-        if (Array.isArray(result) && result.every(isStoredFlightRecordMetadata)) metadata = result;
-      };
-      personalBestRequest.onsuccess = () => {
-        const result: unknown = personalBestRequest.result;
-        if (Array.isArray(result) && result.every(isPersonalBestEntry)) {
-          personalBestRecordIds = new Set(result.map(({ recordId }) => recordId));
+        if (!Array.isArray(result) || !result.every(isStoredFlightRecordMetadata)) {
+          abort(new TypeError("IndexedDB record metadata is malformed"));
+          return;
         }
+        metadata = result;
+        resolvePersonalBestIndex();
       };
-      metadataRequest.onerror = () => { reject(metadataRequest.error ?? new Error("IndexedDB record list failed")); };
-      personalBestRequest.onerror = () => {
-        reject(personalBestRequest.error ?? new Error("IndexedDB Personal Best list failed"));
-      };
+      metadataRequest.onerror = () => { abort(metadataRequest.error ?? new Error("IndexedDB record list failed")); };
       transaction.oncomplete = () => {
         const currentMetadata = metadata;
         const currentPersonalBestRecordIds = personalBestRecordIds;
@@ -243,7 +290,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
           }))));
         }
       };
-      transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB record list was aborted")); };
+      transaction.onabort = () => { reject(failure ?? transaction.error ?? new Error("IndexedDB record list was aborted")); };
       transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB record list failed")); };
     }));
   }
@@ -258,9 +305,102 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
   }
 }
 
+function rebuildPersonalBestIndex(
+  transaction: IDBTransaction,
+  personalBests: IDBObjectStore,
+  stateStore: IDBObjectStore,
+  createSelection: (json: string) => PersonalBestSelectionPort,
+  completed: (recordIds: ReadonlySet<number>) => void,
+  abort: (error: unknown) => void
+): void {
+  const records = transaction.objectStore("records");
+  const selections = new Map<string, { readonly candidateId: number; readonly selection: PersonalBestSelectionPort }>();
+  let activeSelection: PersonalBestSelectionPort | null = null;
+  const releaseSelections = (): void => {
+    activeSelection?.free();
+    activeSelection = null;
+    for (const { selection } of selections.values()) selection.free();
+    selections.clear();
+  };
+  const fail = (error: unknown): void => {
+    releaseSelections();
+    abort(error);
+  };
+  const clearRequest = personalBests.clear();
+  clearRequest.onerror = () => { fail(clearRequest.error ?? new Error("IndexedDB Personal Best index reset failed")); };
+  clearRequest.onsuccess = () => {
+    const cursorRequest = records.openCursor();
+    cursorRequest.onerror = () => { fail(cursorRequest.error ?? new Error("IndexedDB Personal Best migration scan failed")); };
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (cursor === null) {
+        const recordIds = new Set<number>();
+        const selected: { readonly key: string; readonly recordId: number }[] = [];
+        try {
+          for (const [key, entry] of selections) {
+            const recordId = entry.selection.candidate_is_best()
+              ? entry.candidateId
+              : entry.selection.selected_existing_id();
+            if (key.length !== 64 || !/^[0-9a-f]{64}$/.test(key) || !Number.isSafeInteger(recordId) || recordId < 1) {
+              fail(new TypeError("Rust returned an invalid Personal Best migration result"));
+              return;
+            }
+            selected.push({ key, recordId });
+          }
+          for (const entry of selected) personalBests.put(entry);
+          stateStore.put({ key: "canonical-v1" });
+        } catch (error: unknown) {
+          fail(error);
+          return;
+        }
+        for (const entry of selections.values()) entry.selection.free();
+        selections.clear();
+        for (const { recordId } of selected) {
+          recordIds.add(recordId);
+        }
+        completed(recordIds);
+        return;
+      }
+      const value: unknown = cursor.value;
+      if (!isStoredFlightRecord(value)) {
+        fail(new TypeError("IndexedDB flight record is malformed during Personal Best migration"));
+        return;
+      }
+      const id = Number(cursor.primaryKey);
+      try {
+        activeSelection = createSelection(value.json);
+        if (!activeSelection.is_eligible()) {
+          activeSelection.free();
+          activeSelection = null;
+          cursor.continue();
+          return;
+        }
+        const key = activeSelection.key_hex();
+        if (key.length !== 64 || !/^[0-9a-f]{64}$/.test(key)) {
+          fail(new TypeError("Rust returned an invalid Personal Best key during migration"));
+          return;
+        }
+        const existing = selections.get(key);
+        if (existing === undefined) {
+          selections.set(key, { candidateId: id, selection: activeSelection });
+          activeSelection = null;
+        } else {
+          existing.selection.consider_existing(id, value.json);
+          activeSelection.free();
+          activeSelection = null;
+        }
+      } catch (error: unknown) {
+        fail(error);
+        return;
+      }
+      cursor.continue();
+    };
+  };
+}
+
 function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(databaseName, 3);
+    const request = factory.open(databaseName, 4);
     request.onupgradeneeded = () => {
       const database = request.result;
       const transaction = request.transaction;
@@ -287,6 +427,9 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
       }
       if (!database.objectStoreNames.contains("personalBests")) {
         database.createObjectStore("personalBests", { keyPath: "key" });
+      }
+      if (!database.objectStoreNames.contains("personalBestIndexState")) {
+        database.createObjectStore("personalBestIndexState", { keyPath: "key" });
       }
     };
     request.onsuccess = () => {
@@ -331,6 +474,10 @@ function isPersonalBestEntry(value: unknown): value is { readonly key: string; r
     && "key" in value && typeof value.key === "string" && /^[0-9a-f]{64}$/.test(value.key)
     && "recordId" in value && typeof value.recordId === "number"
     && Number.isSafeInteger(value.recordId) && value.recordId > 0;
+}
+
+function isPersonalBestIndexState(value: unknown): value is { readonly key: "canonical-v1" } {
+  return typeof value === "object" && value !== null && "key" in value && value.key === "canonical-v1";
 }
 
 function validateFinalizedRecord(json: string): void {
