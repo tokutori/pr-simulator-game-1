@@ -124,7 +124,7 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 失敗tickの状態は保存しない。初期化失敗で有効sampleがない場合はrecord unavailableとする。
 不完全recordも有効区間の解析に使用できるが、通常のPersonal Bestへ登録しない。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
-Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreの比較を行い、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。現行schemaへのkey保存、実asset/build hashの生成・export接続、保存済みrecord間のPersonal Best選択は未実装であり、key生成だけでPersonal Best機能完了とは扱わない。
+Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成し、保存済みrecord二件を比較する。WASMの`compare_personal_best_json()`はこの比較をブラウザーへ公開する。保存済みrecord群からPersonal Bestを選択しIndexedDBを更新する処理は未実装であり、key保存と二件比較だけでPersonal Best機能完了とは扱わない。
 
 Canonical key v1ではpreset labelを除外し、Information cue、ControllerProfileのmode・authority・version・gain・command limit、scenario identity・seed、aircraft/scenario/environment/physics content hash、course axis、physics・score version、tick契約、launch stateをSHA-256へ入力する。浮動小数点値は有限値に限定し、負のzeroをpositive zeroへ正規化してbig-endian IEEE-754 bit patternを符号化する。表示品質とpresentation backendはkeyに含めない。
 

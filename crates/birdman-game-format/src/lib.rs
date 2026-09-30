@@ -14,7 +14,9 @@ pub use flight_record::{
     FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordTelemetryDocument,
     FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
 };
-pub use personal_best::{PersonalBestContentHashes, canonical_personal_best_key};
+pub use personal_best::{
+    PersonalBestContentHashes, canonical_personal_best_key, compare_personal_best_records,
+};
 
 use birdman_game_core::{BodyRateFeedbackConfig, ControlMode, FbwAuthority, FlightScenario};
 

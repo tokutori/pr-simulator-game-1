@@ -1,4 +1,6 @@
-use birdman_game_core::{ControlMode, CourseAxis, PersonalBestKey};
+use birdman_game_core::{
+    ControlMode, CourseAxis, PersonalBestComparison, PersonalBestKey, compare_personal_best,
+};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -17,6 +19,35 @@ pub struct PersonalBestContentHashes {
     pub environment: [u8; 32],
     /// Hash of the Rust physics implementation build.
     pub physics_build: [u8; 32],
+}
+
+/// Compares two validated records when both carry eligible scores and canonical keys.
+///
+/// `Ok(None)` means at least one record cannot participate in a Personal Best comparison.
+pub fn compare_personal_best_records(
+    candidate: &FlightRecordDocument,
+    existing: &FlightRecordDocument,
+) -> Result<Option<PersonalBestComparison>, FlightRecordFormatError> {
+    candidate.validate()?;
+    existing.validate()?;
+    let Some(candidate_score) = candidate.personal_best_candidate_score()? else {
+        return Ok(None);
+    };
+    let Some(candidate_key) = candidate.personal_best_key() else {
+        return Ok(None);
+    };
+    let Some(existing_score) = existing.personal_best_candidate_score()? else {
+        return Ok(None);
+    };
+    let Some(existing_key) = existing.personal_best_key() else {
+        return Ok(None);
+    };
+    Ok(Some(compare_personal_best(
+        candidate_key,
+        candidate_score,
+        existing_key,
+        existing_score,
+    )))
 }
 
 /// Builds a Personal Best key from a complete record and matching resolved configuration.

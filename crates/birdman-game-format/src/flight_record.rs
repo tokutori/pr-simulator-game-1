@@ -928,7 +928,7 @@ mod tests {
     use crate::{
         AssistanceLevel, ControllerProfile, DifficultySettings, InformationLevel,
         PersonalBestContentHashes, ResolvedConfiguration, ScenarioSelection, WeatherClass,
-        canonical_personal_best_key,
+        canonical_personal_best_key, compare_personal_best_records,
     };
     use birdman_game_core::{
         BodyRateFeedbackConfig, BodyVector, ControlMode, CourseAxis, FlightFeedbackInput,
@@ -1140,6 +1140,41 @@ mod tests {
         assert_eq!(
             completed_record().with_personal_best_key(Some(key)),
             Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+
+    #[test]
+    fn stored_personal_best_comparison_requires_two_keyed_eligible_records() {
+        use birdman_game_core::{PersonalBestComparison, PersonalBestKey};
+
+        let candidate = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        let existing = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([1; 32])))
+            .unwrap();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &existing).unwrap(),
+            Some(PersonalBestComparison::EqualScore)
+        );
+
+        let different_configuration = water_contact_record()
+            .with_personal_best_key(Some(PersonalBestKey::from_digest([2; 32])))
+            .unwrap();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &different_configuration).unwrap(),
+            Some(PersonalBestComparison::DifferentConfiguration)
+        );
+
+        let missing_key = water_contact_record();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &missing_key).unwrap(),
+            None
+        );
+        let ineligible = completed_record();
+        assert_eq!(
+            compare_personal_best_records(&candidate, &ineligible).unwrap(),
+            None
         );
     }
 

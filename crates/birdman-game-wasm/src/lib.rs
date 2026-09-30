@@ -12,7 +12,8 @@ use birdman_game_format::{
     AssistanceLevel, ControllerProfile, DifficultyPreset, DifficultySettings, HudCue, HudProfile,
     InformationLevel, PersonalBestContentHashes, ResolvedConfiguration, ScenarioCatalog,
     ScenarioCatalogEntry, ScenarioModel, ScenarioModelCatalog, WeatherClass,
-    canonical_personal_best_key, resolve_configuration,
+    canonical_personal_best_key, compare_personal_best_records as compare_personal_best_documents,
+    resolve_configuration,
 };
 use wasm_bindgen::{JsValue, prelude::*};
 
@@ -68,6 +69,29 @@ const WEATHER_SCENARIO_ENTRIES: [ScenarioCatalogEntry; 5] = [
 #[wasm_bindgen]
 pub fn physics_hz() -> u32 {
     birdman_game_core::PHYSICS_HZ
+}
+
+/// Compares stored record JSON documents: 0=candidate wins, 1=existing wins,
+/// 2=equal score, 3=different configuration, 4=ineligible record pair.
+#[wasm_bindgen]
+pub fn compare_personal_best_json(
+    candidate_json: &str,
+    existing_json: &str,
+) -> Result<u32, JsValue> {
+    let candidate =
+        birdman_game_format::FlightRecordDocument::decode_json(candidate_json.as_bytes())
+            .map_err(flight_record_format_error)?;
+    let existing = birdman_game_format::FlightRecordDocument::decode_json(existing_json.as_bytes())
+        .map_err(flight_record_format_error)?;
+    let comparison = compare_personal_best_documents(&candidate, &existing)
+        .map_err(flight_record_format_error)?;
+    Ok(match comparison {
+        Some(birdman_game_core::PersonalBestComparison::CandidateWins) => 0,
+        Some(birdman_game_core::PersonalBestComparison::ExistingWins) => 1,
+        Some(birdman_game_core::PersonalBestComparison::EqualScore) => 2,
+        Some(birdman_game_core::PersonalBestComparison::DifferentConfiguration) => 3,
+        None => 4,
+    })
 }
 
 /// Owns the Rust game lifecycle for one synthetic browser session.
@@ -1630,7 +1654,8 @@ fn end_reason_code(reason: SessionEndReason) -> u8 {
 mod tests {
     use super::{
         GameSessionBridge, PLAYBACK_SAMPLE_LENGTH, RECORD_SAMPLE_LENGTH, SNAPSHOT_LENGTH,
-        SyntheticFlightSession, flight_record_sample_layout, validate_axes,
+        SyntheticFlightSession, compare_personal_best_json, flight_record_sample_layout,
+        validate_axes,
     };
     use birdman_game_core::{
         BodyVector, ControlMode, FlightFeedbackInput, FlightTickOutcome, MAX_FLIGHT_RECORD_SAMPLES,
@@ -1744,6 +1769,7 @@ mod tests {
         assert_eq!(finalization[2], 1.0);
         assert_eq!(finalization[4], 1.0);
         let encoded = bridge.export_flight_record_json().unwrap();
+        assert_eq!(compare_personal_best_json(&encoded, &encoded).unwrap(), 4);
         let decoded =
             birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
         assert_eq!(decoded.samples.len(), 2);
@@ -1830,6 +1856,23 @@ mod tests {
             birdman_game_format::FlightRecordDocument::decode_json(first.as_bytes()).unwrap();
         assert!(document.personal_best_candidate_score().unwrap().is_some());
         assert!(document.personal_best_key().is_some());
+        assert_eq!(
+            super::compare_personal_best_json(&first, &second).unwrap(),
+            2
+        );
+        let different_configuration = document
+            .clone()
+            .with_personal_best_key(Some(birdman_game_core::PersonalBestKey::from_digest(
+                [0; 32],
+            )))
+            .unwrap()
+            .encode_json()
+            .unwrap();
+        let different_configuration = String::from_utf8(different_configuration).unwrap();
+        assert_eq!(
+            super::compare_personal_best_json(&first, &different_configuration).unwrap(),
+            3
+        );
     }
 
     #[test]
