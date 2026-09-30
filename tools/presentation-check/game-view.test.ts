@@ -129,8 +129,8 @@ describe("Game scene view model", () => {
       ...createInitialAppModel(),
       gameSession: sessionForPhase(0),
       storedFlightRecords: Object.freeze([
-        Object.freeze({ id: 12, savedAt: "2026-09-28T00:00:00.000Z" }),
-        Object.freeze({ id: 11, savedAt: "2026-09-27T00:00:00.000Z" })
+        Object.freeze({ id: 12, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }),
+        Object.freeze({ id: 11, savedAt: "2026-09-27T00:00:00.000Z", personalBest: false })
       ])
     });
     const controls = createGameViewModel(model, null).panels[0]?.controls;
@@ -138,6 +138,8 @@ describe("Game scene view model", () => {
       .toMatchObject({ kind: "button", enabled: true });
     expect(controls?.find((control) => control.id === "game-title-open-record-11"))
       .toMatchObject({ kind: "button", enabled: true });
+    expect(controls?.find((control) => control.id === "game-title-open-record-12")?.label)
+      .toContain("Personal Best");
     expect(controls?.filter((control) => control.id.startsWith("game-title-open-record-"))).toHaveLength(2);
     const pendingControls = createGameViewModel({ ...model, pendingGameRequestId: 2 }, null).panels[0]?.controls;
     expect(pendingControls?.find((control) => control.id === "game-title-open-record-12"))

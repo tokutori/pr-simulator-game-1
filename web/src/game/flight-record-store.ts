@@ -11,10 +11,30 @@ export interface StoredFlightRecord {
 export interface StoredFlightRecordSummary {
   readonly id: number;
   readonly savedAt: string;
+  readonly personalBest: boolean;
+}
+
+export type PersonalBestUpdate =
+  | { readonly kind: "not-evaluated" }
+  | { readonly kind: "ineligible" }
+  | { readonly kind: "candidate"; readonly id: number; readonly key: string }
+  | { readonly kind: "existing"; readonly id: number; readonly key: string };
+
+export interface PersonalBestSelectionPort {
+  candidate_is_best(): boolean;
+  consider_existing(id: number, json: string): void;
+  free(): void;
+  is_eligible(): boolean;
+  key_hex(): string;
+  selected_existing_id(): number;
+}
+
+export interface SavedFlightRecord extends StoredFlightRecord {
+  readonly personalBest: PersonalBestUpdate;
 }
 
 export interface FlightRecordPersistencePort {
-  add(json: string, savedAt: string): Promise<number>;
+  add(json: string, savedAt: string, selection?: PersonalBestSelectionPort): Promise<number>;
   get(id: number): Promise<StoredFlightRecord | null>;
   getAll(): Promise<readonly StoredFlightRecordSummary[]>;
 }
@@ -24,15 +44,21 @@ const maximumRecordBytes = 16 * 1024 * 1024;
 export class FlightRecordRepository {
   constructor(
     private readonly persistence: FlightRecordPersistencePort,
-    private readonly now: () => Date = () => new Date()
+    private readonly now: () => Date = () => new Date(),
+    private readonly createSelection?: (json: string) => PersonalBestSelectionPort
   ) {}
 
-  async saveFrom(session: FlightRecordExportPort): Promise<StoredFlightRecord> {
+  async saveFrom(session: FlightRecordExportPort): Promise<SavedFlightRecord> {
     const json = session.export_flight_record_json();
     validateFinalizedRecord(json);
     const savedAt = this.now().toISOString();
-    const id = await this.persistence.add(json, savedAt);
-    return Object.freeze({ id, savedAt, json });
+    const selection = this.createSelection?.(json);
+    try {
+      const id = await this.persistence.add(json, savedAt, selection);
+      return Object.freeze({ id, savedAt, json, personalBest: resolvePersonalBestUpdate(id, selection) });
+    } finally {
+      selection?.free();
+    }
   }
 
   async load(id: number): Promise<string | null> {
@@ -44,7 +70,7 @@ export class FlightRecordRepository {
     const records = await this.persistence.getAll();
     return Object.freeze([...records]
       .sort((left, right) => right.id - left.id)
-      .map(({ id, savedAt }) => Object.freeze({ id, savedAt })));
+      .map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
   }
 }
 
@@ -54,21 +80,109 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     private readonly databaseName = "birdman-flight-records"
   ) {}
 
-  async add(json: string, savedAt: string): Promise<number> {
+  async add(json: string, savedAt: string, selection?: PersonalBestSelectionPort): Promise<number> {
     return this.withDatabase((database) => new Promise<number>((resolve, reject) => {
-      const transaction = database.transaction(["records", "recordMetadata"], "readwrite");
-      const request = transaction.objectStore("records").add({ savedAt, json });
+      const stores = selection?.is_eligible()
+        ? ["records", "recordMetadata", "personalBests"]
+        : ["records", "recordMetadata"];
+      const transaction = database.transaction(stores, "readwrite");
+      const records = transaction.objectStore("records");
       let id: number | null = null;
-      request.onsuccess = () => {
-        id = Number(request.result);
-        transaction.objectStore("recordMetadata").add({ id, savedAt });
+      let failure: unknown;
+      const addCandidate = (): void => {
+        const request = records.add({ savedAt, json });
+        request.onsuccess = () => {
+          id = Number(request.result);
+          transaction.objectStore("recordMetadata").add({ id, savedAt });
+          if (selection?.is_eligible()) {
+            const key = selection.key_hex();
+            const selectedId = selection.candidate_is_best() ? id : selection.selected_existing_id();
+            if (key.length !== 64 || !Number.isSafeInteger(selectedId) || selectedId < 1) {
+              failure = new TypeError("Rust returned an invalid Personal Best selection");
+              transaction.abort();
+              return;
+            }
+            transaction.objectStore("personalBests").put({ key, recordId: selectedId });
+          }
+        };
+        request.onerror = () => { reject(request.error ?? new Error("IndexedDB record insertion failed")); };
       };
-      request.onerror = () => { reject(request.error ?? new Error("IndexedDB record insertion failed")); };
+      if (selection?.is_eligible()) {
+        const key = selection.key_hex();
+        const scanExistingRecords = (): void => {
+          const cursorRequest = records.openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (cursor === null) {
+              addCandidate();
+              return;
+            }
+            const value: unknown = cursor.value;
+            if (!isStoredFlightRecord(value)) {
+              failure = new TypeError("IndexedDB flight record is malformed");
+              transaction.abort();
+              return;
+            }
+            try {
+              selection.consider_existing(Number(cursor.primaryKey), value.json);
+            } catch (error: unknown) {
+              failure = error;
+              transaction.abort();
+              return;
+            }
+            cursor.continue();
+          };
+          cursorRequest.onerror = () => { reject(cursorRequest.error ?? new Error("IndexedDB record scan failed")); };
+        };
+        const indexedRequest = transaction.objectStore("personalBests").get(key);
+        indexedRequest.onsuccess = () => {
+          const indexed: unknown = indexedRequest.result;
+          if (indexed === undefined) {
+            scanExistingRecords();
+            return;
+          }
+          if (!isPersonalBestEntry(indexed) || indexed.key !== key) {
+            failure = new TypeError("IndexedDB Personal Best index is malformed");
+            transaction.abort();
+            return;
+          }
+          const existingRequest = records.get(indexed.recordId);
+          existingRequest.onsuccess = () => {
+            const existing: unknown = existingRequest.result;
+            if (!isStoredFlightRecord(existing)) {
+              failure = new TypeError("IndexedDB Personal Best record is missing or malformed");
+              transaction.abort();
+              return;
+            }
+            try {
+              selection.consider_existing(indexed.recordId, existing.json);
+            } catch (error: unknown) {
+              failure = error;
+              transaction.abort();
+              return;
+            }
+            addCandidate();
+          };
+          existingRequest.onerror = () => {
+            reject(existingRequest.error ?? new Error("IndexedDB Personal Best record read failed"));
+          };
+        };
+        indexedRequest.onerror = () => {
+          reject(indexedRequest.error ?? new Error("IndexedDB Personal Best index read failed"));
+        };
+      } else {
+        addCandidate();
+      }
       transaction.oncomplete = () => {
         if (id === null) reject(new Error("IndexedDB completed without a record key"));
         else resolve(id);
       };
-      transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB record insertion was aborted")); };
+      transaction.onabort = () => {
+        const error = failure instanceof Error
+          ? failure
+          : transaction.error ?? new Error("IndexedDB record insertion was aborted");
+        reject(error);
+      };
       transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB record insertion failed")); };
     }));
   }
@@ -97,19 +211,37 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
 
   async getAll(): Promise<readonly StoredFlightRecordSummary[]> {
     return this.withDatabase((database) => new Promise<readonly StoredFlightRecordSummary[]>((resolve, reject) => {
-      const transaction = database.transaction("recordMetadata", "readonly");
-      const request = transaction.objectStore("recordMetadata").getAll();
-      let records: readonly StoredFlightRecordSummary[] | null = null;
-      request.onsuccess = () => {
-        const result: unknown = request.result;
-        if (Array.isArray(result) && result.every(isStoredFlightRecordSummary)) {
-          records = Object.freeze(result);
+      const transaction = database.transaction(["recordMetadata", "personalBests"], "readonly");
+      const metadataRequest = transaction.objectStore("recordMetadata").getAll();
+      const personalBestRequest = transaction.objectStore("personalBests").getAll();
+      let metadata: readonly StoredFlightRecordMetadata[] | null = null;
+      let personalBestRecordIds: ReadonlySet<number> | null = null;
+      metadataRequest.onsuccess = () => {
+        const result: unknown = metadataRequest.result;
+        if (Array.isArray(result) && result.every(isStoredFlightRecordMetadata)) metadata = result;
+      };
+      personalBestRequest.onsuccess = () => {
+        const result: unknown = personalBestRequest.result;
+        if (Array.isArray(result) && result.every(isPersonalBestEntry)) {
+          personalBestRecordIds = new Set(result.map(({ recordId }) => recordId));
         }
       };
-      request.onerror = () => { reject(request.error ?? new Error("IndexedDB record list failed")); };
+      metadataRequest.onerror = () => { reject(metadataRequest.error ?? new Error("IndexedDB record list failed")); };
+      personalBestRequest.onerror = () => {
+        reject(personalBestRequest.error ?? new Error("IndexedDB Personal Best list failed"));
+      };
       transaction.oncomplete = () => {
-        if (records === null) reject(new TypeError("IndexedDB record metadata is malformed"));
-        else resolve(records);
+        const currentMetadata = metadata;
+        const currentPersonalBestRecordIds = personalBestRecordIds;
+        if (currentMetadata === null || currentPersonalBestRecordIds === null) {
+          reject(new TypeError("IndexedDB record metadata or Personal Best index is malformed"));
+        } else {
+          resolve(Object.freeze(currentMetadata.map(({ id, savedAt }) => Object.freeze({
+            id,
+            savedAt,
+            personalBest: currentPersonalBestRecordIds.has(id)
+          }))));
+        }
       };
       transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB record list was aborted")); };
       transaction.onerror = () => { reject(transaction.error ?? new Error("IndexedDB record list failed")); };
@@ -128,7 +260,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
 
 function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = factory.open(databaseName, 2);
+    const request = factory.open(databaseName, 3);
     request.onupgradeneeded = () => {
       const database = request.result;
       const transaction = request.transaction;
@@ -153,6 +285,9 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
           cursor.continue();
         };
       }
+      if (!database.objectStoreNames.contains("personalBests")) {
+        database.createObjectStore("personalBests", { keyPath: "key" });
+      }
     };
     request.onsuccess = () => {
       const database = request.result;
@@ -164,6 +299,15 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
   });
 }
 
+function resolvePersonalBestUpdate(id: number, selection: PersonalBestSelectionPort | undefined): PersonalBestUpdate {
+  if (selection === undefined) return { kind: "not-evaluated" };
+  if (!selection.is_eligible()) return { kind: "ineligible" };
+  const key = selection.key_hex();
+  return selection.candidate_is_best()
+    ? { kind: "candidate", id, key }
+    : { kind: "existing", id: selection.selected_existing_id(), key };
+}
+
 function isStoredFlightRecord(value: unknown): value is StoredFlightRecord {
   return typeof value === "object" && value !== null
     && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0
@@ -171,10 +315,22 @@ function isStoredFlightRecord(value: unknown): value is StoredFlightRecord {
     && "json" in value && typeof value.json === "string";
 }
 
-function isStoredFlightRecordSummary(value: unknown): value is StoredFlightRecordSummary {
+interface StoredFlightRecordMetadata {
+  readonly id: number;
+  readonly savedAt: string;
+}
+
+function isStoredFlightRecordMetadata(value: unknown): value is StoredFlightRecordMetadata {
   return typeof value === "object" && value !== null
     && "id" in value && typeof value.id === "number" && Number.isSafeInteger(value.id) && value.id > 0
     && "savedAt" in value && typeof value.savedAt === "string";
+}
+
+function isPersonalBestEntry(value: unknown): value is { readonly key: string; readonly recordId: number } {
+  return typeof value === "object" && value !== null
+    && "key" in value && typeof value.key === "string" && /^[0-9a-f]{64}$/.test(value.key)
+    && "recordId" in value && typeof value.recordId === "number"
+    && Number.isSafeInteger(value.recordId) && value.recordId > 0;
 }
 
 function validateFinalizedRecord(json: string): void {

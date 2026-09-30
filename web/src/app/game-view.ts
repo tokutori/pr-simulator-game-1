@@ -34,7 +34,7 @@ export function createGameViewModel(
   if (phaseCode === 0) {
     const savedFlightButtons = model.storedFlightRecords.slice(0, 3).map((record) => button(
       `game-title-open-record-${String(record.id)}`,
-      `Replay #${String(record.id)} · ${formatSavedAt(record.savedAt)}`,
+      `${record.personalBest ? "Personal Best · " : ""}Replay #${String(record.id)} · ${formatSavedAt(record.savedAt)}`,
       model.pendingGameRequestId === null
     ));
     buttons.splice(1, 0, ...savedFlightButtons);

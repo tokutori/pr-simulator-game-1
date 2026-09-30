@@ -1,4 +1,8 @@
-import initializeWasm, { GameSessionBridge, physics_hz } from "../../pkg/birdman_game_wasm.js";
+import initializeWasm, {
+  GameSessionBridge,
+  PersonalBestSelectionBridge,
+  physics_hz
+} from "../../pkg/birdman_game_wasm.js";
 
 let wasmInitialization: Promise<unknown> | null = null;
 
@@ -12,4 +16,8 @@ export async function initializeGameSession(): Promise<{
   return Object.freeze({ session, physicsHz: physics_hz() });
 }
 
-export type { GameSessionBridge };
+export function createPersonalBestSelection(recordJson: string): PersonalBestSelectionBridge {
+  return new PersonalBestSelectionBridge(recordJson);
+}
+
+export type { GameSessionBridge, PersonalBestSelectionBridge };
