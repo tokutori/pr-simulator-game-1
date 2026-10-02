@@ -771,6 +771,8 @@ fn interpolate_telemetry(
         result.heading_rad,
     ]
     .into_iter()
+    .chain(result.angle_of_attack_rad)
+    .chain(result.sideslip_angle_rad)
     .any(|value| !value.is_finite())
     {
         return Err(FlightRecordQueryError::NonFiniteInterpolation);
@@ -1256,6 +1258,119 @@ mod tests {
             record.sample_at_seconds(0.01),
             Err(super::FlightRecordQueryError::OutsideRecordedRange)
         );
+    }
+
+    fn archived_record_with_optional_angles(
+        start: [Option<f64>; 2],
+        end: [Option<f64>; 2],
+    ) -> FlightRecord {
+        let (header, initial, telemetry) = fixture();
+        let samples = [start, end]
+            .into_iter()
+            .enumerate()
+            .map(|(index, angles)| {
+                record_sample(
+                    index as u64,
+                    0.0,
+                    initial.flight_state(),
+                    initial.actuator_state(),
+                    crate::FlightTelemetry {
+                        angle_of_attack_rad: angles[0],
+                        sideslip_angle_rad: angles[1],
+                        ..telemetry
+                    },
+                    (index > 0).then(input),
+                )
+            })
+            .collect();
+        FlightRecord::try_from_finalized_samples(
+            header,
+            samples,
+            crate::FlightRecordFinalization {
+                reason: SessionEndReason::ManualAbort,
+                disposition: FlightRecordDisposition::Interrupted,
+                terminal_tick: 1,
+                terminal_fraction: 0.0,
+                score: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn optional_angle_interpolation_rejects_overflow_and_preserves_recorded_endpoints() {
+        for angle_index in 0..2 {
+            for sign in [-1.0, 1.0] {
+                let mut start = [None; 2];
+                let mut end = [None; 2];
+                start[angle_index] = Some(sign * 1.0e308);
+                end[angle_index] = Some(-sign * 1.0e308);
+                let record = archived_record_with_optional_angles(start, end);
+                let samples_before = record.samples().to_vec();
+                let finalization_before = record.finalization();
+                for fraction in [0.25, 0.5, 0.75] {
+                    assert_eq!(
+                        record.sample_at_time(0, fraction),
+                        Err(super::FlightRecordQueryError::NonFiniteInterpolation)
+                    );
+                    assert_eq!(
+                        record.sample_at_seconds(fraction / f64::from(crate::PHYSICS_HZ)),
+                        Err(super::FlightRecordQueryError::NonFiniteInterpolation)
+                    );
+                }
+                for tick in 0..=1 {
+                    let sample = record.sample_at_time(tick, 0.0).unwrap();
+                    let seconds_sample = record
+                        .sample_at_seconds(tick as f64 / f64::from(crate::PHYSICS_HZ))
+                        .unwrap();
+                    assert_eq!(sample.telemetry, record.samples()[tick as usize].telemetry);
+                    assert_eq!(seconds_sample.telemetry, sample.telemetry);
+                }
+                assert_eq!(record.samples(), samples_before);
+                assert_eq!(record.finalization(), finalization_before);
+            }
+        }
+    }
+
+    #[test]
+    fn optional_angle_interpolation_preserves_finite_values_and_absence() {
+        for angle_index in 0..2 {
+            for (start_angle, end_angle, midpoint_angle) in [
+                (Some(-0.25), Some(0.5), Some(0.125)),
+                (None, None, None),
+                (None, Some(1.0e308), None),
+                (Some(-1.0e308), None, None),
+                (Some(f64::MAX), Some(f64::MAX), Some(f64::MAX)),
+            ] {
+                let mut start = [None; 2];
+                let mut end = [None; 2];
+                let mut expected = [None; 2];
+                start[angle_index] = start_angle;
+                end[angle_index] = end_angle;
+                expected[angle_index] = midpoint_angle;
+                let record = archived_record_with_optional_angles(start, end);
+                for sample in [
+                    record.sample_at_time(0, 0.5).unwrap(),
+                    record.sample_at_seconds(0.005).unwrap(),
+                ] {
+                    assert_eq!(
+                        [
+                            sample.telemetry.angle_of_attack_rad,
+                            sample.telemetry.sideslip_angle_rad,
+                        ],
+                        expected
+                    );
+                }
+                assert_eq!(
+                    record.sample_at_time(0, 0.0).unwrap().telemetry,
+                    record.samples()[0].telemetry
+                );
+                assert_eq!(
+                    record.sample_at_seconds(0.01).unwrap().telemetry,
+                    record.samples()[1].telemetry
+                );
+            }
+        }
     }
 
     fn fixture() -> (FlightRecordHeader, FlightTickState, crate::FlightTelemetry) {
