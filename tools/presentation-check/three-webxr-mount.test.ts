@@ -13,6 +13,8 @@ import type { AnchorKind } from "../../web/src/render/anchors.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
+import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
 interface RecordedDraw {
   readonly eyes: readonly Matrix4[];
@@ -23,6 +25,14 @@ interface RecordedDraw {
 interface RecordingDriver {
   readonly xr: WebXRManager;
   readonly draws: RecordedDraw[];
+  readonly normalFrames: BrowserWindowFrames;
+}
+
+interface BrowserAnimation {
+  start(): void;
+  stop(): void;
+  setAnimationLoop(callback: ((timestamp: number) => void) | null): void;
+  setContext(context: BrowserWindowFrames): void;
 }
 
 const capture = vi.hoisted(() => ({ driver: null as RecordingDriver | null }));
@@ -34,9 +44,11 @@ vi.mock("../../web/src/render/engines/three/lake-venue-mesh.js", async () => {
 
 vi.mock("three", async (importOriginal) => {
   const actual = await importOriginal<typeof import("three")>();
+  const { WebGLAnimation } = await vi.importActual<{ WebGLAnimation: () => BrowserAnimation }>("three/src/renderers/webgl/WebGLAnimation.js");
   class RecordingWebGlRenderer {
     readonly xr: WebXRManager;
     readonly draws: RecordedDraw[] = [];
+    readonly normalFrames = new BrowserWindowFrames();
     readonly shadowMap = { enabled: false };
     outputColorSpace = actual.SRGBColorSpace;
     autoClear = true;
@@ -45,10 +57,15 @@ vi.mock("three", async (importOriginal) => {
     private clearAlpha = 1;
     private pixelRatio = 1;
     private target: unknown = null;
+    private readonly animation: BrowserAnimation;
 
     constructor() {
       const gl = { getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }) };
       this.xr = new WebXRManager(this as unknown as WebGLRenderer, gl as unknown as WebGLRenderingContext);
+      this.animation = WebGLAnimation();
+      this.animation.setContext(this.normalFrames);
+      this.xr.addEventListener("sessionstart", () => { this.animation.stop(); });
+      this.xr.addEventListener("sessionend", () => { this.animation.start(); });
       capture.driver = this;
     }
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
@@ -64,9 +81,14 @@ vi.mock("three", async (importOriginal) => {
     setRenderTarget(target: unknown): void { this.target = target; }
     getRenderTarget(): unknown { return this.target; }
     setRenderTargetFramebuffer(): void {}
-    setAnimationLoop(callback: XRFrameRequestCallback | null): void { this.xr.setAnimationLoop(callback); }
+    setAnimationLoop(callback: XRFrameRequestCallback | null): void {
+      this.xr.setAnimationLoop(callback);
+      this.animation.setAnimationLoop(callback === null ? null : (timestamp) => { callback(timestamp, undefined as unknown as XRFrame); });
+      if (callback === null) this.animation.stop();
+      else this.animation.start();
+    }
     clear(): void {}
-    dispose(): void {}
+    dispose(): void { this.animation.stop(); }
     render(scene: Scene, camera: Camera): void {
       if (!this.xr.enabled && this.target !== null) return;
       scene.updateMatrixWorld(true);
@@ -96,6 +118,20 @@ class BrowserXrLayer {
   fixedFoveation = 0;
   getViewport(view: XRView): XRViewport {
     return { x: view.eye === "left" ? 0 : 640, y: 0, width: 640, height: 720 };
+  }
+}
+
+class BrowserWindowFrames {
+  private callback: FrameRequestCallback | null = null;
+  private requestId = 0;
+
+  requestAnimationFrame(callback: FrameRequestCallback): number { this.callback = callback; return ++this.requestId; }
+  cancelAnimationFrame(): void { this.callback = null; }
+  run(timestamp: number): void {
+    const callback = this.callback;
+    if (callback === null) throw new Error("Window frame callback was not scheduled");
+    this.callback = null;
+    callback(timestamp);
   }
 }
 
@@ -268,6 +304,44 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.render(screenFrame(viewport));
     expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y)));
     expect(lastDraw(driver).eyes).toHaveLength(0);
+  });
+
+  it("continues normal Window rAF frames through Runtime after WebXR ends with a retained reference space", async () => {
+    bundle.renderer.stopLoop();
+    await backend.stop();
+    bundle.renderer.setFlightPose(null);
+    session = new BrowserXrSession();
+    const onFrameTimestamps: number[] = [];
+    const viewTimestamps: number[] = [];
+    const screen = new ScreenPresentationBackend(() => viewport);
+    const runtime = new PresentationRuntime(bundle.renderer, [screen, backend],
+      () => { viewTimestamps.push(onFrameTimestamps.at(-1) ?? Number.NaN); return view; },
+      (timestamp) => { onFrameTimestamps.push(timestamp); });
+    await backend.requestSessionFromUserGesture();
+    expect(await runtime.start("webxr")).toEqual({ ok: true });
+    session.run(100, head);
+    expect(lastDraw(driver).eyes).toHaveLength(2);
+    const referenceSpace = driver.xr.getReferenceSpace();
+    expect(referenceSpace).not.toBeNull();
+    expect(await runtime.switchTo("screen")).toEqual({ ok: true });
+    expect(driver.xr.isPresenting).toBe(false);
+    expect(driver.xr.getSession()).toBeNull();
+    expect(driver.xr.getReferenceSpace()).toBe(referenceSpace);
+    view = createSceneFixture("Title");
+    const drawCount = driver.draws.length;
+    try {
+      expect(() => { driver.normalFrames.run(200); }).not.toThrow();
+      expect(() => { driver.normalFrames.run(300); }).not.toThrow();
+      expect(onFrameTimestamps).toEqual([100, 200, 300]);
+      expect(viewTimestamps).toEqual([100, 200, 300]);
+      expect(driver.draws).toHaveLength(drawCount + 2);
+      expect(runtime.currentMode).toBe("screen");
+      expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y)));
+      expect(lastDraw(driver).eyes).toHaveLength(0);
+      expect(lastDraw(driver).panel).toBeNull();
+    } finally {
+      await runtime.dispose();
+    }
   });
 
   it("does not synthesize a valid gaze or controller pose when browser XR reports null", () => {
