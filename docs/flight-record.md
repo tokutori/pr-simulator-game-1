@@ -9,6 +9,10 @@ Replay時刻・再生速度・再生状態もRust coreが所有する。Webは�
 recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
 coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。現行layoutの`FlightRecordSample`はx86_64と`wasm32-unknown-unknown`で各424 byteであり、最大sample payloadは1,696,424 byte（約1.62 MiB）となる。一括WASM転送はsampleごとに51個の`f64`を別bufferへ展開し、最大payloadは1,632,408 byte（約1.56 MiB）である。全recordの転送時、両bufferの論理payload合計は3,328,832 byte（約3.18 MiB）となる。allocator overhead、`FlightRecord`本体、wasm-bindgen境界のcopy、TypeScript解析配列、JSON encode/decode用memoryは含まない。実allocatorが要求capacityを超える領域を確保する可能性もある。layout変更時は回帰試験と本値を更新する。予約失敗は型付きerrorとしてReady遷移を拒否する。
 上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
+公開fieldから構築した`FlightRecordHeader`も、`FlightRecord::try_new`のbuffer予約前に再検証する。
+最大tick数は1〜4,000、physics frequencyは`PHYSICS_HZ`と一致し、catalog・scenario・aircraft・environment・controllerの各versionは非0を必須とする。
+`FlightRecordHeader::try_new`とarchive復元は同じheader条件を用いる。scenario IDとseedの数値範囲は追加で制限せず、catalog解決は呼出し側の責務とする。
+不正headerは構築時に`InvalidHeader`、archive復元時に`InvalidArchive`となる。正当な容量の予約失敗は`AllocationFailed`とし、domain errorと区別する。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
 WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。bulk transfer bufferはfallibleに予約し、確保失敗をadapter errorとして返す。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1〜3からのupgrade、metadata移行、version 4初回一覧時のindex再構築はfake-indexeddbで検証している。実ブラウザー操作は未検証である。再構築対象はschema version 5かつ有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
 WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。

@@ -234,7 +234,7 @@ describe("Boot application state", () => {
   it("serializes permission requests and backend changes", () => {
     const ready = readyModel();
     const requested = updateApp(ready, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
-    expect(requested.model.presentation).toEqual({ type: "transitioning", requestId: 2, from: "screen", to: "webxr", phase: "requesting" });
+    expect(requested.model.presentation).toEqual({ type: "transitioning", origin: "user-request", requestId: 2, from: "screen", to: "webxr", phase: "requesting" });
     expect(requested.effects).toEqual([{ type: "request-permission", mode: "webxr", requestId: 2 }]);
     expect(createBootViewModel(requested.model).panels[0]?.controls.filter((control) => control.kind === "button" && control.id.startsWith("boot-enter-")).every((control) => !control.enabled)).toBe(true);
 
@@ -245,7 +245,7 @@ describe("Boot application state", () => {
     const permitted = updateApp(requested.model, {
       type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
     });
-    expect(permitted.model.presentation).toEqual({ type: "transitioning", requestId: 2, from: "screen", to: "webxr", phase: "starting" });
+    expect(permitted.model.presentation).toEqual({ type: "transitioning", origin: "user-request", requestId: 2, from: "screen", to: "webxr", phase: "starting" });
     expect(permitted.effects).toEqual([{ type: "switch-backend", mode: "webxr", requestId: 2 }]);
 
     const active = updateApp(permitted.model, {
@@ -289,11 +289,182 @@ describe("Boot application state", () => {
   it("restores Screen after an unexpected active backend end and ignores stale ends", () => {
     const active = { ...readyModel(), presentation: Object.freeze({ type: "ready" as const, mode: "webxr" as const }) };
     const recovery = updateApp(active, { type: "backend-ended", mode: "webxr", message: "Session ended" });
-    expect(recovery.model.presentation).toEqual({ type: "transitioning", requestId: 2, from: "webxr", to: "screen", phase: "stopping" });
+    expect(recovery.model.presentation).toEqual({ type: "transitioning", origin: "backend-fault", cause: "Session ended", requestId: 2, from: "webxr", to: "screen", phase: "stopping" });
     expect(recovery.effects).toEqual([{ type: "switch-backend", mode: "screen", requestId: 2 }]);
     const screen = readyModel();
     const stale = updateApp(screen, { type: "backend-ended", mode: "webxr", message: "Late end" });
     expect(stale.model).toBe(screen);
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("hands the %s fault cause to its matching Screen completion", (mode) => {
+    const active: AppModel = { ...readyModel(), presentation: { type: "ready", mode } };
+    const cause = `${mode} tracking failed; restoring Screen`;
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: cause });
+    expect(recovery.model.presentation).toEqual({
+      type: "transitioning", origin: "backend-fault", requestId: 2,
+      from: mode, to: "screen", phase: "stopping", cause
+    });
+    expect(recovery.effects).toEqual([{ type: "switch-backend", mode: "screen", requestId: 2 }]);
+    const notified = updateApp(recovery.model, { type: "game-session-status", message: "Unrelated notification" });
+    expect(notified.model.presentation).toBe(recovery.model.presentation);
+    const completed = updateApp(notified.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: "screen", activeMode: "screen",
+      ok: true, message: "", successStatus: "Screen is active"
+    });
+    expect(completed.model.presentation).toEqual({ type: "ready", mode: "screen" });
+    expect(completed.model.status).toBe(`${cause}; Screen is active`);
+    expect(completed.effects).toEqual([]);
+    for (const view of [createBootViewModel(completed.model), createGameViewModel(completed.model, null)]) {
+      expect(view.panels[0]?.controls.some((control) => control.kind === "status" && control.value === completed.model.status)).toBe(true);
+    }
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("retains the %s cause and actual outcome when Screen recovery fails", (mode) => {
+    const active: AppModel = { ...readyModel(), presentation: { type: "ready", mode } };
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking unavailable" });
+    const activeLabel = mode === "webxr" ? "WebXR" : "Phone VR";
+    for (const outcome of [
+      { activeMode: "screen", ok: false, message: "Cleanup failed", status: "Cleanup failed; Screen is active" },
+      { activeMode: mode, ok: false, message: "Screen failed", status: `Screen failed; ${activeLabel} is active` },
+      { activeMode: mode, ok: true, message: "", status: `Backend screen reported success while ${activeLabel} is active` },
+      { activeMode: null, ok: false, message: "Screen recovery failed", status: "Screen recovery failed" },
+      { activeMode: null, ok: true, message: "", status: "Backend screen reported success without an active backend" }
+    ] as const) {
+      const completed = updateApp(recovery.model, {
+        type: "backend-transition-completed", requestId: 2, requestedMode: "screen",
+        activeMode: outcome.activeMode, ok: outcome.ok, message: outcome.message, successStatus: "Screen is active"
+      });
+      const status = `Tracking unavailable; ${outcome.status}`;
+      expect(completed.model.status).toBe(status);
+      expect(completed.model.presentation).toEqual(outcome.activeMode === null
+        ? { type: "failed", message: status }
+        : { type: "ready", mode: outcome.activeMode });
+      expect(completed.effects).toEqual([]);
+    }
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("rejects stale and wrong-mode completions during %s fault recovery", (mode) => {
+    const active: AppModel = { ...readyModel(), presentation: { type: "ready", mode } };
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: "Current fault" });
+    for (const completion of [
+      { requestId: 1, requestedMode: "screen" },
+      { requestId: 2, requestedMode: mode }
+    ] as const) {
+      const rejected = updateApp(recovery.model, {
+        type: "backend-transition-completed", ...completion, activeMode: "screen",
+        ok: true, message: "", successStatus: "Stale success"
+      });
+      expect(rejected.model).toBe(recovery.model);
+      expect(rejected.effects).toEqual([]);
+    }
+    const duplicateEnd = updateApp(recovery.model, { type: "backend-ended", mode, message: "Duplicate end" });
+    expect(duplicateEnd.model).toBe(recovery.model);
+    expect(duplicateEnd.effects).toEqual([]);
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("keeps %s permission, startup fallback and explicit exit separate from faults", (mode) => {
+    const requested = updateApp(readyModel(), {
+      type: "ui-action", action: { type: "activate", controlId: `boot-enter-${mode}` }
+    });
+    expect(requested.model.presentation).toMatchObject({ origin: "user-request", phase: "requesting" });
+    const earlyCompletion = updateApp(requested.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: mode, activeMode: mode,
+      ok: true, message: "", successStatus: "Premature success"
+    });
+    expect(earlyCompletion.model).toBe(requested.model);
+    expect(earlyCompletion.effects).toEqual([]);
+    const rejected = updateApp(requested.model, {
+      type: "permission-completed", requestId: 2, mode, ok: false, message: "Permission denied"
+    });
+    expect(rejected.model.presentation).toEqual({ type: "ready", mode: "screen" });
+    expect(rejected.model.status).toBe("Permission denied");
+    const starting = updateApp(requested.model, {
+      type: "permission-completed", requestId: 2, mode, ok: true, message: "Granted"
+    });
+    expect(starting.model.presentation).toMatchObject({ origin: "user-request", phase: "starting" });
+    const fallback = updateApp(starting.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: mode, activeMode: "screen",
+      ok: false, message: "Startup failed", successStatus: "VR is active"
+    });
+    expect(fallback.model.presentation).toEqual({ type: "ready", mode: "screen" });
+    expect(fallback.model.status).toBe("Startup failed; Screen is active");
+    const active = updateApp(starting.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: mode, activeMode: mode,
+      ok: true, message: "", successStatus: "VR is active"
+    });
+    const exiting = updateApp(active.model, { type: "ui-action", action: { type: "activate", controlId: "boot-exit-vr" } });
+    expect(exiting.model.presentation).toEqual({
+      type: "transitioning", origin: "user-request", requestId: 3, from: mode, to: "screen", phase: "stopping"
+    });
+    expect(updateApp(exiting.model, { type: "backend-ended", mode, message: "Expected session end" }).model).toBe(exiting.model);
+    const ended = updateApp(exiting.model, {
+      type: "backend-transition-completed", requestId: 3, requestedMode: "screen", activeMode: "screen",
+      ok: true, message: "", successStatus: "Screen is active"
+    });
+    expect(ended.model.status).toBe("Screen is active");
+    expect(ended.model.presentation).toEqual({ type: "ready", mode: "screen" });
+    expect(ended.effects).toEqual([]);
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("assigns a new page-restoration origin instead of reusing a cached %s fault request", (mode) => {
+    const active: AppModel = { ...readyModel(), presentation: { type: "ready", mode } };
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: "Interrupted recovery" });
+    const cached = updateApp(recovery.model, { type: "page-suspended" });
+    expect(cached.model.presentation).toEqual({ type: "cached", retained: recovery.model.presentation });
+    const restored = updateApp(cached.model, { type: "page-restored" });
+    expect(restored.model.presentation).toEqual({
+      type: "transitioning", origin: "page-restoration", requestId: 3, from: null, to: "screen", phase: "stopping"
+    });
+    expect(restored.effects).toEqual([
+      { type: "switch-backend", mode: "screen", requestId: 3 }, { type: "restore-page-flight" }
+    ]);
+    const stale = updateApp(restored.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: "screen", activeMode: "screen",
+      ok: true, message: "", successStatus: "Old recovery"
+    });
+    expect(stale.model).toBe(restored.model);
+    const completed = updateApp(restored.model, {
+      type: "backend-transition-completed", requestId: 3, requestedMode: "screen", activeMode: "screen",
+      ok: true, message: "", successStatus: "Screen is active"
+    });
+    expect(completed.model.status).toBe("Screen is active");
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("keeps the %s recovery cause across Rust pause snapshots without resuming flight", (mode) => {
+    const active: AppModel = { ...readyModel(5), presentation: { type: "ready", mode } };
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking lost" });
+    const paused = updateApp(recovery.model, {
+      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
+      snapshot: flightSnapshot, canResume: false
+    });
+    expect(paused.model.presentation).toBe(recovery.model.presentation);
+    const completed = updateApp(paused.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: "screen", activeMode: "screen",
+      ok: true, message: "", successStatus: "Screen is active"
+    });
+    expect(completed.effects).toEqual([]);
+    expect(createGameViewModel(completed.model, flightSnapshot).panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
+    const synchronized = updateApp(completed.model, {
+      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
+      snapshot: flightSnapshot, canResume: true
+    });
+    expect(synchronized.model.status).toBe("Tracking lost; Screen is active");
+    expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", phaseCode: 6, canResume: true });
+    expect(synchronized.effects).toEqual([]);
+    const view = createGameViewModel(synchronized.model, flightSnapshot);
+    expect(view.panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(true);
+    expect(view.panels[0]?.controls.some((control) => control.kind === "status" && control.value === synchronized.model.status)).toBe(true);
+    for (const action of [
+      { type: "focus", controlId: "game-flight-resume" },
+      { type: "back" },
+      { type: "scroll", deltaX: 0, deltaY: 1 }
+    ] as const) {
+      const unchanged = updateApp(synchronized.model, { type: "ui-action", action });
+      expect(unchanged.model).toBe(synchronized.model);
+      expect(unchanged.effects).toEqual([]);
+    }
   });
 
   it("cancels pending permissions and disposes presentation on page hide", () => {
