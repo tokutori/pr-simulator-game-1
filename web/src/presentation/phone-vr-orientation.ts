@@ -14,7 +14,7 @@ export function phoneOrientationQuaternion(
   const alphaRotation = axisRotation(vec3(0, 0, 1), reading.alpha * DEGREES_TO_RADIANS);
   const betaRotation = axisRotation(vec3(1, 0, 0), reading.beta * DEGREES_TO_RADIANS);
   const gammaRotation = axisRotation(vec3(0, 1, 0), reading.gamma * DEGREES_TO_RADIANS);
-  const screenRotation = axisRotation(vec3(0, 0, 1), screenOrientationAngle * DEGREES_TO_RADIANS);
+  const screenRotation = axisRotation(vec3(0, 0, 1), -screenOrientationAngle * DEGREES_TO_RADIANS);
   return multiplyQuaternion(
     multiplyQuaternion(multiplyQuaternion(alphaRotation, betaRotation), gammaRotation),
     screenRotation

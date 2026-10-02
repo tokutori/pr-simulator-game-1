@@ -22,7 +22,8 @@ describe("Phone VR device orientation", () => {
     expect(phoneOrientationQuaternion(reading(90, 0, 0), 0)).toEqual(axisQuaternion("z", 90));
     expect(phoneOrientationQuaternion(reading(0, 90, 0), 0)).toEqual(axisQuaternion("x", 90));
     expect(phoneOrientationQuaternion(reading(0, 0, 90), 0)).toEqual(axisQuaternion("y", 90));
-    expect(phoneOrientationQuaternion(reading(0, 0, 0), 90)).toEqual(axisQuaternion("z", 90));
+    expect(phoneOrientationQuaternion(reading(0, 0, 0), 90)).toEqual(axisQuaternion("z", -90));
+    expect(phoneOrientationQuaternion(reading(0, 0, 0), -90)).toEqual(axisQuaternion("z", 90));
   });
 
   it("rejects null and non-finite sensor data instead of substituting zero", () => {

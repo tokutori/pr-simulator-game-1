@@ -158,6 +158,15 @@ T_{cockpit,tracking}\,T_{tracking,head}\,T_{head,eye}
 Phone VRではheadの並進を固定し、基準化した頭部回転を合成する。
 deviceorientationのZ-X'-Y''回転、度からrad、端末axes、screen orientation、
 camera前方軸を明示的に変換する。alpha/beta/gammaを航空機のyaw/pitch/rollへ直接代入しない。
+端末の自然な画面方位に固定された姿勢を $D=R_z(\alpha)R_x(\beta)R_y(\gamma)$、
+`ScreenOrientation.angle`を $s$ とすると、表示方位への補正は $H=D R_z(-s)$ とする。
+補正は端末姿勢の右から一度だけ合成する。画面方位を変更してもsensorの端末座標系は変化しない。
+根拠: [Device Orientation §3.1](https://www.w3.org/TR/orientation-event/#device-orientation)、
+[Screen Orientation angle](https://w3c.github.io/screen-orientation/#dom-screenorientation-angle)。
+`three-renderer-phone-orientation.test.ts`は0°・±90°・180°・270°について、実sensor adapter、
+Phone VR backend、Three.js camera、StereoEffectを接続し、左右・上下・rollの回転方向と
+固定世界点の両眼投影、画面回転、head/Menu recenterを検査する。WebGL driverには記録用代替を使用する。
+この検査は描画driverの実GPU動作と実スマートフォンのsensor精度・装着時受入を保証しない。
 絶対方位を常に取得できるとは仮定せず、利用者の正面を基準にrecenterする。
 基準姿勢・画面方位補正後のquaternionに対して、例えば次の相対回転を用いる。
 
