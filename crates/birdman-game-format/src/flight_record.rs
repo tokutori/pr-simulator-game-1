@@ -400,7 +400,7 @@ impl FlightRecordDocument {
         if first.tick_index != 0 || first.fraction != 0.0 || first.input_from_previous.is_some() {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
-        let mut previous_time = -1.0;
+        let mut previous_time = None;
         let mut previous_sample: Option<&FlightRecordSampleDocument> = None;
         for (index, sample) in self.samples.iter().enumerate() {
             if !sample_is_valid(sample, self.header.maximum_flight_ticks)
@@ -408,8 +408,12 @@ impl FlightRecordDocument {
             {
                 return Err(FlightRecordFormatError::InvalidRecord);
             }
-            let sample_time = sample.tick_index as f64 + sample.fraction;
-            if sample_time <= previous_time {
+            let sample_time = if sample.fraction == 1.0 {
+                (u128::from(sample.tick_index) + 1, 0.0)
+            } else {
+                (u128::from(sample.tick_index), sample.fraction)
+            };
+            if previous_time.is_some_and(|previous| sample_time <= previous) {
                 return Err(FlightRecordFormatError::InvalidRecord);
             }
             if let Some(previous) = previous_sample {
@@ -423,7 +427,7 @@ impl FlightRecordDocument {
                     return Err(FlightRecordFormatError::InvalidRecord);
                 }
             }
-            previous_time = sample_time;
+            previous_time = Some(sample_time);
             previous_sample = Some(sample);
         }
         if self.finalization.is_none()
@@ -937,6 +941,78 @@ mod tests {
         GameSession, GameSessionConfiguration, PilotPositionTarget, SessionPhase,
         SessionScenarioIdentity, SurfaceCommands, SyntheticPlayableFlight,
     };
+
+    #[test]
+    fn fractional_record_time_round_trips_microfractions_for_every_schema() {
+        let source = water_contact_record();
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            for fraction in [f64::EPSILON, 1.0e-100, 1.0] {
+                let mut document = source.clone();
+                document.schema_version = schema_version;
+                document.header.personal_best_key = None;
+                if schema_version < super::SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION {
+                    document.header.score_definition_version = None;
+                }
+                if schema_version < super::PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION {
+                    document.header.physics_model_version = None;
+                }
+                document.samples.truncate(6);
+                let terminal = document.samples.last_mut().unwrap();
+                terminal.tick_index = 4;
+                terminal.fraction = fraction;
+                let finalization = document.finalization.as_mut().unwrap();
+                finalization.terminal_tick = 4;
+                finalization.terminal_fraction = fraction;
+                assert!(document.validate().is_ok());
+                let encoded = document.encode_json().unwrap();
+                let decoded = FlightRecordDocument::decode_json(&encoded).unwrap();
+                assert_eq!(decoded, document);
+                let restored = decoded.to_finalized_core_record().unwrap();
+                assert_terminal_round_trip(&restored);
+                assert_eq!(restored.samples().last().unwrap().fraction, fraction);
+                let (tick, query_fraction) = if fraction == 1.0 {
+                    (5, 0.0)
+                } else {
+                    (4, fraction)
+                };
+                let exact = restored.sample_at_time(tick, query_fraction).unwrap();
+                assert_eq!(
+                    exact.telemetry,
+                    restored.samples().last().unwrap().telemetry
+                );
+                let duration = restored.duration_seconds().unwrap();
+                assert_eq!(restored.sample_at_seconds(duration).unwrap(), exact);
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_record_time_rejects_true_duplicates_and_raw_metadata_mismatch() {
+        let source = water_contact_record();
+        for (tick, fraction) in [(4, 0.0), (4, -0.0), (3, 1.0)] {
+            let mut document = source.clone();
+            document.samples.truncate(6);
+            document.samples[5].tick_index = tick;
+            document.samples[5].fraction = fraction;
+            let finalization = document.finalization.as_mut().unwrap();
+            finalization.terminal_tick = tick;
+            finalization.terminal_fraction = fraction;
+            assert!(document.validate().is_err());
+            assert!(document.encode_json().is_err());
+            assert!(
+                FlightRecordDocument::decode_json(&serde_json::to_vec(&document).unwrap()).is_err()
+            );
+            assert!(document.to_finalized_core_record().is_err());
+        }
+        let mut document = source;
+        document.samples.truncate(6);
+        document.samples[5].tick_index = 4;
+        document.samples[5].fraction = 1.0;
+        let finalization = document.finalization.as_mut().unwrap();
+        finalization.terminal_tick = 5;
+        finalization.terminal_fraction = 0.0;
+        assert!(document.validate().is_err());
+    }
 
     fn completed_record() -> FlightRecordDocument {
         let (aircraft, scenario, feedback, _) =

@@ -228,7 +228,8 @@ export function loadFlightAnalysis(
   }
   requirePackedLength(packedSamples, expectedLength, "flight samples");
   const samples: FlightAnalysisSample[] = [];
-  let previousTimeSeconds = -Infinity;
+  let previousTick = -1;
+  let previousFraction = 0;
   for (let index = 0; index < sampleCount; index += 1) {
     const offset = index * FLIGHT_RECORD_SAMPLE_LAYOUT.length;
     const layout = FLIGHT_RECORD_SAMPLE_LAYOUT;
@@ -237,11 +238,14 @@ export function loadFlightAnalysis(
     if (!Number.isSafeInteger(tick) || tick < 0 || fraction < 0 || fraction > 1) {
       throw new TypeError("Flight record sample has invalid time");
     }
-    const timeSeconds = (tick + fraction) / physicsHz;
-    if (timeSeconds <= previousTimeSeconds) {
+    const canonicalTick = fraction === 1 ? tick + 1 : tick;
+    const canonicalFraction = fraction === 1 ? 0 : fraction;
+    if (!Number.isSafeInteger(canonicalTick)) throw new TypeError("Flight record sample has invalid time");
+    if (canonicalTick < previousTick || (canonicalTick === previousTick && canonicalFraction <= previousFraction)) {
       throw new TypeError("Flight record samples are not strictly chronological");
     }
-    previousTimeSeconds = timeSeconds;
+    previousTick = canonicalTick;
+    previousFraction = canonicalFraction;
     samples.push(decodeAnalysisSample(packedSamples, layout, physicsHz, offset));
   }
   const summary = decodeSummary(record.flight_record_summary(), record.flight_record_finalization(), physicsHz);

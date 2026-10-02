@@ -254,12 +254,12 @@ impl FlightRecord {
         {
             return Err(FlightRecordError::InvalidArchive);
         }
-        let mut previous_time = -1.0;
+        let mut previous_time = None;
         for (index, sample) in samples.iter().enumerate() {
             if sample.tick_index > header.maximum_flight_ticks
                 || !sample.fraction.is_finite()
                 || !(0.0..=1.0).contains(&sample.fraction)
-                || sample_time(sample) <= previous_time
+                || previous_time.is_some_and(|previous| sample_time(sample) <= previous)
                 || (index > 0 && sample.input_from_previous.is_none())
                 || sample
                     .input_from_previous
@@ -280,7 +280,7 @@ impl FlightRecord {
                     return Err(FlightRecordError::InvalidArchive);
                 }
             }
-            previous_time = sample_time(sample);
+            previous_time = Some(sample_time(sample));
         }
         let latest = samples.last().ok_or(FlightRecordError::InvalidArchive)?;
         if latest.tick_index != finalization.terminal_tick
@@ -490,7 +490,7 @@ impl FlightRecord {
         if !fraction.is_finite() || !(0.0..1.0).contains(&fraction) {
             return Err(FlightRecordQueryError::InvalidTime);
         }
-        let requested_time = tick_index as f64 + fraction;
+        let requested_time = (u128::from(tick_index), fraction);
         let first = self
             .samples
             .first()
@@ -513,7 +513,7 @@ impl FlightRecord {
             }
             if requested_time > start_time && requested_time < end_time {
                 let interpolation_fraction =
-                    (requested_time - start_time) / (end_time - start_time);
+                    elapsed_ticks(start_time, requested_time) / elapsed_ticks(start_time, end_time);
                 return interpolate_samples(
                     &pair[0],
                     &pair[1],
@@ -536,7 +536,10 @@ impl FlightRecord {
             .samples
             .last()
             .ok_or(FlightRecordQueryError::EmptyRecord)?;
-        Ok((sample_time(last) - sample_time(first)) / f64::from(self.header.physics_hz))
+        Ok(
+            elapsed_ticks(sample_time(first), sample_time(last))
+                / f64::from(self.header.physics_hz),
+        )
     }
 
     /// Returns an interpolated sample at elapsed seconds from the first retained sample.
@@ -547,10 +550,6 @@ impl FlightRecord {
         if !time_seconds.is_finite() || time_seconds < 0.0 {
             return Err(FlightRecordQueryError::InvalidTime);
         }
-        let first = self
-            .samples
-            .first()
-            .ok_or(FlightRecordQueryError::EmptyRecord)?;
         let last = self
             .samples
             .last()
@@ -559,17 +558,38 @@ impl FlightRecord {
         if time_seconds > duration_seconds {
             return Err(FlightRecordQueryError::OutsideRecordedRange);
         }
-        let tick_time = if time_seconds == duration_seconds {
-            sample_time(last)
-        } else {
-            sample_time(first) + time_seconds * f64::from(self.header.physics_hz)
-        };
-        if !tick_time.is_finite() {
-            return Err(FlightRecordQueryError::InvalidTime);
+        if time_seconds == duration_seconds {
+            let (tick_index, fraction) = sample_time(last);
+            return playback_sample(last, tick_index as u64, fraction);
         }
-        let tick_index = tick_time as u64;
-        let fraction = tick_time - tick_index as f64;
-        self.sample_at_time(tick_index, fraction)
+        let physics_hz = f64::from(self.header.physics_hz);
+        for pair in self.samples.windows(2) {
+            let start_time = sample_time(&pair[0]);
+            let end_time = sample_time(&pair[1]);
+            let start_seconds = elapsed_ticks((0, 0.0), start_time) / physics_hz;
+            let end_seconds = elapsed_ticks((0, 0.0), end_time) / physics_hz;
+            if time_seconds == start_seconds {
+                return playback_sample(&pair[0], start_time.0 as u64, start_time.1);
+            }
+            if time_seconds == end_seconds {
+                return playback_sample(&pair[1], end_time.0 as u64, end_time.1);
+            }
+            if time_seconds > start_seconds && time_seconds < end_seconds {
+                let interpolation_fraction =
+                    (time_seconds - start_seconds) / (end_seconds - start_seconds);
+                let local_tick =
+                    start_time.1 + elapsed_ticks(start_time, end_time) * interpolation_fraction;
+                let whole_tick = local_tick as u64;
+                return interpolate_samples(
+                    &pair[0],
+                    &pair[1],
+                    interpolation_fraction,
+                    start_time.0 as u64 + whole_tick,
+                    local_tick - whole_tick as f64,
+                );
+            }
+        }
+        Err(FlightRecordQueryError::OutsideRecordedRange)
     }
 
     /// Calculates summary metrics from stored samples and finalization metadata.
@@ -638,8 +658,16 @@ fn disposition_matches(reason: SessionEndReason, disposition: FlightRecordDispos
     )
 }
 
-fn sample_time(sample: &FlightRecordSample) -> f64 {
-    sample.tick_index as f64 + sample.fraction
+fn sample_time(sample: &FlightRecordSample) -> (u128, f64) {
+    if sample.fraction == 1.0 {
+        (u128::from(sample.tick_index) + 1, 0.0)
+    } else {
+        (u128::from(sample.tick_index), sample.fraction)
+    }
+}
+
+fn elapsed_ticks(start: (u128, f64), end: (u128, f64)) -> f64 {
+    (end.0 - start.0) as f64 + (end.1 - start.1)
 }
 
 fn playback_sample(
@@ -1470,6 +1498,278 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fractional_record_time_accepts_contact_detector_microfraction() {
+        let synthetic = crate::SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let aircraft = synthetic.aircraft();
+        let limits = [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3];
+        let state_at = |tick, down| {
+            FlightTickState::try_new(
+                &aircraft,
+                limits,
+                tick,
+                FlightState::try_new(
+                    NedPoint::try_new(0.0, 0.0, down).unwrap(),
+                    NedVector::zero(),
+                    UnitQuaternion::IDENTITY,
+                    BodyVector::zero(),
+                    0.0,
+                    0.0,
+                )
+                .unwrap(),
+                ActuatorState::neutral(),
+            )
+            .unwrap()
+        };
+        let previous = state_at(4, -1.0e-18);
+        let next = state_at(5, 0.01);
+        let points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let contact = crate::detect_water_contact(
+            &aircraft,
+            previous,
+            next,
+            limits,
+            crate::WaterContactGeometry::try_new(&points).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(contact.fraction() > 0.0);
+        assert_eq!(4.0 + contact.fraction(), 4.0);
+        let (header, _, telemetry) = fixture();
+        let mut record = FlightRecord::try_new(FlightRecordHeader {
+            maximum_flight_ticks: 10,
+            ..header
+        })
+        .unwrap();
+        record.begin(state_at(0, -1.0e-18), telemetry).unwrap();
+        for tick in 1..=4 {
+            record
+                .append_tick(state_at(tick, -1.0e-18), input(), telemetry)
+                .unwrap();
+        }
+        record
+            .append_contact(
+                contact.interval_start_tick(),
+                contact.fraction(),
+                contact.state().flight_state(),
+                contact.state().actuator_state(),
+                input(),
+                telemetry,
+            )
+            .unwrap();
+        record
+            .finalize(
+                SessionEndReason::WaterContact,
+                contact.interval_start_tick(),
+                contact.fraction(),
+                None,
+            )
+            .unwrap();
+        let restored = FlightRecord::try_from_finalized_samples(
+            record.header(),
+            record.samples().to_vec(),
+            record.finalization().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            restored
+                .sample_at_time(4, contact.fraction())
+                .unwrap()
+                .flight_state,
+            contact.state().flight_state()
+        );
+        assert_ne!(
+            restored.sample_at_time(4, 0.0).unwrap().flight_state,
+            contact.state().flight_state()
+        );
+    }
+
+    #[test]
+    fn fractional_record_time_preserves_microfraction_order_and_local_queries() {
+        for fraction in [f64::EPSILON, 1.0e-100, f64::MIN_POSITIVE] {
+            let record = fractional_time_record(4, fraction);
+            let samples = record.samples().to_vec();
+            let finalization = record.finalization().unwrap();
+            let restored = FlightRecord::try_from_finalized_samples(
+                record.header(),
+                samples.clone(),
+                finalization,
+            )
+            .unwrap();
+            assert_eq!(restored.samples(), samples);
+            assert_eq!(restored.finalization(), Some(finalization));
+            let start = restored.sample_at_time(4, 0.0).unwrap();
+            let terminal = restored.sample_at_time(4, fraction).unwrap();
+            assert_eq!(terminal.telemetry.airspeed_mps, 20.0);
+            for proportion in [0.25, 0.5, 0.75] {
+                let interpolated = restored.sample_at_time(4, fraction * proportion).unwrap();
+                assert_eq!(
+                    interpolated.telemetry.airspeed_mps,
+                    start.telemetry.airspeed_mps
+                        + (20.0 - start.telemetry.airspeed_mps) * proportion
+                );
+            }
+            for (tick, beyond) in [(4, fraction.next_up()), (5, 0.0), (u64::MAX, 0.5)] {
+                assert_eq!(
+                    restored.sample_at_time(tick, beyond),
+                    Err(super::FlightRecordQueryError::OutsideRecordedRange)
+                );
+            }
+            assert_eq!(restored.samples(), samples);
+        }
+    }
+
+    #[test]
+    fn fractional_record_time_seconds_accepts_every_projected_interior_boundary() {
+        for fraction in [1.0_f64.next_down(), 0.5, f64::EPSILON, 1.0] {
+            let record = fractional_time_record(4, fraction);
+            let duration = record.duration_seconds().unwrap();
+            let samples = record.samples().to_vec();
+            for seconds in [
+                0.0,
+                0.01,
+                0.03_f64.next_up(),
+                0.04,
+                duration.next_down(),
+                duration,
+            ] {
+                let queried = record.sample_at_seconds(seconds).unwrap();
+                assert!(queried.telemetry.airspeed_mps.is_finite());
+                assert!(queried.telemetry.airspeed_mps <= 20.0);
+                assert!(queried.tick_index <= 5);
+                assert!((0.0..1.0).contains(&queried.fraction));
+            }
+            if fraction == 1.0_f64.next_down() {
+                let seconds = duration.next_down();
+                assert_eq!(seconds * f64::from(crate::PHYSICS_HZ), 5.0);
+                let queried = record.sample_at_seconds(seconds).unwrap();
+                assert_eq!(queried.tick_index, 4);
+                assert!(queried.fraction < fraction);
+                assert!(queried.telemetry.airspeed_mps < 20.0);
+                assert_eq!(
+                    record.sample_at_time(5, 0.0),
+                    Err(super::FlightRecordQueryError::OutsideRecordedRange)
+                );
+            }
+            assert_eq!(
+                record.sample_at_seconds(duration.next_up()),
+                Err(super::FlightRecordQueryError::OutsideRecordedRange)
+            );
+            assert_eq!(record.samples(), samples);
+        }
+    }
+
+    #[test]
+    fn fractional_record_time_seconds_prioritizes_the_stored_terminal() {
+        for (tick, fraction) in [(4, f64::EPSILON), (0, f64::from_bits(1)), (4, 1.0)] {
+            let record = fractional_time_record(tick, fraction);
+            let duration = record.duration_seconds().unwrap();
+            let terminal = record.samples().last().unwrap();
+            let queried = record.sample_at_seconds(duration).unwrap();
+            assert_eq!(queried.flight_state, terminal.flight_state);
+            assert_eq!(queried.telemetry, terminal.telemetry);
+            assert_eq!(queried.actuator_state, terminal.actuator_state);
+            assert_eq!(
+                (queried.tick_index, queried.fraction),
+                if fraction == 1.0 {
+                    (tick + 1, 0.0)
+                } else {
+                    (tick, fraction)
+                }
+            );
+            assert_eq!(
+                record.sample_at_seconds(duration.next_up()),
+                Err(super::FlightRecordQueryError::OutsideRecordedRange)
+            );
+            if tick == 0 {
+                assert_eq!(duration, 0.0);
+                assert_ne!(
+                    record.sample_at_time(0, 0.0).unwrap().telemetry,
+                    queried.telemetry
+                );
+                assert_eq!(record.sample_at_seconds(-0.0).unwrap(), queried);
+            } else {
+                assert_eq!(
+                    record.sample_at_seconds(0.0).unwrap().telemetry,
+                    record.samples()[0].telemetry
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_record_time_canonical_endpoint_rejects_duplicate_archives() {
+        let record = fractional_time_record(4, 1.0);
+        let endpoint = record.sample_at_time(5, -0.0).unwrap();
+        assert_eq!(
+            endpoint.telemetry,
+            record.samples().last().unwrap().telemetry
+        );
+        assert_eq!(
+            record.sample_at_time(4, 1.0),
+            Err(super::FlightRecordQueryError::InvalidTime)
+        );
+        for (tick, fraction) in [(4, 1.0), (5, 0.0), (5, -0.0)] {
+            let mut samples = record.samples().to_vec();
+            let mut duplicate = *samples.last().unwrap();
+            duplicate.tick_index = tick;
+            duplicate.fraction = fraction;
+            samples.push(duplicate);
+            let mut finalization = record.finalization().unwrap();
+            finalization.terminal_tick = tick;
+            finalization.terminal_fraction = fraction;
+            assert!(matches!(
+                FlightRecord::try_from_finalized_samples(record.header(), samples, finalization),
+                Err(FlightRecordError::InvalidArchive)
+            ));
+        }
+        assert_eq!(record.finalization().unwrap().terminal_tick, 4);
+        assert_eq!(record.finalization().unwrap().terminal_fraction, 1.0);
+    }
+
+    fn fractional_time_record(tick: u64, fraction: f64) -> FlightRecord {
+        let synthetic = crate::SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let initial = synthetic.scenario().initial_state();
+        let telemetry = synthetic
+            .scenario()
+            .telemetry(initial.flight_state())
+            .unwrap();
+        let (header, _, _) = fixture();
+        let mut record = FlightRecord::try_new(FlightRecordHeader {
+            maximum_flight_ticks: 10,
+            ..header
+        })
+        .unwrap();
+        record.begin(initial, telemetry).unwrap();
+        for tick_index in 1..=tick {
+            let state = FlightTickState::try_new(
+                &synthetic.aircraft(),
+                [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
+                tick_index,
+                initial.flight_state(),
+                initial.actuator_state(),
+            )
+            .unwrap();
+            record.append_tick(state, input(), telemetry).unwrap();
+        }
+        let mut terminal_telemetry = telemetry;
+        terminal_telemetry.airspeed_mps = 20.0;
+        record
+            .append_contact(
+                tick,
+                fraction,
+                initial.flight_state(),
+                initial.actuator_state(),
+                input(),
+                terminal_telemetry,
+            )
+            .unwrap();
+        record
+            .finalize(SessionEndReason::WaterContact, tick, fraction, None)
+            .unwrap();
+        record
     }
 
     fn fixture() -> (FlightRecordHeader, FlightTickState, crate::FlightTelemetry) {
