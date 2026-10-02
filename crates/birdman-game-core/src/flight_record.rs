@@ -24,19 +24,31 @@ pub struct FlightRecordHeader {
 }
 
 impl FlightRecordHeader {
-    /// Creates a header within the core tick contract.
+    /// Creates a header within the core tick and version metadata contracts.
     pub const fn try_new(
         scenario: SessionScenarioIdentity,
         maximum_flight_ticks: u64,
     ) -> Result<Self, FlightRecordError> {
-        if maximum_flight_ticks == 0 || maximum_flight_ticks > MAX_FLIGHT_RECORD_TICKS as u64 {
-            return Err(FlightRecordError::InvalidHeader);
-        }
-        Ok(Self {
+        let header = Self {
             scenario,
             maximum_flight_ticks,
             physics_hz: crate::PHYSICS_HZ,
-        })
+        };
+        if !header.is_valid() {
+            return Err(FlightRecordError::InvalidHeader);
+        }
+        Ok(header)
+    }
+
+    const fn is_valid(self) -> bool {
+        self.maximum_flight_ticks > 0
+            && self.maximum_flight_ticks <= MAX_FLIGHT_RECORD_TICKS as u64
+            && self.physics_hz == crate::PHYSICS_HZ
+            && self.scenario.catalog_version > 0
+            && self.scenario.scenario_version > 0
+            && self.scenario.aircraft_model_version > 0
+            && self.scenario.environment_version > 0
+            && self.scenario.controller_profile_version > 0
     }
 }
 
@@ -200,8 +212,11 @@ pub struct FlightRecord {
 }
 
 impl FlightRecord {
-    /// Reserves all samples for the configured duration before Briefing completes.
+    /// Validates the public header before reserving all samples for the configured duration.
     pub fn try_new(header: FlightRecordHeader) -> Result<Self, FlightRecordError> {
+        if !header.is_valid() {
+            return Err(FlightRecordError::InvalidHeader);
+        }
         let sample_capacity = usize::try_from(header.maximum_flight_ticks)
             .ok()
             .and_then(|ticks| ticks.checked_add(1))
@@ -224,19 +239,14 @@ impl FlightRecord {
         samples: Vec<FlightRecordSample>,
         finalization: FlightRecordFinalization,
     ) -> Result<Self, FlightRecordError> {
+        if !header.is_valid() {
+            return Err(FlightRecordError::InvalidArchive);
+        }
         let capacity = usize::try_from(header.maximum_flight_ticks)
             .ok()
             .and_then(|ticks| ticks.checked_add(1))
             .ok_or(FlightRecordError::InvalidArchive)?;
-        if header.physics_hz != crate::PHYSICS_HZ
-            || header.maximum_flight_ticks == 0
-            || header.maximum_flight_ticks > MAX_FLIGHT_RECORD_TICKS as u64
-            || header.scenario.catalog_version == 0
-            || header.scenario.scenario_version == 0
-            || header.scenario.aircraft_model_version == 0
-            || header.scenario.environment_version == 0
-            || header.scenario.controller_profile_version == 0
-            || samples.is_empty()
+        if samples.is_empty()
             || samples.len() > capacity
             || samples[0].tick_index != 0
             || samples[0].fraction != 0.0
@@ -859,6 +869,138 @@ mod tests {
     };
 
     const _: [(); 424] = [(); core::mem::size_of::<super::FlightRecordSample>()];
+
+    #[test]
+    fn constructors_reject_public_tick_limits_outside_the_bounded_contract() {
+        let (header, _, _) = fixture();
+        for maximum_flight_ticks in [
+            0,
+            super::MAX_FLIGHT_RECORD_TICKS as u64 + 1,
+            usize::MAX as u64,
+            u64::MAX,
+        ] {
+            assert_eq!(
+                FlightRecordHeader::try_new(header.scenario, maximum_flight_ticks),
+                Err(FlightRecordError::InvalidHeader)
+            );
+            assert_invalid_header(FlightRecordHeader {
+                maximum_flight_ticks,
+                ..header
+            });
+        }
+    }
+
+    #[test]
+    fn constructor_rejects_public_physics_frequency_mismatches() {
+        let (header, _, _) = fixture();
+        for physics_hz in [0, crate::PHYSICS_HZ + 1, u32::MAX] {
+            assert_invalid_header(FlightRecordHeader {
+                physics_hz,
+                ..header
+            });
+        }
+    }
+
+    #[test]
+    fn constructors_reject_zero_identity_versions_consistently_with_archives() {
+        let (header, _, _) = fixture();
+        for scenario in [
+            SessionScenarioIdentity {
+                catalog_version: 0,
+                ..header.scenario
+            },
+            SessionScenarioIdentity {
+                scenario_version: 0,
+                ..header.scenario
+            },
+            SessionScenarioIdentity {
+                aircraft_model_version: 0,
+                ..header.scenario
+            },
+            SessionScenarioIdentity {
+                environment_version: 0,
+                ..header.scenario
+            },
+            SessionScenarioIdentity {
+                controller_profile_version: 0,
+                ..header.scenario
+            },
+        ] {
+            assert_eq!(
+                FlightRecordHeader::try_new(scenario, header.maximum_flight_ticks),
+                Err(FlightRecordError::InvalidHeader)
+            );
+            assert_invalid_header(FlightRecordHeader { scenario, ..header });
+        }
+    }
+
+    #[test]
+    fn valid_header_boundaries_reserve_bounded_capacity_and_restore() {
+        let (header, initial, telemetry) = fixture();
+        for maximum_flight_ticks in [1, super::MAX_FLIGHT_RECORD_TICKS as u64] {
+            for scenario in [
+                SessionScenarioIdentity {
+                    scenario_id: 0,
+                    seed: 0,
+                    ..header.scenario
+                },
+                SessionScenarioIdentity {
+                    catalog_version: u32::MAX,
+                    scenario_id: u32::MAX,
+                    scenario_version: u32::MAX,
+                    aircraft_model_version: u32::MAX,
+                    environment_version: u32::MAX,
+                    controller_profile_version: u32::MAX,
+                    seed: u64::MAX,
+                },
+            ] {
+                let header = FlightRecordHeader::try_new(scenario, maximum_flight_ticks).unwrap();
+                let mut record = FlightRecord::try_new(header).unwrap();
+                assert_eq!(record.sample_capacity, maximum_flight_ticks as usize + 1);
+                assert!(record.samples.capacity() >= record.sample_capacity);
+                let buffer = record.samples.as_ptr();
+                let capacity = record.samples.capacity();
+                record.begin(initial, telemetry).unwrap();
+                let finalization = record
+                    .finalize(SessionEndReason::ManualAbort, 0, 0.0, None)
+                    .unwrap();
+                assert_eq!(record.samples.as_ptr(), buffer);
+                assert_eq!(record.samples.capacity(), capacity);
+                assert_eq!(record.header(), header);
+                let restored = FlightRecord::try_from_finalized_samples(
+                    header,
+                    record.samples().to_vec(),
+                    finalization,
+                )
+                .unwrap();
+                assert_eq!(restored.header(), header);
+                assert_eq!(restored.samples(), record.samples());
+                assert_eq!(restored.finalization(), Some(finalization));
+            }
+        }
+    }
+
+    fn assert_invalid_header(header: FlightRecordHeader) {
+        assert_eq!(
+            FlightRecord::try_new(header).err(),
+            Some(FlightRecordError::InvalidHeader)
+        );
+        let (valid_header, initial, telemetry) = fixture();
+        let mut original = FlightRecord::try_new(valid_header).unwrap();
+        original.begin(initial, telemetry).unwrap();
+        let finalization = original
+            .finalize(SessionEndReason::ManualAbort, 0, 0.0, None)
+            .unwrap();
+        assert_eq!(
+            FlightRecord::try_from_finalized_samples(
+                header,
+                original.samples().to_vec(),
+                finalization,
+            )
+            .err(),
+            Some(FlightRecordError::InvalidArchive)
+        );
+    }
 
     #[test]
     fn reserved_record_retains_initial_and_monotonic_integer_samples() {
