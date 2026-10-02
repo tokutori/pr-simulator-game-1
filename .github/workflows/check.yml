@@ -34,6 +34,8 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Verify offline environment source extraction
+        run: python -m unittest discover -s tools/environment-build -v
       - run: cargo doc --workspace --no-deps --locked
       - name: Verify core without std
         run: cargo build -p birdman-game-core --target wasm32v1-none --locked

@@ -46,6 +46,7 @@ CLI/WASMはcoreを直接使用してよい。format経由で物理計算を呼�
 | `web/src/render/contracts` | engine非依存の描画・UI・view・resource識別子の契約 |
 | `web/src/render/engines/three` | Three.js固有のscene graph、camera、shader、GPU/XR結合 |
 | `tools/world-build` | offline地理・気象処理とasset生成 |
+| `tools/environment-build` | hash固定した気象snapshotの抽出と環境assetのoffline生成 |
 | `tools/asset-check` | 配布assetの登録・出典・hash・利用条件の検査 |
 
 moduleは実装時に追加する。空の細分化crateを増設しない。
