@@ -1,4 +1,5 @@
 import { IDENTITY_POSE } from "../render/contracts/math.js";
+import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
 import type { AppModel, PresentationUiState } from "./app-state.js";
@@ -12,6 +13,7 @@ export function createBootViewModel(model: AppModel): UiViewModel {
     title: "鳥人間滑空ゲーム",
     description: "Rust/WASMの合成flightを開始した。A/D・矢印キー・J/LまたはGamepadで操縦する。",
     activeOverlay: null,
+    headHud: NO_HEAD_HUD,
     panels: Object.freeze([Object.freeze({
       id: "boot-status",
       title: "表示基盤",

@@ -227,6 +227,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
 function frame(overrides: Partial<BackendFrame> = {}): BackendFrame {
   return {
+    headHud: { kind: "absent" },
     timestampMs: 0, cameraPose: IDENTITY_POSE, panelPose: placeMenuPanel(IDENTITY_POSE, 2.4),
     panel: createSceneFixture("Title").panels[0] ?? null, panelVisible: true, gazeCursor: null,
     viewport: { x: 1280, y: 720, pixelRatio: 1 }, ...overrides

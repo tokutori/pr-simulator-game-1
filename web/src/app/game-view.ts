@@ -1,4 +1,5 @@
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
+import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
@@ -319,7 +320,8 @@ export function createGameViewModel(
     activeOverlay: phaseCode === 6
       ? pauseOverlay === "settings" ? "PauseSettings" : pauseOverlay === "help" ? "PauseHelp" : "Pause"
       : null,
-    panels: Object.freeze([panel])
+    panels: Object.freeze([panel]),
+    headHud: NO_HEAD_HUD
   });
 }
 

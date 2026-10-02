@@ -9,6 +9,7 @@ import {
 } from "../render/contracts/math.js";
 import type { Pose, Quaternion } from "../render/contracts/math.js";
 import type { BackendFrame, PresentationBackendAdapter, RendererAdapter, ViewportSize } from "../render/contracts/runtime.js";
+import { resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
 import { MenuAnchorPlacement, placeMenuPanel, resolveAnchorPose } from "../render/anchors.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
@@ -219,6 +220,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
         : this.updateGaze(panel, panelPose, viewerPose, timestampMs);
     return Object.freeze({
       timestampMs,
+      headHud: resolveHeadHudFrame(viewModel.headHud, cameraPose),
       cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
       panelPose,
       panel,

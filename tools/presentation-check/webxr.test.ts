@@ -1,14 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import { composePose, IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../web/src/presentation/webxr-contracts.js";
 import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 
 describe("WebXR session backend", () => {
+  it("supplies the runtime viewer center to Head HUD independently of the identity user camera and transformed Menu", async () => {
+    const adapter = new FakeWebXrAdapter();
+    const renderer = new FakeRenderer();
+    renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
+    const backend = new WebXrPresentationBackend(adapter, renderer, viewport, () => undefined, () => undefined);
+    const hud = createHeadHudFixture();
+    const view = { ...createSceneFixture("Flight"), headHud: hud };
+    const runtimeHead = pose(vec3(0.02, 0.05, -0.03), IDENTITY_POSE.orientation);
+    await backend.requestSessionFromUserGesture();
+    await backend.start();
+    try {
+      const frame = backend.currentFrame(10, view, runtimeHead);
+      expect(frame.cameraPose).toEqual(IDENTITY_POSE);
+      expect(frame.headHud).toEqual({ kind: "visible", trackingFromHead: runtimeHead, view: hud });
+      expect(frame.panelVisible).toBe(true);
+      expect(frame.panel?.controls.length).toBeGreaterThan(0);
+      expect(backend.currentFrame(20, view, null).headHud).toEqual({ kind: "absent" });
+      expect(backend.currentFrame(30, createSceneFixture("Flight"), runtimeHead).headHud).toEqual({ kind: "absent" });
+    } finally { await backend.stop(); }
+  });
+
   it("checks immersive support and requests a session synchronously from the user action", async () => {
     const adapter = new FakeWebXrAdapter();
     const backend = createBackend(adapter);

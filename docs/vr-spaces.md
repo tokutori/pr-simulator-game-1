@@ -14,7 +14,7 @@ worldに固定した地形・湖面・雲の姿勢を頭部回転へ同期させ
 | Menu | menu用tracking reference内の配置位置 | 開いた位置を維持し、頭部運動で視野内位置が変化する |
 | Head | 現在の頭部poseと固定offset | 視野内の位置を維持する |
 
-interactive panelの提案既定値はMenuである。Flightの計器はCockpitに配置する。
+interactive panelの提案既定値はMenuである。機体の実物相当計器はCockpit、非modal Flight情報板はHeadに配置する。
 視野内固定を要するcontrolはHeadとして明示し、gamepad等の頭部から独立した選択方法を必須にする。
 head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用しない。
 
@@ -26,7 +26,8 @@ head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用し�
 | 太陽・無限遠の空 | 方向をWorldへ固定。sky geometryを眼の位置へ平行移動しても回転は同期しない |
 | 機体、cockpit、実機相当の計器 | 機体poseと固定取付位置。計器はCockpit |
 | Boot/Title/Setup/Briefing/Result/Replayのpanel | Menu。背景のcinematic cameraから独立する |
-| Countdown表示、Flight HUD | Cockpit内の所定位置。頭部正面へ自動追従させない |
+| Countdown表示 | Cockpit内の所定位置。頭部正面へ自動追従させない |
+| 非modal Flight情報板 | Head。前方中央を空け、周辺へtelemetryを配置する。操作controlを含めない |
 | Pause/Settings/Help/Credits | Menu。開いた時点の配置を維持する |
 | head-gaze cursor | Head方向からrayを生成し、hit点へ表示する |
 | controller ray | controller poseから生成する |
@@ -34,6 +35,30 @@ head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用し�
 
 flight-path marker等は定義された方向を眼へ投影し、固定panelの文字項目と区別する。
 Screen HUDはviewport基準であり、VRのanchorをpixel位置へ直接置換しない。
+
+## Head情報板と操作panelの分離
+
+`UiViewModel.headHud`は`absent | visible`の排他型とする。visibleはHead anchor、local pose、
+大きさ、中央clear region、背景alpha、foreground alpha、非操作の表示要素を持つ。
+文字、ADI、heading、pilot position、wind、迎角、flight-pathの型を区別し、`UiControl`と`UiAction`を含めない。
+flight-pathは姿勢計を非表示にしたCustom設定でも独立表示できる。interactive Menuは従来の`panels`へ残す。
+HUDの背景alphaを下げる際も文字・警告・計器foregroundのalphaを独立して維持する。
+
+clear regionと表示要素のboundsは左上原点の正規化矩形とし、要素の範囲・重複ID・clear regionとの交差を検査する。
+この矩形検査に加え、profileの角寸法、左右projection、身体前後移動、head姿勢を使って実際の前方可視領域を確認する。
+`BackendFrame.headHud`は表示内容とraw center-head poseを一組として保持し、tracking欠損時はabsentとする。
+Phone VRは基準化したsensor姿勢、WebXRは`XRFrame.getViewerPose().transform`を使用する。
+XRのuser camera用identity、片眼pose、frustum union用cameraをcenter-headの代替にしない。
+表示用のworld basisはengine adapterが一度だけ合成し、Flightでは機体・PilotEye・head・HUD localの順とする。
+左右眼のIPDはstereo projectionだけへ適用する。外部rigと非Flight背景基底もheadとの合成を一度だけ行う。
+
+Three.jsのHUD surfaceは独立したCanvasTextureとmeshを所有し、transparent、opacity 1、depthWrite false、
+depthTest falseで描画する。背景alphaとforeground alphaはcanvas側で別に適用する。
+HUDを水面反射用layerへ追加せず、終了時はtexture・material・geometryを一度ずつ解放する。
+非表示時もmeshを保持し、変更された不変viewだけをtexture更新の入力にする。
+
+現在の追加単位は公開型、backendのcenter-head供給、独立surfaceまでを対象とする。
+ゲームviewの既定値はabsentであり、Flightへの有効化・profile別layout・GPU視認性は後続の接続単位で検証する。
 
 ## Menuと入力
 

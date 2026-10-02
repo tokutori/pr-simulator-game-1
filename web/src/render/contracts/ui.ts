@@ -1,5 +1,7 @@
 import type { AnchorKind } from "../anchors.js";
 import type { Pose } from "./math.js";
+import { validateHeadHudLayer } from "./head-hud.js";
+import type { HeadHudLayer } from "./head-hud.js";
 
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];
@@ -120,6 +122,7 @@ export interface UiViewModel {
   readonly presentationStyle?: "default" | "cinematic";
   readonly activeOverlay: string | null;
   readonly panels: readonly UiPanel[];
+  readonly headHud: HeadHudLayer;
 }
 
 export type UiAction =
@@ -193,6 +196,7 @@ export function chartScaleBarDistance(span: number): number {
 }
 
 export function validateUiViewModel(viewModel: UiViewModel): void {
+  validateHeadHudLayer(viewModel.headHud);
   const ids = new Set<string>();
   for (const panel of viewModel.panels) {
     if (ids.has(panel.id)) throw new Error(`Duplicate UI identifier: ${panel.id}`);

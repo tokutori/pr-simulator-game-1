@@ -2,6 +2,7 @@ import type { Pose, Vec2, Vec3 } from "./math.js";
 import type { CinematicCameraView } from "./camera.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
 import type { LakeVisualCondition } from "./lake-water.js";
+import type { HeadHudFrame } from "./head-hud.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -17,6 +18,7 @@ export interface StereoPresentationProfile {
 }
 
 export interface BackendFrame {
+  readonly headHud: HeadHudFrame;
   readonly timestampMs: number;
   readonly cameraPose: Pose;
   readonly panelPose: Pose;
