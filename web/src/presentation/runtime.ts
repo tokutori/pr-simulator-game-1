@@ -169,6 +169,7 @@ export class PresentationRuntime {
     const backend = this.activeBackend;
     if (backend === null || this.disposed) return;
     this.onFrame(timestampMs);
+    this.renderer.beginViewFrame();
     this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(viewer), viewer.trackingFromHead));
   }
 

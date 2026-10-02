@@ -622,6 +622,7 @@ class FakePhoneVrSensors implements PhoneVrSensorPort {
 }
 
 class FakeRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   stereoProfile: StereoPresentationProfile | null = null;
   readonly frames: BackendFrame[] = [];
   private frameCallback: Parameters<RendererAdapter["startLoop"]>[0] | null = null;

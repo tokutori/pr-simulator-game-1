@@ -92,10 +92,13 @@ ScreenのHUDと操作は従来のDOM adapterを使用する。非Flightの全Sce
 Runtimeは同じframeをview導出関数へ渡し、そのraw center-headをbackendへ供給する。
 AppModel、DOM、window上に眼別geometryの正本を追加せず、前frameのgeometryを再利用しない。
 
-現frameの順序はgeometry取得、physics・機体pose更新callback、view導出、backend frame、描画とする。
-callbackはphysicsとposeを更新し、projection設定・光学profile・camera cut・viewportを変更しない。
-これらの表示構成変更はcallback外で確定させ、取得projectionと描画projectionを同じframeで一致させる。
-callback内で表示構成を変更する機能を追加する際は、geometry取得のphaseを改めて設計する。
+現frameの順序は前frameのpending入力適用、geometry取得、physics・機体pose更新callback、
+`beginViewFrame()`、view導出、backend frame、描画とする。
+physics callbackはcamera選択とintrinsicsを変えない非null poseを同frameへ反映する。
+geometry取得後のprojection設定・光学profile・camera cut・viewportとposeの明示取消は次animationへ送る。
+view開始後のpose・lake入力も次animationへ送り、取得projectionと実描画の構成を同frameで一致させる。
+外部XRFrameやreference spaceが欠けた場合はraw geometryを利用不能として扱い、
+XR終了後の通常rAFはScreen/Phoneの構成済み光学状態から処理する。
 WebXRでは一つの`XRFrame.getViewerPose()`結果からcenter transformと各viewのtransform・projectionをコピーする。
 `headFromEye`はcenter transformの逆変換とeye transformから導出する。
 projectionは16要素のcolumn-major行列のまま保持し、非対称frustum、眼の回転、shearをFOV単一値へ変換しない。

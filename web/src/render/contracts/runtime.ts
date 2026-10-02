@@ -58,6 +58,7 @@ export interface SelectRay {
 
 export interface RendererAdapter {
   startLoop(callback: (timestampMs: number, viewer: ViewerFrame) => void): void;
+  beginViewFrame(): void;
   stopLoop(): void;
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;

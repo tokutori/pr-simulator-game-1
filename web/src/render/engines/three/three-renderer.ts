@@ -390,6 +390,21 @@ export function createThreeRenderer(
   let flightPose: FlightRenderPose | null = null;
   let flightCameraMode: FlightCameraMode = "pilot";
   let fixedCameraView: CinematicCameraView | null = null;
+  let framePhase: "idle" | "physics" | "view" = "idle";
+  let frameViewport: ViewportSize | null = null;
+  let renderedTrackingMount: Pose | null = null;
+  type PendingViewInputs = Readonly<{
+    flightPose?: FlightRenderPose | null;
+    cameraMode?: FlightCameraMode;
+    cameraView?: CinematicCameraView | null;
+    stereo?: StereoPresentationProfile | null;
+    viewport?: ViewportSize;
+    lake?: LakeVisualCondition;
+  }>;
+  let pendingViewInputs: PendingViewInputs | null = null;
+  const stageViewInputs = (inputs: PendingViewInputs): void => {
+    pendingViewInputs = Object.freeze({ ...pendingViewInputs, ...inputs });
+  };
   const currentExternalCameraPose = (): Pose | null => {
     if (flightPose === null || flightCameraMode === "pilot") return null;
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
@@ -403,9 +418,9 @@ export function createThreeRenderer(
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
     const referenceSpace = renderer.xr.getReferenceSpace();
-    if (referenceSpace === null || selectRayHandler === null) return;
+    if (referenceSpace === null || selectRayHandler === null || renderedTrackingMount === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(transformRay(ray, currentTrackingMountPose()));
+    if (ray !== null) selectRayHandler(transformRay(ray, renderedTrackingMount));
   };
 
   const onSessionEnd = (): void => {
@@ -414,6 +429,7 @@ export function createThreeRenderer(
     session.removeEventListener("select", onSelect);
     const expected = xrState.type === "stopping";
     xrState = { type: "idle" };
+    renderedTrackingMount = null;
     if (expected) return;
     queueMicrotask(() => {
       clearSession(session);
@@ -427,7 +443,7 @@ export function createThreeRenderer(
       position: vec3(transform.position.x, transform.position.y, transform.position.z),
       orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
     };
-    const mount = currentTrackingMountPose();
+    const mount = renderedTrackingMount ?? currentTrackingMountPose();
     referenceSpaceResetHandler?.(previousReferenceFromNew === null ? null : composePose(
       composePose(mount, previousReferenceFromNew), inversePose(mount)
     ));
@@ -438,28 +454,53 @@ export function createThreeRenderer(
       ensureActive(disposed);
       if (loopRunning) throw new Error("Three.js frame loop is already active");
       loopRunning = true;
-      renderer.setAnimationLoop((timestamp, xrFrame) => {
-        const referenceSpace = renderer.xr.getReferenceSpace();
-        if (renderer.xr.isPresenting) {
-          const viewer = referenceSpace === null ? null : xrFrame.getViewerPose(referenceSpace);
-          callback(timestamp, captureXrViewerFrame(viewer ?? null));
-        } else if (stereoPresentation !== null) {
-          geometryStereo.eyeSep = stereoPresentation.eyeSeparationMeters;
-          updateFixedCameraProjection();
-          callback(timestamp, captureConfiguredViewerFrame(currentExternalCameraPose() === null ? camera : fixedCamera, geometryStereo));
-        } else {
-          callback(timestamp, unavailableViewerFrame("not-stereo"));
+      renderer.setAnimationLoop((timestamp: number, xrFrame: XRFrame | null | undefined) => {
+        const pending = pendingViewInputs;
+        pendingViewInputs = null;
+        if (pending !== null) {
+          if ("flightPose" in pending) rendererAdapter.setFlightPose(pending.flightPose ?? null);
+          if (pending.cameraMode !== undefined) rendererAdapter.setFlightCameraMode(pending.cameraMode);
+          if ("cameraView" in pending) rendererAdapter.setCinematicCameraView(pending.cameraView ?? null);
+          if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
+          if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
+          if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
+        }
+        frameViewport = width > 0 && height > 0 ? Object.freeze({ x: width, y: height, pixelRatio }) : null;
+        framePhase = "physics";
+        try {
+          const referenceSpace = renderer.xr.getReferenceSpace();
+          if (renderer.xr.isPresenting) {
+            const viewer = xrFrame !== undefined && xrFrame !== null && referenceSpace !== null ? xrFrame.getViewerPose(referenceSpace) : null;
+            callback(timestamp, captureXrViewerFrame(viewer ?? null));
+          } else if (stereoPresentation !== null) {
+            geometryStereo.eyeSep = stereoPresentation.eyeSeparationMeters;
+            updateFixedCameraProjection();
+            callback(timestamp, captureConfiguredViewerFrame(currentExternalCameraPose() === null ? camera : fixedCamera, geometryStereo));
+          } else {
+            callback(timestamp, unavailableViewerFrame("not-stereo"));
+          }
+        } finally {
+          framePhase = "idle";
+          frameViewport = null;
         }
       });
+    },
+    beginViewFrame() {
+      ensureActive(disposed);
+      if (framePhase === "physics") framePhase = "view";
     },
     stopLoop() {
       if (disposed || !loopRunning) return;
       renderer.setAnimationLoop(null);
       loopRunning = false;
+      renderedTrackingMount = null;
     },
     render(frame: BackendFrame) {
       ensureActive(disposed);
-      if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
+      if (!renderer.xr.isPresenting) {
+        if (frameViewport !== null && (frame.viewport.x !== frameViewport.x || frame.viewport.y !== frameViewport.y || frame.viewport.pixelRatio !== frameViewport.pixelRatio)) stageViewInputs({ viewport: frame.viewport });
+        resizeIfNeeded(frameViewport ?? frame.viewport);
+      }
       const externalCameraPose = currentExternalCameraPose();
       const useExternalCamera = externalCameraPose !== null;
       const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE;
@@ -573,10 +614,12 @@ export function createThreeRenderer(
       } else {
         renderer.render(scene, useExternalCamera ? fixedCamera : camera);
       }
+      renderedTrackingMount = loopRunning && renderer.xr.isPresenting && frame.panelVisible ? currentTrackingMountPose() : null;
     },
     resize(viewport: ViewportSize) {
       ensureActive(disposed);
       if (renderer.xr.isPresenting) return;
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ viewport }); return; }
       resizeIfNeeded(viewport);
     },
     setStereoPresentation(profile: StereoPresentationProfile | null) {
@@ -587,6 +630,7 @@ export function createThreeRenderer(
           profile.verticalFieldOfViewDegrees >= 180 || !Number.isFinite(profile.focusDistanceMeters) || profile.focusDistanceMeters <= 0)) {
         throw new RangeError("Phone VR optical profile values must be positive and finite");
       }
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ stereo: profile }); return; }
       stereoPresentation = profile;
       camera.fov = profile?.verticalFieldOfViewDegrees ?? 60;
       camera.focus = profile?.focusDistanceMeters ?? 10;
@@ -597,6 +641,10 @@ export function createThreeRenderer(
       if (disposed) return;
       if (loopRunning) renderer.setAnimationLoop(null);
       loopRunning = false;
+      pendingViewInputs = null;
+      framePhase = "idle";
+      frameViewport = null;
+      renderedTrackingMount = null;
       panelTexture.dispose();
       gazeCursorGeometry.dispose();
       gazeCursorMaterial.dispose();
@@ -619,10 +667,15 @@ export function createThreeRenderer(
       selectRayHandler = handler;
     },
     setFlightPose(pose: FlightRenderPose | null) {
+      if (framePhase === "view" || (framePhase === "idle" && pendingViewInputs !== null) || (framePhase === "physics" && (pose === null || flightPose === null))) {
+        stageViewInputs({ flightPose: pose }); return;
+      }
       flightPose = pose;
+      if (pendingViewInputs !== null && "flightPose" in pendingViewInputs) stageViewInputs({ flightPose: pose });
     },
     setLakeVisualCondition(condition: LakeVisualCondition) {
       ensureActive(disposed);
+      if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ lake: condition }); return; }
       if (sameLakeVisualCondition(activeLakeCondition, condition)) return;
       const next = createLakeVisualResources(condition, lakeQuality);
       lakeUniforms.windSpeed.value = next.windSpeed;
@@ -640,9 +693,11 @@ export function createThreeRenderer(
       activeLakeCondition = condition;
     },
     setFlightCameraMode(mode: FlightCameraMode) {
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ cameraMode: mode }); return; }
       flightCameraMode = mode;
     },
     setCinematicCameraView(view: CinematicCameraView | null) {
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ cameraView: view }); return; }
       fixedCameraView = view;
     },
     transformTrackingPose(pose: Pose): Pose {
@@ -770,6 +825,7 @@ export function createThreeRenderer(
     activeReferenceSpace = null;
     xrState = { type: "idle" };
     renderer.xr.enabled = false;
+    renderedTrackingMount = null;
   }
 
   function isAttaching(): boolean {

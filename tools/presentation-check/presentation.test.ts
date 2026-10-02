@@ -357,6 +357,7 @@ describe("presentation runtime", () => {
 });
 
 class FakeRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   startCount = 0;
   stopCount = 0;
   disposeCount = 0;

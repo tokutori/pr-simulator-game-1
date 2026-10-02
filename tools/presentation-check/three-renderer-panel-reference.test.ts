@@ -181,6 +181,51 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     }
   });
 
+  it("holds captured Phone optics through a view-phase camera cut and applies latest pending optics next frame", () => {
+    const changedViewport = { x: 720, y: 1280, pixelRatio: 2 };
+    const changedProfile = { ...PHONE_VR_OPTICAL_PROFILE, eyeSeparationMeters: 0.071, focusDistanceMeters: 3, verticalFieldOfViewDegrees: 68 };
+    const flight: FlightRenderPose = { datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+    bundle.renderer.resize(viewport);
+    bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
+    bundle.renderer.setFlightPose(flight);
+    bundle.renderer.setFlightCameraMode("platform");
+    bundle.renderer.setCinematicCameraView({ pose: pose(vec3(10, 4, -3), IDENTITY_POSE.orientation), verticalFieldOfViewDegrees: 36 });
+    const observed: ViewerFrame[] = [];
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      observed.push(viewer);
+      bundle.renderer.beginViewFrame();
+      if (timestamp === 100) {
+        bundle.renderer.setFlightPose(null);
+        bundle.renderer.setFlightCameraMode("pilot");
+        bundle.renderer.setCinematicCameraView(null);
+        bundle.renderer.setStereoPresentation({ ...changedProfile, verticalFieldOfViewDegrees: 48 });
+        bundle.renderer.resize(changedViewport);
+      }
+      bundle.renderer.render(frame({ viewport: changedViewport, cameraPose: turnedHead }));
+    });
+    try {
+      for (const timestamp of [100, 200]) {
+        driver.draws.length = 0;
+        driver.tick(timestamp, null);
+        const geometry = observed.at(-1);
+        if (geometry?.source !== "configured") throw new Error("Missing configured optics");
+        expect(driver.draws).toHaveLength(2);
+        for (const [index, draw] of driver.draws.entries()) {
+          const eye = geometry.eyes[index];
+          if (eye === undefined) throw new Error("Missing captured eye");
+          expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
+        }
+        const firstDraw = driver.draws[0];
+        if (firstDraw === undefined) throw new Error("Missing Phone draw");
+        const verticalField = 2 * Math.atan(1 / firstDraw.projection.elements[5]) * 180 / Math.PI;
+        expect(verticalField).toBeCloseTo(timestamp === 100 ? 36 : 68, 8);
+        expect(firstDraw.projection.elements[5] / firstDraw.projection.elements[0])
+          .toBeCloseTo(timestamp === 100 ? viewport.x / viewport.y / 2 : changedViewport.x / changedViewport.y / 2, 8);
+        if (timestamp === 100) bundle.renderer.setStereoPresentation(changedProfile);
+      }
+    } finally { bundle.renderer.stopLoop(); }
+  });
+
   it("copies runtime center and current eye projections in the actual animation-loop adapter", () => {
     const frames: ViewerFrame[] = [];
     bundle.renderer.startLoop((_timestamp, viewer) => { frames.push(viewer); });

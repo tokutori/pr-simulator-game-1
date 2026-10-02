@@ -242,6 +242,7 @@ class FakeWebXrAdapter implements WebXrSessionPort {
 }
 
 class FakeRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   selectHandler: ((ray: SelectRay) => void) | null = null;
 
   startLoop(): void {}
