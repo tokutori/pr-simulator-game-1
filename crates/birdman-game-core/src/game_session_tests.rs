@@ -316,6 +316,67 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
 }
 
 #[test]
+fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succeeds() {
+    let mut session = session(2);
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    while session.snapshot().phase() != SessionPhase::Result {
+        session
+            .advance_flight_tick(neutral_input(&session))
+            .unwrap();
+    }
+    let snapshot = session.snapshot();
+    let record = session.flight_record().unwrap();
+    let header = record.header();
+    let samples = record.samples().to_vec();
+    let sample_storage = record.samples().as_ptr();
+    let finalization = record.finalization();
+
+    for _attempt in 0..2 {
+        assert_eq!(
+            session.retry_with_record_factory(|requested_header| {
+                assert_eq!(requested_header, header);
+                Err(crate::FlightRecordError::AllocationFailed)
+            }),
+            Err(GameSessionError::Record(
+                crate::FlightRecordError::AllocationFailed
+            ))
+        );
+        assert_eq!(session.snapshot(), snapshot);
+        let retained_record = session.flight_record().unwrap();
+        assert_eq!(retained_record.header(), header);
+        assert_eq!(retained_record.samples(), samples);
+        assert_eq!(retained_record.samples().as_ptr(), sample_storage);
+        assert_eq!(retained_record.finalization(), finalization);
+        session.enter_replay().unwrap();
+        assert_eq!(session.playback_record().unwrap().samples(), samples);
+        session.leave_replay().unwrap();
+        assert_eq!(session.snapshot(), snapshot);
+    }
+
+    session.retry().unwrap();
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
+    assert_eq!(session.flight_record().unwrap().header(), header);
+    assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+    assert!(session.snapshot().result().is_none());
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
+}
+
+#[test]
+fn invalid_retry_does_not_request_record_storage() {
+    let mut session = GameSession::new();
+    assert_eq!(
+        session.retry_with_record_factory(|_| panic!("Invalid Retry must not reserve storage")),
+        Err(GameSessionError::InvalidTransition)
+    );
+    assert_eq!(session.snapshot().phase(), SessionPhase::Title);
+}
+
+#[test]
 fn synthetic_flight_reaches_contact_result_without_skipping_terminal_state() {
     let mut session = session(4_000);
     session.start_countdown(1).unwrap();

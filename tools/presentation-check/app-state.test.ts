@@ -934,14 +934,26 @@ describe("Boot application state", () => {
     expect(rejected.model.status).toBe("Action unknown-result-action is unavailable in result");
   });
 
-  it("preserves the Rust terminal snapshot when an operation fails in Result", () => {
-    const requested = updateApp(readyModel(7), {
+  it("preserves Result analysis and allows Retry again after a record allocation failure", () => {
+    const analysis = Object.freeze({
+      samples: Object.freeze([]), initialPilotPositionMeters: 0,
+      summary: Object.freeze({
+        sampleCount: 2, durationSeconds: 2, maximumAltitudeMeters: 10,
+        maximumAirspeedMetersPerSecond: 9, maximumGroundspeedMetersPerSecond: 10,
+        maximumAngleOfAttackRadians: null, maximumAbsoluteRollRadians: 0, score: null,
+        terminal: Object.freeze({ reason: "time-limit" as const, disposition: "complete" as const, timeSeconds: 2 })
+      })
+    });
+    const result: AppModel = {
+      ...readyModel(7), flightAnalysis: analysis, resultTab: "analysis", analysisCursorTimeSeconds: 1
+    };
+    const requested = updateApp(result, {
       type: "ui-action", action: { type: "activate", controlId: "game-result-retry" }
     });
     const rejected = updateApp(requested.model, {
       type: "game-operation-failed",
       requestId: requested.model.pendingGameRequestId as number,
-      message: "InvalidTransition",
+      message: "Record(AllocationFailed)",
       currentSession: {
         phaseCode: 7,
         controlModeCode: 0,
@@ -954,6 +966,17 @@ describe("Boot application state", () => {
     });
 
     expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, snapshot: flightSnapshot });
+    expect(rejected.model.flightAnalysis).toBe(analysis);
+    expect(rejected.model.resultTab).toBe("analysis");
+    expect(rejected.model.analysisCursorTimeSeconds).toBe(1);
+    expect(rejected.model.pendingGameRequestId).toBeNull();
+    expect(rejected.effects).toEqual([]);
+    const retryAgain = updateApp(rejected.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-result-retry" }
+    });
+    expect(retryAgain.effects).toEqual([{
+      type: "game-session-operation", operation: "retry", requestId: retryAgain.model.pendingGameRequestId
+    }]);
   });
 });
 

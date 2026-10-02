@@ -954,15 +954,18 @@ impl<'a> GameSession<'a> {
     }
 
     /// Retries with the identical sealed scenario, seed, initial state, and tick limit.
+    /// A failed record reservation preserves the finalized result and record.
     pub fn retry(&mut self) -> Result<(), GameSessionError> {
+        self.retry_with_record_factory(FlightRecord::try_new)
+    }
+
+    fn retry_with_record_factory(
+        &mut self,
+        create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
+    ) -> Result<(), GameSessionError> {
         if self.phase != SessionPhase::Result {
             return Err(GameSessionError::InvalidTransition);
         }
-        if self.configuration.is_none() {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        self.flight_state = None;
-        self.result = None;
         let configuration = self
             .configuration
             .as_ref()
@@ -970,7 +973,10 @@ impl<'a> GameSession<'a> {
         let header =
             FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
                 .map_err(GameSessionError::Record)?;
-        self.record = Some(FlightRecord::try_new(header).map_err(GameSessionError::Record)?);
+        let record = create_record(header).map_err(GameSessionError::Record)?;
+        self.flight_state = None;
+        self.result = None;
+        self.record = Some(record);
         self.phase = SessionPhase::BriefingReady;
         Ok(())
     }
