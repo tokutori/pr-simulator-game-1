@@ -416,7 +416,7 @@ impl FlightRecord {
         if !terminal_fraction.is_finite()
             || !(0.0..=1.0).contains(&terminal_fraction)
             || latest.tick_index != terminal_tick
-            || (latest.fraction - terminal_fraction).abs() > 1.0e-12
+            || latest.fraction != terminal_fraction
         {
             return Err(FlightRecordError::FinalizationMismatch);
         }
@@ -1081,6 +1081,105 @@ mod tests {
             record.append_tick(initial, input(), telemetry),
             Err(FlightRecordError::AlreadyFinalized)
         );
+    }
+
+    #[test]
+    fn finalization_rejects_inexact_time_without_mutation_and_allows_exact_retry() {
+        for fraction in [0.0_f64, 0.5, 1.0] {
+            let (header, initial, telemetry) = fixture();
+            let mut record = FlightRecord::try_new(header).unwrap();
+            record.begin(initial, telemetry).unwrap();
+            record
+                .append_contact(
+                    0,
+                    fraction,
+                    initial.flight_state(),
+                    initial.actuator_state(),
+                    input(),
+                    telemetry,
+                )
+                .unwrap();
+            let samples = record.samples().to_vec();
+            let buffer = record.samples.as_ptr();
+            let capacity = record.samples.capacity();
+            for (tick, requested_fraction) in [
+                (0, fraction.next_down()),
+                (0, fraction.next_up()),
+                (0, fraction + f64::EPSILON),
+                (0, fraction - 5.0e-13),
+                (0, fraction + 5.0e-13),
+                (0, fraction - 2.0e-12),
+                (0, fraction + 2.0e-12),
+                (0, f64::NAN),
+                (0, f64::NEG_INFINITY),
+                (0, f64::INFINITY),
+                (0, -1.0),
+                (0, 2.0),
+                (1, fraction),
+            ] {
+                assert_eq!(
+                    record.finalize(
+                        SessionEndReason::ManualAbort,
+                        tick,
+                        requested_fraction,
+                        None
+                    ),
+                    Err(FlightRecordError::FinalizationMismatch),
+                    "stored={fraction}, requested=({tick}, {requested_fraction})"
+                );
+                assert_eq!(record.finalization(), None);
+                assert_eq!(record.header(), header);
+                assert_eq!(record.samples(), samples);
+                assert_eq!(record.samples.as_ptr(), buffer);
+                assert_eq!(record.samples.capacity(), capacity);
+            }
+            let finalized = record
+                .finalize(SessionEndReason::ManualAbort, 0, fraction, None)
+                .unwrap();
+            assert_eq!(finalized.terminal_fraction, fraction);
+            assert_eq!(record.samples(), samples);
+            FlightRecord::try_from_finalized_samples(header, samples, finalized).unwrap();
+        }
+    }
+
+    #[test]
+    fn finalization_preserves_exact_time_disposition_and_score() {
+        let score = crate::DistanceScore::try_from_recorded(-3.0, 4.0, 5.0).unwrap();
+        for (reason, disposition) in [
+            (
+                SessionEndReason::WaterContact,
+                FlightRecordDisposition::Complete,
+            ),
+            (
+                SessionEndReason::TimeLimit,
+                FlightRecordDisposition::Complete,
+            ),
+            (
+                SessionEndReason::ManualAbort,
+                FlightRecordDisposition::Interrupted,
+            ),
+            (
+                SessionEndReason::OutOfValidEnvelope,
+                FlightRecordDisposition::Failed,
+            ),
+            (
+                SessionEndReason::FatalSimulationError,
+                FlightRecordDisposition::Failed,
+            ),
+        ] {
+            for score in [None, Some(score)] {
+                let (header, initial, telemetry) = fixture();
+                let mut record = FlightRecord::try_new(header).unwrap();
+                record.begin(initial, telemetry).unwrap();
+                let finalized = record.finalize(reason, 0, 0.0, score).unwrap();
+                assert_eq!(finalized.reason, reason);
+                assert_eq!(finalized.disposition, disposition);
+                assert_eq!(finalized.score, score);
+                assert_eq!(finalized.terminal_tick, record.samples()[0].tick_index);
+                assert_eq!(finalized.terminal_fraction, record.samples()[0].fraction);
+                assert_eq!(record.summary().unwrap().score, score);
+            }
+        }
     }
 
     #[test]
