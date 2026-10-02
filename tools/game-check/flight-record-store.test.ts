@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { IDBFactory } from "fake-indexeddb";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
+import { IDBCursor as FakeCursor, IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
+import { GameSessionBridge, PersonalBestSelectionBridge, compare_personal_best_json, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import {
   FlightRecordRepository,
   IndexedDbFlightRecordPersistence,
@@ -60,7 +64,7 @@ const finalizedCustomHudRecord = JSON.stringify({
 describe("FlightRecordRepository", () => {
   it("persists the Rust-exported finalized document and returns records newest first", async () => {
     const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence, () => new Date("2026-09-28T00:00:00.000Z"));
+    const repository = new FlightRecordRepository(persistence, () => new Date("2026-09-28T00:00:00.000Z"), createIneligibleSelection);
     const first = await repository.saveFrom({ export_flight_record_json: () => finalizedRecord });
     const second = await repository.saveFrom({ export_flight_record_json: () => finalizedRecord });
 
@@ -75,7 +79,7 @@ describe("FlightRecordRepository", () => {
 
   it("persists current schema records without coupling the browser adapter to a schema version", async () => {
     const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence);
+    const repository = new FlightRecordRepository(persistence, undefined, createIneligibleSelection);
 
     const saved = await repository.saveFrom({ export_flight_record_json: () => finalizedCustomHudRecord });
 
@@ -109,12 +113,12 @@ describe("FlightRecordRepository", () => {
     ]);
     const persistence = new IndexedDbFlightRecordPersistence(database.factory);
     const firstSelection = new TestPersonalBestSelection(true);
-    expect(await persistence.add(finalizedRecord, "2026-09-30T00:00:00.000Z", firstSelection)).toBe(2);
+    expect(await persistence.add(finalizedRecord, "2026-09-30T00:00:00.000Z", firstSelection, () => new TestPersonalBestSelection())).toBe(2);
     expect(firstSelection.consideredIds).toEqual([1]);
     expect(database.personalBests.get("a".repeat(64))).toEqual({ key: "a".repeat(64), recordId: 2 });
 
     const secondSelection = new TestPersonalBestSelection(false);
-    expect(await persistence.add(finalizedRecord, "2026-10-01T00:00:00.000Z", secondSelection)).toBe(3);
+    expect(await persistence.add(finalizedRecord, "2026-10-01T00:00:00.000Z", secondSelection, () => new TestPersonalBestSelection())).toBe(3);
     expect(secondSelection.consideredIds).toEqual([2]);
     expect(database.cursorCount()).toBe(1);
     expect(database.records()).toHaveLength(3);
@@ -139,10 +143,10 @@ describe("FlightRecordRepository", () => {
     );
 
     await expect(repository.list()).resolves.toEqual([
-      { id: 2, savedAt: "2026-09-29T00:00:00.000Z", personalBest: true },
-      { id: 1, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }
+      { id: 2, savedAt: "2026-09-29T00:00:00.000Z", personalBest: false },
+      { id: 1, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }
     ]);
-    expect(database.personalBests.get("a".repeat(64))).toEqual({ key: "a".repeat(64), recordId: 2 });
+    expect(database.personalBests.get("a".repeat(64))).toEqual({ key: "a".repeat(64), recordId: 1 });
     expect(database.personalBestIndexInitialized()).toBe(true);
     expect(database.cursorCount()).toBe(1);
     expect(selections.every(({ freed }) => freed)).toBe(true);
@@ -184,7 +188,7 @@ describe("FlightRecordRepository", () => {
       );
       const metadataRequest = requestResult(transaction.objectStore("recordMetadata").get(1));
       const personalBestRequest = requestResult(transaction.objectStore("personalBests").getAll());
-      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get("canonical-v1"));
+      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-v1"));
       await expect(metadataRequest).resolves.toEqual({
         id: 1,
         savedAt: "2026-09-29T00:00:00.000Z"
@@ -192,7 +196,7 @@ describe("FlightRecordRepository", () => {
       await expect(personalBestRequest).resolves.toEqual(personalBestEligible
         ? [{ key: "a".repeat(64), recordId: 1 }]
         : []);
-      await expect(indexStateRequest).resolves.toEqual({ key: "canonical-v1" });
+      await expect(indexStateRequest).resolves.toEqual({ key: "first-winner-v1" });
     } finally {
       database.close();
       await deleteDatabase(factory, databaseName);
@@ -228,21 +232,21 @@ describe("FlightRecordRepository", () => {
     JSON.stringify({ schema_version: 1, header: {}, samples: [{}], finalization: null })
   ])("rejects invalid or incomplete documents before storage", async (json) => {
     const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence);
+    const repository = new FlightRecordRepository(persistence, undefined, createIneligibleSelection);
     await expect(repository.saveFrom({ export_flight_record_json: () => json })).rejects.toThrow();
     expect(await repository.list()).toEqual([]);
   });
 
   it("rejects documents above the Rust format size limit", async () => {
     const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence);
+    const repository = new FlightRecordRepository(persistence, undefined, createIneligibleSelection);
     const oversized = `${finalizedRecord}${" ".repeat(16 * 1024 * 1024)}`;
     await expect(repository.saveFrom({ export_flight_record_json: () => oversized })).rejects.toThrow(RangeError);
     expect(await repository.list()).toEqual([]);
   });
 
   it("rejects invalid record identifiers", async () => {
-    const repository = new FlightRecordRepository(new MemoryFlightRecordPersistence());
+    const repository = new FlightRecordRepository(new MemoryFlightRecordPersistence(), undefined, createIneligibleSelection);
     await expect(repository.load(0)).rejects.toThrow(RangeError);
   });
 
@@ -250,7 +254,7 @@ describe("FlightRecordRepository", () => {
     const valid = new IndexedDbFlightRecordPersistence(indexedDbFactoryWithReadResult("recordMetadata", [
       { id: 3, savedAt: "2026-09-30T00:00:00.000Z" }
     ]));
-    await expect(valid.getAll()).resolves.toEqual([
+    await expect(valid.getAll(createIneligibleSelection)).resolves.toEqual([
       { id: 3, savedAt: "2026-09-30T00:00:00.000Z", personalBest: false }
     ]);
 
@@ -259,7 +263,7 @@ describe("FlightRecordRepository", () => {
       [{ id: 3, savedAt: "2026-09-30T00:00:00.000Z" }],
       [{ key: "a".repeat(64), recordId: 3 }]
     ));
-    await expect(personalBest.getAll()).resolves.toEqual([
+    await expect(personalBest.getAll(createIneligibleSelection)).resolves.toEqual([
       { id: 3, savedAt: "2026-09-30T00:00:00.000Z", personalBest: true }
     ]);
 
@@ -267,7 +271,7 @@ describe("FlightRecordRepository", () => {
       { id: 3, savedAt: "2026-09-30T00:00:00.000Z" },
       { id: "invalid", savedAt: "2026-09-30T00:00:00.000Z" }
     ]));
-    await expect(malformed.getAll()).rejects.toThrow("IndexedDB record metadata is malformed");
+    await expect(malformed.getAll(createIneligibleSelection)).rejects.toThrow("IndexedDB record metadata is malformed");
 
     const missing = new IndexedDbFlightRecordPersistence(indexedDbFactoryWithReadResult("records", undefined));
     await expect(missing.get(3)).resolves.toBeNull();
@@ -280,6 +284,388 @@ describe("FlightRecordRepository", () => {
     await expect(malformedRecord.get(3)).rejects.toThrow("IndexedDB flight record is malformed");
   });
 });
+
+describe("Personal Best index repair", () => {
+  it.each([
+    [3, "list", 2, false], [3, "save", 2, false], [3, "list", 3, false], [3, "save", 3, false],
+    [4, "list", 2, true], [4, "save", 2, true], [4, "list", 3, true], [4, "save", 3, true],
+    [4, "list", 2, false], [4, "save", 2, false]
+  ] as const)("preserves the first Rust winner for database %i, first %s, %i ties, legacy marker %s", async (version, firstOperation, count, legacyMarker) => {
+    const json = waterContactRecord();
+    const factory = new IDBFactory();
+    const databaseName = `pb-repair-${String(version)}-${firstOperation}-${String(count)}`;
+    const records = Array.from({ length: count }, (_, index) => ({
+      id: index + 1, savedAt: `2026-09-${String(20 + index)}T00:00:00.000Z`, json
+    }));
+    const selection = new PersonalBestSelectionBridge(json);
+    const key = selection.key_hex();
+    try {
+      selection.consider_existing(1, json);
+      expect(selection.candidate_is_best()).toBe(false);
+      expect(selection.selected_existing_id()).toBe(1);
+    } finally {
+      selection.free();
+    }
+    await seedPersonalBestDatabase(factory, databaseName, version, records, [{ key, recordId: version === 3 ? 1 : 2 }], legacyMarker);
+    const repository = new FlightRecordRepository(
+      new IndexedDbFlightRecordPersistence(factory, databaseName), undefined,
+      (recordJson) => new PersonalBestSelectionBridge(recordJson)
+    );
+    try {
+      if (firstOperation === "save") {
+        const saved = await repository.saveFrom({ export_flight_record_json: () => json });
+        expect(saved.personalBest).toEqual({ kind: "existing", id: 1, key });
+      }
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
+      for (const record of records) expect(await repository.load(record.id)).toBe(record.json);
+      const database = await openTestDatabase(factory, databaseName);
+      try {
+        const transaction = database.transaction(["records", "personalBests", "personalBestIndexState"], "readonly");
+        const stored = requestResult(transaction.objectStore("records").getAll());
+        const winner = requestResult(transaction.objectStore("personalBests").get(key));
+        const marker = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-v1"));
+        expect((await stored).slice(0, records.length)).toEqual(records);
+        await expect(winner).resolves.toEqual({ key, recordId: 1 });
+        await expect(marker).resolves.toEqual({ key: "first-winner-v1" });
+      } finally {
+        database.close();
+      }
+      const saved = await repository.saveFrom({ export_flight_record_json: () => json });
+      expect(saved.personalBest).toEqual({ kind: "existing", id: 1, key });
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it("uses Rust scores and keys across rebuild, later saves, and ineligible records", async () => {
+    const neutral = waterContactRecord();
+    const pitched = waterContactRecord(0.1);
+    const ranking = new PersonalBestSelectionBridge(neutral);
+    let higher: string;
+    let lower: string;
+    try {
+      ranking.consider_existing(1, pitched);
+      higher = ranking.candidate_is_best() ? neutral : pitched;
+      lower = ranking.candidate_is_best() ? pitched : neutral;
+    } finally {
+      ranking.free();
+    }
+    const opposite = new PersonalBestSelectionBridge(lower);
+    try {
+      expect(compare_personal_best_json(lower, higher)).not.toBe(2);
+      opposite.consider_existing(1, higher);
+      expect(opposite.selected_existing_id()).toBe(1);
+    } finally {
+      opposite.free();
+    }
+    const document = JSON.parse(neutral) as { readonly header: Record<string, unknown> };
+    const otherKey = JSON.stringify({ ...document, header: { ...document.header, personal_best_key: Array.from({ length: 32 }, () => 0) } });
+    const ineligible = interruptedRecord();
+    const legacy = JSON.stringify({ ...document, schema_version: 4, header: { ...document.header, personal_best_key: null } });
+    const jsonRecords = [lower, lower, higher, higher, otherKey, ineligible, legacy];
+    const records = jsonRecords.map((json, index) => ({ id: index + 1, savedAt: `saved-${String(index)}`, json }));
+    const factory = new IDBFactory();
+    const databaseName = "pb-repair-score-keys";
+    await seedPersonalBestDatabase(factory, databaseName, 4, records, []);
+    const traced = tracedRustSelections();
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, traced.create);
+    try {
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([5, 3]);
+      const createdAfterRepair = traced.entries.length;
+      await repository.list();
+      expect(traced.entries).toHaveLength(createdAfterRepair);
+      const tied = await repository.saveFrom({ export_flight_record_json: () => higher });
+      expect(tied.personalBest).toMatchObject({ kind: "existing", id: 3 });
+      const skipped = await repository.saveFrom({ export_flight_record_json: () => ineligible });
+      expect(skipped.personalBest).toEqual({ kind: "ineligible" });
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([5, 3]);
+      for (const record of records) expect(await repository.load(record.id)).toBe(record.json);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it.each(["list", "save"] as const)("repairs an empty database through first %s", async (firstOperation) => {
+    const factory = new IDBFactory();
+    const databaseName = `pb-repair-empty-${firstOperation}`;
+    const traced = tracedRustSelections();
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, traced.create);
+    try {
+      if (firstOperation === "save") {
+        expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
+      } else await expect(repository.list()).resolves.toEqual([]);
+      const state = await readPersonalBestDatabase(factory, databaseName);
+      expect(state.personalBestIndexState).toEqual([{ key: "first-winner-v1" }]);
+      expect(state.personalBests).toEqual([]);
+      const previousCount = traced.entries.length;
+      await repository.list();
+      expect(traced.entries).toHaveLength(previousCount);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it("repairs old winners even when the first saved candidate is ineligible", async () => {
+    const json = waterContactRecord();
+    const factory = new IDBFactory();
+    const databaseName = "pb-repair-ineligible-save";
+    const bridge = new PersonalBestSelectionBridge(json);
+    const key = bridge.key_hex();
+    bridge.free();
+    await seedPersonalBestDatabase(factory, databaseName, 4, [
+      { id: 1, savedAt: "first", json }, { id: 2, savedAt: "second", json }
+    ], [{ key, recordId: 2 }]);
+    const repository = new FlightRecordRepository(
+      new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, (recordJson) => new PersonalBestSelectionBridge(recordJson)
+    );
+    try {
+      expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
+      const state = await readPersonalBestDatabase(factory, databaseName);
+      expect(state.personalBests).toEqual([{ key, recordId: 1 }]);
+      expect(state.personalBestIndexState).toContainEqual({ key: "first-winner-v1" });
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it.each([
+    ["list", "create", 1, 1], ["save", "create", 1, 1], ["list", "consider", 1, 1], ["save", "consider", 1, 1],
+    ["list", "key", 1, 1], ["save", "key", 1, 1], ["list", "create", 2, 1], ["save", "create", 2, 1],
+    ["list", "key", 2, 1], ["save", "key", 2, 1], ["list", "consider", 1, 2], ["save", "consider", 1, 2]
+  ] as const)("rolls back first %s and frees Rust selections on %s failure at record %i / comparison %i", async (firstOperation, failure, recordIndex, consideration) => {
+    const json = waterContactRecord();
+    const factory = new IDBFactory();
+    const databaseName = `pb-repair-failure-${firstOperation}-${failure}`;
+    const bridge = new PersonalBestSelectionBridge(json);
+    const key = bridge.key_hex();
+    bridge.free();
+    await seedPersonalBestDatabase(factory, databaseName, 4, [
+      { id: 1, savedAt: "first", json }, { id: 2, savedAt: "second", json }
+    ], [{ key, recordId: 2 }]);
+    const before = await readPersonalBestDatabase(factory, databaseName);
+    const traced = tracedRustSelections({ failure, creation: recordIndex + (firstOperation === "save" ? 1 : 0), consideration });
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, traced.create);
+    try {
+      await expect(firstOperation === "save" ? repository.saveFrom({ export_flight_record_json: () => json }) : repository.list()).rejects.toThrow();
+      expect(await readPersonalBestDatabase(factory, databaseName)).toEqual(before);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it.each(["list", "save"] as const)("frees retained selections when first %s aborts during cursor traversal", async (firstOperation) => {
+    const json = waterContactRecord();
+    const factory = new IDBFactory();
+    const databaseName = `pb-repair-cursor-abort-${firstOperation}`;
+    const bridge = new PersonalBestSelectionBridge(json);
+    const key = bridge.key_hex();
+    bridge.free();
+    await seedPersonalBestDatabase(factory, databaseName, 4, [
+      { id: 1, savedAt: "first", json }, { id: 2, savedAt: "second", json }
+    ], [{ key, recordId: 2 }]);
+    const before = await readPersonalBestDatabase(factory, databaseName);
+    const traced = tracedRustSelections();
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, traced.create);
+    const originalContinue = Object.getOwnPropertyDescriptor(FakeCursor.prototype, "continue")?.value as IDBCursor["continue"];
+    const cursorContinue = vi.spyOn(FakeCursor.prototype, "continue").mockImplementationOnce(function (this: IDBCursor, requestedKey?: IDBValidKey) {
+      if (!(this.source instanceof FakeObjectStore)) throw new Error("Repair cursor must use the records store");
+      this.source.add({ id: 1, savedAt: "duplicate", json });
+      originalContinue.call(this, requestedKey);
+    });
+    try {
+      await expect(firstOperation === "save" ? repository.saveFrom({ export_flight_record_json: () => json }) : repository.list()).rejects.toThrow();
+    } finally {
+      cursorContinue.mockRestore();
+    }
+    try {
+      expect(traced.entries).toHaveLength(firstOperation === "save" ? 2 : 1);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+      expect(await readPersonalBestDatabase(factory, databaseName)).toEqual(before);
+      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
+      expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
+  it.each([
+    ["list", "personalBests"], ["list", "personalBestIndexState"],
+    ["save", "personalBests"], ["save", "personalBestIndexState"], ["save", "records"], ["save", "recordMetadata"]
+  ] as const)(
+    "rolls back repair and first %s on an asynchronous %s write failure", async (firstOperation, failedStore) => {
+      const json = waterContactRecord();
+      const factory = new IDBFactory();
+      const databaseName = `pb-repair-write-failure-${failedStore}`;
+      const bridge = new PersonalBestSelectionBridge(json);
+      const key = bridge.key_hex();
+      bridge.free();
+      await seedPersonalBestDatabase(factory, databaseName, 4, [
+        { id: 1, savedAt: "first", json }, { id: 2, savedAt: "second", json }
+      ], [{ key, recordId: 2 }]);
+      const before = await readPersonalBestDatabase(factory, databaseName);
+      const traced = tracedRustSelections();
+      const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, traced.create);
+      const originalPut = Object.getOwnPropertyDescriptor(FakeObjectStore.prototype, "put")?.value as IDBObjectStore["put"];
+      const originalAdd = Object.getOwnPropertyDescriptor(FakeObjectStore.prototype, "add")?.value as IDBObjectStore["add"];
+      const put = vi.spyOn(FakeObjectStore.prototype, "put").mockImplementation(function (this: IDBObjectStore, value: unknown, requestedKey?: IDBValidKey) {
+        if (this.name === failedStore) {
+          originalAdd.call(this, value, requestedKey);
+          return originalAdd.call(this, value, requestedKey);
+        }
+        return originalPut.call(this, value, requestedKey);
+      });
+      const add = vi.spyOn(FakeObjectStore.prototype, "add").mockImplementation(function (this: IDBObjectStore, value: unknown, requestedKey?: IDBValidKey) {
+        return originalAdd.call(this, this.name === failedStore ? { ...value as Record<string, unknown>, id: 1 } : value, requestedKey);
+      });
+      try {
+        await expect(firstOperation === "save" ? repository.saveFrom({ export_flight_record_json: () => json }) : repository.list()).rejects.toThrow();
+      } finally {
+        put.mockRestore();
+        add.mockRestore();
+      }
+      try {
+        expect(await readPersonalBestDatabase(factory, databaseName)).toEqual(before);
+        expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+        const saved = await repository.saveFrom({ export_flight_record_json: () => json });
+        expect(saved.id).toBe(3);
+        expect(saved.personalBest).toEqual({ kind: "existing", id: 1, key });
+        expect(traced.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
+      } finally {
+        await deleteDatabase(factory, databaseName);
+      }
+    }
+  );
+});
+
+const cachedWaterContactRecords = new Map<number, string>();
+
+function waterContactRecord(pitch = 0): string {
+  const cached = cachedWaterContactRecords.get(pitch);
+  if (cached !== undefined) return cached;
+  if (cachedWaterContactRecords.size === 0) {
+    const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+  }
+  const session = new GameSessionBridge(0);
+  try {
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.advance_countdown();
+    let snapshot = parseFlightSnapshot(session.launch());
+    for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick++) {
+      snapshot = parseFlightSnapshot(session.advance_tick(pitch, 0, 0, 0));
+    }
+    expect(snapshot.terminal).toBe("water-contact");
+    const json = session.export_flight_record_json();
+    cachedWaterContactRecords.set(pitch, json);
+    return json;
+  } finally {
+    session.free();
+  }
+}
+
+function interruptedRecord(): string {
+  waterContactRecord();
+  const session = new GameSessionBridge(0);
+  try {
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.advance_countdown();
+    session.launch();
+    session.abort();
+    return session.export_flight_record_json();
+  } finally {
+    session.free();
+  }
+}
+
+function tracedRustSelections(injected?: {
+  readonly failure: "create" | "consider" | "key"; readonly creation: number; readonly consideration: number
+}) {
+  const entries: { freeCount: number }[] = [];
+  let creations = 0;
+  return {
+    entries,
+    create: (json: string): PersonalBestSelectionPort => {
+      creations++;
+      const failure = creations === injected?.creation ? injected.failure : null;
+      if (failure === "create") throw new Error("Injected selection creation failure");
+      const selection = new PersonalBestSelectionBridge(json);
+      const trace = { freeCount: 0 };
+      let considerations = 0;
+      entries.push(trace);
+      return {
+        candidate_is_best: () => selection.candidate_is_best(),
+        consider_existing: (id, recordJson) => {
+          considerations++;
+          if (failure === "consider" && considerations === injected?.consideration) throw new Error("Injected selection comparison failure");
+          selection.consider_existing(id, recordJson);
+        },
+        free: () => { trace.freeCount++; selection.free(); },
+        is_eligible: () => selection.is_eligible(),
+        key_hex: () => failure === "key" ? "invalid" : selection.key_hex(),
+        selected_existing_id: () => selection.selected_existing_id()
+      };
+    }
+  };
+}
+
+async function readPersonalBestDatabase(factory: IDBFactory, databaseName: string): Promise<Record<string, unknown[]>> {
+  const database = await openTestDatabase(factory, databaseName);
+  try {
+    const transaction = database.transaction([...database.objectStoreNames], "readonly");
+    const entries = await Promise.all([...database.objectStoreNames].map(async (name) => [
+      name, await requestResult(transaction.objectStore(name).getAll()) as unknown[]
+    ] as const));
+    return Object.fromEntries(entries);
+  } finally {
+    database.close();
+  }
+}
+
+async function seedPersonalBestDatabase(
+  factory: IDBFactory, databaseName: string, version: 3 | 4,
+  records: readonly StoredFlightRecord[], personalBests: readonly { readonly key: string; readonly recordId: number }[], legacyMarker = true
+): Promise<void> {
+  const request = factory.open(databaseName, version);
+  request.onupgradeneeded = () => {
+    const database = request.result;
+    database.createObjectStore("records", { keyPath: "id", autoIncrement: true });
+    database.createObjectStore("recordMetadata", { keyPath: "id" });
+    database.createObjectStore("personalBests", { keyPath: "key" });
+    if (version === 4) database.createObjectStore("personalBestIndexState", { keyPath: "key" });
+  };
+  const database = await requestResult(request);
+  try {
+    const transaction = database.transaction([...database.objectStoreNames], "readwrite");
+    for (const record of records) {
+      transaction.objectStore("records").put(record);
+      transaction.objectStore("recordMetadata").put({ id: record.id, savedAt: record.savedAt });
+    }
+    for (const entry of personalBests) transaction.objectStore("personalBests").put(entry);
+    if (version === 4 && legacyMarker) transaction.objectStore("personalBestIndexState").put({ key: "canonical-v1" });
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => { resolve(); };
+      transaction.onabort = () => { reject(transaction.error ?? new Error("Personal Best seed aborted")); };
+    });
+  } finally {
+    database.close();
+  }
+}
+
+function createIneligibleSelection(): PersonalBestSelectionPort {
+  return new TestPersonalBestSelection(false, false);
+}
 
 class TestPersonalBestSelection implements PersonalBestSelectionPort {
   readonly consideredIds: number[] = [];
@@ -401,6 +787,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
       let completionScheduled = false;
       let completed = false;
       const transaction = {
+        addEventListener: () => undefined,
         oncomplete: null as ((event: Event) => void) | null,
         onabort: null as ((event: Event) => void) | null,
         onerror: null as ((event: Event) => void) | null,
@@ -433,7 +820,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             get: (key: string | number) => request(() => name === "records"
               ? records.find((record) => record.id === key)
               : name === "personalBestIndexState"
-                ? personalBestIndexInitialized && key === "canonical-v1" ? { key } : undefined
+                ? personalBestIndexInitialized && key === "first-winner-v1" ? { key } : undefined
                 : personalBests.get(String(key))),
             getAll: () => request(() => name === "records"
               ? [...records]
@@ -441,7 +828,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             put: (value: { readonly key: string; readonly recordId?: number }) => request(() => {
               if (name === "personalBests" && value.recordId !== undefined) {
                 personalBests.set(value.key, { key: value.key, recordId: value.recordId });
-              } else if (name === "personalBestIndexState" && value.key === "canonical-v1") {
+              } else if (name === "personalBestIndexState" && value.key === "first-winner-v1") {
                 personalBestIndexInitialized = true;
               } else throw new Error(`Unexpected put to ${name}`);
               return value.key;
@@ -552,7 +939,7 @@ function indexedDbFactoryWithReadResult(storeName: string, result: unknown, pers
       queueMicrotask(() => transaction.onabort?.(new Event("abort")));
     },
     objectStore: (name) => ({
-      get: () => makeRequest(name === storeName ? result : undefined),
+      get: () => makeRequest(name === "personalBestIndexState" ? { key: "first-winner-v1" } : name === storeName ? result : undefined),
       getAll: () => makeRequest(name === "personalBests" ? personalBests : result)
     })
   };

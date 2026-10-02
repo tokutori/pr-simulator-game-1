@@ -433,9 +433,10 @@ export function createThreeRenderer(
       ensureActive(disposed);
       if (loopRunning) throw new Error("Three.js frame loop is already active");
       loopRunning = true;
-      renderer.setAnimationLoop((timestamp, xrFrame) => {
+      renderer.setAnimationLoop((timestamp: number, xrFrame: XRFrame | null | undefined) => {
         const referenceSpace = renderer.xr.getReferenceSpace();
-        const viewer = referenceSpace === null ? null : xrFrame.getViewerPose(referenceSpace);
+        const viewer = renderer.xr.isPresenting && xrFrame !== undefined && xrFrame !== null && referenceSpace !== null
+          ? xrFrame.getViewerPose(referenceSpace) : null;
         const transform = viewer?.transform;
         const viewerPose = transform === undefined ? null : {
           position: vec3(transform.position.x, transform.position.y, transform.position.z),
