@@ -64,8 +64,8 @@ describe("browser flight adapters", () => {
   it("requires a neutral gamepad sample after connection and reconnection", () => {
     const target = { addEventListener() {}, removeEventListener() {} } as unknown as Window;
     const input = new BrowserPilotInput(target);
-    const activeGamepad = { connected: true, axes: [0.54, -0.54, 0.0, 0.5] } as unknown as Gamepad;
-    const neutralGamepad = { connected: true, axes: [0, 0, 0, 0] } as unknown as Gamepad;
+    const activeGamepad = { index: 0, connected: true, axes: [0.54, -0.54, 0.0, 0.5] } as unknown as Gamepad;
+    const neutralGamepad = { index: 0, connected: true, axes: [0, 0, 0, 0] } as unknown as Gamepad;
 
     expect(input.readIntent([activeGamepad])).toEqual({
       roll: 0,
@@ -82,6 +82,8 @@ describe("browser flight adapters", () => {
     expect(disconnectedIntent.pilotPositionMeters).toBe(activeIntent.pilotPositionMeters);
     const reconnectIntent = input.readIntent([activeGamepad]);
     expect(reconnectIntent).toEqual(disconnectedIntent);
+    expect(input.readIntent([neutralGamepad]).pilotPositionMeters).toBe(activeIntent.pilotPositionMeters);
+    expect(input.readIntent([activeGamepad])).toEqual(activeIntent);
     expect(input.readIntent([neutralGamepad]).pilotPositionMeters).toBe(0);
     input.dispose();
   });

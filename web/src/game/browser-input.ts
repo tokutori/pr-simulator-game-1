@@ -27,12 +27,24 @@ export const DEFAULT_PILOT_INPUT_CONFIGURATION: BrowserPilotInputConfiguration =
   pilotPositionRateMetersPerSecond: 0.4
 });
 
+interface GamepadConnection {
+  readonly index: number;
+  readonly generation: number;
+}
+
+type GamepadAcquisition =
+  | Readonly<{ kind: "unselected" }>
+  | Readonly<{ kind: "waiting-neutral"; connection: GamepadConnection }>
+  | Readonly<{ kind: "steering-active-waiting-pilot"; connection: GamepadConnection; previousPilotPositionMeters: number }>
+  | Readonly<{ kind: "active"; connection: GamepadConnection }>;
+
 export class BrowserPilotInput {
   private activity: "active" | "suspended" | "disposed" = "active";
   private readonly pressed = new Set<string>();
   private pilotPositionTargetMeters = 0;
   private readonly controlKeys: ReadonlySet<string>;
-  private gamepadNeedsNeutralConfirmation = true;
+  private readonly connectionGenerations = new Map<number, number>();
+  private gamepadAcquisition: GamepadAcquisition = { kind: "unselected" };
 
   constructor(
     private readonly target: Window,
@@ -43,26 +55,23 @@ export class BrowserPilotInput {
     target.addEventListener("keydown", this.onKeyDown);
     target.addEventListener("keyup", this.onKeyUp);
     target.addEventListener("blur", this.clearKeys);
+    target.addEventListener("gamepadconnected", this.onGamepadConnectionChange);
+    target.addEventListener("gamepaddisconnected", this.onGamepadConnectionChange);
   }
 
   readIntent(gamepads: readonly (Gamepad | null)[]): PilotIntent {
     if (this.activity !== "active") {
       return { roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: this.pilotPositionTargetMeters };
     }
-    const connectedGamepad = gamepads.find((gamepad) => gamepad !== null && gamepad.connected) ?? null;
-    if (connectedGamepad === null) {
-      this.gamepadNeedsNeutralConfirmation = true;
-    } else if (this.gamepadNeedsNeutralConfirmation && isGamepadNeutral(connectedGamepad, this.configuration.gamepad)) {
-      this.gamepadNeedsNeutralConfirmation = false;
-    }
+    const connectedGamepad = this.selectGamepad(gamepads);
     const keyboardActive = [...this.pressed].some((code) => this.controlKeys.has(code));
-    if (!keyboardActive) {
-      const gamepad = this.gamepadNeedsNeutralConfirmation
-        ? null
-        : gamepadIntent([connectedGamepad], this.configuration.gamepad, this.configuration.pilotPositionRangeMeters);
-      if (gamepad !== null) {
-        this.pilotPositionTargetMeters = gamepad.pilotPositionMeters;
-        return gamepad;
+    if (keyboardActive) {
+      this.rearmGamepad();
+    } else if (connectedGamepad !== null) {
+      const intent = this.readGamepad(connectedGamepad);
+      if (intent !== null) {
+        this.pilotPositionTargetMeters = intent.pilotPositionMeters;
+        return intent;
       }
     }
     const intent = keyboardIntent(
@@ -100,12 +109,65 @@ export class BrowserPilotInput {
   }
 
   dispose(): void {
+    if (this.activity === "disposed") return;
     this.activity = "disposed";
     this.target.removeEventListener("keydown", this.onKeyDown);
     this.target.removeEventListener("keyup", this.onKeyUp);
     this.target.removeEventListener("blur", this.clearKeys);
+    this.target.removeEventListener("gamepadconnected", this.onGamepadConnectionChange);
+    this.target.removeEventListener("gamepaddisconnected", this.onGamepadConnectionChange);
     this.pressed.clear();
+    this.connectionGenerations.clear();
+    this.gamepadAcquisition = { kind: "unselected" };
   }
+
+  private selectGamepad(gamepads: readonly (Gamepad | null)[]): Gamepad | null {
+    const acquisition = this.gamepadAcquisition;
+    if (acquisition.kind !== "unselected") {
+      const { connection } = acquisition;
+      const selected = gamepads.find((gamepad) => gamepad !== null && gamepad.connected && gamepad.index === connection.index);
+      if (selected !== undefined && connection.generation === (this.connectionGenerations.get(connection.index) ?? 0)) {
+        return selected;
+      }
+    }
+    const candidate = gamepads.find((gamepad) => gamepad !== null && gamepad.connected) ?? null;
+    this.gamepadAcquisition = candidate === null ? { kind: "unselected" } : {
+      kind: "waiting-neutral",
+      connection: { index: candidate.index, generation: this.connectionGenerations.get(candidate.index) ?? 0 }
+    };
+    return candidate;
+  }
+
+  private readGamepad(gamepad: Gamepad): PilotIntent | null {
+    const acquisition = this.gamepadAcquisition;
+    if (acquisition.kind === "unselected") return null;
+    if (acquisition.kind === "waiting-neutral" && !isGamepadNeutral(gamepad, this.configuration.gamepad)) return null;
+    const intent = gamepadIntent([gamepad], this.configuration.gamepad, this.configuration.pilotPositionRangeMeters);
+    if (intent === null || acquisition.kind === "active") return intent;
+    const previous = acquisition.kind === "waiting-neutral"
+      ? intent.pilotPositionMeters : acquisition.previousPilotPositionMeters;
+    const target = this.pilotPositionTargetMeters;
+    const current = intent.pilotPositionMeters;
+    const pickedUp = (previous <= target && target <= current) || (current <= target && target <= previous);
+    this.gamepadAcquisition = pickedUp ? { kind: "active", connection: acquisition.connection } : {
+      kind: "steering-active-waiting-pilot",
+      connection: acquisition.connection,
+      previousPilotPositionMeters: current
+    };
+    return { ...intent, pilotPositionMeters: target };
+  }
+
+  private rearmGamepad(): void {
+    if (this.gamepadAcquisition.kind !== "unselected") {
+      this.gamepadAcquisition = { kind: "waiting-neutral", connection: this.gamepadAcquisition.connection };
+    }
+  }
+
+  private readonly onGamepadConnectionChange = (event: GamepadEvent): void => {
+    if (this.activity === "disposed") return;
+    const index = event.gamepad.index;
+    this.connectionGenerations.set(index, (this.connectionGenerations.get(index) ?? 0) + 1);
+  };
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (this.activity !== "active"
@@ -113,6 +175,7 @@ export class BrowserPilotInput {
     event.preventDefault();
     if (event.repeat) return;
     this.pressed.add(event.code);
+    this.rearmGamepad();
   };
 
   private readonly onKeyUp = (event: KeyboardEvent): void => {
@@ -121,7 +184,7 @@ export class BrowserPilotInput {
 
   private readonly clearKeys = (): void => {
     this.pressed.clear();
-    this.gamepadNeedsNeutralConfirmation = true;
+    this.rearmGamepad();
   };
 }
 
