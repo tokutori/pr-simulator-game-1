@@ -1,0 +1,56 @@
+{
+  "recipe_version": 1,
+  "observation": {
+    "station": "彦根",
+    "month": 7,
+    "first_year": 1991,
+    "last_year": 2020,
+    "input_sha256": "7541845fa00506da3eda372c86e214a97426da1554d82ae4d1dbc55f5d810638",
+    "measurement_scope": "彦根地上観測点の月平年値。風速はscalar平均、風向は最多のfrom-direction。両統計の資料年数は30年。観測高度・平均化時間・湖上との差はこのsnapshotから確定できない。",
+    "source": {
+      "title": "気象庁 彦根 平年値（年・月ごとの値） 詳細（風・日照）",
+      "url": "https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=",
+      "version": "1991–2020 normals; July; snapshot 2026-10-02",
+      "license": "公共データ利用規約（第1.0版）",
+      "license_url": "https://www.jma.go.jp/jma/kishou/info/coment.html",
+      "attribution": "出典：気象庁ホームページ。月平年値を抽出し、pr-simulator-game-1が仮定に基づくゲーム用環境を作成。気象庁作成の湖上風場ではない。"
+    }
+  },
+  "wind_model": {
+    "reference_speed_scale": 1.0,
+    "from_offset_degrees": 0.0,
+    "vertical_mps": 0.0,
+    "gradient_ned_per_m": [[0.00002, 0.00001, -0.0001], [-0.00001, 0.00002, 0.0001], [0.0, 0.0, 0.0]]
+  },
+  "wave_wind_speed_scale": 1.0,
+  "environment": {
+    "schema_version": 1,
+    "environment_version": 6,
+    "name": "Hikone July Typical / ground-normal-anchored assumed lake field",
+    "local_frame": {
+      "latitude_degrees": 35.294075,
+      "longitude_degrees": 136.254448,
+      "water_level_datum": "local down=0 is the fixed gameplay water surface. Origin matches the Matsubara launch venue. No WGS84 ellipsoid-height or geodetic water-level conversion is asserted."
+    },
+    "wind_grid": {
+      "origin_ned_m": [-2000.0, -2000.0, -500.0],
+      "spacing_ned_m": [1000.0, 1000.0, 170.0],
+      "counts_ned": [5, 5, 4],
+      "representative_position_ned_m": [0.0, 0.0, -10.5]
+    },
+    "waves": {"fetch_m": 600.0, "detail_amplitude_scale": 1.0, "pattern_seed": 202607},
+    "sky": {
+      "sun_azimuth_degrees": 135.0,
+      "sun_elevation_degrees": 55.0,
+      "cloud_fraction": 0.25,
+      "cloud_base_m": 1500.0,
+      "visibility_m": 25000.0
+    },
+    "provenance": {
+      "local_frame": {"kind": "assumed", "rationale": "Existing launch-venue WGS84 origin and fixed gameplay water datum; geodetic altitude conversion is not supplied."},
+      "wind_grid": {"kind": "assumed", "rationale": "The scalar ground monthly mean and prevailing from-direction provide independent scale/direction anchors, not an observed mean vector. Lake extrapolation, affine horizontal spatial gradients and height dependence are model assumptions. Vertical flow is zero. The field is stationary for one flight. Coverage is N/E ±2 km and down -500..10 m, including below-water RK4 evaluation margin; ordinary-input integrated coverage remains to be verified before runtime adoption."},
+      "waves": {"kind": "game_tuned", "rationale": "Wave wind history uses the ground scalar/direction anchors with unit scale. Effective fetch 600 m and detail scale 1 are provisional visual tuning for local speed cues, not measured lake fetch or observed waves. Pattern seed is fixed. Waves do not alter physics contact."},
+      "sky": {"kind": "assumed", "rationale": "Sun azimuth/elevation, cloud cover/base and visibility are fixed illustrative summer settings. They are not calculated ephemerides or measured weather. No time evolution is asserted."}
+    }
+  }
+}

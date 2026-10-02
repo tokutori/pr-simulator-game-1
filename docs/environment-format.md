@@ -62,6 +62,7 @@ Three.js等への座標変換とshader/GPU更新はengine adapterが担当する
 
 ## 現在の実装範囲
 
-この変更は正式な外部形式・検証・core風場への変換を追加する。
-BPG-008のoffline生成と配布asset、catalogの実環境への接続は次の実装単位で行う。
+正式な外部形式・検証・core風場への変換と、`tools/environment-build`のoffline生成を実装している。
+hash固定した地上月統計と追跡可能recipeから生成し、Rust codec検証後だけ出力を保存する。
+配布assetのmanifest登録、catalogの実環境への接続と通常入力coverageの受入は後続単位で行う。
 現行browserのsynthetic scenarioはこの追加だけでは変更されない。
