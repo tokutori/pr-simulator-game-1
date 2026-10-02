@@ -102,8 +102,8 @@ describe("pilot input lifecycle boundaries", () => {
 
   it("requires neutral gamepad confirmation again after resume and retry", () => {
     const trial = fixture();
-    const neutral = { connected: true, axes: [0, 0, 0, 0] } as unknown as Gamepad;
-    const active = { connected: true, axes: [0.54, 0, 0, 0.5] } as unknown as Gamepad;
+    const neutral = { index: 0, connected: true, axes: [0, 0, 0, 0] } as unknown as Gamepad;
+    const active = { index: 0, connected: true, axes: [0.54, 0, 0, 0.5] } as unknown as Gamepad;
     trial.input.readIntent([neutral]);
     const command = trial.input.readIntent([active]);
     expect(command.roll).toBe(0.5);

@@ -75,6 +75,12 @@ v_t=\operatorname{sgn}(x_t-x)\min\left(v_{max},\sqrt{2a_{max}d}\right)
 
 同時に有効な操縦機器は1つとし、選択機器の値だけを採用する。機器切替、切断、非表示化、UI overlayへの遷移では保留中の押下・軸値を破棄し、身体目標は直前の有効値に保持する。再接続では中立確認後に明示的に入力を再取得する。絶対位置軸へ切り替える際は現在目標との不連続を防ぐ同期操作を要求する。Menu操作イベントを同じtickのFlight指令へ転用しない。標準mappingと未対応機器の個別bindingを区別する。
 
+BrowserPilotInputの安全な機器引継ぎpolicyとして、選択中のGamepad接続を維持し、後から小さいindexの機器が接続しても切り替えない。未選択時と選択接続の消失時だけ、取得配列の先頭から接続候補を選ぶ。接続はindexとadapterが接続・切断イベントごとに更新する世代の組で識別する。同じindexの再利用も中立未確認へ戻す。Gamepadのidは製品識別、timestampは入力更新時刻であり、物理機器の一意識別には使用しない。pollごとのobject更新も接続変更には使用しない。[Gamepad APIのindex・イベント契約](https://www.w3.org/TR/gamepad/)に基づく。
+
+取得状態は未選択、中立待ち、舵有効・身体pickup待ち、全軸有効の排他的状態とする。全割当軸の中立確認前は舵0と保持中の身体目標を返す。中立確認後は既存の舵mappingを受理し、身体軸だけを保持する。身体軸の既存絶対位置mappingが保持目標と一致するか、前後sample間で目標を交差するとpickup成立とする。成立sampleも保持目標を返し、次sampleから通常の絶対位置mappingを採用する。新たな許容幅、offset、rate limitは加えない。保持目標が0の場合は中立sampleでpickupも成立する。これは中立確認と目標同期の契約を満たすadapter上の設計選択であり、実機操作の妥当性は別途検証する。
+
+keyboardの操縦キーを優先し、押下時と押下中はGamepadを再び中立待ちへ戻す。blur、suspend、resume、resetでも取得状態を再armし、同じ接続が存在する間は選択indexを維持する。resetだけは新Flightのsnapshotから身体目標を初期化する。停止中も接続イベントの世代を記録し、復帰時に古い確認を流用しない。disposeはkeyboard・blur・Gamepad接続イベントの全listenerと世代情報を解放する。Menu入力の機器選択・button履歴は別adapterの責務とする。
+
 FBW authorityの混合は同じ舵操作対象の指令に限定する。初期契約では身体の位置目標は選択された操縦機器から直接与え、FBWは舵を制御する。Automatic中も身体位置指令は独立して有効であり、入力がない場合は最後の目標位置を保持する。身体への自動指令を将来追加する際は、権限・調停・比較条件を独立に定義する。
 
 ## 検証と記録

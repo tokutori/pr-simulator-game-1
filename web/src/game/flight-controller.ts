@@ -49,7 +49,7 @@ export class FlightController {
     this.clock = new FixedTickClock(1_000 / physicsHz);
     this.snapshotValue = parseFlightSnapshot(session.snapshot());
     this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
-    this.initializeInput();
+    this.initializeInput(this.snapshotValue);
     this.applySnapshot(this.snapshotValue);
   }
 
@@ -96,18 +96,31 @@ export class FlightController {
 
   reset(snapshot: ArrayLike<number>): void {
     if (this.disposed) throw new Error("Cannot reset a disposed flight controller");
-    this.failed = false;
-    this.terminalReported = false;
-    this.clock.reset();
-    this.snapshotValue = parseFlightSnapshot(snapshot);
-    this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
-    this.initializeInput();
-    this.applySnapshot(this.snapshotValue);
+    this.failed = true;
+    this.clock.suspend();
+    try {
+      const nextSnapshot = parseFlightSnapshot(snapshot);
+      this.initializeInput(nextSnapshot);
+      this.applySnapshot(nextSnapshot, nextSnapshot.pilotPositionMeters);
+      this.snapshotValue = nextSnapshot;
+      this.initialPilotPositionMeters = nextSnapshot.pilotPositionMeters;
+      this.terminalReported = false;
+      this.clock.reset();
+      this.failed = false;
+    } catch (error: unknown) {
+      let failure = error;
+      try {
+        this.input.suspend();
+      } catch (cleanupError: unknown) {
+        failure = new AggregateError([error, cleanupError], "Flight reset and input suspension failed", { cause: error });
+      }
+      throw failure;
+    }
   }
 
-  private initializeInput(): void {
-    this.input.reset(this.initialPilotPositionMeters);
-    if (this.snapshotValue.terminal === "airborne") this.input.resume();
+  private initializeInput(snapshot: FlightSnapshot): void {
+    this.input.reset(snapshot.pilotPositionMeters);
+    if (snapshot.terminal === "airborne") this.input.resume();
     else this.input.suspend();
   }
 
@@ -125,12 +138,12 @@ export class FlightController {
     this.hud.setVisible(false);
   }
 
-  private applySnapshot(snapshot: FlightSnapshot): void {
+  private applySnapshot(snapshot: FlightSnapshot, initialPilotPositionMeters = this.initialPilotPositionMeters): void {
     const pose: FlightRenderPose = Object.freeze({
       datumPositionNed: snapshot.positionNed,
       attitudeBodyToNed: snapshot.attitudeBodyToNed,
       pilotPositionMeters: snapshot.pilotPositionMeters,
-      initialPilotPositionMeters: this.initialPilotPositionMeters,
+      initialPilotPositionMeters,
       simulationTimeSeconds: snapshot.flightTimeSeconds,
       airspeedMetersPerSecond: snapshot.telemetry?.airspeedMetersPerSecond ?? null,
       actuatorDeflectionRadians: snapshot.actuatorDeflectionRadians,

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { GameSessionBridge, PersonalBestSelectionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
@@ -219,7 +219,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
         },
         get: () => Promise.resolve(null),
         getAll: () => Promise.resolve([])
-      });
+      }, undefined, (json) => new PersonalBestSelectionBridge(json));
       const saved = await repository.saveFrom(session);
       const document = JSON.parse(saved.json) as {
         readonly schema_version: number;

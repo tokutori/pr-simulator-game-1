@@ -128,7 +128,11 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 失敗tickの状態は保存しない。初期化失敗で有効sampleがない場合はrecord unavailableとする。
 不完全recordも有効区間の解析に使用できるが、通常のPersonal Bestへ登録しない。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
-Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。IndexedDB version 4では初回一覧時に既存record全体からcanonical key別indexを一度再構築し、以後はindex先recordとのみ比較する。
+Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。Repositoryとpersistence portにはRust selection factoryを必須で供給する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。
+
+IndexedDB version 4のPB index修復revisionは`first-winner-v1`とする。canonical key v1やrecord schemaの版とは独立である。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。同点は最初のwinnerを保持し、score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
+
+再構築・PB index・修復markerと、保存時のrecord・metadata追加は同一readwrite transactionで確定する。不適格candidateの保存も修復を先に完了する。失敗時は全変更をrollbackし、生成したselectionを解放する。以後の保存はindex先recordとのみ比較し、一覧取得は再構築を繰り返さない。
 
 Canonical key v1ではpreset labelを除外し、Information cue、ControllerProfileのmode・authority・version・gain・command limit、scenario identity・seed、aircraft/scenario/environment/physics content hash、course axis、physics・score version、tick契約、launch stateをSHA-256へ入力する。浮動小数点値は有限値に限定し、負のzeroをpositive zeroへ正規化してbig-endian IEEE-754 bit patternを符号化する。表示品質とpresentation backendはkeyに含めない。
 
@@ -148,3 +152,16 @@ capacity境界、allocation、schema round-trip、手計算可能な集計値、
 record validationは単調時刻、単位quaternion、有限値、有効な要素IDとheader整合を確認する。
 playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路quaternion slerp、線形状態補間、
 角度のwrap-aware補間を行う。queryは記録範囲外を拒否し、物理状態を変更しない。
+
+recordの順序・範囲判定は整数tickとfractionの組で行い、`(n, 1)`と`(n + 1, 0)`を同一時刻として扱う。
+保存sampleとfinalization metadataの一致検査には保存したtick/fractionの厳密一致を用いる。
+微小な終端fractionを絶対tickへ浮動小数加算して消失させず、補間率は隣接sampleからの局所時間差で計算する。
+表示用secondsへの変換で同じ値になるsampleもすべて保持し、core・format・Web境界は真の重複時刻を拒否する。
+
+秒単位queryは有限かつ`0 <= seconds <= duration_seconds`を受け付ける。
+`seconds == duration_seconds`では保存終端の状態・telemetryを優先し、返却時刻は上記の同値規則で正規化する。
+正の微小durationが秒への変換で0へ丸められる場合も、seconds=0は保存終端を返す。
+秒の内点は表示秒へ変換した隣接sampleの区間を選び、その区間内の秒差の比から補間する。
+これにより秒から絶対tickへの再乗算で生じる丸めを範囲判定へ持ち込まない。
+同じsecondsへ丸められた時刻を個別指定する場合はtick/fraction queryを用いる。
+durationの直外を含む範囲外queryは拒否し、epsilonによる時刻の移動やsample削除は行わない。

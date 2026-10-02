@@ -120,6 +120,36 @@ function sample(tick: number, fraction: number): number[] {
 }
 
 describe("loadFlightAnalysis", () => {
+  it("retains ordered microfraction samples with colliding display seconds", () => {
+    const samples = Array.from({ length: 5 }, (_, tick) => sample(tick, 0));
+    const terminal = sample(4, 2 ** -52);
+    terminal[FLIGHT_RECORD_SAMPLE_LAYOUT.cgNorth] = 100;
+    samples.push(terminal);
+    const analysis = loadFlightAnalysis(new PackedFlightRecord(samples), 100);
+    expect(analysis.samples).toHaveLength(6);
+    expect(analysis.samples[4]?.timeSeconds).toBe(analysis.samples[5]?.timeSeconds);
+    expect(analysis.samples[4]).not.toEqual(analysis.samples[5]);
+  });
+
+  it("rejects canonical ticks outside the safe integer transfer range", () => {
+    expect(() => loadFlightAnalysis(new PackedFlightRecord([
+      sample(0, 0), sample(Number.MAX_SAFE_INTEGER, 1)
+    ]), 100)).toThrow(/invalid time/);
+  });
+
+  it.each([
+    [[4, 0], [4, -0]],
+    [[4, 1], [5, 0]],
+    [[4, 2 ** -52], [4, 2 ** -53]],
+    [[4, 0], [4, 0]]
+  ])("rejects duplicate canonical or reversed fractional times: %j", (start, end) => {
+    const first = start as [number, number];
+    const last = end as [number, number];
+    expect(() => loadFlightAnalysis(new PackedFlightRecord([
+      sample(...first), sample(...last)
+    ]), 100)).toThrow(/chronological/);
+  });
+
   it("decodes Rust-owned samples and summary metrics", () => {
     const analysis = loadFlightAnalysis(new PackedFlightRecord([sample(0, 0), sample(1, 0)]), 100);
     expect(analysis.samples[1]).toMatchObject({
