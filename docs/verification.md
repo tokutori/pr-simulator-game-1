@@ -86,10 +86,10 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
 | 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
 | 007 | playable synthetic fixtureのneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
-| 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間。環境assetのruntime接続と実ブラウザー受入は別途検証する |
+| 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。環境assetの選択activation・描画接続と実ブラウザー受入は別途検証する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
-| 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |
-| 016 | 全SceneのPhone VR UI、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実スマートフォン |
+| 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |
+| 016 | 全SceneのPhone VR UI、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectのEye mount・全anchor/gaze・recenter・Screen復帰。実スマートフォンは別途受入 |
 | 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
 | 018 | HUD項目とFlight Pilot camera固定、Replay/Attract rig選択、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
 | 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |

@@ -232,8 +232,9 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   recenterTracking(): void {
     if (this.state.type !== "active" || this.latestSensorOrientation === null) return;
-    const oldFromNew = poseAtOrigin(this.latestViewerOrientation);
-    const newFromOld = inversePose(oldFromNew);
+    const mountedHead = this.renderer.transformTrackingPose(poseAtOrigin(this.latestViewerOrientation));
+    const mountedOrigin = this.renderer.transformTrackingPose(IDENTITY_POSE);
+    const newFromOld = composePose(mountedOrigin, inversePose(mountedHead));
     this.referenceFromWorld = composePose(newFromOld, this.referenceFromWorld);
     this.menuPlacement.applyReferenceTransform(newFromOld);
     this.calibrationOrientation = this.latestSensorOrientation;
@@ -243,7 +244,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   recenterMenu(): void {
     if (this.state.type === "active") {
-      this.menuPlacement.recenter(poseAtOrigin(this.latestViewerOrientation), 2.4);
+      this.menuPlacement.recenter(this.renderer.transformTrackingPose(poseAtOrigin(this.latestViewerOrientation)), 2.4);
     }
   }
 

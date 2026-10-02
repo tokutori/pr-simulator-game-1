@@ -88,6 +88,35 @@ WebXR sessionはユーザー操作内から要求し、Three.js `WebXRManager`�
 左右眼のpose/projectionとXR animation loopをruntimeから利用する。XR select rayとhead-gaze dwellは共通`UiAction`へ変換する。
 `XRReferenceSpace`のresetではevent transformをengine非依存のposeへ変換してWorld/Cockpit/Menu anchorを新referenceへ写像する。
 transformが取得できない場合は選択を停止し、Screenへ退出して再開始を促す。
+native viewerはruntimeのcenter-head poseである。片眼やXR union cameraのposeへ置換しない。
+`WebXrSessionPort.transformTrackingPose`はraw tracking poseをpresentation frameへ写像する。
+Pilot Flightでは機体local frameのEye mount、外部Replayではworld frameのcamera rig、
+non-flightではidentityを $M$ とし、viewerとcontroller rayへ同じ $M$ を一度だけ合成する。
+Menu/Headはこのviewer frameから配置する。Cockpit/World panelはphysical frameを保持する。
+Phone VRの`RendererAdapter.transformTrackingPose`は独立した入口であり、同じ $M$ を使用する。
+cameraへ渡すraw head poseを維持し、Menu/Head配置とgazeへmountを一度だけ適用する。
+Menu recenterはmounted headから配置し、tracking recenterは $M H^{-1}M^{-1}$ でretained anchorを写像する。
+`three-renderer-panel-reference.test.ts`は実Phone backendとStereoEffectを使用し、
+3身体位置・全anchor・gaze dwell・recenter・Screen復帰の同一basisを検査する。
+WebGL driverを代替したソフトウェア試験であり、実スマートフォンの受入は別途実施する。
+
+Three.jsはXR cameraのlocal poseをruntime値へ更新するため、Eye mountをcameraの親tracking originへ保持する。
+各眼のworld poseは $A E H_{eye}$ となり、身体移動、runtimeのhead poseとIPDを各一度だけ含む。
+Screen/Phoneの既存 $A E H$ と、外部Replayの $C H_{eye}$ を維持する。
+根拠: [Three.js WebXRManager](https://threejs.org/docs/pages/WebXRManager.html#updateCamera)。
+
+reset eventの $R$ は新native originを旧referenceで表したposeである。
+portのreset callbackにはviewerと同じpresentation frameで $M R M^{-1}$ を返し、
+backendはその逆をretained anchorへ適用する。旧panel $P$、旧viewer $H$ は次を満たす。
+
+```math
+(M R^{-1} H)^{-1}(M R^{-1} M^{-1}P)=(M H)^{-1}P
+```
+
+根拠: [WebXR XRReferenceSpaceEvent](https://www.w3.org/TR/webxr/#xrreferencespaceevent-interface)。
+`three-webxr-mount.test.ts`は実WebXRManagerと模擬XRSession/XRFrame/XRWebGLLayerを接続し、
+両眼、3身体offset、全anchorのgaze/controller、回転と並進を含むreset、session終了後のScreenを検査する。
+GPU driverと非対象のvenue I/Oを代替する。runtime合成経路の回帰と実HMD受入を区別する。
 全Scene/overlayのfixture、自動session lifecycle試験、production buildは実施可能である。HMD/browser上のpose・projection・操作確認は
 対象実機未確保のため未実施として扱い、実機検証完了までBPG-015を完了扱いしない。
 
@@ -158,6 +187,15 @@ T_{cockpit,tracking}\,T_{tracking,head}\,T_{head,eye}
 Phone VRではheadの並進を固定し、基準化した頭部回転を合成する。
 deviceorientationのZ-X'-Y''回転、度からrad、端末axes、screen orientation、
 camera前方軸を明示的に変換する。alpha/beta/gammaを航空機のyaw/pitch/rollへ直接代入しない。
+端末の自然な画面方位に固定された姿勢を $D=R_z(\alpha)R_x(\beta)R_y(\gamma)$、
+`ScreenOrientation.angle`を $s$ とすると、表示方位への補正は $H=D R_z(-s)$ とする。
+補正は端末姿勢の右から一度だけ合成する。画面方位を変更してもsensorの端末座標系は変化しない。
+根拠: [Device Orientation §3.1](https://www.w3.org/TR/orientation-event/#device-orientation)、
+[Screen Orientation angle](https://w3c.github.io/screen-orientation/#dom-screenorientation-angle)。
+`three-renderer-phone-orientation.test.ts`は0°・±90°・180°・270°について、実sensor adapter、
+Phone VR backend、Three.js camera、StereoEffectを接続し、左右・上下・rollの回転方向と
+固定世界点の両眼投影、画面回転、head/Menu recenterを検査する。WebGL driverには記録用代替を使用する。
+この検査は描画driverの実GPU動作と実スマートフォンのsensor精度・装着時受入を保証しない。
 絶対方位を常に取得できるとは仮定せず、利用者の正面を基準にrecenterする。
 基準姿勢・画面方位補正後のquaternionに対して、例えば次の相対回転を用いる。
 

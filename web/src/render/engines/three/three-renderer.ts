@@ -30,6 +30,7 @@ import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
 import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import type { CinematicCameraView } from "../../contracts/camera.js";
+import { uiPanelComposition } from "../../contracts/ui.js";
 import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import { composePose, inversePose } from "../../contracts/math.js";
@@ -73,6 +74,7 @@ const TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS = 42 * 16;
 const TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS = 32;
 const TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS = 24;
 const TITLE_SCREEN_PITCH_HALF_RADIANS = 3 * Math.PI / 180;
+const PANEL_OVERLAY_RENDER_ORDER = 2000;
 
 export function titleScreenCameraPoseForViewport(width: number, height: number): Pose {
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
@@ -338,7 +340,7 @@ export function createThreeRenderer(
   panelTexture.colorSpace = SRGBColorSpace;
   panelTexture.minFilter = LinearFilter;
   panelTexture.generateMipmaps = false;
-  const panelMaterial = new MeshBasicMaterial({ map: panelTexture, side: DoubleSide });
+  const panelMaterial = new MeshBasicMaterial({ map: panelTexture, side: DoubleSide, forceSinglePass: true });
   const panelGeometry = new PlaneGeometry(2.4, 1.8);
   const panelMesh = new Mesh(panelGeometry, panelMaterial);
   panelMesh.visible = false;
@@ -363,8 +365,10 @@ export function createThreeRenderer(
       object.castShadow = (Array.isArray(material) ? material : [material]).every((part) => !part.transparent);
     }
   });
+  const trackingOrigin = new Group();
+  aircraftRoot.add(trackingOrigin);
   const camera = new PerspectiveCamera(60, 1, 0.05, 100_000);
-  aircraftRoot.add(camera);
+  trackingOrigin.add(camera);
   let titleCameraPose = titleScreenCameraPoseForViewport(1, 1);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
@@ -391,13 +395,17 @@ export function createThreeRenderer(
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
     return flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")));
   };
+  const currentPilotEyePose = (): Pose => flightPose === null
+    ? IDENTITY_POSE
+    : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
+  const currentTrackingMountPose = (): Pose => currentExternalCameraPose() ?? currentPilotEyePose();
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(transformRay(ray, currentExternalCameraPose()));
+    if (ray !== null) selectRayHandler(transformRay(ray, currentTrackingMountPose()));
   };
 
   const onSessionEnd = (): void => {
@@ -415,10 +423,14 @@ export function createThreeRenderer(
 
   const onReferenceSpaceReset = (event: XRReferenceSpaceEvent): void => {
     const transform = event.transform as XRRigidTransform | null | undefined;
-    referenceSpaceResetHandler?.(transform === null || transform === undefined ? null : {
+    const previousReferenceFromNew = transform === null || transform === undefined ? null : {
       position: vec3(transform.position.x, transform.position.y, transform.position.z),
       orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
-    });
+    };
+    const mount = currentTrackingMountPose();
+    referenceSpaceResetHandler?.(previousReferenceFromNew === null ? null : composePose(
+      composePose(mount, previousReferenceFromNew), inversePose(mount)
+    ));
   };
 
   const rendererAdapter: RendererAdapter = {
@@ -450,16 +462,9 @@ export function createThreeRenderer(
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
       const externalCameraPose = currentExternalCameraPose();
       const useExternalCamera = externalCameraPose !== null;
-      const pilotEyePose = flightPose === null
-        ? IDENTITY_POSE
-        : pilotEyePoseThree(
-          SYNTHETIC_PILOT_EYE_POINT,
-          flightPose.pilotPositionMeters,
-          flightPose.initialPilotPositionMeters
-        );
-      const cameraPose = composePose(pilotEyePose, frame.cameraPose);
       const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE;
-      setPose(camera, composePose(titlePresentationPose, cameraPose));
+      setPose(trackingOrigin, composePose(titlePresentationPose, currentPilotEyePose()));
+      setPose(camera, frame.cameraPose);
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
@@ -493,6 +498,16 @@ export function createThreeRenderer(
           : frame.panelPose;
         setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, frame.panelPose));
       }
+      const overlayPanel = frame.panel !== null && uiPanelComposition(frame.panel.anchor) === "overlay";
+      if (panelMaterial.transparent !== overlayPanel) {
+        panelMaterial.transparent = overlayPanel;
+        panelMaterial.needsUpdate = true;
+      }
+      panelMaterial.depthTest = !overlayPanel;
+      panelMaterial.depthWrite = !overlayPanel;
+      panelMesh.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER : 0;
+      gazeCursorMaterial.depthTest = !overlayPanel;
+      gazeCursor.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
         panelTexture.needsUpdate = true;
@@ -631,12 +646,14 @@ export function createThreeRenderer(
       fixedCameraView = view;
     },
     transformTrackingPose(pose: Pose): Pose {
-      const externalPose = currentExternalCameraPose();
-      return externalPose === null ? pose : composePose(externalPose, pose);
+      return flightPose === null ? pose : composePose(currentTrackingMountPose(), pose);
     }
   };
 
   const webxr: WebXrSessionPort = {
+    transformTrackingPose(value: Pose): Pose {
+      return composePose(currentTrackingMountPose(), value);
+    },
     async checkAvailability(): Promise<WebXrAvailability> {
       if (xrSystem === null) return { supported: false, message: "WebXR is unavailable in this browser" };
       try {
