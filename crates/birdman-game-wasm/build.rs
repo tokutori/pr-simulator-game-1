@@ -11,6 +11,11 @@ fn main() {
     let workspace_dir = manifest_dir.join("../..").canonicalize().unwrap();
     let core_source = workspace_dir.join("crates/birdman-game-core/src");
     let wasm_source = workspace_dir.join("crates/birdman-game-wasm/src/lib.rs");
+    let runtime_environment_source =
+        workspace_dir.join("crates/birdman-game-wasm/src/environment.rs");
+    let environment_snapshot_source =
+        workspace_dir.join("crates/birdman-game-wasm/src/environment_snapshot.rs");
+    let environment_asset = workspace_dir.join("assets/biwa-typical-july-environment-v6.json");
     let synthetic_source = core_source.join("synthetic_flight.rs");
     let dynamics_source = core_source.join("dynamics.rs");
     let aerodynamics_source = core_source.join("aerodynamics.rs");
@@ -25,11 +30,25 @@ fn main() {
     ];
     let environment_files = vec![
         wasm_source.clone(),
+        runtime_environment_source.clone(),
+        environment_snapshot_source.clone(),
         synthetic_source,
         aerodynamics_source,
         wind_source,
     ];
-    let scenario_files = vec![wasm_source];
+    let scenario_files = vec![
+        wasm_source,
+        runtime_environment_source,
+        environment_snapshot_source,
+    ];
+
+    println!("cargo:rerun-if-changed={}", environment_asset.display());
+    let asset_digest = Sha256::digest(fs::read(environment_asset).unwrap());
+    let asset_hash = asset_digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    println!("cargo:rustc-env=BPG_ENVIRONMENT_V6_SHA256={asset_hash}");
 
     let mut physics_files = core_files;
     physics_files.push(workspace_dir.join("crates/birdman-game-core/Cargo.toml"));
