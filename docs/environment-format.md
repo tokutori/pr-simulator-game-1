@@ -1,0 +1,67 @@
+# 環境asset契約
+
+## 外部境界
+
+`birdman-game-format::EnvironmentDocument` はschema version 1のJSONを受け取り、
+固定環境の風・波・空・原点・出典を検証する。JSONは最大8 MiB、風格子は最大65,536標本とする。
+各説明文字列はUTF-8で最大2,048 byte、出典・月統計・各source参照一覧はそれぞれ最大16件とする。
+JSONの配列decoderは要素数上限を超えた要素をstorageへ追加する前に拒否する。
+標本・metadataの構造上限は、JSON escapeを含むencoderの最大出力も8 MiB未満へ制限する。
+データ取得・filesystem I/Oはoffline生成toolとCLI/Web adapterに置く。
+
+`environment_version` は既存 `ScenarioCatalogEntry` のenvironment versionに対応する。
+`validate_for` が一致を検査する。scenario ID、Weather分類、選択seedは既存catalogが所有する。
+この形式の追加によって独立したscenario選択やゲーム状態を作らない。
+
+## 座標・風場
+
+`local_frame` はWGS84の緯度・経度と、固定水面の高さ基準を記録する。
+local NEDのdown=0はscenarioの固定水面、負のdownは水面上の高度である。
+水位・測地基準間の変換や近似は `water_level_datum` とprovenanceへ記す。
+
+`wind_grid` はnorth/east/down順のorigin・正のspacing・各軸2点以上のcountを保持する。
+風標本のindexは `(down * east_count + east) * north_count + north` である。
+各標本は空気が向かうNED方向のm/sを表す。気象の風向は吹いてくる方位であるため、
+生成処理で水平方向の符号を反転する。鉛直流もdown正として記録する。
+
+`WindGridDocument::build` は有限座標、有限速度、標本数、表現可能な上端、代表地点の範囲を検査し、
+構築時だけ確保するNED標本storageを返す。`EnvironmentWindGrid::as_field` がそのstorageを借用し、
+既存coreの `WindField::grid` を構築する。fieldはstorageのlifetime内で使用する。
+補間・閉区間境界・範囲外エラーは既存風場契約に従う。
+実行scenarioはRK4途中の機体位置と全空力評価点を含むcoverageを、統合検証で確認する。
+
+`representative_position_ned_m` はFlight Setup等で表示する代表風の地点である。
+代表値の地点・水面上高度を明示し、単一の代表値を全格子の風と扱わない。
+
+## 観測根拠と仮定
+
+`sources` にsource URL、version、入力snapshotのSHA-256、利用条件、帰属・加工表示を記録する。
+入力hashは小文字hexadecimal 64文字とする。codecはsource URLへ通信しない。
+生成物自身のhashはasset manifestへ登録し、自己参照するhashをJSON内に作らない。
+
+`provenance` はlocal_frame・wind_grid・waves・skyそれぞれに必須である。
+型は `observed`、`derived`、`assumed`、`game_tuned` を排他的に表す。
+observed/derivedは有効なsource index、assumed/game_tunedは根拠・適用範囲の説明を要求する。
+格子のprovenanceには空間分布・鉛直流・高度依存・フライト中の定常性を含める。
+
+`ground_wind_normals` は地上観測点の月平均風速・最多風向、統計期間、観測条件を保持する。
+平均風速はscalar平均、最多風向はfrom-directionであり、この組合せは平均風速vectorを与えない。
+これらの観測統計は格子風の標本から分離して保存する。湖上・飛行高度への外挿は追加の仮定として記す。
+
+## 描画用環境
+
+`waves` はrender-onlyの風履歴、effective fetch、detail scale、pattern seedを保持する。
+風履歴を瞬時の物理風と区別する理由はprovenanceへ記す。既存湖面rendererと同じく、
+風速60 m/s以下、fetchは正かつ50 km以下、detail scaleは正かつ3以下とする。
+波面は物理の固定水面接触を変更しない。
+
+`sky` は太陽の北基準時計回りazimuth、水平面上elevation、雲量、cloud base、visibilityを保持する。
+sun方位は0以上360°未満、elevationは±90°以内、雲量は0～1とする。
+cloud baseは水面上の非負高度、visibilityは有限正値である。条件はフライト中に固定する。
+Three.js等への座標変換とshader/GPU更新はengine adapterが担当する。
+
+## 現在の実装範囲
+
+この変更は正式な外部形式・検証・core風場への変換を追加する。
+BPG-008のoffline生成と配布asset、catalogの実環境への接続は次の実装単位で行う。
+現行browserのsynthetic scenarioはこの追加だけでは変更されない。

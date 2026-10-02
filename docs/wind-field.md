@@ -1,5 +1,8 @@
 # 風場契約
 
+外部assetのschema、local NED原点、出典・仮定、波・空との対応は
+[`environment-format.md`](environment-format.md) に従う。
+
 ## 定常空間場
 
 1フライトの基本環境は時間不変とし、NED位置に対する空気のNED速度を返す。
@@ -19,6 +22,8 @@ Gridのvelocity sampleはimmutableなsliceを借用し、coreで確保・複製�
 Gridは原点、N/E/D各軸の正の間隔、各軸2以上の点数、NED速度列を持つ。
 配列順はNが最速、次いでE、Dとし、indexは `((d * count_e) + e) * count_n + n` とする。
 三線形補間、閉区間の境界を採用する。範囲外、非有限値、overflow、不正な点数はエラーとする。
+閉区間はNED座標の `origin .. origin + spacing * (count - 1)` で判定する。
+区間内の位置をindexへ換算した際の上端丸め誤差を補正し、1 ULPでも区間外の位置は拒否する。
 暗黙の外挿・clampは行わない。全機の評価点を含む飛行領域をofflineで確保する。
 
 ## 一貫した作用経路

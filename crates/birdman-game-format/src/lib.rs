@@ -3,8 +3,18 @@
 
 extern crate alloc;
 
+mod environment;
 mod flight_record;
 mod personal_best;
+
+pub use environment::{
+    ENVIRONMENT_SCHEMA_VERSION, EnvironmentBasisDocument, EnvironmentComponent,
+    EnvironmentDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
+    EnvironmentSourceDocument, EnvironmentWindGrid, GroundWindNormalDocument,
+    LocalNedFrameDocument, MAX_ENVIRONMENT_JSON_BYTES, MAX_ENVIRONMENT_METADATA_ENTRIES,
+    MAX_ENVIRONMENT_TEXT_BYTES, MAX_ENVIRONMENT_WIND_SAMPLES, SkyStateDocument, WaveStateDocument,
+    WindGridDocument,
+};
 
 pub use flight_record::{
     FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
