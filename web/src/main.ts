@@ -1,4 +1,5 @@
 import "./styles.css";
+import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
@@ -23,6 +24,7 @@ import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
 import { BrowserPilotInput, DEFAULT_PILOT_INPUT_CONFIGURATION } from "./game/browser-input.js";
 import { FlightController } from "./game/flight-controller.js";
+import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { syntheticLakeVisualCondition } from "./game/synthetic-lake-condition.js";
 import { createPersonalBestSelection, initializeGameSession } from "./game/wasm-flight.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
@@ -118,7 +120,8 @@ function renderModel(): void {
   } else if (phaseCode <= 3 || phaseCode === 8 || (phaseCode === 7 && flightController === null)) {
     flightRenderer?.setFlightPose(null);
   }
-  if (model.presentation.type === "hidden") {
+  if (model.presentation.type === "hidden" || model.presentation.type === "cached") {
+    flightHud.setVisible(false);
     screenUi.clear();
     return;
   }
@@ -148,6 +151,13 @@ function flightHudModel(snapshot: FlightSnapshot, paused: boolean) {
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "suspend-page-flight":
+      suspendPageFlightState();
+      return;
+    case "restore-page-flight":
+      onResize();
+      clearSessionPauseReason(1);
+      return;
     case "initialize-presentation":
       void initializePresentation(effect.requestId);
       return;
@@ -196,14 +206,16 @@ function runEffect(effect: AppEffect): void {
       pauseForPresentationTransition();
       flightController?.suspend();
       void presentation.switchTo(effect.mode).then((result) => {
+        const current = model.presentation.type === "transitioning" && model.presentation.requestId === effect.requestId;
         dispatchBackendResult(effect.requestId, effect.mode, presentation.currentMode, result);
-        resolvePresentationTransitionPause();
+        if (current) resolvePresentationTransitionPause();
       }, (error: unknown) => {
+        const current = model.presentation.type === "transitioning" && model.presentation.requestId === effect.requestId;
         dispatchBackendResult(effect.requestId, effect.mode, presentation.currentMode, {
           ok: false,
           error: { type: "renderer-failed", message: errorMessage(error) }
         });
-        resolvePresentationTransitionPause();
+        if (current) resolvePresentationTransitionPause();
       });
       return;
     }
@@ -784,19 +796,32 @@ function onPageHide(): void {
 }
 
 function onVisibilityChange(): void {
-  const session = gameSession;
   if (document.visibilityState === "hidden") {
-    if (session?.phase_code() === 4) {
-      countdownGeneration += 1;
-      session.cancel_countdown();
-      syncGameSession();
-      return;
-    }
-    pauseSessionForReason(1);
-    flightController?.suspend();
+    suspendPageFlightState();
+    return;
+  }
+  if (model.presentation.type === "cached") {
+    onPageRestore();
     return;
   }
   clearSessionPauseReason(1);
+}
+
+function suspendPageFlightState(): void {
+  try {
+    suspendPageFlight(gameSession, flightController, () => { countdownGeneration += 1; }, syncGameSession);
+  } catch (error: unknown) {
+    dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
+  }
+}
+
+function onPageSuspend(): void {
+  dispatch({ type: "page-suspended" });
+}
+
+function onPageRestore(): void {
+  if (document.visibilityState === "hidden") return;
+  dispatch({ type: "page-restored" });
 }
 
 function pauseForPresentationTransition(): void {
@@ -958,6 +983,6 @@ function assertNever(value: never): never {
 
 renderModel();
 window.addEventListener("resize", onResize);
-window.addEventListener("pagehide", onPageHide, { once: true });
+installBrowserPageLifecycle(window, { suspend: onPageSuspend, restore: onPageRestore, dispose: onPageHide });
 document.addEventListener("visibilitychange", onVisibilityChange);
 dispatch({ type: "initialize" });

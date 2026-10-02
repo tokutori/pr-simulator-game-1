@@ -50,7 +50,7 @@ export type ReplayClockCommand =
   | { readonly kind: "rate"; readonly rateCode: 0 | 1 | 2 }
   | { readonly kind: "advance"; readonly elapsedSeconds: number };
 
-export type PresentationUiState =
+export type LivePresentationUiState =
   | { readonly type: "uninitialized" }
   | { readonly type: "initializing"; readonly requestId: number }
   | { readonly type: "ready"; readonly mode: PresentationMode }
@@ -61,7 +61,10 @@ export type PresentationUiState =
       readonly to: PresentationMode;
       readonly phase: "requesting" | "stopping" | "starting";
     }
-  | { readonly type: "failed"; readonly message: string }
+  | { readonly type: "failed"; readonly message: string };
+
+export type PresentationUiState = LivePresentationUiState
+  | { readonly type: "cached"; readonly retained: LivePresentationUiState }
   | { readonly type: "hidden" };
 
 export type GameSessionUiState =
@@ -201,6 +204,8 @@ export type AppMessage =
     }
   | { readonly type: "backend-ended"; readonly mode: "webxr" | "phone-vr"; readonly message: string }
   | { readonly type: "page-hidden" }
+  | { readonly type: "page-suspended" }
+  | { readonly type: "page-restored" }
   | {
       readonly type: "game-session-synced";
       readonly phaseCode: number;
@@ -258,6 +263,8 @@ export type AppEffect =
   | { readonly type: "recenter-tracking" }
   | { readonly type: "recenter-menu" }
   | { readonly type: "dispose-presentation" }
+  | { readonly type: "suspend-page-flight" }
+  | { readonly type: "restore-page-flight" }
   | { readonly type: "persist-flight-record" }
   | { readonly type: "load-stored-flight-records"; readonly requestId: number }
   | { readonly type: "open-stored-flight-record"; readonly id: number; readonly requestId: number }
@@ -382,6 +389,32 @@ export function createInitialAppModel(): AppModel {
 }
 
 export function updateApp(model: AppModel, message: AppMessage): AppTransition {
+  if (model.presentation.type === "cached") {
+    if (message.type === "page-suspended" || message.type === "ui-action"
+        || message.type === "replay-clock-tick" || message.type === "backend-ended") return transition(model);
+    if (message.type === "permission-completed") {
+      return transition(model, message.ok ? [{ type: "cancel-pending-request", mode: message.mode }] : []);
+    }
+    const retained = withModel(model, { presentation: model.presentation.retained });
+    if (message.type === "page-restored") {
+      const recovered = retained.presentation.type === "initializing" || retained.presentation.type === "uninitialized"
+          || retained.presentation.type === "failed"
+        ? transition(retained)
+        : beginScreenRecovery(retained, "Page restored", null);
+      const playback = recovered.model.gameSession.kind === "attract"
+        ? beginReplayClockCommand(recovered.model, { kind: "play" }, true)
+        : transition(recovered.model);
+      return transition(playback.model, [
+        ...recovered.effects, { type: "restore-page-flight" }, ...playback.effects
+      ]);
+    }
+    const updated = updateApp(retained, message);
+    if (updated.model.presentation.type === "hidden") return updated;
+    if (updated.model.presentation.type === "cached") return updated;
+    return transition(withModel(updated.model, {
+      presentation: Object.freeze({ type: "cached", retained: updated.model.presentation })
+    }), updated.effects);
+  }
   if (model.presentation.type === "hidden") {
     if (message.type === "permission-completed" && message.ok) {
       return transition(model, [{ type: "cancel-pending-request", mode: message.mode }]);
@@ -390,6 +423,29 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "page-restored":
+      return transition(model);
+    case "page-suspended": {
+      let suspended = withModel(model, {
+        replayPlaying: false,
+        replayClockGeneration: model.replayClockGeneration + 1,
+        pendingReplayClockRequestId: null
+      });
+      const effects: AppEffect[] = [
+        { type: "suspend-page-flight" },
+        { type: "cancel-pending-request", mode: "webxr" },
+        { type: "cancel-pending-request", mode: "phone-vr" }
+      ];
+      if (model.gameSession.kind === "replay" || model.gameSession.kind === "attract") {
+        const paused = beginReplayClockCommand(suspended, { kind: "pause" }, false);
+        suspended = paused.model;
+        effects.push(...paused.effects);
+      }
+      if (suspended.presentation.type === "hidden" || suspended.presentation.type === "cached") return transition(model);
+      return transition(withModel(suspended, {
+        presentation: Object.freeze({ type: "cached", retained: suspended.presentation })
+      }), effects);
+    }
     case "initialize": {
       if (model.presentation.type !== "uninitialized") return transition(model);
       const requestId = model.nextRequestId;
@@ -1024,7 +1080,7 @@ function updateBackendCompletion(
 function beginScreenRecovery(
   model: AppModel,
   message: string,
-  from: "webxr" | "phone-vr"
+  from: PresentationMode | null
 ): AppTransition {
   const requestId = model.nextRequestId;
   return transition(withModel(model, {

@@ -72,6 +72,14 @@ pause中はtick・controller・actuator・記録sample・波のsimulation time�
 再開時にwall-clock差を加算せず、accumulatorと入力境界を再設定して次tickから進める。
 非表示化時の押下状態を解除し、device再接続後の入力を再取得する。
 
+BFCacheへの退避ではRust session、記録、rendererを保持する。Countdownは取消し、Flightは非表示理由で停止する。
+Replay/AttractはRust playback clockを停止し、古い再生timerを無効化する。
+表示復帰時、Replayは停止状態を維持し、Attractは同じcursor位置から新しいtimerで自動再生を再開する。
+履歴復帰では同一sessionのsnapshotを同期し、Screenへ復帰する。Flightの再開にはResume操作を要する。
+WebXR/Phone VRの保留要求を取消し、外部sessionの再要求は明示操作に限定する。
+初期化中の退避は同じrequestを継続し、復帰時にsessionやrendererを再生成しない。
+通常のpage退出では資源を最終破棄する。退避・復帰と最終破棄は別の状態として扱う。
+
 Settingsは画質、音量、表示サイズ、binding設定等を扱う。
 初期版ではInformation内容、Assistance、Weather、input shapingを飛行中に変更しない。
 これらはFlightSetupへ戻って変更する。Flight cameraはPilotに固定し、Replay/Attract cameraはpresentation操作として選択する。HUDの文字サイズ・配色等の可読性設定は変更してよい。

@@ -312,6 +312,110 @@ describe("Boot application state", () => {
     expect(latePermission.effects).toEqual([{ type: "cancel-pending-request", mode: "phone-vr" }]);
   });
 
+  it("retains initialization through cache and ignores initial pageshow", () => {
+    const initial = createInitialAppModel();
+    expect(updateApp(initial, { type: "page-restored" }).model).toBe(initial);
+    const initializing = updateApp(initial, { type: "initialize" }).model;
+    const cached = updateApp(initializing, { type: "page-suspended" });
+    expect(cached.model.presentation).toEqual({ type: "cached", retained: initializing.presentation });
+    expect(cached.effects.some((effect) => effect.type === "dispose-presentation")).toBe(false);
+    const restoredBeforeCompletion = updateApp(cached.model, { type: "page-restored" });
+    expect(restoredBeforeCompletion.model.presentation).toEqual(initializing.presentation);
+    expect(restoredBeforeCompletion.effects).toEqual([{ type: "restore-page-flight" }]);
+    const completed = updateApp(cached.model, {
+      type: "presentation-initialized", requestId: 1, activeMode: "screen",
+      webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
+    });
+    expect(completed.model.presentation).toEqual({ type: "cached", retained: { type: "ready", mode: "screen" } });
+    const restored = updateApp(completed.model, { type: "page-restored" });
+    expect(restored.effects).toEqual([
+      { type: "switch-backend", mode: "screen", requestId: 2 }, { type: "restore-page-flight" }
+    ]);
+    expect(restored.effects.some((effect) => effect.type === "initialize-presentation")).toBe(false);
+  });
+
+  it("invalidates permission and backend completions across cache restoration", () => {
+    const pending = updateApp(readyModel(), { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
+    const cached = updateApp(pending.model, { type: "page-suspended" });
+    const permission = updateApp(cached.model, {
+      type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
+    });
+    expect(permission.model).toBe(cached.model);
+    expect(permission.effects).toEqual([{ type: "cancel-pending-request", mode: "webxr" }]);
+    const restored = updateApp(cached.model, { type: "page-restored" });
+    expect(restored.effects).toEqual([
+      { type: "switch-backend", mode: "screen", requestId: 3 }, { type: "restore-page-flight" }
+    ]);
+    const stale = updateApp(restored.model, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: "webxr", activeMode: "webxr",
+      ok: true, message: "", successStatus: "XR"
+    });
+    expect(stale.model).toBe(restored.model);
+    const starting = updateApp(pending.model, {
+      type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
+    }).model;
+    const cachedStarting = updateApp(starting, { type: "page-suspended" }).model;
+    const completedWhileCached = updateApp(cachedStarting, {
+      type: "backend-transition-completed", requestId: 2, requestedMode: "webxr", activeMode: "webxr",
+      ok: true, message: "", successStatus: "XR"
+    }).model;
+    expect(completedWhileCached.presentation).toEqual({ type: "cached", retained: { type: "ready", mode: "webxr" } });
+    expect(updateApp(completedWhileCached, { type: "page-restored" }).effects).toEqual([
+      { type: "switch-backend", mode: "screen", requestId: 3 }, { type: "restore-page-flight" }
+    ]);
+    expect(updateApp(cached.model, {
+      type: "ui-action", action: { type: "activate", controlId: "game-title-start" }
+    }).effects).toEqual([]);
+    expect(updateApp(cached.model, { type: "page-hidden" }).model.presentation).toEqual({ type: "hidden" });
+  });
+
+  it.each([9, 10])("pauses the Rust playback clock and rejects old ticks in cached phase %s", (phaseCode) => {
+    const playing = { ...readyModel(phaseCode), replayPlaying: true, replayClockGeneration: 7 };
+    const cached = updateApp(playing, { type: "page-suspended" });
+    expect(cached.model.replayPlaying).toBe(false);
+    expect(cached.model.replayClockGeneration).toBe(8);
+    expect(cached.effects).toContainEqual({
+      type: "control-replay-clock", requestId: 1, generation: 8, command: { kind: "pause" }
+    });
+    const paused = updateApp(cached.model, {
+      type: "replay-clock-command-completed", requestId: 1, generation: 8,
+      state: { timeSeconds: 0, rateCode: 1, playing: false }
+    });
+    expect(paused.model.pendingReplayClockRequestId).toBeNull();
+    expect(paused.model.replayPlaying).toBe(false);
+    expect(paused.model.presentation.type).toBe("cached");
+    expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
+    expect(updateApp(cached.model, {
+      type: "replay-clock-tick", generation: 7, elapsedSeconds: 40
+    }).model).toBe(cached.model);
+    const restoration = updateApp(paused.model, { type: "page-restored" });
+    const restored = restoration.model;
+    expect(restored.replayPlaying).toBe(false);
+    const play = restoration.effects.find((effect) => effect.type === "control-replay-clock");
+    if (phaseCode === 10) {
+      expect(play).toEqual({ type: "control-replay-clock", requestId: 2, generation: 9, command: { kind: "play" } });
+      const playingAgain = updateApp(restored, {
+        type: "replay-clock-command-completed", requestId: 2, generation: 9,
+        state: { timeSeconds: 0, rateCode: 1, playing: true }
+      });
+      expect(playingAgain.model.replayPlaying).toBe(true);
+      expect(playingAgain.model.analysisCursorTimeSeconds).toBe(0);
+    } else expect(play).toBeUndefined();
+    expect(updateApp(restored, {
+      type: "replay-clock-tick", generation: 7, elapsedSeconds: 40
+    }).effects).toEqual([]);
+  });
+
+  it.each([0, 7])("retains the phase and stored Result projection after cache in phase %s", (phaseCode) => {
+    const original = readyModel(phaseCode);
+    const cached = updateApp(original, { type: "page-suspended" }).model;
+    const restored = updateApp(cached, { type: "page-restored" }).model;
+    expect(restored.gameSession).toBe(original.gameSession);
+    expect(restored.configurationMetadata).toBe(original.configurationMetadata);
+    expect(restored.flightAnalysis).toBe(original.flightAnalysis);
+    expect(restored.presentation).toMatchObject({ type: "transitioning", to: "screen" });
+  });
+
   it("serializes game operations and ignores stale completions", () => {
     const title = readyModel(0);
     const setup = updateApp(title, { type: "ui-action", action: { type: "activate", controlId: "game-title-start" } });
