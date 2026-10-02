@@ -492,17 +492,11 @@ impl AerodynamicModel {
             total_force = total_force
                 .plus(evaluation.force_body_newtons)
                 .map_err(map_math_error)
-                .map_err(|cause| AerodynamicEvaluationError::Element {
-                    role: element.role,
-                    cause,
-                })?;
+                .map_err(|cause| AerodynamicEvaluationError::Aggregate { cause })?;
             total_moment = total_moment
                 .plus(evaluation.moment_about_datum_body_newton_meters)
                 .map_err(map_math_error)
-                .map_err(|cause| AerodynamicEvaluationError::Element {
-                    role: element.role,
-                    cause,
-                })?;
+                .map_err(|cause| AerodynamicEvaluationError::Aggregate { cause })?;
             evaluations[element.role.index()] = evaluation;
         }
         let total_wrench = Wrench::try_new(total_force, total_moment).map_err(|_| {
@@ -2269,6 +2263,141 @@ mod tests {
                 cause: AeroError::NonFinite,
             })
         );
+    }
+
+    fn assert_aggregate_load_error<P: ExternalLoadProvider>(
+        provider: &P,
+        aircraft: &AircraftModel,
+        initial: &FlightState,
+        expected: AerodynamicEvaluationError,
+    ) {
+        assert_eq!(
+            provider.evaluate(aircraft, initial),
+            Err(LoadError::Aerodynamic(expected))
+        );
+        assert_eq!(
+            provider.evaluate_with_surface_deflections(
+                aircraft,
+                initial,
+                SurfaceDeflections::neutral(),
+            ),
+            Err(LoadError::Aerodynamic(expected))
+        );
+        assert_eq!(
+            advance(
+                aircraft,
+                initial,
+                PilotAcceleration::try_new(0.0).unwrap(),
+                Gravity::try_new(0.0).unwrap(),
+                provider,
+                0.01,
+            ),
+            Err(DynamicsError::Load(LoadError::Aerodynamic(expected)))
+        );
+    }
+
+    fn assert_aggregate_overflow(
+        wing_coefficients: AeroCoefficients,
+        wing_force: [f64; 3],
+        wing_moment: [f64; 3],
+    ) {
+        let initial = state([1.0, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
+        let unchanged_initial = initial;
+        let ambient = air([0.0; 3], 2.0);
+        let wind = WindField::uniform(NedVector::zero());
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            0.0,
+            0.0,
+            -0.5,
+            0.5,
+            1.0,
+            1.0,
+        )
+        .unwrap();
+        let unchanged_aircraft = aircraft;
+        let expected = AerodynamicEvaluationError::Aggregate {
+            cause: AeroError::NonFinite,
+        };
+        let mut reversed_wings = ROLES;
+        reversed_wings.swap(0, 1);
+        for roles in [ROLES, reversed_wings] {
+            let elements = roles.map(|role| {
+                let is_wing =
+                    matches!(role, AerodynamicRole::LeftWing | AerodynamicRole::RightWing);
+                AerodynamicElement::try_new(
+                    role,
+                    point(0.0, 0.0, 0.0),
+                    point(0.0, 0.0, 0.0),
+                    ElementOrientation::IDENTITY,
+                    reference(if is_wing { 1.0e308 } else { 1.0 }, 1.0, 1.0),
+                    if is_wing {
+                        wing_coefficients
+                    } else {
+                        zero_coefficients()
+                    },
+                    envelope(),
+                )
+                .unwrap()
+            });
+            for element in elements {
+                let evaluation =
+                    evaluate_element(element, &initial, 2.0, wind, SurfaceDeflections::neutral())
+                        .unwrap();
+                let is_wing = matches!(
+                    element.role,
+                    AerodynamicRole::LeftWing | AerodynamicRole::RightWing
+                );
+                assert_eq!(
+                    evaluation.force_body_newtons().components(),
+                    if is_wing { wing_force } else { [0.0; 3] }
+                );
+                assert_eq!(
+                    evaluation
+                        .moment_about_datum_body_newton_meters()
+                        .components(),
+                    if is_wing { wing_moment } else { [0.0; 3] }
+                );
+            }
+            let aerodynamics = AerodynamicModel::try_new(elements).unwrap();
+            let unchanged_aerodynamics = aerodynamics;
+            let error = aerodynamics.evaluate(&initial, ambient).unwrap_err();
+            assert_eq!(error, expected);
+            assert_eq!(error.cause(), AeroError::NonFinite);
+            assert_eq!(error.role(), None);
+            let uniform = UniformAerodynamicLoad::new(aerodynamics, ambient);
+            let spatial = WindFieldAerodynamicLoad::try_new(aerodynamics, 2.0, wind).unwrap();
+            let unchanged_uniform = uniform;
+            let unchanged_spatial = spatial;
+            assert_aggregate_load_error(&uniform, &aircraft, &initial, expected);
+            assert_aggregate_load_error(&spatial, &aircraft, &initial, expected);
+            assert_eq!(initial, unchanged_initial);
+            assert_eq!(aircraft, unchanged_aircraft);
+            assert_eq!(aerodynamics, unchanged_aerodynamics);
+            assert_eq!(uniform, unchanged_uniform);
+            assert_eq!(spatial, unchanged_spatial);
+        }
+    }
+
+    #[test]
+    fn finite_element_forces_overflow_as_an_aggregate_failure() {
+        assert_aggregate_overflow(
+            constant_coefficients(0.0, 1.0, 0.0, 0.0, 0.0, 0.0),
+            [-1.0e308, 0.0, 0.0],
+            [0.0; 3],
+        );
+    }
+
+    #[test]
+    fn finite_element_moments_overflow_as_an_aggregate_failure() {
+        for pitch_moment in [-1.0, 1.0] {
+            assert_aggregate_overflow(
+                constant_coefficients(0.0, 0.0, 0.0, 0.0, pitch_moment, 0.0),
+                [0.0; 3],
+                [0.0, pitch_moment * 1.0e308, 0.0],
+            );
+        }
     }
 
     #[test]
