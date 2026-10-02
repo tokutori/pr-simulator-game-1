@@ -140,15 +140,19 @@ impl GridWindField<'_> {
         let mut lower = [0; 3];
         let mut upper = [0; 3];
         let mut fraction = [0.0; 3];
+        let position = position_ned.components();
+        let origin = self.origin_ned.components();
         for axis in 0..3 {
             let coordinate = displacement[axis] / self.spacing_m[axis];
             let maximum = (self.counts[axis] - 1) as f64;
+            let domain_end = origin[axis] + self.spacing_m[axis] * maximum;
             if !coordinate.is_finite() {
                 return Err(WindError::NonFinite);
             }
-            if coordinate < 0.0 || coordinate > maximum {
+            if position[axis] < origin[axis] || position[axis] > domain_end {
                 return Err(WindError::OutsideGrid);
             }
+            let coordinate = coordinate.min(maximum);
             let low = libm::floor(coordinate) as usize;
             lower[axis] = low;
             upper[axis] = (low + 1).min(self.counts[axis] - 1);
@@ -277,6 +281,55 @@ mod tests {
             grid.velocity_at(point(1.0, 5.0, 7.000_001)),
             Err(WindError::OutsideGrid)
         );
+    }
+
+    #[test]
+    fn decimal_grid_endpoints_use_physical_bounds_before_index_rounding() {
+        let samples: [NedVector; 64] = core::array::from_fn(|index| {
+            vector(
+                (index % 4) as f64,
+                ((index / 4) % 4) as f64,
+                (index / 16) as f64,
+            )
+        });
+        let origin = 0.1_f64;
+        let end = origin + 0.1 * 3.0;
+        let grid = WindField::grid(
+            point(origin, origin, origin),
+            vector(0.1, 0.1, 0.1),
+            [4, 4, 4],
+            &samples,
+        )
+        .unwrap();
+        assert_eq!(
+            grid.velocity_at(point(end, end, end)),
+            Ok(vector(3.0, 3.0, 3.0))
+        );
+        assert_eq!(
+            grid.velocity_at(point(origin, origin, origin)),
+            Ok(vector(0.0, 0.0, 0.0))
+        );
+        let below_origin = f64::from_bits(origin.to_bits() - 1);
+        let above_end = f64::from_bits(end.to_bits() + 1);
+        let inside_end = f64::from_bits(end.to_bits() - 1);
+        for axis in 0..3 {
+            let mut query = [end; 3];
+            query[axis] = above_end;
+            assert_eq!(
+                grid.velocity_at(point(query[0], query[1], query[2])),
+                Err(WindError::OutsideGrid)
+            );
+            query[axis] = below_origin;
+            assert_eq!(
+                grid.velocity_at(point(query[0], query[1], query[2])),
+                Err(WindError::OutsideGrid)
+            );
+            query[axis] = inside_end;
+            let value = grid
+                .velocity_at(point(query[0], query[1], query[2]))
+                .unwrap();
+            near(value.components()[axis], 3.0);
+        }
     }
 
     #[test]
