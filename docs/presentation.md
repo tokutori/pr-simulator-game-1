@@ -279,6 +279,31 @@ Phone VRでは開始・recenter・終了を装着前後に操作できる導線�
 操縦にはgamepadまたはautomaticを利用できる。頭部姿勢を操舵として使用する機能は別途設計する。
 HUDとメニューは左右眼で読める距離・位置へ配置する。
 
+## 操作飛行の停止診断
+
+`AppModel.expectedLaunchRequestId` は開始effectが許可したexact IDを保持する。
+countdown操作の完了後も保持し、残数0・Rustの新しいairborne projection・controllerの
+create/reset成功を一つのactivated messageとして受理した時に消費する。
+`flightRuntime` はbrowser処理の相関と停止診断を表し、Rustのphase、physics、recordを置換しない。
+停止原因は同epochの最初の通知を保持し、Pause/Resume、backend切替、情報設定、Replayで解除しない。
+Title/Resultでは直前の操作飛行の診断として表示し、次の成功launchだけで解除する。
+保持した原因と現在の準備・安全終了statusを併記し、後続操作の失敗通知も表示する。
+
+既存HUD fail portは呼出し時のsession/controller/launch epochを捕捉する。
+同じcontrollerをresetで再利用する場合も古いepochの通知を拒否する。
+Rust launch後のcontroller初期化失敗は、新しいRust初期projectionと停止原因を原子的に表示する。
+新projectionを取得できない場合は`projection-unavailable`とし、旧runの数値を採用しない。
+この場合もScreen/VRの常設安全viewに取得不能通知と安全終了を表示する。
+Information/Custom全offと通常Head HUDの収容失敗は、必須通知と操作を抑止しない。
+停止中のResumeはviewとpure updateの両方で拒否する。
+
+安全終了effectはexact launch/session相関を確認し、実際のRust phaseが5/6の場合だけ既存Abortを要求する。
+phase getter失敗時に許可や成功を生成しない。別phaseではAbortを送らず、fresh projectionを確認する。
+Abort後のfresh terminal projectionはcontroller resetより先にpure updateへ渡す。
+reset例外でも検証済みの終了projectionと原因を保持し、Result理由や保存recordを診断で書き換えない。
+同期完了effectによるsession/controller変更後は、捕捉した旧controllerをresetしない。
+数値HUDは初期化成功済みの同epoch controller、またはAppが保持する検証済みprojectionだけから導出する。
+
 ## 検証と完了条件
 
 - BPG-014: engine境界、全Sceneのview model、anchor別追従、backend切替、単一loop、transform合成、resource解放。

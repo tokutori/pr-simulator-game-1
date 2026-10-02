@@ -2,6 +2,8 @@ import type { FlightCameraMode, FlightRenderPose, PresentationMode } from "../re
 import type { UiAction } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData, FlightAnalysisSample } from "../game/flight-record-query.js";
+import { acceptsFlightActivation, failFlightLaunch, flightRuntimeNotice, stopFlightRuntime } from "./flight-runtime-ui.js";
+import type { FlightLaunchFailure, FlightRuntimeUiState } from "./flight-runtime-ui.js";
 
 export interface StoredFlightRecordUiEntry {
   readonly id: number;
@@ -134,6 +136,8 @@ export interface AppModel {
   readonly pendingRecordListRequestId: number | null;
   readonly nextRecordListRequestId: number;
   readonly pendingGameRequestId: number | null;
+  readonly expectedLaunchRequestId: number | null;
+  readonly flightRuntime: FlightRuntimeUiState;
   readonly nextRequestId: number;
 }
 
@@ -236,6 +240,16 @@ export type AppMessage =
       readonly snapshot: FlightSnapshot | null;
       readonly canResume?: boolean;
     }
+  | { readonly type: "flight-controller-activated"; readonly launchRequestId: number; readonly projection: GameSessionProjection }
+  | { readonly type: "flight-controller-stopped"; readonly launchRequestId: number; readonly cause: string; readonly snapshot: FlightSnapshot }
+  | {
+      readonly type: "flight-launch-failed";
+      readonly launchRequestId: number;
+      readonly cause: string;
+      readonly outcome: FlightLaunchFailure<GameSessionProjection>;
+    }
+  | { readonly type: "flight-recovery-completed"; readonly launchRequestId: number; readonly requestId: number; readonly projection: GameSessionProjection }
+  | { readonly type: "flight-recovery-failed"; readonly launchRequestId: number; readonly requestId: number; readonly cause: string }
   | { readonly type: "game-session-status"; readonly message: string }
   | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisData }
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
@@ -287,7 +301,8 @@ export type AppEffect =
       readonly generation: number;
       readonly command: ReplayClockCommand;
     }
-  | { readonly type: "game-session-operation"; readonly operation: GameSessionOperation; readonly requestId: number };
+  | { readonly type: "game-session-operation"; readonly operation: GameSessionOperation; readonly requestId: number }
+  | { readonly type: "recover-stopped-flight"; readonly launchRequestId: number; readonly requestId: number };
 
 export interface AppTransition {
   readonly model: AppModel;
@@ -316,6 +331,16 @@ export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshot
 
 export function gameSessionCountdown(session: GameSessionUiState): number {
   return session.kind === "countdown" ? session.countdownRemaining : 0;
+}
+
+export function flightDiagnosticNotice(model: AppModel): string | null {
+  return flightRuntimeNotice(model, gameSessionPhaseCode(model.gameSession));
+}
+
+export function flightRecoveryControlId(model: AppModel): string | null {
+  const diagnostic = model.flightRuntime;
+  return diagnostic.kind === "projection-unavailable" || diagnostic.kind === "stopped" && (model.gameSession.kind === "flight" || model.gameSession.kind === "paused-flight")
+    ? `flight-recovery-abort-${String(diagnostic.launchRequestId)}` : null;
 }
 
 export function gameSessionState(
@@ -393,6 +418,8 @@ export function createInitialAppModel(): AppModel {
     pendingRecordListRequestId: null,
     nextRecordListRequestId: 1,
     pendingGameRequestId: null,
+    expectedLaunchRequestId: null,
+    flightRuntime: Object.freeze({ kind: "inactive" }),
     nextRequestId: 1
   });
 }
@@ -520,7 +547,39 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       if (model.presentation.type !== "ready" || model.presentation.mode !== message.mode) return transition(model);
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
+    case "flight-controller-activated": {
+      if (!acceptsFlightActivation(model, message.launchRequestId, gameSessionPhaseCode(model.gameSession), gameSessionCountdown(model.gameSession), message.projection)) return transition(model);
+      const activated = withModel(model, { expectedLaunchRequestId: null, flightRuntime: Object.freeze({ kind: "active", launchRequestId: message.launchRequestId }), status: "" });
+      return updateApp(activated, { type: "game-session-synced", ...message.projection });
+    }
+    case "flight-controller-stopped": {
+      const flightRuntime = stopFlightRuntime(model.flightRuntime, message.launchRequestId, gameSessionPhaseCode(model.gameSession), message.cause);
+      if (flightRuntime === model.flightRuntime || model.expectedLaunchRequestId !== null) return transition(model);
+      const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
+      const gameSession = model.gameSession.kind === "result" ? model.gameSession
+        : gameSessionState(gameSessionPhaseCode(model.gameSession), 0, message.snapshot, canResume, model.gameSession);
+      return gameSession === null ? transition(model) : transition(withModel(model, { flightRuntime, gameSession: Object.freeze(gameSession) }));
+    }
+    case "flight-launch-failed": {
+      const result = failFlightLaunch(model, message.launchRequestId, gameSessionPhaseCode(model.gameSession), gameSessionCountdown(model.gameSession), message.cause, message.outcome);
+      if (result === null) return transition(model);
+      const failed = withModel(model, { ...result.correlation, status: `発進準備に失敗した: ${message.cause}` });
+      return result.projection === null ? transition(failed) : updateApp(failed, { type: "game-session-synced", ...result.projection });
+    }
+    case "flight-recovery-completed": {
+      if (model.pendingGameRequestId !== message.requestId || model.flightRuntime.kind !== "stopped" && model.flightRuntime.kind !== "projection-unavailable"
+          || model.flightRuntime.launchRequestId !== message.launchRequestId) return transition(model);
+      if (gameSessionState(message.projection.phaseCode, message.projection.countdownRemaining, message.projection.snapshot, message.projection.canResume, model.gameSession) === null) return transition(withModel(model, { pendingGameRequestId: null, status: "終了処理後の飛行状態を取得できない" }));
+      const recovered = withModel(model, { flightRuntime: Object.freeze({ ...model.flightRuntime, kind: "stopped" }) });
+      return updateApp(recovered, { type: "game-operation-completed", requestId: message.requestId, ...message.projection });
+    }
+    case "flight-recovery-failed": {
+      if (model.pendingGameRequestId !== message.requestId || model.flightRuntime.kind !== "stopped" && model.flightRuntime.kind !== "projection-unavailable"
+          || model.flightRuntime.launchRequestId !== message.launchRequestId) return transition(model);
+      return transition(withModel(model, { pendingGameRequestId: null, status: `安全終了の状態確認に失敗した: ${message.cause}` }));
+    }
     case "game-session-synced": {
+      if (model.flightRuntime.kind === "projection-unavailable" || model.expectedLaunchRequestId !== null && (message.phaseCode === 5 || message.phaseCode === 6)) return transition(model);
       const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
@@ -533,6 +592,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         : [];
       return transition(withModel(model, {
         gameSession: Object.freeze(gameSession),
+        expectedLaunchRequestId: nextPhaseCode === 4 ? model.expectedLaunchRequestId : null,
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
@@ -595,6 +655,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return transition(withModel(model, {
         pendingGameRequestId: null,
         gameSession: Object.freeze(gameSession),
+        expectedLaunchRequestId: nextPhaseCode === 4 ? model.expectedLaunchRequestId : null,
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
@@ -732,6 +793,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return transition(withModel(model, { status: message.message }));
     case "game-operation-failed": {
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
+      if (model.expectedLaunchRequestId === message.requestId) model = withModel(model, { expectedLaunchRequestId: null });
       if (message.currentSession !== undefined) {
         const completed = updateApp(model, {
           type: "game-operation-completed",
@@ -748,6 +810,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     }
     case "page-hidden": {
       return transition(withModel(model, {
+        expectedLaunchRequestId: null,
+        flightRuntime: model.flightRuntime.kind === "active" ? Object.freeze({ kind: "inactive" }) : model.flightRuntime,
         presentation: Object.freeze({ type: "hidden" }),
         replayPlaying: false,
         replayClockGeneration: model.replayClockGeneration + 1,
@@ -765,8 +829,16 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId === flightRecoveryControlId(model) && model.pendingGameRequestId === null
+      && (model.flightRuntime.kind === "stopped" || model.flightRuntime.kind === "projection-unavailable")) {
+    const requestId = model.nextRequestId;
+    return transition(withModel(model, { pendingGameRequestId: requestId, nextRequestId: requestId + 1, status: "飛行状態を確認して安全終了を要求している" }),
+      [{ type: "recover-stopped-flight", launchRequestId: model.flightRuntime.launchRequestId, requestId }]);
+  }
+  if (action.type === "activate" && action.controlId.startsWith("flight-recovery-abort-")) return transition(model);
+  if (model.flightRuntime.kind === "projection-unavailable" && isGameFlowActivation(action)) return transition(model);
   if (action.type === "activate" && action.controlId === "game-flight-resume"
-      && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
+      && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume || model.flightRuntime.kind === "stopped")) {
     return transition(model);
   }
   if (action.type === "activate" && model.pendingGameRequestId === null && model.gameSession.kind === "paused-flight") {
@@ -997,6 +1069,7 @@ function beginGameOperation(model: AppModel, operation: GameSessionOperation): A
   const requestId = model.nextRequestId;
   return transition(withModel(model, {
     pendingGameRequestId: requestId,
+    expectedLaunchRequestId: operation === "start-flight" ? requestId : operation === "cancel-countdown" ? null : model.expectedLaunchRequestId,
     nextRequestId: requestId + 1,
     status: "ゲーム状態を更新している"
   }), [{ type: "game-session-operation", operation, requestId }]);

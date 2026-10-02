@@ -1,6 +1,6 @@
 import { createBootViewModel } from "./boot-view.js";
 import { createGameViewModel } from "./game-view.js";
-import { gameSessionPhaseCode } from "./app-state.js";
+import { flightDiagnosticNotice, gameSessionPhaseCode } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { createFlightHudModel } from "../presentation/flight-hud-model.js";
@@ -20,16 +20,17 @@ export interface FlightFrameViewDraft {
 }
 
 export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnapshot | null, viewer: ViewerFrame): FlightFrameViewDraft {
+  const displayedSnapshot = model.flightRuntime.kind === "projection-unavailable" ? null : snapshot;
   const phase = gameSessionPhaseCode(model.gameSession);
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
-  const hud = snapshot !== null && (phase === 5 || phase === 6)
-    ? createFlightHudModel(snapshot, code as InformationLevelCode, model.difficulty.hudProfile)
+  const hud = displayedSnapshot !== null && (phase === 5 || phase === 6)
+    ? createFlightHudModel(displayedSnapshot, code as InformationLevelCode, model.difficulty.hudProfile, flightDiagnosticNotice(model))
     : null;
   const headHud = hud !== null && phase === 5 && model.presentation.type === "ready" && model.presentation.mode !== "screen"
     ? createHeadHudView(hud, viewer)
     : NO_HEAD_HUD_VIEW;
-  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud });
+  return Object.freeze({ model, snapshot: displayedSnapshot, analysis: model.flightAnalysis, hud, headHud });
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {

@@ -5,6 +5,7 @@ import { nedToWgs84 } from "../render/contracts/launch-venue.js";
 export type InformationLevelCode = 0 | 1 | 2 | 3 | 4;
 
 export interface FlightHudModel {
+  readonly diagnostic?: string;
   readonly status: string;
   readonly attitude: Readonly<{ rollDegrees: number; pitchDegrees: number }> | null;
   readonly flightPathAngleDegrees: number | null;
@@ -26,7 +27,17 @@ export interface FlightHudModel {
 export function createFlightHudModel(
   snapshot: FlightSnapshot,
   informationCode: InformationLevelCode,
-  customProfile: HudProfileUiState = fullProfile
+  customProfile: HudProfileUiState = fullProfile,
+  diagnostic: string | null = null
+): FlightHudModel {
+  const model = deriveFlightHudModel(snapshot, informationCode, customProfile);
+  return diagnostic === null ? model : Object.freeze({ ...model, status: "飛行処理停止 · 最後の有効値", diagnostic });
+}
+
+function deriveFlightHudModel(
+  snapshot: FlightSnapshot,
+  informationCode: InformationLevelCode,
+  customProfile: HudProfileUiState
 ): FlightHudModel {
   if (informationCode === 4) return customFlightHudModel(snapshot, customProfile);
   const telemetry = snapshot.telemetry;

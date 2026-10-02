@@ -47,6 +47,10 @@ export function createHeadHudView(model: FlightHudModel, viewer: ViewerFrame, pr
   const readouts = model.readouts.split("\n").filter((line) => !line.startsWith("PITCH ")).join("\n");
   const text = [readouts, model.telemetry].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
   const textElements: HeadHudElement[] = [];
+  if (model.diagnostic !== undefined) textElements.push(Object.freeze({
+    kind: "text", id: "head-flight-stop", label: "STOP", bounds: unitRect,
+    value: model.diagnostic, tone: "warning"
+  }));
   if (model.warning !== null) textElements.push(Object.freeze({
     kind: "text", id: "head-warning", label: "WARNING", bounds: unitRect,
     value: model.warning, tone: "warning"

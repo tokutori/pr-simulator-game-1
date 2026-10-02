@@ -13,7 +13,7 @@ import type {
   DifficultyUiState,
   PresentationUiState
 } from "./app-state.js";
-import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
+import { flightDiagnosticNotice, flightRecoveryControlId, gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 
 export function createGameViewModel(
   model: AppModel,
@@ -26,6 +26,23 @@ export function createGameViewModel(
   const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
   const pauseOverlay = model.gameSession.kind === "paused-flight" ? model.gameSession.overlay.kind : null;
   const scene = sceneForPhase(phaseCode);
+  const diagnostic = flightDiagnosticNotice(model);
+  const diagnosticStatus = diagnostic === null ? model.status : model.status === "" ? diagnostic : `${diagnostic}\n${model.status}`;
+  const recoveryId = flightRecoveryControlId(model);
+  if (recoveryId !== null && diagnostic !== null) {
+    const activeMode = activeModeOf(model.presentation);
+    const controls: (UiStatus | UiButton)[] = [
+      Object.freeze({ ...status("flight-stop-notice", "飛行処理", diagnosticStatus), rect: normalizedRect(0.08, 0.14, 0.84, 0.48) }),
+      Object.freeze({ ...button(recoveryId, "飛行状態を確認して安全終了", model.pendingGameRequestId === null), rect: normalizedRect(0.08, 0.7, 0.84, 0.12) })
+    ];
+    if (activeMode === "phone-vr" || activeMode === "webxr") controls.push(Object.freeze({
+      ...button("boot-exit-vr", "VRを終了", canRequest(model.presentation)), rect: normalizedRect(0.08, 0.85, 0.84, 0.075)
+    }));
+    return Object.freeze({ scene, title: titleForScene(scene), description: diagnosticStatus, activeOverlay: phaseCode === 6 ? "Pause" : null,
+      panels: Object.freeze([Object.freeze({ id: "game-flow", title: "飛行処理の停止", anchor: "menu", localPose: IDENTITY_POSE,
+        size: Object.freeze({ width: 2.4, height: 1.8 }), controls: Object.freeze(controls) })]),
+      headHud: model.flightRuntime.kind === "stopped" && phaseCode === 5 && activeMode !== "screen" && headHudView.kind === "visible" ? headHudView.layer : NO_HEAD_HUD });
+  }
   const buttons = gameButtons(
     phaseCode,
     model.difficulty,
@@ -59,7 +76,7 @@ export function createGameViewModel(
   const vrFlightPanel = (phaseCode === 5 || phaseCode === 6) && (activeMode === "webxr" || activeMode === "phone-vr");
   const controls: (UiButton | UiToggle | UiRange | UiStatus | UiChart)[] = phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
     ? []
-    : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume))];
+    : [status("game-state", "状態", diagnosticStatus || descriptionForPhase(phaseCode, model.difficulty, countdownRemaining, canResume))];
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
   if (phaseCode === 5 || phaseCode === 6) {
     if (!vrFlightPanel) {
