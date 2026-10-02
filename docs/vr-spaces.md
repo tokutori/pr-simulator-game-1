@@ -35,6 +35,23 @@ head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用し�
 flight-path marker等は定義された方向を眼へ投影し、固定panelの文字項目と区別する。
 Screen HUDはviewport基準であり、VRのanchorをpixel位置へ直接置換しない。
 
+## Panelの深度合成
+
+`UiPanel`の合成規則はanchorから純粋に導出する。World/Cockpitはphysical、Menu/Headはoverlayとする。
+physical panelは世界と同じ深度判定・深度書込みに参加する。Menu/Head panelは世界の後へ合成し、
+水面・機体・透明な景観によって必須操作を隠さない。panelとcursorは世界の深度を変更せず、cursorをpanelの後へ描く。
+これは合成規則であり、anchor pose、左右眼の有限距離・視差、camera、終端Flight poseを変更しない。
+
+Three adapterはoverlay panelをtransparent queueへ入れ、depthTest/depthWriteを無効にする。
+描画順は世界、非操作Head情報板、interactive panel、panel cursorの順とし、adapter内の予約順序を使用する。
+世界とoverlayの親GroupはrenderOrder 0を維持し、世界objectへUI用の描画順序を流用しない。
+Groupの順序は子meshの順序より優先されるため、両者を合わせて検査する。
+opaque queueのrenderOrderだけで透明景観より後へ描けるとは扱わない。
+同じmeshをphysical panelへ戻す際はopaque queueと深度判定・書込みを復元する。
+
+Result Menuの可視性とdwellの初期確定は別の受入条件である。可視化だけで中立姿勢からの意図しないRetryが
+解消したとは扱わず、通常entryでResult到達後に新規操作なしで滞在できるかを独立に確認する。
+
 ## Menuと入力
 
 Menu用referenceと景観のcamera rigを分離する。

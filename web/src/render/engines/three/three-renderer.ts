@@ -29,6 +29,7 @@ import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
 import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import type { CinematicCameraView } from "../../contracts/camera.js";
+import { uiPanelComposition } from "../../contracts/ui.js";
 import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import { composePose, inversePose } from "../../contracts/math.js";
@@ -70,6 +71,7 @@ const TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS = 42 * 16;
 const TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS = 32;
 const TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS = 24;
 const TITLE_SCREEN_PITCH_HALF_RADIANS = 3 * Math.PI / 180;
+const PANEL_OVERLAY_RENDER_ORDER = 2000;
 
 export function titleScreenCameraPoseForViewport(width: number, height: number): Pose {
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
@@ -333,7 +335,7 @@ export function createThreeRenderer(
   panelTexture.colorSpace = SRGBColorSpace;
   panelTexture.minFilter = LinearFilter;
   panelTexture.generateMipmaps = false;
-  const panelMaterial = new MeshBasicMaterial({ map: panelTexture, side: DoubleSide });
+  const panelMaterial = new MeshBasicMaterial({ map: panelTexture, side: DoubleSide, forceSinglePass: true });
   const panelGeometry = new PlaneGeometry(2.4, 1.8);
   const panelMesh = new Mesh(panelGeometry, panelMaterial);
   panelMesh.visible = false;
@@ -492,6 +494,16 @@ export function createThreeRenderer(
           : frame.panelPose;
         setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, frame.panelPose));
       }
+      const overlayPanel = frame.panel !== null && uiPanelComposition(frame.panel.anchor) === "overlay";
+      if (panelMaterial.transparent !== overlayPanel) {
+        panelMaterial.transparent = overlayPanel;
+        panelMaterial.needsUpdate = true;
+      }
+      panelMaterial.depthTest = !overlayPanel;
+      panelMaterial.depthWrite = !overlayPanel;
+      panelMesh.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER : 0;
+      gazeCursorMaterial.depthTest = !overlayPanel;
+      gazeCursor.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
         panelTexture.needsUpdate = true;

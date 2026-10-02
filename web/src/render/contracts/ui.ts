@@ -113,6 +113,19 @@ export interface UiPanel {
   readonly controls: readonly UiControl[];
 }
 
+export type UiPanelComposition = "physical" | "overlay";
+
+export function uiPanelComposition(anchor: AnchorKind): UiPanelComposition {
+  switch (anchor) {
+    case "world":
+    case "cockpit":
+      return "physical";
+    case "menu":
+    case "head":
+      return "overlay";
+  }
+}
+
 export interface UiViewModel {
   readonly scene: GameScene;
   readonly title: string;
