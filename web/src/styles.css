@@ -75,6 +75,12 @@ body {
   letter-spacing: 0.02em;
 }
 
+.screen-ui-shell[data-overlay="Credits"] .screen-ui-status {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
 .screen-ui-shell[data-mode="analysis"] > .build-version {
   position: fixed;
   right: max(0.75rem, env(safe-area-inset-right));

@@ -68,11 +68,13 @@ describe("Boot application state", () => {
   });
 
   it("dispatches every enabled game-flow button from its rendered phase", () => {
+    const paused = sessionForTest(6, flightSnapshot);
+    if (paused.kind !== "paused-flight") throw new Error("Invalid paused-flight fixture");
     const models = [
       ...[0, 1, 2, 3, 4, 5, 8, 10].map((phaseCode) => readyModel(phaseCode)),
       { ...readyModel(6), gameSession: sessionForTest(6, flightSnapshot, true) },
-      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "settings" as const } } },
-      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "help" as const } } },
+      { ...readyModel(6), gameSession: { ...paused, overlay: { kind: "settings" as const } } },
+      { ...readyModel(6), gameSession: { ...paused, overlay: { kind: "help" as const } } },
       { ...readyModel(7), resultTab: "summary" as const },
       { ...readyModel(7), resultTab: "analysis" as const },
       { ...readyModel(9), replayViewMode: "cinematic" as const },

@@ -63,7 +63,9 @@ describe("Game scene view model", () => {
   });
 
   it("projects separate Pause, Settings, and Help overlays while the flight remains paused", () => {
-    const menuModel = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(6) });
+    const paused = sessionForPhase(6);
+    if (paused.kind !== "paused-flight") throw new Error("Invalid paused-flight fixture");
+    const menuModel = Object.freeze({ ...createInitialAppModel(), gameSession: paused });
     const menu = createGameViewModel(menuModel, flightSnapshot);
     expect(menu.activeOverlay).toBe("Pause");
     expect(menu.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([

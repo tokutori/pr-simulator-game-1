@@ -300,7 +300,7 @@ function drawControl(context: PanelDrawingContext, control: UiControl, width: nu
   const y = control.rect.y * height;
   const controlWidth = control.rect.width * width;
   const controlHeight = control.rect.height * height;
-  context.setGlobalAlpha(control.enabled ? 1 : 0.45);
+  context.setGlobalAlpha(control.kind === "status" || control.enabled ? 1 : 0.45);
   context.setFillStyle(control.kind === "button" ? "#31555a" : "#233c42");
   context.fillRect(x, y, controlWidth, controlHeight);
   context.setStrokeStyle("#91b4b3");

@@ -11,12 +11,14 @@ import type {
   PresentationUiState
 } from "./app-state.js";
 import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
+import { createDataCreditsViewModel } from "./data-credits-view.js";
 
 export function createGameViewModel(
   model: AppModel,
   snapshot: FlightSnapshot | null,
   analysis: FlightAnalysisData | null = model.flightAnalysis
 ): UiViewModel {
+  if (model.gameSession.kind === "title" && model.gameSession.overlay === "data-credits") return createDataCreditsViewModel();
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
   const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
@@ -298,6 +300,15 @@ export function createGameViewModel(
     : controls.map((control) => control.kind === "button" || control.kind === "range"
       ? Object.freeze({ ...control, enabled: false })
       : control);
+  if (phaseCode === 0) {
+    const stateIndex = renderedControls.findIndex((control) => control.id === "game-state");
+    const stateControl = renderedControls[stateIndex];
+    if (stateControl !== undefined) renderedControls[stateIndex] = Object.freeze({ ...stateControl, rect: normalizedRect(0.08, 0.84, 0.61, 0.075) });
+    renderedControls.push(Object.freeze({
+      ...button("data-credits-open", "Data credits", model.pendingGameRequestId === null),
+      rect: normalizedRect(0.71, 0.84, 0.21, 0.075)
+    }));
+  }
   const panel: UiPanel = Object.freeze({
     id: "game-flow",
     title: "ゲーム進行",

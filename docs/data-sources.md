@@ -71,3 +71,14 @@ CSSの`image-set()`は登録経路を実装するまで使用しない。
 小容量assetのdata URL化も元ファイルの登録を要する。動的URL生成は登録済みasset IDから解決し、
 任意のruntime URLをassetとして読み込む経路は設けない。依存package内のassetはpackageの利用条件で管理する。
 この規則とbuild graph検査はBPG-001の対象である。実assetの配布・creditsとruntime resolverはBPG-009/013で検証する。
+
+## ScreenとVRの帰属表示
+
+Titleの`Data credits`から、OpenStreetMap、AW3D30 (JAXA)、Copernicusの帰属・改変通知・免責文を
+共通Menu panelで表示する。TitleのUI overlayとして管理し、Rust GameSessionのphaseとVR sessionを保持する。
+Screenは通常のpanelスクロールと折返しで全文へ到達できる。VRは全文を一枚のpanelへ分割配置し、
+`Titleへ戻る`をhead-gazeまたはGamepadの選択操作で実行し、Credits内ではGamepadの戻る操作も使用できる。
+Screen Flight HUDの既存リンクも維持する。
+通知本文は同一の定数から導出し、DOM非表示中も両眼Creditsから参照できる。
+自動検査は共通viewの開閉、本文の一致、VR描画commandと帰還buttonの非重複を確認する。
+実スマートフォン・viewerでの文字可読性と光学適合は別の受入条件である。

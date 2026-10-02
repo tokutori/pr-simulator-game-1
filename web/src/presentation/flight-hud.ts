@@ -3,6 +3,7 @@ import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { createFlightHudModel } from "./flight-hud-model.js";
 import type { InformationLevelCode } from "./flight-hud-model.js";
 import type { HudProfileUiState } from "../app/app-state.js";
+import { TERRAIN_ATTRIBUTION } from "../app/data-attribution.js";
 
 export class FlightHudAdapter implements FlightHudPort {
   private readonly status: HTMLOutputElement;
@@ -57,22 +58,22 @@ export class FlightHudAdapter implements FlightHudPort {
     this.terrainAttribution.href = "https://earth.jaxa.jp/en/data/policy/";
     this.terrainAttribution.target = "_blank";
     this.terrainAttribution.rel = "noopener noreferrer";
-    this.terrainAttribution.textContent = "地形 AW3D30 (JAXA)";
+    this.terrainAttribution.textContent = TERRAIN_ATTRIBUTION.jaxa;
     this.copernicusAttribution = documentRef.createElement("a");
     this.copernicusAttribution.className = "flight-hud-attribution-link";
     this.copernicusAttribution.href = "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM";
     this.copernicusAttribution.target = "_blank";
     this.copernicusAttribution.rel = "noopener noreferrer";
-    this.copernicusAttribution.textContent = "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.";
+    this.copernicusAttribution.textContent = TERRAIN_ATTRIBUTION.copernicus;
     this.copernicusLicenseNotice = documentRef.createElement("details");
     this.copernicusLicenseNotice.className = "flight-hud-attribution-notice";
     this.copernicusLicenseNotice.open = true;
     const licenseSummary = documentRef.createElement("summary");
     licenseSummary.textContent = "Copernicus GLO-30 利用条件";
     const modifiedNotice = documentRef.createElement("p");
-    modifiedNotice.textContent = "produced using Copernicus WorldDEM-30.";
+    modifiedNotice.textContent = TERRAIN_ATTRIBUTION.modified;
     const liabilityNotice = documentRef.createElement("p");
-    liabilityNotice.textContent = "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.";
+    liabilityNotice.textContent = TERRAIN_ATTRIBUTION.liability;
     this.copernicusLicenseNotice.append(licenseSummary, modifiedNotice, liabilityNotice);
     this.adi = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.adi.setAttribute("viewBox", "0 0 240 180");

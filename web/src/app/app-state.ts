@@ -69,7 +69,7 @@ export type PresentationUiState = LivePresentationUiState
 
 export type GameSessionUiState =
   | { readonly kind: "boot"; readonly phaseCode: -1 }
-  | { readonly kind: "title"; readonly phaseCode: 0 }
+  | { readonly kind: "title"; readonly phaseCode: 0; readonly overlay: "menu" | "data-credits" }
   | { readonly kind: "setup"; readonly phaseCode: 1 }
   | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
@@ -318,7 +318,7 @@ export function gameSessionState(
 ): GameSessionUiState | null {
   switch (phaseCode) {
     case -1: return { kind: "boot", phaseCode: -1 };
-    case 0: return { kind: "title", phaseCode: 0 };
+    case 0: return { kind: "title", phaseCode: 0, overlay: previous?.kind === "title" ? previous.overlay : "menu" };
     case 1: return { kind: "setup", phaseCode: 1 };
     case 2: return { kind: "briefing-preparing", phaseCode: 2 };
     case 3: return { kind: "briefing-ready", phaseCode: 3 };
@@ -756,6 +756,17 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (model.gameSession.kind === "title") {
+    if (action.type === "activate" && action.controlId === "data-credits-open" && model.pendingGameRequestId === null) {
+      return transition(withModel(model, { gameSession: { ...model.gameSession, overlay: "data-credits" } }));
+    }
+    if (model.gameSession.overlay === "data-credits" && action.type !== "recenter-menu"
+        && !(action.type === "activate" && action.controlId.startsWith("boot-"))) {
+      return action.type === "back" || (action.type === "activate" && action.controlId === "data-credits-close")
+        ? transition(withModel(model, { gameSession: { ...model.gameSession, overlay: "menu" } }))
+        : transition(model);
+    }
+  }
   if (action.type === "activate" && action.controlId === "game-flight-resume"
       && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
     return transition(model);

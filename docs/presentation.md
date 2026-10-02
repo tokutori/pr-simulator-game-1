@@ -34,6 +34,10 @@ VR panelは両眼で読める文字・距離とhit領域を持つ。共通layout
 texture化したpanelへ適用できる構成とする。通常DOMの自動取り込みは前提にしない。
 graphも同じrecord・軸・cursorモデルからVR panelへ描く。VR表示専用の集計を作らない。
 
+Titleの`Data credits`は共通Menu panelへ帰属・改変通知・免責文を表示する。
+UI overlayの開閉だけを純粋updateで行い、Rust phaseとpresentation sessionを保持する。
+本文とScreen Flight HUDの通知は共通定数を使用する。全文とTitleへの帰還操作はScreen/VR双方へ提供する。
+
 DOM Overlayは選択機能であり、対応機種でのみ使用する。非対応でも主要操作をVR panelで完結させる。
 根拠: [WebXR DOM Overlays仕様](https://immersive-web.github.io/dom-overlays/)。
 DOMとXR入力を併用する場合は同じ選択が二重発火しないよう共通actionで処理する。
