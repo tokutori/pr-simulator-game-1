@@ -360,8 +360,10 @@ export function createThreeRenderer(
       object.castShadow = (Array.isArray(material) ? material : [material]).every((part) => !part.transparent);
     }
   });
+  const trackingOrigin = new Group();
+  aircraftRoot.add(trackingOrigin);
   const camera = new PerspectiveCamera(60, 1, 0.05, 100_000);
-  aircraftRoot.add(camera);
+  trackingOrigin.add(camera);
   let titleCameraPose = titleScreenCameraPoseForViewport(1, 1);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
@@ -388,13 +390,17 @@ export function createThreeRenderer(
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
     return flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")));
   };
+  const currentPilotEyePose = (): Pose => flightPose === null
+    ? IDENTITY_POSE
+    : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
+  const currentTrackingMountPose = (): Pose => currentExternalCameraPose() ?? currentPilotEyePose();
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(transformRay(ray, currentExternalCameraPose()));
+    if (ray !== null) selectRayHandler(transformRay(ray, currentTrackingMountPose()));
   };
 
   const onSessionEnd = (): void => {
@@ -412,10 +418,14 @@ export function createThreeRenderer(
 
   const onReferenceSpaceReset = (event: XRReferenceSpaceEvent): void => {
     const transform = event.transform as XRRigidTransform | null | undefined;
-    referenceSpaceResetHandler?.(transform === null || transform === undefined ? null : {
+    const previousReferenceFromNew = transform === null || transform === undefined ? null : {
       position: vec3(transform.position.x, transform.position.y, transform.position.z),
       orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
-    });
+    };
+    const mount = currentTrackingMountPose();
+    referenceSpaceResetHandler?.(previousReferenceFromNew === null ? null : composePose(
+      composePose(mount, previousReferenceFromNew), inversePose(mount)
+    ));
   };
 
   const rendererAdapter: RendererAdapter = {
@@ -445,16 +455,9 @@ export function createThreeRenderer(
       const externalCameraPose = currentExternalCameraPose();
       const useExternalCamera = externalCameraPose !== null;
       const fixedView = useExternalCamera && flightCameraMode !== "chase" ? fixedCameraView : null;
-      const pilotEyePose = flightPose === null
-        ? IDENTITY_POSE
-        : pilotEyePoseThree(
-          SYNTHETIC_PILOT_EYE_POINT,
-          flightPose.pilotPositionMeters,
-          flightPose.initialPilotPositionMeters
-        );
-      const cameraPose = composePose(pilotEyePose, frame.cameraPose);
       const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE;
-      setPose(camera, composePose(titlePresentationPose, cameraPose));
+      setPose(trackingOrigin, composePose(titlePresentationPose, currentPilotEyePose()));
+      setPose(camera, frame.cameraPose);
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
@@ -642,12 +645,14 @@ export function createThreeRenderer(
       fixedCameraView = view;
     },
     transformTrackingPose(pose: Pose): Pose {
-      const externalPose = currentExternalCameraPose();
-      return externalPose === null ? pose : composePose(externalPose, pose);
+      return flightPose === null ? pose : composePose(currentTrackingMountPose(), pose);
     }
   };
 
   const webxr: WebXrSessionPort = {
+    transformTrackingPose(value: Pose): Pose {
+      return composePose(currentTrackingMountPose(), value);
+    },
     async checkAvailability(): Promise<WebXrAvailability> {
       if (xrSystem === null) return { supported: false, message: "WebXR is unavailable in this browser" };
       try {

@@ -193,12 +193,12 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
       backend.recenterMenu();
       const movedMenu = render(backend);
       expectMatrix(centerCamera(movedMenu.eyes), centerCamera(turned.eyes));
-      const menuRelativeToHead = poseMatrix(movedMenu.frame.cameraPose).invert().multiply(poseMatrix(movedMenu.frame.panelPose));
+      const menuRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(movedMenu.frame.cameraPose)).invert().multiply(poseMatrix(movedMenu.frame.panelPose));
       expectMatrix(menuRelativeToHead, new Matrix4().makeTranslation(0, 0, -2.4));
       backend.recenterTracking();
       const reset = render(backend);
       expectMatrix(poseMatrix(reset.frame.cameraPose), new Matrix4());
-      expectMatrix(poseMatrix(reset.frame.cameraPose).invert().multiply(poseMatrix(reset.frame.panelPose)), menuRelativeToHead);
+      expectMatrix(poseMatrix(bundle.renderer.transformTrackingPose(reset.frame.cameraPose)).invert().multiply(poseMatrix(reset.frame.panelPose)), menuRelativeToHead);
       browser.emit(orientation.left);
       const later = render(backend);
       expectMatrix(centerCamera(reset.eyes).invert().multiply(centerCamera(later.eyes)), new Matrix4().makeRotationY(Math.PI / 9));

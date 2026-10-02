@@ -8,6 +8,8 @@ import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/rend
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
+import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
+import type { AnchorKind } from "../../web/src/render/anchors.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { placeMenuPanel } from "../../web/src/render/anchors.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
@@ -294,7 +296,130 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       }
     }
   });
+
+  it.each(["menu", "head", "cockpit", "world"] as const)("matches real Phone VR %s gaze to both rendered eyes for moving PilotEye positions", async (anchor) => {
+    for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
+      const flight: FlightRenderPose = {
+        datumPositionNed: { north: 100, east: 25, down: -8 },
+        attitudeBodyToNed: { w: Math.cos(0.1), x: Math.sin(0.1), y: 0, z: 0 },
+        pilotPositionMeters, initialPilotPositionMeters: 0.1
+      };
+      bundle.renderer.setFlightPose(flight);
+      const phone = await startPhone(bundle, viewport);
+      try {
+        phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10 });
+        const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
+        const mountedHead = composePose(pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1), rawFrame.cameraPose);
+        const view = phonePanel(anchor, mountedHead);
+        const current = phone.backend.currentFrame(20, view);
+        driver.draws.length = 0;
+        bundle.renderer.render(current);
+        const center = centerEye(driver.draws);
+        const panel = driver.draws[0]?.panel;
+        if (panel === undefined) throw new Error("Missing Phone panel draw");
+        expectMatrix(center, poseMatrix(flightRelativePose(flight, mountedHead)));
+        expectMatrix(panel, poseMatrix(flightRelativePose(flight, current.panelPose)));
+        const worldCamera = matrixPose(center);
+        const point = intersectPanel({ origin: worldCamera.position,
+          direction: rotateVec3(worldCamera.orientation, vec3(0, 0, -1)) }, matrixPose(panel));
+        expect(point?.x).toBeCloseTo(current.gazeCursor?.point.x ?? Number.NaN, 8);
+        expect(point?.y).toBeCloseTo(current.gazeCursor?.point.y ?? Number.NaN, 8);
+        expect(current.gazeCursor?.point.x).toBeCloseTo(0, 8);
+        expect(current.gazeCursor?.point.y).toBeCloseTo(0, 8);
+        for (const draw of driver.draws) expectVisible(new Vector3(), draw);
+        phone.backend.currentFrame(2020, view);
+        expect(phone.actions).toContainEqual({ type: "activate", controlId: "phone-eye-button" });
+        await phone.backend.stop();
+        driver.draws.length = 0;
+        bundle.renderer.render(frame({ panelVisible: false }));
+        const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1);
+        expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, eye)));
+      } finally {
+        await phone.backend.stop();
+      }
+    }
+  });
+
+  it.each(["pilot", "platform"] as const)("preserves Phone VR tracking/Menu recenter with the %s mount", async (mode) => {
+    const flight: FlightRenderPose = {
+      datumPositionNed: { north: 100, east: 25, down: -8 },
+      attitudeBodyToNed: { w: Math.cos(0.1), x: Math.sin(0.1), y: 0, z: 0 },
+      pilotPositionMeters: 0.35, initialPilotPositionMeters: 0.1
+    };
+    bundle.renderer.setFlightPose(flight);
+    bundle.renderer.setFlightCameraMode(mode);
+    const external = pose(vec3(50, 20, -130), quaternion(Math.cos(0.23), 0, Math.sin(0.23), 0));
+    if (mode === "platform") bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
+    const mount = mode === "platform" ? external : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.35, 0.1);
+    const phone = await startPhone(bundle, viewport);
+    try {
+      phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10 });
+      const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
+      const view = phonePanel("menu", composePose(mount, rawFrame.cameraPose));
+      const render = (timestampMs: number): Matrix4 => {
+        const current = phone.backend.currentFrame(timestampMs, view);
+        driver.draws.length = 0;
+        bundle.renderer.render(current);
+        const panel = driver.draws[0]?.panel;
+        if (panel === undefined) throw new Error("Missing Phone recenter panel");
+        expect(current.gazeCursor?.point.x).toBeCloseTo(0, 8);
+        expect(current.gazeCursor?.point.y).toBeCloseTo(0, 8);
+        if (mode === "platform") expectMatrix(centerEye(driver.draws), poseMatrix(composePose(external, current.cameraPose)));
+        return centerEye(driver.draws).invert().multiply(panel);
+      };
+      const before = render(20);
+      phone.backend.recenterTracking();
+      expectMatrix(render(21), before);
+      phone.backend.recenterMenu();
+      expectMatrix(render(22), poseMatrix(placeMenuPanel(IDENTITY_POSE, 2.4)));
+    } finally {
+      await phone.backend.stop();
+    }
+  });
 });
+
+async function startPhone(bundle: ThreeRendererBundle, viewport: BackendFrame["viewport"]): Promise<{
+  readonly backend: PhoneVrPresentationBackend;
+  readonly actions: UiAction[];
+  readonly emit: (reading: PhoneVrSensorReading) => void;
+}> {
+  let listener: ((reading: PhoneVrSensorReading) => void) | null = null;
+  const sensors: PhoneVrSensorPort = {
+    checkAvailability: () => Promise.resolve({ supported: true, message: "Available" }),
+    requestPermissionFromUserGesture: () => Promise.resolve({ ok: true }),
+    getScreenOrientationAngle: () => 90,
+    startListening: (reading) => { listener = reading; reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0 }); },
+    stopListening: () => { listener = null; }
+  };
+  const actions: UiAction[] = [];
+  const backend = new PhoneVrPresentationBackend(sensors, bundle.renderer, () => viewport,
+    (action) => { actions.push(action); }, (message) => { throw new Error(message); }, { nowMs: () => 10_000 });
+  await backend.requestPermissionFromUserGesture();
+  await backend.start();
+  return { backend, actions, emit: (reading) => {
+    if (listener === null) throw new Error("Phone sensor listener is unavailable");
+    listener(reading);
+  } };
+}
+
+function phonePanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
+  const fixture = createSceneFixture("Flight");
+  const panel = fixture.panels[0];
+  if (panel === undefined) throw new Error("Missing Phone Flight panel");
+  const forward = pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation);
+  const localPose = anchor === "menu" ? IDENTITY_POSE : anchor === "head" ? forward : composePose(mountedHead, forward);
+  return { ...fixture, panels: [{ ...panel, anchor, localPose, controls: [{
+    id: "phone-eye-button", kind: "button", label: "Phone Eye", enabled: true,
+    rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
+  }] }] };
+}
+
+function matrixPose(matrix: Matrix4): Pose {
+  const position = new Vector3();
+  const orientation = new Quaternion();
+  matrix.decompose(position, orientation, new Vector3());
+  return pose(vec3(position.x, position.y, position.z), quaternion(orientation.w, orientation.x, orientation.y, orientation.z));
+}
 
 function frame(overrides: Partial<BackendFrame> = {}): BackendFrame {
   return {
