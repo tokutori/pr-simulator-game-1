@@ -66,8 +66,11 @@ layoutの設計値は距離2.4 m、最大幅2.16 m、最大高2.4 m、前方中�
 上下のbandへreadoutと計器を配分し、狭い左右視野では列数と上下配分を変える。
 距離と中央空白角を保ち、実際の左右view/projectionでplane四隅がclip margin内へ収まる大きさを探索する。
 収容できない場合は要素や中央空白を縮小して継続せず、理由を持つunavailableを返す。
-設計font emの中心位置での角寸法は0.65°とする。この値は端部のglyphの実角寸法や実機可読性の下限を保証しない。
-canted眼での中央可視領域、眼別glyph角寸法、実機の可読性はconsumer・GPU・実機の受入で確認する。
+各眼の光学軸から左右各15°・上下各10°の保護錐をHead planeへ交差させ、頭部接平面の保護領域との和集合を上下bandから除く。
+設計font emの中心位置での角寸法は0.60°とする。全非空描画行の実ink bounding boxについて、
+左右端の上下ray間の角高を両眼で測り、0.35°以上かつclip内へ収まることを事前評価する。
+これは個別の句読点等の最小字高や実機可読性の保証を意味しない。代表cap/x-height・数字と実rasterの可読性を別途確認する。
+cardの内余白は0.5 em、card間隔は0.6 emとし、純粋な必要面積の導出とCanvasの事前評価・描画で同じ内余白を使う。
 
 専用Canvas painterはplaneの物理aspectに合わせたpixel寸法を使う。
 `prepareHeadHudPaint`が固定font・left align・middle baselineで全cardの文字を測定し、
@@ -84,6 +87,14 @@ Pause・そのSettings/Helpは通常サイズのMenuとし、Head情報板をabs
 ScreenのHUDと操作は従来のDOM adapterを使用する。非Flightの全SceneもHeadをabsentとする。
 小型Menuの字高・配置、Head surfaceへのゲーム接続、実WebXRManager境界、GPU視認性は後続のconsumer接続単位で検証する。
 現時点のcomposition rootはHead viewを供給せず、ゲームviewの既定値はabsentである。
+
+Menuの予約帯はMenuPlacement.openまたはrecenter時のposeと現在のHead poseが整列した場合に適用する。
+この条件はFlight開始そのものを意味しない。Menuの配置はScene間で保持され、開始前の頭部運動も相対basisを変える。
+整列時はHead最下段cardを小型Menuの上端から離し、両眼投影の非重畳を確認する。
+任意の頭部運動ではMenuの視野内位置が変化し、操作MenuをHeadより前へ合成するため短時間の情報遮蔽を許容する。
+Head自体の視野内位置と光学中心保護は維持する。全姿勢の非重畳や操作Menuの中央排除は保証しない。
+通常前方姿勢、Menuへの視線移動、頭部を戻したときの情報再表示を実Canvas/GPUで検証する。
+GPU、実HMD・スマートフォン受入は数値・SDK境界試験と区別する。
 
 ## 同一frameの眼別geometry
 

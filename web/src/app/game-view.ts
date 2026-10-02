@@ -1,6 +1,6 @@
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
-import { normalizedRect } from "../render/contracts/ui.js";
+import { FLIGHT_MENU_GEOMETRY, normalizedRect } from "../render/contracts/ui.js";
 import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
@@ -314,9 +314,9 @@ export function createGameViewModel(
     id: "game-flow",
     title: vrFlightPanel ? phaseCode === 5 ? "Pause" : pauseOverlay === "settings" ? "Settings" : pauseOverlay === "help" ? "Help" : "Pause" : "ゲーム進行",
     anchor: "menu",
-    localPose: vrFlightPanel && phaseCode === 5 ? pose(vec3(0, -1.12, 0), IDENTITY_POSE.orientation) : IDENTITY_POSE,
+    localPose: vrFlightPanel && phaseCode === 5 ? pose(vec3(0, FLIGHT_MENU_GEOMETRY.centerY, 0), IDENTITY_POSE.orientation) : IDENTITY_POSE,
     size: vrFlightPanel && phaseCode === 5
-      ? headHudView.kind === "unavailable" ? Object.freeze({ width: 0.9, height: 0.5 }) : Object.freeze({ width: 0.62, height: 0.25 })
+      ? headHudView.kind === "unavailable" ? Object.freeze({ width: 0.9, height: 0.5 }) : Object.freeze({ width: FLIGHT_MENU_GEOMETRY.width, height: FLIGHT_MENU_GEOMETRY.height })
       : Object.freeze({ width: 2.4, height: 1.8 }),
     controls: Object.freeze(renderedControls)
   });

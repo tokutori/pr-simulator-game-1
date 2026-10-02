@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
-import { createInitialAppModel } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { createFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
-import { drawHeadHud, headHudCanvasSize, prepareHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
+import { drawHeadHud, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import type { HeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
+import { composePose, IDENTITY_POSE, pose, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
+import { FLIGHT_MENU_GEOMETRY } from "../../web/src/render/contracts/ui.js";
+import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
 
 class RecordingHeadContext implements HeadHudDrawingContext {
   readonly texts: { value: string; alpha: number; arguments: number }[] = [];
@@ -20,13 +25,15 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   private readonly states: { alpha: number; fontSize: number }[] = [];
   invalidMetrics = false;
   excessiveInk = false;
+  tinyInk = false;
 
   clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
   fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height }); }
   fillText(...args: [string, number, number]): void { this.texts.push({ value: args[0], alpha: this.alpha, arguments: args.length }); }
   measureText(value: string): HeadHudTextMetrics {
     const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
-    return { width, left: this.excessiveInk ? width * 10 : 0, right: width, ascent: this.invalidMetrics ? Number.NaN : this.fontSize * 0.7, descent: this.fontSize * 0.2 };
+    return { width, left: this.excessiveInk ? width * 10 : 0, right: width,
+      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk ? 0.1 : 0.7), descent: this.fontSize * (this.tinyInk ? 0.05 : 0.2) };
   }
   save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize }); }
   restore(): void {
@@ -75,7 +82,89 @@ function flightView(aspect = 1280 / 720): Extract<HeadHudView, { kind: "visible"
 }
 
 describe("Head HUD Canvas preflight and painting", () => {
-  it.each([1280 / 720, 720 / 1280])("preserves physical aspect and glyph height at aspect %s", (aspect) => {
+  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 4].map((code) => ({ aspect, code }))))("fits all cues with envelope warning and long values for Information $code at aspect $aspect", ({ aspect, code }) => {
+    const values = new Array<number>(33).fill(0);
+    values[4] = 8; values[7] = 1; values[16] = 3; values[17] = 1234.5; values[19] = -1;
+    values[20] = 123.4; values[21] = 12.3; values[22] = 23.4; values[23] = -12.3;
+    values[24] = 5.6; values[25] = -8.9; values[31] = 1; values[32] = 123.4;
+    const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera(); stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    const model = createFlightHudModel(parseFlightSnapshot(values), code as 0 | 4, createInitialAppModel().difficulty.hudProfile);
+    const view = createHeadHudView(model, viewer);
+    if (view.kind !== "visible") throw new Error("Missing warning-and-long-values layout");
+    expect(view.layer.elements.some((element) => element.id === "head-warning")).toBe(true);
+    const size = headHudCanvasSize(view.layer);
+    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
+  });
+  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 1, 2, 3, 4].map((code) => ({ aspect, code }))))("fits Information $code with nominal Menu and measured ink at aspect $aspect", ({ aspect, code }) => {
+    const values = new Array<number>(33).fill(0); values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9;
+    values[23] = 2; values[24] = -1; values[31] = 1;
+    const snapshot = parseFlightSnapshot(values);
+    const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera(); stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    if (viewer.source === "unavailable") throw new Error("Missing binocular fixture");
+    const hudModel = createFlightHudModel(snapshot, code as 0 | 1 | 2 | 3 | 4, createInitialAppModel().difficulty.hudProfile);
+    const view = createHeadHudView(hudModel, viewer);
+    if (view.kind !== "visible") throw new Error("Missing Information layout");
+    const size = headHudCanvasSize(view.layer);
+    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
+    const gameSession = gameSessionState(5, 0, snapshot, true);
+    if (gameSession === null) throw new Error("Missing Flight session");
+    const menu = createGameViewModel({ ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } }, snapshot, null, view).panels[0];
+    if (menu === undefined) throw new Error("Missing small Menu");
+    const menuPose = composePose(pose(vec3(0, 0, -FLIGHT_MENU_GEOMETRY.distanceMeters), IDENTITY_POSE.orientation), menu.localPose);
+    const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]] as const;
+    for (const eye of viewer.eyes) {
+      const menuProjection = corners.map(([horizontal, vertical]) => projectHeadPoint(eye,
+        transformPoint(menuPose, vec3(horizontal * menu.size.width / 2, vertical * menu.size.height / 2, 0))));
+      if (menuProjection.some((point) => point === null)) throw new Error("Missing Menu projection");
+      for (const element of view.layer.elements) {
+        const bounds = element.bounds;
+        const cardProjection = corners.map(([horizontal, vertical]) => projectHeadPoint(eye, transformPoint(view.layer.localPose,
+          vec3((bounds.left + (horizontal + 1) * bounds.width / 2 - 0.5) * view.layer.size.width,
+            (0.5 - bounds.top - (1 - vertical) * bounds.height / 2) * view.layer.size.height, 0))));
+        if (cardProjection.some((point) => point === null)) throw new Error("Missing card projection");
+        expect(convexQuadsOverlap(cardProjection.filter((point) => point !== null), menuProjection.filter((point) => point !== null))).toBe(false);
+      }
+    }
+  });
+
+  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => Array.from({ length: 64 }, (_, mask) => ({ aspect, mask }))))("preflights independent Custom mask $mask at aspect $aspect", ({ aspect, mask }) => {
+    const values = new Array<number>(33).fill(0); values[4] = 8; values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9;
+    values[23] = 2; values[24] = -1; values[31] = 1;
+    const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera(); stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    const custom = { telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
+      flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0 };
+    const view = createHeadHudView(createFlightHudModel(parseFlightSnapshot(values), 4, custom), viewer);
+    if (mask === 0 || mask === 32) { expect(view.kind).toBe("absent"); return; }
+    if (view.kind !== "visible") throw new Error("Missing Custom layout");
+    const size = headHudCanvasSize(view.layer);
+    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
+  });
+  it("rejects small measured ink before painting even if font em and wrapping fit", () => {
+    const camera = new PerspectiveCamera(60, 1280 / 720, 0.05, 100);
+    camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera(); stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    const view = flightView();
+    const size = headHudCanvasSize(view.layer);
+    const context = new RecordingHeadContext();
+    const ready = prepareHeadHudPaint(context, view, size.width, size.height);
+    expect(validateHeadHudPaint(ready, viewer).kind).toBe("ready");
+    expect(headHudPaintedTextInk(ready).length).toBeGreaterThan(0);
+    context.tinyInk = true;
+    const small = prepareHeadHudPaint(context, view, size.width, size.height);
+    expect(small.kind).toBe("ready");
+    const rejected = validateHeadHudPaint(small, viewer);
+    expect(rejected.kind).toBe("unavailable");
+    drawHeadHud(context, rejected);
+    expect(context.texts).toEqual([]);
+  });
+  it.each([1280 / 720, 720 / 1280])("preserves physical aspect and font-em height at aspect %s", (aspect) => {
     const view = flightView(aspect);
     const size = headHudCanvasSize(view.layer);
     expect(Math.abs(size.width / size.height - view.layer.size.width / view.layer.size.height)).toBeLessThan(1 / size.height);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Matrix4, PerspectiveCamera, StereoCamera } from "three";
+import { Euler, Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
 import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -11,6 +11,7 @@ import { copyProjectionMatrix, projectHeadPoint, unavailableViewerFrame } from "
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
 
 const profile = Object.freeze({ telemetry: true, attitude: true, wind: true, flightPath: true, angleOfAttack: true, warnings: true });
 const values = new Array<number>(33).fill(0);
@@ -108,14 +109,30 @@ describe("Pure Head Flight HUD layout", () => {
     const copiedLeft = copyProjectionMatrix(leftProjection.elements);
     const copiedRight = copyProjectionMatrix(rightProjection.elements);
     if (copiedLeft === null || copiedRight === null) throw new Error("Invalid fixture projection");
+    const leftRotation = new Quaternion().setFromEuler(new Euler(0.08, 0.05, 0.07));
+    const rightRotation = new Quaternion().setFromEuler(new Euler(-0.07, -0.04, -0.08));
     const viewer: ViewerFrame = { source: "runtime-derived", trackingFromHead: IDENTITY_POSE, eyes: [
-      { eye: "left", headFromEye: pose(vec3(-0.034, 0.003, 0.002), quaternion(Math.cos(0.025), 0, Math.sin(0.025), 0)), projection: copiedLeft },
-      { eye: "right", headFromEye: pose(vec3(0.032, -0.003, 0.004), quaternion(Math.cos(0.02), 0, -Math.sin(0.02), 0)), projection: copiedRight }
+      { eye: "left", headFromEye: pose(vec3(-0.034, 0.003, 0.002), quaternion(leftRotation.w, leftRotation.x, leftRotation.y, leftRotation.z)), projection: copiedLeft },
+      { eye: "right", headFromEye: pose(vec3(0.032, -0.003, 0.004), quaternion(rightRotation.w, rightRotation.x, rightRotation.y, rightRotation.z)), projection: copiedRight }
     ] };
     const model = createFlightHudModel(snapshot, 0);
     const view = createHeadHudView(model, viewer);
     if (view.kind !== "visible") throw new Error("Expected fitted native-style HUD");
+    const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]] as const;
+    const opticalWidth = Math.tan(15 * Math.PI / 180);
+    const opticalHeight = Math.tan(10 * Math.PI / 180);
     for (const element of view.layer.elements) for (const eye of viewer.eyes) {
+      const projection = new Matrix4().fromArray(eye.projection);
+      const eyeFromHead = new Matrix4().compose(
+        new Vector3(eye.headFromEye.position.x, eye.headFromEye.position.y, eye.headFromEye.position.z),
+        new Quaternion(eye.headFromEye.orientation.x, eye.headFromEye.orientation.y, eye.headFromEye.orientation.z, eye.headFromEye.orientation.w),
+        new Vector3(1, 1, 1)).invert();
+      const opticalCone = corners.map(([horizontal, vertical]) => new Vector3(horizontal * opticalWidth, vertical * opticalHeight, -1).applyMatrix4(projection));
+      const card = corners.map(([horizontal, vertical]) => new Vector3(
+        (element.bounds.left + (horizontal + 1) * element.bounds.width / 2 - 0.5) * view.layer.size.width,
+        (0.5 - element.bounds.top - (1 - vertical) * element.bounds.height / 2) * view.layer.size.height,
+        -DEFAULT_HEAD_HUD_PROFILE.distanceMeters).applyMatrix4(eyeFromHead).applyMatrix4(projection));
+      expect(convexQuadsOverlap(card, opticalCone)).toBe(false);
       for (const horizontal of [element.bounds.left, element.bounds.left + element.bounds.width]) {
         for (const vertical of [element.bounds.top, element.bounds.top + element.bounds.height]) {
           const point = transformPoint(view.layer.localPose, vec3((horizontal - 0.5) * view.layer.size.width, (0.5 - vertical) * view.layer.size.height, 0));
@@ -135,7 +152,7 @@ describe("Pure Head Flight HUD layout", () => {
     const view = createHeadHudView(createFlightHudModel(snapshot, 0), configuredViewer(aspect));
     if (view.kind !== "visible") throw new Error("Expected phone profile fit");
     expect(Math.atan(view.layer.clearRegion.height * view.layer.size.height / (2 * DEFAULT_HEAD_HUD_PROFILE.distanceMeters)) * 180 / Math.PI).toBeCloseTo(10, 10);
-    expect(Math.atan(view.textHeightMeters / DEFAULT_HEAD_HUD_PROFILE.distanceMeters) * 180 / Math.PI).toBeCloseTo(0.65, 10);
+    expect(Math.atan(view.textHeightMeters / DEFAULT_HEAD_HUD_PROFILE.distanceMeters) * 180 / Math.PI).toBeCloseTo(DEFAULT_HEAD_HUD_PROFILE.textHeightDegrees, 10);
     expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
   });
 

@@ -1,9 +1,24 @@
 import { validateHeadHudLayer } from "../render/contracts/head-hud.js";
 import type { HeadHudElement, VisibleHeadHud } from "../render/contracts/head-hud.js";
 import { browserPanelContext } from "./browser-canvas.js";
-import { HEAD_HUD_LINE_HEIGHT, headHudElementValue, headHudInstrumentHeight } from "./head-hud-view.js";
+import { HEAD_HUD_CARD_PADDING, HEAD_HUD_LINE_HEIGHT, headHudElementValue, headHudInstrumentHeight } from "./head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "./head-hud-view.js";
 import type { PanelDrawingContext } from "./vr-panel-canvas.js";
+import { inversePose, transformPoint, vec3 } from "../render/contracts/math.js";
+import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
+import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
+
+export const HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES = 0.35;
+
+export interface HeadHudTextInk {
+  readonly value: string;
+  readonly x: number;
+  readonly baseline: number;
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
 
 export interface HeadHudTextMetrics {
   readonly width: number;
@@ -43,7 +58,7 @@ export function browserHeadHudContext(context: CanvasRenderingContext2D): HeadHu
   });
 }
 
-interface PaintedLine {
+export interface PaintedLine {
   readonly value: string;
   readonly metrics: HeadHudTextMetrics;
 }
@@ -74,9 +89,9 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
   for (const element of layer.elements) {
     const cardWidth = element.bounds.width * width;
     const cardHeight = element.bounds.height * height;
-    const padding = fontSize * 0.7;
-    const label = element.label === "" ? [] : wrapText(context, element.label, cardWidth - padding * 2, lineHeight);
-    const value = wrapText(context, headHudElementValue(element), cardWidth - padding * 2, lineHeight);
+    const padding = fontSize * HEAD_HUD_CARD_PADDING;
+    const label = element.label === "" ? [] : prepareHudTextLines(context, element.label, cardWidth - padding * 2, lineHeight);
+    const value = prepareHudTextLines(context, headHudElementValue(element), cardWidth - padding * 2, lineHeight);
     const instrumentHeight = headHudInstrumentHeight(element, fontSize);
     if (label === null || value === null || (label.length + value.length) * lineHeight + instrumentHeight + padding * 2 > cardHeight + 1e-6) {
       context.restore();
@@ -107,12 +122,8 @@ export function drawHeadHud(context: HeadHudDrawingContext, preparation: HeadHud
     context.fillRect(card.left, card.top, card.width, card.height);
     context.setGlobalAlpha(layer.foregroundAlpha);
     context.setFillStyle(card.element.kind === "text" && card.element.tone === "warning" ? "#ffca87" : "#f3fff9");
-    let textTop = card.top + card.padding;
-    for (const text of [...card.label, ...card.value]) {
-      context.fillText(text.value, card.left + card.padding + Math.max(0, text.metrics.left),
-        textTop + lineHeight / 2 + (text.metrics.ascent - text.metrics.descent) / 2);
-      textTop += lineHeight;
-    }
+    for (const text of paintedCardText(card, lineHeight)) context.fillText(text.value, text.x, text.baseline);
+    const textTop = card.top + card.padding + (card.label.length + card.value.length) * lineHeight;
     drawInstrument(context, card.element, card.left + card.padding, textTop,
       card.width - card.padding * 2, card.instrumentHeight, fontSize);
     context.restore();
@@ -120,7 +131,50 @@ export function drawHeadHud(context: HeadHudDrawingContext, preparation: HeadHud
   context.restore();
 }
 
-function wrapText(context: HeadHudDrawingContext, text: string, width: number, lineHeight: number): readonly PaintedLine[] | null {
+export function headHudPaintedTextInk(preparation: HeadHudPaintPreparation): readonly HeadHudTextInk[] {
+  return preparation.kind !== "ready" ? Object.freeze([]) : Object.freeze(preparation.cards.flatMap((card) =>
+    paintedCardText(card, preparation.fontSize * HEAD_HUD_LINE_HEIGHT)));
+}
+
+function paintedCardText(card: PreparedCard, lineHeight: number): readonly HeadHudTextInk[] {
+  return [...card.label, ...card.value].map((text, index) => {
+    const x = card.left + card.padding + Math.max(0, text.metrics.left);
+    const baseline = card.top + card.padding + index * lineHeight + lineHeight / 2 + (text.metrics.ascent - text.metrics.descent) / 2;
+    return Object.freeze({ value: text.value, x, baseline, left: x - text.metrics.left, top: baseline - text.metrics.ascent,
+      width: text.metrics.left + text.metrics.right, height: text.metrics.ascent + text.metrics.descent });
+  });
+}
+
+export function validateHeadHudPaint(preparation: HeadHudPaintPreparation, viewer: ViewerFrame): HeadHudPaintPreparation {
+  if (preparation.kind !== "ready") return preparation;
+  if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason, width: preparation.width, height: preparation.height });
+  const layer = preparation.view.layer;
+  const toHeadPoint = (horizontal: number, vertical: number) => transformPoint(layer.localPose, vec3(
+    (horizontal / preparation.width - 0.5) * layer.size.width,
+    (0.5 - vertical / preparation.height) * layer.size.height, 0));
+  for (const glyph of headHudPaintedTextInk(preparation)) {
+    if (glyph.value.trim() === "") continue;
+    for (const eye of viewer.eyes) for (const horizontal of [glyph.left, glyph.left + glyph.width]) {
+      const top = toHeadPoint(horizontal, glyph.top);
+      const bottom = toHeadPoint(horizontal, glyph.top + glyph.height);
+      const topProjection = projectHeadPoint(eye, top);
+      const bottomProjection = projectHeadPoint(eye, bottom);
+      const eyeFromHead = inversePose(eye.headFromEye);
+      const eyeTop = transformPoint(eyeFromHead, top);
+      const eyeBottom = transformPoint(eyeFromHead, bottom);
+      const dot = eyeTop.x * eyeBottom.x + eyeTop.y * eyeBottom.y + eyeTop.z * eyeBottom.z;
+      const angle = Math.acos(Math.max(-1, Math.min(1, dot / (Math.hypot(eyeTop.x, eyeTop.y, eyeTop.z) * Math.hypot(eyeBottom.x, eyeBottom.y, eyeBottom.z))))) * 180 / Math.PI;
+      if (topProjection === null || bottomProjection === null || [topProjection, bottomProjection].some((point) =>
+        Math.abs(point.x) > 1 || Math.abs(point.y) > 1 || point.z < -1 || point.z > 1) ||
+        !Number.isFinite(angle) || angle < HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES) {
+        return Object.freeze({ kind: "unavailable", reason: "text-overflow", width: preparation.width, height: preparation.height });
+      }
+    }
+  }
+  return preparation;
+}
+
+export function prepareHudTextLines(context: HeadHudDrawingContext, text: string, width: number, lineHeight: number): readonly PaintedLine[] | null {
   const lines: PaintedLine[] = [];
   for (const paragraph of text.split("\n")) {
     let current = "";
