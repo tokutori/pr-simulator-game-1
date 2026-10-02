@@ -385,6 +385,12 @@ function rebuildPersonalBestIndex(
 
 function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    let ownership: "pending" | "abandoned" | "transferred" | "closed" = "pending";
+    const abandon = (error: Error): void => {
+      if (ownership !== "pending") return;
+      ownership = "abandoned";
+      reject(error);
+    };
     const request = factory.open(databaseName, 4);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -418,12 +424,19 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
       }
     };
     request.onsuccess = () => {
+      if (ownership === "transferred" || ownership === "closed") return;
       const database = request.result;
+      if (ownership === "abandoned") {
+        ownership = "closed";
+        database.close();
+        return;
+      }
+      ownership = "transferred";
       database.onversionchange = () => { database.close(); };
       resolve(database);
     };
-    request.onerror = () => { reject(request.error ?? new Error("IndexedDB database open failed")); };
-    request.onblocked = () => { reject(new Error("IndexedDB database upgrade is blocked")); };
+    request.onerror = () => { abandon(request.error ?? new Error("IndexedDB database open failed")); };
+    request.onblocked = () => { abandon(new Error("IndexedDB database upgrade is blocked")); };
   });
 }
 
