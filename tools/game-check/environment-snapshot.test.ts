@@ -128,6 +128,7 @@ it("retains archived samples when environment metadata is unavailable", () => {
       const before = archive.flight_record_sample_at(0, 0);
       expect(parse(archive.environment_snapshot_json()).projection).toMatchObject({ kind: version === 3 ? "available" : "unavailable", source: "archive", identity: { environment_version: version } });
       expect(archive.flight_record_sample_at(0, 0)).toEqual(before);
+      expect(archive.flight_record_sample_at_seconds(0)).toEqual(before);
       expect(archive.flight_record_summary()).toEqual(session.flight_record_summary());
       expect(archive.phase_code()).toBe(9);
       expect(archive.is_archived_replay()).toBe(true);

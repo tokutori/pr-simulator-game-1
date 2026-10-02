@@ -33,6 +33,91 @@ function hudProfile(session: GameSessionBridge) {
 }
 
 describe("Screen UI to WebAssembly GameSession transitions", () => {
+  it.each(["manual-abort", "water-contact"] as const)("loads initial and range Result cursor effects through WASM after %s", (terminal) => {
+    initializeWasm();
+    const session = new GameSessionBridge(0);
+    try {
+      session.open_setup();
+      session.prepare();
+      session.mark_briefing_ready();
+      session.start_countdown(1);
+      session.advance_countdown();
+      session.launch();
+      let model = updateApp(createInitialAppModel(), {
+        type: "game-session-synced", phaseCode: 5, controlModeCode: 0,
+        difficulty: createInitialAppModel().difficulty, configurationMetadata: null,
+        countdownRemaining: 0, snapshot: parseFlightSnapshot(session.snapshot())
+      }).model;
+      if (terminal === "manual-abort") {
+        session.advance_tick(0, 0, 0, 0);
+        session.advance_tick(0, 0, 0, 0);
+        session.abort();
+      } else {
+        for (let tick = 0; tick < 4_000 && session.phase_code() === 5; tick += 1) {
+          session.advance_tick(0, 0, 0, 0);
+        }
+      }
+      expect(session.phase_code()).toBe(7);
+      const before = session.snapshot();
+      const finalization = session.flight_record_finalization();
+      const encoded = session.export_flight_record_json();
+      const entered = updateApp(model, {
+        type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
+        difficulty: model.difficulty, configurationMetadata: null,
+        countdownRemaining: 0, snapshot: parseFlightSnapshot(before)
+      });
+      model = entered.model;
+      const load = entered.effects.find((effect) => effect.type === "load-flight-analysis");
+      if (load?.type !== "load-flight-analysis") throw new Error("Result did not request Analysis");
+      const analysis = loadFlightAnalysis(session, physics_hz());
+      expect(analysis.summary.terminal.reason).toBe(terminal);
+      const completeCursor = (transition: ReturnType<typeof updateApp>): void => {
+        model = transition.model;
+        const query = transition.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
+        if (query?.type !== "load-flight-analysis-cursor") throw new Error("Result cursor query was not requested");
+        const sample = queryFlightRecordSampleAt(session, physics_hz(), query.timeSeconds);
+        model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: query.requestId, sample }).model;
+        expect(model.analysisCursorSample?.timeSeconds).toBeCloseTo(query.timeSeconds, 12);
+        expect(model.pendingAnalysisCursorRequestId).toBeNull();
+        expect(model.gameSession.kind).toBe("result");
+        expect(model.status).not.toMatch(/InvalidTransition|cursorを取得できない/);
+      };
+      completeCursor(updateApp(model, { type: "flight-analysis-loaded", requestId: load.requestId, data: analysis }));
+      expect(model.analysisCursorSample).toEqual(analysis.samples[0]);
+      model = updateApp(model, {
+        type: "ui-action", action: { type: "activate", controlId: "game-result-open-analysis" }
+      }).model;
+      expect(model.resultTab).toBe("analysis");
+      for (const timeSeconds of [0.005, analysis.summary.durationSeconds]) {
+        completeCursor(updateApp(model, {
+          type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds }
+        }));
+      }
+      expect(model.analysisCursorSample).toEqual(analysis.samples.at(-1));
+      if (terminal === "water-contact") {
+        expect(finalization[3]).toBeGreaterThan(0);
+        expect(finalization[3]).toBeLessThan(1);
+      } else {
+        expect(analysis.summary.durationSeconds).toBe(0.02);
+      }
+      for (const timeSeconds of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.01]) {
+        expect(() => session.flight_record_sample_at_seconds(timeSeconds)).toThrow(/PlaybackQuery\(InvalidTime\)/);
+      }
+      expect(() => session.flight_record_sample_at_seconds(analysis.summary.durationSeconds + 0.01))
+        .toThrow(/PlaybackQuery\(OutsideRecordedRange\)/);
+      expect(() => session.seek_playback(0)).toThrow(/InvalidTransition/);
+      expect(() => session.set_playback_playing(true)).toThrow(/InvalidTransition/);
+      expect(() => session.set_playback_rate_code(1)).toThrow(/InvalidTransition/);
+      expect(() => session.advance_playback(0.01)).toThrow(/InvalidTransition/);
+      expect(session.phase_code()).toBe(7);
+      expect(session.snapshot()).toEqual(before);
+      expect(session.flight_record_finalization()).toEqual(finalization);
+      expect(session.export_flight_record_json()).toBe(encoded);
+    } finally {
+      session.free();
+    }
+  });
+
   it("completes the visible Title-to-Result-to-Retry flow through actual DOM clicks", async () => {
     initializeWasm();
     const session = new GameSessionBridge(0);

@@ -835,7 +835,7 @@ impl GameSessionBridge {
         Ok(pack_flight_record_playback_sample(sample).to_vec())
     }
 
-    /// Returns a Rust-interpolated playback sample at elapsed seconds.
+    /// Returns a read-only Rust-interpolated sample in Result, Replay or Attract.
     pub fn flight_record_sample_at_seconds(&self, time_seconds: f64) -> Result<Vec<f64>, JsValue> {
         let sample = self
             .session
@@ -1895,6 +1895,10 @@ mod tests {
             );
             assert_eq!(archive.flight_record_summary(), summary);
             assert_eq!(archive.flight_record_sample_at(0, 0.0).unwrap(), before);
+            assert_eq!(
+                archive.flight_record_sample_at_seconds(0.0).unwrap(),
+                before
+            );
             assert_eq!(archive.phase_code(), 9);
             assert!(archive.resolved_configuration.is_none());
         }
@@ -2041,6 +2045,18 @@ mod tests {
         assert_eq!(finalization[2], 1.0);
         assert_eq!(finalization[4], 1.0);
         let encoded = bridge.export_flight_record_json().unwrap();
+        let before = bridge.snapshot();
+        for (time_seconds, tick, fraction) in [(0.0, 0, 0.0), (0.005, 0, 0.5), (0.01, 1, 0.0)] {
+            assert_eq!(
+                bridge
+                    .flight_record_sample_at_seconds(time_seconds)
+                    .unwrap(),
+                bridge.flight_record_sample_at(tick, fraction).unwrap()
+            );
+        }
+        assert_eq!(bridge.phase_code(), 7);
+        assert_eq!(bridge.snapshot(), before);
+        assert_eq!(bridge.export_flight_record_json().unwrap(), encoded);
         assert_eq!(compare_personal_best_json(&encoded, &encoded).unwrap(), 4);
         let decoded =
             birdman_game_format::FlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
@@ -2174,6 +2190,10 @@ mod tests {
         assert!(demo_sample_count > 100);
         assert!(!bridge.flight_record_finalization().is_empty());
         assert!(bridge.session.flight_record().is_none());
+        assert_eq!(
+            bridge.flight_record_sample_at_seconds(0.0).unwrap(),
+            bridge.flight_record_sample_at(0, 0.0).unwrap()
+        );
 
         bridge.leave_attract().unwrap();
         assert_eq!(bridge.phase_code(), 0);

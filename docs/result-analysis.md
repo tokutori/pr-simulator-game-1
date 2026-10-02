@@ -69,7 +69,12 @@ AoA、roll/pitch、pilot/FBW/actuatorの系列はAdvanced Analysisとして追�
 
 ResultとReplayで単一のrecord-time cursor値を共有し、seek範囲・補間sample・再生速度・再生状態はRust core queryが返す。Webはwall-clock schedulerと入力adapterを担当し、再生時刻を独立計算しない。
 coreは有効record区間外・非有限時刻・不正recordを拒否する。Webは受信値でcursor位置と描画を更新する。
-graph側のhover/dragは再生時刻だけを変更し、元record・physics・Personal Bestを更新しない。
+Resultの初回cursorとrange操作は、Replayへの遷移を経ず、確定済みrecordの秒単位queryを使用する。
+`GameSession::playback_sample_at_seconds`はResult/Replay/Attractのread-only queryであり、
+Attractでは独立demo record、それ以外では保持中のflight recordを参照する。
+queryはphase・score・record・physics state・再生clockを変更しない。
+seek・play/pause・rate・advanceのclock操作はReplay/Attractだけに許可する。
+graph側のhover/dragはResultの照会時刻またはReplayの再生時刻だけを変更し、元record・physics・Personal Bestを更新しない。
 大量sampleは表示用に間引いてよいが、端点・極値・eventを保持する。
 画面resizeや端末画質で集計値を変えない。
 
@@ -77,4 +82,7 @@ BPG-020で既知軌道・wind・高度・速度のfixture、軸方向と等縮�
 終端種別、cursor同期、touch/keyboard、表示用間引きの極値保持を検証する。
 VRのgamepad/head-gaze等によるtab・scroll・cursor・Replay遷移も同じ受入条件で検証する。
 BPG-021で同じ時刻のmap marker・graph・3D poseの一致とResultへの復帰を検証する。
+`wasm-screen-transition.test.ts`は実WASMを使用し、Result進入時の解析取得から初回cursor effect、
+Analysisのrange effect、成功応答までを接続する。整数終端とfractional着水終端、
+不正時刻のtyped error、Resultでのclock操作拒否、query前後の不変性を検査する。
 最初のmapはversion付き`synthetic-training-basin` assetを用い、実地理assetの取得を待たず完成させる。originはscenario発進時の合成重心を基準とするlocal NEDである。湖岸・platform・小島の座標は模式的な非地理データであり、既知のsynthetic scenario catalogだけに適用する。実地理形状は別versionのworld assetで管理し、このfixtureから推定しない。
