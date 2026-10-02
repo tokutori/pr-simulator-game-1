@@ -90,9 +90,9 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
       const transaction = database.transaction(["records", "recordMetadata", "personalBests", "personalBestIndexState"], "readwrite");
       const records = transaction.objectStore("records");
       let id: number | null = null;
-      let failure: unknown;
+      let failure: { readonly kind: "unrecorded" } | { readonly kind: "recorded"; readonly error: Error } = { kind: "unrecorded" };
       const abort = (error: unknown): void => {
-        failure = error;
+        failure = { kind: "recorded", error: normalizeInsertionError(error) };
         transaction.abort();
       };
       const addCandidate = (): void => {
@@ -128,15 +128,13 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
               }
               const value: unknown = cursor.value;
               if (!isStoredFlightRecord(value)) {
-                failure = new TypeError("IndexedDB flight record is malformed");
-                transaction.abort();
+                abort(new TypeError("IndexedDB flight record is malformed"));
                 return;
               }
               try {
                 selection.consider_existing(Number(cursor.primaryKey), value.json);
               } catch (error: unknown) {
-                failure = error;
-                transaction.abort();
+                abort(error);
                 return;
               }
               cursor.continue();
@@ -150,23 +148,20 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
               return;
             }
             if (!isPersonalBestEntry(indexed) || indexed.key !== key) {
-              failure = new TypeError("IndexedDB Personal Best index is malformed");
-              transaction.abort();
+              abort(new TypeError("IndexedDB Personal Best index is malformed"));
               return;
             }
             const existingRequest = records.get(indexed.recordId);
             existingRequest.onsuccess = () => {
               const existing: unknown = existingRequest.result;
               if (!isStoredFlightRecord(existing)) {
-                failure = new TypeError("IndexedDB Personal Best record is missing or malformed");
-                transaction.abort();
+                abort(new TypeError("IndexedDB Personal Best record is missing or malformed"));
                 return;
               }
               try {
                 selection.consider_existing(indexed.recordId, existing.json);
               } catch (error: unknown) {
-                failure = error;
-                transaction.abort();
+                abort(error);
                 return;
               }
               addCandidate();
@@ -182,8 +177,8 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
         else resolve(id);
       };
       transaction.onabort = () => {
-        const error = failure instanceof Error
-          ? failure
+        const error = failure.kind === "recorded"
+          ? failure.error
           : transaction.error ?? new Error("IndexedDB record insertion was aborted");
         reject(error);
       };
@@ -268,6 +263,14 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     } finally {
       database.close();
     }
+  }
+}
+
+function normalizeInsertionError(reason: unknown): Error {
+  try {
+    return reason instanceof Error ? reason : new Error(String(reason), { cause: reason });
+  } catch {
+    return new Error("IndexedDB record insertion failed with an unprintable cause", { cause: reason });
   }
 }
 
