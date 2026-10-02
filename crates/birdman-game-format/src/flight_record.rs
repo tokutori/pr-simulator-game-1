@@ -1047,6 +1047,176 @@ mod tests {
         document
     }
 
+    fn assert_terminal_round_trip(record: &birdman_game_core::FlightRecord) {
+        let terminal = record.samples().last().unwrap();
+        let finalized = record.finalization().unwrap();
+        assert_eq!(finalized.terminal_tick, terminal.tick_index);
+        assert_eq!(finalized.terminal_fraction, terminal.fraction);
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = FlightRecordDocument::from_record(
+                record,
+                DifficultySettings::custom(
+                    InformationLevel::Full,
+                    AssistanceLevel::Manual,
+                    WeatherClass::Calm,
+                ),
+            )
+            .unwrap();
+            document.schema_version = schema_version;
+            if schema_version < super::SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION {
+                document.header.score_definition_version = None;
+            }
+            if schema_version < super::PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION {
+                document.header.physics_model_version = None;
+            }
+            let decoded =
+                FlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap();
+            assert_eq!(decoded, document);
+            let restored = decoded.to_finalized_core_record().unwrap();
+            assert_eq!(restored.finalization(), record.finalization());
+            assert_eq!(restored.sample_count(), record.sample_count());
+            for (restored_sample, original_sample) in
+                restored.samples().iter().zip(record.samples())
+            {
+                assert_eq!(restored_sample.tick_index, original_sample.tick_index);
+                assert_eq!(restored_sample.fraction, original_sample.fraction);
+                assert_eq!(restored_sample.telemetry, original_sample.telemetry);
+                assert_eq!(
+                    restored_sample.input_from_previous,
+                    original_sample.input_from_previous
+                );
+            }
+            let (tick, fraction) = if terminal.fraction == 1.0 {
+                (terminal.tick_index + 1, 0.0)
+            } else {
+                (terminal.tick_index, terminal.fraction)
+            };
+            let exact = restored.sample_at_time(tick, fraction).unwrap();
+            assert_eq!(
+                exact.flight_state,
+                restored.samples().last().unwrap().flight_state
+            );
+            assert_eq!(
+                exact.flight_state.datum_position_ned(),
+                terminal.flight_state.datum_position_ned()
+            );
+            assert_eq!(exact.actuator_state, terminal.actuator_state);
+            assert_eq!(exact.telemetry, terminal.telemetry);
+            let at_duration = restored
+                .sample_at_seconds(restored.duration_seconds().unwrap())
+                .unwrap();
+            assert_eq!(at_duration.tick_index, exact.tick_index);
+            assert_eq!(at_duration.flight_state, exact.flight_state);
+            assert_eq!(at_duration.actuator_state, exact.actuator_state);
+            assert_eq!(at_duration.telemetry, exact.telemetry);
+        }
+    }
+
+    #[test]
+    fn finalization_public_api_rejects_inexact_time_before_round_trip() {
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let initial = fixture.scenario().initial_state();
+        let telemetry = fixture
+            .scenario()
+            .telemetry(initial.flight_state())
+            .unwrap();
+        let commands = SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap();
+        let input = birdman_game_core::FlightRecordInput::new(
+            FlightFeedbackInput::new(
+                commands,
+                BodyVector::zero(),
+                PilotPositionTarget::try_new(&fixture.aircraft(), 0.0).unwrap(),
+            ),
+            commands,
+            commands,
+        );
+        let header = completed_record()
+            .to_finalized_core_record()
+            .unwrap()
+            .header();
+        for fraction in [0.0_f64, 0.5, 1.0] {
+            let mut record = birdman_game_core::FlightRecord::try_new(header).unwrap();
+            record.begin(initial, telemetry).unwrap();
+            record
+                .append_contact(
+                    0,
+                    fraction,
+                    initial.flight_state(),
+                    initial.actuator_state(),
+                    input,
+                    telemetry,
+                )
+                .unwrap();
+            let mismatch = if fraction == 0.0 {
+                f64::EPSILON
+            } else {
+                fraction.next_down()
+            };
+            assert_eq!(
+                record.finalize(
+                    birdman_game_core::SessionEndReason::WaterContact,
+                    0,
+                    mismatch,
+                    None
+                ),
+                Err(birdman_game_core::FlightRecordError::FinalizationMismatch)
+            );
+            assert_eq!(record.finalization(), None);
+            record
+                .finalize(
+                    birdman_game_core::SessionEndReason::WaterContact,
+                    0,
+                    fraction,
+                    None,
+                )
+                .unwrap();
+            assert_terminal_round_trip(&record);
+        }
+    }
+
+    #[test]
+    fn finalization_normal_game_session_preserves_contact_and_time_limit_stamps() {
+        for (maximum_ticks, expected_reason) in [
+            (1, birdman_game_core::SessionEndReason::TimeLimit),
+            (4_000, birdman_game_core::SessionEndReason::WaterContact),
+        ] {
+            let (aircraft, scenario, feedback, _) =
+                SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
+            let identity = completed_record()
+                .to_finalized_core_record()
+                .unwrap()
+                .header()
+                .scenario;
+            let configuration = GameSessionConfiguration::try_new(
+                scenario,
+                ControlMode::Manual,
+                feedback,
+                maximum_ticks,
+                identity,
+            )
+            .unwrap();
+            let mut session = GameSession::new();
+            session.open_setup().unwrap();
+            session.prepare_flight(configuration).unwrap();
+            session.mark_briefing_ready().unwrap();
+            session.start_countdown(1).unwrap();
+            session.advance_countdown().unwrap();
+            session.launch().unwrap();
+            let input = FlightFeedbackInput::new(
+                SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                BodyVector::zero(),
+                PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
+            );
+            while session.snapshot().phase() != SessionPhase::Result {
+                session.advance_flight_tick(input).unwrap();
+            }
+            let record = session.take_finalized_result_record().unwrap();
+            assert_eq!(record.finalization().unwrap().reason, expected_reason);
+            assert!(record.finalization().unwrap().score.is_some());
+            assert_terminal_round_trip(&record);
+        }
+    }
+
     fn assert_invalid_score(document: &FlightRecordDocument) {
         assert_eq!(
             document.validate(),
