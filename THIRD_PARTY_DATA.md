@@ -44,6 +44,19 @@ EGM96標高から琵琶湖B.S.L.への変換は近似であり、測量・航法
 
 沖の白石はOpenStreetMapの4つの島輪郭を使い、高島市が公表する「4個の岩」「最高14 m」という事実を描画専用の形状上限に利用する。個々の岩の高さは公開資料にないため、輪郭面積に応じた視覚上の推定値であり、地形標高・衝突形状・飛行物理として使用しない。市の文章を出典として記録し、写真・画像は利用していない。
 
+## 彦根の月平年値と環境仮定
+
+`assets/biwa-typical-july-environment-v6.json` は[気象庁の彦根・月平年値](https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=)の
+1991–2020年・7月の地上平均風速と最多風向を抽出し、プロジェクトが湖上外挿・空間分布・波・空の仮定を追加したデータである。
+気象庁のデータには[公共データ利用規約（第1.0版）に基づく利用条件](https://www.jma.go.jp/jma/kishou/info/coment.html)を適用する。
+出典・加工表示と原snapshotのexact-byte hashをassetとmanifestに保持する。原HTMLは配布しない。
+プロジェクト独自のrecipe・生成tool・仮定にはMIT Licenseを適用する。
+
+風速はscalar月平均、風向は最多のfrom-directionであり、観測された平均vectorや湖上3D風場を表さない。
+波のfetch 600 m、鉛直流zero、高度依存・定常性、太陽・雲・視程は明示した仮定／game tuningである。
+気象庁が作成した湖上気象scenario、実測波浪、天文計算結果として扱わない。
+環境version 6はruntime接続前の登録段階であり、Web表示の接続時に利用者向けの出典・加工表示も追加する。
+
 ## 登録要件
 
 `assets/manifest.toml` を正本とし、各assetに次の情報を登録する。

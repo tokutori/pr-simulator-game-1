@@ -64,5 +64,6 @@ Three.js等への座標変換とshader/GPU更新はengine adapterが担当する
 
 正式な外部形式・検証・core風場への変換と、`tools/environment-build`のoffline生成を実装している。
 hash固定した地上月統計と追跡可能recipeから生成し、Rust codec検証後だけ出力を保存する。
-配布assetのmanifest登録、catalogの実環境への接続と通常入力coverageの受入は後続単位で行う。
+version 6のJSONをrepositoryの配布manifestへ登録し、全格子標本と生成入力hashをCIで検証する。
+browser bundleへの組込み、catalogの実環境への接続と通常入力coverageの受入は後続単位で行う。
 現行browserのsynthetic scenarioはこの追加だけでは変更されない。

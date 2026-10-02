@@ -1,0 +1,618 @@
+{
+  "environment_version": 6,
+  "ground_wind_normals": [
+    {
+      "first_year": 1991,
+      "last_year": 2020,
+      "mean_speed_mps": 2.5,
+      "measurement_scope": "\u5f66\u6839\u5730\u4e0a\u89b3\u6e2c\u70b9\u306e\u6708\u5e73\u5e74\u5024\u3002\u98a8\u901f\u306fscalar\u5e73\u5747\u3001\u98a8\u5411\u306f\u6700\u591a\u306efrom-direction\u3002\u4e21\u7d71\u8a08\u306e\u8cc7\u6599\u5e74\u6570\u306f30\u5e74\u3002\u89b3\u6e2c\u9ad8\u5ea6\u30fb\u5e73\u5747\u5316\u6642\u9593\u30fb\u6e56\u4e0a\u3068\u306e\u5dee\u306f\u3053\u306esnapshot\u304b\u3089\u78ba\u5b9a\u3067\u304d\u306a\u3044\u3002",
+      "month": 7,
+      "prevailing_from_degrees": 315.0,
+      "source_index": 0,
+      "station": "\u5f66\u6839"
+    }
+  ],
+  "local_frame": {
+    "latitude_degrees": 35.294075,
+    "longitude_degrees": 136.254448,
+    "water_level_datum": "local down=0 is the fixed gameplay water surface. Origin matches the Matsubara launch venue. No WGS84 ellipsoid-height or geodetic water-level conversion is asserted."
+  },
+  "name": "Hikone July Typical / ground-normal-anchored assumed lake field",
+  "provenance": {
+    "local_frame": {
+      "kind": "assumed",
+      "rationale": "Existing launch-venue WGS84 origin and fixed gameplay water datum; geodetic altitude conversion is not supplied."
+    },
+    "sky": {
+      "kind": "assumed",
+      "rationale": "Sun azimuth/elevation, cloud cover/base and visibility are fixed illustrative summer settings. They are not calculated ephemerides or measured weather. No time evolution is asserted."
+    },
+    "waves": {
+      "kind": "game_tuned",
+      "rationale": "Wave wind history uses the ground scalar/direction anchors with unit scale. Effective fetch 600 m and detail scale 1 are provisional visual tuning for local speed cues, not measured lake fetch or observed waves. Pattern seed is fixed. Waves do not alter physics contact."
+    },
+    "wind_grid": {
+      "kind": "assumed",
+      "rationale": "The scalar ground monthly mean and prevailing from-direction provide independent scale/direction anchors, not an observed mean vector. Lake extrapolation, affine horizontal spatial gradients and height dependence are model assumptions. Vertical flow is zero. The field is stationary for one flight. Coverage is N/E \u00b12 km and down -500..10 m, including below-water RK4 evaluation margin; ordinary-input integrated coverage remains to be verified before runtime adoption."
+    }
+  },
+  "schema_version": 1,
+  "sky": {
+    "cloud_base_m": 1500.0,
+    "cloud_fraction": 0.25,
+    "sun_azimuth_degrees": 135.0,
+    "sun_elevation_degrees": 55.0,
+    "visibility_m": 25000.0
+  },
+  "sources": [
+    {
+      "attribution": "\u51fa\u5178\uff1a\u6c17\u8c61\u5e81\u30db\u30fc\u30e0\u30da\u30fc\u30b8\u3002\u6708\u5e73\u5e74\u5024\u3092\u62bd\u51fa\u3057\u3001pr-simulator-game-1\u304c\u4eee\u5b9a\u306b\u57fa\u3065\u304f\u30b2\u30fc\u30e0\u7528\u74b0\u5883\u3092\u4f5c\u6210\u3002\u6c17\u8c61\u5e81\u4f5c\u6210\u306e\u6e56\u4e0a\u98a8\u5834\u3067\u306f\u306a\u3044\u3002",
+      "input_sha256": "7541845fa00506da3eda372c86e214a97426da1554d82ae4d1dbc55f5d810638",
+      "license": "\u516c\u5171\u30c7\u30fc\u30bf\u5229\u7528\u898f\u7d04\uff08\u7b2c1.0\u7248\uff09",
+      "license_url": "https://www.jma.go.jp/jma/kishou/info/coment.html",
+      "title": "\u6c17\u8c61\u5e81 \u5f66\u6839 \u5e73\u5e74\u5024\uff08\u5e74\u30fb\u6708\u3054\u3068\u306e\u5024\uff09 \u8a73\u7d30\uff08\u98a8\u30fb\u65e5\u7167\uff09",
+      "url": "https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=",
+      "version": "1991\u20132020 normals; July; snapshot 2026-10-02"
+    },
+    {
+      "attribution": "pr-simulator-game-1 contributors",
+      "input_sha256": "cf42d1addfc7ce7a771f632e835ac5f91a951cab1f3a0f74d65a7e2ea57d3006",
+      "license": "MIT",
+      "license_url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE",
+      "title": "Environment generation recipe",
+      "url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/tools/environment-build/typical-july.recipe.json",
+      "version": "SHA-256 pinned source bytes"
+    },
+    {
+      "attribution": "pr-simulator-game-1 contributors",
+      "input_sha256": "739c13d09f427db2e19182c4181c0ae4cc016fb52ef49c85c0076152292d0382",
+      "license": "MIT",
+      "license_url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE",
+      "title": "Environment generator",
+      "url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/tools/environment-build/build_environment.py",
+      "version": "SHA-256 pinned source bytes"
+    },
+    {
+      "attribution": "pr-simulator-game-1 contributors",
+      "input_sha256": "2c86532b8fd426402dbc00bfb5148010e43905321aaf70530b0e2c8af3a98c85",
+      "license": "MIT",
+      "license_url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE",
+      "title": "JMA normal parser",
+      "url": "https://github.com/tokutori/pr-simulator-game-1/blob/main/tools/environment-build/jma_normals.py",
+      "version": "SHA-256 pinned source bytes"
+    }
+  ],
+  "waves": {
+    "detail_amplitude_scale": 1.0,
+    "fetch_m": 600.0,
+    "pattern_seed": 202607,
+    "wind_velocity_ne_mps": [
+      -1.767766953,
+      1.767766953
+    ]
+  },
+  "wind_grid": {
+    "counts_ned": [
+      5,
+      5,
+      4
+    ],
+    "origin_ned_m": [
+      -2000.0,
+      -2000.0,
+      -500.0
+    ],
+    "representative_position_ned_m": [
+      0.0,
+      0.0,
+      -10.5
+    ],
+    "spacing_ned_m": [
+      1000.0,
+      1000.0,
+      170.0
+    ],
+    "velocities_ned_mps": [
+      [
+        -1.778816953,
+        1.698816953,
+        0.0
+      ],
+      [
+        -1.758816953,
+        1.688816953,
+        0.0
+      ],
+      [
+        -1.738816953,
+        1.678816953,
+        0.0
+      ],
+      [
+        -1.718816953,
+        1.668816953,
+        0.0
+      ],
+      [
+        -1.698816953,
+        1.658816953,
+        0.0
+      ],
+      [
+        -1.768816953,
+        1.718816953,
+        0.0
+      ],
+      [
+        -1.748816953,
+        1.708816953,
+        0.0
+      ],
+      [
+        -1.728816953,
+        1.698816953,
+        0.0
+      ],
+      [
+        -1.708816953,
+        1.688816953,
+        0.0
+      ],
+      [
+        -1.688816953,
+        1.678816953,
+        0.0
+      ],
+      [
+        -1.758816953,
+        1.738816953,
+        0.0
+      ],
+      [
+        -1.738816953,
+        1.728816953,
+        0.0
+      ],
+      [
+        -1.718816953,
+        1.718816953,
+        0.0
+      ],
+      [
+        -1.698816953,
+        1.708816953,
+        0.0
+      ],
+      [
+        -1.678816953,
+        1.698816953,
+        0.0
+      ],
+      [
+        -1.748816953,
+        1.758816953,
+        0.0
+      ],
+      [
+        -1.728816953,
+        1.748816953,
+        0.0
+      ],
+      [
+        -1.708816953,
+        1.738816953,
+        0.0
+      ],
+      [
+        -1.688816953,
+        1.728816953,
+        0.0
+      ],
+      [
+        -1.668816953,
+        1.718816953,
+        0.0
+      ],
+      [
+        -1.738816953,
+        1.778816953,
+        0.0
+      ],
+      [
+        -1.718816953,
+        1.768816953,
+        0.0
+      ],
+      [
+        -1.698816953,
+        1.758816953,
+        0.0
+      ],
+      [
+        -1.678816953,
+        1.748816953,
+        0.0
+      ],
+      [
+        -1.658816953,
+        1.738816953,
+        0.0
+      ],
+      [
+        -1.795816953,
+        1.715816953,
+        0.0
+      ],
+      [
+        -1.775816953,
+        1.705816953,
+        0.0
+      ],
+      [
+        -1.755816953,
+        1.695816953,
+        0.0
+      ],
+      [
+        -1.735816953,
+        1.685816953,
+        0.0
+      ],
+      [
+        -1.715816953,
+        1.675816953,
+        0.0
+      ],
+      [
+        -1.785816953,
+        1.735816953,
+        0.0
+      ],
+      [
+        -1.765816953,
+        1.725816953,
+        0.0
+      ],
+      [
+        -1.745816953,
+        1.715816953,
+        0.0
+      ],
+      [
+        -1.725816953,
+        1.705816953,
+        0.0
+      ],
+      [
+        -1.705816953,
+        1.695816953,
+        0.0
+      ],
+      [
+        -1.775816953,
+        1.755816953,
+        0.0
+      ],
+      [
+        -1.755816953,
+        1.745816953,
+        0.0
+      ],
+      [
+        -1.735816953,
+        1.735816953,
+        0.0
+      ],
+      [
+        -1.715816953,
+        1.725816953,
+        0.0
+      ],
+      [
+        -1.695816953,
+        1.715816953,
+        0.0
+      ],
+      [
+        -1.765816953,
+        1.775816953,
+        0.0
+      ],
+      [
+        -1.745816953,
+        1.765816953,
+        0.0
+      ],
+      [
+        -1.725816953,
+        1.755816953,
+        0.0
+      ],
+      [
+        -1.705816953,
+        1.745816953,
+        0.0
+      ],
+      [
+        -1.685816953,
+        1.735816953,
+        0.0
+      ],
+      [
+        -1.755816953,
+        1.795816953,
+        0.0
+      ],
+      [
+        -1.735816953,
+        1.785816953,
+        0.0
+      ],
+      [
+        -1.715816953,
+        1.775816953,
+        0.0
+      ],
+      [
+        -1.695816953,
+        1.765816953,
+        0.0
+      ],
+      [
+        -1.675816953,
+        1.755816953,
+        0.0
+      ],
+      [
+        -1.812816953,
+        1.732816953,
+        0.0
+      ],
+      [
+        -1.792816953,
+        1.722816953,
+        0.0
+      ],
+      [
+        -1.772816953,
+        1.712816953,
+        0.0
+      ],
+      [
+        -1.752816953,
+        1.702816953,
+        0.0
+      ],
+      [
+        -1.732816953,
+        1.692816953,
+        0.0
+      ],
+      [
+        -1.802816953,
+        1.752816953,
+        0.0
+      ],
+      [
+        -1.782816953,
+        1.742816953,
+        0.0
+      ],
+      [
+        -1.762816953,
+        1.732816953,
+        0.0
+      ],
+      [
+        -1.742816953,
+        1.722816953,
+        0.0
+      ],
+      [
+        -1.722816953,
+        1.712816953,
+        0.0
+      ],
+      [
+        -1.792816953,
+        1.772816953,
+        0.0
+      ],
+      [
+        -1.772816953,
+        1.762816953,
+        0.0
+      ],
+      [
+        -1.752816953,
+        1.752816953,
+        0.0
+      ],
+      [
+        -1.732816953,
+        1.742816953,
+        0.0
+      ],
+      [
+        -1.712816953,
+        1.732816953,
+        0.0
+      ],
+      [
+        -1.782816953,
+        1.792816953,
+        0.0
+      ],
+      [
+        -1.762816953,
+        1.782816953,
+        0.0
+      ],
+      [
+        -1.742816953,
+        1.772816953,
+        0.0
+      ],
+      [
+        -1.722816953,
+        1.762816953,
+        0.0
+      ],
+      [
+        -1.702816953,
+        1.752816953,
+        0.0
+      ],
+      [
+        -1.772816953,
+        1.812816953,
+        0.0
+      ],
+      [
+        -1.752816953,
+        1.802816953,
+        0.0
+      ],
+      [
+        -1.732816953,
+        1.792816953,
+        0.0
+      ],
+      [
+        -1.712816953,
+        1.782816953,
+        0.0
+      ],
+      [
+        -1.692816953,
+        1.772816953,
+        0.0
+      ],
+      [
+        -1.829816953,
+        1.749816953,
+        0.0
+      ],
+      [
+        -1.809816953,
+        1.739816953,
+        0.0
+      ],
+      [
+        -1.789816953,
+        1.729816953,
+        0.0
+      ],
+      [
+        -1.769816953,
+        1.719816953,
+        0.0
+      ],
+      [
+        -1.749816953,
+        1.709816953,
+        0.0
+      ],
+      [
+        -1.819816953,
+        1.769816953,
+        0.0
+      ],
+      [
+        -1.799816953,
+        1.759816953,
+        0.0
+      ],
+      [
+        -1.779816953,
+        1.749816953,
+        0.0
+      ],
+      [
+        -1.759816953,
+        1.739816953,
+        0.0
+      ],
+      [
+        -1.739816953,
+        1.729816953,
+        0.0
+      ],
+      [
+        -1.809816953,
+        1.789816953,
+        0.0
+      ],
+      [
+        -1.789816953,
+        1.779816953,
+        0.0
+      ],
+      [
+        -1.769816953,
+        1.769816953,
+        0.0
+      ],
+      [
+        -1.749816953,
+        1.759816953,
+        0.0
+      ],
+      [
+        -1.729816953,
+        1.749816953,
+        0.0
+      ],
+      [
+        -1.799816953,
+        1.809816953,
+        0.0
+      ],
+      [
+        -1.779816953,
+        1.799816953,
+        0.0
+      ],
+      [
+        -1.759816953,
+        1.789816953,
+        0.0
+      ],
+      [
+        -1.739816953,
+        1.779816953,
+        0.0
+      ],
+      [
+        -1.719816953,
+        1.769816953,
+        0.0
+      ],
+      [
+        -1.789816953,
+        1.829816953,
+        0.0
+      ],
+      [
+        -1.769816953,
+        1.819816953,
+        0.0
+      ],
+      [
+        -1.749816953,
+        1.809816953,
+        0.0
+      ],
+      [
+        -1.729816953,
+        1.799816953,
+        0.0
+      ],
+      [
+        -1.709816953,
+        1.789816953,
+        0.0
+      ]
+    ]
+  }
+}

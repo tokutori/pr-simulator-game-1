@@ -46,4 +46,5 @@ Typical recipeは新environment version 6を予約する。既存catalogの1～5
 fetch 600 mとsky設定は観測された琵琶湖条件を主張しない。
 
 この工程の追加だけではbrowserのscenarioを変更しない。
-配布manifest登録・既存catalog接続・PB identityへのasset hash反映・統合受入を後続で行い、BPG-008を完了扱いにしない。
+version 6のJSONはrepositoryの配布manifestへ登録済みである。現行Web bundleはまだこのJSONを含めない。
+browser配布・既存catalog接続・PB identityへのasset hash反映・統合受入を後続で行い、BPG-008を完了扱いにしない。

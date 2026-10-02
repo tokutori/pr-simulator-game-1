@@ -1,5 +1,15 @@
 schema_version = 1
 [[assets]]
+path = "assets/biwa-typical-july-environment-v6.json"
+sha256 = "525f746bbfd2e65d0bf22bb8bf91dc6dcac641b9f42cc8254e335d8d70c523b8"
+source = "https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year="
+source_version = "Hikone July normals 1991-2020; raw snapshot SHA-256 7541845fa00506da3eda372c86e214a97426da1554d82ae4d1dbc55f5d810638"
+license = "公共データ利用規約（第1.0版）; MIT for project-authored recipe and assumptions"
+license_url = "https://www.jma.go.jp/jma/kishou/info/coment.html"
+attribution = "出典：気象庁ホームページ。月平年値を加工し、pr-simulator-game-1が仮定に基づくゲーム用環境を作成。"
+processing = "tools/environment-build/build_environment.py + typical-july.recipe.json; exact recipe/generator/parser hashes in asset sources; WGS84 origin 35.294075,136.254448; fixed local water down=0; N-fast affine grid 5x5x4, horizontal +/-2 km, down -500..10 m; 1e-9 m/s rounding; wave fetch 600 m and illustrative sky are assumptions/game tuning; raw HTML excluded; Rust codec validation before atomic output"
+
+[[assets]]
 path = "assets/indigo-resist-decal.png"
 sha256 = "9de869562b54113362a1a3b950b9761c3dde05df0737192a01dd843b9237c5d0"
 source = "OpenAI-generated decal using the user-supplied Tokutori wing photo as visual reference"
