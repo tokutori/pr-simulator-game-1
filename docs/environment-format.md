@@ -65,5 +65,10 @@ Three.js等への座標変換とshader/GPU更新はengine adapterが担当する
 正式な外部形式・検証・core風場への変換と、`tools/environment-build`のoffline生成を実装している。
 hash固定した地上月統計と追跡可能recipeから生成し、Rust codec検証後だけ出力を保存する。
 version 6のJSONをrepositoryの配布manifestへ登録し、全格子標本と生成入力hashをCIで検証する。
-browser bundleへの組込み、catalogの実環境への接続と通常入力coverageの受入は後続単位で行う。
+WASM adapterはversion 6のJSONをbundleへ組み込み、session生成前に既存codecで検証する。
+`OnceLock<Result<RuntimeEnvironment, EnvironmentFormatError>>`がimmutableなmetadataと風標本を所有し、
+成功・失敗を一度だけ保持する。風場はこのstorageを借用し、coreにI/Oや所有用allocationを追加しない。
+build時にasset bytesのSHA-256を計算する。runtime環境moduleはsource fingerprint入力にも含める。
+raw asset hashのPersonal Best content keyへの接続は、実環境scenarioを公開する後続単位で行う。
+現行catalogの実環境への接続、描画用metadataの消費と通常入力coverageの受入は後続単位で行う。
 現行browserのsynthetic scenarioはこの追加だけでは変更されない。

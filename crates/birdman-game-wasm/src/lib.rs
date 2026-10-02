@@ -17,6 +17,8 @@ use birdman_game_format::{
 };
 use wasm_bindgen::{JsValue, prelude::*};
 
+mod environment;
+
 mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
 }
@@ -177,6 +179,7 @@ impl GameSessionBridge {
     /// Creates a Title session. Mode is 0=Manual, 1=Shared, 2=Automatic.
     #[wasm_bindgen(constructor)]
     pub fn new(control_mode: u32) -> Result<GameSessionBridge, JsValue> {
+        environment::initialize_bundled_environment().map_err(environment_format_error)?;
         let (aircraft, scenarios, feedback) = playable_scenarios()?;
         let mut session = GameSession::new();
         session
@@ -1570,6 +1573,10 @@ fn game_session_error(error: birdman_game_core::GameSessionError) -> JsValue {
 
 fn flight_record_format_error(error: birdman_game_format::FlightRecordFormatError) -> JsValue {
     JsValue::from_str(&format!("flight record format error: {error:?}"))
+}
+
+fn environment_format_error(error: birdman_game_format::EnvironmentFormatError) -> JsValue {
+    JsValue::from_str(&format!("Environment: {error:?}"))
 }
 
 fn validate_axes(axes: [f64; 3]) -> Result<(), &'static str> {
