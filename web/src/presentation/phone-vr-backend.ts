@@ -30,7 +30,6 @@ type PhoneVrBackendState =
 export interface PhoneVrBackendOptions {
   readonly opticalProfile?: PhoneVrOpticalProfile;
   readonly firstSampleTimeoutMs?: number;
-  readonly staleAfterMs?: number;
   readonly gamepadInput?: PhoneVrGamepadInputPort;
   readonly nowMs?: () => number;
 }
@@ -54,7 +53,6 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private readonly gamepadSelector: GamepadUiSelector;
   private readonly opticalProfile: PhoneVrOpticalProfile;
   private readonly firstSampleTimeoutMs: number;
-  private readonly staleAfterMs: number;
   private readonly gamepadInput: PhoneVrGamepadInputPort;
   private readonly nowMs: () => number;
 
@@ -68,15 +66,10 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   ) {
     const opticalProfile = options.opticalProfile ?? PHONE_VR_OPTICAL_PROFILE;
     const firstSampleTimeoutMs = options.firstSampleTimeoutMs ?? 3000;
-    const staleAfterMs = options.staleAfterMs ?? 1000;
     if (!Number.isFinite(firstSampleTimeoutMs) || firstSampleTimeoutMs <= 0) {
       throw new RangeError("Phone VR first-sample timeout must be positive and finite");
     }
-    if (!Number.isFinite(staleAfterMs) || staleAfterMs <= 0) {
-      throw new RangeError("Phone VR stale threshold must be positive and finite");
-    }
     this.firstSampleTimeoutMs = firstSampleTimeoutMs;
-    this.staleAfterMs = staleAfterMs;
     this.opticalProfile = opticalProfile;
     this.gamepadInput = options.gamepadInput ?? NO_PHONE_VR_GAMEPAD_INPUT;
     this.nowMs = options.nowMs ?? (() => performance.now());
@@ -254,10 +247,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   private currentViewerPose(timestampMs: number): Pose | null {
     if (this.state.type !== "active" || this.latestSampleTimestampMs === null || this.latestSensorOrientation === null) return null;
-    const currentTimestampMs = this.nowMs();
-    const ageMs = currentTimestampMs - this.latestSampleTimestampMs;
-    if (!Number.isFinite(timestampMs) || !Number.isFinite(currentTimestampMs) || ageMs < 0 || ageMs > this.staleAfterMs) {
-      this.failTracking("Phone VR orientation data is stale");
+    if (!Number.isFinite(timestampMs)) {
+      this.failTracking("Phone VR frame timestamp is invalid");
       return null;
     }
     return poseAtOrigin(this.latestViewerOrientation);
@@ -265,7 +256,9 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   private handleSensorReading(reading: PhoneVrSensorReading): void {
     if (this.state.type !== "starting" && this.state.type !== "active") return;
-    if (!Number.isFinite(reading.timestampMs) || reading.timestampMs < 0 ||
+    const receivedTimestampMs = this.nowMs();
+    if (!Number.isFinite(receivedTimestampMs) || receivedTimestampMs < 0 ||
+        !Number.isFinite(reading.timestampMs) || reading.timestampMs < 0 || reading.timestampMs > receivedTimestampMs ||
         (this.latestSampleTimestampMs !== null && reading.timestampMs < this.latestSampleTimestampMs)) {
       this.handleInvalidReading("Phone VR orientation timestamp is invalid");
       return;

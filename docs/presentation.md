@@ -57,7 +57,8 @@ fixtureは表示基盤の検証データであり、未実装physicsの代用と
 ## 状態とcapability
 
 backend種別、capability、session状態、tracking状態を独立したdiscriminated unionとする。
-状態はidle / requesting / active / stopping / failed、trackingはvalid / unavailable / staleを基本とする。
+状態はidle / requesting / active / stopping / failed、trackingはvalid / unavailableを基本とする。
+Phone VRのvalidは最後に受理した姿勢を保持することを表す。
 start/stopに加え、capability調査、resize、recenter、frame描画、disposeの責務を持つ。
 非同期開始と終了の競合、二重開始、session end、permission denied、context lossを明示的に扱う。
 停止時にlistener、animation callback、render targetを解放する。
@@ -75,7 +76,7 @@ support確認の成功はsession開始成功を保証しない。
 [isSessionSupported](https://developer.mozilla.org/en-US/docs/Web/API/XRSystem/isSessionSupported)。
 
 Phone VRではAPI存在、許可状態、有効な姿勢eventの受信を別々に判定する。
-nullや非有限値を0度として採用しない。受信timeout・stale判定を設ける。
+nullや非有限値を0度として採用しない。初回姿勢取得にはtimeoutを設け、取得後は最新有効姿勢を保持する。
 センサーが利用できない場合は理由を表示し、再試行・Desktopへの復帰を可能にする。
 sensor権限とXR sessionは利用者の明示操作から要求する。
 非同期capability調査は開始操作より前に実施し、await後にuser activationが残ると仮定しない。
@@ -100,15 +101,23 @@ fullscreenとlandscape lockは補助機能とする。非対応・拒否・中�
 
 Phone VRはsecure context上の`DeviceOrientationEvent`と`ScreenOrientation`を使用する。
 センサー許可要求は開始操作の同期区間で呼び出し、開始後は有効なorientation eventを受け取るまでstereoを有効化しない。
-`alpha`・`beta`・`gamma`のnull、非有限値、初回event timeout、tracking staleを失敗状態として扱い、0度へ置換しない。
+`alpha`・`beta`・`gamma`のnull、非有限値、初回event timeout、不正sample時刻を失敗状態として扱い、0度へ置換しない。
 画面角度はScreen Orientation仕様の自然向きからのcounter-clockwise角としてZ軸補正へ適用する。
 姿勢は最初の有効sampleをtracking基準とし、明示的なrecenterで更新する。tracking喪失時はstereoを解除しScreenへ復帰する。
 
-sample時刻は`DeviceOrientationEvent.timeStamp`を保持する。freshnessは同一Window/time originの
-単調時計`performance.now()`との差で評価する。試験用の`nowMs`注入も同じtime originを要する。
+`deviceorientation`は有意な姿勢変化を通知し、freshness維持の追加通知は任意である。
+有効sample取得後の無通知だけでは、静止と通知経路の停止を識別できない。heartbeat間隔は仮定せず、
+通知がない間は最新有効姿勢を保持する。明示的な不正sample・画面方位の喪失ではtrackingを停止し、
+利用者の終了操作とpage/session lifecycleによるlistener・stereoの解放も維持する。
+このAPIによる無通知hardware failureの検出は保証しない。
+根拠: [Device Orientation §6.1](https://www.w3.org/TR/orientation-event/#deviceorientation)。
+
+sample時刻は`DeviceOrientationEvent.timeStamp`を保持する。受信境界では同一Window/time originの
+単調時計`performance.now()`を用い、受信時刻・sample時刻の有限性と非負性、sampleが未来を指さないこと、
+前回sampleからの非減少性を検査してから姿勢を更新する。試験用の`nowMs`注入も同じtime originを要する。
 rendererのrAF時刻はrendering opportunityを示し、callback直前に受信したsampleより古い場合がある。
 その時刻差をtracking障害と判定しない。rAF時刻は描画とdwellに使用する。
-同一sample時刻とage 0は許容し、非有限・負値・後退sampleと評価時計より未来のsampleは拒否する。
+同一sample時刻と受信時刻に等しいsampleは許容する。受信後の経過時間は失敗条件に含めない。
 根拠: [DOM event生成時刻](https://dom.spec.whatwg.org/#concept-event-inner-create)、
 [High Resolution Time](https://www.w3.org/TR/hr-time-3/#dom-performance-now)、
 [HTML rendering update](https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering)。
@@ -120,13 +129,14 @@ mappingは[W3C Gamepad API](https://www.w3.org/TR/gamepad/)のStandard Gamepad�
 初期optical profileはIPD 0.064 m、vertical FOV 60°、focus distance 10 m、distortion disabledとし、
 `generic-unverified-v1`として明示する。これらの値はviewer適合を保証しない。
 
-自動試験は全Scene/overlay fixture、permission拒否、event欠落/null/stale、screen rotation、recenter、listener解放、
+自動試験は全Scene/overlay fixture、permission拒否、初回event欠落、不正sample、無通知中の姿勢保持、screen rotation、recenter、listener解放、
 head-gazeと標準Gamepadのfocus/選択/back/scrollを対象とする。実スマートフォン、browser、viewerでの表示・操作・
 Screen復帰は未確認であり、実機受入完了までBPG-016を完了扱いしない。fullscreen・screen lockと非標準Gamepadは
 現行実装の対象外である。
 
-sensor browser adapter・backend・runtime・App updateを接続する模擬API試験では、rAF時刻より新しいsampleで
-Phone VRを継続し、単調時計上でstale閾値を超えた際にScreenへ復帰する経路を検査する。
+sensor browser adapter・backend・runtime・App updateを接続する模擬API試験では、rAF時刻より新しいsampleを受理し、
+1秒・60秒の無通知中もPhone VRと最新姿勢を維持する。次のsample・画面回転・recenterを適用し、
+明示的な不正sampleでScreenへ復帰する経路を検査する。
 この試験は実スマートフォンで報告された即時Screen復帰の原因確定と受入確認を代替しない。
 
 ## 視点の階層
@@ -205,7 +215,7 @@ HUDとメニューは左右眼で読める距離・位置へ配置する。
 
 - BPG-014: engine境界、全Sceneのview model、anchor別追従、backend切替、単一loop、transform合成、resource解放。
 - BPG-015: WebXR capability/reject/session end、reference-space reset、pose/projection、実HMD。
-- BPG-016: 権限許可・拒否、event未受信/null/stale、縦横画面、resize、左右aspect、IPD/FOV、実スマートフォン。
+- BPG-016: 権限許可・拒否、初回event未受信、不正sample、無通知中の姿勢保持、縦横画面、resize、左右aspect、IPD/FOV、実スマートフォン。
 - BPG-012: 二眼描画負荷、XR refresh rate、thermal負荷、画質振動、physics一致。
 - BPG-013: HTTPS、permission導線、終了復帰、backend別creditsと対応端末一覧。
 
