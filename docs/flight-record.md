@@ -148,3 +148,16 @@ capacity境界、allocation、schema round-trip、手計算可能な集計値、
 record validationは単調時刻、単位quaternion、有限値、有効な要素IDとheader整合を確認する。
 playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路quaternion slerp、線形状態補間、
 角度のwrap-aware補間を行う。queryは記録範囲外を拒否し、物理状態を変更しない。
+
+recordの順序・範囲判定は整数tickとfractionの組で行い、`(n, 1)`と`(n + 1, 0)`を同一時刻として扱う。
+保存sampleとfinalization metadataの一致検査には保存したtick/fractionの厳密一致を用いる。
+微小な終端fractionを絶対tickへ浮動小数加算して消失させず、補間率は隣接sampleからの局所時間差で計算する。
+表示用secondsへの変換で同じ値になるsampleもすべて保持し、core・format・Web境界は真の重複時刻を拒否する。
+
+秒単位queryは有限かつ`0 <= seconds <= duration_seconds`を受け付ける。
+`seconds == duration_seconds`では保存終端の状態・telemetryを優先し、返却時刻は上記の同値規則で正規化する。
+正の微小durationが秒への変換で0へ丸められる場合も、seconds=0は保存終端を返す。
+秒の内点は表示秒へ変換した隣接sampleの区間を選び、その区間内の秒差の比から補間する。
+これにより秒から絶対tickへの再乗算で生じる丸めを範囲判定へ持ち込まない。
+同じsecondsへ丸められた時刻を個別指定する場合はtick/fraction queryを用いる。
+durationの直外を含む範囲外queryは拒否し、epsilonによる時刻の移動やsample削除は行わない。
