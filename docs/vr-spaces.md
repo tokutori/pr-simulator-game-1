@@ -60,6 +60,36 @@ HUDを水面反射用layerへ追加せず、終了時はtexture・material・geo
 現在の追加単位は公開型、backendのcenter-head供給、独立surfaceまでを対象とする。
 ゲームviewの既定値はabsentであり、Flightへの有効化・profile別layout・GPU視認性は後続の接続単位で検証する。
 
+## 同一frameの眼別geometry
+
+`RendererAdapter.startLoop`はtimestampと不変の`ViewerFrame`を渡す。
+`ViewerFrame`は`configured`、`runtime-derived`、`unavailable`を排他的に表現する。
+Runtimeは同じframeをview導出関数へ渡し、そのraw center-headをbackendへ供給する。
+AppModel、DOM、window上に眼別geometryの正本を追加せず、前frameのgeometryを再利用しない。
+resize、光学profile変更、表示camera切替はframe callback前に完了させる。callback内の物理pose更新は許可し、
+geometry取得から描画までの間にprojection設定を変更しない。
+
+WebXRでは一つの`XRFrame.getViewerPose()`結果からcenter transformと各viewのtransform・projectionをコピーする。
+`headFromEye`はcenter transformの逆変換とeye transformから導出する。
+projectionは16要素のcolumn-major行列のまま保持し、非対称frustum、眼の回転、shearをFOV単一値へ変換しない。
+公開型へWebXR・Three.jsの具体型を含めない。配列とposeはコピー・freezeし、browser所有の配列を保持しない。
+初期対応はleft/right各1眼の組である。入力順序を正規化し、他のview数・重複・未知の眼編成は利用不能理由を返す。
+非有限値、非単位pose、退化projectionも理由を保持する。有効なcenter-headがある場合、geometry失敗時もtrackingは維持する。
+参照: [WebXRのview geometry](https://www.w3.org/TR/webxr/#xrviewgeometry-interface)、
+[viewer pose](https://www.w3.org/TR/webxr/#xrviewerpose-interface)。
+
+Phone VRでは実`StereoCamera`を描画と同じcamera projection設定、aspect倍率0.5、eye separationで評価する。
+fov、aspect、zoom、near/far、focusを個別に近似せず、左右projectionをコピーする。
+これは構成済みのソフトウェア光学モデルであり、実端末・viewerの較正値を意味しない。
+Screenおよび取得不能なXR frameは`unavailable`とする。raw sensor headは従来どおりPhone backendが所有する。
+`headPlaneFitsViews`はhead基準の矩形四隅を各眼のview/projectionへ写像し、両眼のclip範囲を検査する。
+eye offsetは配置検査に使用し、Head HUD meshへ追加しない。描画時のIPD適用はstereo rendererが一度だけ行う。
+
+`viewer-frame.test.ts`は非対称・回転・shearを含む模擬XR入力、コピー、reference変換、欠損・不正入力と純粋な投影判定を検査する。
+`three-renderer-panel-reference.test.ts`は実renderer adapterのanimation-loop境界と、実`StereoEffect`の両眼出力を検査する。
+後者のXR portは模擬APIである。native consumerの投影証明は、#169の実`WebXRManager`を用いた回帰と
+Head HUDの左右眼投影を接続する後続単位へ残る。GPU視認性と実スマートフォン・実HMD受入も独立した未達条件である。
+
 ## Menuと入力
 
 Menu用referenceと景観のcamera rigを分離する。

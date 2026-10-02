@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseThree } from "../../web/src/render/camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
 import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
@@ -131,6 +133,34 @@ describe("scene and overlay fixtures", () => {
     expect(labels).toContain("Selected axes");
     expect(labels).toContain("Scenario and model versions");
     expect(fonts).toContain("500 17px system-ui, sans-serif");
+  });
+});
+
+describe("same-frame view projection boundary", () => {
+  it("passes the exact immutable frame into pure view derivation and its raw head into the backend", async () => {
+    const renderer = new FakeRenderer();
+    const backend = new FakeBackend("webxr", new Set());
+    const head = pose(vec3(1, 2, 3), IDENTITY_POSE.orientation);
+    const frame = unavailableViewerFrame("invalid-view-geometry", head);
+    let projectedFrame: ViewerFrame | null = null;
+    let backendPose: Pose | null = null;
+    const originalFrame = backend.currentFrame.bind(backend);
+    backend.currentFrame = (timestampMs, _view, viewerPose) => {
+      backendPose = viewerPose ?? null;
+      return originalFrame(timestampMs, _view, viewerPose);
+    };
+    const runtime = new PresentationRuntime(renderer, [backend], (viewer) => {
+      projectedFrame = viewer;
+      return createSceneFixture("Flight");
+    });
+    expect(await runtime.start("webxr")).toEqual({ ok: true });
+    renderer.tick(25, frame);
+    expect(projectedFrame).toBe(frame);
+    expect(backendPose).toBe(head);
+    renderer.tick(26);
+    expect(projectedFrame).toEqual(unavailableViewerFrame("not-stereo"));
+    expect(backendPose).toBeNull();
+    await runtime.dispose();
   });
 });
 
@@ -332,9 +362,9 @@ class FakeRenderer implements RendererAdapter {
   disposeCount = 0;
   readonly frames: BackendFrame[] = [];
   lastViewport: ViewportSize | null = null;
-  private callback: ((timestampMs: number, viewerPose: Pose | null) => void) | null = null;
+  private callback: Parameters<RendererAdapter["startLoop"]>[0] | null = null;
 
-  startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void {
+  startLoop(callback: Parameters<RendererAdapter["startLoop"]>[0]): void {
     if (this.callback !== null) throw new Error("Only one frame loop may run");
     this.callback = callback;
     this.startCount++;
@@ -373,8 +403,8 @@ class FakeRenderer implements RendererAdapter {
     this.disposeCount++;
   }
 
-  tick(timestampMs: number): void {
-    this.callback?.(timestampMs, null);
+  tick(timestampMs: number, viewer: ViewerFrame = unavailableViewerFrame("not-stereo")): void {
+    this.callback?.(timestampMs, viewer);
   }
 }
 
@@ -406,12 +436,12 @@ class FakeBackend implements PresentationBackendAdapter {
     return Promise.resolve();
   }
 
-  currentFrame(timestampMs: number): BackendFrame {
+  currentFrame(timestampMs: number, _view?: UiViewModel, viewerPose: Pose | null = null): BackendFrame {
     if (!this.running) throw new Error(`${this.mode} is inactive`);
     return Object.freeze({
       timestampMs,
       headHud: { kind: "absent" as const },
-      cameraPose: IDENTITY_POSE,
+      cameraPose: viewerPose ?? IDENTITY_POSE,
       panelPose: IDENTITY_POSE,
       panel: null,
       panelVisible: this.mode !== "screen",

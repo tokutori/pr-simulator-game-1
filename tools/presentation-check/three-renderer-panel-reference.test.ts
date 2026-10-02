@@ -8,6 +8,8 @@ import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/rend
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { placeMenuPanel } from "../../web/src/render/anchors.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
@@ -25,6 +27,7 @@ interface RecordedDraw {
 interface RecordingDriver {
   readonly draws: RecordedDraw[];
   readonly xr: { isPresenting: boolean; enabled: boolean };
+  tick(timestamp: number, viewer: XRViewerPose | null): void;
 }
 
 const capture = vi.hoisted(() => ({ driver: null as RecordingDriver | null }));
@@ -33,13 +36,14 @@ vi.mock("three", async (importOriginal) => {
   const actual = await importOriginal<typeof import("three")>();
   class RecordingWebGlRenderer {
     readonly draws: RecordedDraw[] = [];
-    readonly xr = { isPresenting: false, enabled: false };
+    readonly xr = { isPresenting: false, enabled: false, getReferenceSpace: () => ({}) as XRReferenceSpace };
     readonly shadowMap = { enabled: false };
     autoClear = true;
     private readonly size = new actual.Vector2();
     private readonly clearColor = new actual.Color();
     private clearAlpha = 1;
     private target: unknown = null;
+    private animationLoop: ((timestamp: number, frame: XRFrame) => void) | null = null;
 
     constructor() { capture.driver = this; }
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
@@ -54,6 +58,10 @@ vi.mock("three", async (importOriginal) => {
     setRenderTarget(target: unknown): void { this.target = target; }
     getRenderTarget(): unknown { return this.target; }
     clear(): void {}
+    setAnimationLoop(callback: ((timestamp: number, frame: XRFrame) => void) | null): void { this.animationLoop = callback; }
+    tick(timestamp: number, viewer: XRViewerPose | null): void {
+      this.animationLoop?.(timestamp, { getViewerPose: () => viewer } as unknown as XRFrame);
+    }
     dispose(): void {}
     render(scene: Scene, camera: Camera): void {
       if (this.target !== null) return;
@@ -96,6 +104,82 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it("captures current configured projections matching both actual StereoEffect eyes across resize, optics, and camera cuts", () => {
+    let currentViewport = viewport;
+    const observed: ViewerFrame[] = [];
+    bundle.renderer.startLoop((_timestamp, viewer) => {
+      observed.push(viewer);
+      bundle.renderer.render(frame({ viewport: currentViewport, cameraPose: turnedHead }));
+    });
+    try {
+      for (const [index, configuration] of [
+        { size: viewport, profile: PHONE_VR_OPTICAL_PROFILE, external: false },
+        { size: { x: 720, y: 1280, pixelRatio: 2 }, profile: { ...PHONE_VR_OPTICAL_PROFILE, eyeSeparationMeters: 0.071, focusDistanceMeters: 3, verticalFieldOfViewDegrees: 68 }, external: false },
+        { size: viewport, profile: PHONE_VR_OPTICAL_PROFILE, external: true }
+      ].entries()) {
+        currentViewport = configuration.size;
+        bundle.renderer.resize(currentViewport);
+        bundle.renderer.setStereoPresentation(configuration.profile);
+        if (configuration.external) {
+          bundle.renderer.setFlightPose({ datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, initialPilotPositionMeters: 0 });
+          bundle.renderer.setFlightCameraMode("platform");
+          bundle.renderer.setCinematicCameraView({ pose: pose(vec3(10, 4, -3), IDENTITY_POSE.orientation), verticalFieldOfViewDegrees: 42 });
+        }
+        driver.draws.length = 0;
+        driver.tick(index, null);
+        const geometry = observed.at(-1);
+        if (geometry?.source !== "configured") throw new Error("Configured geometry missing");
+        expect(driver.draws).toHaveLength(2);
+        const center = centerEye(driver.draws);
+        const target = new Vector3(0.12, -0.2, -2.4);
+        for (const [eyeIndex, draw] of driver.draws.entries()) {
+          const eye = geometry.eyes[eyeIndex];
+          if (eye === undefined) throw new Error("Eye missing");
+          expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
+          const expected = target.clone().applyMatrix4(center).applyMatrix4(draw.camera.clone().invert()).applyMatrix4(draw.projection);
+          const projected = projectHeadPoint(eye, vec3(target.x, target.y, target.z));
+          expect(projected?.x).toBeCloseTo(expected.x, 10);
+          expect(projected?.y).toBeCloseTo(expected.y, 10);
+        }
+      }
+      bundle.renderer.setStereoPresentation(null);
+      driver.tick(4, null);
+      expect(observed.at(-1)).toEqual({ source: "unavailable", reason: "not-stereo", trackingFromHead: null });
+    } finally {
+      bundle.renderer.stopLoop();
+    }
+  });
+
+  it("copies runtime center and current eye projections in the actual animation-loop adapter", () => {
+    const frames: ViewerFrame[] = [];
+    bundle.renderer.startLoop((_timestamp, viewer) => { frames.push(viewer); });
+    try {
+      driver.xr.isPresenting = true;
+      const transform = (offset: number) => ({ position: { x: offset, y: 1.6, z: 0, w: 1 }, orientation: { x: 0, y: 0, z: 0, w: 1 } });
+      const matrix = new Matrix4().makePerspective(-0.08, 0.11, 0.09, -0.07, 0.1, 100);
+      const projection = new Float32Array(matrix.elements);
+      const viewer = { transform: transform(0), views: [
+        { eye: "right", transform: transform(0.034), projectionMatrix: projection },
+        { eye: "left", transform: transform(-0.032), projectionMatrix: projection }
+      ] } as unknown as XRViewerPose;
+      driver.tick(10, viewer);
+      const initial = frames[0];
+      if (initial?.source !== "runtime-derived") throw new Error("Runtime geometry missing");
+      expect(initial.trackingFromHead.position.y).toBe(1.6);
+      expect(initial.eyes[0].headFromEye.position.x).toBe(-0.032);
+      projection[0] = 9;
+      driver.tick(11, viewer);
+      const changed = frames[1];
+      if (changed?.source !== "runtime-derived") throw new Error("Second runtime frame missing");
+      expect(changed.eyes[0].projection[0]).toBe(9);
+      expect(initial.eyes[0].projection[0]).not.toBe(9);
+      driver.tick(12, null);
+      expect(frames[2]).toEqual({ source: "unavailable", reason: "viewer-unavailable", trackingFromHead: null });
+    } finally {
+      bundle.renderer.stopLoop();
+    }
+  });
 
   it.each(["Boot", "Title", "FlightSetup", "Briefing", "Result"] as const)("keeps non-flight %s Menu visible in both eyes and stable across viewport changes", (scene) => {
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);

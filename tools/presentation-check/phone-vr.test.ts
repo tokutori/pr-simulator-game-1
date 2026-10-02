@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -637,7 +638,7 @@ class FakeRenderer implements RendererAdapter {
   setSelectRayHandler(): void {}
   dispose(): void {}
 
-  tick(timestampMs: number): void { this.frameCallback?.(timestampMs, null); }
+  tick(timestampMs: number): void { this.frameCallback?.(timestampMs, unavailableViewerFrame("not-stereo")); }
 }
 
 class FakePhoneVrGamepad implements PhoneVrGamepadInputPort {

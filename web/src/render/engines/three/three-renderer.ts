@@ -17,6 +17,7 @@ import {
   PlaneGeometry,
   Scene,
   SRGBColorSpace,
+  StereoCamera,
   ShaderMaterial,
   UniformsLib,
   UniformsUtils,
@@ -34,6 +35,8 @@ import type { Pose } from "../../contracts/math.js";
 import { composePose, inversePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
+import { captureConfiguredViewerFrame, captureXrViewerFrame } from "./viewer-frame.js";
+import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
@@ -175,6 +178,8 @@ export function createThreeRenderer(
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.shadowMap.enabled = true;
   const stereoEffect = new StereoEffect(renderer);
+  const geometryStereo = new StereoCamera();
+  geometryStereo.aspect = 0.5;
   renderer.outputColorSpace = SRGBColorSpace;
   renderer.setClearColor(0x9fb0ad, 1);
 
@@ -423,13 +428,16 @@ export function createThreeRenderer(
       loopRunning = true;
       renderer.setAnimationLoop((timestamp, xrFrame) => {
         const referenceSpace = renderer.xr.getReferenceSpace();
-        const viewer = referenceSpace === null ? null : xrFrame.getViewerPose(referenceSpace);
-        const transform = viewer?.transform;
-        const viewerPose = transform === undefined ? null : {
-          position: vec3(transform.position.x, transform.position.y, transform.position.z),
-          orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
-        };
-        callback(timestamp, viewerPose);
+        if (renderer.xr.isPresenting) {
+          const viewer = referenceSpace === null ? null : xrFrame.getViewerPose(referenceSpace);
+          callback(timestamp, captureXrViewerFrame(viewer ?? null));
+        } else if (stereoPresentation !== null) {
+          geometryStereo.eyeSep = stereoPresentation.eyeSeparationMeters;
+          updateFixedCameraProjection();
+          callback(timestamp, captureConfiguredViewerFrame(currentExternalCameraPose() === null ? camera : fixedCamera, geometryStereo));
+        } else {
+          callback(timestamp, unavailableViewerFrame("not-stereo"));
+        }
       });
     },
     stopLoop() {
@@ -442,7 +450,6 @@ export function createThreeRenderer(
       if (!renderer.xr.isPresenting) resizeIfNeeded(frame.viewport);
       const externalCameraPose = currentExternalCameraPose();
       const useExternalCamera = externalCameraPose !== null;
-      const fixedView = useExternalCamera && flightCameraMode !== "chase" ? fixedCameraView : null;
       const pilotEyePose = flightPose === null
         ? IDENTITY_POSE
         : pilotEyePoseThree(
@@ -456,13 +463,7 @@ export function createThreeRenderer(
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
-      if (fixedView !== null && fixedCamera.fov !== fixedView.verticalFieldOfViewDegrees) {
-        fixedCamera.fov = fixedView.verticalFieldOfViewDegrees;
-        fixedCamera.updateProjectionMatrix();
-      } else if (fixedView === null && fixedCamera.fov !== 60) {
-        fixedCamera.fov = 60;
-        fixedCamera.updateProjectionMatrix();
-      }
+      updateFixedCameraProjection();
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
       airframe.setVisualState(
         flightPose?.airspeedMetersPerSecond ?? null,
@@ -756,6 +757,14 @@ export function createThreeRenderer(
 
   function isAttaching(): boolean {
     return xrState.type === "attaching";
+  }
+
+  function updateFixedCameraProjection(): void {
+    const fixedView = currentExternalCameraPose() !== null && flightCameraMode !== "chase" ? fixedCameraView : null;
+    const fieldOfView = fixedView?.verticalFieldOfViewDegrees ?? 60;
+    if (fixedCamera.fov === fieldOfView) return;
+    fixedCamera.fov = fieldOfView;
+    fixedCamera.updateProjectionMatrix();
   }
 
   function resizeIfNeeded(viewport: ViewportSize): void {

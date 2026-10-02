@@ -1,6 +1,6 @@
 import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize } from "../render/contracts/runtime.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
-import type { Pose } from "../render/contracts/math.js";
+import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
 export class PresentationRuntime {
   private readonly backends: ReadonlyMap<PresentationMode, PresentationBackendAdapter>;
@@ -12,7 +12,7 @@ export class PresentationRuntime {
   constructor(
     private readonly renderer: RendererAdapter,
     backends: readonly PresentationBackendAdapter[],
-    private readonly viewModel: () => UiViewModel,
+    private readonly viewModel: (viewer: ViewerFrame) => UiViewModel,
     private readonly onFrame: (timestampMs: number) => void = () => undefined
   ) {
     const entries = backends.map((backend) => [backend.mode, backend] as const);
@@ -79,7 +79,7 @@ export class PresentationRuntime {
     this.activeBackend = backend;
     if (!this.loopStarted) {
       try {
-        this.renderer.startLoop((timestampMs, viewerPose) => { this.renderFrame(timestampMs, viewerPose); });
+        this.renderer.startLoop((timestampMs, viewer) => { this.renderFrame(timestampMs, viewer); });
         this.loopStarted = true;
       } catch (error) {
         this.activeBackend = null;
@@ -165,11 +165,11 @@ export class PresentationRuntime {
     this.loopStarted = false;
   }
 
-  private renderFrame(timestampMs: number, viewerPose: Pose | null): void {
+  private renderFrame(timestampMs: number, viewer: ViewerFrame): void {
     const backend = this.activeBackend;
     if (backend === null || this.disposed) return;
     this.onFrame(timestampMs);
-    this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(), viewerPose));
+    this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(viewer), viewer.trackingFromHead));
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
