@@ -104,6 +104,17 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
     ));
     assert!(session.flight_record().is_none());
     assert!(session.playback_record().unwrap().sample_count() > 1);
+    let before = session.snapshot();
+    let clock = session.playback_clock;
+    let record = session.playback_record().unwrap();
+    for time_seconds in [0.0, 0.005, record.duration_seconds().unwrap()] {
+        assert_eq!(
+            session.playback_sample_at_seconds(time_seconds),
+            Ok(record.sample_at_seconds(time_seconds).unwrap())
+        );
+    }
+    assert_eq!(session.snapshot(), before);
+    assert_eq!(session.playback_clock, clock);
 
     session.leave_attract().unwrap();
     assert_eq!(session.snapshot(), SessionSnapshot::Title);
@@ -192,6 +203,96 @@ fn abort_from_paused_flight_finalizes_the_last_valid_tick() {
 }
 
 #[test]
+fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
+    let mut session = session(3);
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    for _ in 0..3 {
+        session
+            .advance_flight_tick(neutral_input(&session))
+            .unwrap();
+    }
+    let before = session.snapshot();
+    let clock = session.playback_clock;
+    let record = session.flight_record().unwrap();
+    let header = record.header();
+    let samples = record.samples().to_vec();
+    let finalization = record.finalization();
+    assert_eq!(before.phase(), SessionPhase::Result);
+    for time_seconds in [0.0, 0.005, 0.03] {
+        let expected = record.sample_at_seconds(time_seconds).unwrap();
+        assert_eq!(
+            session.playback_sample_at_seconds(time_seconds),
+            Ok(expected)
+        );
+    }
+    for time_seconds in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01] {
+        assert_eq!(
+            session.playback_sample_at_seconds(time_seconds),
+            Err(GameSessionError::PlaybackQuery(
+                crate::FlightRecordQueryError::InvalidTime
+            ))
+        );
+    }
+    assert_eq!(
+        session.playback_sample_at_seconds(0.04),
+        Err(GameSessionError::PlaybackQuery(
+            crate::FlightRecordQueryError::OutsideRecordedRange
+        ))
+    );
+    assert_eq!(
+        session.set_playback_rate_code(0),
+        Err(GameSessionError::InvalidTransition)
+    );
+    for playing in [false, true] {
+        assert_eq!(
+            session.set_playback_playing(playing),
+            Err(GameSessionError::InvalidTransition)
+        );
+    }
+    assert_eq!(
+        session.seek_playback(0.0),
+        Err(GameSessionError::InvalidTransition)
+    );
+    assert_eq!(
+        session.advance_playback(0.01),
+        Err(GameSessionError::InvalidTransition)
+    );
+    assert_eq!(session.snapshot(), before);
+    assert_eq!(session.playback_clock, clock);
+    let record = session.flight_record().unwrap();
+    assert_eq!(record.header(), header);
+    assert_eq!(record.samples(), samples);
+    assert_eq!(record.finalization(), finalization);
+}
+
+#[test]
+fn seconds_queries_reject_phases_without_a_finalized_result() {
+    let mut session = GameSession::new();
+    let assert_rejected = |session: &GameSession<'_>| {
+        assert_eq!(
+            session.playback_sample_at_seconds(0.0),
+            Err(GameSessionError::InvalidTransition)
+        );
+    };
+    assert_rejected(&session);
+    session.open_setup().unwrap();
+    assert_rejected(&session);
+    session.prepare_flight(configuration(100)).unwrap();
+    assert_rejected(&session);
+    session.mark_briefing_ready().unwrap();
+    assert_rejected(&session);
+    session.start_countdown(1).unwrap();
+    assert_rejected(&session);
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    assert_rejected(&session);
+    session.pause(PauseReason::DocumentHidden).unwrap();
+    assert_rejected(&session);
+}
+
+#[test]
 fn replay_phase_retains_the_immutable_result_and_record() {
     let mut session = session(100);
     session.start_countdown(1).unwrap();
@@ -272,6 +373,10 @@ fn archived_record_opens_replay_from_title_and_returns_without_result() {
         Some(source_record.header().scenario)
     );
     assert_eq!(viewer.flight_record().unwrap().sample_count(), 1);
+    assert_eq!(
+        viewer.playback_sample_at_seconds(0.0),
+        Ok(source_record.sample_at_seconds(0.0).unwrap())
+    );
     viewer.leave_replay().unwrap();
     assert_eq!(viewer.snapshot().phase(), SessionPhase::Title);
     assert!(viewer.flight_record().is_none());
@@ -412,6 +517,19 @@ fn synthetic_flight_reaches_contact_result_without_skipping_terminal_state() {
                 last.tick_index
             );
             assert_eq!(record.finalization().unwrap().score, result.score);
+            let duration_seconds = record.duration_seconds().unwrap();
+            let sample = session
+                .playback_sample_at_seconds(duration_seconds)
+                .unwrap();
+            assert_eq!(sample.tick_index, last.tick_index);
+            assert!(
+                (sample.fraction - last.fraction).abs()
+                    <= 2.0 * f64::EPSILON * (last.tick_index as f64 + 1.0)
+            );
+            assert_eq!(sample.flight_state, last.flight_state);
+            assert_eq!(sample.actuator_state, last.actuator_state);
+            assert_eq!(sample.telemetry, last.telemetry);
+            assert_eq!(session.snapshot(), snapshot);
             break;
         }
     }

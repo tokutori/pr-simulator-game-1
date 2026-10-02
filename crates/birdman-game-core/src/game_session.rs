@@ -616,12 +616,17 @@ impl<'a> GameSession<'a> {
             .map_err(GameSessionError::PlaybackClock)
     }
 
-    /// Queries an interpolated playback sample at elapsed seconds from the record start.
+    /// Queries a retained sample in Result, Replay or Attract without changing playback.
     pub fn playback_sample_at_seconds(
         &self,
         time_seconds: f64,
     ) -> Result<crate::FlightRecordPlaybackSample, GameSessionError> {
-        self.require_playback_phase()?;
+        if !matches!(
+            self.phase,
+            SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
+        ) {
+            return Err(GameSessionError::InvalidTransition);
+        }
         self.playback_record()
             .ok_or(GameSessionError::InvalidTransition)?
             .sample_at_seconds(time_seconds)
