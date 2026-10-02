@@ -22,6 +22,15 @@ interface RecordedDraw {
   readonly panel: Matrix4;
   readonly projection: Matrix4;
   readonly panelVisible: boolean;
+  readonly transparent: boolean;
+  readonly depthTest: boolean;
+  readonly depthWrite: boolean;
+  readonly renderOrder: number;
+  readonly cursorDepthTest: boolean;
+  readonly cursorDepthWrite: boolean;
+  readonly cursorRenderOrder: number;
+  readonly worldTransparentOrders: readonly number[];
+  readonly groupOrders: readonly number[];
 }
 
 interface RecordingDriver {
@@ -64,9 +73,28 @@ vi.mock("three", async (importOriginal) => {
       scene.traverse((object) => {
         if (object instanceof actual.Mesh && object.material instanceof actual.MeshBasicMaterial &&
             object.material.map instanceof actual.CanvasTexture) {
+          const cursor = object.children.find((child) => child instanceof actual.Mesh && child.geometry instanceof actual.CircleGeometry);
+          if (!(cursor instanceof actual.Mesh) || !(cursor.material instanceof actual.MeshBasicMaterial)) {
+            throw new Error("Panel cursor is missing");
+          }
+          const worldTransparentOrders: number[] = [];
+          const groupOrders: number[] = [];
+          scene.traverse((entry) => {
+            if (entry instanceof actual.Group) groupOrders.push(entry.renderOrder);
+            if (entry instanceof actual.Mesh && entry !== object && entry !== cursor) {
+              const materials = Array.isArray(entry.material) ? entry.material : [entry.material];
+              if (materials.some((material: unknown) => material instanceof actual.Material && material.transparent)) {
+                worldTransparentOrders.push(entry.renderOrder);
+              }
+            }
+          });
           this.draws.push({
             camera: camera.matrixWorld.clone(), panel: object.matrixWorld.clone(),
-            projection: camera.projectionMatrix.clone(), panelVisible: object.visible
+            projection: camera.projectionMatrix.clone(), panelVisible: object.visible,
+            transparent: object.material.transparent, depthTest: object.material.depthTest,
+            depthWrite: object.material.depthWrite, renderOrder: object.renderOrder,
+            cursorDepthTest: cursor.material.depthTest, cursorDepthWrite: cursor.material.depthWrite,
+            cursorRenderOrder: cursor.renderOrder, worldTransparentOrders, groupOrders
           });
         }
       });
@@ -224,6 +252,49 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.render(frame({ cameraPose: turnedHead, panelPose: worldPanel }));
     expectMatrix(centerEye(driver.draws), poseMatrix(transformed));
     for (const draw of driver.draws) expectMatrix(draw.panel, poseMatrix(worldPanel));
+  });
+
+  it("composites terminal Menu and Head panels after the world while restoring physical panel depth", () => {
+    const flight: FlightRenderPose = {
+      datumPositionNed: { north: 256.7, east: 0, down: -0.05 },
+      attitudeBodyToNed: { w: Math.cos(0.04), x: Math.sin(0.04), y: 0, z: 0 },
+      pilotPositionMeters: 0.15, initialPilotPositionMeters: 0
+    };
+    const basePanel = createSceneFixture("Result").panels[0];
+    if (basePanel === undefined) throw new Error("Missing Result panel fixture");
+    const panelPose = placeMenuPanel(IDENTITY_POSE, 2.4);
+    const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.15, 0);
+    bundle.renderer.setFlightPose(flight);
+    bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
+    for (const anchor of ["menu", "world", "head", "cockpit", "menu"] as const) {
+      driver.draws.length = 0;
+      bundle.renderer.render(frame({
+        cameraPose: turnedHead, panelPose, panel: { ...basePanel, anchor },
+        gazeCursor: { point: { x: 0.2, y: -0.3 }, progress: 0.5 }
+      }));
+      const overlay = anchor === "menu" || anchor === "head";
+      expect(driver.draws).toHaveLength(2);
+      expectMatrix(centerEye(driver.draws), poseMatrix(flightRelativePose(flight, composePose(eye, turnedHead))));
+      for (const draw of driver.draws) {
+        expectMatrix(draw.panel, poseMatrix(flightRelativePose(flight, panelPose)));
+        expect(draw.panelVisible).toBe(true);
+        expect(draw.transparent).toBe(overlay);
+        expect(draw.depthTest).toBe(!overlay);
+        expect(draw.depthWrite).toBe(!overlay);
+        expect(draw.cursorDepthTest).toBe(!overlay);
+        expect(draw.cursorDepthWrite).toBe(false);
+        if (overlay) {
+          expect(draw.renderOrder).toBeGreaterThan(1000);
+          expect(draw.cursorRenderOrder).toBeGreaterThan(draw.renderOrder);
+          expect(draw.worldTransparentOrders.length).toBeGreaterThan(0);
+          expect(draw.worldTransparentOrders.every((order) => order < draw.renderOrder)).toBe(true);
+          expect(draw.groupOrders.every((order) => order === 0)).toBe(true);
+        } else {
+          expect(draw.renderOrder).toBe(0);
+          expect(draw.cursorRenderOrder).toBe(0);
+        }
+      }
+    }
   });
 
   it.each(["menu", "head", "cockpit", "world"] as const)("matches real Phone VR %s gaze to both rendered eyes for moving PilotEye positions", async (anchor) => {
