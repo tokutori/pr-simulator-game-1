@@ -97,7 +97,7 @@ describe("Game scene view model", () => {
       presentation: { type: "ready" as const, mode: "webxr" as const }
     });
     const vrHelp = createGameViewModel(vrModel, flightSnapshot);
-    expect(vrHelp.panels[0]?.anchor).toBe("cockpit");
+    expect(vrHelp.panels[0]?.anchor).toBe("menu");
     expect(vrHelp.panels[0]?.controls.map((control) => control.id)).toEqual(expect.arrayContaining([
       "game-pause-help-info", "game-pause-help-back"
     ]));
@@ -108,7 +108,7 @@ describe("Game scene view model", () => {
     )).toBe(true);
   });
 
-  it("renders one cockpit-anchored HUD and one set of controls in VR Flight", () => {
+  it("renders one Menu-anchored Pause control separately from VR Flight information", () => {
     const model = Object.freeze({
       ...createInitialAppModel(),
       gameSession: sessionForPhase(5),
@@ -117,10 +117,10 @@ describe("Game scene view model", () => {
     const panel = createGameViewModel(model, flightSnapshot).panels[0];
     if (panel === undefined) throw new Error("Flight panel is missing");
     const controlIds = panel.controls.map((control) => control.id);
-    expect(panel.anchor).toBe("cockpit");
+    expect(panel.anchor).toBe("menu");
     expect(controlIds).not.toContain("game-flight-readouts");
     expect(controlIds).toContain("game-flight-pause");
-    expect(controlIds).toContain("game-flight-abort");
+    expect(controlIds).not.toContain("game-flight-abort");
     expect(new Set(controlIds).size).toBe(controlIds.length);
   });
 

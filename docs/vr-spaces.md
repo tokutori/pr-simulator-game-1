@@ -57,8 +57,33 @@ depthTest falseで描画する。背景alphaとforeground alphaはcanvas側で�
 HUDを水面反射用layerへ追加せず、終了時はtexture・material・geometryを一度ずつ解放する。
 非表示時もmeshを保持し、変更された不変viewだけをtexture更新の入力にする。
 
-現在の追加単位は公開型、backendのcenter-head供給、独立surfaceまでを対象とする。
-ゲームviewの既定値はabsentであり、Flightへの有効化・profile別layout・GPU視認性は後続の接続単位で検証する。
+`createHeadHudView`は同一の`FlightHudModel`と当該frameの`ViewerFrame`から、
+`absent | unavailable(reason) | visible(layer, textHeightMeters)`を純粋に導出する。
+Information全5設定を共用し、Customの各cueを独立に扱う。全cueを意図的に非表示にしたabsentと、
+geometry・可読領域の不足によるunavailableを区別する。物理値の正本とInformation設定を変更しない。
+
+layoutの設計値は距離2.4 m、最大幅2.16 m、最大高2.4 m、前方中央の接平面角で左右各15°・上下各10°である。
+上下のbandへreadoutと計器を配分し、狭い左右視野では列数と上下配分を変える。
+距離と中央空白角を保ち、実際の左右view/projectionでplane四隅がclip margin内へ収まる大きさを探索する。
+収容できない場合は要素や中央空白を縮小して継続せず、理由を持つunavailableを返す。
+設計font emの中心位置での角寸法は0.65°とする。この値は端部のglyphの実角寸法や実機可読性の下限を保証しない。
+canted眼での中央可視領域、眼別glyph角寸法、実機の可読性はconsumer・GPU・実機の受入で確認する。
+
+専用Canvas painterはplaneの物理aspectに合わせたpixel寸法を使う。
+`prepareHeadHudPaint`が固定font・left align・middle baselineで全cardの文字を測定し、
+advanceとglyphの実bounding box、改行後の行数と高さを検査して不変のpaint planを返す。
+`fillText`の`maxWidth`による字形の圧縮を使用しない。
+根拠: [HTML Canvasの文字描画とTextMetrics](https://html.spec.whatwg.org/multipage/canvas.html#textmetrics)。
+測定はCanvas adapterの副作用境界で行う。AppModel・status・DOMへ測定結果を書き戻さない。
+composition rootはframe開始時に取得したmodel・FlightSnapshot・ViewerFrameを一組として保持し、
+事前評価の成功・失敗をpureなgame viewへ渡して、Head layerとMenu案内を同じ結果から確定する。
+その後`drawHeadHud`がCanvas全面をclearし、成功planだけを描く。欠損metricsや文字収容失敗は部分描画を公開しない。
+
+Flight runningのVR操作はHead情報板から分離した小型MenuのPauseに配置する。
+Pause・そのSettings/Helpは通常サイズのMenuとし、Head情報板をabsentにする。
+ScreenのHUDと操作は従来のDOM adapterを使用する。非Flightの全SceneもHeadをabsentとする。
+小型Menuの字高・配置、Head surfaceへのゲーム接続、実WebXRManager境界、GPU視認性は後続のconsumer接続単位で検証する。
+現時点のcomposition rootはHead viewを供給せず、ゲームviewの既定値はabsentである。
 
 ## 同一frameの眼別geometry
 
@@ -66,9 +91,11 @@ HUDを水面反射用layerへ追加せず、終了時はtexture・material・geo
 `ViewerFrame`は`configured`、`runtime-derived`、`unavailable`を排他的に表現する。
 Runtimeは同じframeをview導出関数へ渡し、そのraw center-headをbackendへ供給する。
 AppModel、DOM、window上に眼別geometryの正本を追加せず、前frameのgeometryを再利用しない。
-resize、光学profile変更、表示camera切替はframe callback前に完了させる。callback内の物理pose更新は許可し、
-geometry取得から描画までの間にprojection設定を変更しない。
 
+現frameの順序はgeometry取得、physics・機体pose更新callback、view導出、backend frame、描画とする。
+callbackはphysicsとposeを更新し、projection設定・光学profile・camera cut・viewportを変更しない。
+これらの表示構成変更はcallback外で確定させ、取得projectionと描画projectionを同じframeで一致させる。
+callback内で表示構成を変更する機能を追加する際は、geometry取得のphaseを改めて設計する。
 WebXRでは一つの`XRFrame.getViewerPose()`結果からcenter transformと各viewのtransform・projectionをコピーする。
 `headFromEye`はcenter transformの逆変換とeye transformから導出する。
 projectionは16要素のcolumn-major行列のまま保持し、非対称frustum、眼の回転、shearをFOV単一値へ変換しない。
