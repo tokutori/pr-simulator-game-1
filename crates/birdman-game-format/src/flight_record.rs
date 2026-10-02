@@ -445,7 +445,9 @@ impl FlightRecordDocument {
                 || !(0.0..=1.0).contains(&finalization.terminal_fraction)
                 || finalization
                     .score_m
-                    .is_some_and(|score| score.iter().any(|value| !value.is_finite()))
+                    .is_some_and(|[course, cross_track, net]| {
+                        DistanceScore::try_from_recorded(course, cross_track, net).is_err()
+                    })
                 || !disposition_matches(finalization.reason, finalization.disposition)
             {
                 return Err(FlightRecordFormatError::InvalidRecord);
@@ -1030,6 +1032,207 @@ mod tests {
             ),
         )
         .unwrap()
+    }
+
+    fn keyless_record_for_schema(schema_version: u32) -> FlightRecordDocument {
+        let mut document = completed_record();
+        document.schema_version = schema_version;
+        document.header.personal_best_key = None;
+        if schema_version < super::SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION {
+            document.header.score_definition_version = None;
+        }
+        if schema_version < super::PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION {
+            document.header.physics_model_version = None;
+        }
+        document
+    }
+
+    fn assert_invalid_score(document: &FlightRecordDocument) {
+        assert_eq!(
+            document.validate(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+        assert_eq!(
+            document.encode_json(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+        assert_eq!(
+            FlightRecordDocument::decode_json(&serde_json::to_vec(document).unwrap()),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+        assert_eq!(
+            document.to_finalized_core_record().err(),
+            Some(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+
+    fn assert_score_round_trip(document: &FlightRecordDocument) {
+        document.validate().unwrap();
+        let decoded = FlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap();
+        assert_eq!(&decoded, document);
+        for source in [document, &decoded] {
+            let restored = source.to_finalized_core_record().unwrap();
+            let restored_score = restored.finalization().unwrap().score.map(|score| {
+                [
+                    score.course_parallel_m(),
+                    score.cross_track_m(),
+                    score.net_horizontal_m(),
+                ]
+            });
+            assert_eq!(
+                restored_score,
+                source.finalization.as_ref().unwrap().score_m
+            );
+        }
+    }
+
+    #[test]
+    fn every_schema_rejects_inconsistent_keyless_scores_at_all_record_boundaries() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(schema_version);
+            document.validate().unwrap();
+            for score in [
+                [3.0, 4.0, -1.0],
+                [3.0, 4.0, 4.0],
+                [3.0, 4.0, 6.0],
+                [f64::MAX, f64::MAX, f64::MAX],
+                [0.0, 0.0, 1.0e-9_f64.next_up()],
+                [3.0, 4.0, (5.0 + 5.0e-9_f64).next_up()],
+            ] {
+                assert!(
+                    birdman_game_core::DistanceScore::try_from_recorded(
+                        score[0], score[1], score[2]
+                    )
+                    .is_err()
+                );
+                document.finalization.as_mut().unwrap().score_m = Some(score);
+                assert_invalid_score(&document);
+            }
+        }
+    }
+
+    #[test]
+    fn every_schema_preserves_signed_scores_and_domain_tolerance_boundaries() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(schema_version);
+            for score in [
+                [3.0, 4.0, 5.0],
+                [-3.0, 4.0, 5.0],
+                [3.0, -4.0, 5.0],
+                [-3.0, -4.0, 5.0],
+                [0.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0e-9_f64.next_down()],
+                [0.0, 0.0, 1.0e-9],
+                [3.0, 4.0, (5.0 + 5.0e-9_f64).next_down()],
+                [f64::MAX, 0.0, f64::MAX],
+            ] {
+                assert!(
+                    birdman_game_core::DistanceScore::try_from_recorded(
+                        score[0], score[1], score[2]
+                    )
+                    .is_ok()
+                );
+                document.finalization.as_mut().unwrap().score_m = Some(score);
+                assert_score_round_trip(&document);
+            }
+        }
+    }
+
+    #[test]
+    fn every_schema_preserves_terminal_classification_and_optional_scores() {
+        use super::{FlightRecordDispositionDocument, FlightRecordEndReasonDocument};
+        use birdman_game_core::{FlightRecordDisposition, SessionEndReason};
+
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(schema_version);
+            for (reason, disposition, core_reason, core_disposition) in [
+                (
+                    FlightRecordEndReasonDocument::ManualAbort,
+                    FlightRecordDispositionDocument::Interrupted,
+                    SessionEndReason::ManualAbort,
+                    FlightRecordDisposition::Interrupted,
+                ),
+                (
+                    FlightRecordEndReasonDocument::TimeLimit,
+                    FlightRecordDispositionDocument::Complete,
+                    SessionEndReason::TimeLimit,
+                    FlightRecordDisposition::Complete,
+                ),
+                (
+                    FlightRecordEndReasonDocument::WaterContact,
+                    FlightRecordDispositionDocument::Complete,
+                    SessionEndReason::WaterContact,
+                    FlightRecordDisposition::Complete,
+                ),
+            ] {
+                for score in [None, Some([-3.0, -4.0, 5.0])] {
+                    let finalization = document.finalization.as_mut().unwrap();
+                    finalization.reason = reason;
+                    finalization.disposition = disposition;
+                    finalization.score_m = score;
+                    assert_score_round_trip(&document);
+                    let restored = document.to_finalized_core_record().unwrap();
+                    let restored_finalization = restored.finalization().unwrap();
+                    assert_eq!(restored_finalization.reason, core_reason);
+                    assert_eq!(restored_finalization.disposition, core_disposition);
+                    assert_eq!(
+                        document.personal_best_candidate_score().unwrap().is_some(),
+                        schema_version == super::FLIGHT_RECORD_SCHEMA_VERSION
+                            && reason == FlightRecordEndReasonDocument::WaterContact
+                            && score.is_some()
+                    );
+                    assert_eq!(
+                        compare_personal_best_records(&document, &document).unwrap(),
+                        None
+                    );
+                }
+                document.finalization.as_mut().unwrap().score_m = Some([3.0, 4.0, -1.0]);
+                assert_invalid_score(&document);
+            }
+        }
+    }
+
+    #[test]
+    fn every_schema_keeps_unfinalized_records_readable_and_unavailable_for_replay() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(schema_version);
+            document.finalization = None;
+            document.validate().unwrap();
+            let decoded =
+                FlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap();
+            assert_eq!(decoded, document);
+            assert_eq!(
+                decoded.to_finalized_core_record().err(),
+                Some(FlightRecordFormatError::RecordUnavailable)
+            );
+            assert_eq!(decoded.personal_best_candidate_score().unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn every_schema_rejects_nonfinite_in_memory_score_components() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(schema_version);
+            for index in 0..3 {
+                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    let mut score = [3.0, 4.0, 5.0];
+                    score[index] = value;
+                    document.finalization.as_mut().unwrap().score_m = Some(score);
+                    assert_eq!(
+                        document.validate(),
+                        Err(FlightRecordFormatError::InvalidRecord)
+                    );
+                    assert_eq!(
+                        document.encode_json(),
+                        Err(FlightRecordFormatError::InvalidRecord)
+                    );
+                    assert_eq!(
+                        document.to_finalized_core_record().err(),
+                        Some(FlightRecordFormatError::InvalidRecord)
+                    );
+                }
+            }
+        }
     }
 
     #[test]
