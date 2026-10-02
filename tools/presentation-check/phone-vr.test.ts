@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { IDENTITY_POSE, quaternion } from "../../web/src/render/contracts/math.js";
-import type { RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
+import type { BackendFrame, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAnchorFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
@@ -11,6 +11,10 @@ import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrPermissionRes
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import { phoneOrientationQuaternion } from "../../web/src/presentation/phone-vr-orientation.js";
 import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
+import type { AppEffect, AppMessage } from "../../web/src/app/app-state.js";
+import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
 describe("Phone VR device orientation", () => {
   it("converts the W3C intrinsic Z-X'-Y'' angles and screen rotation", () => {
@@ -114,6 +118,144 @@ describe("Phone VR gamepad UI", () => {
 });
 
 describe("Phone VR presentation backend", () => {
+  it("uses the current performance clock by default instead of the frame timestamp", async () => {
+    const clock = vi.spyOn(performance, "now").mockReturnValue(1003);
+    const sensors = new FakePhoneVrSensors();
+    const unavailable: string[] = [];
+    const backend = new PhoneVrPresentationBackend(
+      sensors, new FakeRenderer(), viewport, () => undefined,
+      (message) => { unavailable.push(message); }
+    );
+    try {
+      await backend.requestPermissionFromUserGesture();
+      const startup = backend.start();
+      sensors.emit(reading(0, 0, 0, 1002));
+      await startup;
+      expect(backend.currentFrame(1000, createSceneFixture("Title")).panelVisible).toBe(true);
+      expect(unavailable).toEqual([]);
+      expect(clock).toHaveBeenCalled();
+    } finally {
+      await backend.stop();
+      clock.mockRestore();
+    }
+  });
+
+  it("keeps Phone VR active when browser sensor events are newer than the rendering opportunity", async () => {
+    const browser = createMockBrowserWindow();
+    const renderer = new FakeRenderer();
+    const unavailable: string[] = [];
+    let currentTimeMs = 1003;
+    let model = createInitialAppModel();
+    const screenRecoveries: Promise<void>[] = [];
+    const dispatch = (message: AppMessage): readonly AppEffect[] => {
+      const transition = updateApp(model, message);
+      model = transition.model;
+      return transition.effects;
+    };
+    const backend = new PhoneVrPresentationBackend(
+      createBrowserPhoneVrSensorPort(browser.window), renderer, viewport, () => undefined,
+      (message) => {
+        unavailable.push(message);
+        const effects = dispatch({ type: "backend-ended", mode: "phone-vr", message });
+        const recovery = effects[0];
+        if (recovery?.type !== "switch-backend" || recovery.mode !== "screen") {
+          throw new Error("Missing Screen recovery effect");
+        }
+        screenRecoveries.push(runtime.switchTo(recovery.mode).then((result) => {
+          expect(result).toEqual({ ok: true });
+          dispatch({
+            type: "backend-transition-completed", requestId: recovery.requestId,
+            requestedMode: recovery.mode, activeMode: runtime.currentMode, ok: result.ok,
+            message: "", successStatus: "Screen is active"
+          });
+        }));
+      },
+      { staleAfterMs: 50, nowMs: () => currentTimeMs }
+    );
+    const runtime = new PresentationRuntime(
+      renderer, [new ScreenPresentationBackend(viewport), backend], () => createSceneFixture("Title")
+    );
+    expect(await runtime.start("screen")).toEqual({ ok: true });
+    dispatch({ type: "initialize" });
+    dispatch({
+      type: "presentation-initialized", requestId: 1, activeMode: runtime.currentMode,
+      webXrAvailable: false, phoneVrAvailable: true, status: "Screen is active"
+    });
+    expect(dispatch({ type: "ui-action", action: { type: "activate", controlId: "boot-enter-phone-vr" } }))
+      .toEqual([{ type: "request-permission", mode: "phone-vr", requestId: 2 }]);
+    expect(await backend.requestPermissionFromUserGesture()).toEqual({ ok: true });
+    expect(dispatch({ type: "permission-completed", requestId: 2, mode: "phone-vr", ok: true, message: "" }))
+      .toEqual([{ type: "switch-backend", mode: "phone-vr", requestId: 2 }]);
+    const startup = runtime.switchTo("phone-vr");
+    await browser.orientationListening;
+    browser.emitDeviceOrientation(reading(0, 0, 0, 1002));
+    expect(await startup).toEqual({ ok: true });
+    dispatch({
+      type: "backend-transition-completed", requestId: 2, requestedMode: "phone-vr",
+      activeMode: runtime.currentMode, ok: true, message: "", successStatus: "Phone VR is active"
+    });
+
+    renderer.tick(1000);
+    expect(unavailable).toEqual([]);
+    expect(runtime.currentMode).toBe("phone-vr");
+    expect(model.presentation).toEqual({ type: "ready", mode: "phone-vr" });
+    expect(renderer.stereoProfile).toEqual(PHONE_VR_OPTICAL_PROFILE);
+    expect(renderer.frames.at(-1)).toMatchObject({ timestampMs: 1000, panelVisible: true });
+
+    currentTimeMs = 1018;
+    browser.emitDeviceOrientation(reading(0, 20, 0, 1018));
+    browser.emitDeviceOrientation(reading(0, 25, 0, 1018));
+    renderer.tick(1016);
+    expect(renderer.frames.at(-1)?.cameraPose.orientation).not.toEqual(IDENTITY_POSE.orientation);
+    expect(unavailable).toEqual([]);
+    expect(model.presentation).toEqual({ type: "ready", mode: "phone-vr" });
+
+    currentTimeMs = 1068;
+    renderer.tick(1066);
+    expect(unavailable).toEqual([]);
+    currentTimeMs = 1069;
+    renderer.tick(1066);
+    expect(unavailable).toEqual(["Phone VR orientation data is stale"]);
+    expect(model.presentation).toMatchObject({ type: "transitioning", to: "screen" });
+    expect(screenRecoveries).toHaveLength(1);
+    await Promise.all(screenRecoveries);
+    expect(runtime.currentMode).toBe("screen");
+    expect(model.presentation).toEqual({ type: "ready", mode: "screen" });
+    expect(renderer.stereoProfile).toBeNull();
+    expect(await runtime.dispose()).toEqual({ ok: true });
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, -1, 99])(
+    "rejects invalid or backward sensor timestamps: %s", async (timestampMs) => {
+      const sensors = new FakePhoneVrSensors();
+      const unavailable: string[] = [];
+      const backend = createBackend(sensors, new FakeRenderer(), unavailable);
+      await backend.requestPermissionFromUserGesture();
+      const startup = backend.start();
+      sensors.emit(reading(0, 0, 0, 100));
+      await startup;
+      sensors.emit(reading(0, 0, 0, timestampMs));
+      expect(unavailable).toEqual(["Phone VR orientation timestamp is invalid"]);
+      await backend.stop();
+    }
+  );
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, 99])(
+    "rejects invalid evaluation clocks and samples in the clock's future: %s", async (currentTimeMs) => {
+      const sensors = new FakePhoneVrSensors();
+      const unavailable: string[] = [];
+      const backend = createBackend(sensors, new FakeRenderer(), unavailable);
+      await backend.requestPermissionFromUserGesture();
+      const startup = backend.start();
+      sensors.emit(reading(0, 0, 0, 100));
+      await startup;
+      sensors.currentTimeMs = currentTimeMs;
+      expect(backend.currentFrame(100, createSceneFixture("Title")).panelVisible).toBe(false);
+      expect(unavailable).toEqual(["Phone VR orientation data is stale"]);
+      await backend.stop();
+    }
+  );
+
   it("requests permission synchronously and enables stereo only after a valid sensor event", async () => {
     const sensors = new FakePhoneVrSensors();
     const renderer = new FakeRenderer();
@@ -184,6 +326,9 @@ describe("Phone VR presentation backend", () => {
     const staleStartup = staleBackend.start();
     staleSensors.emit(reading(0, 0, 0, 100));
     await staleStartup;
+    staleSensors.currentTimeMs = 150;
+    expect(staleBackend.currentFrame(149, createSceneFixture("Title")).panelVisible).toBe(true);
+    staleSensors.currentTimeMs = 151;
     expect(staleBackend.currentFrame(151, createSceneFixture("Title")).panelVisible).toBe(false);
     expect(unavailable).toEqual(["Phone VR orientation data is stale"]);
     expect(staleRenderer.stereoProfile).toBeNull();
@@ -199,7 +344,7 @@ describe("Phone VR presentation backend", () => {
         const actions: UiAction[] = [];
         const backend = new PhoneVrPresentationBackend(
           sensors, renderer, viewport, (action) => { actions.push(action); }, () => undefined,
-          { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs: 3000, staleAfterMs: 60_000 }
+          { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs: 3000, staleAfterMs: 60_000, nowMs: () => sensors.currentTimeMs }
         );
         await backend.requestPermissionFromUserGesture();
         const startup = backend.start();
@@ -270,7 +415,7 @@ describe("Phone VR presentation backend", () => {
     const actions: UiAction[] = [];
     const backend = new PhoneVrPresentationBackend(
       sensors, renderer, viewport, (action) => { actions.push(action); }, () => undefined,
-      { gamepadInput: gamepad }
+      { gamepadInput: gamepad, nowMs: () => sensors.currentTimeMs }
     );
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
@@ -302,6 +447,7 @@ class FakePhoneVrSensors implements PhoneVrSensorPort {
   permissionRequestCount = 0;
   startCount = 0;
   stopCount = 0;
+  currentTimeMs = 100;
   private readingHandler: ((value: PhoneVrSensorReading) => void) | null = null;
   private screenHandler: ((angle: number | null) => void) | null = null;
   private screenAngle: number | null = 0;
@@ -335,6 +481,7 @@ class FakePhoneVrSensors implements PhoneVrSensorPort {
   }
 
   emit(value: PhoneVrSensorReading): void {
+    this.currentTimeMs = value.timestampMs;
     this.readingHandler?.(value);
   }
 
@@ -346,10 +493,12 @@ class FakePhoneVrSensors implements PhoneVrSensorPort {
 
 class FakeRenderer implements RendererAdapter {
   stereoProfile: StereoPresentationProfile | null = null;
+  readonly frames: BackendFrame[] = [];
+  private frameCallback: Parameters<RendererAdapter["startLoop"]>[0] | null = null;
 
-  startLoop(): void {}
-  stopLoop(): void {}
-  render(): void {}
+  startLoop(callback: Parameters<RendererAdapter["startLoop"]>[0]): void { this.frameCallback = callback; }
+  stopLoop(): void { this.frameCallback = null; }
+  render(frame: BackendFrame): void { this.frames.push(frame); }
   setFlightPose(): void {}
   setLakeVisualCondition(): void {}
   setFlightCameraMode(): void {}
@@ -359,6 +508,8 @@ class FakeRenderer implements RendererAdapter {
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
   setSelectRayHandler(): void {}
   dispose(): void {}
+
+  tick(timestampMs: number): void { this.frameCallback?.(timestampMs, null); }
 }
 
 class FakePhoneVrGamepad implements PhoneVrGamepadInputPort {
@@ -379,7 +530,7 @@ function createBackend(
   return new PhoneVrPresentationBackend(
     sensors, renderer, viewport, () => undefined,
     (message) => { unavailable.push(message); },
-    { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs, staleAfterMs }
+    { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs, staleAfterMs, nowMs: () => sensors.currentTimeMs }
   );
 }
 
@@ -430,6 +581,8 @@ function createMockBrowserWindow(options: {
   const windowListeners = new Map<string, (event: unknown) => void>();
   const orientationListeners = new Map<string, () => void>();
   const permissionRequests: boolean[] = [];
+  let resolveOrientationListener: (() => void) | null = null;
+  const orientationListening = new Promise<void>((resolve) => { resolveOrientationListener = resolve; });
   let screenAngle = 0;
   const orientationConstructor = options.orientationApi === false ? undefined : Object.assign(
     function MockDeviceOrientationEvent() {},
@@ -451,12 +604,14 @@ function createMockBrowserWindow(options: {
     screen: { orientation: screenOrientation },
     addEventListener: (type: string, listener: unknown) => {
       windowListeners.set(type, listener as (event: unknown) => void);
+      if (type === "deviceorientation") resolveOrientationListener?.();
     },
     removeEventListener: (type: string) => { windowListeners.delete(type); }
   };
   return {
     window: fakeWindow as Parameters<typeof createBrowserPhoneVrSensorPort>[0],
     permissionRequests,
+    orientationListening,
     emitDeviceOrientation(value: PhoneVrSensorReading) {
       windowListeners.get("deviceorientation")?.({
         alpha: value.alpha, beta: value.beta, gamma: value.gamma, timeStamp: value.timestampMs

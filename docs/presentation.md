@@ -104,6 +104,15 @@ Phone VRはsecure context上の`DeviceOrientationEvent`と`ScreenOrientation`を
 画面角度はScreen Orientation仕様の自然向きからのcounter-clockwise角としてZ軸補正へ適用する。
 姿勢は最初の有効sampleをtracking基準とし、明示的なrecenterで更新する。tracking喪失時はstereoを解除しScreenへ復帰する。
 
+sample時刻は`DeviceOrientationEvent.timeStamp`を保持する。freshnessは同一Window/time originの
+単調時計`performance.now()`との差で評価する。試験用の`nowMs`注入も同じtime originを要する。
+rendererのrAF時刻はrendering opportunityを示し、callback直前に受信したsampleより古い場合がある。
+その時刻差をtracking障害と判定しない。rAF時刻は描画とdwellに使用する。
+同一sample時刻とage 0は許容し、非有限・負値・後退sampleと評価時計より未来のsampleは拒否する。
+根拠: [DOM event生成時刻](https://dom.spec.whatwg.org/#concept-event-inner-create)、
+[High Resolution Time](https://www.w3.org/TR/hr-time-3/#dom-performance-now)、
+[HTML rendering update](https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering)。
+
 head-gazeは既存のdwell selectorを使用する。標準mappingのGamepadが接続されている間は、左stickをpanel cursor、
 button 0を選択、button 1を戻る、右stickをscrollへ対応付ける。Gamepad入力とhead-gazeが同時に同一controlへ
 actionを発火させない。これらは共通`UiAction`へ変換する。標準mappingでないGamepadは選択対象とせず、head-gazeを継続する。
@@ -115,6 +124,10 @@ mappingは[W3C Gamepad API](https://www.w3.org/TR/gamepad/)のStandard Gamepad�
 head-gazeと標準Gamepadのfocus/選択/back/scrollを対象とする。実スマートフォン、browser、viewerでの表示・操作・
 Screen復帰は未確認であり、実機受入完了までBPG-016を完了扱いしない。fullscreen・screen lockと非標準Gamepadは
 現行実装の対象外である。
+
+sensor browser adapter・backend・runtime・App updateを接続する模擬API試験では、rAF時刻より新しいsampleで
+Phone VRを継続し、単調時計上でstale閾値を超えた際にScreenへ復帰する経路を検査する。
+この試験は実スマートフォンで報告された即時Screen復帰の原因確定と受入確認を代替しない。
 
 ## 視点の階層
 

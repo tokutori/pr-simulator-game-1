@@ -32,6 +32,7 @@ export interface PhoneVrBackendOptions {
   readonly firstSampleTimeoutMs?: number;
   readonly staleAfterMs?: number;
   readonly gamepadInput?: PhoneVrGamepadInputPort;
+  readonly nowMs?: () => number;
 }
 
 export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
@@ -55,6 +56,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private readonly firstSampleTimeoutMs: number;
   private readonly staleAfterMs: number;
   private readonly gamepadInput: PhoneVrGamepadInputPort;
+  private readonly nowMs: () => number;
 
   constructor(
     private readonly sensors: PhoneVrSensorPort,
@@ -77,6 +79,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.staleAfterMs = staleAfterMs;
     this.opticalProfile = opticalProfile;
     this.gamepadInput = options.gamepadInput ?? NO_PHONE_VR_GAMEPAD_INPUT;
+    this.nowMs = options.nowMs ?? (() => performance.now());
     this.gazeDwell = new GazeDwellSelector(dispatch);
     this.gamepadSelector = new GamepadUiSelector(dispatch);
   }
@@ -251,8 +254,9 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   private currentViewerPose(timestampMs: number): Pose | null {
     if (this.state.type !== "active" || this.latestSampleTimestampMs === null || this.latestSensorOrientation === null) return null;
-    const ageMs = timestampMs - this.latestSampleTimestampMs;
-    if (!Number.isFinite(timestampMs) || ageMs < 0 || ageMs > this.staleAfterMs) {
+    const currentTimestampMs = this.nowMs();
+    const ageMs = currentTimestampMs - this.latestSampleTimestampMs;
+    if (!Number.isFinite(timestampMs) || !Number.isFinite(currentTimestampMs) || ageMs < 0 || ageMs > this.staleAfterMs) {
       this.failTracking("Phone VR orientation data is stale");
       return null;
     }
