@@ -63,6 +63,40 @@ sun方位は0以上360°未満、elevationは±90°以内、雲量は0～1とす
 cloud baseは水面上の非負高度、visibilityは有限正値である。条件はフライト中に固定する。
 Three.js等への座標変換とshader/GPU更新はengine adapterが担当する。
 
+## WASM metadata snapshot
+
+`GameSessionBridge::environment_snapshot_json` はschema version 1のJSONを一括返す。
+包絡は`schema_version`、`context`、`projection`である。session contextは`kind: session`と
+同時点の`phase_code`を保持する。registry queryのcontextは`kind: registry`である。
+queryはsession・record・physics timeを変更せず、独立したgeneration counterを保持しない。
+Web adapterは既存のrequest IDと捕捉したsessionの一致を検査し、同じprojection messageへmetadataを含める。
+
+projectionは`available`、`unavailable`、`no_selection`を排他的に表す。
+available/unavailableは完全identityとsourceを保持し、unavailableにはmetadataを含めない。
+identityはcatalog/scenario/aircraft/environment/controllerのversionとscenario ID、`seed_low`/`seed_high`である。
+seedは符号なし32 bitの2 wordとして転送し、JavaScript numberへの64 bit整数変換を避ける。
+
+| Scene / phase | sourceと参照元 |
+|---|---|
+| Title | no_selection |
+| FlightSetup | selected。同じconfiguration resolverが選ぶpreview |
+| Briefing〜Result | sealed。sessionの確定identity |
+| Replay | record、またはarchive。現在再生中のrecord header |
+| Attract | attract。独立demoのrecord header |
+
+metadataは名前、hash、local frame、風のquery領域、代表点・高度・coreでsampleした風、
+wave/sky inputs、月統計、provenanceと出典を含む。全格子標本は転送しない。
+local frameとskyは`defined`/`unavailable`の直和型であり、legacyに架空の値を補完しない。
+definedは環境入力の定義を示す。rendererへの適用状況はWeb/engine adapterが管理する。
+hashはenv6の`asset_bytes`とlegacyの`source_fingerprint`を区別し、各SHA-256を保持する。
+legacy hashは現在のbuildのsource fingerprintであり、過去recordの実asset hashを復元する値ではない。
+
+`environment_snapshot_for_identity_json` はJSON文字列だけを受理するregistry queryである。
+JSのnull・型不一致、4,096 byte超過、object以外の包絡、JSON/field/range異常、0のversionを分類して拒否する。
+registryは旧catalog v1の1〜5とcatalog v2の1/2/4/5/6を完全identityで照合する。
+既知registryの存在は通常選択の公開を意味しない。現行の選択catalogはv1の5scenarioである。
+未知identityはunavailableを返し、archiveの受入・記録・snapshot replayを維持する。
+
 ## 現在の実装範囲
 
 正式な外部形式・検証・core風場への変換と、`tools/environment-build`のoffline生成を実装している。
@@ -73,5 +107,6 @@ WASM adapterはversion 6のJSONをbundleへ組み込み、session生成前に既
 成功・失敗を一度だけ保持する。風場はこのstorageを借用し、coreにI/Oや所有用allocationを追加しない。
 build時にasset bytesのSHA-256を計算する。runtime環境moduleはsource fingerprint入力にも含める。
 raw asset hashのPersonal Best content keyへの接続は、実環境scenarioを公開する後続単位で行う。
-現行catalogの実環境への接続、描画用metadataの消費と通常入力coverageの受入は後続単位で行う。
+versioned metadataとstrict registry queryを実装している。現行catalogの実環境への接続、
+描画用metadataの消費と通常入力coverageの受入は後続単位で行う。
 現行browserのsynthetic scenarioはこの追加だけでは変更されない。

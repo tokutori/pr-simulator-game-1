@@ -18,6 +18,7 @@ use birdman_game_format::{
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod environment;
+mod environment_snapshot;
 
 mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
@@ -71,6 +72,16 @@ const WEATHER_SCENARIO_ENTRIES: [ScenarioCatalogEntry; 5] = [
 #[wasm_bindgen]
 pub fn physics_hz() -> u32 {
     birdman_game_core::PHYSICS_HZ
+}
+
+/// Queries immutable environment metadata by a strict JSON-encoded complete identity.
+/// This query does not select or prepare a scenario in any session.
+#[wasm_bindgen]
+pub fn environment_snapshot_for_identity_json(identity_json: &JsValue) -> Result<String, JsValue> {
+    let json = identity_json.as_string().ok_or_else(|| {
+        environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::InvalidInputType)
+    })?;
+    environment_snapshot::for_identity_json(json.as_bytes()).map_err(environment_snapshot_error)
 }
 
 /// Compares stored record JSON documents: 0=candidate wins, 1=existing wins,
@@ -404,6 +415,62 @@ impl GameSessionBridge {
         ])
     }
 
+    /// Returns a versioned batch of environment metadata, source and complete identity.
+    /// Registry availability is independent of archive acceptance and snapshot playback.
+    pub fn environment_snapshot_json(&self) -> Result<String, JsValue> {
+        use environment_snapshot::{
+            EnvironmentContext, EnvironmentProjection, EnvironmentSnapshot,
+            EnvironmentSnapshotError, EnvironmentSource,
+        };
+
+        let phase = self.session.snapshot().phase();
+        let source = match phase {
+            SessionPhase::Title => None,
+            SessionPhase::FlightSetup => Some(EnvironmentSource::Selected),
+            SessionPhase::Replay => Some(if self.is_archived_replay() {
+                EnvironmentSource::Archive
+            } else {
+                EnvironmentSource::Record
+            }),
+            SessionPhase::Attract => Some(EnvironmentSource::Attract),
+            SessionPhase::BriefingPreparing
+            | SessionPhase::BriefingReady
+            | SessionPhase::BriefingFailed { .. }
+            | SessionPhase::Countdown { .. }
+            | SessionPhase::FlightRunning
+            | SessionPhase::FlightPaused { .. }
+            | SessionPhase::Result => Some(EnvironmentSource::Sealed),
+        };
+        let projection = if let Some(source) = source {
+            let identity = match phase {
+                SessionPhase::FlightSetup => {
+                    session_identity(self.resolve_selected_configuration()?)
+                }
+                SessionPhase::Replay | SessionPhase::Attract => self
+                    .session
+                    .playback_record()
+                    .map(|record| record.header().scenario)
+                    .ok_or_else(|| {
+                        environment_snapshot_error(EnvironmentSnapshotError::MissingSessionIdentity)
+                    })?,
+                _ => self.session.configuration_identity().ok_or_else(|| {
+                    environment_snapshot_error(EnvironmentSnapshotError::MissingSessionIdentity)
+                })?,
+            };
+            environment_snapshot::for_identity(source, identity.into())
+                .map_err(environment_snapshot_error)?
+        } else {
+            EnvironmentProjection::NoSelection
+        };
+        EnvironmentSnapshot::encode(
+            EnvironmentContext::Session {
+                phase_code: phase_code(phase),
+            },
+            projection,
+        )
+        .map_err(environment_snapshot_error)
+    }
+
     /// Loads a finalized stored record and enters the Rust-owned Replay phase.
     pub fn open_archived_flight_record(&mut self, json: &str) -> Result<(), JsValue> {
         let document = birdman_game_format::FlightRecordDocument::decode_json(json.as_bytes())
@@ -477,11 +544,7 @@ impl GameSessionBridge {
 
     /// Seals the selected synthetic scenario as Briefing preparation.
     pub fn prepare(&mut self) -> Result<(), JsValue> {
-        let catalog =
-            ScenarioCatalog::try_new(1, &WEATHER_SCENARIO_ENTRIES).map_err(configuration_error)?;
-        let profiles = controller_profiles(self.feedback)?;
-        let resolved = resolve_configuration(self.difficulty, 0, &profiles, &catalog)
-            .map_err(configuration_error)?;
+        let resolved = self.resolve_selected_configuration()?;
         let scenario = self
             .resolve_scenario_model(resolved.scenario)
             .map_err(configuration_error)?;
@@ -490,15 +553,7 @@ impl GameSessionBridge {
             resolved.controller.mode(),
             resolved.controller.feedback(),
             MAX_TICKS,
-            SessionScenarioIdentity {
-                catalog_version: resolved.scenario.catalog_version,
-                scenario_id: resolved.scenario.scenario_id,
-                scenario_version: resolved.scenario.scenario_version,
-                aircraft_model_version: resolved.scenario.aircraft_model_version,
-                environment_version: resolved.scenario.environment_version,
-                controller_profile_version: resolved.controller.version(),
-                seed: resolved.scenario.seed,
-            },
+            session_identity(resolved),
         )
         .map_err(game_session_error)?;
         self.session
@@ -960,6 +1015,13 @@ impl GameSessionBridge {
 }
 
 impl GameSessionBridge {
+    fn resolve_selected_configuration(&self) -> Result<ResolvedConfiguration, JsValue> {
+        let catalog =
+            ScenarioCatalog::try_new(1, &WEATHER_SCENARIO_ENTRIES).map_err(configuration_error)?;
+        let profiles = controller_profiles(self.feedback)?;
+        resolve_configuration(self.difficulty, 0, &profiles, &catalog).map_err(configuration_error)
+    }
+
     fn resolve_scenario_model(
         &self,
         selection: birdman_game_format::ScenarioSelection,
@@ -1378,17 +1440,10 @@ fn playable_scenarios() -> Result<
     ),
     JsValue,
 > {
-    let winds = [
-        [0.0, 0.0, 0.0],
-        [0.0, 0.25, 0.0],
-        [-0.25, 0.5, 0.0],
-        [-0.5, 0.75, 0.0],
-        [-0.75, 1.0, 0.0],
-    ];
     let mut aircraft = None;
     let mut feedback = None;
     let mut scenarios = Vec::with_capacity(5);
-    for wind in winds {
+    for wind in environment_snapshot::legacy_winds() {
         let fixture = SyntheticPlayableFlight::try_new_with_uniform_wind(10.5, wind)
             .map_err(synthetic_error)?;
         let (fixture_aircraft, scenario, fixture_feedback, _) = fixture.into_parts();
@@ -1578,6 +1633,22 @@ fn environment_format_error(error: birdman_game_format::EnvironmentFormatError) 
     JsValue::from_str(&format!("Environment: {error:?}"))
 }
 
+fn environment_snapshot_error(error: environment_snapshot::EnvironmentSnapshotError) -> JsValue {
+    JsValue::from_str(&format!("environment snapshot error: {error:?}"))
+}
+
+fn session_identity(resolved: ResolvedConfiguration) -> SessionScenarioIdentity {
+    SessionScenarioIdentity {
+        catalog_version: resolved.scenario.catalog_version,
+        scenario_id: resolved.scenario.scenario_id,
+        scenario_version: resolved.scenario.scenario_version,
+        aircraft_model_version: resolved.scenario.aircraft_model_version,
+        environment_version: resolved.scenario.environment_version,
+        controller_profile_version: resolved.controller.version(),
+        seed: resolved.scenario.seed,
+    }
+}
+
 fn validate_axes(axes: [f64; 3]) -> Result<(), &'static str> {
     if axes
         .into_iter()
@@ -1735,6 +1806,99 @@ mod tests {
 
     const _: [(); 1_632_408] =
         [(); core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES];
+
+    #[test]
+    fn environment_snapshot_uses_selection_sealed_and_attract_sources_without_mutation() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        let title: serde_json::Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(title["projection"]["kind"], "no_selection");
+        assert_eq!(title["context"]["phase_code"], 0);
+        bridge.open_setup().unwrap();
+        bridge.set_weather_class(2).unwrap();
+        let selected: serde_json::Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(selected["projection"]["source"], "selected");
+        assert_eq!(selected["projection"]["identity"]["catalog_version"], 1);
+        assert_eq!(selected["projection"]["identity"]["scenario_id"], 3);
+        assert_eq!(selected["projection"]["identity"]["environment_version"], 3);
+        assert!(bridge.resolved_configuration.is_none());
+        assert_eq!(bridge.flight_record_sample_count(), 0);
+        bridge.prepare().unwrap();
+        let before = bridge.snapshot();
+        let sealed: serde_json::Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(sealed["projection"]["source"], "sealed");
+        assert_eq!(
+            sealed["projection"]["identity"],
+            selected["projection"]["identity"]
+        );
+        assert_eq!(
+            sealed["projection"]["metadata"],
+            selected["projection"]["metadata"]
+        );
+        assert_eq!(bridge.snapshot(), before);
+        bridge.cancel_briefing().unwrap();
+        bridge.return_to_title().unwrap();
+        bridge.enter_attract().unwrap();
+        let count = bridge.flight_record_sample_count();
+        let attract: serde_json::Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(attract["projection"]["source"], "attract");
+        assert_eq!(attract["projection"]["identity"]["environment_version"], 1);
+        assert_eq!(
+            attract["projection"]["metadata"]["waves"]["pattern_seed"],
+            0
+        );
+        assert_eq!(bridge.flight_record_sample_count(), count);
+    }
+
+    #[test]
+    fn archive_metadata_unavailability_preserves_record_and_snapshot_playback() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.set_weather_class(2).unwrap();
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+        bridge.abort().unwrap();
+        let json = bridge.export_flight_record_json().unwrap();
+        let original =
+            birdman_game_format::FlightRecordDocument::decode_json(json.as_bytes()).unwrap();
+        let summary = bridge.flight_record_summary();
+        for version in [3, 99] {
+            let mut document = original.clone();
+            document.header.environment_version = version;
+            let bytes = document.encode_json().unwrap();
+            let mut archive = GameSessionBridge::new(0).unwrap();
+            archive
+                .open_archived_flight_record(std::str::from_utf8(&bytes).unwrap())
+                .unwrap();
+            let before = archive.flight_record_sample_at(0, 0.0).unwrap();
+            let snapshot: serde_json::Value =
+                serde_json::from_str(&archive.environment_snapshot_json().unwrap()).unwrap();
+            assert_eq!(snapshot["projection"]["source"], "archive");
+            assert_eq!(
+                snapshot["projection"]["identity"]["environment_version"],
+                version
+            );
+            assert_eq!(
+                snapshot["projection"]["kind"],
+                if version == 3 {
+                    "available"
+                } else {
+                    "unavailable"
+                }
+            );
+            assert_eq!(archive.flight_record_summary(), summary);
+            assert_eq!(archive.flight_record_sample_at(0, 0.0).unwrap(), before);
+            assert_eq!(archive.phase_code(), 9);
+            assert!(archive.resolved_configuration.is_none());
+        }
+    }
 
     #[test]
     fn model_lookup_requires_the_complete_selected_identity() {

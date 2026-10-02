@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use birdman_game_core::{NedPoint, NedVector};
+use birdman_game_core::{NedPoint, NedVector, WindField};
 use birdman_game_format::{
     EnvironmentDocument, EnvironmentFormatError, EnvironmentWindGrid, ScenarioCatalogEntry,
     WeatherClass,
@@ -18,12 +18,22 @@ const BUNDLED_ENVIRONMENT_ENTRY: ScenarioCatalogEntry = ScenarioCatalogEntry {
 static BUNDLED_ENVIRONMENT: OnceLock<Result<RuntimeEnvironment, EnvironmentFormatError>> =
     OnceLock::new();
 
-struct RuntimeEnvironment {
+pub(crate) struct RuntimeEnvironment {
     document: EnvironmentDocument,
     wind_grid: EnvironmentWindGrid,
 }
 
 impl RuntimeEnvironment {
+    pub(crate) fn document(&self) -> &EnvironmentDocument {
+        &self.document
+    }
+
+    pub(crate) fn wind_field(&self) -> Result<WindField<'_>, EnvironmentFormatError> {
+        self.wind_grid
+            .as_field()
+            .map_err(EnvironmentFormatError::Wind)
+    }
+
     fn decode(bytes: &[u8]) -> Result<Self, EnvironmentFormatError> {
         let document = EnvironmentDocument::decode_json(bytes)?;
         document.validate_for(BUNDLED_ENVIRONMENT_ENTRY)?;
@@ -38,9 +48,7 @@ impl RuntimeEnvironment {
         let coordinates = self.document.wind_grid.representative_position_ned_m;
         let position = NedPoint::try_new(coordinates[0], coordinates[1], coordinates[2])
             .map_err(|_| EnvironmentFormatError::InvalidWindPosition)?;
-        self.wind_grid
-            .as_field()
-            .map_err(EnvironmentFormatError::Wind)?
+        self.wind_field()?
             .velocity_at(position)
             .map_err(EnvironmentFormatError::Wind)
     }
@@ -56,8 +64,12 @@ fn cached_environment<'a>(
         .map_err(|error| *error)
 }
 
+pub(crate) fn bundled_environment() -> Result<&'static RuntimeEnvironment, EnvironmentFormatError> {
+    cached_environment(&BUNDLED_ENVIRONMENT, BUNDLED_ENVIRONMENT_BYTES)
+}
+
 pub(crate) fn initialize_bundled_environment() -> Result<(), EnvironmentFormatError> {
-    cached_environment(&BUNDLED_ENVIRONMENT, BUNDLED_ENVIRONMENT_BYTES)?.representative_wind()?;
+    bundled_environment()?.representative_wind()?;
     Ok(())
 }
 
