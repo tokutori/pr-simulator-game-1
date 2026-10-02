@@ -38,6 +38,28 @@ Titleの`Data credits`は共通Menu panelへ帰属・改変通知・免責文を
 UI overlayの開閉だけを純粋updateで行い、Rust phaseとpresentation sessionを保持する。
 本文とScreen Flight HUDの通知は共通定数を使用する。全文とTitleへの帰還操作はScreen/VR双方へ提供する。
 
+単眼DOMの可視性は`PresentationUiState`から純粋関数で導出し、Sceneと独立に適用する。
+
+| Presentation状態 | Screen DOM / Flight HUD |
+|---|---|
+| uninitialized / initializing / failed | Screen DOMを表示する。HUDはFlight/Pauseだけで表示する |
+| ready(Screen) | Screen DOMを表示する。HUDはFlight/Pauseだけで表示する |
+| requesting、from=Screen | 権限要求中のScreen DOMを維持する |
+| requesting、from=VR/null | 非表示とする |
+| starting / stopping | from/toを問わず非表示とする。BFCache復帰のfrom=nullも含む |
+| ready(WebXR/Phone VR) / cached / hidden | 非表示とする |
+
+VR起動の副作用を実行する前に単眼DOMを隠し、Screenへの復帰完了後に表示する。
+Snabbdomの安定mountへ`hidden`・`inert`・`aria-hidden`を反映し、専用CSSで`display: none`を指定する。
+author CSSの`display: contents`が`hidden`の表示抑制を上書きしないようにする。
+根拠: [HTML hidden](https://html.spec.whatwg.org/multipage/interaction.html#the-hidden-attribute)、
+[HTML inert](https://html.spec.whatwg.org/multipage/interaction.html#the-inert-attribute)。
+非表示中も最新Viewをpatchし、Flight HUDの既存nodeとsnapshot更新・VR計器へのrender通知を保持する。
+DOMのclick/change/inputは非表示中に拒否する。表示復帰時にlistenerを再登録しない。
+focusとscrollはbrowser adapter内で非表示への遷移時に一度だけ退避する。
+同一Scene/overlayへ戻るときにscrollを復元し、focusは同一の接続中・有効なnodeに限って`preventScroll`付きで復元する。
+非表示中に別要素へ移動したfocusと、除去・無効化された要素のfocusは復元対象から除外する。
+
 DOM Overlayは選択機能であり、対応機種でのみ使用する。非対応でも主要操作をVR panelで完結させる。
 根拠: [WebXR DOM Overlays仕様](https://immersive-web.github.io/dom-overlays/)。
 DOMとXR入力を併用する場合は同じ選択が二重発火しないよう共通actionで処理する。

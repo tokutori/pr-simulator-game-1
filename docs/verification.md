@@ -88,7 +88,7 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 007 | playable synthetic fixtureのneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実HMDのpose/projection |
-| 016 | 全SceneのPhone VR UI、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実スマートフォン |
+| 016 | 全SceneのPhone VR UI、単眼DOM非表示とScreen復帰、共通Credits、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実スマートフォン |
 | 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
 | 018 | HUD項目とFlight Pilot camera固定、Replay/Attract rig選択、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
 | 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |
@@ -98,6 +98,14 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 023 | Boot updateの純粋性、排他遷移、request ID、stale permission、backend開始失敗とScreen復帰、pagehide disposal、実`XRFrame.getPose()`境界のnull |
 
 非有限値は入口と積分途中で拒否する。比較は解析解、不変量、独立した基準caseを用いる。
+
+`presentation-visibility.test.ts`は純粋な可視性投影と、App updateから実Screen DOM/HUD adapterへの接続を検査する。
+全domain phaseのpermission要求・VR起動・終了・Screen復帰、拒否・起動失敗、BFCacheと非表示を通して、
+mount/HUD nodeの同一性・接続状態・非表示属性・最新snapshot反映・render通知を確認する。
+`screen-ui.test.ts`は非表示中のclick/change/input抑止、表示復帰後の一回dispatch、range値・focus・scroll保持、
+非表示中に除去・無効化されたnodeと外部focusの非復元を検査する。
+これらの合成DOM試験に加え、実ブラウザではcomputed styleと左右眼の描画画像を確認する。
+実スマートフォンの権限・センサー・viewer内の可読性は独立した実機受入項目である。
 同じ実装から期待値を生成するだけの試験を検証根拠としない。
 一様風不変性の試験では、位置依存の地面効果や接触を除外して比較する。
 評価対象、初期条件、入力列、許容差、duration、seed、実行環境、commitを記録する。
