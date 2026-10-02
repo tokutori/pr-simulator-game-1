@@ -973,7 +973,7 @@ impl GameSessionBridge {
 /// Owns one synthetic flight and exposes atomic tick/snapshot operations.
 #[wasm_bindgen]
 pub struct SyntheticFlightSession {
-    fixture: SyntheticPlayableFlight,
+    fixture: SyntheticPlayableFlight<'static>,
     control_mode: ControlMode,
     state: FlightTickState,
     start_datum: NedPoint,
