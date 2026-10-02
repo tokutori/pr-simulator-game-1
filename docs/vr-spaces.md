@@ -63,6 +63,14 @@ Menuはbackground rigの変換を含まないUI layerとして合成できる。
 head poseの逆変換をpanelへ重複適用しない。
 これらのpose・anchorはengine非依存の数値データとし、scene graphへの変換はengine adapterが担当する。
 
+Flight poseを持たないBoot/Title/FlightSetup/Briefing/Result/CreditsのPhone VRでは、景観構図用の描画基底を眼とMenu/Head panelへ一度ずつ適用する。
+panel配置・head-gaze・recenterは共通tracking referenceで計算し、構図用の高度・yaw/pitchを混入させない。
+眼とpanelへの共通基底を $B$、tracking reference内のposeを $H,P$ とすると、
+相対poseは $(BH)^{-1}(BP)=H^{-1}P$ となり、描画とhit testが一致する。
+viewport変更によるTitle構図の更新でもMenuの相対位置を維持する。
+Screenの景観構図、WebXRのreference space、Flight/Cockpitの機体変換、Replayの外部rigは既存の基底を使用する。
+Title基底を`transformTrackingPose`へ追加し、panel側でも再度合成する二重変換を禁止する。
+
 head-gaze hit testは左右眼の中点に対応するhead基準、controller hit testはcontroller基準とする。
 描画と同じanchor変換・frame poseを使用し、不可視・disabled・別overlayの対象を選択しない。
 UI anchor状態をphysicsやFlight sampleへ混入させず、操作履歴はpresentation metadataとして記録する。
@@ -87,3 +95,10 @@ BPG-014〜016で以下を検証する。実機試験と変換fixture試験を区
 5. 左右眼の視差とhit位置、recenter/reset前後の位置関係が一致する。
 6. Pause/Settings中も周囲を見回せ、physics tickとrecordは進まない。
 7. 全8 Sceneとoverlayでanchor規則を満たし、graph cursor・数値変更・退出まで操作できる。
+
+`three-renderer-panel-reference.test.ts`は実`createThreeRenderer`・Three.js scene graph・`StereoEffect`を実行し、
+WebGL driverだけを描画要求の記録用doubleへ置換する。非Flight Menu/Headの両眼相対pose・IPD・投影、
+Phone VR backendのgaze/recenter、Screen構図、WebXR分岐、Flight/Cockpitと外部Replay rigの変換保持を検査する。
+landscapeはpanel四隅、portraitはpanel中心の視野内投影を確認する。非Flight World/Cockpitは既存変換の非回帰を確認する。
+この数値結合試験に加え、実ブラウザ/GPUで両眼panel・可視controlの選択・Credits・退出を検証する。
+native XRの実HMD pose/projectionとPhone viewerの光学特性は独立した実機受入項目である。

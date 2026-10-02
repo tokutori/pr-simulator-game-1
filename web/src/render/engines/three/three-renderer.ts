@@ -451,10 +451,8 @@ export function createThreeRenderer(
           flightPose.initialPilotPositionMeters
         );
       const cameraPose = composePose(pilotEyePose, frame.cameraPose);
-      setPose(camera, composePose(
-        flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE,
-        cameraPose
-      ));
+      const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE;
+      setPose(camera, composePose(titlePresentationPose, cameraPose));
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
@@ -489,7 +487,10 @@ export function createThreeRenderer(
         setPose(panelMesh, composePose(inversePose(externalPose), frame.panelPose));
       } else {
         scene.add(panelMesh);
-        setPose(panelMesh, flightPose === null ? frame.panelPose : flightRelativePose(flightPose, frame.panelPose));
+        const titlePanelPose = frame.panel?.anchor === "menu" || frame.panel?.anchor === "head"
+          ? composePose(titlePresentationPose, frame.panelPose)
+          : frame.panelPose;
+        setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, frame.panelPose));
       }
       panelMesh.visible = frame.panelVisible;
       if (frame.panel !== currentPanel) {
