@@ -2,6 +2,7 @@ import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
+import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
@@ -97,12 +98,13 @@ function dispatch(message: AppMessage): void {
 
 function renderModel(): void {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
+  const domVisible = screenUiVisible(model.presentation);
   // The attract record is a separate, fixed scenario-1 flight. Its water
   // condition must not inherit the player's last setup selection.
   const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
   flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
-  flightHud.setVisible(phaseCode === 5 || phaseCode === 6);
+  flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
     ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
@@ -120,13 +122,9 @@ function renderModel(): void {
   } else if (phaseCode <= 3 || phaseCode === 8 || (phaseCode === 7 && flightController === null)) {
     flightRenderer?.setFlightPose(null);
   }
-  if (model.presentation.type === "hidden" || model.presentation.type === "cached") {
-    flightHud.setVisible(false);
-    screenUi.clear();
-    return;
-  }
   const viewModel = currentViewModel();
-  screenUi.render(viewModel);
+  screenUi.render(viewModel, domVisible);
+  if (model.presentation.type === "hidden" || model.presentation.type === "cached") return;
   const panel = viewModel.panels[0];
   const context = panelCanvas.getContext("2d");
   if (panel !== undefined && context !== null) {

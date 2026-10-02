@@ -89,7 +89,7 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。環境assetの選択activation・描画接続と実ブラウザー受入は別途検証する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |
-| 016 | 全SceneのPhone VR UI、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectのEye mount・全anchor/gaze・recenter・Screen復帰。実スマートフォンは別途受入 |
+| 016 | 全SceneのPhone VR UI、単眼DOM非表示とScreen復帰、sensor権限・初回timeout・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectのEye mount・全anchor/gaze・recenter・Screen復帰。実スマートフォンは別途受入 |
 | 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
 | 018 | HUD項目とFlight Pilot camera固定、Replay/Attract rig選択、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
 | 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |
@@ -99,6 +99,14 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 023 | Boot updateの純粋性、排他遷移、request ID、stale permission、backend開始失敗とScreen復帰、pagehide disposal、実`XRFrame.getPose()`境界のnull |
 
 非有限値は入口と積分途中で拒否する。比較は解析解、不変量、独立した基準caseを用いる。
+
+`presentation-visibility.test.ts`は純粋な可視性投影と、App updateから実Screen DOM/HUD adapterへの接続を検査する。
+全domain phaseのpermission要求・VR起動・終了・Screen復帰、拒否・起動失敗、BFCacheと非表示を通して、
+mount/HUD nodeの同一性・接続状態・非表示属性・最新snapshot反映・render通知を確認する。
+`screen-ui.test.ts`は非表示中のclick/change/input抑止、表示復帰後の一回dispatch、range値・focus・scroll保持、
+非表示中に除去・無効化されたnodeと外部focusの非復元を検査する。
+これらの合成DOM試験に加え、実ブラウザではcomputed styleと左右眼の描画画像を確認する。
+実スマートフォンの権限・センサー・viewer内の可読性は独立した実機受入項目である。
 同じ実装から期待値を生成するだけの試験を検証根拠としない。
 一様風不変性の試験では、位置依存の地面効果や接触を除外して比較する。
 評価対象、初期条件、入力列、許容差、duration、seed、実行環境、commitを記録する。
