@@ -482,14 +482,8 @@ impl GameSessionBridge {
         let profiles = controller_profiles(self.feedback)?;
         let resolved = resolve_configuration(self.difficulty, 0, &profiles, &catalog)
             .map_err(configuration_error)?;
-        let models: [ScenarioModel<'static>; 5] = core::array::from_fn(|index| ScenarioModel {
-            metadata: WEATHER_SCENARIO_ENTRIES[index],
-            model: self.scenarios[index],
-        });
-        let model_catalog =
-            ScenarioModelCatalog::try_new(1, &models).map_err(configuration_error)?;
-        let scenario = model_catalog
-            .resolve(resolved.scenario)
+        let scenario = self
+            .resolve_scenario_model(resolved.scenario)
             .map_err(configuration_error)?;
         let configuration = GameSessionConfiguration::try_new(
             scenario,
@@ -936,17 +930,9 @@ impl GameSessionBridge {
         let mut document =
             birdman_game_format::FlightRecordDocument::from_record(record, resolved.difficulty)
                 .map_err(flight_record_format_error)?;
-        let scenario_id = resolved
-            .scenario
-            .scenario_id
-            .checked_sub(1)
-            .ok_or_else(|| JsValue::from_str("resolved scenario index is invalid"))?;
-        let scenario_index = usize::try_from(scenario_id)
-            .map_err(|_| JsValue::from_str("resolved scenario index is invalid"))?;
         let scenario = self
-            .scenarios
-            .get(scenario_index)
-            .ok_or_else(|| JsValue::from_str("resolved scenario is unavailable"))?;
+            .resolve_scenario_model(resolved.scenario)
+            .map_err(configuration_error)?;
         let key = canonical_personal_best_key(
             &document,
             resolved,
@@ -970,6 +956,19 @@ impl GameSessionBridge {
     /// Returns the field names and ordering of the packed record sample.
     pub fn flight_record_sample_layout() -> String {
         flight_record_sample_layout()
+    }
+}
+
+impl GameSessionBridge {
+    fn resolve_scenario_model(
+        &self,
+        selection: birdman_game_format::ScenarioSelection,
+    ) -> Result<FlightScenario<'static>, birdman_game_format::ConfigurationError> {
+        let models: [ScenarioModel<'static>; 5] = core::array::from_fn(|index| ScenarioModel {
+            metadata: WEATHER_SCENARIO_ENTRIES[index],
+            model: self.scenarios[index],
+        });
+        ScenarioModelCatalog::try_new(1, &models)?.resolve(selection)
     }
 }
 
@@ -1736,6 +1735,43 @@ mod tests {
 
     const _: [(); 1_632_408] =
         [(); core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES];
+
+    #[test]
+    fn model_lookup_requires_the_complete_selected_identity() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        for weather in 0..5 {
+            bridge.set_weather_class(weather).unwrap();
+            bridge.prepare().unwrap();
+            let selection = bridge.resolved_configuration.unwrap().scenario;
+            assert!(bridge.resolve_scenario_model(selection).is_ok());
+            for component in 0..6 {
+                let mut changed = selection;
+                match component {
+                    0 => changed.catalog_version += 1,
+                    1 => changed.scenario_id += 10,
+                    2 => changed.scenario_version += 1,
+                    3 => changed.aircraft_model_version += 1,
+                    4 => changed.environment_version += 1,
+                    5 => {
+                        changed.weather = if weather == 0 {
+                            birdman_game_format::WeatherClass::Mild
+                        } else {
+                            birdman_game_format::WeatherClass::Calm
+                        };
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(matches!(
+                    bridge.resolve_scenario_model(changed),
+                    Err(birdman_game_format::ConfigurationError::ScenarioModelUnavailable)
+                ));
+            }
+            bridge.cancel_briefing().unwrap();
+        }
+        assert_eq!(bridge.phase_code(), 1);
+        assert_eq!(bridge.flight_record_sample_count(), 0);
+    }
 
     #[test]
     fn maximum_bulk_record_transfer_payload_matches_the_layout_budget() {

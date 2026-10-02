@@ -12,6 +12,9 @@ JSONの配列decoderは要素数上限を超えた要素をstorageへ追加す�
 `environment_version` は既存 `ScenarioCatalogEntry` のenvironment versionに対応する。
 `validate_for` が一致を検査する。scenario ID、Weather分類、選択seedは既存catalogが所有する。
 この形式の追加によって独立したscenario選択やゲーム状態を作らない。
+WASM adapterのprepareとFlightRecord出力は同じ`ScenarioModelCatalog::resolve`を使用し、
+catalog・scenario・aircraft・environmentの各versionとWeather分類を完全照合する。
+scenario IDを配列indexへ算術変換する取得経路は使用しない。
 
 ## 座標・風場
 
