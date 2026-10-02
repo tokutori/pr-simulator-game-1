@@ -50,17 +50,26 @@ export type ReplayClockCommand =
   | { readonly kind: "rate"; readonly rateCode: 0 | 1 | 2 }
   | { readonly kind: "advance"; readonly elapsedSeconds: number };
 
+type ScreenRecoveryOrigin =
+  | { readonly origin: "page-restoration"; readonly from: null }
+  | { readonly origin: "backend-fault"; readonly from: "webxr" | "phone-vr"; readonly cause: string };
+
 export type LivePresentationUiState =
   | { readonly type: "uninitialized" }
   | { readonly type: "initializing"; readonly requestId: number }
   | { readonly type: "ready"; readonly mode: PresentationMode }
-  | {
+  | ({
       readonly type: "transitioning";
       readonly requestId: number;
-      readonly from: PresentationMode | null;
-      readonly to: PresentationMode;
-      readonly phase: "requesting" | "stopping" | "starting";
-    }
+    } & (
+      | {
+          readonly origin: "user-request";
+          readonly from: PresentationMode | null;
+          readonly to: PresentationMode;
+          readonly phase: "requesting" | "stopping" | "starting";
+        }
+      | (ScreenRecoveryOrigin & { readonly to: "screen"; readonly phase: "stopping" })
+    ))
   | { readonly type: "failed"; readonly message: string };
 
 export type PresentationUiState = LivePresentationUiState
@@ -400,7 +409,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const recovered = retained.presentation.type === "initializing" || retained.presentation.type === "uninitialized"
           || retained.presentation.type === "failed"
         ? transition(retained)
-        : beginScreenRecovery(retained, "Page restored", null);
+        : beginScreenRecovery(retained, { origin: "page-restoration", from: null });
       const playback = recovered.model.gameSession.kind === "attract"
         ? beginReplayClockCommand(recovered.model, { kind: "play" }, true)
         : transition(recovered.model);
@@ -509,7 +518,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return updateBackendCompletion(model, message);
     case "backend-ended": {
       if (model.presentation.type !== "ready" || model.presentation.mode !== message.mode) return transition(model);
-      return beginScreenRecovery(model, message.message, message.mode);
+      return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
       const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
@@ -1013,7 +1022,7 @@ function beginPermissionRequest(model: AppModel, mode: "webxr" | "phone-vr"): Ap
   const from = model.presentation.type === "ready" ? model.presentation.mode : null;
   const status = mode === "webxr" ? "Waiting for WebXR permission" : "Waiting for phone orientation permission";
   return transition(withModel(model, {
-    presentation: Object.freeze({ type: "transitioning", requestId, from, to: mode, phase: "requesting" }),
+    presentation: Object.freeze({ type: "transitioning", origin: "user-request", requestId, from, to: mode, phase: "requesting" }),
     nextRequestId: requestId + 1,
     status
   }), [{ type: "request-permission", mode, requestId }]);
@@ -1024,7 +1033,7 @@ function beginBackendSwitch(model: AppModel, mode: PresentationMode, status: str
   const requestId = model.nextRequestId;
   const from = model.presentation.mode;
   return transition(withModel(model, {
-    presentation: Object.freeze({ type: "transitioning", requestId, from, to: mode, phase: "stopping" }),
+    presentation: Object.freeze({ type: "transitioning", origin: "user-request", requestId, from, to: mode, phase: "stopping" }),
     nextRequestId: requestId + 1,
     status
   }), [{ type: "switch-backend", mode, requestId }]);
@@ -1056,35 +1065,37 @@ function updateBackendCompletion(
   message: Extract<AppMessage, { readonly type: "backend-transition-completed" }>
 ): AppTransition {
   const current = model.presentation;
-  if (current.type !== "transitioning" || current.requestId !== message.requestId || current.to !== message.requestedMode) {
+  if (current.type !== "transitioning" || current.phase === "requesting"
+      || current.requestId !== message.requestId || current.to !== message.requestedMode) {
     return transition(model);
   }
+  const causePrefix = current.origin === "backend-fault" ? `${current.cause}; ` : "";
   if (message.activeMode !== null) {
-    const status = message.ok && message.activeMode === message.requestedMode
-      ? message.successStatus
+    const outcome = message.ok
+      ? message.activeMode === message.requestedMode
+        ? message.successStatus
+        : `Backend ${message.requestedMode} reported success while ${labelForMode(message.activeMode)} is active`
       : `${message.message}; ${labelForMode(message.activeMode)} is active`;
     return transition(withModel(model, {
       presentation: Object.freeze({ type: "ready", mode: message.activeMode }),
-      status
+      status: `${causePrefix}${outcome}`
     }));
   }
-  const status = message.ok
+  const outcome = message.ok
     ? `Backend ${message.requestedMode} reported success without an active backend`
     : message.message;
+  const status = `${causePrefix}${outcome}`;
   return transition(withModel(model, {
     presentation: Object.freeze({ type: "failed", message: status }),
     status
   }));
 }
 
-function beginScreenRecovery(
-  model: AppModel,
-  message: string,
-  from: PresentationMode | null
-): AppTransition {
+function beginScreenRecovery(model: AppModel, origin: ScreenRecoveryOrigin): AppTransition {
   const requestId = model.nextRequestId;
+  const message = origin.origin === "backend-fault" ? origin.cause : "Page restored";
   return transition(withModel(model, {
-    presentation: Object.freeze({ type: "transitioning", requestId, from, to: "screen", phase: "stopping" }),
+    presentation: Object.freeze({ type: "transitioning", ...origin, requestId, to: "screen", phase: "stopping" }),
     nextRequestId: requestId + 1,
     status: `${message}; restoring Screen`
   }), [{ type: "switch-backend", mode: "screen", requestId }]);
