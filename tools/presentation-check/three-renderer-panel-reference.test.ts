@@ -18,6 +18,12 @@ import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { intersectPanel } from "../../web/src/presentation/panel-interaction.js";
+import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
+import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
+import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
+import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 
 interface RecordedDraw {
   readonly camera: Matrix4;
@@ -33,6 +39,7 @@ interface RecordedDraw {
   readonly cursorRenderOrder: number;
   readonly worldTransparentOrders: readonly number[];
   readonly groupOrders: readonly number[];
+  readonly headHud: Matrix4 | null;
 }
 
 interface RecordingDriver {
@@ -78,9 +85,11 @@ vi.mock("three", async (importOriginal) => {
       if (this.target !== null) return;
       scene.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
+      let headHud: Matrix4 | null = null;
+      scene.traverse((object) => { if (object.name === "head-hud" && object.visible) headHud = object.matrixWorld.clone(); });
       scene.traverse((object) => {
         if (object instanceof actual.Mesh && object.material instanceof actual.MeshBasicMaterial &&
-            object.material.map instanceof actual.CanvasTexture) {
+            object.material.map instanceof actual.CanvasTexture && object.name !== "head-hud") {
           const cursor = object.children.find((child) => child instanceof actual.Mesh && child.geometry instanceof actual.CircleGeometry);
           if (!(cursor instanceof actual.Mesh) || !(cursor.material instanceof actual.MeshBasicMaterial)) {
             throw new Error("Panel cursor is missing");
@@ -102,7 +111,7 @@ vi.mock("three", async (importOriginal) => {
             transparent: object.material.transparent, depthTest: object.material.depthTest,
             depthWrite: object.material.depthWrite, renderOrder: object.renderOrder,
             cursorDepthTest: cursor.material.depthTest, cursorDepthWrite: cursor.material.depthWrite,
-            cursorRenderOrder: cursor.renderOrder, worldTransparentOrders, groupOrders
+            cursorRenderOrder: cursor.renderOrder, worldTransparentOrders, groupOrders, headHud
           });
         }
       });
@@ -119,7 +128,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   beforeAll(() => {
     const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
-    bundle = createThreeRenderer(canvas, canvas, null, "low");
+    bundle = createThreeRenderer(canvas, canvas, null, "low", canvas);
     if (capture.driver === null) throw new Error("Recording driver was not constructed");
     driver = capture.driver;
   });
@@ -224,6 +233,70 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         if (timestamp === 100) bundle.renderer.setStereoPresentation(changedProfile);
       }
     } finally { bundle.renderer.stopLoop(); }
+  });
+
+  it("keeps the Phone Head layer fixed in both actual StereoEffect eyes through body, PilotEye and head rotations", async () => {
+    const values = new Array<number>(33).fill(0);
+    values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9; values[31] = 1;
+    const snapshot = parseFlightSnapshot(values);
+    const gameSession = gameSessionState(5, 0, snapshot, true);
+    if (gameSession === null) throw new Error("Missing Flight fixture");
+    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };
+    let currentFlight: FlightRenderPose = { datumPositionNed: { north: 100, east: 25, down: -8 },
+      attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+    bundle.renderer.resize(viewport);
+    bundle.renderer.setFlightPose(currentFlight);
+    const phone = await startPhone(bundle, viewport);
+    const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null };
+    const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
+      currentFrame: (timestamp, view) => phone.backend.currentFrame(timestamp, view) }], (viewer) => {
+      evidence.viewer = viewer;
+      const draft = createFlightFrameViewDraft(model, snapshot, viewer);
+      if (draft.headHud.kind !== "visible") throw new Error("Missing Phone Head layout");
+      const size = headHudCanvasSize(draft.headHud.layer);
+      const paint = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, size.width, size.height), viewer);
+      if (paint.kind !== "ready") throw new Error("Missing Phone Head plan");
+      evidence.view = finalizeFlightFrameView(draft, paint.view);
+      return evidence.view;
+    }, () => { bundle.renderer.setFlightPose(currentFlight); });
+    const projections: Vector3[][] = [];
+    try {
+      expect(await runtime.start("phone-vr")).toEqual({ ok: true });
+      for (const [index, pilotPositionMeters] of [-0.15, 0.12, 0.35].entries()) {
+        const body = new Quaternion().setFromAxisAngle(new Vector3(0.3, 0.7, -0.2).normalize(), index * 0.2);
+        currentFlight = { ...currentFlight, pilotPositionMeters, attitudeBodyToNed: quaternion(body.w, body.x, body.y, body.z) };
+        phone.emit({ alpha: index * 11, beta: 90 - index * 7, gamma: index * 5, timestampMs: 100 + index * 100 });
+        driver.draws.length = 0;
+        driver.tick(100 + index * 100, null);
+        expect(driver.draws).toHaveLength(2);
+        const viewer = evidence.viewer;
+        const headHud = evidence.view?.headHud;
+        if (viewer?.source !== "configured" || headHud?.kind !== "visible") throw new Error("Missing same-frame configured Head");
+        expect(viewer.trackingFromHead).toBeNull();
+        const points: Vector3[] = [];
+        for (const [eyeIndex, draw] of driver.draws.entries()) {
+          const eye = viewer.eyes[eyeIndex];
+          if (eye === undefined || draw.headHud === null) throw new Error("Missing Phone Head draw");
+          expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
+          for (const horizontal of [-0.5, 0.5]) for (const vertical of [-0.5, 0.5]) {
+            const projected = new Vector3(horizontal, vertical, 0).applyMatrix4(draw.headHud).applyMatrix4(draw.camera.clone().invert()).applyMatrix4(draw.projection);
+            const headPoint = new Vector3(horizontal * headHud.size.width, vertical * headHud.size.height, 0).applyMatrix4(poseMatrix(headHud.localPose));
+            const pure = projectHeadPoint(eye, vec3(headPoint.x, headPoint.y, headPoint.z));
+            expect(projected.x).toBeCloseTo(pure?.x ?? Number.NaN, 8);
+            expect(projected.y).toBeCloseTo(pure?.y ?? Number.NaN, 8);
+            points.push(projected);
+          }
+        }
+        projections.push(points);
+      }
+      const first = projections[0];
+      if (first === undefined) throw new Error("Missing first Phone projection");
+      for (const points of projections.slice(1)) points.forEach((point, index) => {
+        const original = first[index];
+        if (original === undefined) throw new Error("Missing corresponding Phone point");
+        expect(point.distanceTo(original)).toBeLessThan(1e-8);
+      });
+    } finally { await runtime.dispose(); await phone.backend.stop(); }
   });
 
   it("copies runtime center and current eye projections in the actual animation-loop adapter", () => {
