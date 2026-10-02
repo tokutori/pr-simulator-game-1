@@ -633,8 +633,7 @@ export function createThreeRenderer(
       fixedCameraView = view;
     },
     transformTrackingPose(pose: Pose): Pose {
-      const externalPose = currentExternalCameraPose();
-      return externalPose === null ? pose : composePose(externalPose, pose);
+      return flightPose === null ? pose : composePose(currentTrackingMountPose(), pose);
     }
   };
 

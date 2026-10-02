@@ -93,8 +93,12 @@ native viewerはruntimeのcenter-head poseである。片眼やXR union camera�
 Pilot Flightでは機体local frameのEye mount、外部Replayではworld frameのcamera rig、
 non-flightではidentityを $M$ とし、viewerとcontroller rayへ同じ $M$ を一度だけ合成する。
 Menu/Headはこのviewer frameから配置する。Cockpit/World panelはphysical frameを保持する。
-Phone VRの`RendererAdapter.transformTrackingPose`は独立した入口であり、このnative XR境界の追加で変更しない。
-PhoneのEye mountとselectorの一致は[Issue #170](https://github.com/tokutori/pr-simulator-game-1/issues/170)で扱う。
+Phone VRの`RendererAdapter.transformTrackingPose`は独立した入口であり、同じ $M$ を使用する。
+cameraへ渡すraw head poseを維持し、Menu/Head配置とgazeへmountを一度だけ適用する。
+Menu recenterはmounted headから配置し、tracking recenterは $M H^{-1}M^{-1}$ でretained anchorを写像する。
+`three-renderer-panel-reference.test.ts`は実Phone backendとStereoEffectを使用し、
+3身体位置・全anchor・gaze dwell・recenter・Screen復帰の同一basisを検査する。
+WebGL driverを代替したソフトウェア試験であり、実スマートフォンの受入は別途実施する。
 
 Three.jsはXR cameraのlocal poseをruntime値へ更新するため、Eye mountをcameraの親tracking originへ保持する。
 各眼のworld poseは $A E H_{eye}$ となり、身体移動、runtimeのhead poseとIPDを各一度だけ含む。
