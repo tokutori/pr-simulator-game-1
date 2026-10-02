@@ -129,7 +129,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   }
 
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewerPose: Pose | null): BackendFrame {
-    const presentationViewerPose = viewerPose === null ? null : this.renderer.transformTrackingPose(viewerPose);
+    const presentationViewerPose = viewerPose === null ? null : this.xrRenderer.transformTrackingPose(viewerPose);
     this.lastViewerPose = presentationViewerPose;
     const panel = viewModel.panels[0] ?? null;
     const headPose = presentationViewerPose ?? IDENTITY_POSE;

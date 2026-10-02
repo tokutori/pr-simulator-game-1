@@ -10,6 +10,7 @@ export type WebXrSessionRequest =
   | { readonly ok: false; readonly message: string };
 
 export interface WebXrSessionPort {
+  transformTrackingPose(pose: Pose): Pose;
   checkAvailability(): Promise<WebXrAvailability>;
   requestSessionFromUserGesture(): Promise<WebXrSessionRequest>;
   startSession(): Promise<void>;

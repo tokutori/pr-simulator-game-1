@@ -178,6 +178,8 @@ class FakeWebXrAdapter implements WebXrSessionPort {
   private endHandler: (() => void) | null = null;
   private referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
 
+  transformTrackingPose(value: Pose): Pose { return value; }
+
   checkAvailability(): Promise<WebXrAvailability> {
     return Promise.resolve(this.availability);
   }
