@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { Window as BrowserWindow } from "happy-dom";
 import {
   GameSessionBridge,
   PersonalBestSelectionBridge,
@@ -11,6 +12,7 @@ import {
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
 import { BrowserPilotInput } from "../../web/src/game/browser-input.js";
+import { FlightController } from "../../web/src/game/flight-controller.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
@@ -18,6 +20,50 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
+
+it("clears a DOM pilot target across terminal Result and Rust Retry", () => {
+  initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+  const window = new BrowserWindow();
+  vi.stubGlobal("HTMLElement", window.HTMLElement);
+  const input = new BrowserPilotInput(window as unknown as Window);
+  const session = new GameSessionBridge(0);
+  let controller: FlightController | null = null;
+  try {
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.advance_countdown();
+    session.launch();
+    controller = new FlightController(session, input, { setFlightPose() {} }, {
+      render() {}, setVisible() {}, fail(message) { throw new Error(message); }
+    }, physics_hz(), () => []);
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { code: "KeyL" }));
+    controller.onFrame(0);
+    controller.onFrame(100);
+    window.dispatchEvent(new window.KeyboardEvent("keyup", { code: "KeyL" }));
+    expect(input.readIntent([]).pilotPositionMeters).toBeGreaterThan(0.03);
+    controller.reset(session.abort());
+    const resultPress = new window.KeyboardEvent("keydown", { code: "KeyL", cancelable: true });
+    window.dispatchEvent(resultPress);
+    expect(resultPress.defaultPrevented).toBe(false);
+    session.retry();
+    session.start_countdown(1);
+    session.advance_countdown();
+    const initial = session.launch();
+    controller.reset(initial);
+    expect(input.readIntent([]).pilotPositionMeters).toBe(parseFlightSnapshot(initial).pilotPositionMeters);
+    controller.onFrame(1000);
+    controller.onFrame(1010);
+    controller.onFrame(1020);
+    expect(controller.currentSnapshot.pilotPositionMeters).toBeCloseTo(0, 12);
+    expect(session.phase_code()).toBe(5);
+  } finally {
+    if (controller === null) { input.dispose(); session.free(); }
+    else controller.dispose();
+    vi.unstubAllGlobals();
+  }
+});
 
 function hudProfile(session: GameSessionBridge) {
   const values = session.information_profile_codes();

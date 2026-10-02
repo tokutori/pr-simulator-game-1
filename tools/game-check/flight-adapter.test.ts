@@ -241,6 +241,10 @@ class FakeFlightSession implements FlightSessionPort {
 class FakePilotInput implements PilotInputPort {
   disposed = false;
 
+  reset(): void {}
+  suspend(): void {}
+  resume(): void {}
+
   readIntent() {
     return { roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: 0 };
   }

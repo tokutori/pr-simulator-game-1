@@ -28,6 +28,7 @@ export const DEFAULT_PILOT_INPUT_CONFIGURATION: BrowserPilotInputConfiguration =
 });
 
 export class BrowserPilotInput {
+  private activity: "active" | "suspended" | "disposed" = "active";
   private readonly pressed = new Set<string>();
   private pilotPositionTargetMeters = 0;
   private readonly controlKeys: ReadonlySet<string>;
@@ -45,6 +46,9 @@ export class BrowserPilotInput {
   }
 
   readIntent(gamepads: readonly (Gamepad | null)[]): PilotIntent {
+    if (this.activity !== "active") {
+      return { roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: this.pilotPositionTargetMeters };
+    }
     const connectedGamepad = gamepads.find((gamepad) => gamepad !== null && gamepad.connected) ?? null;
     if (connectedGamepad === null) {
       this.gamepadNeedsNeutralConfirmation = true;
@@ -73,7 +77,30 @@ export class BrowserPilotInput {
     return intent;
   }
 
+  reset(initialPilotPositionMeters: number): void {
+    if (this.activity === "disposed") throw new Error("Cannot reset disposed pilot input");
+    if (!Number.isFinite(initialPilotPositionMeters)
+        || Math.abs(initialPilotPositionMeters) > this.configuration.pilotPositionRangeMeters) {
+      throw new RangeError("Initial pilot position is outside the configured range");
+    }
+    this.pilotPositionTargetMeters = initialPilotPositionMeters;
+    this.clearKeys();
+  }
+
+  suspend(): void {
+    if (this.activity === "disposed") return;
+    this.activity = "suspended";
+    this.clearKeys();
+  }
+
+  resume(): void {
+    if (this.activity === "disposed") return;
+    this.clearKeys();
+    this.activity = "active";
+  }
+
   dispose(): void {
+    this.activity = "disposed";
     this.target.removeEventListener("keydown", this.onKeyDown);
     this.target.removeEventListener("keyup", this.onKeyUp);
     this.target.removeEventListener("blur", this.clearKeys);
@@ -81,8 +108,10 @@ export class BrowserPilotInput {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (!this.controlKeys.has(event.code) || isEditableTarget(event.target)) return;
+    if (this.activity !== "active"
+        || !this.controlKeys.has(event.code) || isEditableTarget(event.target)) return;
     event.preventDefault();
+    if (event.repeat) return;
     this.pressed.add(event.code);
   };
 
@@ -92,6 +121,7 @@ export class BrowserPilotInput {
 
   private readonly clearKeys = (): void => {
     this.pressed.clear();
+    this.gamepadNeedsNeutralConfirmation = true;
   };
 }
 

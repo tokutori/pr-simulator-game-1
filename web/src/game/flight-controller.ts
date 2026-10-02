@@ -16,6 +16,9 @@ export interface FlightSessionPort {
 
 export interface PilotInputPort {
   readIntent(gamepads: readonly (Gamepad | null)[]): PilotIntent;
+  reset(initialPilotPositionMeters: number): void;
+  suspend(): void;
+  resume(): void;
   dispose(): void;
 }
 
@@ -46,6 +49,7 @@ export class FlightController {
     this.clock = new FixedTickClock(1_000 / physicsHz);
     this.snapshotValue = parseFlightSnapshot(session.snapshot());
     this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
+    this.initializeInput();
     this.applySnapshot(this.snapshotValue);
   }
 
@@ -67,22 +71,26 @@ export class FlightController {
         this.applySnapshot(this.snapshotValue);
         if (this.snapshotValue.terminal !== "airborne" && !this.terminalReported) {
           this.terminalReported = true;
+          this.input.suspend();
           this.onTerminal(this.snapshotValue);
         }
         return this.snapshotValue.terminal === "airborne";
       });
     } catch (error: unknown) {
       this.failed = true;
-      this.clock.suspend();
+      this.suspend();
       this.hud.fail(error instanceof Error ? error.message : String(error));
     }
   }
 
   suspend(): void {
     this.clock.suspend();
+    this.input.suspend();
   }
 
   resume(): void {
+    if (this.disposed || this.failed || this.snapshotValue.terminal !== "airborne") return;
+    this.input.resume();
     this.clock.resume();
   }
 
@@ -93,7 +101,14 @@ export class FlightController {
     this.clock.reset();
     this.snapshotValue = parseFlightSnapshot(snapshot);
     this.initialPilotPositionMeters = this.snapshotValue.pilotPositionMeters;
+    this.initializeInput();
     this.applySnapshot(this.snapshotValue);
+  }
+
+  private initializeInput(): void {
+    this.input.reset(this.initialPilotPositionMeters);
+    if (this.snapshotValue.terminal === "airborne") this.input.resume();
+    else this.input.suspend();
   }
 
   renderCurrentSnapshot(): void {
