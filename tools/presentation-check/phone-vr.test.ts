@@ -347,7 +347,7 @@ describe("Phone VR presentation backend", () => {
     await backend.cancelPendingRequest();
     await expect(startup).rejects.toThrow("canceled");
     expect(renderer.stereoProfile).toBeNull();
-    expect(sensors.stopCount).toBe(2);
+    expect(sensors.stopCount).toBe(1);
   });
 
   it.each(["stop", "cancel"] as const)("ignores late readings after %s without accessing the clock", async (operation) => {
