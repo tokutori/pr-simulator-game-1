@@ -93,8 +93,10 @@ legacy hashは現在のbuildのsource fingerprintであり、過去recordの実a
 
 `environment_snapshot_for_identity_json` はJSON文字列だけを受理するregistry queryである。
 JSのnull・型不一致、4,096 byte超過、object以外の包絡、JSON/field/range異常、0のversionを分類して拒否する。
-registryは旧catalog v1の1〜5とcatalog v2の1/2/4/5/6を完全identityで照合する。
-既知registryの存在は通常選択の公開を意味しない。現行の選択catalogはv1の5scenarioである。
+registryはcatalog v1の1〜5とcatalog v2の1/2/4/5/6を完全identityで照合する。
+各組合せのaircraft model v1は旧archiveの環境metadata照会用に保持し、v2を現行playable機体として登録する。
+環境metadataの照会は旧機体を再積分する操作を含まない。
+既知registryの存在は通常選択の公開を意味しない。現行の選択catalogはv1の5scenarioで、aircraft model v2を使用する。
 未知identityはunavailableを返し、archiveの受入・記録・snapshot replayを維持する。
 
 ## 現在の実装範囲

@@ -34,35 +34,35 @@ const WEATHER_SCENARIO_ENTRIES: [ScenarioCatalogEntry; 5] = [
     ScenarioCatalogEntry {
         scenario_id: 1,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 1,
         weather: WeatherClass::Calm,
     },
     ScenarioCatalogEntry {
         scenario_id: 2,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 2,
         weather: WeatherClass::Mild,
     },
     ScenarioCatalogEntry {
         scenario_id: 3,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 3,
         weather: WeatherClass::Typical,
     },
     ScenarioCatalogEntry {
         scenario_id: 4,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 4,
         weather: WeatherClass::Challenging,
     },
     ScenarioCatalogEntry {
         scenario_id: 5,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 5,
         weather: WeatherClass::NearLimit,
     },
@@ -1490,7 +1490,7 @@ fn build_demo_flight() -> Result<DemoFlight, JsValue> {
         catalog_version: 1,
         scenario_id: 1,
         scenario_version: 1,
-        aircraft_model_version: 1,
+        aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
         environment_version: 1,
         controller_profile_version: 1,
         seed: 0xD3A0,
@@ -1851,6 +1851,10 @@ mod tests {
             serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
         assert_eq!(selected["projection"]["source"], "selected");
         assert_eq!(selected["projection"]["identity"]["catalog_version"], 1);
+        assert_eq!(
+            selected["projection"]["identity"]["aircraft_model_version"],
+            SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION
+        );
         assert_eq!(selected["projection"]["identity"]["scenario_id"], 3);
         assert_eq!(selected["projection"]["identity"]["environment_version"], 3);
         assert!(bridge.resolved_configuration.is_none());
@@ -2181,6 +2185,10 @@ mod tests {
         assert_eq!(first, second);
         let document =
             birdman_game_format::FlightRecordDocument::decode_json(first.as_bytes()).unwrap();
+        assert_eq!(
+            document.header.aircraft_model_version,
+            SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION
+        );
         assert!(document.personal_best_candidate_score().unwrap().is_some());
         assert!(document.personal_best_key().is_some());
         assert_eq!(
@@ -2233,7 +2241,7 @@ mod tests {
                 catalog_version: 1,
                 scenario_id: 1,
                 scenario_version: 1,
-                aircraft_model_version: 1,
+                aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
                 environment_version: 1,
                 controller_profile_version: 1,
                 seed: 0xD3A0,
@@ -2268,7 +2276,7 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(
                 bridge.configuration_metadata().unwrap(),
-                [4, 2, 3, 0, 1, 1, 1, 1, 1, 1, 0xD3A0, 0, 1, 0, 0, 0, 0, 0]
+                [4, 2, 3, 0, 1, 1, 1, 2, 1, 1, 0xD3A0, 0, 1, 0, 0, 0, 0, 0]
             );
             assert_eq!(bridge.difficulty, player);
             assert_eq!(bridge.phase_code(), 10);
@@ -2462,7 +2470,7 @@ mod tests {
         let resolved = bridge.configuration_metadata().unwrap();
         assert_eq!(
             &resolved[..],
-            &[4, 2, 3, 4, 1, 5, 1, 1, 5, 4, 0, 0, 1, 0, 0, 0, 0, 0]
+            &[4, 2, 3, 4, 1, 5, 1, 2, 5, 4, 0, 0, 1, 0, 0, 0, 0, 0]
         );
         bridge.start_countdown(1).unwrap();
         bridge.advance_countdown().unwrap();

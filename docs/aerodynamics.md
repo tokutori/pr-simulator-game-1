@@ -104,3 +104,16 @@ M_x=a(L_L-L_R)
 尾翼は通常 $r_x<0$ である。上向き尾翼荷重の増分は負pitch momentを生じる。
 右向き尾翼荷重の増分は負yaw momentを生じる。
 試験では具体的なoffsetとforceから外積を計算して期待符号を固定する。
+
+## Playable合成機体のyaw軸
+
+`SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION` は2である。ブラウザーのscenarioとdemoは
+この版を記録する。v2の垂直尾翼は評価点・荷重作用点をbody `(-1.8,0,-0.1)` mとし、
+取付姿勢IDENTITYの側力へ $C_{Y,\delta_{yaw}}=-0.2$ rad$^{-1}$ を割り当てる。
+正のyaw指令は左向き尾翼力を生み、後方の作用点から正のyaw momentを生成する。
+要素固有yaw momentは0であり、作用点の外積でmomentを計算する。
+この腕長と微係数は合成fixtureの仮定として固定する。実機同定値・性能予測の根拠には使用しない。
+
+正負yaw操舵の側力・momentを解析値と比較し、Manual・Shared・Automaticの軸応答、authority、
+neutral、決定性を検証する。yawのみのfeedbackを使って追加減衰の寄与を分離し、
+全軸feedbackでも初期yaw rateからの減衰を確認する。roll/pitchの符号と既存neutral glideも検査する。
