@@ -52,7 +52,25 @@ C=C_0+C_\alpha\alpha+C_\beta\beta
 
 角速度rate derivative、Mach依存、失速後モデル、downwashは含めない。
 局所速度による回転減衰は評価点速度にのみ反映する。`ElementEnvelope`はalpha、beta、
-dynamic pressureの閉区間を定め、外側の値をclampせず拒否する。$C_D$は宣言範囲全体で非負でなければならない。
+dynamic pressureとroll・pitch・yaw舵角の閉区間を定め、外側の値をclampせず拒否する。
+`ControlEnvelope`は各軸について有限かつneutralを含む上下限を要求する。非対称範囲を許可し、
+上下限とも0の軸はneutral固定を表す。actuatorの最大舵角・最大舵角速度とは別の係数lawの適用範囲である。
+全要素へ同じglobal舵角を渡すため、微係数0の軸にも適用範囲を明示する。
+
+舵角微係数を使用する場合の6係数は次式で評価する。
+
+```math
+C=C_0+C_\alpha\alpha+C_\beta\beta+
+C_{\delta_r}\delta_r+C_{\delta_p}\delta_p+C_{\delta_y}\delta_y
+```
+
+要素構築時にalpha・beta・3舵角の直積領域の32頂点を、実行時と同じ係数評価で検査する。
+一次lawの領域全体で6係数が有限、$C_D$が非負であることを要求する。係数や負抗力をclampしない。
+零速でも舵角領域を先に検査し、逸脱はroleを保持した`OutsideEnvelope`となる。
+`FlightScenario::try_new`は全5要素・全3軸についてactuatorの全travel範囲が舵角領域に含まれることを
+検査し、不一致は`ControlEnvelope` error内にroleと`IncompatibleControlEnvelope`を保持する。
+この検査は設定の整合性を保証する。飛行中のflow領域逸脱や、参照寸法・動圧を乗じた荷重の算術overflowは
+実行時の型付きerrorとして引き続き検査する。
 
 揚抗力・側力のwind-axis基底を要素local axesで定義する。$H=\sqrt{u_a^2+w_a^2}$、
 $V=\sqrt{u_a^2+v_a^2+w_a^2}$ とすると、速度軸は $(u_a,v_a,w_a)/V$、揚力方向は

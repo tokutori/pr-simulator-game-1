@@ -68,7 +68,7 @@ RK4 stage時刻の間に生じるpilot位置の極値も検査し、移動限界
 ## BPG-003の空力接続
 
 `AerodynamicModel`は左右主翼・水平尾翼・垂直尾翼・胴体を各1要素保持する。各要素は評価点と
-荷重作用点、取付姿勢、参照面積・span・chord、6係数law、alpha/beta/dynamic-pressure envelopeを持つ。
+荷重作用点、取付姿勢、参照面積・span・chord、6係数law、alpha/beta/dynamic-pressureと3軸舵角のenvelopeを持つ。
 `UniformAerodynamicLoad`は位置一様な風と密度から各要素の局所流を評価し、forceとdatum $O$ まわりの
 momentを合成する。位置依存風場はBPG-004/005で別境界から接続する。
 

@@ -43,6 +43,8 @@ pub enum AeroError {
     InvalidOrientation,
     /// An angle or dynamic-pressure interval is invalid.
     InvalidEnvelope,
+    /// Actuator travel extends outside an element's control-deflection domain.
+    IncompatibleControlEnvelope,
     /// A coefficient would imply negative drag within its declared envelope.
     NegativeDragCoefficient,
     /// The model does not contain exactly one of each required element role.

@@ -526,7 +526,20 @@ mod tests {
 
     fn convergence_loads() -> WindFieldAerodynamicLoad<'static> {
         let reference = ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
-        let envelope = ElementEnvelope::try_new(-1.2, 1.2, -1.2, 1.2, 0.0, 10_000.0).unwrap();
+        let envelope = ElementEnvelope::try_new(
+            -1.2,
+            1.2,
+            -1.2,
+            1.2,
+            0.0,
+            10_000.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let roles = [
             AerodynamicRole::LeftWing,
             AerodynamicRole::RightWing,

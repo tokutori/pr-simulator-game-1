@@ -62,6 +62,13 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
 | RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
 
+### 空力舵角domainの検証（#209）
+
+要素構築時にalpha・beta・3舵角の組合せで生じる負抗力と非有限係数を拒否する。
+舵角の各正負境界・直外を零速と通常流で検査し、role付きerrorの伝達を確認する。
+scenario構築ではactuatorの全travelがdomainに収まる場合を受理し、各軸の正負側の不足を拒否する。
+既存のneutral荷重・force/moment scaling・aggregate overflowの回帰も維持する。
+
 ### BPG-024 空力境界・error契約
 
 | ケース | 比較対象 | 受入条件 |
