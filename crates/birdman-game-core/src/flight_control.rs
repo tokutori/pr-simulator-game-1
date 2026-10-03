@@ -385,7 +385,8 @@ impl ActuatorState {
         self.0
     }
 
-    /// Interpolates between recorded actuator states.
+    /// Linearly blends finite actuator values.
+    /// Physical tick, contact, and record queries use held states instead.
     pub fn interpolate(self, other: Self, fraction: f64) -> Result<Self, ActuatorError> {
         if !fraction.is_finite() {
             return Err(ActuatorError::NonFinite);

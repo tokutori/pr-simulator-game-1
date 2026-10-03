@@ -95,10 +95,14 @@ launchはdatum $O$ のground velocityと姿勢、構造datum高度、身体初�
 trimから生成する場合はair-relative条件を明示し、ground条件によるlaunchと別の生成方法にする。
 静水面はNEDのD=0とする。初期版の接触判定は登録した機体接触点のいずれかがD>=0となる条件を用いる。
 接触点は構造datumからの固定offsetでモデルに記録する。接触検出は隣接する成功tick間のstateを補間し、
-各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態・actuatorは線形補間し、
+各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態は線形補間し、
 姿勢は短経路quaternion slerpを用いる。接触探索では補間経路を16区間で調べ、接触を含む区間のfractionを
 同じ補間state上で二分探索により確定する。
-終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
+終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。actuatorは `flight-control.md` の
+tick内保持規則に従い、正のfractionでは全RK4 stageに渡した更新値を使用する。
+fractionが0の既存接触は直前snapshotのactuatorを保持する。
+公開 `detect_water_contact` に外部生成した隣接stateを渡す場合も、次stateのactuatorを区間 $(k,k+1]$
+の保持値として扱う。入力指令からの更新過程や連続したactuator軌跡は推定しない。
 接触後のtick状態を通常sampleとして保存しない。Result、graph、Replayは同じ終端sampleを参照する。
 `advance_flight_tick_with_contact`はContact時にfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開しない。
 `run_flight`は固定100 Hzの機器非依存input列を順に適用し、最初のWaterContactまたはTimeLimitで終了する。score v1はWaterContactならfractional terminal sample、TimeLimitなら最後の有効stateから算出し、終了後のtickを処理しない。
