@@ -1929,8 +1929,20 @@ mod tests {
         .unwrap();
         let law = crate::CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
         let coefficients = crate::AeroCoefficients::new(law, law, law, law, law, law);
-        let envelope =
-            crate::ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap();
+        let envelope = crate::ElementEnvelope::try_new(
+            -1.0,
+            1.0,
+            -1.0,
+            1.0,
+            0.0,
+            100_000.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let reference = crate::ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
         let roles = [
             crate::AerodynamicRole::LeftWing,

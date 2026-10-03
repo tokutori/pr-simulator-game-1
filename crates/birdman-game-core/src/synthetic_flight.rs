@@ -319,8 +319,17 @@ impl SyntheticFlight {
 fn synthetic_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightError> {
     use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
 
-    let envelope = ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0)
-        .map_err(SyntheticFlightError::Aerodynamics)?;
+    let envelope = ElementEnvelope::try_new(
+        -0.8,
+        0.8,
+        -0.8,
+        0.8,
+        0.0,
+        100_000.0,
+        crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3])
+            .map_err(SyntheticFlightError::Aerodynamics)?,
+    )
+    .map_err(SyntheticFlightError::Aerodynamics)?;
     let reference =
         ElementReference::try_new(0.4, 1.0, 0.5).map_err(SyntheticFlightError::Aerodynamics)?;
     let zero =
@@ -381,8 +390,17 @@ fn synthetic_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightErro
 fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightError> {
     use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
 
-    let envelope = ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0)
-        .map_err(SyntheticFlightError::Aerodynamics)?;
+    let envelope = ElementEnvelope::try_new(
+        -0.8,
+        0.8,
+        -0.8,
+        0.8,
+        0.0,
+        100_000.0,
+        crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3])
+            .map_err(SyntheticFlightError::Aerodynamics)?,
+    )
+    .map_err(SyntheticFlightError::Aerodynamics)?;
     let zero =
         CoefficientLaw::try_new(0.0, 0.0, 0.0).map_err(SyntheticFlightError::Aerodynamics)?;
     let element = |role: AerodynamicRole,
