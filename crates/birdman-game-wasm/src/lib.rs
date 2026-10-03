@@ -180,6 +180,7 @@ pub struct GameSessionBridge {
     aircraft: birdman_game_core::AircraftModel,
     feedback: birdman_game_core::BodyRateFeedbackConfig,
     difficulty: DifficultySettings,
+    demo_difficulty: DifficultySettings,
     archived_preset_code: Option<u32>,
     resolved_configuration: Option<ResolvedConfiguration>,
     snapshot: [f64; SNAPSHOT_LENGTH],
@@ -193,8 +194,9 @@ impl GameSessionBridge {
         environment::initialize_bundled_environment().map_err(environment_format_error)?;
         let (aircraft, scenarios, feedback) = playable_scenarios()?;
         let mut session = GameSession::new();
+        let demo = build_demo_flight()?;
         session
-            .install_attract_record(build_demo_record()?)
+            .install_attract_record(demo.record)
             .map_err(game_session_error)?;
         let difficulty = DifficultySettings::custom(
             InformationLevel::Full,
@@ -207,6 +209,7 @@ impl GameSessionBridge {
             aircraft,
             feedback,
             difficulty,
+            demo_difficulty: demo.difficulty,
             archived_preset_code: None,
             resolved_configuration: None,
             snapshot: [0.0; SNAPSHOT_LENGTH],
@@ -361,13 +364,7 @@ impl GameSessionBridge {
         {
             return code;
         }
-        match self.difficulty.preset_label() {
-            DifficultyPreset::Beginner => 0,
-            DifficultyPreset::Standard => 1,
-            DifficultyPreset::Expert => 2,
-            DifficultyPreset::Realistic => 3,
-            DifficultyPreset::Custom => 4,
-        }
+        preset_code(self.difficulty.preset_label())
     }
 
     /// Returns Information axis code: 0=Full through 4=Custom.
@@ -389,15 +386,26 @@ impl GameSessionBridge {
     ///
     /// Layout: preset, information, assistance, weather, scenario identity,
     /// seed-low/high, then six HUD cue visibility codes.
+    /// Attract uses the declaration generated with its independent demo record.
+    /// Its Custom preset and Minimal Information profile describe this generator,
+    /// not historical display settings or the player's current HUD preferences.
     pub fn configuration_metadata(&self) -> Result<Vec<u32>, JsValue> {
         let identity = self.session.configuration_identity().ok_or_else(|| {
             JsValue::from_str("resolved configuration is unavailable before Briefing")
         })?;
+        let (difficulty, preset) = if self.session.snapshot().phase() == SessionPhase::Attract {
+            (
+                self.demo_difficulty,
+                preset_code(self.demo_difficulty.preset_label()),
+            )
+        } else {
+            (self.difficulty, self.difficulty_preset_code())
+        };
         Ok(vec![
-            self.difficulty_preset_code(),
-            information_code(self.difficulty.information()),
-            assistance_code(self.difficulty.assistance()),
-            weather_code(self.difficulty.weather()),
+            preset,
+            information_code(difficulty.information()),
+            assistance_code(difficulty.assistance()),
+            weather_code(difficulty.weather()),
             identity.catalog_version,
             identity.scenario_id,
             identity.scenario_version,
@@ -406,12 +414,12 @@ impl GameSessionBridge {
             identity.controller_profile_version,
             identity.seed as u32,
             (identity.seed >> 32) as u32,
-            u32::from(self.difficulty.hud_profile().telemetry()),
-            u32::from(self.difficulty.hud_profile().attitude()),
-            u32::from(self.difficulty.hud_profile().wind()),
-            u32::from(self.difficulty.hud_profile().flight_path()),
-            u32::from(self.difficulty.hud_profile().angle_of_attack()),
-            u32::from(self.difficulty.hud_profile().warnings()),
+            u32::from(difficulty.hud_profile().telemetry()),
+            u32::from(difficulty.hud_profile().attitude()),
+            u32::from(difficulty.hud_profile().wind()),
+            u32::from(difficulty.hud_profile().flight_path()),
+            u32::from(difficulty.hud_profile().angle_of_attack()),
+            u32::from(difficulty.hud_profile().warnings()),
         ])
     }
 
@@ -1461,9 +1469,23 @@ fn playable_scenarios() -> Result<
     ))
 }
 
-fn build_demo_record() -> Result<FlightRecord, JsValue> {
+struct DemoFlight {
+    record: FlightRecord,
+    difficulty: DifficultySettings,
+}
+
+/// Generates the Manual, zero-wind demo and its non-physical display declaration.
+/// Custom is the difficulty preset; Minimal is the Information level whose
+/// default profile is telemetry-only. This does not reconstruct a past HUD.
+fn build_demo_flight() -> Result<DemoFlight, JsValue> {
     let fixture = SyntheticPlayableFlight::try_new(10.5).map_err(synthetic_error)?;
     let (aircraft, scenario, feedback, _) = fixture.into_parts();
+    let control_mode = ControlMode::Manual;
+    let difficulty = DifficultySettings::custom(
+        InformationLevel::Minimal,
+        assistance_from_control_mode(control_mode),
+        WeatherClass::Calm,
+    );
     let identity = SessionScenarioIdentity {
         catalog_version: 1,
         scenario_id: 1,
@@ -1473,14 +1495,9 @@ fn build_demo_record() -> Result<FlightRecord, JsValue> {
         controller_profile_version: 1,
         seed: 0xD3A0,
     };
-    let configuration = GameSessionConfiguration::try_new(
-        scenario,
-        ControlMode::Manual,
-        feedback,
-        MAX_TICKS,
-        identity,
-    )
-    .map_err(game_session_error)?;
+    let configuration =
+        GameSessionConfiguration::try_new(scenario, control_mode, feedback, MAX_TICKS, identity)
+            .map_err(game_session_error)?;
     let mut demo = GameSession::new();
     demo.open_setup().map_err(game_session_error)?;
     demo.prepare_flight(configuration)
@@ -1502,8 +1519,22 @@ fn build_demo_record() -> Result<FlightRecord, JsValue> {
         demo.advance_flight_tick(input)
             .map_err(game_session_error)?;
     }
-    demo.take_finalized_result_record()
-        .map_err(game_session_error)
+    Ok(DemoFlight {
+        record: demo
+            .take_finalized_result_record()
+            .map_err(game_session_error)?,
+        difficulty,
+    })
+}
+
+fn preset_code(preset: DifficultyPreset) -> u32 {
+    match preset {
+        DifficultyPreset::Beginner => 0,
+        DifficultyPreset::Standard => 1,
+        DifficultyPreset::Expert => 2,
+        DifficultyPreset::Realistic => 3,
+        DifficultyPreset::Custom => 4,
+    }
 }
 
 fn controller_profiles(
@@ -2177,6 +2208,77 @@ mod tests {
         selection.consider_existing(12.0, &first).unwrap();
         assert!(!selection.candidate_is_best());
         assert_eq!(selection.selected_existing_id(), 12.0);
+    }
+
+    #[test]
+    fn demo_declaration_matches_its_manual_zero_wind_record() {
+        let demo = super::build_demo_flight().unwrap();
+        assert_eq!(
+            demo.difficulty.preset_label(),
+            super::DifficultyPreset::Custom
+        );
+        assert_eq!(
+            demo.difficulty.information(),
+            super::InformationLevel::Minimal
+        );
+        assert_eq!(demo.difficulty.assistance(), super::AssistanceLevel::Manual);
+        assert_eq!(demo.difficulty.weather(), super::WeatherClass::Calm);
+        assert_eq!(
+            demo.difficulty.hud_profile(),
+            super::HudProfile::new(true, false, false, false, false, false)
+        );
+        assert_eq!(
+            demo.record.header().scenario,
+            super::SessionScenarioIdentity {
+                catalog_version: 1,
+                scenario_id: 1,
+                scenario_version: 1,
+                aircraft_model_version: 1,
+                environment_version: 1,
+                controller_profile_version: 1,
+                seed: 0xD3A0,
+            }
+        );
+        assert!(demo.record.samples().iter().all(|sample| {
+            sample.wind_at_cg_ned_mps.components() == [0.0; 3]
+                && sample.input_from_previous.is_none_or(|input| {
+                    input.mixed_surface_commands == input.pilot_surface_commands
+                })
+        }));
+        assert!(demo.record.samples().iter().any(|sample| {
+            sample
+                .input_from_previous
+                .is_some_and(|input| input.fbw_surface_commands != input.pilot_surface_commands)
+        }));
+    }
+
+    #[test]
+    fn attract_metadata_does_not_mutate_player_selection_or_demo_playback() {
+        let mut bridge = GameSessionBridge::new(2).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.set_weather_class(4).unwrap();
+        bridge.set_information_cue(2, false).unwrap();
+        let player = bridge.difficulty;
+        bridge.return_to_title().unwrap();
+        bridge.enter_attract().unwrap();
+        bridge.seek_playback(0.75).unwrap();
+        let clock = bridge.playback_clock_state().unwrap();
+        let samples = bridge.flight_record_samples_packed().unwrap();
+        let finalization = bridge.flight_record_finalization();
+        for _ in 0..3 {
+            assert_eq!(
+                bridge.configuration_metadata().unwrap(),
+                [4, 2, 3, 0, 1, 1, 1, 1, 1, 1, 0xD3A0, 0, 1, 0, 0, 0, 0, 0]
+            );
+            assert_eq!(bridge.difficulty, player);
+            assert_eq!(bridge.phase_code(), 10);
+            assert_eq!(bridge.playback_clock_state().unwrap(), clock);
+            assert_eq!(bridge.flight_record_samples_packed().unwrap(), samples);
+            assert_eq!(bridge.flight_record_finalization(), finalization);
+        }
+        bridge.leave_attract().unwrap();
+        bridge.open_setup().unwrap();
+        assert_eq!(bridge.difficulty, player);
     }
 
     #[test]
