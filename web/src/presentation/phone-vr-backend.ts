@@ -22,10 +22,22 @@ type PhoneVrBackendState =
   | { readonly type: "idle" }
   | { readonly type: "requesting" }
   | { readonly type: "requested" }
-  | { readonly type: "starting" }
-  | { readonly type: "active" }
+  | { readonly type: "starting"; readonly attempt: PhoneVrTrackingAttempt }
+  | { readonly type: "active"; readonly attempt: PhoneVrTrackingAttempt }
   | { readonly type: "stopping" }
   | { readonly type: "failed"; readonly message: string };
+
+interface PhoneVrTrackingAttempt {
+  sampleResult:
+    | { readonly type: "waiting" }
+    | { readonly type: "ready" }
+    | { readonly type: "failed"; readonly error: Error };
+  timer:
+    | { readonly type: "cleared" }
+    | { readonly type: "pending"; readonly handle: ReturnType<typeof globalThis.setTimeout> };
+  resources: "owned" | "released";
+  readonly signalSample: () => void;
+}
 
 export interface PhoneVrBackendOptions {
   readonly opticalProfile?: PhoneVrOpticalProfile;
@@ -46,11 +58,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private latestSampleTimestampMs: number | null = null;
   private referenceFromWorld: Pose = IDENTITY_POSE;
   private menuPlacement = new MenuAnchorPlacement();
-  private firstSampleResolve: (() => void) | null = null;
-  private firstSampleReject: ((error: Error) => void) | null = null;
-  private firstSampleTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
-  private readonly gazeDwell: GazeDwellSelector;
-  private readonly gamepadSelector: GamepadUiSelector;
+  private gazeDwell: GazeDwellSelector;
+  private gamepadSelector: GamepadUiSelector;
   private readonly opticalProfile: PhoneVrOpticalProfile;
   private readonly firstSampleTimeoutMs: number;
   private readonly gamepadInput: PhoneVrGamepadInputPort;
@@ -60,7 +69,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     private readonly sensors: PhoneVrSensorPort,
     private readonly renderer: RendererAdapter,
     private readonly viewport: () => ViewportSize,
-    dispatch: UiActionDispatcher,
+    private readonly dispatch: UiActionDispatcher,
     private readonly onTrackingUnavailable: (message: string) => void,
     options: PhoneVrBackendOptions = {}
   ) {
@@ -108,93 +117,69 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   async start(): Promise<void> {
     if (this.state.type !== "requested") throw new Error("Phone VR sensors require an explicit user permission action");
-    this.state = { type: "starting" };
-    this.menuPlacement = new MenuAnchorPlacement();
-    this.referenceFromWorld = IDENTITY_POSE;
-    this.latestRawReading = null;
-    this.latestSensorOrientation = null;
-    this.latestViewerOrientation = IDENTITY_POSE.orientation;
-    this.calibrationOrientation = null;
-    this.latestSampleTimestampMs = null;
-    this.screenOrientationAngle = this.sensors.getScreenOrientationAngle();
-    if (this.screenOrientationAngle === null) {
-      this.state = { type: "failed", message: "Phone VR screen orientation is unavailable" };
-      throw new Error("Phone VR screen orientation is unavailable");
-    }
-    let resolveFirstSample: (() => void) | null = null;
-    let rejectFirstSample: ((error: Error) => void) | null = null;
-    const firstSample = new Promise<void>((resolve, reject) => {
-      resolveFirstSample = resolve;
-      rejectFirstSample = reject;
-    });
-    this.firstSampleResolve = () => { resolveFirstSample?.(); };
-    this.firstSampleReject = (error) => { rejectFirstSample?.(error); };
-    this.firstSampleTimer = setTimeout(() => {
-      this.firstSampleReject?.(new Error("Phone VR received no valid orientation event before timeout"));
-    }, this.firstSampleTimeoutMs);
-    try {
-      this.renderer.setStereoPresentation(this.opticalProfile);
-      this.sensors.startListening(
-        (reading) => { this.handleSensorReading(reading); },
-        (angle) => { this.handleScreenOrientationChange(angle); }
-      );
-      await firstSample;
-      if (!this.isStarting()) throw new Error("Phone VR tracking ended during startup");
-      this.state = { type: "active" };
-    } catch (error) {
-      this.state = { type: "failed", message: errorMessage(error) };
+    const firstSample = new Promise<PhoneVrTrackingAttempt>((resolve) => {
+      const attempt: PhoneVrTrackingAttempt = {
+        sampleResult: { type: "waiting" },
+        timer: { type: "cleared" },
+        resources: "owned",
+        signalSample: () => { resolve(attempt); }
+      };
+      this.state = { type: "starting", attempt };
+      this.resetTracking();
+      this.menuPlacement = new MenuAnchorPlacement();
       try {
-        this.sensors.stopListening();
-      } catch {
-        this.state = { type: "failed", message: "Phone VR sensor cleanup failed" };
+        this.screenOrientationAngle = this.sensors.getScreenOrientationAngle();
+        if (this.screenOrientationAngle === null || !Number.isFinite(this.screenOrientationAngle)) {
+          throw new Error("Phone VR screen orientation is unavailable");
+        }
+        if (!this.acceptsAttempt(attempt)) return;
+        attempt.timer = { type: "pending", handle: setTimeout(() => {
+          if (this.acceptsAttempt(attempt) && attempt.sampleResult.type === "waiting") {
+            this.failStartup(attempt, new Error("Phone VR received no valid orientation event before timeout"));
+          }
+        }, this.firstSampleTimeoutMs) };
+        this.renderer.setStereoPresentation(this.opticalProfile);
+        if (!this.acceptsAttempt(attempt)) return;
+        this.sensors.startListening(
+          (reading) => { if (this.acceptsAttempt(attempt)) this.handleSensorReading(reading); },
+          (angle) => { if (this.acceptsAttempt(attempt)) this.handleScreenOrientationChange(angle); }
+        );
+      } catch (error) {
+        this.failStartup(attempt, startupError(error));
       }
-      try {
-        this.renderer.setStereoPresentation(null);
-      } catch {
-        this.state = { type: "failed", message: "Phone VR stereo cleanup failed" };
+    });
+    const attempt = await firstSample;
+    try {
+      if (attempt.sampleResult.type === "failed") throw attempt.sampleResult.error;
+      if (!this.isStartingAttempt(attempt) ||
+          attempt.sampleResult.type !== "ready" || this.latestSensorOrientation === null || this.latestSampleTimestampMs === null) {
+        throw new Error("Phone VR tracking ended during startup");
+      }
+      this.state = { type: "active", attempt };
+    } catch (error) {
+      if (this.ownsAttempt(attempt)) {
+        this.state = { type: "stopping" };
+        try {
+          this.releaseAttempt(attempt);
+        } catch {
+          this.failStartup(attempt, startupError(error));
+        } finally {
+          this.state = { type: "failed", message: errorMessage(error) };
+        }
       }
       throw error;
     } finally {
-      this.clearFirstSampleWait();
+      this.clearAttemptTimer(attempt);
     }
   }
 
   stop(): Promise<void> {
-    this.requestGeneration++;
-    this.state = { type: "stopping" };
-    this.clearFirstSampleWait();
-    this.renderer.setSelectRayHandler(null);
-    try {
-      this.sensors.stopListening();
-    } finally {
-      try {
-        this.renderer.setStereoPresentation(null);
-      } finally {
-        this.state = { type: "idle" };
-        this.latestRawReading = null;
-        this.latestSensorOrientation = null;
-        this.latestSampleTimestampMs = null;
-        this.calibrationOrientation = null;
-        this.referenceFromWorld = IDENTITY_POSE;
-        this.gazeDwell.reset();
-        this.gamepadSelector.reset();
-      }
-    }
-    return Promise.resolve();
+    return this.stopTracking("Phone VR startup was stopped");
   }
 
   cancelPendingRequest(): Promise<void> {
-    const startupPending = this.state.type === "starting";
-    if (!startupPending && this.state.type !== "requesting" && this.state.type !== "requested") return Promise.resolve();
-    this.requestGeneration++;
-    this.state = { type: "stopping" };
-    if (startupPending) this.firstSampleReject?.(new Error("Phone VR startup was canceled"));
-    try {
-      this.sensors.stopListening();
-    } finally {
-      this.state = { type: "idle" };
-    }
-    return Promise.resolve();
+    if (this.state.type !== "starting" && this.state.type !== "requesting" && this.state.type !== "requested") return Promise.resolve();
+    return this.stopTracking("Phone VR startup was canceled");
   }
 
   currentFrame(timestampMs: number, viewModel: UiViewModel): BackendFrame {
@@ -276,7 +261,11 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.latestSensorOrientation = sensorOrientation;
     this.latestSampleTimestampMs = reading.timestampMs;
     this.updateViewerOrientation(sensorOrientation);
-    if (this.state.type === "starting") this.firstSampleResolve?.();
+    if (this.state.type === "starting") {
+      this.state.attempt.sampleResult = { type: "ready" };
+      this.clearAttemptTimer(this.state.attempt);
+      this.state.attempt.signalSample();
+    }
   }
 
   private handleScreenOrientationChange(angle: number | null): void {
@@ -312,13 +301,27 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.latestViewerOrientation = multiplyQuaternion(inverseCalibration, sensorOrientation);
   }
 
-  private isStarting(): boolean {
-    return this.state.type === "starting";
+  private ownsAttempt(attempt: PhoneVrTrackingAttempt): boolean {
+    return (this.state.type === "starting" || this.state.type === "active") && this.state.attempt === attempt;
+  }
+
+  private isStartingAttempt(attempt: PhoneVrTrackingAttempt): boolean {
+    return this.state.type === "starting" && this.state.attempt === attempt;
+  }
+
+  private acceptsAttempt(attempt: PhoneVrTrackingAttempt): boolean {
+    return this.ownsAttempt(attempt) && attempt.sampleResult.type !== "failed";
+  }
+
+  private failStartup(attempt: PhoneVrTrackingAttempt, error: Error): void {
+    if (attempt.sampleResult.type === "failed") return;
+    attempt.sampleResult = { type: "failed", error };
+    attempt.signalSample();
   }
 
   private handleInvalidReading(message: string): void {
     if (this.state.type === "starting") {
-      this.firstSampleReject?.(new Error(message));
+      this.failStartup(this.state.attempt, new Error(message));
       return;
     }
     if (this.state.type === "active") this.failTracking(message);
@@ -326,19 +329,15 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   private failTracking(message: string): void {
     if (this.state.type !== "active") return;
-    this.state = { type: "failed", message };
-    this.renderer.setSelectRayHandler(null);
+    const attempt = this.state.attempt;
+    this.state = { type: "stopping" };
     try {
-      this.sensors.stopListening();
+      this.releaseAttempt(attempt);
     } catch {
-      this.state = { type: "failed", message: "Phone VR sensor cleanup failed" };
+      this.failStartup(attempt, new Error(message));
+    } finally {
+      this.state = { type: "failed", message };
     }
-    try {
-      this.renderer.setStereoPresentation(null);
-    } catch {
-      this.state = { type: "failed", message: "Phone VR stereo cleanup failed" };
-    }
-    this.gazeDwell.reset();
     this.onTrackingUnavailable(message);
   }
 
@@ -356,11 +355,68 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     return this.gazeDwell.update(panel, point, timestampMs);
   }
 
-  private clearFirstSampleWait(): void {
-    if (this.firstSampleTimer !== null) clearTimeout(this.firstSampleTimer);
-    this.firstSampleTimer = null;
-    this.firstSampleResolve = null;
-    this.firstSampleReject = null;
+  private stopTracking(message: string): Promise<void> {
+    if (this.state.type === "stopping") return Promise.resolve();
+    const previousState = this.state;
+    if (previousState.type === "starting") this.failStartup(previousState.attempt, new Error(message));
+    this.requestGeneration++;
+    this.state = { type: "stopping" };
+    try {
+      if (previousState.type === "starting" || previousState.type === "active") this.releaseAttempt(previousState.attempt);
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(startupError(error));
+    } finally {
+      this.state = { type: "idle" };
+    }
+  }
+
+  private releaseAttempt(attempt: PhoneVrTrackingAttempt): void {
+    if (attempt.resources === "released") return;
+    attempt.resources = "released";
+    this.clearAttemptTimer(attempt);
+    const gazeDwell = this.gazeDwell;
+    const gamepadSelector = this.gamepadSelector;
+    this.resetTracking();
+    let result: { readonly type: "released" } | { readonly type: "failed"; readonly error: Error } = { type: "released" };
+    for (const cleanup of [
+      () => { this.renderer.setSelectRayHandler(null); },
+      () => { this.sensors.stopListening(); },
+      () => { this.renderer.setStereoPresentation(null); },
+      () => { gazeDwell.reset(); },
+      () => { gamepadSelector.reset(); }
+    ]) {
+      try {
+        cleanup();
+      } catch (error) {
+        if (result.type === "released") result = { type: "failed", error: startupError(error) };
+      }
+    }
+    if (result.type === "failed") throw result.error;
+  }
+
+  private resetTracking(): void {
+    this.latestRawReading = null;
+    this.latestSensorOrientation = null;
+    this.latestSampleTimestampMs = null;
+    this.latestViewerOrientation = IDENTITY_POSE.orientation;
+    this.calibrationOrientation = null;
+    this.referenceFromWorld = IDENTITY_POSE;
+    this.gazeDwell = new GazeDwellSelector(this.dispatch);
+    this.gamepadSelector = new GamepadUiSelector(this.dispatch);
+  }
+
+  private clearAttemptTimer(attempt: PhoneVrTrackingAttempt): void {
+    if (attempt.timer.type === "pending") clearTimeout(attempt.timer.handle);
+    attempt.timer = { type: "cleared" };
+  }
+}
+
+function startupError(error: unknown): Error {
+  try {
+    return error instanceof Error ? error : new Error(String(error), { cause: error });
+  } catch {
+    return new Error("Phone VR operation failed with an unprintable cause", { cause: error });
   }
 }
 
