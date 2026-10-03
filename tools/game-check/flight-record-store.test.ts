@@ -188,7 +188,7 @@ describe("FlightRecordRepository", () => {
       );
       const metadataRequest = requestResult(transaction.objectStore("recordMetadata").get(1));
       const personalBestRequest = requestResult(transaction.objectStore("personalBests").getAll());
-      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v2"));
+      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v3"));
       await expect(metadataRequest).resolves.toEqual({
         id: 1,
         savedAt: "2026-09-29T00:00:00.000Z"
@@ -196,7 +196,7 @@ describe("FlightRecordRepository", () => {
       await expect(personalBestRequest).resolves.toEqual(personalBestEligible
         ? [{ key: "a".repeat(64), recordId: 1 }]
         : []);
-      await expect(indexStateRequest).resolves.toEqual({ key: "first-winner-physics-v2" });
+      await expect(indexStateRequest).resolves.toEqual({ key: "first-winner-physics-v3" });
     } finally {
       database.close();
       await deleteDatabase(factory, databaseName);
@@ -323,10 +323,10 @@ describe("Personal Best index repair", () => {
         const transaction = database.transaction(["records", "personalBests", "personalBestIndexState"], "readonly");
         const stored = requestResult(transaction.objectStore("records").getAll());
         const winner = requestResult(transaction.objectStore("personalBests").get(key));
-        const marker = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v2"));
+        const marker = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v3"));
         expect((await stored).slice(0, records.length)).toEqual(records);
         await expect(winner).resolves.toEqual({ key, recordId: 1 });
-        await expect(marker).resolves.toEqual({ key: "first-winner-physics-v2" });
+        await expect(marker).resolves.toEqual({ key: "first-winner-physics-v3" });
       } finally {
         database.close();
       }
@@ -455,7 +455,7 @@ describe("Personal Best index repair", () => {
         expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
       } else await expect(repository.list()).resolves.toEqual([]);
       const state = await readPersonalBestDatabase(factory, databaseName);
-      expect(state.personalBestIndexState).toEqual([{ key: "first-winner-physics-v2" }]);
+      expect(state.personalBestIndexState).toEqual([{ key: "first-winner-physics-v3" }]);
       expect(state.personalBests).toEqual([]);
       const previousCount = traced.entries.length;
       await repository.list();
@@ -483,7 +483,7 @@ describe("Personal Best index repair", () => {
       expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
       const state = await readPersonalBestDatabase(factory, databaseName);
       expect(state.personalBests).toEqual([{ key, recordId: 1 }]);
-      expect(state.personalBestIndexState).toContainEqual({ key: "first-winner-physics-v2" });
+      expect(state.personalBestIndexState).toContainEqual({ key: "first-winner-physics-v3" });
     } finally {
       await deleteDatabase(factory, databaseName);
     }
@@ -878,7 +878,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             get: (key: string | number) => request(() => name === "records"
               ? records.find((record) => record.id === key)
               : name === "personalBestIndexState"
-                ? personalBestIndexInitialized && key === "first-winner-physics-v2" ? { key } : undefined
+                ? personalBestIndexInitialized && key === "first-winner-physics-v3" ? { key } : undefined
                 : personalBests.get(String(key))),
             getAll: () => request(() => name === "records"
               ? [...records]
@@ -886,7 +886,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             put: (value: { readonly key: string; readonly recordId?: number }) => request(() => {
               if (name === "personalBests" && value.recordId !== undefined) {
                 personalBests.set(value.key, { key: value.key, recordId: value.recordId });
-              } else if (name === "personalBestIndexState" && value.key === "first-winner-physics-v2") {
+              } else if (name === "personalBestIndexState" && value.key === "first-winner-physics-v3") {
                 personalBestIndexInitialized = true;
               } else throw new Error(`Unexpected put to ${name}`);
               return value.key;
@@ -997,7 +997,7 @@ function indexedDbFactoryWithReadResult(storeName: string, result: unknown, pers
       queueMicrotask(() => transaction.onabort?.(new Event("abort")));
     },
     objectStore: (name) => ({
-      get: () => makeRequest(name === "personalBestIndexState" ? { key: "first-winner-physics-v2" } : name === storeName ? result : undefined),
+      get: () => makeRequest(name === "personalBestIndexState" ? { key: "first-winner-physics-v3" } : name === storeName ? result : undefined),
       getAll: () => makeRequest(name === "personalBests" ? personalBests : result)
     })
   };

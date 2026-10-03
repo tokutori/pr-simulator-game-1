@@ -307,6 +307,8 @@ fn score_endpoints(
 /// Control mode resolution, actuator update, pilot position control, and all four
 /// aerodynamic RK stages use one input sample and a fixed physics timestep. The
 /// caller retains the original state when this operation returns an error.
+/// The updated actuator is held throughout the new interval. The previous
+/// snapshot retains its completed-interval value at the exact start boundary.
 pub fn advance_flight_tick<P: ExternalLoadProvider>(
     aircraft: &AircraftModel,
     previous: FlightTickState,
@@ -1187,6 +1189,119 @@ mod tests {
                 < 1.0e-12
         );
         assert_eq!(previous.tick_index(), 8);
+    }
+
+    #[test]
+    fn terminal_actuators_match_all_four_held_load_inputs_after_positive_elapsed_time() {
+        struct LoadProbe {
+            count: core::cell::Cell<usize>,
+            deflections: core::cell::RefCell<[crate::SurfaceDeflections; 4]>,
+        }
+        impl ExternalLoadProvider for LoadProbe {
+            fn evaluate(
+                &self,
+                _aircraft: &AircraftModel,
+                _state: &FlightState,
+            ) -> Result<Wrench, LoadError> {
+                panic!("the controlled tick must pass its held actuator to every load stage")
+            }
+
+            fn evaluate_with_surface_deflections(
+                &self,
+                _aircraft: &AircraftModel,
+                _state: &FlightState,
+                deflections: crate::SurfaceDeflections,
+            ) -> Result<Wrench, LoadError> {
+                let index = self.count.get();
+                self.deflections.borrow_mut()[index] = deflections;
+                self.count.set(index + 1);
+                Ok(Wrench::zero())
+            }
+        }
+
+        let aircraft = aircraft();
+        let limits = [ActuatorConfig::try_new(0.5, 10.0).unwrap(); 3];
+        let geometry_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let mut commands = [0.0; 3];
+                commands[axis] = sign * 0.2;
+                let commands =
+                    SurfaceCommands::try_new(commands[0], commands[1], commands[2]).unwrap();
+                let mut expected = [0.0; 3];
+                expected[axis] = sign * 0.1;
+                let held =
+                    crate::SurfaceDeflections::try_new(expected[0], expected[1], expected[2])
+                        .unwrap();
+                for fraction in [0.0, 0.5, 1.0] {
+                    let previous_flight = FlightState::try_new(
+                        NedPoint::try_new(0.0, 0.0, -2.0 * PHYSICS_DT_SECONDS * fraction).unwrap(),
+                        NedVector::try_new(0.0, 0.0, 2.0).unwrap(),
+                        UnitQuaternion::IDENTITY,
+                        BodyVector::zero(),
+                        0.0,
+                        0.0,
+                    )
+                    .unwrap();
+                    let previous = FlightTickState::try_new(
+                        &aircraft,
+                        limits,
+                        0,
+                        previous_flight,
+                        ActuatorState::neutral(),
+                    )
+                    .unwrap();
+                    let loads = LoadProbe {
+                        count: core::cell::Cell::new(0),
+                        deflections: core::cell::RefCell::new(
+                            [crate::SurfaceDeflections::neutral(); 4],
+                        ),
+                    };
+                    let input = FlightTickInput::new(
+                        commands,
+                        SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                        crate::PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
+                    );
+                    let outcome = advance_flight_tick_with_contact(
+                        &aircraft,
+                        previous,
+                        FlightTickConfig::new(
+                            ControlMode::Manual,
+                            limits,
+                            Gravity::try_new(0.0).unwrap(),
+                        ),
+                        input,
+                        &loads,
+                        WaterContactGeometry::try_new(&geometry_points).unwrap(),
+                    )
+                    .unwrap();
+                    let FlightTickOutcome::WaterContact(contact) = outcome else {
+                        panic!("expected water contact at fraction {fraction}, got {outcome:?}");
+                    };
+                    assert_eq!(loads.count.get(), 4);
+                    assert_eq!(*loads.deflections.borrow(), [held; 4]);
+                    assert!((contact.fraction() - fraction).abs() < 1.0e-14);
+                    let terminal = contact.state();
+                    assert_eq!(
+                        terminal.actuator_state().deflections(),
+                        if fraction == 0.0 {
+                            previous.actuator_state().deflections()
+                        } else {
+                            held
+                        },
+                    );
+                    assert_eq!(
+                        terminal.flight_state().datum_velocity_ned(),
+                        previous_flight.datum_velocity_ned(),
+                    );
+                    assert_eq!(
+                        terminal.flight_state().angular_velocity_body(),
+                        BodyVector::zero()
+                    );
+                    assert_eq!(previous.actuator_state(), ActuatorState::neutral());
+                }
+            }
+        }
     }
 
     #[test]

@@ -1124,6 +1124,54 @@ mod tests {
         document
     }
 
+    #[test]
+    fn every_schema_restores_held_actuator_queries_without_rewriting_terminal_samples() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut document = keyless_record_for_schema(schema_version);
+                    let mut initial = [0.0; 3];
+                    initial[axis] = -sign * 0.07;
+                    let mut terminal = [0.0; 3];
+                    terminal[axis] = sign * 0.11;
+                    document.samples[0].actuator_deflections_rad = initial;
+                    document.samples[1].actuator_deflections_rad = terminal;
+                    document.samples[1].tick_index = 0;
+                    document.samples[1].fraction = 0.5;
+                    let finalization = document.finalization.as_mut().unwrap();
+                    finalization.terminal_tick = 0;
+                    finalization.terminal_fraction = 0.5;
+                    let bytes = document.encode_json().unwrap();
+                    let decoded = FlightRecordDocument::decode_json(&bytes).unwrap();
+                    assert_eq!(decoded.samples, document.samples);
+                    let restored = decoded.to_finalized_core_record().unwrap();
+                    let stored_initial = restored.samples()[0].actuator_state;
+                    let stored_terminal = restored.samples()[1].actuator_state;
+                    assert_eq!(
+                        restored.sample_at_time(0, 0.0).unwrap().actuator_state,
+                        stored_initial,
+                    );
+                    for fraction in [f64::from_bits(1), 0.25, 0.5] {
+                        assert_eq!(
+                            restored.sample_at_time(0, fraction).unwrap().actuator_state,
+                            stored_terminal,
+                        );
+                    }
+                    assert_eq!(
+                        restored.sample_at_seconds(0.0025).unwrap().actuator_state,
+                        stored_terminal,
+                    );
+                    assert_eq!(
+                        restored.sample_at_seconds(0.005).unwrap().actuator_state,
+                        stored_terminal,
+                    );
+                    assert_eq!(restored.samples()[1].actuator_state, stored_terminal);
+                    assert_eq!(decoded.samples[1].actuator_deflections_rad, terminal);
+                }
+            }
+        }
+    }
+
     fn assert_terminal_round_trip(record: &birdman_game_core::FlightRecord) {
         let terminal = record.samples().last().unwrap();
         let finalized = record.finalization().unwrap();
