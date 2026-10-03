@@ -30,6 +30,13 @@ function selectedMetadata(session: GameSessionBridge) {
   };
 }
 
+function expectPackedSamplesEqual(actual: Float64Array, expected: Float64Array): void {
+  expect(actual.constructor).toBe(expected.constructor);
+  expect(actual.length).toBe(expected.length);
+  const mismatch = actual.findIndex((value, index) => !Object.is(value, expected[index]));
+  expect(mismatch).toBe(-1);
+}
+
 function startFlight(session: GameSessionBridge): void {
   session.prepare();
   session.mark_briefing_ready();
@@ -37,6 +44,48 @@ function startFlight(session: GameSessionBridge): void {
   session.advance_countdown();
   session.launch();
 }
+
+it("compares packed values with SameValue semantics for NaN payloads and bounded views", () => {
+  const firstPayload = new Float64Array(new BigUint64Array([0x7ff8000000000001n]).buffer);
+  const secondPayload = new Float64Array(new BigUint64Array([0x7ff8000000000002n]).buffer);
+  expect(firstPayload).toEqual(secondPayload);
+  expectPackedSamplesEqual(firstPayload, secondPayload);
+  expectPackedSamplesEqual(
+    new Float64Array([NaN, Infinity, -Infinity, -0]),
+    new Float64Array([NaN, Infinity, -Infinity, -0])
+  );
+  expectPackedSamplesEqual(
+    new Float64Array([99, 1, 2, 99]).subarray(1, 3),
+    new Float64Array([1, 2])
+  );
+});
+
+it("rejects changed packed positions, lengths, constructors and distinct numeric values", () => {
+  const original = new Float64Array([1, 2, 3, 4, 5]);
+  for (const index of [0, 2, 4]) {
+    const changed = original.slice();
+    changed[index] = 99;
+    expect(() => {
+      expectPackedSamplesEqual(changed, original);
+    }).toThrow();
+  }
+  const shorter = original.subarray(0, original.length - 1);
+  expect(() => {
+    expectPackedSamplesEqual(shorter, original);
+  }).toThrow();
+  expect(() => {
+    expectPackedSamplesEqual(original, shorter);
+  }).toThrow();
+  class OtherFloat64Array extends Float64Array {}
+  expect(() => {
+    expectPackedSamplesEqual(new OtherFloat64Array([1]), new Float64Array([1]));
+  }).toThrow();
+  for (const [actual, expected] of [[0, -0], [NaN, 0], [Infinity, -Infinity]] as const) {
+    expect(() => {
+      expectPackedSamplesEqual(new Float64Array([actual]), new Float64Array([expected]));
+    }).toThrow();
+  }
+});
 
 it("reports the declared Custom/Minimal demo policy instead of Automatic/NearLimit player settings", () => {
   const session = new GameSessionBridge(2);
@@ -83,13 +132,13 @@ it.each([0, 1, 2, 3, 4])("keeps player Information %s and all six cues independe
       const samples = session.flight_record_samples_packed();
       const finalization = session.flight_record_finalization();
       if (firstDemoSamples === null) firstDemoSamples = samples;
-      else expect(samples).toEqual(firstDemoSamples);
+      else expectPackedSamplesEqual(samples, firstDemoSamples);
       for (let query = 0; query < 3; query++) {
         expect(Array.from(session.configuration_metadata())).toEqual(demoMetadata);
         expect(selectedMetadata(session)).toEqual(selected);
         expect(session.playback_clock_state()).toEqual(clock);
         expect(session.snapshot()).toEqual(snapshot);
-        expect(session.flight_record_samples_packed()).toEqual(samples);
+        expectPackedSamplesEqual(session.flight_record_samples_packed(), samples);
         expect(session.flight_record_finalization()).toEqual(finalization);
         expect(session.phase_code()).toBe(10);
       }
