@@ -1,4 +1,6 @@
-use birdman_game_core::{NedPoint, NedVector, SessionScenarioIdentity, WindField};
+use birdman_game_core::{
+    NedPoint, NedVector, SessionScenarioIdentity, SyntheticPlayableFlight, WindField,
+};
 use birdman_game_format::{
     EnvironmentBasisDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
     EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument, SkyStateDocument,
@@ -244,7 +246,10 @@ pub(crate) fn for_identity(
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
     let registered = identity.scenario_version == 1
-        && identity.aircraft_model_version == 1
+        && matches!(
+            identity.aircraft_model_version,
+            1 | SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION
+        )
         && (1..=4).contains(&identity.controller_profile_version)
         && identity.scenario_id == identity.environment_version
         && match identity.catalog_version {
@@ -452,6 +457,31 @@ mod tests {
     }
 
     #[test]
+    fn current_playable_aircraft_and_legacy_archive_identities_preserve_environment_metadata() {
+        for version in 1..=6 {
+            let legacy = identity(version);
+            let mut current = legacy;
+            current.aircraft_model_version =
+                birdman_game_core::SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION;
+            let legacy_snapshot = query(legacy);
+            let current_snapshot = query(current);
+            assert_eq!(current_snapshot["projection"]["kind"], "available");
+            assert_eq!(
+                current_snapshot["projection"]["identity"]["aircraft_model_version"],
+                2
+            );
+            assert_eq!(
+                legacy_snapshot["projection"]["identity"]["aircraft_model_version"],
+                1
+            );
+            assert_eq!(
+                current_snapshot["projection"]["metadata"],
+                legacy_snapshot["projection"]["metadata"]
+            );
+        }
+    }
+
+    #[test]
     fn registry_rejects_unknown_identity_without_aliasing_a_known_environment() {
         let original = identity(6);
         for component in 0..6 {
@@ -460,7 +490,7 @@ mod tests {
                 0 => changed.catalog_version = 1,
                 1 => changed.scenario_id = 3,
                 2 => changed.scenario_version = 2,
-                3 => changed.aircraft_model_version = 2,
+                3 => changed.aircraft_model_version = 3,
                 4 => changed.environment_version = 3,
                 5 => changed.controller_profile_version = 5,
                 _ => unreachable!(),
