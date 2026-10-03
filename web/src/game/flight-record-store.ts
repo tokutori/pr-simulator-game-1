@@ -42,7 +42,8 @@ export interface FlightRecordPersistencePort {
 }
 
 const maximumRecordBytes = 16 * 1024 * 1024;
-const personalBestIndexRevision = "first-winner-v1";
+// Change with the Rust physics model version so persisted eligibility is re-evaluated.
+const personalBestIndexRevision = "first-winner-physics-v2";
 
 export class FlightRecordRepository {
   constructor(

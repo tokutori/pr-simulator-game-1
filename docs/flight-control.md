@@ -30,7 +30,8 @@ CLI/WASM adapterはFBW commandを事前生成しない。これはcontroller pri
 入力targetは最大舵角でsaturateし、現在状態から1 stepで移動できる角度を最大舵角速度とtimestepで制限する。
 step中の出力は更新済みactuator stateとして保持し、次のtickまで同じ値を空力評価へ渡す。
 制御・actuator更新周期はphysics tickと同じ100 Hzとする。actuator stepは正の有限timestepのみ受理する。
-pilot target policyは連続停止距離に基づき、停止距離が1 tick分の停止距離以下になった目標近傍では速度を0へ収束させる。
+pilot target policyは保持加速度によるtick内軌跡と終端stateの有限停止証明を検査し、目標近傍では2 tickで位置目標へ停止する運動学に基づく要求を生成する。
+停止証明は積分器と同じ`f64`運動を最大4096 step検査する。物理的な連続停止不能とpolicyの数値適用範囲外を別の型付きerrorにする。詳細は `pilot-motion.md` を正本とする。
 そのtimestepは100 Hz tick以下の有限値とし、描画frame数から値を生成しない。
 `advance_surface_control`はpilot/FBWのauthority混合、rate limit・saturation適用、更新後stateを一つの
 決定的な操作として返す。混合後commandもrecord可能な値として返却する。

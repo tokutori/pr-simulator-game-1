@@ -38,6 +38,12 @@ physics build・scenario・aircraft・environmentのsource hashはcanonical Pers
 
 同じIDでもhashが異なるassetを同一データとして扱わない。
 保存schemaとphysics versionの互換性を分離する。記録済み値の表示と再積分による検証は別操作である。
+schema 4以降のphysics model versionは既知の1から現行versionまでを読み込み対象とし、0、欠落、
+現行より新しいversionを拒否する。過去versionのJSON encode/decodeはversionと保存sampleを維持する。
+Personal Best候補は現行physics model versionとの一致も要求し、過去versionのcanonical keyが
+保存されていても比較対象にしない。
+physics model version 1は初期モデル、2は回復可能な身体移動状態を維持する目標制御を表す。
+versionの更新は保存schemaを変更しない。
 元のphysics実行系が利用できなくても、schemaと必要assetに互換性があればsnapshot再生は可能とする。
 未知schema、破損、欠落、未対応追加項目の必須性は検証結果として通知する。
 
@@ -130,7 +136,7 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
 Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。Repositoryとpersistence portにはRust selection factoryを必須で供給する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。
 
-IndexedDB version 4のPB index修復revisionは`first-winner-v1`とする。canonical key v1やrecord schemaの版とは独立である。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。同点は最初のwinnerを保持し、score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
+IndexedDB version 4のPB index修復revisionは`first-winner-physics-v2`とする。canonical key v1やrecord schemaの版とは独立であり、physics model versionの更新時に修復revisionも更新する。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`、`first-winner-v1`、過去physics versionの完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。過去physics versionのrecordをPB indexと一覧のPB表示から除外し、現行versionの同点は最初のwinnerを保持する。score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
 
 再構築・PB index・修復markerと、保存時のrecord・metadata追加は同一readwrite transactionで確定する。不適格candidateの保存も修復を先に完了する。失敗時は全変更をrollbackし、生成したselectionを解放する。以後の保存はindex先recordとのみ比較し、一覧取得は再構築を繰り返さない。
 
