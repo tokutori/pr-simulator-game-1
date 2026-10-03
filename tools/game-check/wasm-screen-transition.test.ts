@@ -155,6 +155,21 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       model = updateApp(model, { type: "game-session-synced", ...projection }).model;
       adapter.render(createGameViewModel(model, projection.snapshot, model.flightAnalysis));
     };
+    const launchFlight = (): void => {
+      render();
+      expect(model.gameSession.kind).toBe("countdown");
+      expect(session.countdown_remaining()).toBe(0);
+      const launchRequestId = model.expectedLaunchRequestId;
+      if (launchRequestId === null) throw new Error("Expected launch identity is missing");
+      session.launch();
+      const projection = sessionProjection();
+      expect(projection.phaseCode).toBe(5);
+      expect(projection.snapshot?.terminal).toBe("airborne");
+      model = updateApp(model, { type: "flight-controller-activated", launchRequestId, projection }).model;
+      expect(model.expectedLaunchRequestId).toBeNull();
+      expect(model.flightRuntime).toEqual({ kind: "active", launchRequestId });
+      render();
+    };
 
     const adapter = new ScreenUiAdapter(root, (action) => {
       const requested = updateApp(model, { type: "ui-action", action });
@@ -200,8 +215,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       activate("game-briefing-start");
       expect(model.gameSession.kind).toBe("countdown");
       while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
-      render();
+      launchFlight();
       expect(model.gameSession.kind).toBe("flight");
 
       let snapshot = parseFlightSnapshot(session.snapshot());
@@ -262,8 +276,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       expect(model.gameSession.kind).toBe("briefing-ready");
       activate("game-briefing-start");
       while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
-      render();
+      launchFlight();
       expect(model.gameSession.kind).toBe("flight");
       activate("game-flight-pause");
       expect(model.gameSession.kind).toBe("paused-flight");

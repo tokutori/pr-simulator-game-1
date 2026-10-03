@@ -16,7 +16,7 @@ import { FlightController } from "../../web/src/game/flight-controller.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel } from "../../web/src/app/app-state.js";
+import type { AppModel, GameSessionProjection } from "../../web/src/app/app-state.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
@@ -280,13 +280,12 @@ describe("generated WebAssembly browser binding", () => {
         ...createInitialAppModel(),
         presentation: Object.freeze({ type: "ready", mode })
       });
-      const projectedScene = (): string => {
+      const sessionProjection = (): GameSessionProjection => {
         const phaseCode = session.phase_code();
         const snapshot = phaseCode === 5 || phaseCode === 6
           ? parseFlightSnapshot(session.snapshot())
           : null;
-        model = updateApp(model, {
-          type: "game-session-synced",
+        return {
           phaseCode,
           controlModeCode: session.control_mode_code(),
           difficulty: {
@@ -300,8 +299,25 @@ describe("generated WebAssembly browser binding", () => {
           countdownRemaining: session.countdown_remaining(),
           canResume: session.can_resume(),
           snapshot
-        }).model;
-        return createGameViewModel(model, snapshot).scene;
+        };
+      };
+      const projectedScene = (): string => {
+        const projection = sessionProjection();
+        model = updateApp(model, { type: "game-session-synced", ...projection }).model;
+        return createGameViewModel(model, projection.snapshot).scene;
+      };
+      const launchFlight = (): void => {
+        expect(projectedScene()).toBe("Countdown");
+        expect(session.countdown_remaining()).toBe(0);
+        const launchRequestId = model.expectedLaunchRequestId;
+        if (launchRequestId === null) throw new Error("Expected launch identity is missing");
+        session.launch();
+        const projection = sessionProjection();
+        expect(projection.phaseCode).toBe(5);
+        expect(projection.snapshot?.terminal).toBe("airborne");
+        model = updateApp(model, { type: "flight-controller-activated", launchRequestId, projection }).model;
+        expect(model.expectedLaunchRequestId).toBeNull();
+        expect(model.flightRuntime).toEqual({ kind: "active", launchRequestId });
       };
       const requestOperation = (controlId: string, expectedOperation: string) => {
         const requested = updateApp(model, {
@@ -392,7 +408,7 @@ describe("generated WebAssembly browser binding", () => {
       const restartCountdown = requestOperation("game-briefing-start", "start-flight");
       completeOperation(restartCountdown.requestId);
       while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
+      launchFlight();
       expect(projectedScene()).toBe("Flight");
       const pause = requestOperation("game-flight-pause", "pause");
       completeOperation(pause.requestId);
@@ -423,7 +439,7 @@ describe("generated WebAssembly browser binding", () => {
       completeOperation(retryStart.requestId);
       expect(projectedScene()).toBe("Countdown");
       while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
+      launchFlight();
       expect(projectedScene()).toBe("Flight");
       const abort = requestOperation("game-flight-abort", "abort");
       expect(abort.result.kind).toBe("aborted");
