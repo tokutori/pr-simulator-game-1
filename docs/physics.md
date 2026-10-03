@@ -56,6 +56,9 @@ $R_{NB}(d v_O^B/dt+\omega^B\times v_O^B)$ を用いる。座標成分の微分�
 外力providerを受け取る。providerが返すbody-frame wrenchは重力を含まない。重力合力はcoreが
 全質量へ作用させ、パイロット重力によるdatum $O$まわりmomentも計上する。外力providerは4つの
 RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stateで単位長へ射影する。
+一定加速度を保持するpilot位置・速度は、各stage時刻と出力時刻で解析解を与える。
+他のstate成分のRK4と連成力のstage再評価は維持する。
+RK4 stage時刻の間に生じるpilot位置の極値も検査し、移動限界を超える入力加速度を拒否する。
 一回のstepは入力stateを変更せず、いずれかのstageが失敗した場合は型付きerrorのみを返す。
 力学step内にheap allocationを行わない。
 

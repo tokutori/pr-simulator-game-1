@@ -229,7 +229,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
         };
       };
       expect(document.schema_version).toBe(5);
-      expect(document.header.physics_model_version).toBe(1);
+      expect(document.header.physics_model_version).toBe(2);
       expect(document.header.difficulty.hud_profile).toEqual({
         telemetry: true,
         attitude: true,

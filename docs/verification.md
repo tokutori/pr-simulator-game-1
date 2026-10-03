@@ -38,6 +38,10 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 内部質量運動量 | 一般3D姿勢、非対角慣性、pilot加速、外力なし | NED線運動量誤差 $\le 2\times10^{-10}$ kg m/s、角運動量誤差 $\le 2\times10^{-9}$ kg m²/s、成功 |
 | 回転中の並進 | 外力なし、初速・body yaw rateあり | NED速度誤差 $\le 2\times10^{-12}$ m/s、成功 |
 | 姿勢積分収束 | torque-free非対称剛体、$0.02$ sから$0.01$ sへstepを半減 | 誤差比が12–20の範囲、成功。4次法の理論値16を含む |
+| pilot境界の保持加速度 | 正負の境界、$x=0.49989999$ mの静止、境界直前の転回、低加速度の制動系列 | tick内極値・速度/加速度上限と次policyの受理、固定目標への収束を検査 |
+| pilot stage解析運動 | $x=0.4999997$ m、$v=0.001$ m/s、$a=-2$ m/s²、0.01 s | 全4 stageを一定加速度解析解と比較、範囲内の転回を受理 |
+| pilot policy閉包 | 4組のrange/速度/加速度上限、seed固定の目標反転列、狭travelの静止追従 | 同一入力の決定性、反復後の移動限界と停止証明を検査 |
+| pilot数値適用域 | 4096 stepを超える停止系列、`f64`上で制動速度が減少しない値 | `PilotMotionOutsidePolicyDomain`、入力state不変、連続停止不能errorと区別 |
 | 入力・モデル異常 | 非単位quaternion、非正定値慣性、pilot範囲超過、算術overflow、失敗load、無効step | 型付きerrorを返し、pilot状態をclampせず、部分stateを公開しない |
 
 これらは数値積分器と運動量収支の検証であり、実機飛距離の予測精度を保証しない。

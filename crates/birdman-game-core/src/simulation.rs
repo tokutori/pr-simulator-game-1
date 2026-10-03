@@ -732,6 +732,64 @@ mod tests {
     }
 
     #[test]
+    fn controlled_pilot_boundary_ticks_remain_valid_for_the_next_policy_query() {
+        let aircraft = aircraft();
+        let loads = ConstantLoad::new(Wrench::zero());
+        for direction in [-1.0, 1.0] {
+            for (position, velocity) in [(0.33, 0.8), (0.49989999, 0.0)] {
+                let flight = FlightState::try_new(
+                    NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+                    NedVector::zero(),
+                    UnitQuaternion::IDENTITY,
+                    BodyVector::zero(),
+                    direction * position,
+                    direction * velocity,
+                )
+                .unwrap();
+                let mut current = FlightTickState::try_new(
+                    &aircraft,
+                    actuator_limits(),
+                    0,
+                    flight,
+                    ActuatorState::neutral(),
+                )
+                .unwrap();
+                let target =
+                    crate::PilotPositionTarget::try_new(&aircraft, direction * 0.5).unwrap();
+                let input = FlightTickInput::new(
+                    SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                    SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
+                    target,
+                );
+                for tick in 0..500 {
+                    current = advance_flight_tick(
+                        &aircraft,
+                        current,
+                        config(ControlMode::Manual),
+                        input,
+                        &loads,
+                    )
+                    .unwrap();
+                    assert_eq!(current.tick_index(), tick + 1);
+                    assert!(current.flight_state().pilot_position_m().abs() <= 0.5);
+                    crate::pilot_target_acceleration(
+                        &aircraft,
+                        &current.flight_state(),
+                        target,
+                        PHYSICS_DT_SECONDS,
+                    )
+                    .unwrap();
+                }
+                assert!(
+                    (current.flight_state().pilot_position_m() - target.position_m()).abs()
+                        <= 1.0e-8
+                );
+                assert!(current.flight_state().pilot_velocity_mps().abs() <= 1.0e-8);
+            }
+        }
+    }
+
+    #[test]
     fn mode_endpoints_select_the_correct_surface_input_for_a_tick() {
         let aircraft = aircraft();
         let initial = initial_state(&aircraft);
