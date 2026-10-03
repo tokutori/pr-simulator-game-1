@@ -83,6 +83,14 @@ keyboardの操縦キーを優先し、押下時と押下中はGamepadを再び�
 
 FBW authorityの混合は同じ舵操作対象の指令に限定する。初期契約では身体の位置目標は選択された操縦機器から直接与え、FBWは舵を制御する。Automatic中も身体位置指令は独立して有効であり、入力がない場合は最後の目標位置を保持する。身体への自動指令を将来追加する際は、権限・調停・比較条件を独立に定義する。
 
+### Phone VR MenuのGamepad接続
+
+Menu用Gamepad portは接続を必須の`connection: { index, generation }`で返す。選択接続が有効な間は維持し、低いindexの追加で選択を変更しない。接続・切断イベントから世代を更新し、poll間の同index再接続も新しい接続として扱う。id、入力timestamp、poll時のobject同一性は接続識別に使用しない。イベントを受信できるactiveなブラウザー文書を前提とし、文書非active時に通知されなかった再接続の識別は保証しない。
+
+portの`start`/`stop`はPhone VR tracking attemptが所有する。factory生成時はlistenerを登録せず、開始時に登録し、停止・取消し・開始失敗・追跡失敗時に解除する。部分的な開始失敗でも全解除を試行し、旧listener callbackは新attemptの接続情報を変更しない。外部portが解除例外を返した場合、全解除の試行とbackendの終端を保証する。外部資源自体の解除成功は別途確認を要する。
+
+Menu selectorは接続ごとにbuttonとframe時刻の履歴を所有する。接続交代・全切断・reset時はcursorを中央へ戻し、focusと旧履歴を破棄する。新接続の初回sampleは経過時間0とし、保持中のprimary/backを履歴へ取り込む。保持継続は操作を発生させず、解放後の再押下から1回の操作を発生させる。内部状態の確定を外部UiAction dispatchより先に行い、dispatch例外で旧履歴を再使用しない。操縦用の中立確認・身体pickupとは別のMenu入力契約である。
+
 ## 検証と記録
 
 初期身体位置・速度、目標位置列、実位置・速度・加速度、合成重心offsetと質量特性の導出値を記録・検証する。Replayは実位置からpilot poseと視点を再現する。初期状態、AircraftModel、Environment、舵入力列、身体目標位置列、刻みが同じ場合の決定性を検証する。身体指令だけを変更したケースでは質量分布と軌道が変化することを確認する。

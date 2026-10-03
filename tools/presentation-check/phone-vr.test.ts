@@ -101,18 +101,21 @@ describe("Phone VR gamepad UI", () => {
 
   it("reads only connected standard-mapped browser gamepads", () => {
     let currentGamepads: readonly unknown[] = [
-      { connected: true, mapping: "", axes: [1, 1], buttons: [{ pressed: true }] },
-      { connected: true, mapping: "standard", axes: [0.5, -0.25, 0, 1], buttons: [{ pressed: true }, { pressed: false }] }
+      { index: 0, connected: true, mapping: "", axes: [1, 1], buttons: [{ pressed: true }] },
+      { index: 1, connected: true, mapping: "standard", axes: [0.5, -0.25, 0, 1], buttons: [{ pressed: true }, { pressed: false }] }
     ];
     const input = createBrowserPhoneVrGamepadInputPort({
       getGamepads: () => currentGamepads as never
-    });
+    }, new EventTarget());
+    input.start();
     expect(input.readState()).toEqual({
+      connection: { index: 1, generation: 1 },
       axes: [0.5, -0.25, 0, 1],
       buttons: [true, false]
     });
-    currentGamepads = [{ connected: false, mapping: "standard", axes: [], buttons: [] }];
+    currentGamepads = [{ index: 1, connected: false, mapping: "standard", axes: [], buttons: [] }];
     expect(input.readState()).toBeNull();
+    input.stop();
     expect(createBrowserPhoneVrGamepadInputPort({}).readState()).toBeNull();
     expect(createBrowserPhoneVrGamepadInputPort({ getGamepads: () => { throw new Error("blocked"); } }).readState()).toBeNull();
   });
@@ -621,6 +624,9 @@ class FakeRenderer implements RendererAdapter {
 class FakePhoneVrGamepad implements PhoneVrGamepadInputPort {
   state = gamepadState([0, 0, 0, 0], [false, false]);
 
+  start(): void {}
+  stop(): void {}
+
   readState() {
     return this.state;
   }
@@ -655,7 +661,7 @@ function reading(alpha: number, beta: number, gamma: number, timestampMs = 100):
 }
 
 function gamepadState(axes: readonly number[], buttons: readonly boolean[]) {
-  return Object.freeze({ axes, buttons });
+  return Object.freeze({ connection: { index: 0, generation: 0 }, axes, buttons });
 }
 
 function expectScrollAction(actions: readonly UiAction[]): void {

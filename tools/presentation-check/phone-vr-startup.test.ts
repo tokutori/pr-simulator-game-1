@@ -180,7 +180,7 @@ describe("Phone VR startup attempt ownership", () => {
     expect(fixture.sensors.stopListening).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["orientation", "stereo", "listening"] as const)("terminates startup on a synchronous %s setup exception", async (operation) => {
+  it.each(["orientation", "stereo", "gamepad", "listening"] as const)("terminates startup on a synchronous %s setup exception", async (operation) => {
     const fixture = createFixture();
     const failure = new Error(operation + " setup failed");
     if (operation === "orientation") fixture.sensors.getScreenOrientationAngle.mockImplementationOnce(() => { throw failure; });
@@ -189,6 +189,7 @@ describe("Phone VR startup attempt ownership", () => {
       fixture.renderer.setStereoPresentation.mockImplementationOnce((profile) => { applyStereo?.(profile); throw failure; });
     }
     if (operation === "listening") fixture.sensors.onStart = () => { throw failure; };
+    if (operation === "gamepad") fixture.gamepadStart.mockImplementationOnce(() => { throw failure; });
     await fixture.backend.requestPermissionFromUserGesture();
     await expect(fixture.backend.start()).rejects.toBe(failure);
     expectReleased(fixture);
@@ -212,11 +213,12 @@ describe("Phone VR startup attempt ownership", () => {
     expectReleased(fixture);
   });
 
-  it.each(["selection", "listening", "stereo"] as const)("preserves startup failure and attempts all cleanup when %s release throws", async (operation) => {
+  it.each(["selection", "listening", "gamepad", "stereo"] as const)("preserves startup failure and attempts all cleanup when %s release throws", async (operation) => {
     const fixture = createFixture();
     const cleanupFailure = new Error(operation + " release failed");
     if (operation === "selection") fixture.renderer.setSelectRayHandler.mockImplementationOnce(() => { throw cleanupFailure; });
     if (operation === "listening") fixture.sensors.stopListening.mockImplementationOnce(() => { fixture.sensors.detach(); throw cleanupFailure; });
+    if (operation === "gamepad") fixture.gamepadStop.mockImplementationOnce(() => { throw cleanupFailure; });
     if (operation === "stereo") fixture.renderer.setStereoPresentation.mockImplementationOnce(() => undefined).mockImplementationOnce(() => { throw cleanupFailure; });
     fixture.sensors.onStart = (callbacks) => { callbacks.reading({ ...valid(), gamma: null }); };
     await fixture.backend.requestPermissionFromUserGesture();
@@ -256,7 +258,7 @@ describe("Phone VR startup attempt ownership", () => {
     { input: "gamepad", operation: "tracking failure" }
   ] as const)("terminates $operation despite a focused $input dispatcher throwing and rejecting reentrant startup", async ({ input, operation }) => {
     const fixture = createFixture();
-    if (input === "gamepad") fixture.gamepad.mockReturnValue({ axes: [], buttons: [] });
+    if (input === "gamepad") fixture.gamepad.mockReturnValue({ connection: { index: 0, generation: 0 }, axes: [], buttons: [] });
     await fixture.backend.requestPermissionFromUserGesture();
     const startup = fixture.backend.start();
     const oldCallbacks = fixture.sensors.current();
@@ -321,7 +323,7 @@ describe("Phone VR startup attempt ownership", () => {
     fixture.dispatch.mockImplementation((action) => {
       if (action.type === "focus" && action.controlId === null) throw focusFailure;
     });
-    fixture.gamepad.mockReturnValue({ axes: [], buttons: [] });
+    fixture.gamepad.mockReturnValue({ connection: { index: 0, generation: 0 }, axes: [], buttons: [] });
     expect(() => fixture.backend.currentFrame(201, view)).toThrow(focusFailure);
     fixture.dispatch.mockClear();
     const firstFailure = new Error("select handler cleanup failed");
@@ -434,16 +436,19 @@ function createFixture() {
   const unavailable = vi.fn<(message: string) => void>();
   const dispatch = vi.fn<UiActionDispatcher>();
   const gamepad = vi.fn((): PhoneVrGamepadState | null => null);
+  const gamepadStart = vi.fn<() => void>();
+  const gamepadStop = vi.fn<() => void>();
   const clock = vi.fn(() => 200);
   const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, dispatch, unavailable, {
-    firstSampleTimeoutMs: 50, nowMs: clock, gamepadInput: { readState: gamepad }
+    firstSampleTimeoutMs: 50, nowMs: clock, gamepadInput: { start: gamepadStart, stop: gamepadStop, readState: gamepad }
   });
   backends.push(backend);
-  return { sensors, renderer, unavailable, dispatch, gamepad, backend, clock, stereo: () => profile };
+  return { sensors, renderer, unavailable, dispatch, gamepad, gamepadStart, gamepadStop, backend, clock, stereo: () => profile };
 }
 
 function expectReleased(fixture: ReturnType<typeof createFixture>): void {
   expect(fixture.sensors.stopListening).toHaveBeenCalledTimes(1);
+  expect(fixture.gamepadStop).toHaveBeenCalledTimes(1);
   expect(() => fixture.sensors.current()).toThrow("detached");
   expect(fixture.stereo()).toBeNull();
   expect(vi.getTimerCount()).toBe(0);

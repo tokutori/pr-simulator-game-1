@@ -1,18 +1,26 @@
 import type { PanelCursor } from "../render/contracts/runtime.js";
-import type { UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
-import type { PhoneVrGamepadState } from "./phone-vr-contracts.js";
+import type { UiAction, UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
+import type { PhoneVrGamepadConnection, PhoneVrGamepadState } from "./phone-vr-contracts.js";
 import { actionForControl, hitTestControl, rangeAction } from "./panel-interaction.js";
 
 const AXIS_DEADZONE = 0.2;
 const CURSOR_SPEED_PER_SECOND = 1.2;
 const SCROLL_PIXELS_PER_SECOND = 720;
 
+type GamepadHistory =
+  | { readonly type: "unselected" }
+  | {
+    readonly type: "selected";
+    readonly connection: PhoneVrGamepadConnection;
+    readonly primaryPressed: boolean;
+    readonly backPressed: boolean;
+    readonly timestampMs: number;
+  };
+
 export class GamepadUiSelector {
   private cursor = { x: 0.5, y: 0.5 };
   private focusedControlId: string | null = null;
-  private previousPrimaryPressed = false;
-  private previousBackPressed = false;
-  private lastTimestampMs: number | null = null;
+  private history: GamepadHistory = { type: "unselected" };
 
   constructor(private readonly dispatch: UiActionDispatcher) {}
 
@@ -22,8 +30,16 @@ export class GamepadUiSelector {
       this.reset();
       return null;
     }
-    const firstSample = this.lastTimestampMs === null;
-    const elapsedSeconds = this.elapsedSeconds(timestampMs);
+    const previous = this.history;
+    const sameConnection = previous.type === "selected" && previous.connection.index === gamepad.connection.index &&
+      previous.connection.generation === gamepad.connection.generation;
+    const elapsedSeconds = sameConnection ? clamp((timestampMs - previous.timestampMs) / 1000, 0, 0.05) : 0;
+    const actions: UiAction[] = [];
+    if (!sameConnection) {
+      if (this.focusedControlId !== null) actions.push({ type: "focus", controlId: null });
+      this.cursor = { x: 0.5, y: 0.5 };
+      this.focusedControlId = null;
+    }
     const horizontal = readAxis(gamepad.axes, 0);
     const vertical = readAxis(gamepad.axes, 1);
     this.cursor = {
@@ -38,49 +54,45 @@ export class GamepadUiSelector {
     const nextFocus = control?.id ?? null;
     if (nextFocus !== this.focusedControlId) {
       this.focusedControlId = nextFocus;
-      this.dispatch({ type: "focus", controlId: nextFocus });
+      actions.push({ type: "focus", controlId: nextFocus });
     }
 
     const primaryPressed = gamepad.buttons[0] ?? false;
-    if (!firstSample && primaryPressed && !this.previousPrimaryPressed && control !== null) {
+    if (sameConnection && primaryPressed && !previous.primaryPressed && control !== null) {
       const action = control.kind === "range" ? rangeAction(control, panel, point) : actionForControl(control);
-      if (action !== null) this.dispatch(action);
+      if (action !== null) actions.push(action);
     }
-    this.previousPrimaryPressed = primaryPressed;
 
     const backPressed = gamepad.buttons[1] ?? false;
-    if (!firstSample && backPressed && !this.previousBackPressed) this.dispatch({ type: "back" });
-    this.previousBackPressed = backPressed;
+    if (sameConnection && backPressed && !previous.backPressed) actions.push({ type: "back" });
 
     const scrollX = readAxis(gamepad.axes, 2);
     const scrollY = readAxis(gamepad.axes, 3);
     if (elapsedSeconds > 0 && (scrollX !== 0 || scrollY !== 0)) {
-      this.dispatch({
+      actions.push({
         type: "scroll",
         deltaX: scrollX * SCROLL_PIXELS_PER_SECOND * elapsedSeconds,
         deltaY: scrollY * SCROLL_PIXELS_PER_SECOND * elapsedSeconds
       });
     }
+    const history: GamepadHistory = {
+      type: "selected", connection: gamepad.connection, primaryPressed, backPressed, timestampMs
+    };
+    this.history = history;
+    for (const action of actions) {
+      if (this.history !== history) return null;
+      this.dispatch(action);
+    }
+    if (this.history !== history) return null;
     return Object.freeze({ point, progress: 0 });
   }
 
   reset(): void {
-    if (this.focusedControlId !== null) this.dispatch({ type: "focus", controlId: null });
+    const hadFocus = this.focusedControlId !== null;
     this.cursor = { x: 0.5, y: 0.5 };
     this.focusedControlId = null;
-    this.previousPrimaryPressed = false;
-    this.previousBackPressed = false;
-    this.lastTimestampMs = null;
-  }
-
-  private elapsedSeconds(timestampMs: number): number {
-    if (this.lastTimestampMs === null || timestampMs < this.lastTimestampMs) {
-      this.lastTimestampMs = timestampMs;
-      return 0;
-    }
-    const elapsedSeconds = Math.min((timestampMs - this.lastTimestampMs) / 1000, 0.05);
-    this.lastTimestampMs = timestampMs;
-    return elapsedSeconds;
+    this.history = { type: "unselected" };
+    if (hadFocus) this.dispatch({ type: "focus", controlId: null });
   }
 }
 
