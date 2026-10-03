@@ -27,16 +27,26 @@ export interface PhoneVrSensorPort {
   stopListening(): void;
 }
 
+export interface PhoneVrGamepadConnection {
+  readonly index: number;
+  readonly generation: number;
+}
+
 export interface PhoneVrGamepadState {
+  readonly connection: PhoneVrGamepadConnection;
   readonly axes: readonly number[];
   readonly buttons: readonly boolean[];
 }
 
 export interface PhoneVrGamepadInputPort {
+  start(): void;
+  stop(): void;
   readState(): PhoneVrGamepadState | null;
 }
 
 export const NO_PHONE_VR_GAMEPAD_INPUT: PhoneVrGamepadInputPort = Object.freeze({
+  start: () => undefined,
+  stop: () => undefined,
   readState: () => null
 });
 

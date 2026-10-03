@@ -140,6 +140,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
         }, this.firstSampleTimeoutMs) };
         this.renderer.setStereoPresentation(this.opticalProfile);
         if (!this.acceptsAttempt(attempt)) return;
+        this.gamepadInput.start();
+        if (!this.acceptsAttempt(attempt)) return;
         this.sensors.startListening(
           (reading) => { if (this.acceptsAttempt(attempt)) this.handleSensorReading(reading); },
           (angle) => { if (this.acceptsAttempt(attempt)) this.handleScreenOrientationChange(angle); }
@@ -382,6 +384,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     for (const cleanup of [
       () => { this.renderer.setSelectRayHandler(null); },
       () => { this.sensors.stopListening(); },
+      () => { this.gamepadInput.stop(); },
       () => { this.renderer.setStereoPresentation(null); },
       () => { gazeDwell.reset(); },
       () => { gamepadSelector.reset(); }
