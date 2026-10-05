@@ -74,6 +74,10 @@ const TITLE_SCREEN_PITCH_HALF_RADIANS = 3 * Math.PI / 180;
 const PANEL_OVERLAY_RENDER_ORDER = 2000;
 
 export function titleScreenCameraPoseForViewport(width: number, height: number): Pose {
+  return titleCameraPoseForViewport(width, height, -TITLE_SCREEN_PITCH_HALF_RADIANS);
+}
+
+function titleCameraPoseForViewport(width: number, height: number, pitchHalfRadians: number): Pose {
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     throw new RangeError("Viewport dimensions must be positive");
   }
@@ -88,7 +92,7 @@ export function titleScreenCameraPoseForViewport(width: number, height: number):
     vec3(0, 12, 0),
     multiplyQuaternion(
       quaternion(Math.cos(yaw / 2), 0, Math.sin(yaw / 2), 0),
-      quaternion(Math.cos(TITLE_SCREEN_PITCH_HALF_RADIANS), -Math.sin(TITLE_SCREEN_PITCH_HALF_RADIANS), 0, 0)
+      quaternion(Math.cos(pitchHalfRadians), Math.sin(pitchHalfRadians), 0, 0)
     )
   );
 }
@@ -365,6 +369,7 @@ export function createThreeRenderer(
   const camera = new PerspectiveCamera(60, 1, 0.05, 100_000);
   trackingOrigin.add(camera);
   let titleCameraPose = titleScreenCameraPoseForViewport(1, 1);
+  let titlePhoneCameraPose = titleCameraPoseForViewport(1, 1, 0);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
   const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 100_000);
@@ -456,7 +461,9 @@ export function createThreeRenderer(
       const externalCameraPose = currentExternalCameraPose();
       const useExternalCamera = externalCameraPose !== null;
       const fixedView = useExternalCamera && flightCameraMode !== "chase" ? fixedCameraView : null;
-      const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting ? titleCameraPose : IDENTITY_POSE;
+      const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting
+        ? stereoPresentation === null ? titleCameraPose : titlePhoneCameraPose
+        : IDENTITY_POSE;
       setPose(trackingOrigin, composePose(titlePresentationPose, currentPilotEyePose()));
       setPose(camera, frame.cameraPose);
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
@@ -787,6 +794,7 @@ export function createThreeRenderer(
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     titleCameraPose = titleScreenCameraPoseForViewport(width, height);
+    titlePhoneCameraPose = titleCameraPoseForViewport(width, height, 0);
     fixedCamera.aspect = width / height;
     fixedCamera.updateProjectionMatrix();
   }

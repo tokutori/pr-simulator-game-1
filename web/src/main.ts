@@ -965,7 +965,7 @@ function successStatus(mode: PresentationMode): string {
   switch (mode) {
     case "screen": return "Screen is active";
     case "webxr": return "WebXR active; gaze dwell or XR select activates controls";
-    case "phone-vr": return "Phone VR active; use head-gaze or standard Gamepad. Optical profile is unverified.";
+    case "phone-vr": return "Phone VR active with gravity-referenced tilt; recenter resets heading only. Device and optical validation remain pending.";
   }
 }
 

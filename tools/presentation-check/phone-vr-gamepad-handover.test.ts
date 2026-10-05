@@ -185,12 +185,12 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     const second = fixture.backend.start();
     const current = fixture.input.readState()?.connection;
     for (const captured of oldCallbacks) captured.listener(gamepadEvent(captured.type, gamepad(0)));
-    oldSensors?.reading({ alpha: null, beta: null, gamma: null, timestampMs: 0 });
+    oldSensors?.reading({ alpha: null, beta: null, gamma: null, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
     oldSensors?.rotation(null);
     expect(fixture.input.readState()?.connection).toEqual(current);
     expect(browser.listenerCount()).toBe(2);
     expect(vi.getTimerCount()).toBe(1);
-    fixture.sensorCallbacks[1]?.reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0 });
+    fixture.sensorCallbacks[1]?.reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
     await second;
     expect(fixture.frame().panelVisible).toBe(true);
     expect(fixture.unavailable).not.toHaveBeenCalled();
@@ -256,7 +256,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     };
     if (operation === "stop") await expect(fixture.backend.stop()).rejects.toBe(failures[0]);
     else {
-      fixture.sensorCallbacks[0]?.reading({ alpha: null, beta: null, gamma: null, timestampMs: 0 });
+      fixture.sensorCallbacks[0]?.reading({ alpha: null, beta: null, gamma: null, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
       expect(fixture.unavailable).toHaveBeenCalledExactlyOnceWith("Phone VR orientation data contains null or non-finite values");
     }
     expect(browser.listenerCount()).toBe(0);
@@ -437,7 +437,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     getScreenOrientationAngle: () => 0,
     startListening: vi.fn<PhoneVrSensorPort["startListening"]>((reading, rotation) => {
       sensorCallbacks.push({ reading, rotation });
-      if (options.initialSample !== false) reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0 });
+      if (options.initialSample !== false) reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
     }),
     stopListening: vi.fn<PhoneVrSensorPort["stopListening"]>()
   } satisfies PhoneVrSensorPort;

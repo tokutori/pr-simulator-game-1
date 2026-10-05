@@ -2,8 +2,6 @@ import {
   composePose,
   IDENTITY_POSE,
   inversePose,
-  multiplyQuaternion,
-  quaternion,
   rotateVec3,
   vec3
 } from "../render/contracts/math.js";
@@ -16,6 +14,8 @@ import { intersectPanel } from "./panel-interaction.js";
 import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrOpticalProfile, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "./phone-vr-contracts.js";
 import { NO_PHONE_VR_GAMEPAD_INPUT, PHONE_VR_OPTICAL_PROFILE } from "./phone-vr-contracts.js";
 import { phoneOrientationQuaternion } from "./phone-vr-orientation.js";
+import { calibratePhoneGravity, phoneGravityViewer, recenterPhoneGravity } from "./phone-vr-gravity.js";
+import type { PhoneGravityCalibration, PhoneGravityEvidence } from "./phone-vr-gravity.js";
 import { GamepadUiSelector } from "./gamepad-ui-selector.js";
 
 type PhoneVrBackendState =
@@ -54,7 +54,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private latestRawReading: PhoneVrSensorReading | null = null;
   private latestSensorOrientation: Quaternion | null = null;
   private latestViewerOrientation: Quaternion = IDENTITY_POSE.orientation;
-  private calibrationOrientation: Quaternion | null = null;
+  private calibration: PhoneGravityCalibration | null = null;
+  private gravityEvidence: PhoneGravityEvidence | null = null;
   private latestSampleTimestampMs: number | null = null;
   private referenceFromWorld: Pose = IDENTITY_POSE;
   private menuPlacement = new MenuAnchorPlacement();
@@ -135,7 +136,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
         if (!this.acceptsAttempt(attempt)) return;
         attempt.timer = { type: "pending", handle: setTimeout(() => {
           if (this.acceptsAttempt(attempt) && attempt.sampleResult.type === "waiting") {
-            this.failStartup(attempt, new Error("Phone VR received no valid orientation event before timeout"));
+            this.failStartup(attempt, new Error("Phone VR received no valid orientation event with gravity and a usable horizontal heading before timeout"));
           }
         }, this.firstSampleTimeoutMs) };
         this.renderer.setStereoPresentation(this.opticalProfile);
@@ -216,14 +217,20 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   }
 
   recenterTracking(): void {
-    if (this.state.type !== "active" || this.latestSensorOrientation === null) return;
-    const mountedHead = this.renderer.transformTrackingPose(poseAtOrigin(this.latestViewerOrientation));
+    if (this.state.type !== "active" || this.latestSensorOrientation === null ||
+        this.calibration === null || this.screenOrientationAngle === null) return;
+    const result = recenterPhoneGravity(this.calibration, this.latestSensorOrientation, this.screenOrientationAngle);
+    if (result.kind === "invalid") {
+      this.handleInvalidReading(`Phone VR gravity recenter is invalid: ${result.reason}`);
+      return;
+    }
+    if (result.kind === "retained") return;
     const mountedOrigin = this.renderer.transformTrackingPose(IDENTITY_POSE);
-    const newFromOld = composePose(mountedOrigin, inversePose(mountedHead));
+    const newFromOld = composePose(composePose(mountedOrigin, poseAtOrigin(result.newTrackingFromOldTracking)), inversePose(mountedOrigin));
     this.referenceFromWorld = composePose(newFromOld, this.referenceFromWorld);
     this.menuPlacement.applyReferenceTransform(newFromOld);
-    this.calibrationOrientation = this.latestSensorOrientation;
-    this.latestViewerOrientation = IDENTITY_POSE.orientation;
+    this.calibration = result.calibration;
+    this.latestViewerOrientation = result.viewer;
     this.gazeDwell.reset();
   }
 
@@ -252,7 +259,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       return;
     }
     const screenAngle = this.screenOrientationAngle;
-    const sensorOrientation = screenAngle === null ? null : phoneOrientationQuaternion(reading, screenAngle);
+    const sensorOrientation = screenAngle === null ? null : phoneOrientationQuaternion(reading, 0);
     if (sensorOrientation === null) {
       this.latestRawReading = null;
       this.latestSensorOrientation = null;
@@ -262,7 +269,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.latestRawReading = reading;
     this.latestSensorOrientation = sensorOrientation;
     this.latestSampleTimestampMs = reading.timestampMs;
-    this.updateViewerOrientation(sensorOrientation);
+    if (!this.updateViewerOrientation()) return;
     if (this.state.type === "starting") {
       this.state.attempt.sampleResult = { type: "ready" };
       this.clearAttemptTimer(this.state.attempt);
@@ -278,29 +285,47 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     }
     this.screenOrientationAngle = angle;
     const reading = this.latestRawReading;
-    if (reading === null || this.calibrationOrientation === null) return;
-    const sensorOrientation = phoneOrientationQuaternion(reading, angle);
-    if (sensorOrientation === null) {
-      this.handleInvalidReading("Phone VR orientation could not be recalibrated after screen rotation");
-      return;
+    if (reading === null) return;
+    if (!this.updateViewerOrientation()) return;
+    if (this.state.type === "starting") {
+      this.state.attempt.sampleResult = { type: "ready" };
+      this.clearAttemptTimer(this.state.attempt);
+      this.state.attempt.signalSample();
     }
-    this.latestSensorOrientation = sensorOrientation;
-    this.updateViewerOrientation(sensorOrientation);
   }
 
-  private updateViewerOrientation(sensorOrientation: Quaternion): void {
-    if (this.calibrationOrientation === null) {
-      this.calibrationOrientation = sensorOrientation;
-      this.latestViewerOrientation = IDENTITY_POSE.orientation;
-      return;
+  private updateViewerOrientation(): boolean {
+    if (this.latestSensorOrientation === null || this.latestRawReading === null || this.screenOrientationAngle === null) return false;
+    if (this.calibration === null) {
+      const result = calibratePhoneGravity({
+        referenceFromDevice: this.latestSensorOrientation,
+        screenAngleDegrees: this.screenOrientationAngle,
+        evidence: this.latestRawReading.gravityEvidence
+      });
+      if (result.kind === "invalid") {
+        this.handleInvalidReading(`Phone VR gravity calibration is invalid: ${result.reason}`);
+        return false;
+      }
+      if (result.kind === "pending") return false;
+      this.calibration = result.calibration;
+      const evidence = this.latestRawReading.gravityEvidence;
+      this.gravityEvidence = evidence.kind === "relative-reference-up"
+        ? Object.freeze({ kind: evidence.kind, referenceUp: vec3(evidence.referenceUp.x, evidence.referenceUp.y, evidence.referenceUp.z) })
+        : Object.freeze({ kind: evidence.kind });
+      this.latestViewerOrientation = result.viewer;
+      return true;
     }
-    const inverseCalibration = quaternion(
-      this.calibrationOrientation.w,
-      -this.calibrationOrientation.x,
-      -this.calibrationOrientation.y,
-      -this.calibrationOrientation.z
-    );
-    this.latestViewerOrientation = multiplyQuaternion(inverseCalibration, sensorOrientation);
+    if (this.gravityEvidence === null || !sameGravityReference(this.gravityEvidence, this.latestRawReading.gravityEvidence)) {
+      this.handleInvalidReading("Phone VR gravity reference became unavailable or changed");
+      return false;
+    }
+    const result = phoneGravityViewer(this.calibration, this.latestSensorOrientation, this.screenOrientationAngle);
+    if (result.kind === "invalid") {
+      this.handleInvalidReading(`Phone VR gravity orientation is invalid: ${result.reason}`);
+      return false;
+    }
+    this.latestViewerOrientation = result.viewer;
+    return true;
   }
 
   private ownsAttempt(attempt: PhoneVrTrackingAttempt): boolean {
@@ -403,7 +428,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.latestSensorOrientation = null;
     this.latestSampleTimestampMs = null;
     this.latestViewerOrientation = IDENTITY_POSE.orientation;
-    this.calibrationOrientation = null;
+    this.calibration = null;
+    this.gravityEvidence = null;
     this.referenceFromWorld = IDENTITY_POSE;
     this.gazeDwell = new GazeDwellSelector(this.dispatch);
     this.gamepadSelector = new GamepadUiSelector(this.dispatch);
@@ -429,4 +455,10 @@ function poseAtOrigin(orientation: Quaternion): Pose {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sameGravityReference(first: PhoneGravityEvidence, next: PhoneGravityEvidence): boolean {
+  if (first.kind === "earth-z-up") return next.kind === "earth-z-up";
+  if (first.kind !== "relative-reference-up" || next.kind !== "relative-reference-up") return false;
+  return first.referenceUp.x === next.referenceUp.x && first.referenceUp.y === next.referenceUp.y && first.referenceUp.z === next.referenceUp.z;
 }

@@ -1056,7 +1056,7 @@ function updatePermissionCompletion(
   }
   return transition(withModel(model, {
     presentation: Object.freeze({ ...current, phase: "starting" }),
-    status: message.mode === "webxr" ? "Starting WebXR presentation" : "Starting Phone VR presentation"
+    status: message.mode === "webxr" ? "Starting WebXR presentation" : "Waiting for gravity-referenced orientation."
   }), [{ type: "switch-backend", mode: message.mode, requestId: message.requestId }]);
 }
 

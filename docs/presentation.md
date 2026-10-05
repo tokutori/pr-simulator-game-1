@@ -75,8 +75,9 @@ support確認の成功はsession開始成功を保証しない。
 参考: [WebXR仕様](https://immersive-web.github.io/webxr/)、
 [isSessionSupported](https://developer.mozilla.org/en-US/docs/Web/API/XRSystem/isSessionSupported)。
 
-Phone VRではAPI存在、許可状態、有効な姿勢eventの受信を別々に判定する。
-nullや非有限値を0度として採用しない。初回姿勢取得にはtimeoutを設け、取得後は最新有効姿勢を保持する。
+Phone VRではAPI存在、許可状態、重力参照を持つ有効な姿勢eventの受信を別々に判定する。
+API存在は対応候補の判定であり、tracking成功を表さない。Modelは許可要求中、重力参照と方位の較正待ち、
+追跡中、起動失敗を区別する。nullや非有限値を0度として採用しない。初回姿勢取得にはtimeoutを設け、取得後は最新有効姿勢を保持する。
 センサーが利用できない場合は理由を表示し、再試行・Desktopへの復帰を可能にする。
 sensor権限とXR sessionは利用者の明示操作から要求する。
 非同期capability調査は開始操作より前に実施し、await後にuser activationが残ると仮定しない。
@@ -129,10 +130,22 @@ fullscreenとlandscape lockは補助機能とする。非対応・拒否・中�
 ## BPG-016 Phone VR実装
 
 Phone VRはsecure context上の`DeviceOrientationEvent`と`ScreenOrientation`を使用する。
-センサー許可要求は開始操作の同期区間で呼び出し、開始後は有効なorientation eventを受け取るまでstereoを有効化しない。
+センサー許可要求は開始操作の同期区間で`requestPermission(true)`を呼び出し、absolute orientationに必要なmagnetometerも要求する。
+開始時にstereo資源を準備し、重力参照と非退化の水平方位を較正するまでbackendの開始成功と描画を保留する。
 `alpha`・`beta`・`gamma`のnull、非有限値、初回event timeout、不正sample時刻を失敗状態として扱い、0度へ置換しない。
 画面角度はScreen Orientation仕様の自然向きからのcounter-clockwise角としてZ軸補正へ適用する。
-姿勢は最初の有効sampleをtracking基準とし、明示的なrecenterで更新する。tracking喪失時はstereoを解除しScreenへ復帰する。
+重力で水平を定義し、最初の較正可能なsampleと明示的なrecenterではyawだけを基準化する。初回pitch/rollも保持する。
+tracking喪失時はstereoを解除しScreenへ復帰する。
+
+browser adapterは`deviceorientation`と`deviceorientationabsolute`のうち最初に`absolute=true`を受け取った経路を選択し、
+そのsession中は別経路を混合しない。Earth参照系の上向きを重力の根拠とし、選択経路の参照喪失は失敗として扱う。
+`absolute=false`の任意参照系には上向きを推定しない。relative-only browserでは較正待ちの後にtimeoutとなり、
+失敗理由付きでScreenへ復帰する。これはPhone VR開始成功として扱わない。
+独立sensor portは同じsampleと整合し、session中に固定された`relative-reference-up`を供給できるが、現browser adapterはこのsourceを提供しない。
+`webkitCompassHeading`だけで水平を保証しない。`DeviceMotionEvent`の`accelerationIncludingGravity`と`acceleration`の差分を
+利用する経路は、欠測、符号、姿勢sampleとの同期と参照系の一貫性を検証する残作業である。
+根拠: [Device Orientation参照系・権限・Device Motion](https://www.w3.org/TR/orientation-event/)、
+[Apple DeviceMotionEvent](https://developer.apple.com/documentation/webkitjs/devicemotionevent)。
 
 `deviceorientation`は有意な姿勢変化を通知し、freshness維持の追加通知は任意である。
 有効sample取得後の無通知だけでは、静止と通知経路の停止を識別できない。heartbeat間隔は仮定せず、
@@ -188,23 +201,27 @@ Phone VRではheadの並進を固定し、基準化した頭部回転を合成�
 deviceorientationのZ-X'-Y''回転、度からrad、端末axes、screen orientation、
 camera前方軸を明示的に変換する。alpha/beta/gammaを航空機のyaw/pitch/rollへ直接代入しない。
 端末の自然な画面方位に固定された姿勢を $D=R_z(\alpha)R_x(\beta)R_y(\gamma)$、
-`ScreenOrientation.angle`を $s$ とすると、表示方位への補正は $H=D R_z(-s)$ とする。
+`ScreenOrientation.angle`を $s$、重力と初回水平方位から求めたtracking基底を $B$ とすると、head回転は $H=B D R_z(-s)$ とする。
 補正は端末姿勢の右から一度だけ合成する。画面方位を変更してもsensorの端末座標系は変化しない。
 根拠: [Device Orientation §3.1](https://www.w3.org/TR/orientation-event/#device-orientation)、
 [Screen Orientation angle](https://w3c.github.io/screen-orientation/#dom-screenorientation-angle)。
 `three-renderer-phone-orientation.test.ts`は0°・±90°・180°・270°について、実sensor adapter、
 Phone VR backend、Three.js camera、StereoEffectを接続し、左右・上下・rollの回転方向と
-固定世界点の両眼投影、画面回転、head/Menu recenterを検査する。WebGL driverには記録用代替を使用する。
+固定世界点の両眼投影、画面回転、yaw-only head/Menu recenter、非零初回pitch/roll、全Sceneの非Flight水平復帰を検査する。
+Phone非FlightはTitleの位置・yawを維持してpitchを0°とし、ScreenのTitle pitch −6°を維持する。
+Flightは既存の航空機・Eye mount・headの積 $A E H$ を維持する。WebGL driverには記録用代替を使用する。
 この検査は描画driverの実GPU動作と実スマートフォンのsensor精度・装着時受入を保証しない。
-絶対方位を常に取得できるとは仮定せず、利用者の正面を基準にrecenterする。
-基準姿勢・画面方位補正後のquaternionに対して、例えば次の相対回転を用いる。
+較正とrecenterは利用者の水平方位を基準とし、北向きをゲームの正面へ固定しない。
+manual recenterの基底差分はtrackingの上向き軸周りの回転となる。
 
 ```math
-Q_{head}(t)=Q_{calibrated}(t_0)^{-1}Q_{calibrated}(t)
+B_{new}=R_y(-\psi) B_{old},\qquad H_{new}=R_y(-\psi)H_{old}
 ```
 
-基準姿勢は利用者が正面・水平を確認した時点で取得する。
-画面回転時にはtracking基準を再評価する。符号・積順序・recenter前後の連続性を試験する。
+pitch/rollを基準化しない。初回方位が退化すると較正を保留し、追跡中の上向き・下向きでは基底を維持する。
+退化したmanual recenterは直前の基底を維持する。画面回転は同じ基底へ右側補正を適用する。
+recenterの基底差分をEye mountで共役変換してWorld/Cockpit/Menuへ適用し、cameraとpanelの相対関係を維持する。
+符号・積順序・recenter前後の連続性を試験する。
 sensor姿勢は現実の端末空間に属する。航空機の仮想姿勢をsensor補正へ重複適用しない。
 WebXRではreference spaceの原点・高さとcockpit mountを対応付け、床高やIPDを二重加算しない。
 XR管理cameraのpose/projectionをPhone VRの値で上書きしない。
