@@ -374,8 +374,9 @@ impl FlightRecordDocument {
             || (self.schema_version < SCORE_DEFINITION_FLIGHT_RECORD_SCHEMA_VERSION
                 && self.header.score_definition_version.is_some())
             || (self.schema_version >= PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION
-                && self.header.physics_model_version
-                    != Some(birdman_game_core::PHYSICS_MODEL_VERSION))
+                && !self.header.physics_model_version.is_some_and(|version| {
+                    (1..=birdman_game_core::PHYSICS_MODEL_VERSION).contains(&version)
+                }))
             || (self.schema_version < PHYSICS_MODEL_FLIGHT_RECORD_SCHEMA_VERSION
                 && self.header.physics_model_version.is_some())
             || (self.schema_version < PERSONAL_BEST_KEY_FLIGHT_RECORD_SCHEMA_VERSION
@@ -1123,6 +1124,54 @@ mod tests {
         document
     }
 
+    #[test]
+    fn every_schema_restores_held_actuator_queries_without_rewriting_terminal_samples() {
+        for schema_version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            for axis in 0..3 {
+                for sign in [-1.0, 1.0] {
+                    let mut document = keyless_record_for_schema(schema_version);
+                    let mut initial = [0.0; 3];
+                    initial[axis] = -sign * 0.07;
+                    let mut terminal = [0.0; 3];
+                    terminal[axis] = sign * 0.11;
+                    document.samples[0].actuator_deflections_rad = initial;
+                    document.samples[1].actuator_deflections_rad = terminal;
+                    document.samples[1].tick_index = 0;
+                    document.samples[1].fraction = 0.5;
+                    let finalization = document.finalization.as_mut().unwrap();
+                    finalization.terminal_tick = 0;
+                    finalization.terminal_fraction = 0.5;
+                    let bytes = document.encode_json().unwrap();
+                    let decoded = FlightRecordDocument::decode_json(&bytes).unwrap();
+                    assert_eq!(decoded.samples, document.samples);
+                    let restored = decoded.to_finalized_core_record().unwrap();
+                    let stored_initial = restored.samples()[0].actuator_state;
+                    let stored_terminal = restored.samples()[1].actuator_state;
+                    assert_eq!(
+                        restored.sample_at_time(0, 0.0).unwrap().actuator_state,
+                        stored_initial,
+                    );
+                    for fraction in [f64::from_bits(1), 0.25, 0.5] {
+                        assert_eq!(
+                            restored.sample_at_time(0, fraction).unwrap().actuator_state,
+                            stored_terminal,
+                        );
+                    }
+                    assert_eq!(
+                        restored.sample_at_seconds(0.0025).unwrap().actuator_state,
+                        stored_terminal,
+                    );
+                    assert_eq!(
+                        restored.sample_at_seconds(0.005).unwrap().actuator_state,
+                        stored_terminal,
+                    );
+                    assert_eq!(restored.samples()[1].actuator_state, stored_terminal);
+                    assert_eq!(decoded.samples[1].actuator_deflections_rad, terminal);
+                }
+            }
+        }
+    }
+
     fn assert_terminal_round_trip(record: &birdman_game_core::FlightRecord) {
         let terminal = record.samples().last().unwrap();
         let finalized = record.finalization().unwrap();
@@ -1761,19 +1810,102 @@ mod tests {
             Err(FlightRecordFormatError::InvalidRecord)
         );
 
-        let mut document = completed_record();
-        document.header.physics_model_version = Some(birdman_game_core::PHYSICS_MODEL_VERSION + 1);
-        assert_eq!(
-            document.validate(),
-            Err(FlightRecordFormatError::InvalidRecord)
-        );
+        for schema_version in [4, 5] {
+            for physics_version in [
+                None,
+                Some(0),
+                Some(birdman_game_core::PHYSICS_MODEL_VERSION + 1),
+            ] {
+                let mut document = keyless_record_for_schema(schema_version);
+                document.header.physics_model_version = physics_version;
+                assert_eq!(
+                    document.validate(),
+                    Err(FlightRecordFormatError::InvalidRecord)
+                );
+                // Bypass the validated encoder to exercise the external decoder.
+                let bytes = serde_json::to_vec(&document).unwrap();
+                assert_eq!(
+                    FlightRecordDocument::decode_json(&bytes),
+                    Err(FlightRecordFormatError::InvalidRecord)
+                );
+            }
+        }
+    }
 
-        let mut document = completed_record();
-        document.header.physics_model_version = None;
-        assert_eq!(
-            document.validate(),
-            Err(FlightRecordFormatError::InvalidRecord)
-        );
+    #[test]
+    fn known_previous_physics_versions_round_trip_and_replay_but_are_ineligible_for_personal_best()
+    {
+        let source = water_contact_record()
+            .with_personal_best_key(Some(birdman_game_core::PersonalBestKey::from_digest(
+                [7; 32],
+            )))
+            .unwrap();
+        assert!(source.personal_best_candidate_score().unwrap().is_some());
+        for schema_version in [4, 5] {
+            for physics_version in 1..birdman_game_core::PHYSICS_MODEL_VERSION {
+                let mut document = source.clone();
+                document.schema_version = schema_version;
+                document.header.physics_model_version = Some(physics_version);
+                if schema_version == 4 {
+                    document.header.personal_best_key = None;
+                }
+                let bytes = document.encode_json().unwrap();
+                let decoded = FlightRecordDocument::decode_json(&bytes).unwrap();
+                assert_eq!(decoded, document);
+                assert_eq!(decoded.encode_json().unwrap(), bytes);
+                assert_eq!(decoded.header.physics_model_version, Some(physics_version));
+                assert_eq!(decoded.personal_best_candidate_score().unwrap(), None);
+                assert!(PersonalBestSelection::try_new(&decoded).unwrap().is_none());
+                assert_eq!(
+                    compare_personal_best_records(&source, &decoded).unwrap(),
+                    None
+                );
+                let mut selection = PersonalBestSelection::try_new(&source).unwrap().unwrap();
+                selection.consider_existing(1, &decoded).unwrap();
+                assert_eq!(selection.selected_existing_id(), None);
+                assert_eq!(
+                    decoded.header.personal_best_key,
+                    document.header.personal_best_key
+                );
+                let restored = decoded.to_finalized_core_record().unwrap();
+                let before_query = restored.samples().to_vec();
+                for (stored, external) in restored.samples().iter().zip(&decoded.samples) {
+                    let (tick, fraction) = if stored.fraction == 1.0 {
+                        (stored.tick_index + 1, 0.0)
+                    } else {
+                        (stored.tick_index, stored.fraction)
+                    };
+                    let queried = restored.sample_at_time(tick, fraction).unwrap();
+                    assert_eq!(queried.flight_state, stored.flight_state);
+                    assert_eq!(queried.actuator_state, stored.actuator_state);
+                    assert_eq!(queried.telemetry, stored.telemetry);
+                    assert_eq!(
+                        queried.flight_state.datum_position_ned().components(),
+                        external.datum_position_ned_m,
+                    );
+                    assert_eq!(
+                        queried.flight_state.datum_velocity_ned().components(),
+                        external.datum_velocity_ned_mps,
+                    );
+                    assert_eq!(
+                        [
+                            queried.actuator_state.roll_rad(),
+                            queried.actuator_state.pitch_rad(),
+                            queried.actuator_state.yaw_rad(),
+                        ],
+                        external.actuator_deflections_rad,
+                    );
+                }
+                let terminal = restored.samples().last().unwrap();
+                let final_query = restored
+                    .sample_at_seconds(restored.duration_seconds().unwrap())
+                    .unwrap();
+                assert_eq!(final_query.flight_state, terminal.flight_state);
+                assert_eq!(final_query.actuator_state, terminal.actuator_state);
+                assert_eq!(final_query.telemetry, terminal.telemetry);
+                assert_eq!(restored.samples(), before_query);
+            }
+        }
     }
 
     #[test]

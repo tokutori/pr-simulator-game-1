@@ -56,6 +56,9 @@ $R_{NB}(d v_O^B/dt+\omega^B\times v_O^B)$ を用いる。座標成分の微分�
 外力providerを受け取る。providerが返すbody-frame wrenchは重力を含まない。重力合力はcoreが
 全質量へ作用させ、パイロット重力によるdatum $O$まわりmomentも計上する。外力providerは4つの
 RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stateで単位長へ射影する。
+一定加速度を保持するpilot位置・速度は、各stage時刻と出力時刻で解析解を与える。
+他のstate成分のRK4と連成力のstage再評価は維持する。
+RK4 stage時刻の間に生じるpilot位置の極値も検査し、移動限界を超える入力加速度を拒否する。
 一回のstepは入力stateを変更せず、いずれかのstageが失敗した場合は型付きerrorのみを返す。
 力学step内にheap allocationを行わない。
 
@@ -65,13 +68,24 @@ RK4 stageごとのstateから評価する。姿勢は各中間stateと出力stat
 ## BPG-003の空力接続
 
 `AerodynamicModel`は左右主翼・水平尾翼・垂直尾翼・胴体を各1要素保持する。各要素は評価点と
-荷重作用点、取付姿勢、参照面積・span・chord、6係数law、alpha/beta/dynamic-pressure envelopeを持つ。
+荷重作用点、取付姿勢、参照面積・span・chord、6係数law、alpha/beta/dynamic-pressureと3軸舵角のenvelopeを持つ。
 `UniformAerodynamicLoad`は位置一様な風と密度から各要素の局所流を評価し、forceとdatum $O$ まわりの
 momentを合成する。位置依存風場はBPG-004/005で別境界から接続する。
 
 評価点の速度には機体datum速度と $\omega\times r_i$ を用いる。身体の相対速度は空力点速度へ加えない。
 係数lawは参照値・alpha derivative・beta derivativeによる一次式であり、rate derivativeは持たない。
 適用範囲外はclampせずerrorとし、外力providerの失敗としてstep全体へ伝播する。
+
+## BPG-038の全機static接続
+
+`StaticPolarLoad`は各RK stageのdatum対気速度から全機polarを評価し、body forceとdatum momentを返す。
+momentの固定参照点$P$と軸、共通参照面積・span・MAC、7独立係数列のPWL補間は
+`aerodynamics.md`を正本とする。momentは次元化、beta-zero wind軸からbodyへの回転、
+$r_{OP}\times F$による一回の移送の順に評価する。
+`AerodynamicLoadProvider`は静的全機providerと既存element-only providerを排他的に選ぶ。
+FRD/NED、6DoF、一般慣性tensor、moving pilot、quaternion、RK4、100 Hz tickの契約は共通である。
+static providerの範囲外・wind sampling・非有限計算は元のcauseを保持してstep全体へ伝播する。
+新しいplayableへの適用と公開contractの切替はBPG-042で行う。
 
 ## 時間と処理落ち
 
@@ -92,10 +106,14 @@ launchはdatum $O$ のground velocityと姿勢、構造datum高度、身体初�
 trimから生成する場合はair-relative条件を明示し、ground条件によるlaunchと別の生成方法にする。
 静水面はNEDのD=0とする。初期版の接触判定は登録した機体接触点のいずれかがD>=0となる条件を用いる。
 接触点は構造datumからの固定offsetでモデルに記録する。接触検出は隣接する成功tick間のstateを補間し、
-各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態・actuatorは線形補間し、
+各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態は線形補間し、
 姿勢は短経路quaternion slerpを用いる。接触探索では補間経路を16区間で調べ、接触を含む区間のfractionを
 同じ補間state上で二分探索により確定する。
-終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。
+終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。actuatorは `flight-control.md` の
+tick内保持規則に従い、正のfractionでは全RK4 stageに渡した更新値を使用する。
+fractionが0の既存接触は直前snapshotのactuatorを保持する。
+公開 `detect_water_contact` に外部生成した隣接stateを渡す場合も、次stateのactuatorを区間 $(k,k+1]$
+の保持値として扱う。入力指令からの更新過程や連続したactuator軌跡は推定しない。
 接触後のtick状態を通常sampleとして保存しない。Result、graph、Replayは同じ終端sampleを参照する。
 `advance_flight_tick_with_contact`はContact時にfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開しない。
 `run_flight`は固定100 Hzの機器非依存input列を順に適用し、最初のWaterContactまたはTimeLimitで終了する。score v1はWaterContactならfractional terminal sample、TimeLimitなら最後の有効stateから算出し、終了後のtickを処理しない。

@@ -38,6 +38,10 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 内部質量運動量 | 一般3D姿勢、非対角慣性、pilot加速、外力なし | NED線運動量誤差 $\le 2\times10^{-10}$ kg m/s、角運動量誤差 $\le 2\times10^{-9}$ kg m²/s、成功 |
 | 回転中の並進 | 外力なし、初速・body yaw rateあり | NED速度誤差 $\le 2\times10^{-12}$ m/s、成功 |
 | 姿勢積分収束 | torque-free非対称剛体、$0.02$ sから$0.01$ sへstepを半減 | 誤差比が12–20の範囲、成功。4次法の理論値16を含む |
+| pilot境界の保持加速度 | 正負の境界、$x=0.49989999$ mの静止、境界直前の転回、低加速度の制動系列 | tick内極値・速度/加速度上限と次policyの受理、固定目標への収束を検査 |
+| pilot stage解析運動 | $x=0.4999997$ m、$v=0.001$ m/s、$a=-2$ m/s²、0.01 s | 全4 stageを一定加速度解析解と比較、範囲内の転回を受理 |
+| pilot policy閉包 | 4組のrange/速度/加速度上限、seed固定の目標反転列、狭travelの静止追従 | 同一入力の決定性、反復後の移動限界と停止証明を検査 |
+| pilot数値適用域 | 4096 stepを超える停止系列、`f64`上で制動速度が減少しない値 | `PilotMotionOutsidePolicyDomain`、入力state不変、連続停止不能errorと区別 |
 | 入力・モデル異常 | 非単位quaternion、非正定値慣性、pilot範囲超過、算術overflow、失敗load、無効step | 型付きerrorを返し、pilot状態をclampせず、部分stateを公開しない |
 
 これらは数値積分器と運動量収支の検証であり、実機飛距離の予測精度を保証しない。
@@ -57,6 +61,42 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 係数moment | 参照span/chordと $C_l,C_m,C_n$ | 各body軸momentの解析値と一致、誤差 $\le10^{-12}$、成功 |
 | 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
 | RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
+
+### BPG-038 全機static polar
+
+`aerodynamics::polar::tests`は実機値を含まない独立fixtureで次を検証する。
+7独立係数列から6成分wrenchを評価し、抗力はCDi+CDvの計算値とする。
+
+| ケース | 独立比較対象・受入条件 |
+|---|---|
+| 構築時検証 | 各列・alphaの非有限値、2点未満、重複・逆順、負CDi/CDv、非正参照量・密度、無効metadataを拒否。負lift/momentは有効 |
+| PWL | 全7列の独立補間、異なる区間slope、元のknot値、両端点、直外の拒否。係数誤差はおおむね $10^{-15}$ |
+| 数値境界 | 極端な有限alpha幅・符号の異なる係数、最小正subnormal速度、計算overflowを区別。外挿やclampは行わない |
+| 力・moment軸 | $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$、非ゼロCl/Cnの解析6成分。momentの解析値、span/MACの軸対応、同じalpha・Vでbetaを変えたmomentの一致を確認。alpha-only回転と次元化は可換である。許容差は32 epsilon程度の演算scaleを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N m |
+| 参照点 | 固定PとOの表現で同じdatum wrench、general tensor・moving pilot方程式の応答が一致。さらにalpha=beta=0を維持する軸方向drag+roll fixtureで二つの静的providerを100 tick実行し、位置・速度・角速度・quaternion各成分差 $\le10^{-12}$ |
+| datum flow | Pにoffsetがあり、rate・空間wind gradientがあってもOだけでstaticを評価。XCP/点速度の二重適用がない |
+| frame・風 | NEDからbodyへの逆回転、一様world速度と風の同量加算による荷重不変性 |
+| provider・error | 排他的選択で既存element-onlyの結果を保持。未対応の非neutral操舵を拒否。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
+| 借用・no_std | row借用のcompile-fail doctest、coreの`wasm32v1-none` build、外部allocation probeで構築・評価・RK stepのallocationを計測 |
+
+static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例はBPG-039で検証する。
+neutral増分0、局所流の微係数、mock trim、公開終端・旧record扱いはBPG-039〜043の試験とする。
+単体polarの合格を、実機精度・wake・失速・Re依存・地面効果の検証として扱わない。
+公開mockはBPG-041で定義・検証し、既定切替はBPG-042の公開型・identity・記録version更新と同時に行う。
+旧BPG-007の距離・時間は既存fixtureの履歴・回帰条件として扱い、新hybridの空力調整targetにしない。
+
+2026-10-05、Windows / Rust 1.97.0の独立したworktreeで上記12件と借用期間のdoctestが成功した。
+repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
+polar・provider・モデル構築のallocation 0、static評価10,000回と既存RK4 step 10,000回のallocation 0を確認した。
+測定は非ゼロ流、P offset、空間wind gradient、moving pilotを含むdebug buildで行った。
+coreのunsafe禁止と依存は維持し、計測用allocatorをrepoのsourceやruntimeへ追加しない。
+
+### 空力舵角domainの検証（#209）
+
+要素構築時にalpha・beta・3舵角の組合せで生じる負抗力と非有限係数を拒否する。
+舵角の各正負境界・直外を零速と通常流で検査し、role付きerrorの伝達を確認する。
+scenario構築ではactuatorの全travelがdomainに収まる場合を受理し、各軸の正負側の不足を拒否する。
+既存のneutral荷重・force/moment scaling・aggregate overflowの回帰も維持する。
 
 ### BPG-024 空力境界・error契約
 
@@ -79,8 +119,8 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 026 | position targetの加速・制動・収束、最大速度・加速度・移動範囲、復帰不能境界のtyped error、同条件決定性、6DoF internal-mass接続 |
 | 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral互換、stage error時の状態不変 |
 | 028 | Manual / Shared / Automaticの統合tick、pilot target・actuator・6DoF一括更新、決定性、load error時の不変性、tick overflow |
-| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical/actuator補間、geometry・tick・actuator error |
-| 030 | controlled tickからcontact終端への統合、airborne state返却、post-contact state非公開、contact/dynamics typed error |
+| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical補間・actuator保持、geometry・tick・actuator error |
+| 030 | controlled tickからcontact終端への統合、airborne state返却、post-contact state非公開、contact/dynamics typed error、正負3軸の全RK4保持値・正の接触fractionでの終端actuator一致・fraction 0での旧state保持、record終端・exact時刻・区間内Replayの保持規則 |
 | 031 | configurable body-rate feedbackの符号・axis別飽和・極端な有限rate・無効設定、および合成roll momentを介した6DoF減衰。実機tuningの検証とは区別する |
 | 032 | course-distance score v1の北・東・斜行・逆行・高度不変性、cross-track/net horizontal解析値、極端軸正規化、無効軸・差分overflowのtyped error |
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |

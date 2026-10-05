@@ -94,6 +94,21 @@ grid範囲外を黙って補正しない。失敗時は直前の有効状態を�
 Webは有効recordがあれば終了理由付きResultへ遷移し、boot等の初期化失敗は所属Scene内のfailed状態で扱う。
 再試行・復帰の選択肢を提示し、表示言語はcoreから分離する。
 
+## 全機polarとhybridへの移行
+
+BPG-038の`StaticPolar`はborrowed row・離散設定ID・解析方式・model version、
+moment軸・固定参照点・共通参照量を持つ。構築と評価にruntime heap・I/Oは不要である。
+`AerodynamicLoadProvider`は一つのproviderを借用して排他的に選び、全機staticと旧5要素荷重の重畳を防ぐ。
+既存element-only APIは独立software fixtureとして保持する。
+staticとcurrent-reference局所normal-force増分によるhybridはBPG-039で追加し、
+BPG-040で二系統尾翼操作とq/r FBWを接続する。
+
+BPG-041（[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)）は公開用架空mockの定義・検証までとする。
+公開アプリの既定モデル切替はBPG-042（[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)）で、
+WASM/TypeScript・snapshot・Screen/VR入力、model/controller identity、record versionと同時に更新する。
+旧三系統recordを新モデルとして再計算しない。新モデルの合否に旧playability距離条件を使用しない。
+非公開xlsxと実機数値はrepo・Issue・PR・fixtureへ導入しない。詳しい単位・式・適用範囲は`aerodynamics.md`に従う。
+
 ## 参照元と現状
 
 2026-09-27確認: ローカル `simulator1` のoriginは

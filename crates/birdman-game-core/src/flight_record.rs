@@ -93,7 +93,8 @@ pub struct FlightRecordSample {
     pub fraction: f64,
     /// Aircraft-datum and internal pilot-motion state.
     pub flight_state: FlightState,
-    /// Physical actuator deflections at the sample time.
+    /// Physical actuator deflections held in the interval ending at this sample.
+    /// The initial `(0, 0)` sample retains the configured initial deflections.
     pub actuator_state: crate::ActuatorState,
     /// Composite-center ambient wind in NED axes.
     pub wind_at_cg_ned_mps: NedVector,
@@ -138,7 +139,8 @@ pub struct FlightRecordPlaybackSample {
     pub fraction: f64,
     /// Interpolated aircraft and pilot state.
     pub flight_state: FlightState,
-    /// Interpolated physical actuator state.
+    /// Physical actuator state, held from the interval's ending sample.
+    /// An exact recorded time retains that recorded sample's state.
     pub actuator_state: crate::ActuatorState,
     /// Interpolated wind and telemetry values.
     pub telemetry: FlightTelemetry,
@@ -364,6 +366,8 @@ impl FlightRecord {
     }
 
     /// Appends the first water-contact state without recording the post-contact tick.
+    /// A positive fraction must carry the updated actuator held in that interval.
+    /// Fraction zero retains the existing sample and its completed-interval actuator.
     pub fn append_contact(
         &mut self,
         interval_start_tick: u64,
@@ -481,7 +485,11 @@ impl FlightRecord {
         }
     }
 
-    /// Returns an interpolated snapshot at an exact tick and fractional tick.
+    /// Returns a snapshot at an exact tick and fractional tick.
+    ///
+    /// Flight state and telemetry are interpolated. Actuator state uses the
+    /// interval's ending sample at an interior time, and the recorded state at
+    /// an exact sample time. This rule also applies to restored archives.
     pub fn sample_at_time(
         &self,
         tick_index: u64,
@@ -542,7 +550,8 @@ impl FlightRecord {
         )
     }
 
-    /// Returns an interpolated sample at elapsed seconds from the first retained sample.
+    /// Returns a sample at elapsed seconds from the first retained sample.
+    /// Uses the same held-actuator rule as [`Self::sample_at_time`].
     pub fn sample_at_seconds(
         &self,
         time_seconds: f64,
@@ -736,10 +745,9 @@ fn interpolate_samples(
     )
     .map_err(|_| FlightRecordQueryError::NonFiniteInterpolation)?;
     let telemetry = interpolate_telemetry(start.telemetry, end.telemetry, fraction)?;
-    let actuator_state = start
-        .actuator_state
-        .interpolate(end.actuator_state, fraction)
-        .map_err(|_| FlightRecordQueryError::NonFiniteInterpolation)?;
+    // This function is called only for strict interior times. The ending
+    // sample stores the updated actuator held throughout that interval.
+    let actuator_state = end.actuator_state;
     Ok(FlightRecordPlaybackSample {
         tick_index,
         fraction: tick_fraction,
@@ -1339,7 +1347,8 @@ mod tests {
         assert!((midpoint_position[2] - (initial_position[2] - 8.0) * 0.5).abs() < 1.0e-12);
         assert_eq!(midpoint.telemetry.altitude_m, 11.0);
         assert!((midpoint.telemetry.heading_rad.abs() - core::f64::consts::PI).abs() < 0.05);
-        assert_eq!(midpoint.actuator_state.roll_rad(), 0.1);
+        assert_eq!(midpoint.actuator_state, end_actuator);
+        assert_eq!(seconds_midpoint.actuator_state, end_actuator);
 
         let summary = record.summary().unwrap();
         assert_eq!(summary.sample_count, 2);
@@ -1354,6 +1363,130 @@ mod tests {
         );
         assert_eq!(summary.maximum_altitude_m, 12.0);
         assert_eq!(summary.maximum_airspeed_mps, 12.0);
+    }
+
+    #[test]
+    fn playback_holds_actuators_across_integer_and_fractional_terminal_intervals() {
+        let (header, initial, telemetry) = fixture();
+        let aircraft = AircraftModel::try_new(
+            10.0,
+            InertiaTensor::diagonal(2.0, 3.0, 4.0).unwrap(),
+            1.0,
+            -0.2,
+            -0.5,
+            0.5,
+            1.0,
+            2.0,
+        )
+        .unwrap();
+        let limits = [ActuatorConfig::try_new(0.35, 10.0).unwrap(); 3];
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let mut first = [0.0; 3];
+                first[axis] = sign * 0.07;
+                let first = ActuatorState::try_from_recorded(first[0], first[1], first[2]).unwrap();
+                let mut terminal = [0.0; 3];
+                terminal[axis] = -sign * 0.11;
+                let terminal =
+                    ActuatorState::try_from_recorded(terminal[0], terminal[1], terminal[2])
+                        .unwrap();
+                let tick_one =
+                    FlightTickState::try_new(&aircraft, limits, 1, initial.flight_state(), first)
+                        .unwrap();
+                for terminal_fraction in [0.0, 0.5, 1.0] {
+                    let mut original = FlightRecord::try_new(header).unwrap();
+                    original.begin(initial, telemetry).unwrap();
+                    original.append_tick(tick_one, input(), telemetry).unwrap();
+                    original
+                        .append_contact(
+                            1,
+                            terminal_fraction,
+                            initial.flight_state(),
+                            terminal,
+                            input(),
+                            telemetry,
+                        )
+                        .unwrap();
+                    let finalization = original
+                        .finalize(SessionEndReason::WaterContact, 1, terminal_fraction, None)
+                        .unwrap();
+                    let archived_samples = original.samples().to_vec();
+                    let restored = FlightRecord::try_from_finalized_samples(
+                        header,
+                        archived_samples.clone(),
+                        finalization,
+                    )
+                    .unwrap();
+                    for record in [&original, &restored] {
+                        assert_eq!(
+                            record.sample_at_time(0, 0.0).unwrap().actuator_state,
+                            initial.actuator_state(),
+                        );
+                        assert_eq!(
+                            record.sample_at_seconds(0.0).unwrap().actuator_state,
+                            initial.actuator_state(),
+                        );
+                        for fraction in [f64::from_bits(1), 0.5, 1.0_f64.next_down()] {
+                            assert_eq!(
+                                record.sample_at_time(0, fraction).unwrap().actuator_state,
+                                first,
+                            );
+                        }
+                        assert_eq!(
+                            record.sample_at_seconds(0.005).unwrap().actuator_state,
+                            first
+                        );
+                        assert_eq!(record.sample_at_time(1, 0.0).unwrap().actuator_state, first);
+                        assert_eq!(
+                            record.sample_at_seconds(0.01).unwrap().actuator_state,
+                            first
+                        );
+                        let expected_terminal = if terminal_fraction == 0.0 {
+                            first
+                        } else {
+                            for fraction in [f64::from_bits(1), terminal_fraction * 0.5] {
+                                assert_eq!(
+                                    record.sample_at_time(1, fraction).unwrap().actuator_state,
+                                    terminal,
+                                );
+                            }
+                            assert_eq!(
+                                record
+                                    .sample_at_seconds(0.01 + terminal_fraction * 0.005)
+                                    .unwrap()
+                                    .actuator_state,
+                                terminal,
+                            );
+                            terminal
+                        };
+                        let terminal_time = if terminal_fraction == 1.0 {
+                            (2, 0.0)
+                        } else {
+                            (1, terminal_fraction)
+                        };
+                        assert_eq!(
+                            record
+                                .sample_at_time(terminal_time.0, terminal_time.1)
+                                .unwrap()
+                                .actuator_state,
+                            expected_terminal,
+                        );
+                        assert_eq!(
+                            record
+                                .sample_at_seconds(record.duration_seconds().unwrap())
+                                .unwrap()
+                                .actuator_state,
+                            expected_terminal,
+                        );
+                        assert_eq!(record.samples(), archived_samples);
+                        assert_eq!(
+                            record.samples().last().unwrap().actuator_state,
+                            expected_terminal
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1796,8 +1929,20 @@ mod tests {
         .unwrap();
         let law = crate::CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
         let coefficients = crate::AeroCoefficients::new(law, law, law, law, law, law);
-        let envelope =
-            crate::ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap();
+        let envelope = crate::ElementEnvelope::try_new(
+            -1.0,
+            1.0,
+            -1.0,
+            1.0,
+            0.0,
+            100_000.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let reference = crate::ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
         let roles = [
             crate::AerodynamicRole::LeftWing,

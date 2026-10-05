@@ -225,6 +225,410 @@ fn pilot_position_policy_reaches_a_fixed_target_deterministically() {
     );
 }
 
+fn assert_pilot_held_step_is_safe(
+    aircraft: &AircraftModel,
+    initial: FlightState,
+    acceleration: PilotAcceleration,
+    timestep: f64,
+    limits: (f64, f64, f64, f64),
+) -> FlightState {
+    let (minimum_position, maximum_position, maximum_speed, maximum_acceleration) = limits;
+    let value = acceleration.meters_per_second_squared();
+    assert!(value.abs() <= maximum_acceleration);
+    let position = initial.pilot_position_m();
+    let velocity = initial.pilot_velocity_mps();
+    for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let time = fraction * timestep;
+        let point = position + velocity * time + 0.5 * value * time * time;
+        // This independently expanded polynomial has a different rounding order
+        // from the integrator. Bound its arithmetic error, while the actual
+        // returned state and the turning-point check remain strictly in range.
+        let arithmetic_error = 8.0
+            * f64::EPSILON
+            * (position.abs() + (velocity * time).abs() + (0.5 * value * time * time).abs());
+        assert!(
+            point >= minimum_position - arithmetic_error
+                && point <= maximum_position + arithmetic_error
+        );
+        assert!((velocity + value * time).abs() <= maximum_speed);
+    }
+    if value != 0.0 {
+        let turning_time = -velocity / value;
+        if turning_time > 0.0 && turning_time < timestep {
+            let turning_position = position + 0.5 * velocity * turning_time;
+            assert!(turning_position >= minimum_position && turning_position <= maximum_position);
+        }
+    }
+    let next = advance(
+        aircraft,
+        &initial,
+        acceleration,
+        Gravity::try_new(0.0).unwrap(),
+        &ConstantLoad::new(Wrench::zero()),
+        timestep,
+    )
+    .unwrap();
+    assert!(
+        next.pilot_position_m() >= minimum_position && next.pilot_position_m() <= maximum_position
+    );
+    let next_speed = next.pilot_velocity_mps().abs();
+    let stopping_point = next.pilot_position_m()
+        + next.pilot_velocity_mps().signum()
+            * (0.5 * next_speed * (next_speed / maximum_acceleration));
+    assert!(stopping_point >= minimum_position && stopping_point <= maximum_position);
+    next
+}
+
+#[test]
+fn pilot_boundary_regressions_remain_safe_across_repeated_queries() {
+    for direction in [-1.0, 1.0] {
+        for (initial_position, initial_velocity, target_position) in [
+            (0.33, 0.8, 0.5),
+            (0.33, 0.8, 0.499),
+            (0.49989999, 0.0, 0.5),
+            (0.49, 0.2, 0.5),
+            (0.4999997, 0.001, 0.5),
+            (0.48989975, 0.201, 0.5),
+            (0.0, 1.0, 0.5),
+        ] {
+            let aircraft = model(0.5, diagonal_inertia(1.0, 1.0, 1.0));
+            let target =
+                PilotPositionTarget::try_new(&aircraft, direction * target_position).unwrap();
+            let mut current = state(
+                [0.0; 3],
+                [0.0; 3],
+                UnitQuaternion::IDENTITY,
+                [0.0; 3],
+                direction * initial_position,
+                direction * initial_velocity,
+            );
+            for tick in 0..500 {
+                let acceleration = pilot_target_acceleration(&aircraft, &current, target, 0.01)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "initial=({initial_position},{initial_velocity}), target={target_position}, direction={direction}, tick={tick}, state={current:?}: {error:?}"
+                        )
+                    });
+                current = assert_pilot_held_step_is_safe(
+                    &aircraft,
+                    current,
+                    acceleration,
+                    0.01,
+                    (-0.5, 0.5, 1.0, 2.0),
+                );
+            }
+            close(current.pilot_position_m(), target.position_m(), 1.0e-8);
+            close(current.pilot_velocity_mps(), 0.0, 1.0e-8);
+        }
+    }
+}
+
+#[test]
+fn constant_pilot_acceleration_uses_analytic_positions_at_all_rk_stages() {
+    struct StagePilotMotion {
+        stage: core::cell::Cell<usize>,
+    }
+    impl ExternalLoadProvider for StagePilotMotion {
+        fn evaluate(
+            &self,
+            _model: &AircraftModel,
+            current: &FlightState,
+        ) -> Result<Wrench, LoadError> {
+            let time = [0.0, 0.005, 0.005, 0.01][self.stage.get()];
+            close(
+                current.pilot_position_m(),
+                0.4999997 + 0.001 * time - time * time,
+                1.0e-15,
+            );
+            close(current.pilot_velocity_mps(), 0.001 - 2.0 * time, 1.0e-15);
+            self.stage.set(self.stage.get() + 1);
+            Ok(Wrench::zero())
+        }
+    }
+    let aircraft = model(0.5, diagonal_inertia(1.0, 1.0, 1.0));
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.4999997,
+        0.001,
+    );
+    let loads = StagePilotMotion {
+        stage: core::cell::Cell::new(0),
+    };
+    let result = advance(
+        &aircraft,
+        &initial,
+        PilotAcceleration::try_new(-2.0).unwrap(),
+        Gravity::try_new(0.0).unwrap(),
+        &loads,
+        0.01,
+    )
+    .unwrap();
+    assert_eq!(loads.stage.get(), 4);
+    close(result.pilot_position_m(), 0.4999097, 1.0e-15);
+    close(result.pilot_velocity_mps(), -0.019, 1.0e-15);
+}
+
+#[test]
+fn direct_pilot_acceleration_rejects_an_overshoot_between_rk_stage_times() {
+    let aircraft = model(0.0, diagonal_inertia(1.0, 1.0, 1.0));
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.4999999,
+        0.001,
+    );
+    // The peak at t=0.0005 is outside travel, although analytic stage
+    // positions at t=0.005 and t=0.01 are back inside travel.
+    assert!(initial.pilot_position_m() + 0.001_f64.powi(2) / 4.0 > 0.5);
+    assert_eq!(
+        step(&aircraft, &initial, -2.0, 0.0, Wrench::zero(), 0.01),
+        Err(DynamicsError::PilotOutOfRange)
+    );
+    assert_eq!(initial.pilot_position_m(), 0.4999999);
+    assert_eq!(initial.pilot_velocity_mps(), 0.001);
+}
+
+#[test]
+fn weak_braking_uses_the_quadratic_solution_without_far_turning_point_cancellation() {
+    let aircraft = model(0.0, diagonal_inertia(1.0, 1.0, 1.0));
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.1,
+        1.0,
+    );
+    // Anchoring this step at x_turn ~= 5e19 loses the actual 0.11 m position.
+    let next = step(&aircraft, &initial, -1.0e-20, 0.0, Wrench::zero(), 0.01).unwrap();
+    close(next.pilot_position_m(), 0.11, 1.0e-15);
+    close(next.pilot_velocity_mps(), 1.0, 1.0e-15);
+}
+
+#[test]
+fn pilot_policy_distinguishes_its_domain_from_continuous_unrecoverability() {
+    let aircraft = AircraftModel::try_new(
+        4.0,
+        diagonal_inertia(1.0, 1.0, 1.0),
+        0.0,
+        0.0,
+        -1.0e-6,
+        1.0e-6,
+        1.0,
+        2.0,
+    )
+    .unwrap();
+    let initial = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        7.0e-7,
+        0.001,
+    );
+    assert!(initial.pilot_position_m() + 0.001_f64.powi(2) / 4.0 < 1.0e-6);
+    assert_eq!(
+        pilot_target_acceleration(
+            &aircraft,
+            &initial,
+            PilotPositionTarget::try_new(&aircraft, 1.0e-6).unwrap(),
+            0.01,
+        ),
+        Err(DynamicsError::PilotMotionOutsidePolicyDomain)
+    );
+}
+
+#[test]
+fn resting_pilot_tracks_targets_in_a_narrow_travel_range() {
+    let aircraft = AircraftModel::try_new(
+        4.0,
+        diagonal_inertia(1.0, 1.0, 1.0),
+        0.0,
+        0.0,
+        -1.0e-5,
+        1.0e-5,
+        1.0,
+        2.0,
+    )
+    .unwrap();
+    let mut current = state(
+        [0.0; 3],
+        [0.0; 3],
+        UnitQuaternion::IDENTITY,
+        [0.0; 3],
+        0.0,
+        0.0,
+    );
+    for target_position in [1.0e-5, -1.0e-5, 0.0] {
+        let target = PilotPositionTarget::try_new(&aircraft, target_position).unwrap();
+        let initial_position = current.pilot_position_m();
+        for tick in 0..100 {
+            let acceleration =
+                pilot_target_acceleration(&aircraft, &current, target, 0.01).unwrap();
+            current = assert_pilot_held_step_is_safe(
+                &aircraft,
+                current,
+                acceleration,
+                0.01,
+                (-1.0e-5, 1.0e-5, 1.0, 2.0),
+            );
+            if tick == 0 {
+                assert_ne!(current.pilot_position_m(), initial_position);
+            }
+        }
+        close(current.pilot_position_m(), target_position, 1.0e-12);
+        close(current.pilot_velocity_mps(), 0.0, 1.0e-12);
+    }
+}
+
+#[test]
+fn seeded_pilot_target_sequences_preserve_policy_closure() {
+    let mut seed = 197_u64;
+    for (half_range, maximum_speed, maximum_acceleration) in [
+        (0.5, 1.0, 2.0),
+        (0.4, 0.3, 0.8),
+        (5.0e-4, 1.0, 2.0),
+        (1.0e-5, 1.0, 2.0),
+    ] {
+        let aircraft = AircraftModel::try_new(
+            4.0,
+            diagonal_inertia(1.0, 1.0, 1.0),
+            0.0,
+            0.0,
+            -half_range,
+            half_range,
+            maximum_speed,
+            maximum_acceleration,
+        )
+        .unwrap();
+        for position_fraction in [-1.0, -0.99, -0.2, 0.0, 0.7, 0.999, 1.0] {
+            let mut current = state(
+                [0.0; 3],
+                [0.0; 3],
+                UnitQuaternion::IDENTITY,
+                [0.0; 3],
+                position_fraction * half_range,
+                0.0,
+            );
+            for tick in 0..500 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let target_position = match tick % 7 {
+                    0 => half_range,
+                    1 => -half_range,
+                    _ => (2.0 * ((seed >> 32) as u32 as f64) / u32::MAX as f64 - 1.0) * half_range,
+                };
+                let target = PilotPositionTarget::try_new(&aircraft, target_position).unwrap();
+                let acceleration = pilot_target_acceleration(&aircraft, &current, target, 0.01)
+                    .unwrap_or_else(|error| {
+                        panic!("range={half_range}, tick={tick}, state={current:?}: {error:?}")
+                    });
+                assert_eq!(
+                    acceleration,
+                    pilot_target_acceleration(&aircraft, &current, target, 0.01).unwrap()
+                );
+                current = assert_pilot_held_step_is_safe(
+                    &aircraft,
+                    current,
+                    acceleration,
+                    0.01,
+                    (-half_range, half_range, maximum_speed, maximum_acceleration),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn slow_braking_sequences_remain_closed_until_target_convergence() {
+    for (half_range, maximum_acceleration, initial_position) in [
+        (0.5, 0.1, 0.0),
+        (0.5, 0.1, 0.49),
+        (0.01, 0.1, 0.0),
+        (0.4, 0.8, 0.0),
+    ] {
+        for direction in [-1.0, 1.0] {
+            let aircraft = AircraftModel::try_new(
+                4.0,
+                diagonal_inertia(1.0, 1.0, 1.0),
+                0.0,
+                0.0,
+                -half_range,
+                half_range,
+                1.0,
+                maximum_acceleration,
+            )
+            .unwrap();
+            let target = PilotPositionTarget::try_new(&aircraft, direction * half_range).unwrap();
+            let mut current = state(
+                [0.0; 3],
+                [0.0; 3],
+                UnitQuaternion::IDENTITY,
+                [0.0; 3],
+                direction * initial_position,
+                0.0,
+            );
+            for tick in 0..2500 {
+                let acceleration = pilot_target_acceleration(&aircraft, &current, target, 0.01)
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "A={maximum_acceleration}, tick={tick}, state={current:?}: {error:?}"
+                        )
+                    });
+                current = assert_pilot_held_step_is_safe(
+                    &aircraft,
+                    current,
+                    acceleration,
+                    0.01,
+                    (-half_range, half_range, 1.0, maximum_acceleration),
+                );
+            }
+            close(current.pilot_position_m(), target.position_m(), 1.0e-10);
+            close(current.pilot_velocity_mps(), 0.0, 1.0e-10);
+        }
+    }
+}
+
+#[test]
+fn pilot_stopping_certificate_has_a_bounded_numerical_domain() {
+    for (half_range, maximum_acceleration, velocity) in [
+        (100.0, 0.02, 1.0),
+        (100.0, 1.0e-300, 1.0e-150),
+        (1.0e304, f64::from_bits(1), 1.0e-10),
+    ] {
+        let aircraft = AircraftModel::try_new(
+            4.0,
+            diagonal_inertia(1.0, 1.0, 1.0),
+            0.0,
+            0.0,
+            -half_range,
+            half_range,
+            1.0,
+            maximum_acceleration,
+        )
+        .unwrap();
+        let current = state(
+            [0.0; 3],
+            [0.0; 3],
+            UnitQuaternion::IDENTITY,
+            [0.0; 3],
+            0.0,
+            velocity,
+        );
+        let target = PilotPositionTarget::try_new(&aircraft, 25.0).unwrap();
+        assert_eq!(
+            pilot_target_acceleration(&aircraft, &current, target, 0.01),
+            Err(DynamicsError::PilotMotionOutsidePolicyDomain)
+        );
+        assert_eq!(current.pilot_position_m(), 0.0);
+        assert_eq!(current.pilot_velocity_mps(), velocity);
+    }
+}
+
 #[test]
 fn quaternion_rotation_round_trips_vectors_between_frames() {
     let quarter_turn = UnitQuaternion::try_new(

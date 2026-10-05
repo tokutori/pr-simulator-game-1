@@ -80,7 +80,7 @@ async function createFixture(route: ComparisonRoute, existingJson: string) {
       transaction.objectStore("recordMetadata").add({ id, savedAt });
     }
     if (route !== "scan") transaction.objectStore("personalBests").put({ key, recordId: 2 });
-    transaction.objectStore("personalBestIndexState").put({ key: route === "repair" ? "canonical-v1" : "first-winner-v1" });
+    transaction.objectStore("personalBestIndexState").put({ key: route === "repair" ? "canonical-v1" : "first-winner-physics-v3" });
     await done;
   } finally {
     database.close();

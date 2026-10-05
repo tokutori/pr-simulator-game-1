@@ -38,6 +38,12 @@ physics build・scenario・aircraft・environmentのsource hashはcanonical Pers
 
 同じIDでもhashが異なるassetを同一データとして扱わない。
 保存schemaとphysics versionの互換性を分離する。記録済み値の表示と再積分による検証は別操作である。
+schema 4以降のphysics model versionは既知の1から現行versionまでを読み込み対象とし、0、欠落、
+現行より新しいversionを拒否する。過去versionのJSON encode/decodeはversionと保存sampleを維持する。
+Personal Best候補は現行physics model versionとの一致も要求し、過去versionのcanonical keyが
+保存されていても比較対象にしない。
+physics model version 1は初期モデル、2は回復可能な身体移動状態を維持する目標制御、
+3はtick内保持値と終端actuatorの一致を表す。versionの更新は保存schemaを変更しない。
 元のphysics実行系が利用できなくても、schemaと必要assetに互換性があればsnapshot再生は可能とする。
 未知schema、破損、欠落、未対応追加項目の必須性は検証結果として通知する。
 
@@ -47,8 +53,10 @@ physics build・scenario・aircraft・environmentのsource hashはcanonical Pers
 tick kの入力はstate k→k+1に適用する。tick 0の初期状態も保存する。
 時刻は整数tickを正本とし、浮動小数時刻の反復加算を避ける。
 接触がtick間にある場合はtickとfractionを持つ終端event/sampleを追加し、二重sampleを排除する。
-終端sampleは接触時刻に対応する位置、速度、短経路quaternion slerpによる姿勢、角速度、actuator、
-身体位置・速度を同じ補間規則で確定する。接触fractionは接触geometryの各点について補間経路上で探索し、
+終端sampleは接触時刻に対応する位置、速度、短経路quaternion slerpによる姿勢、角速度、
+身体位置・速度を確定する。actuatorは入力 $k$ による更新後の値を区間 $(k,k+1]$ で保持し、
+正の接触fractionでも荷重に用いた同じ値を保存する。fractionが0なら既存のtick $k$ sampleを保持し、
+actuator更新後の値や重複sampleを追加しない。接触fractionは接触geometryの各点について補間経路上で探索し、
 最早eventを選択する。
 接触後のtick $k+1$ 状態は保存しない。Resultの終了点、graph終端、Replay最終poseは同じsampleを参照する。
 
@@ -72,7 +80,7 @@ f64の物理値を保存する。圧縮・量子化は後続format versionで誤
 | attitude_body_to_ned | 単位quaternion。Euler角はderived |
 | angular_velocity_body_rad_s | body角速度 |
 | wind_at_cg_ned_mps | 同じ位置・時刻の重心風sample |
-| actuator_state | 実舵角等の表示・検証に必要な状態 |
+| actuator_state | 初期sample `(0, 0)` は初期舵角、後続sampleはそのsampleへ進めた区間の保持舵角 |
 | pilot_motion_state | パイロットの実前後位置・相対速度・相対加速度 |
 | combined_cg_offset_body_m | datum $O$ から導出した合成重心offset |
 | optional element diagnostics | 要素ID、局所風・対気速度・荷重等 |
@@ -130,7 +138,7 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
 Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。Repositoryとpersistence portにはRust selection factoryを必須で供給する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。
 
-IndexedDB version 4のPB index修復revisionは`first-winner-v1`とする。canonical key v1やrecord schemaの版とは独立である。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。同点は最初のwinnerを保持し、score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
+IndexedDB version 4のPB index修復revisionは`first-winner-physics-v3`とする。canonical key v1やrecord schemaの版とは独立であり、physics model versionの更新時に修復revisionも更新する。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`、`first-winner-v1`、過去physics versionの完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。過去physics versionのrecordをPB indexと一覧のPB表示から除外し、現行versionの同点は最初のwinnerを保持する。score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
 
 再構築・PB index・修復markerと、保存時のrecord・metadata追加は同一readwrite transactionで確定する。不適格candidateの保存も修復を先に完了する。失敗時は全変更をrollbackし、生成したselectionを解放する。以後の保存はindex先recordとのみ比較し、一覧取得は再構築を繰り返さない。
 
@@ -150,8 +158,13 @@ Rust補間sampleからのrender pose適用、連続playback clock、pause、0.5�
 BPG-019でtick/FPS独立性、初期・終端sample、欠損/非有限値/重複tick、範囲外seek、
 capacity境界、allocation、schema round-trip、手計算可能な集計値、失敗finalizationを検証する。
 record validationは単調時刻、単位quaternion、有限値、有効な要素IDとheader整合を確認する。
-playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路quaternion slerp、線形状態補間、
-角度のwrap-aware補間を行う。queryは記録範囲外を拒否し、物理状態を変更しない。
+playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路quaternion slerp、位置・速度・
+身体状態の線形補間、telemetryと角度のwrap-aware補間を行う。actuatorはexact sample時刻でその保存値を返し、
+sample間の内点では終端側sampleの保持値を返す。fractional terminal区間にも同じ規則を適用する。
+queryは記録範囲外を拒否し、物理状態を変更しない。
+復元した旧recordにも同じactuator query規則を適用し、保存sampleと厳密な終端値は変更しない。
+旧recordの線形補間済みterminal actuatorから当時の荷重に用いた保持値を再構成することはできないため、
+その値の補正や再積分は行わない。
 
 recordの順序・範囲判定は整数tickとfractionの組で行い、`(n, 1)`と`(n + 1, 0)`を同一時刻として扱う。
 保存sampleとfinalization metadataの一致検査には保存したtick/fractionの厳密一致を用いる。

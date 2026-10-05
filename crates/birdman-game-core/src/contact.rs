@@ -1,5 +1,5 @@
 use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
-use crate::flight_control::{ActuatorConfig, ActuatorError, ActuatorState, SurfaceDeflections};
+use crate::flight_control::{ActuatorConfig, ActuatorError, ActuatorState};
 use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector};
 use crate::simulation::FlightTickState;
 
@@ -41,7 +41,7 @@ impl<'a> WaterContactGeometry<'a> {
     }
 }
 
-/// Physical state interpolated at a fractional physics tick.
+/// Physical state sampled at a fractional physics tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InterpolatedFlightState {
     flight_state: FlightState,
@@ -95,6 +95,13 @@ impl WaterContactSample {
 ///
 /// Flight variables use linear interpolation except attitude, which uses shortest-arc
 /// quaternion slerp. The event fraction is refined against that same interpolated state.
+/// Actuator state is the previous state at fraction zero and the next state's held
+/// deflections at every positive fraction, matching the controlled tick's load input.
+///
+/// The caller must supply adjacent snapshots from one aircraft and actuator model.
+/// With externally constructed endpoints, this API treats the next actuator state as
+/// held throughout `(previous.tick_index(), next.tick_index()]`; it does not infer a
+/// continuous actuator trajectory or validate that commands generated that state.
 pub fn detect_water_contact(
     aircraft: &AircraftModel,
     previous: FlightTickState,
@@ -235,28 +242,14 @@ fn interpolate_tick_state(
         ),
     )
     .map_err(ContactError::Dynamics)?;
-    let previous_deflections = previous.actuator_state().deflections();
-    let next_deflections = next.actuator_state().deflections();
-    let deflections = SurfaceDeflections::try_new(
-        interpolate_scalar(
-            previous_deflections.roll_rad(),
-            next_deflections.roll_rad(),
-            fraction,
-        ),
-        interpolate_scalar(
-            previous_deflections.pitch_rad(),
-            next_deflections.pitch_rad(),
-            fraction,
-        ),
-        interpolate_scalar(
-            previous_deflections.yaw_rad(),
-            next_deflections.yaw_rad(),
-            fraction,
-        ),
-    )
-    .map_err(ContactError::Actuator)?;
-    let actuator_state =
-        ActuatorState::try_new(actuator_limits, deflections).map_err(ContactError::Actuator)?;
+    // Exact tick snapshots retain their completed-interval actuator. A positive
+    // fraction belongs to the following interval and uses its updated held value.
+    let actuator_state = if fraction == 0.0 {
+        previous.actuator_state()
+    } else {
+        next.actuator_state()
+    };
+    validate_actuator_state(actuator_limits, actuator_state)?;
     Ok(InterpolatedFlightState {
         flight_state,
         actuator_state,
@@ -334,6 +327,20 @@ mod tests {
     }
 
     fn tick(tick_index: u64, down: f64, angle: f64, roll: f64) -> FlightTickState {
+        tick_with_deflections(
+            tick_index,
+            down,
+            angle,
+            SurfaceDeflections::try_new(roll, 0.0, 0.0).unwrap(),
+        )
+    }
+
+    fn tick_with_deflections(
+        tick_index: u64,
+        down: f64,
+        angle: f64,
+        deflections: SurfaceDeflections,
+    ) -> FlightTickState {
         let attitude =
             UnitQuaternion::try_new(libm::cos(angle * 0.5), 0.0, libm::sin(angle * 0.5), 0.0)
                 .unwrap();
@@ -346,11 +353,7 @@ mod tests {
             0.0,
         )
         .unwrap();
-        let actuator_state = ActuatorState::try_new(
-            limits(),
-            SurfaceDeflections::try_new(roll, 0.0, 0.0).unwrap(),
-        )
-        .unwrap();
+        let actuator_state = ActuatorState::try_new(limits(), deflections).unwrap();
         FlightTickState::try_new(
             &aircraft(),
             limits(),
@@ -400,7 +403,7 @@ mod tests {
         assert_eq!(result.contact_point_index(), 0);
         let state = result.state();
         assert!(state.flight_state().datum_position_ned().components()[2].abs() < 1.0e-14);
-        assert!((state.actuator_state().roll_rad() - 0.1).abs() < 1.0e-14);
+        assert_eq!(state.actuator_state().roll_rad(), 0.2);
         assert_eq!(
             state.flight_state().attitude_body_to_ned(),
             UnitQuaternion::IDENTITY
@@ -433,6 +436,43 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(endpoint_contact.fraction(), 1.0);
+    }
+
+    #[test]
+    fn externally_constructed_endpoints_use_held_actuators_after_the_start_boundary() {
+        let points = [contact_point(0.0, 0.0)];
+        for axis in 0..3 {
+            for sign in [-1.0, 1.0] {
+                let mut old = [0.0; 3];
+                let mut held = [0.0; 3];
+                old[axis] = -sign * 0.05;
+                held[axis] = sign * 0.2;
+                let old = SurfaceDeflections::try_new(old[0], old[1], old[2]).unwrap();
+                let held = SurfaceDeflections::try_new(held[0], held[1], held[2]).unwrap();
+                for fraction in [0.0, 0.5, 1.0] {
+                    let previous = tick_with_deflections(4, -fraction, 0.0, old);
+                    let next = tick_with_deflections(5, 1.0 - fraction, 0.0, held);
+                    let contact = detect_water_contact(
+                        &aircraft(),
+                        previous,
+                        next,
+                        limits(),
+                        geometry(&points),
+                    )
+                    .unwrap()
+                    .unwrap();
+                    assert!((contact.fraction() - fraction).abs() < 1.0e-14);
+                    assert_eq!(
+                        contact.state().actuator_state(),
+                        if fraction == 0.0 {
+                            previous.actuator_state()
+                        } else {
+                            next.actuator_state()
+                        },
+                    );
+                }
+            }
+        }
     }
 
     #[test]

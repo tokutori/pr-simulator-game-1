@@ -91,6 +91,9 @@ impl SyntheticPlayableFlight<'static> {
 }
 
 impl<'a> SyntheticPlayableFlight<'a> {
+    /// Version of the playable fixture's synthetic airframe and aerodynamic parameters.
+    pub const AIRCRAFT_MODEL_VERSION: u32 = 2;
+
     /// Builds a synthetic glide using the caller's validated stationary wind field.
     ///
     /// Grid samples remain borrowed for the lifetime of the fixture and any
@@ -316,8 +319,17 @@ impl SyntheticFlight {
 fn synthetic_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightError> {
     use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
 
-    let envelope = ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0)
-        .map_err(SyntheticFlightError::Aerodynamics)?;
+    let envelope = ElementEnvelope::try_new(
+        -0.8,
+        0.8,
+        -0.8,
+        0.8,
+        0.0,
+        100_000.0,
+        crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3])
+            .map_err(SyntheticFlightError::Aerodynamics)?,
+    )
+    .map_err(SyntheticFlightError::Aerodynamics)?;
     let reference =
         ElementReference::try_new(0.4, 1.0, 0.5).map_err(SyntheticFlightError::Aerodynamics)?;
     let zero =
@@ -378,8 +390,17 @@ fn synthetic_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightErro
 fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticFlightError> {
     use AerodynamicRole::{Fuselage, HorizontalTail, LeftWing, RightWing, VerticalTail};
 
-    let envelope = ElementEnvelope::try_new(-0.8, 0.8, -0.8, 0.8, 0.0, 100_000.0)
-        .map_err(SyntheticFlightError::Aerodynamics)?;
+    let envelope = ElementEnvelope::try_new(
+        -0.8,
+        0.8,
+        -0.8,
+        0.8,
+        0.0,
+        100_000.0,
+        crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3])
+            .map_err(SyntheticFlightError::Aerodynamics)?,
+    )
+    .map_err(SyntheticFlightError::Aerodynamics)?;
     let zero =
         CoefficientLaw::try_new(0.0, 0.0, 0.0).map_err(SyntheticFlightError::Aerodynamics)?;
     let element = |role: AerodynamicRole,
@@ -412,7 +433,12 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
         let derivatives = ControlCoefficientDerivatives::try_new(
             control_lift,
             [0.0; 3],
-            [0.0; 3],
+            match role {
+                // Positive yaw command produces a leftward tail force. Its
+                // aft moment arm then produces positive body yaw moment.
+                VerticalTail => [0.0, 0.0, -0.2],
+                LeftWing | RightWing | HorizontalTail | Fuselage => [0.0; 3],
+            },
             [0.0; 3],
             pitch_moment_control,
             [0.0; 3],
@@ -472,9 +498,9 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
             0.5,
             0.0,
             0.08,
-            [0.0, 0.0, 0.2],
             [0.0; 3],
-            (0.0, 0.0, -0.1),
+            [0.0; 3],
+            (-1.8, 0.0, -0.1),
         )?,
         element(
             Fuselage,
@@ -493,12 +519,15 @@ fn synthetic_playable_aerodynamic_model() -> Result<AerodynamicModel, SyntheticF
 
 #[cfg(test)]
 mod tests {
-    use super::{SyntheticFlightError, SyntheticPlayableFlight};
+    use super::{
+        SyntheticFlightError, SyntheticPlayableFlight, synthetic_playable_aerodynamic_model,
+    };
     use crate::{
-        AeroError, AerodynamicEvaluationError, AerodynamicRole, BodyVector, ControlMode,
-        DynamicsError, FbwAuthority, FlightFeedbackInput, FlightState, FlightTickError,
-        FlightTickOutcome, LoadError, NedPoint, NedVector, PilotPositionTarget, SurfaceCommands,
-        WindError, WindField,
+        ActuatorConfig, AeroError, AerodynamicEvaluationError, AerodynamicRole,
+        BodyRateFeedbackConfig, BodyVector, ControlMode, DynamicsError, FbwAuthority,
+        FlightFeedbackInput, FlightState, FlightTickError, FlightTickOutcome, FlightTickState,
+        LoadError, NedPoint, NedVector, PilotPositionTarget, SurfaceCommands, SurfaceDeflections,
+        UniformAir, UnitQuaternion, WindError, WindField,
     };
 
     fn neutral_input(fixture: &SyntheticPlayableFlight<'_>) -> FlightFeedbackInput {
@@ -525,6 +554,220 @@ mod tests {
                 (actual - expected).abs() <= 1.0e-10,
                 "{actual} != {expected}"
             );
+        }
+    }
+
+    fn advance_airborne(
+        fixture: &SyntheticPlayableFlight<'_>,
+        state: FlightTickState,
+        mode: ControlMode,
+        input: FlightFeedbackInput,
+    ) -> FlightTickState {
+        advance_airborne_with_feedback(fixture, state, mode, fixture.feedback(), input)
+    }
+
+    fn advance_airborne_with_feedback(
+        fixture: &SyntheticPlayableFlight<'_>,
+        mut state: FlightTickState,
+        mode: ControlMode,
+        feedback: BodyRateFeedbackConfig,
+        input: FlightFeedbackInput,
+    ) -> FlightTickState {
+        for _ in 0..200 {
+            let FlightTickOutcome::Advanced(next) = fixture
+                .scenario()
+                .advance_feedback_tick_with_contact(state, mode, feedback, input)
+                .unwrap()
+            else {
+                panic!("unexpected early contact");
+            };
+            state = next;
+        }
+        state
+    }
+
+    #[test]
+    fn playable_yaw_deflection_generates_side_force_and_aft_yaw_moment() {
+        let model = synthetic_playable_aerodynamic_model().unwrap();
+        let state = FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+            NedVector::try_new(10.0, 0.0, 0.0).unwrap(),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let air = UniformAir::try_new(NedVector::zero(), 1.225).unwrap();
+        let neutral = model.evaluate(&state, air).unwrap();
+        for sign in [-1.0, 1.0] {
+            let evaluation = model
+                .evaluate_with_surface_deflections(
+                    &state,
+                    air,
+                    SurfaceDeflections::try_new(0.0, 0.0, sign * 0.1).unwrap(),
+                )
+                .unwrap();
+            let tail = evaluation.element(AerodynamicRole::VerticalTail);
+            let baseline = neutral.element(AerodynamicRole::VerticalTail);
+            let force = tail
+                .force_body_newtons()
+                .minus(baseline.force_body_newtons())
+                .unwrap()
+                .components();
+            let moment = tail
+                .moment_about_datum_body_newton_meters()
+                .minus(baseline.moment_about_datum_body_newton_meters())
+                .unwrap()
+                .components();
+            // q = 61.25 Pa, S = 0.5 m², CY = -0.2 * (+/-0.1).
+            assert!((force[1] + sign * 0.6125).abs() <= 1.0e-12);
+            assert!((moment[2] - sign * 1.1025).abs() <= 1.0e-12);
+            assert_eq!(force[2], 0.0);
+            assert_eq!(moment[1], 0.0);
+        }
+    }
+
+    #[test]
+    fn playable_yaw_authority_responds_in_each_control_mode_and_is_deterministic() {
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let initial = fixture.scenario().initial_state();
+        let neutral = advance_airborne(
+            &fixture,
+            initial,
+            ControlMode::Manual,
+            neutral_input(&fixture),
+        );
+        assert!(neutral.flight_state().angular_velocity_body().components()[2].abs() < 1.0e-12);
+        for sign in [-1.0, 1.0] {
+            let input = FlightFeedbackInput::new(
+                SurfaceCommands::try_new(0.0, 0.0, sign * 0.2).unwrap(),
+                BodyVector::try_new(0.0, 0.0, sign * 0.5).unwrap(),
+                PilotPositionTarget::try_new(&fixture.aircraft(), 0.0).unwrap(),
+            );
+            let mut rates = [0.0; 3];
+            for (index, mode) in [
+                ControlMode::Manual,
+                ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+                ControlMode::Automatic,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let first = advance_airborne(&fixture, initial, mode, input);
+                let repeated = advance_airborne(&fixture, initial, mode, input);
+                assert_eq!(first, repeated);
+                rates[index] = sign * first.flight_state().angular_velocity_body().components()[2];
+                assert!(
+                    rates[index] > 1.0e-4,
+                    "mode={mode:?}, yaw rate={}",
+                    rates[index]
+                );
+                assert!(sign * first.actuator_state().yaw_rad() > 0.0);
+            }
+            assert!(rates[0] > rates[1] && rates[1] > rates[2]);
+        }
+        let ignored_pilot = FlightFeedbackInput::new(
+            SurfaceCommands::try_new(0.0, 0.0, 0.2).unwrap(),
+            BodyVector::zero(),
+            PilotPositionTarget::try_new(&fixture.aircraft(), 0.0).unwrap(),
+        );
+        let automatic = advance_airborne(&fixture, initial, ControlMode::Automatic, ignored_pilot);
+        assert!(
+            automatic
+                .flight_state()
+                .angular_velocity_body()
+                .components()[2]
+                .abs()
+                < 1.0e-12
+        );
+    }
+
+    #[test]
+    fn playable_yaw_feedback_damps_positive_and_negative_body_rates() {
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let initial = fixture.scenario().initial_state();
+        let flight = initial.flight_state();
+        for sign in [-1.0, 1.0] {
+            let disturbed = FlightState::try_new(
+                flight.datum_position_ned(),
+                flight.datum_velocity_ned(),
+                flight.attitude_body_to_ned(),
+                BodyVector::try_new(0.0, 0.0, sign * 0.1).unwrap(),
+                flight.pilot_position_m(),
+                flight.pilot_velocity_mps(),
+            )
+            .unwrap();
+            let disturbed = FlightTickState::try_new(
+                &fixture.aircraft(),
+                [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
+                0,
+                disturbed,
+                initial.actuator_state(),
+            )
+            .unwrap();
+            let manual = advance_airborne(
+                &fixture,
+                disturbed,
+                ControlMode::Manual,
+                neutral_input(&fixture),
+            );
+            // Isolate the yaw feedback contribution from roll/pitch cross coupling.
+            let yaw_feedback = BodyRateFeedbackConfig::try_new(
+                [0.0, 0.0, fixture.feedback().gains_seconds()[2]],
+                fixture.feedback().command_limits_rad(),
+            )
+            .unwrap();
+            let automatic = advance_airborne_with_feedback(
+                &fixture,
+                disturbed,
+                ControlMode::Automatic,
+                yaw_feedback,
+                neutral_input(&fixture),
+            );
+            let manual_rate = sign * manual.flight_state().angular_velocity_body().components()[2];
+            let automatic_rate = sign
+                * automatic
+                    .flight_state()
+                    .angular_velocity_body()
+                    .components()[2];
+            assert!(
+                automatic_rate > 0.0 && automatic_rate < manual_rate && manual_rate < 0.1,
+                "sign={sign}, automatic yaw rate={automatic_rate}, manual yaw rate={manual_rate}"
+            );
+            assert!(sign * automatic.actuator_state().yaw_rad() < 0.0);
+            let all_axes = advance_airborne(
+                &fixture,
+                disturbed,
+                ControlMode::Automatic,
+                neutral_input(&fixture),
+            );
+            assert!(all_axes.flight_state().angular_velocity_body().components()[2].abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn playable_roll_and_pitch_commands_retain_their_body_axis_signs() {
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
+        for (axis, magnitude) in [(0, 0.1), (1, 0.02)] {
+            for sign in [-1.0, 1.0] {
+                let mut commands = [0.0; 3];
+                commands[axis] = sign * magnitude;
+                let input = FlightFeedbackInput::new(
+                    SurfaceCommands::try_new(commands[0], commands[1], commands[2]).unwrap(),
+                    BodyVector::zero(),
+                    PilotPositionTarget::try_new(&fixture.aircraft(), 0.0).unwrap(),
+                );
+                let state = advance_airborne(
+                    &fixture,
+                    fixture.scenario().initial_state(),
+                    ControlMode::Manual,
+                    input,
+                );
+                assert!(
+                    sign * state.flight_state().angular_velocity_body().components()[axis] > 0.0
+                );
+            }
         }
     }
 

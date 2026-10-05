@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use birdman_game_core::{NedPoint, NedVector, WindField};
+use birdman_game_core::{NedPoint, NedVector, SyntheticPlayableFlight, WindField};
 use birdman_game_format::{
     EnvironmentDocument, EnvironmentFormatError, EnvironmentWindGrid, ScenarioCatalogEntry,
     WeatherClass,
@@ -11,7 +11,7 @@ const BUNDLED_ENVIRONMENT_BYTES: &[u8] =
 const BUNDLED_ENVIRONMENT_ENTRY: ScenarioCatalogEntry = ScenarioCatalogEntry {
     scenario_id: 6,
     scenario_version: 1,
-    aircraft_model_version: 1,
+    aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
     environment_version: 6,
     weather: WeatherClass::Typical,
 };
