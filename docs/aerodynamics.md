@@ -63,7 +63,10 @@ roll・yawは$b$、pitchは$c$で最初に次元化する。
 ```
 
 `WindAtBetaZero`では、表のbeta=0に対応する次の列ベクトルでbodyへ回転する。
-current betaでは回転しない。$b\ne c$のため、係数ベクトルを先に回してから各軸をscaleする処理は禁止する。
+current betaでは回転しない。公開契約の評価順序は次元化後の軸回転とする。
+alphaだけを用いるこのbody y軸回転は、共通のspan $b$を用いるrollとyawだけを混合するため、
+$\operatorname{diag}(b,c,b)$と可換である。
+pitchとroll/yawを混合する一般回転では、$b\ne c$の場合に次元化と回転の順序が結果へ影響する。
 
 ```math
 e_x^0=(\cos\alpha,0,\sin\alpha),\quad e_y^0=(0,1,0),\quad

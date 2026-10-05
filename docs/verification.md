@@ -68,7 +68,7 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 構築時検証 | 各列・alphaの非有限値、2点未満、重複・逆順、負CDi/CDv、非正参照量・密度、無効metadataを拒否。負lift/momentは有効 |
 | PWL | 全7列の独立補間、異なる区間slope、元のknot値、両端点、直外の拒否。係数誤差はおおむね $10^{-15}$ |
 | 数値境界 | 極端な有限alpha幅・符号の異なる係数、最小正subnormal速度、計算overflowを区別。外挿やclampは行わない |
-| 力・moment軸 | $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$、非ゼロCl/Cnの解析6成分。momentは次元化後にbeta-zero回転し、current beta回転と区別。許容差は32 epsilon程度の演算scaleを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N m |
+| 力・moment軸 | $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$、非ゼロCl/Cnの解析6成分。momentの解析値、span/MACの軸対応、同じalpha・Vでbetaを変えたmomentの一致を確認。alpha-only回転と次元化は可換である。許容差は32 epsilon程度の演算scaleを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N m |
 | 参照点 | 固定PとOの表現で同じdatum wrench、general tensor・moving pilot方程式の応答が一致。さらにalpha=beta=0を維持する軸方向drag+roll fixtureで二つの静的providerを100 tick実行し、位置・速度・角速度・quaternion各成分差 $\le10^{-12}$ |
 | datum flow | Pにoffsetがあり、rate・空間wind gradientがあってもOだけでstaticを評価。XCP/点速度の二重適用がない |
 | frame・風 | NEDからbodyへの逆回転、一様world速度と風の同量加算による荷重不変性 |
