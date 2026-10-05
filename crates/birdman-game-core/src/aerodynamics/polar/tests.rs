@@ -774,7 +774,16 @@ fn exclusive_provider_delegates_one_model_and_rejects_unmodeled_controls() {
                 law(0.0),
                 law(0.0),
             ),
-            crate::ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap(),
+            crate::ElementEnvelope::try_new(
+                -1.0,
+                1.0,
+                -1.0,
+                1.0,
+                0.0,
+                100_000.0,
+                crate::ControlEnvelope::NEUTRAL,
+            )
+            .unwrap(),
         )
         .unwrap()
     }))
