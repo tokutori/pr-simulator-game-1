@@ -442,7 +442,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     stopListening: vi.fn<PhoneVrSensorPort["stopListening"]>()
   } satisfies PhoneVrSensorPort;
   const renderer = {
-    startLoop: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
+    startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
     setFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), setStereoPresentation: vi.fn(),
     transformTrackingPose: (pose) => pose
   } satisfies RendererAdapter;

@@ -421,6 +421,7 @@ function createFixture() {
   let profile: StereoPresentationProfile | null = null;
   const renderer = {
     startLoop: vi.fn<RendererAdapter["startLoop"]>(),
+    beginViewFrame: vi.fn<RendererAdapter["beginViewFrame"]>(),
     stopLoop: vi.fn<RendererAdapter["stopLoop"]>(),
     render: vi.fn<RendererAdapter["render"]>(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(),

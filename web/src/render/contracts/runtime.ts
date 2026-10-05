@@ -3,6 +3,7 @@ import type { CinematicCameraView } from "./camera.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 import type { HeadHudFrame } from "./head-hud.js";
+import type { ViewerFrame } from "./viewer-frame.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -56,7 +57,8 @@ export interface SelectRay {
 }
 
 export interface RendererAdapter {
-  startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void;
+  startLoop(callback: (timestampMs: number, viewer: ViewerFrame) => void): void;
+  beginViewFrame(): void;
   stopLoop(): void;
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;

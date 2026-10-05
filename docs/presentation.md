@@ -255,6 +255,14 @@ DeviceOrientationControlsは使用しない。
 ## 時間・性能・操作
 
 rendererのanimation loop所有者は常に1つとする。backend切替でphysicsを二重stepしない。
+各animation冒頭で前フレームのpending描画入力を適用し、同フレームのraw head poseと眼別projectionを捕捉する。
+続くphysics callbackはcamera選択とintrinsicsを維持する非null poseだけを即時更新する。
+Runtimeはphysics後に`beginViewFrame()`を呼び、以後のview導出、canvas計測・描画、gaze、3D描画を同じ入力で完了する。
+camera切替、FOV、stereo、viewport、poseの明示取消は捕捉後に適用せず、次animationへ送る。
+view開始後のpose・lake入力も次animationへ送る。pendingとidleの新setterは最後の入力を優先し、
+例外時もprivate frame phaseを解放する。pendingはstop/startをまたいで次animationまで保持し、disposeで破棄する。
+animation外のnative selectは最後に描画した操作panelとmountを使う。未描画入力をrayへ混合せず、
+初描画前、操作panelの非表示、loop停止、session終了時はselectを無効にする。
 physicsは100 Hzを維持し、snapshot補間とhead pose取得を別に扱う。
 XRではruntimeのframe schedulingと眼別projectionを使用し、tracking poseは描画直前に反映する。
 Desktop/Phoneの画質目標とXRのrefresh rateを区別する。

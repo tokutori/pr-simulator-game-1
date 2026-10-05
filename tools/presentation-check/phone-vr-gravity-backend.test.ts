@@ -267,6 +267,7 @@ function createFixture(screenAngle: number, mount: Pose = IDENTITY_POSE) {
 }
 
 class RecordingRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   stereo: StereoPresentationProfile | null = null;
   constructor(private readonly mount: Pose = IDENTITY_POSE) {}
   startLoop(): void {}

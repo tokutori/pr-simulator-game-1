@@ -189,6 +189,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   let view: UiViewModel;
   let latestFrame: BackendFrame | null;
   let actions: UiAction[];
+  let onUiAction: ((action: UiAction) => void) | null;
   const viewport = { x: 1280, y: 720, pixelRatio: 1 };
   const head = pose(vec3(0.06, 0.08, -0.05), quaternion(Math.cos(0.13), 0, Math.sin(0.13), 0));
   const flight: FlightRenderPose = {
@@ -206,12 +207,14 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     if (capture.driver === null) throw new Error("Recording driver not constructed");
     driver = capture.driver;
     actions = [];
+    onUiAction = null;
     view = { ...createSceneFixture("Flight"), panels: [] };
     latestFrame = null;
     backend = new WebXrPresentationBackend(bundle.webxr, bundle.renderer, () => viewport,
-      (action) => { actions.push(action); }, () => undefined);
-    bundle.renderer.startLoop((timestamp, viewerPose) => {
-      latestFrame = backend.currentFrame(timestamp, view, viewerPose);
+      (action) => { actions.push(action); onUiAction?.(action); }, () => undefined);
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      bundle.renderer.beginViewFrame();
+      latestFrame = backend.currentFrame(timestamp, view, viewer.trackingFromHead);
       bundle.renderer.render(latestFrame);
     });
     await backend.requestSessionFromUserGesture();
@@ -224,6 +227,104 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.stopLoop();
     bundle.renderer.dispose();
     vi.unstubAllGlobals();
+  });
+
+  it("stages a synchronous gaze Scene cut until the following rendered frame", () => {
+    const mountedHead = composePose(eyePose(flight), head);
+    view = centeredPanel("menu", mountedHead);
+    onUiAction = (action) => {
+      if (action.type !== "activate") return;
+      bundle.renderer.setFlightPose(null);
+      bundle.renderer.setFlightCameraMode("pilot");
+    };
+    session.run(100, head);
+    expect(actions).toEqual([{ type: "focus", controlId: "mount-button" }]);
+    expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(flight, mountedHead)));
+    session.run(2200, head);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+    expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(flight, mountedHead)));
+    session.run(2300, head);
+    expectEyes(lastDraw(driver), poseMatrix(head));
+  });
+
+  it("uses only the last rendered mount for native select before an idle Scene cut is drawn", async () => {
+    view = centeredPanel("head", composePose(eyePose(flight), head));
+    session.select(100, head);
+    expect(actions).toHaveLength(0);
+    session.run(200, head);
+    actions.length = 0;
+    bundle.renderer.setFlightPose(null);
+    session.select(10_000, head);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+    actions.length = 0;
+    view = centeredPanel("head", head);
+    session.run(10_100, head);
+    expectEyes(lastDraw(driver), poseMatrix(head));
+    session.select(20_000, head);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+    actions.length = 0;
+    await backend.stop();
+    actions.length = 0;
+    session.select(30_000, head);
+    expect(actions).toHaveLength(0);
+  });
+
+  it("keeps native select disabled after a stopped callback renders and until a restarted loop draws", () => {
+    view = centeredPanel("head", composePose(eyePose(flight), head));
+    session.run(100, head);
+    bundle.renderer.stopLoop();
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      bundle.renderer.beginViewFrame();
+      bundle.renderer.stopLoop();
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+    });
+    session.run(200, head);
+    expect(lastDraw(driver).panel).not.toBeNull();
+    actions.length = 0;
+    session.select(10_000, head);
+    expect(actions).toHaveLength(0);
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      bundle.renderer.beginViewFrame();
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+    });
+    session.select(11_000, head);
+    expect(actions).toHaveLength(0);
+    session.run(11_100, head);
+    actions.length = 0;
+    session.select(20_000, head);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+  });
+
+  it("keeps pending input lifetime and latest-write-wins across frame exceptions and stop/start", () => {
+    bundle.renderer.stopLoop();
+    bundle.renderer.startLoop(() => {
+      bundle.renderer.beginViewFrame();
+      bundle.renderer.setFlightPose(null);
+      throw new Error("fixture view failure");
+    });
+    expect(() => { session.run(100, head); }).toThrow("fixture view failure");
+    const latestFlight = { ...flight, pilotPositionMeters: 0.4 };
+    bundle.renderer.setFlightPose(latestFlight);
+    bundle.renderer.stopLoop();
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      bundle.renderer.beginViewFrame();
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+    });
+    session.run(200, head);
+    expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(latestFlight, composePose(eyePose(latestFlight), head))));
+  });
+
+  it("applies newer nonnull physics pose in the current frame despite staged optical inputs", () => {
+    bundle.renderer.stopLoop();
+    const updatedFlight = { ...flight, pilotPositionMeters: 0.4 };
+    bundle.renderer.startLoop((timestamp, viewer) => {
+      bundle.renderer.setFlightCameraMode("pilot");
+      bundle.renderer.setFlightPose(updatedFlight);
+      bundle.renderer.beginViewFrame();
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+    });
+    session.run(100, head);
+    expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(updatedFlight, composePose(eyePose(updatedFlight), head))));
   });
 
   it("retains PilotEye, moving body offset, runtime head and IPD exactly once in both native eyes", async () => {
