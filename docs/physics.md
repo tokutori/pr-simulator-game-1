@@ -73,6 +73,17 @@ momentを合成する。位置依存風場はBPG-004/005で別境界から接続
 係数lawは参照値・alpha derivative・beta derivativeによる一次式であり、rate derivativeは持たない。
 適用範囲外はclampせずerrorとし、外力providerの失敗としてstep全体へ伝播する。
 
+## BPG-038の全機static接続
+
+`StaticPolarLoad`は各RK stageのdatum対気速度から全機polarを評価し、body forceとdatum momentを返す。
+momentの固定参照点$P$と軸、共通参照面積・span・MAC、7独立係数列のPWL補間は
+`aerodynamics.md`を正本とする。momentは次元化、beta-zero wind軸からbodyへの回転、
+$r_{OP}\times F$による一回の移送の順に評価する。
+`AerodynamicLoadProvider`は静的全機providerと既存element-only providerを排他的に選ぶ。
+FRD/NED、6DoF、一般慣性tensor、moving pilot、quaternion、RK4、100 Hz tickの契約は共通である。
+static providerの範囲外・wind sampling・非有限計算は元のcauseを保持してstep全体へ伝播する。
+新しいplayableへの適用と公開contractの切替はBPG-042で行う。
+
 ## 時間と処理落ち
 
 ```math

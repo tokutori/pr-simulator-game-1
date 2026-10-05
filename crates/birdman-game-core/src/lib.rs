@@ -24,10 +24,12 @@ mod synthetic_flight;
 mod wind_field;
 
 pub use aerodynamics::{
-    AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicModel,
-    AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives, ElementEnvelope,
-    ElementOrientation, ElementReference, ElementalFlow, FlowAngles, UniformAerodynamicLoad,
-    UniformAir, WindFieldAerodynamicLoad,
+    AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicLoadProvider,
+    AerodynamicModel, AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives,
+    ElementEnvelope, ElementOrientation, ElementReference, ElementalFlow, FlowAngles,
+    PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
+    StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata, StaticPolarRow,
+    UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
 };
 pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
 pub use contact::{

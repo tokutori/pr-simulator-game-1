@@ -1167,7 +1167,8 @@ fn is_outside_valid_envelope(error: FlightTickError) -> bool {
         return false;
     };
     match error {
-        AerodynamicEvaluationError::Element { cause, .. }
+        AerodynamicEvaluationError::StaticPolar { cause }
+        | AerodynamicEvaluationError::Element { cause, .. }
         | AerodynamicEvaluationError::Aggregate { cause } => cause == AeroError::OutsideEnvelope,
     }
 }

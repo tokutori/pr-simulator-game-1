@@ -5,6 +5,13 @@ use crate::flight_control::SurfaceDeflections;
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
+mod polar;
+pub use polar::{
+    AerodynamicLoadProvider, PolarAnalysisMethod, PolarMomentAxes, StaticPolar,
+    StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata,
+    StaticPolarRow,
+};
+
 /// A proper rotation from one element's local axes into the aircraft body axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ElementOrientation {
@@ -113,6 +120,21 @@ pub struct ElementReference {
 }
 
 impl ElementReference {
+    /// Returns the positive reference area in square meters.
+    pub const fn area_square_meters(self) -> f64 {
+        self.area_square_meters
+    }
+
+    /// Returns the roll and yaw reference span in meters.
+    pub const fn span_meters(self) -> f64 {
+        self.span_meters
+    }
+
+    /// Returns the pitch reference chord in meters.
+    pub const fn chord_meters(self) -> f64 {
+        self.chord_meters
+    }
+
     /// Creates positive reference area, span, and chord values in SI units.
     pub fn try_new(
         area_square_meters: f64,

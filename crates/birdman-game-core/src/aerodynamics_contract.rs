@@ -47,17 +47,28 @@ pub enum AeroError {
     NegativeDragCoefficient,
     /// The model does not contain exactly one of each required element role.
     InvalidElementSet,
-    /// A nonzero flow has no defined angle of attack.
+    /// A static polar has fewer than two rows or non-increasing alpha knots.
+    InvalidPolarTable,
+    /// A polar has an empty configuration ID or a zero model version.
+    InvalidPolarMetadata,
+    /// A static-only provider received controls it does not model.
+    UnsupportedControl,
+    /// The flow has no defined angle of attack.
     UndefinedFlowAngle,
-    /// A local flow is outside an element's declared coefficient envelope.
+    /// A flow is outside its declared coefficient envelope or polar interval.
     OutsideEnvelope,
-    /// The wind field could not provide a finite velocity at the element point.
+    /// The wind field could not provide a finite velocity at the datum or local point.
     Wind(WindError),
 }
 
 /// Identifies an element-scoped or model-wide aerodynamic evaluation failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AerodynamicEvaluationError {
+    /// Evaluation failed in the full-aircraft static polar.
+    StaticPolar {
+        /// The original validation, flow, sampling, or load failure.
+        cause: AeroError,
+    },
     /// Evaluation failed while processing the identified element.
     Element {
         /// The aerodynamic element being evaluated.
@@ -73,18 +84,20 @@ pub enum AerodynamicEvaluationError {
 }
 
 impl AerodynamicEvaluationError {
-    /// Returns the affected element, or `None` for an aggregate failure.
+    /// Returns the affected element, or `None` for static or aggregate failures.
     pub const fn role(self) -> Option<AerodynamicRole> {
         match self {
             Self::Element { role, .. } => Some(role),
-            Self::Aggregate { .. } => None,
+            Self::StaticPolar { .. } | Self::Aggregate { .. } => None,
         }
     }
 
     /// Returns the original aerodynamic cause.
     pub const fn cause(self) -> AeroError {
         match self {
-            Self::Element { cause, .. } | Self::Aggregate { cause } => cause,
+            Self::StaticPolar { cause }
+            | Self::Element { cause, .. }
+            | Self::Aggregate { cause } => cause,
         }
     }
 }

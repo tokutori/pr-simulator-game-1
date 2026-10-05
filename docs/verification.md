@@ -58,6 +58,35 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
 | RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
 
+### BPG-038 全機static polar
+
+`aerodynamics::polar::tests`は実機値を含まない独立fixtureで次を検証する。
+7独立係数列から6成分wrenchを評価し、抗力はCDi+CDvの計算値とする。
+
+| ケース | 独立比較対象・受入条件 |
+|---|---|
+| 構築時検証 | 各列・alphaの非有限値、2点未満、重複・逆順、負CDi/CDv、非正参照量・密度、無効metadataを拒否。負lift/momentは有効 |
+| PWL | 全7列の独立補間、異なる区間slope、元のknot値、両端点、直外の拒否。係数誤差はおおむね $10^{-15}$ |
+| 数値境界 | 極端な有限alpha幅・符号の異なる係数、最小正subnormal速度、計算overflowを区別。外挿やclampは行わない |
+| 力・moment軸 | $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$、非ゼロCl/Cnの解析6成分。momentは次元化後にbeta-zero回転し、current beta回転と区別。許容差は32 epsilon程度の演算scaleを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N m |
+| 参照点 | 固定PとOの表現で同じdatum wrench、general tensor・moving pilot方程式の応答が一致。さらにalpha=beta=0を維持する軸方向drag+roll fixtureで二つの静的providerを100 tick実行し、位置・速度・角速度・quaternion各成分差 $\le10^{-12}$ |
+| datum flow | Pにoffsetがあり、rate・空間wind gradientがあってもOだけでstaticを評価。XCP/点速度の二重適用がない |
+| frame・風 | NEDからbodyへの逆回転、一様world速度と風の同量加算による荷重不変性 |
+| provider・error | 排他的選択で既存element-onlyの結果を保持。未対応の非neutral操舵を拒否。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
+| 借用・no_std | row借用のcompile-fail doctest、coreの`wasm32v1-none` build、外部allocation probeで構築・評価・RK stepのallocationを計測 |
+
+static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例はBPG-039で検証する。
+neutral増分0、局所流の微係数、mock trim、公開終端・旧record扱いはBPG-039〜043の試験とする。
+単体polarの合格を、実機精度・wake・失速・Re依存・地面効果の検証として扱わない。
+公開mockはBPG-041で定義・検証し、既定切替はBPG-042の公開型・identity・記録version更新と同時に行う。
+旧BPG-007の距離・時間は既存fixtureの履歴・回帰条件として扱い、新hybridの空力調整targetにしない。
+
+2026-10-05、Windows / Rust 1.97.0の独立したworktreeで上記12件と借用期間のdoctestが成功した。
+repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
+polar・provider・モデル構築のallocation 0、static評価10,000回と既存RK4 step 10,000回のallocation 0を確認した。
+測定は非ゼロ流、P offset、空間wind gradient、moving pilotを含むdebug buildで行った。
+coreのunsafe禁止と依存は維持し、計測用allocatorをrepoのsourceやruntimeへ追加しない。
+
 ### BPG-024 空力境界・error契約
 
 | ケース | 比較対象 | 受入条件 |

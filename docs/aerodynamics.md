@@ -1,8 +1,120 @@
 # 空力契約
 
+## 全機static polar（BPG-038）
+
+`StaticPolar`は一つの解析方式・離散設定・参照量を持つ全機の非線形static表である。
+行は`StaticPolarRow`、独立列は`StaticPolarCoefficients`で表す。迎角`alpha_rad`と
+揚力`lift`（$C_L$）、誘導抗力`induced_drag`（$C_{Di}$）、profile抗力`profile_drag`（$C_{Dv}$）、
+側力`side_force`（$C_Y$）、`roll_moment`（$C_l$）、`pitch_moment`（$C_m$）、`yaw_moment`（$C_n$）を区別する。
+全機profile dragはこの表へ集約する。`drag()`は次式の計算値であり、独立入力列を持たない。
+
+```math
+C_D=C_{Di}+C_{Dv}
+```
+
+構築時に2点以上、全値有限、迎角の厳密単調増加、$C_{Di},C_{Dv}\ge0$、
+正の有限な共通面積$S$・span $b$・MAC $c$を検証する。負の揚力やmomentも有効である。
+型の内部値は非公開とし、検証済みのconstructorだけで組み立てる。各列は区分線形補間する。
+table knotでは元の行を保持し、両端を含む閉区間で評価する。外挿・端点clamp・失速後曲線の追加を行わない。
+有限値の計算で生じるoverflowも型付きerrorとする。
+
+`StaticPolarMetadata`は解析方式、離散設定ID、非ゼロmodel versionを保持する。
+設定IDは舵角として解釈しない。方式・対象・設定・参照量が異なる表を数値だけ継ぎ足さない。
+LLTの主翼表は全機VLM表へ加算しない。Re依存や設定間の連続補間はこの契約に含めない。
+行・設定IDは借用し、構築と荷重評価はheap allocation・I/Oを要しない。
+
+### datumの流れとstatic force
+
+bodyはFRD、worldはNEDとし、角度rad、長さm、力N、moment N mで扱う。
+$R_{NB}$はbodyからNEDへの回転である。全機staticは各RK stageのdatum $O$で風をsampleする。
+
+```math
+v_O^B=R_{NB}^{T}(v_O^N-W_O^N),\qquad
+V=\lVert v_O^B\rVert,\qquad q_\infty=\frac12\rho V^2
+```
+
+```math
+\alpha=\operatorname{atan2}(w,u),\qquad
+\beta=\operatorname{atan2}(v,\sqrt{u^2+w^2})
+```
+
+```math
+e_V=(\cos\alpha\cos\beta,\sin\beta,\sin\alpha\cos\beta),\quad
+e_L=(\sin\alpha,0,-\cos\alpha),\quad
+e_Y=(-\cos\alpha\sin\beta,\cos\beta,-\sin\alpha\sin\beta)
+```
+
+```math
+F_{static}^B=q_\infty S(-C_D e_V+C_Y e_Y+C_L e_L)
+```
+
+beta=0の表をcurrent betaの力基底で表す処理はkinematic continuationの設計仮定である。
+横滑りの非線形係数を取得したという意味は持たない。実装は上式と等価な速度成分の比で基底を計算し、
+先に$1/V$を計算することによる微小速度のoverflowを避ける。minimum airspeedは追加しない。
+
+### momentの軸と参照点
+
+`moment_point_from_datum`はbody固定点$P$の$r_{OP}$であり、移動する重心$G$と区別する。
+`PolarMomentAxes`は`BodyFrd`または`WindAtBetaZero`を明示する。
+roll・yawは$b$、pitchは$c$で最初に次元化する。
+
+```math
+\widetilde M_P=q_\infty S(bC_l,cC_m,bC_n)
+```
+
+`WindAtBetaZero`では、表のbeta=0に対応する次の列ベクトルでbodyへ回転する。
+current betaでは回転しない。$b\ne c$のため、係数ベクトルを先に回してから各軸をscaleする処理は禁止する。
+
+```math
+e_x^0=(\cos\alpha,0,\sin\alpha),\quad e_y^0=(0,1,0),\quad
+e_z^0=(-\sin\alpha,0,\cos\alpha),\qquad
+M_P^B=[e_x^0\ e_y^0\ e_z^0]\widetilde M_P
+```
+
+```math
+M_{O,static}^B=M_P^B+r_{OP}^B\times F_{static}^B
+```
+
+`BodyFrd`は次元化したmomentをそのままbody成分とする。原点移送は一度だけ行い、
+XCP由来のmomentを追加しない。$P$の点速度や風でstatic表を再評価しない。
+同じwrenchを異なる$P$で表す試験は、移送後のdatum荷重と既存moving pilot方程式の応答を比較する。
+
+### providerと後続実装の境界
+
+`StaticPolarLoad`は全機staticだけを返し、errorを`AerodynamicEvaluationError::StaticPolar`として保持する。
+静的providerはneutral以外の既存三系統操舵を`UnsupportedControl`で拒否する。
+`AerodynamicLoadProvider`は借用した`ElementOnly`または`StaticPolar`を排他的に選択する。
+全機staticと旧5要素の全荷重を加算する経路は持たない。
+
+このstatic部品はalphaが未定義のゼロ流・純横方向流を`UndefinedFlowAngle`で拒否する。
+hybridのゼロ速度特例はBPG-039で全proxy actual流と構成・state・controlを検証して実装する。
+datumだけを見た荷重0の早期returnを追加しない。小さな正の前進流は有限な角度を持ち、動圧と荷重は0へ近づく。
+BPG-039で局所normal-forceのcurrent-reference差分とstage単位の小擾乱適用範囲を追加する。
+局所drag・固有Cm、独立rate derivative・操舵torque、wake・動的失速・Re依存・地面効果は追加しない。
+水面接触は既存の幾何判定で扱い、地面近傍の空力精度は保証しない。
+
+BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で公開用架空mockを定義・検証する。
+公開アプリの既定hybrid切替はBPG-042 / [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)で、
+二系統入力の公開型・model/controller identity・record versionの更新と同時に行う。
+
+### 根拠と来歴
+
+非公開xlsxの監査は設計者が完了しており、この実装に実係数・実機の質量・慣性・形状数値・元解析ファイルを導入しない。
+software試験は架空値だけを使用する。Excel importerは対象外である。
+実データ導入時には来歴・座標・参照量・版・単位を再確認する。
+誤った部分集計や派生値を採用せず、非公開xlsxはrepo外へ保持する。
+
+[開発方針](https://zenn.dev/bem130/articles/1b352797de94e7)に従い、機体空力を難易度や到達距離へ合わせて変更しない。
+[XFLR5著者のmoment軸説明](https://sourceforge.net/p/xflr5/discussion/679398/thread/9fc00666c9/)は
+T1/T2/T4のwind axesを参照する根拠であり、`WindAtBetaZero`の選択とは個別表の解析条件を対応付ける。
+[著者の解析上の制限](https://flow5.tech/xflr5/docs/Part%20IV:%20Limitations.pdf)に示される
+LLT/VLM、粘性・剥離・抗力評価の制約を、実機妥当性の検証と区別する。
+本実装のPWL補間・kinematic continuation・provider構成は今回の設計判断である。
+
 ## 要素と局所流
 
-初期から左右主翼・水平尾翼・垂直尾翼・胴体の5要素を使用する。
+既存のelement-onlyモデルは左右主翼・水平尾翼・垂直尾翼・胴体の5要素を使用する。
+以下はその汎用API・独立software fixtureの契約である。新しいplayableは後続BPGでhybridを選択する。
 `AerodynamicModel`は5役割を各1個要求する。要素位置は構造datumからの固定body offsetである。
 要素ごとに評価点、荷重作用点、面積、span、chord、取付姿勢、係数、適用範囲を設定する。
 評価点と荷重作用点が異なる場合は両方を明記する。
