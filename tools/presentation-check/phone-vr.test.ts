@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { IDENTITY_POSE, quaternion } from "../../web/src/render/contracts/math.js";
+import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
@@ -123,6 +123,29 @@ describe("Phone VR gamepad UI", () => {
 });
 
 describe("Phone VR presentation backend", () => {
+  it("supplies raw center-head tracking to the non-interactive HUD independently of Menu placement", async () => {
+    const sensors = new FakePhoneVrSensors();
+    const renderer = new FakeRenderer();
+    renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
+    const backend = createBackend(sensors, renderer);
+    const hud = createHeadHudFixture();
+    const view = { ...createSceneFixture("Flight"), headHud: hud };
+    await backend.requestPermissionFromUserGesture();
+    const startup = backend.start();
+    sensors.emit(reading(0, 90, 0, 100));
+    await startup;
+    try {
+      sensors.emit(reading(0, 110, 0, 110));
+      const frame = backend.currentFrame(110, view);
+      expect(frame.headHud).toEqual({ kind: "visible", trackingFromHead: frame.cameraPose, view: hud });
+      expect(frame.headHud.kind === "visible" && frame.headHud.trackingFromHead.position).toEqual(vec3(0, 0, 0));
+      expect(frame.panelVisible).toBe(true);
+      expect(frame.panel?.controls.length).toBeGreaterThan(0);
+      sensors.emit({ ...reading(0, 110, 0, 120), alpha: null });
+      expect(backend.currentFrame(120, view).headHud).toEqual({ kind: "absent" });
+    } finally { await backend.stop(); }
+  });
+
   it("uses the current performance clock by default instead of the frame timestamp", async () => {
     const clock = vi.spyOn(performance, "now").mockReturnValue(1003);
     const sensors = new FakePhoneVrSensors();

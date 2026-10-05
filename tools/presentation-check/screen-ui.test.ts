@@ -91,6 +91,7 @@ describe("screen UI DOM patching", () => {
       title: "Result",
       description: "Analysis",
       activeOverlay: null,
+      headHud: { kind: "absent" },
       panels: [{
         id: "analysis",
         title: "Analysis",

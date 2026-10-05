@@ -410,6 +410,7 @@ class FakeBackend implements PresentationBackendAdapter {
     if (!this.running) throw new Error(`${this.mode} is inactive`);
     return Object.freeze({
       timestampMs,
+      headHud: { kind: "absent" as const },
       cameraPose: IDENTITY_POSE,
       panelPose: IDENTITY_POSE,
       panel: null,

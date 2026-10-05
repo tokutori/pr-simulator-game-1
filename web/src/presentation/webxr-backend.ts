@@ -1,6 +1,7 @@
 import { composePose, IDENTITY_POSE, inversePose, rotateVec3, vec3 } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
 import type { BackendFrame, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
+import { resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
 import { MenuAnchorPlacement, placeMenuPanel, resolveAnchorPose } from "../render/anchors.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
@@ -146,6 +147,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs);
     return Object.freeze({
       timestampMs,
+      headHud: resolveHeadHudFrame(viewModel.headHud, viewerPose),
       cameraPose: IDENTITY_POSE,
       panelPose: worldFromPanel,
       panel,

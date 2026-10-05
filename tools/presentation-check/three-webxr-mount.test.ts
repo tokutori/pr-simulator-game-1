@@ -382,7 +382,7 @@ function centeredPanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
 }
 
 function screenFrame(viewport: BackendFrame["viewport"]): BackendFrame {
-  return { timestampMs: 0, cameraPose: IDENTITY_POSE, panelPose: IDENTITY_POSE, panel: null,
+  return { headHud: { kind: "absent" }, timestampMs: 0, cameraPose: IDENTITY_POSE, panelPose: IDENTITY_POSE, panel: null,
     panelVisible: false, gazeCursor: null, viewport };
 }
 
