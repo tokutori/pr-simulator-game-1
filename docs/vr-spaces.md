@@ -57,8 +57,27 @@ depthTest falseで描画する。背景alphaとforeground alphaはcanvas側で�
 HUDを水面反射用layerへ追加せず、終了時はtexture・material・geometryを一度ずつ解放する。
 非表示時もmeshを保持し、変更された不変viewだけをtexture更新の入力にする。
 
-現在の追加単位は公開型、backendのcenter-head供給、独立surfaceまでを対象とする。
-ゲームviewの既定値はabsentであり、Flightへの有効化・profile別layout・GPU視認性は後続の接続単位で検証する。
+公開型、backendのcenter-head供給、独立surface、同一frameの眼別geometryを実装した。
+ゲームviewの既定値はabsentであり、Flightへの有効化・実GPU視認性は後続の接続単位で検証する。
+
+## 純粋layoutとCanvas preflight
+
+`createHeadHudView`は共通の`FlightHudModel`、そのframeの`ViewerFrame`、明示localeから不変layoutを導出する。
+InformationのFull/Standard/Minimal/Realistic/Customと各Custom cueを保持し、架空値と取得不能値を区別する。
+左右眼のposeから前方の水平±15°・垂直±10°の保護領域をHUD面へ写像し、各cardをその領域外へ配置する。
+予約したFlight Menu幾何との分離も検査する。現在のgame Menu接続と実browser/GPUでの操作受入は後続に残る。
+
+`prepareHeadHudPaint`は実advanceとactualBoundingBoxによって改行・card収容を検査し、描画前に不変paint planを作る。
+Canvas adapterは`VisibleHeadHud.locale`をdetached canvasのlanguageへ明示し、対応browserでは2D contextの`lang`も設定する。
+measureとdrawは同じfont・language・baseline・alignを使用し、`fillText`のmaxWidthで文字を縮小しない。
+actualBoundingBoxの距離は符号付きのまま扱い、ascent/descent単独の負値を拒否しない。
+左右端からのink幅とbaselineからのink高を合算して実矩形を復元する。
+参照: [HTML StandardのlanguageとTextMetrics](https://html.spec.whatwg.org/dev/canvas.html)。
+
+`validateHeadHudPaint`は各非空行の実inkを左右眼へ投影し、clip内の収容と両端で0.35°以上の角高さを検査する。
+0.35°は本製品のソフトウェア配置契約であり、実Phone/HMDの可読性を保証する実測値ではない。
+旧ALTの13px／0.282640168°による拒否をlocale変更だけで解消済みとは扱わず、新sourceでの実metricsとGPUを検証する。
+CPU試験は模擬metricsによるlayout・合成・拒否契約を対象とし、実font選択、contrast、GPU画像、光学受入は別条件とする。
 
 ## 同一frameの眼別geometry
 
