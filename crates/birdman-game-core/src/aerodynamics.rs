@@ -1,7 +1,7 @@
 use crate::aerodynamics_contract::AerodynamicEvaluationError;
 pub use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
-use crate::flight_control::SurfaceDeflections;
+use crate::flight_control::{ActuatorConfig, SurfaceDeflections};
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
@@ -242,11 +242,30 @@ impl AeroCoefficients {
         self
     }
 
-    fn validate_drag(self, envelope: ElementEnvelope) -> Result<(), AeroError> {
+    fn at(self, alpha: f64, beta: f64, controls: [f64; 3]) -> Result<[f64; 6], AeroError> {
+        let d = self.control_derivatives;
+        let values = [
+            self.lift.at(alpha, beta)? + d.effect(d.lift_per_axis_rad, controls),
+            self.drag.at(alpha, beta)? + d.effect(d.drag_per_axis_rad, controls),
+            self.side_force.at(alpha, beta)? + d.effect(d.side_force_per_axis_rad, controls),
+            self.roll_moment.at(alpha, beta)? + d.effect(d.roll_moment_per_axis_rad, controls),
+            self.pitch_moment.at(alpha, beta)? + d.effect(d.pitch_moment_per_axis_rad, controls),
+            self.yaw_moment.at(alpha, beta)? + d.effect(d.yaw_moment_per_axis_rad, controls),
+        ];
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(AeroError::NonFinite);
+        }
+        if values[1] < 0.0 {
+            return Err(AeroError::NegativeDragCoefficient);
+        }
+        Ok(values)
+    }
+
+    fn validate_envelope(self, envelope: ElementEnvelope) -> Result<(), AeroError> {
         for alpha in [envelope.minimum_alpha_rad, envelope.maximum_alpha_rad] {
             for beta in [envelope.minimum_beta_rad, envelope.maximum_beta_rad] {
-                if self.drag.at(alpha, beta)? < 0.0 {
-                    return Err(AeroError::NegativeDragCoefficient);
+                for corner in 0..8 {
+                    self.at(alpha, beta, envelope.controls.corner(corner))?;
                 }
             }
         }
@@ -305,17 +324,86 @@ impl ControlCoefficientDerivatives {
         })
     }
 
-    fn effect(self, derivatives: [f64; 3], deflections: SurfaceDeflections) -> f64 {
-        let controls = [
-            deflections.roll_rad(),
-            deflections.pitch_rad(),
-            deflections.yaw_rad(),
-        ];
+    fn effect(self, derivatives: [f64; 3], controls: [f64; 3]) -> f64 {
         derivatives[0] * controls[0] + derivatives[1] * controls[1] + derivatives[2] * controls[2]
     }
 }
 
-/// Inclusive validity bounds for local angles and dynamic pressure.
+/// Inclusive validity bounds for global roll, pitch, and yaw deflections in radians.
+///
+/// Every axis includes neutral. A fixed neutral axis has both bounds equal to zero.
+/// These are coefficient-law domains, not actuator travel or rate limits.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ControlEnvelope {
+    minimum_rad: [f64; 3],
+    maximum_rad: [f64; 3],
+}
+
+impl ControlEnvelope {
+    /// A domain that admits only neutral deflections on every axis.
+    pub const NEUTRAL: Self = Self {
+        minimum_rad: [0.0; 3],
+        maximum_rad: [0.0; 3],
+    };
+
+    /// Creates finite, neutral-inclusive bounds ordered roll, pitch, and yaw.
+    pub fn try_new(minimum_rad: [f64; 3], maximum_rad: [f64; 3]) -> Result<Self, AeroError> {
+        if minimum_rad
+            .into_iter()
+            .chain(maximum_rad)
+            .any(|value| !value.is_finite())
+        {
+            return Err(AeroError::NonFinite);
+        }
+        if (0..3).any(|axis| minimum_rad[axis] > 0.0 || maximum_rad[axis] < 0.0) {
+            return Err(AeroError::InvalidEnvelope);
+        }
+        Ok(Self {
+            minimum_rad,
+            maximum_rad,
+        })
+    }
+
+    /// Returns the inclusive lower bounds in axis order.
+    pub const fn minimum_rad(self) -> [f64; 3] {
+        self.minimum_rad
+    }
+
+    /// Returns the inclusive upper bounds in axis order.
+    pub const fn maximum_rad(self) -> [f64; 3] {
+        self.maximum_rad
+    }
+
+    fn contains(self, deflections: SurfaceDeflections) -> bool {
+        let values = [
+            deflections.roll_rad(),
+            deflections.pitch_rad(),
+            deflections.yaw_rad(),
+        ];
+        (0..3).all(|axis| {
+            values[axis] >= self.minimum_rad[axis] && values[axis] <= self.maximum_rad[axis]
+        })
+    }
+
+    fn supports(self, limits: [ActuatorConfig; 3]) -> bool {
+        (0..3).all(|axis| {
+            self.minimum_rad[axis] <= -limits[axis].maximum_deflection_rad()
+                && self.maximum_rad[axis] >= limits[axis].maximum_deflection_rad()
+        })
+    }
+
+    fn corner(self, index: usize) -> [f64; 3] {
+        core::array::from_fn(|axis| {
+            if index & (1 << axis) == 0 {
+                self.minimum_rad[axis]
+            } else {
+                self.maximum_rad[axis]
+            }
+        })
+    }
+}
+
+/// Inclusive coefficient-law bounds for local flow and global control deflections.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ElementEnvelope {
     minimum_alpha_rad: f64,
@@ -324,10 +412,11 @@ pub struct ElementEnvelope {
     maximum_beta_rad: f64,
     minimum_dynamic_pressure_pascal: f64,
     maximum_dynamic_pressure_pascal: f64,
+    controls: ControlEnvelope,
 }
 
 impl ElementEnvelope {
-    /// Creates finite angle and dynamic-pressure bounds.
+    /// Creates finite flow bounds with an explicit control-deflection domain.
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         minimum_alpha_rad: f64,
@@ -336,6 +425,7 @@ impl ElementEnvelope {
         maximum_beta_rad: f64,
         minimum_dynamic_pressure_pascal: f64,
         maximum_dynamic_pressure_pascal: f64,
+        controls: ControlEnvelope,
     ) -> Result<Self, AeroError> {
         let values = [
             minimum_alpha_rad,
@@ -362,7 +452,13 @@ impl ElementEnvelope {
             maximum_beta_rad,
             minimum_dynamic_pressure_pascal,
             maximum_dynamic_pressure_pascal,
+            controls,
         })
+    }
+
+    /// Returns the coefficient-law domain for roll, pitch, and yaw deflections.
+    pub const fn controls(self) -> ControlEnvelope {
+        self.controls
     }
 
     fn contains(self, alpha_rad: f64, beta_rad: f64, dynamic_pressure_pascal: f64) -> bool {
@@ -403,7 +499,7 @@ impl AerodynamicElement {
         coefficients: AeroCoefficients,
         envelope: ElementEnvelope,
     ) -> Result<Self, AeroError> {
-        coefficients.validate_drag(envelope)?;
+        coefficients.validate_envelope(envelope)?;
         Ok(Self {
             role,
             flow_point_from_datum,
@@ -442,6 +538,25 @@ impl AerodynamicModel {
             return Err(AeroError::InvalidElementSet);
         }
         Ok(Self { elements })
+    }
+
+    /// Verifies that every coefficient-law domain includes the complete actuator travel.
+    ///
+    /// This checks parameter compatibility, not the validity of every flight trajectory
+    /// or the absence of arithmetic overflow in force and moment scaling.
+    pub fn validate_actuator_limits(
+        self,
+        limits: [ActuatorConfig; 3],
+    ) -> Result<(), AerodynamicEvaluationError> {
+        for element in self.elements {
+            if !element.envelope.controls.supports(limits) {
+                return Err(AerodynamicEvaluationError::Element {
+                    role: element.role,
+                    cause: AeroError::IncompatibleControlEnvelope,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Evaluates all five elements against one spatially uniform air state.
@@ -774,6 +889,9 @@ fn evaluate_element(
     wind_field: WindField<'_>,
     surface_deflections: SurfaceDeflections,
 ) -> Result<AerodynamicWrench, AeroError> {
+    if !element.envelope.controls.contains(surface_deflections) {
+        return Err(AeroError::OutsideEnvelope);
+    }
     let [flow_x, flow_y, flow_z] = element.flow_point_from_datum.components();
     let radius = BodyVector::try_new(flow_x, flow_y, flow_z).map_err(map_math_error)?;
     let rotational_velocity = state
@@ -846,36 +964,22 @@ fn evaluate_element(
         return Err(AeroError::OutsideEnvelope);
     }
 
-    let coefficients = element.coefficients;
-    let derivatives = coefficients.control_derivatives;
-    let lift = coefficients.lift.at(alpha, beta)?
-        + derivatives.effect(derivatives.lift_per_axis_rad, surface_deflections);
-    let drag = coefficients.drag.at(alpha, beta)?
-        + derivatives.effect(derivatives.drag_per_axis_rad, surface_deflections);
-    let side_force = coefficients.side_force.at(alpha, beta)?
-        + derivatives.effect(derivatives.side_force_per_axis_rad, surface_deflections);
-    let roll_moment = coefficients.roll_moment.at(alpha, beta)?
-        + derivatives.effect(derivatives.roll_moment_per_axis_rad, surface_deflections);
-    let pitch_moment = coefficients.pitch_moment.at(alpha, beta)?
-        + derivatives.effect(derivatives.pitch_moment_per_axis_rad, surface_deflections);
-    let yaw_moment = coefficients.yaw_moment.at(alpha, beta)?
-        + derivatives.effect(derivatives.yaw_moment_per_axis_rad, surface_deflections);
-    if [
+    let [
         lift,
         drag,
         side_force,
         roll_moment,
         pitch_moment,
         yaw_moment,
-    ]
-    .iter()
-    .any(|value| !value.is_finite())
-    {
-        return Err(AeroError::NonFinite);
-    }
-    if drag < 0.0 {
-        return Err(AeroError::NegativeDragCoefficient);
-    }
+    ] = element.coefficients.at(
+        alpha,
+        beta,
+        [
+            surface_deflections.roll_rad(),
+            surface_deflections.pitch_rad(),
+            surface_deflections.yaw_rad(),
+        ],
+    )?;
 
     let projected_x = u / longitudinal_vertical_speed;
     let projected_z = w / longitudinal_vertical_speed;
@@ -1015,7 +1119,20 @@ mod tests {
     }
 
     fn envelope() -> ElementEnvelope {
-        ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap()
+        ElementEnvelope::try_new(
+            -1.0,
+            1.0,
+            -1.0,
+            1.0,
+            0.0,
+            100_000.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     fn point(x: f64, y: f64, z: f64) -> BodyPoint {
@@ -1089,6 +1206,163 @@ mod tests {
 
     fn reference(area: f64, span: f64, chord: f64) -> ElementReference {
         ElementReference::try_new(area, span, chord).unwrap()
+    }
+
+    fn control_envelope(minimum: [f64; 3], maximum: [f64; 3]) -> ElementEnvelope {
+        ElementEnvelope::try_new(
+            -0.125,
+            0.125,
+            -0.125,
+            0.125,
+            0.0,
+            100_000.0,
+            ControlEnvelope::try_new(minimum, maximum).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn control_domain_is_finite_neutral_inclusive_and_may_be_asymmetric() {
+        let controls = ControlEnvelope::try_new([-0.2, -0.1, 0.0], [0.3, 0.0, 0.0]).unwrap();
+        assert_eq!(controls.minimum_rad(), [-0.2, -0.1, 0.0]);
+        assert_eq!(controls.maximum_rad(), [0.3, 0.0, 0.0]);
+        assert!(ControlEnvelope::NEUTRAL.contains(SurfaceDeflections::neutral()));
+        for (minimum, maximum) in [
+            ([0.1; 3], [0.3; 3]),
+            ([-0.3; 3], [-0.1; 3]),
+            ([0.3; 3], [-0.3; 3]),
+        ] {
+            assert_eq!(
+                ControlEnvelope::try_new(minimum, maximum),
+                Err(AeroError::InvalidEnvelope)
+            );
+        }
+        assert_eq!(
+            ControlEnvelope::try_new([f64::NAN; 3], [0.0; 3]),
+            Err(AeroError::NonFinite)
+        );
+        assert_eq!(
+            ControlEnvelope::try_new([0.0; 3], [f64::INFINITY; 3]),
+            Err(AeroError::NonFinite)
+        );
+    }
+
+    #[test]
+    fn element_constructor_validates_control_drag_and_combined_corners() {
+        let derivatives = |drag| {
+            ControlCoefficientDerivatives::try_new(
+                [0.0; 3], drag, [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3],
+            )
+            .unwrap()
+        };
+        let construct = |coefficients, envelope| {
+            AerodynamicElement::try_new(
+                AerodynamicRole::VerticalTail,
+                point(0.0, 0.0, 0.0),
+                point(0.0, 0.0, 0.0),
+                ElementOrientation::IDENTITY,
+                reference(1.0, 1.0, 1.0),
+                coefficients,
+                envelope,
+            )
+        };
+        // The audit reproducer is invalid despite a positive neutral drag coefficient.
+        assert_eq!(
+            construct(
+                constant_coefficients(0.0, 0.02, 0.0, 0.0, 0.0, 0.0)
+                    .with_control_derivatives(derivatives([0.0, 0.0, -1.0])),
+                control_envelope([-0.35; 3], [0.35; 3])
+            ),
+            Err(AeroError::NegativeDragCoefficient)
+        );
+        // Flow and all three controls contribute simultaneously at each domain corner.
+        let combined = coefficients(
+            law(0.0),
+            law_with_slopes(0.078125, 0.125, 0.125),
+            law(0.0),
+            law(0.0),
+            law(0.0),
+            law(0.0),
+        )
+        .with_control_derivatives(derivatives([0.125; 3]));
+        let domain = control_envelope([-0.125; 3], [0.125; 3]);
+        assert!(construct(combined, domain).is_ok());
+        let negative = coefficients(
+            law(0.0),
+            law_with_slopes(0.078, 0.125, 0.125),
+            law(0.0),
+            law(0.0),
+            law(0.0),
+            law(0.0),
+        )
+        .with_control_derivatives(derivatives([0.125; 3]));
+        assert_eq!(
+            construct(negative, domain),
+            Err(AeroError::NegativeDragCoefficient)
+        );
+        let overflow = constant_coefficients(f64::MAX, 0.0, 0.0, 0.0, 0.0, 0.0)
+            .with_control_derivatives(
+                ControlCoefficientDerivatives::try_new(
+                    [f64::MAX; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                    [0.0; 3],
+                )
+                .unwrap(),
+            );
+        assert_eq!(
+            construct(overflow, control_envelope([-1.0; 3], [1.0; 3])),
+            Err(AeroError::NonFinite)
+        );
+    }
+
+    #[test]
+    fn control_bounds_are_checked_even_at_zero_airspeed() {
+        let domain = control_envelope([-0.2; 3], [0.3; 3]);
+        let aerodynamics = model(
+            AerodynamicRole::LeftWing,
+            zero_coefficients(),
+            point(0.0, 0.0, 0.0),
+            point(0.0, 0.0, 0.0),
+            ElementOrientation::IDENTITY,
+            reference(1.0, 1.0, 1.0),
+            domain,
+        );
+        for speed in [0.0, 10.0] {
+            let flight = state([speed, 0.0, 0.0], [0.0; 3], 0.0, 0.0);
+            for axis in 0..3 {
+                for bound in [-0.2, 0.3] {
+                    let mut delta = [0.0; 3];
+                    delta[axis] = bound;
+                    assert!(
+                        aerodynamics
+                            .evaluate_with_surface_deflections(
+                                &flight,
+                                air([0.0; 3], 1.0),
+                                SurfaceDeflections::try_new(delta[0], delta[1], delta[2]).unwrap()
+                            )
+                            .is_ok()
+                    );
+                }
+                for outside in [-0.200001, 0.300001] {
+                    let mut delta = [0.0; 3];
+                    delta[axis] = outside;
+                    assert_eq!(
+                        aerodynamics.evaluate_with_surface_deflections(
+                            &flight,
+                            air([0.0; 3], 1.0),
+                            SurfaceDeflections::try_new(delta[0], delta[1], delta[2]).unwrap()
+                        ),
+                        Err(AerodynamicEvaluationError::Element {
+                            role: AerodynamicRole::LeftWing,
+                            cause: AeroError::OutsideEnvelope
+                        })
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1800,7 +2074,20 @@ mod tests {
             point(0.0, 0.0, 1.0),
             ElementOrientation::IDENTITY,
             reference(1.0, 1.0, 1.0),
-            ElementEnvelope::try_new(-1.0, 1.0, -FRAC_PI_2, FRAC_PI_2, 0.0, 100_000.0).unwrap(),
+            ElementEnvelope::try_new(
+                -1.0,
+                1.0,
+                -FRAC_PI_2,
+                FRAC_PI_2,
+                0.0,
+                100_000.0,
+                crate::ControlEnvelope::try_new(
+                    [-core::f64::consts::PI; 3],
+                    [core::f64::consts::PI; 3],
+                )
+                .unwrap(),
+            )
+            .unwrap(),
         );
         let evaluation = aerodynamics
             .evaluate(
@@ -1972,7 +2259,20 @@ mod tests {
             point(0.0, 0.0, 0.0),
             ElementOrientation::IDENTITY,
             reference(1.0, 1.0, 1.0),
-            ElementEnvelope::try_new(-1.0, 1.0, -FRAC_PI_2, FRAC_PI_2, 0.0, 100_000.0).unwrap(),
+            ElementEnvelope::try_new(
+                -1.0,
+                1.0,
+                -FRAC_PI_2,
+                FRAC_PI_2,
+                0.0,
+                100_000.0,
+                crate::ControlEnvelope::try_new(
+                    [-core::f64::consts::PI; 3],
+                    [core::f64::consts::PI; 3],
+                )
+                .unwrap(),
+            )
+            .unwrap(),
         );
         let result = aerodynamics.evaluate(
             &state([0.0, 10.0, 0.0], [0.0; 3], 0.0, 0.0),
@@ -1989,7 +2289,20 @@ mod tests {
 
     #[test]
     fn local_flow_outside_declared_envelope_is_rejected() {
-        let narrow_envelope = ElementEnvelope::try_new(-0.1, 0.1, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let narrow_envelope = ElementEnvelope::try_new(
+            -0.1,
+            0.1,
+            -0.1,
+            0.1,
+            0.0,
+            100.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let aerodynamics = model(
             AerodynamicRole::LeftWing,
             constant_coefficients(0.0, 0.1, 0.0, 0.0, 0.0, 0.0),
@@ -2014,7 +2327,20 @@ mod tests {
 
     #[test]
     fn envelope_comparison_accepts_interior_and_boundary_and_rejects_exterior() {
-        let envelope = ElementEnvelope::try_new(-0.2, 0.2, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let envelope = ElementEnvelope::try_new(
+            -0.2,
+            0.2,
+            -0.1,
+            0.1,
+            0.0,
+            100.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert!(envelope.contains(0.199, 0.0, 50.0));
         assert!(envelope.contains(0.2, 0.1, 100.0));
         assert!(!envelope.contains(0.200_001, 0.0, 50.0));
@@ -2024,8 +2350,20 @@ mod tests {
     #[test]
     fn atan2_precision_does_not_reject_a_flow_below_pi_over_eight() {
         let maximum_alpha = core::f64::consts::PI / 8.0;
-        let limited =
-            ElementEnvelope::try_new(-maximum_alpha, maximum_alpha, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let limited = ElementEnvelope::try_new(
+            -maximum_alpha,
+            maximum_alpha,
+            -0.1,
+            0.1,
+            0.0,
+            100.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let aerodynamics = model(
             AerodynamicRole::LeftWing,
             zero_coefficients(),
@@ -2077,7 +2415,20 @@ mod tests {
 
     #[test]
     fn load_boundary_preserves_aerodynamic_cause_and_element_role() {
-        let restricted = ElementEnvelope::try_new(-0.1, 0.1, -0.1, 0.1, 0.0, 100.0).unwrap();
+        let restricted = ElementEnvelope::try_new(
+            -0.1,
+            0.1,
+            -0.1,
+            0.1,
+            0.0,
+            100.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let aerodynamics = model(
             AerodynamicRole::LeftWing,
             zero_coefficients(),
@@ -2187,7 +2538,20 @@ mod tests {
 
     #[test]
     fn dynamic_pressure_outside_declared_envelope_is_rejected() {
-        let pressure_limited = ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0).unwrap();
+        let pressure_limited = ElementEnvelope::try_new(
+            -1.0,
+            1.0,
+            -1.0,
+            1.0,
+            0.0,
+            1.0,
+            crate::ControlEnvelope::try_new(
+                [-core::f64::consts::PI; 3],
+                [core::f64::consts::PI; 3],
+            )
+            .unwrap(),
+        )
+        .unwrap();
         let aerodynamics = model(
             AerodynamicRole::LeftWing,
             zero_coefficients(),
@@ -2258,7 +2622,19 @@ mod tests {
             Err(AeroError::NonFinite)
         );
         assert_eq!(
-            ElementEnvelope::try_new(1.0, -1.0, -1.0, 1.0, 0.0, 1.0),
+            ElementEnvelope::try_new(
+                1.0,
+                -1.0,
+                -1.0,
+                1.0,
+                0.0,
+                1.0,
+                crate::ControlEnvelope::try_new(
+                    [-core::f64::consts::PI; 3],
+                    [core::f64::consts::PI; 3]
+                )
+                .unwrap()
+            ),
             Err(AeroError::InvalidEnvelope)
         );
     }

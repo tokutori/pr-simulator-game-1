@@ -11,7 +11,7 @@ import { record } from "../shared/validation.js";
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const demoMetadata = Object.freeze([
   4, 2, 3, 0,
-  1, 1, 1, 1, 1, 1,
+  1, 1, 1, 2, 1, 1,
   0xD3A0, 0,
   1, 0, 0, 0, 0, 0
 ]);
@@ -99,7 +99,7 @@ it("reports the declared Custom/Minimal demo policy instead of Automatic/NearLim
     expect(projection.source).toBe("attract");
     expect(projection.identity).toEqual({
       catalog_version: 1, scenario_id: 1, scenario_version: 1,
-      aircraft_model_version: 1, environment_version: 1,
+      aircraft_model_version: 2, environment_version: 1,
       controller_profile_version: 1, seed_low: 0xD3A0, seed_high: 0
     });
     expect(record(projection.metadata).representative_velocity_ned_mps).toEqual([0, 0, 0]);

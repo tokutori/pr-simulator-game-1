@@ -26,8 +26,8 @@ mod wind_field;
 pub use aerodynamics::{
     AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicLoadProvider,
     AerodynamicModel, AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives,
-    ElementEnvelope, ElementOrientation, ElementReference, ElementalFlow, FlowAngles,
-    PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
+    ControlEnvelope, ElementEnvelope, ElementOrientation, ElementReference, ElementalFlow,
+    FlowAngles, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
     StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata, StaticPolarRow,
     UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
 };
@@ -92,7 +92,7 @@ pub const PHYSICS_HZ: u32 = 100;
 ///
 /// Increment when the same validated model and tick-input sequence can produce a
 /// different physical trajectory or terminal state.
-pub const PHYSICS_MODEL_VERSION: u32 = 1;
+pub const PHYSICS_MODEL_VERSION: u32 = 3;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;

@@ -167,7 +167,25 @@ C=C_0+C_\alpha\alpha+C_\beta\beta
 
 角速度rate derivative、Mach依存、失速後モデル、downwashは含めない。
 局所速度による回転減衰は評価点速度にのみ反映する。`ElementEnvelope`はalpha、beta、
-dynamic pressureの閉区間を定め、外側の値をclampせず拒否する。$C_D$は宣言範囲全体で非負でなければならない。
+dynamic pressureとroll・pitch・yaw舵角の閉区間を定め、外側の値をclampせず拒否する。
+`ControlEnvelope`は各軸について有限かつneutralを含む上下限を要求する。非対称範囲を許可し、
+上下限とも0の軸はneutral固定を表す。actuatorの最大舵角・最大舵角速度とは別の係数lawの適用範囲である。
+全要素へ同じglobal舵角を渡すため、微係数0の軸にも適用範囲を明示する。
+
+舵角微係数を使用する場合の6係数は次式で評価する。
+
+```math
+C=C_0+C_\alpha\alpha+C_\beta\beta+
+C_{\delta_r}\delta_r+C_{\delta_p}\delta_p+C_{\delta_y}\delta_y
+```
+
+要素構築時にalpha・beta・3舵角の直積領域の32頂点を、実行時と同じ係数評価で検査する。
+一次lawの領域全体で6係数が有限、$C_D$が非負であることを要求する。係数や負抗力をclampしない。
+零速でも舵角領域を先に検査し、逸脱はroleを保持した`OutsideEnvelope`となる。
+`FlightScenario::try_new`は全5要素・全3軸についてactuatorの全travel範囲が舵角領域に含まれることを
+検査し、不一致は`ControlEnvelope` error内にroleと`IncompatibleControlEnvelope`を保持する。
+この検査は設定の整合性を保証する。飛行中のflow領域逸脱や、参照寸法・動圧を乗じた荷重の算術overflowは
+実行時の型付きerrorとして引き続き検査する。
 
 揚抗力・側力のwind-axis基底を要素local axesで定義する。$H=\sqrt{u_a^2+w_a^2}$、
 $V=\sqrt{u_a^2+v_a^2+w_a^2}$ とすると、速度軸は $(u_a,v_a,w_a)/V$、揚力方向は
@@ -219,3 +237,16 @@ M_x=a(L_L-L_R)
 尾翼は通常 $r_x<0$ である。上向き尾翼荷重の増分は負pitch momentを生じる。
 右向き尾翼荷重の増分は負yaw momentを生じる。
 試験では具体的なoffsetとforceから外積を計算して期待符号を固定する。
+
+## Playable合成機体のyaw軸
+
+`SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION` は2である。ブラウザーのscenarioとdemoは
+この版を記録する。v2の垂直尾翼は評価点・荷重作用点をbody `(-1.8,0,-0.1)` mとし、
+取付姿勢IDENTITYの側力へ $C_{Y,\delta_{yaw}}=-0.2$ rad$^{-1}$ を割り当てる。
+正のyaw指令は左向き尾翼力を生み、後方の作用点から正のyaw momentを生成する。
+要素固有yaw momentは0であり、作用点の外積でmomentを計算する。
+この腕長と微係数は合成fixtureの仮定として固定する。実機同定値・性能予測の根拠には使用しない。
+
+正負yaw操舵の側力・momentを解析値と比較し、Manual・Shared・Automaticの軸応答、authority、
+neutral、決定性を検証する。yawのみのfeedbackを使って追加減衰の寄与を分離し、
+全軸feedbackでも初期yaw rateからの減衰を確認する。roll/pitchの符号と既存neutral glideも検査する。

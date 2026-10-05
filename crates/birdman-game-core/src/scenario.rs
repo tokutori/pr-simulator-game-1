@@ -1,5 +1,5 @@
 use crate::aerodynamics::{AerodynamicModel, WindFieldAerodynamicLoad};
-use crate::aerodynamics_contract::AeroError;
+use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
 use crate::contact::{ContactError, WaterContactGeometry};
 use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
 use crate::flight_control::{ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode};
@@ -172,6 +172,8 @@ pub enum FlightTelemetryError {
 pub enum FlightScenarioError {
     /// The aerodynamic provider rejected density or environment input.
     Aerodynamic(AeroError),
+    /// The configured actuator travel exceeds an element's aerodynamic domain.
+    ControlEnvelope(AerodynamicEvaluationError),
     /// Launch inputs could not be converted to a valid flight state.
     Launch(DynamicsError),
     /// The initial tick state or actuator state is invalid.
@@ -195,6 +197,10 @@ pub struct FlightScenario<'a> {
 impl<'a> FlightScenario<'a> {
     /// Validates and assembles one reusable flight scenario without allocation.
     pub fn try_new(definition: FlightScenarioDefinition<'a>) -> Result<Self, FlightScenarioError> {
+        definition
+            .aerodynamics
+            .validate_actuator_limits(definition.actuator_limits)
+            .map_err(FlightScenarioError::ControlEnvelope)?;
         let loads = WindFieldAerodynamicLoad::try_new(
             definition.aerodynamics,
             definition.air_density_kg_m3,
@@ -445,6 +451,12 @@ mod tests {
     }
 
     fn aerodynamics() -> AerodynamicModel {
+        aerodynamics_with_control_domain(
+            crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3]).unwrap(),
+        )
+    }
+
+    fn aerodynamics_with_control_domain(controls: crate::ControlEnvelope) -> AerodynamicModel {
         let law = CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
         let coefficients = AeroCoefficients::new(law, law, law, law, law, law)
             .with_control_derivatives(
@@ -453,7 +465,8 @@ mod tests {
                 )
                 .unwrap(),
             );
-        let envelope = ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0).unwrap();
+        let envelope =
+            ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0, controls).unwrap();
         let reference = ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
         let roles = [
             AerodynamicRole::LeftWing,
@@ -500,6 +513,36 @@ mod tests {
             gravity: Gravity::try_new(9.80665).unwrap(),
             contact_points_body,
             course_axis: CourseAxis::try_new(1.0, 0.0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn scenario_rejects_actuator_travel_outside_any_control_domain() {
+        let points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        assert!(FlightScenario::try_new(scenario_definition(1.225, &points)).is_ok());
+        for axis in 0..3 {
+            for direction in [-1.0, 1.0] {
+                let mut minimum = [-0.35; 3];
+                let mut maximum = [0.35; 3];
+                if direction < 0.0 {
+                    minimum[axis] = -0.349;
+                } else {
+                    maximum[axis] = 0.349;
+                }
+                let mut definition = scenario_definition(1.225, &points);
+                definition.aerodynamics = aerodynamics_with_control_domain(
+                    crate::ControlEnvelope::try_new(minimum, maximum).unwrap(),
+                );
+                assert_eq!(
+                    FlightScenario::try_new(definition).err(),
+                    Some(FlightScenarioError::ControlEnvelope(
+                        crate::AerodynamicEvaluationError::Element {
+                            role: AerodynamicRole::LeftWing,
+                            cause: AeroError::IncompatibleControlEnvelope
+                        }
+                    ))
+                );
+            }
         }
     }
 

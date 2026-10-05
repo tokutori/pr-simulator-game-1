@@ -290,10 +290,14 @@ impl PilotPositionTarget {
 
 /// Computes a bounded pilot acceleration that follows a longitudinal position target.
 ///
-/// The speed target is limited by the model and by the continuous stopping speed for
-/// the remaining distance. An already-unrecoverable velocity toward a travel boundary
-/// is rejected instead of clamping position or velocity. The policy accepts substeps up
-/// to the fixed 100 Hz simulation tick.
+/// A command is accepted only if its complete held-acceleration trajectory stays
+/// within the model and its endpoint has a certified, finite stopping sequence.
+/// The certificate includes a reversing braking step when continuous stopping is
+/// possible but stopping only at tick boundaries needs more clearance. States
+/// outside this policy's certified domain are distinguished from states whose
+/// continuous stopping distance already exceeds a travel boundary. The proof
+/// checks at most 4096 held steps using the same f64 transition as integration.
+/// The policy accepts positive substeps up to the fixed 100 Hz simulation tick.
 pub fn pilot_target_acceleration(
     model: &AircraftModel,
     state: &FlightState,
@@ -316,54 +320,348 @@ pub fn pilot_target_acceleration(
     let position = state.pilot_position_m;
     let velocity = state.pilot_velocity_mps;
     let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
-    let boundary_clearance = if velocity > 0.0 {
-        model.pilot_maximum_position_m - position
-    } else if velocity < 0.0 {
-        position - model.pilot_minimum_position_m
-    } else {
-        f64::INFINITY
-    };
-    let stopping_distance = velocity.abs() * velocity.abs() / (2.0 * maximum_acceleration);
-    if !stopping_distance.is_finite() || stopping_distance > boundary_clearance {
-        return Err(DynamicsError::PilotMotionUnrecoverable);
-    }
-
+    let braking_acceleration =
+        pilot_braking_acceleration(model, position, velocity, timestep_seconds)?;
+    let stopping_distance = continuous_stopping_distance(velocity.abs(), maximum_acceleration);
     let position_error = target.position_m - position;
-    if position_error == 0.0 {
-        return acceleration_toward_velocity(0.0, velocity, timestep_seconds, maximum_acceleration);
-    }
     let one_tick_stopping_distance =
         0.5 * maximum_acceleration * timestep_seconds * timestep_seconds;
-    if position_error.abs() <= one_tick_stopping_distance
+    let requested_acceleration = if position_error.abs() <= one_tick_stopping_distance
         && stopping_distance <= one_tick_stopping_distance
     {
-        return acceleration_toward_velocity(0.0, velocity, timestep_seconds, maximum_acceleration);
-    }
-    let direction = position_error.signum();
-    let distance = position_error.abs();
-    let speed_square = 2.0 * maximum_acceleration * distance;
-    let stopping_speed = if speed_square.is_finite() {
-        libm::sqrt(speed_square).min(model.pilot_maximum_speed_mps)
+        // A held step followed by a step ending at rest reaches the target when
+        // w = (target - x) / h - v / 2. This also moves a resting pilot toward
+        // targets closer than the old one-tick dead zone.
+        acceleration_toward_velocity(
+            position_error / timestep_seconds - 0.5 * velocity,
+            velocity,
+            timestep_seconds,
+            maximum_acceleration,
+        )?
+        .meters_per_second_squared
     } else {
-        model.pilot_maximum_speed_mps
-    };
-    let velocity_toward_target = velocity * direction;
-    let speed_tolerance =
-        16.0 * f64::EPSILON * velocity_toward_target.abs().max(stopping_speed.abs());
-    let commanded_acceleration = if velocity_toward_target > 0.0
-        && velocity_toward_target + speed_tolerance >= stopping_speed
-    {
-        -direction * maximum_acceleration
-    } else {
-        let desired_velocity = direction * stopping_speed;
-        let requested_acceleration = (desired_velocity - velocity) / timestep_seconds;
-        if !requested_acceleration.is_finite() {
-            requested_acceleration.signum() * maximum_acceleration
+        let direction = position_error.signum();
+        let speed_square = 2.0 * maximum_acceleration * position_error.abs();
+        let stopping_speed = if speed_square.is_finite() {
+            libm::sqrt(speed_square).min(model.pilot_maximum_speed_mps)
         } else {
-            requested_acceleration.clamp(-maximum_acceleration, maximum_acceleration)
+            model.pilot_maximum_speed_mps
+        };
+        if velocity * direction > 0.0
+            && direction * (position + direction * stopping_distance)
+                >= direction * target.position_m
+        {
+            -direction * maximum_acceleration
+        } else {
+            acceleration_toward_velocity(
+                direction * stopping_speed,
+                velocity,
+                timestep_seconds,
+                maximum_acceleration,
+            )?
+            .meters_per_second_squared
         }
     };
-    PilotAcceleration::try_new(commanded_acceleration)
+
+    if pilot_acceleration_is_safe(
+        model,
+        position,
+        velocity,
+        requested_acceleration,
+        timestep_seconds,
+    ) {
+        return PilotAcceleration::try_new(requested_acceleration);
+    }
+    if !pilot_acceleration_is_safe(
+        model,
+        position,
+        velocity,
+        braking_acceleration,
+        timestep_seconds,
+    ) {
+        return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+    }
+    // Search toward the certified braking command. Each accepted value is
+    // checked against the actual held trajectory and the same next-state domain;
+    // no position, velocity, or error tolerance is adjusted. Each midpoint
+    // halves its distance to braking until the finite f64 values coalesce.
+    let mut candidate = requested_acceleration;
+    loop {
+        let next_candidate = 0.5 * candidate + 0.5 * braking_acceleration;
+        if next_candidate == candidate || next_candidate == braking_acceleration {
+            return PilotAcceleration::try_new(braking_acceleration);
+        }
+        candidate = next_candidate;
+        if pilot_acceleration_is_safe(model, position, velocity, candidate, timestep_seconds) {
+            return PilotAcceleration::try_new(candidate);
+        }
+    }
+}
+
+fn continuous_stopping_distance(speed: f64, maximum_acceleration: f64) -> f64 {
+    0.5 * speed * (speed / maximum_acceleration)
+}
+
+// Returns the first command of a finite stopping certificate. The first option
+// brakes by A until the last tick, whose acceleration is chosen to end at rest.
+// If that distance is unavailable, maximal braking is followed by one reversing
+// step and one step ending at rest. The latter certificate explicitly checks the
+// opposite travel boundary and the maximum speed.
+// The certificate follows the exact f64 transition used by the integrator. A
+// suffix therefore remains the same certificate when queried on the next tick.
+// Bounding the proof to 4096 held steps bounds policy evaluation cost without
+// treating unsupported numerical states as physically unrecoverable.
+const MAX_PILOT_STOPPING_STEPS: usize = 4096;
+
+fn pilot_braking_acceleration(
+    model: &AircraftModel,
+    position: f64,
+    velocity: f64,
+    timestep: f64,
+) -> Result<f64, DynamicsError> {
+    let mut current_position = position;
+    let mut current_velocity = velocity;
+    let mut first_acceleration = 0.0;
+    for step in 0..MAX_PILOT_STOPPING_STEPS {
+        if current_velocity == 0.0 {
+            return Ok(first_acceleration);
+        }
+        let acceleration = pilot_braking_step(model, current_position, current_velocity, timestep)
+            .map_err(|error| {
+                if step == 0 {
+                    error
+                } else {
+                    DynamicsError::PilotMotionOutsidePolicyDomain
+                }
+            })?;
+        if step == 0 {
+            first_acceleration = acceleration;
+        }
+        if !pilot_held_motion_is_in_range(
+            model,
+            current_position,
+            current_velocity,
+            acceleration,
+            timestep,
+        ) {
+            return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+        }
+        (current_position, current_velocity) =
+            pilot_motion_at(current_position, current_velocity, acceleration, timestep);
+    }
+    if current_velocity == 0.0 {
+        Ok(first_acceleration)
+    } else {
+        Err(DynamicsError::PilotMotionOutsidePolicyDomain)
+    }
+}
+
+fn pilot_braking_step(
+    model: &AircraftModel,
+    position: f64,
+    velocity: f64,
+    timestep: f64,
+) -> Result<f64, DynamicsError> {
+    if velocity == 0.0 {
+        return Ok(0.0);
+    }
+    let direction = velocity.signum();
+    let speed = velocity.abs();
+    let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
+    let continuous_distance = continuous_stopping_distance(speed, maximum_acceleration);
+    if !continuous_distance.is_finite() {
+        return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+    }
+    if !pilot_position_is_in_range(model, position + direction * continuous_distance) {
+        return Err(DynamicsError::PilotMotionUnrecoverable);
+    }
+    let speed_change = maximum_acceleration * timestep;
+    if speed_change == 0.0 || speed - speed_change == speed {
+        return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+    }
+    let remainder = libm::fmod(speed, speed_change);
+    let sampled_distance =
+        continuous_distance + 0.5 * remainder * ((speed_change - remainder) / maximum_acceleration);
+    if pilot_position_is_in_range(model, position + direction * sampled_distance) {
+        return Ok(-direction * maximum_acceleration.min(speed / timestep));
+    }
+
+    if remainder == 0.0 {
+        return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+    }
+    // For residual speed r and reversing endpoint speed -w, the first held
+    // acceleration is -(r+w)/h. Its positive excursion is r²h/[2(r+w)]
+    // and, after the following stopping step, displacement is rh/2-wh.
+    // Use the same canonical turning point as maximal-braking integration.
+    // Subtracting two stopping distances before adding position would evaluate
+    // this residual on a different rounded trajectory.
+    let stopping_position = position + direction * continuous_distance;
+    let residual_position = stopping_position
+        - direction * continuous_stopping_distance(remainder, maximum_acceleration);
+    let maximum_reverse_speed = (speed_change - remainder).min(model.pilot_maximum_speed_mps);
+    let bridge_acceleration =
+        -direction * ((remainder + maximum_reverse_speed) / timestep).min(maximum_acceleration);
+    let residual_velocity = direction * remainder;
+    let braking_time = -residual_velocity / bridge_acceleration;
+    let (peak, _) = pilot_motion_at(
+        residual_position,
+        residual_velocity,
+        bridge_acceleration,
+        braking_time,
+    );
+    if !pilot_position_is_in_range(model, peak) {
+        return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+    }
+    let mut safe_acceleration = bridge_acceleration;
+    if !pilot_bridge_stops_in_range(
+        model,
+        residual_position,
+        residual_velocity,
+        safe_acceleration,
+        timestep,
+    ) {
+        // The reverse speed is limited by the opposite boundary. The peak is
+        // monotone in reverse speed, so locate its smallest feasible command
+        // using coordinate comparisons with the same trajectory arithmetic.
+        let mut unsafe_acceleration = -residual_velocity / timestep;
+        loop {
+            let middle = 0.5 * safe_acceleration + 0.5 * unsafe_acceleration;
+            if middle == safe_acceleration || middle == unsafe_acceleration {
+                break;
+            }
+            let time = -residual_velocity / middle;
+            let (peak, _) = pilot_motion_at(residual_position, residual_velocity, middle, time);
+            if pilot_position_is_in_range(model, peak) {
+                safe_acceleration = middle;
+            } else {
+                unsafe_acceleration = middle;
+            }
+        }
+        if !pilot_bridge_stops_in_range(
+            model,
+            residual_position,
+            residual_velocity,
+            safe_acceleration,
+            timestep,
+        ) {
+            return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
+        }
+    }
+    if speed > speed_change {
+        Ok(-direction * maximum_acceleration)
+    } else {
+        Ok(safe_acceleration)
+    }
+}
+
+fn pilot_bridge_stops_in_range(
+    model: &AircraftModel,
+    position: f64,
+    velocity: f64,
+    acceleration: f64,
+    timestep: f64,
+) -> bool {
+    let (next_position, next_velocity) =
+        pilot_motion_at(position, velocity, acceleration, timestep);
+    if !pilot_position_is_in_range(model, next_position)
+        || next_velocity.abs() > model.pilot_maximum_speed_mps
+        || (next_velocity != 0.0 && next_velocity.signum() == velocity.signum())
+    {
+        return false;
+    }
+    let stopping_acceleration = -next_velocity / timestep;
+    if stopping_acceleration.abs() > model.pilot_maximum_acceleration_mps2 {
+        return false;
+    }
+    let (stop_position, stop_velocity) = pilot_motion_at(
+        next_position,
+        next_velocity,
+        stopping_acceleration,
+        timestep,
+    );
+    pilot_position_is_in_range(model, stop_position)
+        && pilot_position_is_in_range(
+            model,
+            stop_position
+                + stop_velocity.signum()
+                    * continuous_stopping_distance(
+                        stop_velocity.abs(),
+                        model.pilot_maximum_acceleration_mps2,
+                    ),
+        )
+}
+
+fn pilot_motion_at(position: f64, velocity: f64, acceleration: f64, time: f64) -> (f64, f64) {
+    let next_velocity = velocity + acceleration * time;
+    if acceleration != 0.0 && velocity != 0.0 && acceleration.signum() != velocity.signum() {
+        let turning_displacement = -0.5 * velocity * (velocity / acceleration);
+        let trajectory_scale =
+            position.abs() + (velocity * time).abs() + (acceleration * time * time).abs();
+        // Anchoring braking motion at its turning point reduces cancellation
+        // over repeated maximal-braking ticks. Restrict this evaluation to a
+        // nearby finite turning point to avoid cancellation for very small a.
+        if turning_displacement.is_finite() && turning_displacement.abs() <= 2.0 * trajectory_scale
+        {
+            let turning_position = position + turning_displacement;
+            let next_position =
+                turning_position + 0.5 * next_velocity * (next_velocity / acceleration);
+            if next_position.is_finite() {
+                return (next_position, next_velocity);
+            }
+        }
+    }
+    (
+        position + time * (velocity + 0.5 * acceleration * time),
+        next_velocity,
+    )
+}
+
+fn pilot_position_is_in_range(model: &AircraftModel, position: f64) -> bool {
+    position >= model.pilot_minimum_position_m && position <= model.pilot_maximum_position_m
+}
+
+fn pilot_acceleration_is_safe(
+    model: &AircraftModel,
+    position: f64,
+    velocity: f64,
+    acceleration: f64,
+    timestep: f64,
+) -> bool {
+    if !pilot_held_motion_is_in_range(model, position, velocity, acceleration, timestep) {
+        return false;
+    }
+    let (next_position, next_velocity) =
+        pilot_motion_at(position, velocity, acceleration, timestep);
+    pilot_braking_acceleration(model, next_position, next_velocity, timestep).is_ok()
+}
+
+fn pilot_held_motion_is_in_range(
+    model: &AircraftModel,
+    position: f64,
+    velocity: f64,
+    acceleration: f64,
+    timestep: f64,
+) -> bool {
+    let (next_position, next_velocity) =
+        pilot_motion_at(position, velocity, acceleration, timestep);
+    if !next_position.is_finite()
+        || !next_velocity.is_finite()
+        || !pilot_position_is_in_range(model, next_position)
+        || next_velocity.abs() > model.pilot_maximum_speed_mps
+    {
+        return false;
+    }
+    if acceleration != 0.0 {
+        let extremum_time = -velocity / acceleration;
+        if extremum_time > 0.0 && extremum_time < timestep {
+            let (extremum_position, _) =
+                pilot_motion_at(position, velocity, acceleration, extremum_time);
+            if !pilot_position_is_in_range(model, extremum_position) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn acceleration_toward_velocity(
@@ -488,6 +786,10 @@ pub enum DynamicsError {
     PilotOutOfRange,
     /// Pilot velocity cannot be stopped before reaching a movement boundary.
     PilotMotionUnrecoverable,
+    /// No finite stopping sequence is certified by the held-acceleration policy.
+    ///
+    /// This does not assert that every possible sampled-control trajectory fails.
+    PilotMotionOutsidePolicyDomain,
     /// The requested timestep is not finite and positive.
     InvalidTimeStep,
     /// The coupled mass matrix is singular or numerically non-invertible.
@@ -558,6 +860,25 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         return Err(DynamicsError::PilotOutOfRange);
     }
 
+    let (pilot_endpoint_position, pilot_endpoint_velocity) = pilot_motion_at(
+        state.pilot_position_m,
+        state.pilot_velocity_mps,
+        pilot_acceleration.meters_per_second_squared,
+        timestep_seconds,
+    );
+    if !pilot_endpoint_position.is_finite() || !pilot_endpoint_velocity.is_finite() {
+        return Err(DynamicsError::NonFinite);
+    }
+    if !pilot_held_motion_is_in_range(
+        model,
+        state.pilot_position_m,
+        state.pilot_velocity_mps,
+        pilot_acceleration.meters_per_second_squared,
+        timestep_seconds,
+    ) {
+        return Err(DynamicsError::PilotOutOfRange);
+    }
+
     let first = derivative(
         model,
         state,
@@ -566,7 +887,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         loads,
         surface_deflections,
     )?;
-    let second_state = offset_state(state, &first, timestep_seconds * 0.5)?;
+    let second_state = offset_state(state, &first, pilot_acceleration, timestep_seconds * 0.5)?;
     validate_state(model, &second_state)?;
     let second = derivative(
         model,
@@ -576,7 +897,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         loads,
         surface_deflections,
     )?;
-    let third_state = offset_state(state, &second, timestep_seconds * 0.5)?;
+    let third_state = offset_state(state, &second, pilot_acceleration, timestep_seconds * 0.5)?;
     validate_state(model, &third_state)?;
     let third = derivative(
         model,
@@ -586,7 +907,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         loads,
         surface_deflections,
     )?;
-    let fourth_state = offset_state(state, &third, timestep_seconds)?;
+    let fourth_state = offset_state(state, &third, pilot_acceleration, timestep_seconds)?;
     validate_state(model, &fourth_state)?;
     let fourth = derivative(
         model,
@@ -604,6 +925,14 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
             + timestep_seconds / 6.0
                 * (first[index] + 2.0 * second[index] + 2.0 * third[index] + fourth[index]);
     }
+    let (pilot_position, pilot_velocity) = pilot_motion_at(
+        state.pilot_position_m,
+        state.pilot_velocity_mps,
+        pilot_acceleration.meters_per_second_squared,
+        timestep_seconds,
+    );
+    result[13] = pilot_position;
+    result[14] = pilot_velocity;
     let candidate = FlightState::from_components(result)?;
     validate_state(model, &candidate)?;
     Ok(candidate)
@@ -952,12 +1281,21 @@ fn solve_6x6(mut augmented: [[f64; 7]; 6]) -> Result<[f64; 6], DynamicsError> {
 fn offset_state(
     state: &FlightState,
     derivative: &StateDerivative,
+    pilot_acceleration: PilotAcceleration,
     scale: f64,
 ) -> Result<FlightState, DynamicsError> {
     let mut components = state.components();
     for index in 0..STATE_COMPONENTS {
         components[index] += derivative[index] * scale;
     }
+    let (pilot_position, pilot_velocity) = pilot_motion_at(
+        state.pilot_position_m,
+        state.pilot_velocity_mps,
+        pilot_acceleration.meters_per_second_squared,
+        scale,
+    );
+    components[13] = pilot_position;
+    components[14] = pilot_velocity;
     FlightState::from_components(components)
 }
 

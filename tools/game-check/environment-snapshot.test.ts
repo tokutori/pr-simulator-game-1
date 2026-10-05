@@ -72,6 +72,19 @@ it("classifies JS envelope, bounded JSON and seed-word failures at the actual WA
   expect(unknown.projection).toEqual({ kind: "unavailable", source: "registry", identity: { ...identity, environment_version: 99 } });
 });
 
+it("preserves environment metadata for both archived and current playable aircraft identities", () => {
+  initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+  const archived = record(parse(environment_snapshot_for_identity_json(JSON.stringify(identity))).projection);
+  const currentIdentity = { ...identity, aircraft_model_version: 2 };
+  const current = record(parse(environment_snapshot_for_identity_json(JSON.stringify(currentIdentity))).projection);
+  expect(current).toMatchObject({ kind: "available", identity: currentIdentity });
+  expect(current.metadata).toEqual(archived.metadata);
+  const unknownIdentity = { ...identity, aircraft_model_version: 3 };
+  expect(parse(environment_snapshot_for_identity_json(JSON.stringify(unknownIdentity))).projection).toEqual({
+    kind: "unavailable", source: "registry", identity: unknownIdentity
+  });
+});
+
 it("uses selected, sealed, record and Attract identities without modifying the current flight", () => {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
   const session = new GameSessionBridge(0);

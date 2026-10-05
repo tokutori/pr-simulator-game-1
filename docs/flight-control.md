@@ -28,14 +28,22 @@ CLI/WASM adapterはFBW commandを事前生成しない。これはcontroller pri
 
 各actuatorは正の最大舵角$radian$と最大舵角速度$radian/second$を持つ。
 入力targetは最大舵角でsaturateし、現在状態から1 stepで移動できる角度を最大舵角速度とtimestepで制限する。
-step中の出力は更新済みactuator stateとして保持し、次のtickまで同じ値を空力評価へ渡す。
+整数tick $k$ のsnapshotは直前区間の保持値 $\delta_k$ を保存する。入力 $k$ から求めた更新値
+$\delta_{k+1}$ は区間 $(k,k+1]$ で保持し、全RK4 stageの空力評価へ同じ値を渡す。
+RK4の開始stageは入力更新後の右側値を評価する。rate limitは隣接tickの更新量を制限し、
+tick内の連続したactuator軌跡を定義しない。
+接触fractionが正なら終端physical actuatorも $\delta_{k+1}$ とする。fractionが0なら正の飛行時間を
+経過していないため、既存snapshotの $\delta_k$ を終端値として保持する。
 制御・actuator更新周期はphysics tickと同じ100 Hzとする。actuator stepは正の有限timestepのみ受理する。
-pilot target policyは連続停止距離に基づき、停止距離が1 tick分の停止距離以下になった目標近傍では速度を0へ収束させる。
+pilot target policyは保持加速度によるtick内軌跡と終端stateの有限停止証明を検査し、目標近傍では2 tickで位置目標へ停止する運動学に基づく要求を生成する。
+停止証明は積分器と同じ`f64`運動を最大4096 step検査する。物理的な連続停止不能とpolicyの数値適用範囲外を別の型付きerrorにする。詳細は `pilot-motion.md` を正本とする。
 そのtimestepは100 Hz tick以下の有限値とし、描画frame数から値を生成しない。
 `advance_surface_control`はpilot/FBWのauthority混合、rate limit・saturation適用、更新後stateを一つの
 決定的な操作として返す。混合後commandもrecord可能な値として返却する。
 `advance_flight_tick_with_contact`は統合tickの次状態をwater-contact detectorへ渡し、次のinteger-tick stateまたはterminal contactを
 返す。Contact時にはfractional sampleのみを公開し、接触後のinteger-tick stateを呼出し側へ返さない。
+FlightRecordとReplayのactuatorもこの保持規則を使用する。exact sample時刻は保存値、
+sample間の内点はその区間の終端sampleに保存された保持値を返す。
 
 このactuator modelは静的舵角限界とrate limitを表す。独立した遅延・一次lagを追加する場合は、
 遅延bufferとその初期状態をFlightRecordへ含める契約および統合収束試験を同時に定義する。
