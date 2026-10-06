@@ -123,6 +123,13 @@ Distance score v1は発進course axisに対するdatumの符号付き水平変�
 
 ## 数値エラーと検証範囲
 
+BPG-039のhybridは既存datum-based 6DoF、一般慣性tensor、moving pilot、quaternion、100 Hz RK4へ接続する。
+全機staticとcurrent-reference normal-force差分の合成wrenchだけを同じload境界へ渡す。
+全4 stageでO・全proxyの風と小擾乱範囲を再評価し、`HybridError`のcause・site・limitを変えずstageを付与する。
+失敗時はactuator・pilot・tick indexを含む直前stateを保持し、部分的な積分結果を公開しない。
+旧ElementOnly・StaticPolarの原因観測、公開physics version、既定scenario・recordは維持する。
+二系統playable制御はBPG-040、公開終端・default・ABI/record切替はBPG-042で扱う。
+
 不正値、非正定値慣性、空力適用範囲外は型付きエラーとして返す。
 失速域を使用するゲームでは、その範囲を含む係数モデルを別途検証する。
 適用範囲外を無条件clampして飛行継続しない。

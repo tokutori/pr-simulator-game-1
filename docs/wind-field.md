@@ -52,6 +52,16 @@ multi-point modelは要素間の速度差によるmomentを表現するが、連
 
 ## Scenario
 
+### Hybridのcurrent-reference差分
+
+BPG-039の`HybridAerodynamicLoad`は各RK4 stageのOと全proxy world位置で、同じ定常`WindField`をsampleする。
+各proxyにはbodyの$\omega\times r_i$と、NED wind差をbodyへ逆回転した項を適用する。
+全機staticはOの風だけを使用し、proxyは現在のalpha・Vの一様流referenceとの差だけを返す。
+風場の循環・gradientに対する独立forceや加速度を追加しない。式と閉境界は[`aerodynamics.md`](aerodynamics.md)に従う。
+
+V=0でも全proxyのsampleを省略せず、局所回転流・差動windと全点静止を区別する。
+範囲外gridや算術故障は元の`WindError`、proxy/surface、RK stageを保持し、失敗tickをcommitしない。
+
 Weather分類は `difficulty.md` のCalm / Mild / Typical / Challenging / NearLimitを正本とし、
 Customは利用者によるscenario選択を表す。具体的なscenario ID・versionと分類を区別する。
 0–5 m/sはゲーム設計上の主要範囲であり、公式運用限界として扱わない。

@@ -12,8 +12,11 @@ BPG-014のScreen表示shell、BPG-015のnative WebXR sessionとVR操作、BPG-01
 
 BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜034ではRust coreにauthority mixer、actuator dynamics、pilot position policy、決定的flight tick、fractional water contact、score、launch変換、固定tick flight sequenceを追加した。Rust coreの`FlightScenario`はlaunch・機体・空力・空間風・actuator・contact・score設定を統合する。
 
-BPG-038でborrowed非線形全機static polarと、moment軸・固定参照点・PWL補間の契約を追加する。
-後続のhybridと二系統尾翼操作は[#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)・[#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)で実装する。
+BPG-038でborrowed非線形全機static polarと、moment軸・固定参照点・PWL補間を追加した。
+BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)は全機staticとcurrent-reference局所normal-force差分、
+検証済みgeometry・TailIncidence・閉境界・RK stage付きcauseをRust coreへ追加する。
+新playableの二系統actuator・authority・q/r FBWは
+[#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)で接続する。数式と近似範囲は[空力契約](docs/aerodynamics.md)に従う。
 [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)は架空mockの定義・検証、
 [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)は公開型・記録version更新と既定モデル切替を同時に行う。
 以下の飛距離条件は既存fixtureの検証記録であり、新しいhybrid mockの合否基準には使用しない。実機数値・非公開xlsxは導入しない。

@@ -27,11 +27,16 @@ pub use aerodynamics::{
     AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicLoadProvider,
     AerodynamicModel, AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives,
     ControlEnvelope, ElementEnvelope, ElementOrientation, ElementReference, ElementalFlow,
-    FlowAngles, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata, StaticPolarRow,
-    UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
+    FlowAngles, HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy,
+    HybridSection, HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, PolarAnalysisMethod,
+    PolarMomentAxes, StaticPolar, StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad,
+    StaticPolarMetadata, StaticPolarRow, TailIncidence, UniformAerodynamicLoad, UniformAir,
+    WindFieldAerodynamicLoad,
 };
-pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
+pub use aerodynamics_contract::{
+    AeroError, AerodynamicEvaluationError, AerodynamicRole, AerodynamicStage, HybridError,
+    HybridFlowKind, HybridLimit, HybridSite, HybridSurfaceRole,
+};
 pub use contact::{
     ContactError, InterpolatedFlightState, WaterContactGeometry, WaterContactSample,
     detect_water_contact,

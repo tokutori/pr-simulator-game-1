@@ -100,8 +100,9 @@ BPG-038の`StaticPolar`はborrowed row・離散設定ID・解析方式・model v
 moment軸・固定参照点・共通参照量を持つ。構築と評価にruntime heap・I/Oは不要である。
 `AerodynamicLoadProvider`は一つのproviderを借用して排他的に選び、全機staticと旧5要素荷重の重畳を防ぐ。
 既存element-only APIは独立software fixtureとして保持する。
-staticとcurrent-reference局所normal-force増分によるhybridはBPG-039で追加し、
-BPG-040で二系統尾翼操作とq/r FBWを接続する。
+BPG-039の`HybridModel`は全機staticを一度評価し、幾何・固定normal・current referenceに基づく局所差分だけを加える。
+`HybridError`はcause・surface/proxy・limitを保持し、RK4境界で失敗stageを付与する。
+新playableの二系統尾翼操作・authority・q/r FBWはBPG-040で接続する。
 
 BPG-041（[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)）は公開用架空mockの定義・検証までとする。
 公開アプリの既定モデル切替はBPG-042（[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)）で、

@@ -512,6 +512,8 @@ impl ExternalLoadProvider for StaticPolarLoad<'_> {
 /// Borrows exactly one load provider; full-aircraft static loads are never added to element loads.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AerodynamicLoadProvider<'a> {
+    /// Full-aircraft static plus exclusive current-reference normal-force increments.
+    Hybrid(&'a super::hybrid::HybridAerodynamicLoad<'a>),
     /// Independent five-element model, retained for generic software fixtures.
     ElementOnly(&'a WindFieldAerodynamicLoad<'a>),
     /// Full-aircraft static polar with neutral controls.
@@ -521,6 +523,7 @@ pub enum AerodynamicLoadProvider<'a> {
 impl ExternalLoadProvider for AerodynamicLoadProvider<'_> {
     fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         match self {
+            Self::Hybrid(load) => load.evaluate(model, state),
             Self::ElementOnly(load) => load.evaluate(model, state),
             Self::StaticPolar(load) => load.evaluate(model, state),
         }
@@ -533,6 +536,7 @@ impl ExternalLoadProvider for AerodynamicLoadProvider<'_> {
         deflections: SurfaceDeflections,
     ) -> Result<Wrench, LoadError> {
         match self {
+            Self::Hybrid(load) => load.evaluate_with_surface_deflections(model, state, deflections),
             Self::ElementOnly(load) => {
                 load.evaluate_with_surface_deflections(model, state, deflections)
             }

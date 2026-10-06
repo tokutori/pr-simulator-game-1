@@ -5,7 +5,12 @@ use crate::flight_control::{ActuatorConfig, SurfaceDeflections};
 use crate::math::{BodyPoint, BodyVector, MathError, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
+mod hybrid;
 mod polar;
+pub use hybrid::{
+    HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy, HybridSection,
+    HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, TailIncidence,
+};
 pub use polar::{
     AerodynamicLoadProvider, PolarAnalysisMethod, PolarMomentAxes, StaticPolar,
     StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata,
