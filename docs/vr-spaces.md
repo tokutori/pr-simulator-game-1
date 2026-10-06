@@ -89,7 +89,8 @@ Headが利用不能な場合はsurfaceを消去し、同じMenuに理由と通�
 
 Flightの非操作telemetryとinteractive Menuはtexture、pose、寸法、cursor、hit-test対象を分離する。
 MenuはHeadの追従poseを流用せず、tracking referenceへ配置する。専用painterは実inkの収容を検査し、文字を縮小しない。
-Menuが描けないframeではHeadとMenuの両surfaceを無効化し、描画後のmicrotaskでScreenへの回復を要求する。
+Menuが`unavailable`のframeではHeadとMenuの両surfaceを無効化する。
+`viewer-unavailable`を除く失敗は描画後のmicrotaskでScreenへの回復を要求する。
 その要求はpresentationの参照とrequest世代が一致する間だけ有効とし、古い失敗で新しいsessionを終了しない。
 
 Screenのmount、Sceneとoverlayのnode、Flight HUDをVR移行・cache中も接続状態で保持する。
@@ -169,6 +170,37 @@ head-gazeの確定時間を表示し、視線を外すか取消操作で確定�
 Head固定controlはgamepad focusまたは独立controller rayで選択する。
 phone viewerでもtouchなしで戻る・閉じる・再配置・退出を操作できるようにする。
 GameScene変更時もXR sessionを維持し、必要なpanel内容だけを更新する。
+
+### MenuDocumentとscoped入力
+
+`PreparedPresentationView`は同一frameの`UiViewModel`と`MenuPresentation`を一組として渡す。
+`MenuPresentation`は`absent | pending | unavailable | ready`の排他型とし、
+`ready`だけが測定済みpanel、`MenuViewport`、`MenuScrollContext`を持つ。
+
+Canvas adapterは明示localeとfont識別子・世代を用い、実fontのadvanceとactualBoundingBoxを測定する。
+測定値から純粋layoutで不変`MenuDocument`を導出し、改行、control矩形、chart領域、頁操作を確定する。
+portraitではsurface幅と行構成を調整し、縦方向の超過をviewport内のscrollへ接続する。
+文字を縮小して収容せず、開いた時点の両眼projectionで実inkの角高さ0.35°以上を検査する。
+この閾値はソフトウェア配置契約であり、実font・GPU・実Phone/HMDの可読性受入は別条件とする。
+
+描画、clip、gaze/controllerのhit、range値、graph cursor、頁操作は同じ`MenuViewport`を共有する。
+documentの物理座標とviewport座標は共通のoffsetで変換し、clip外のcontrolは選択対象から除外する。
+`delta.viewportPages`は表示域の高さ単位とし、`pageProgress`は最大scroll量に対する一頁分の比率とする。
+Result/Replayのgraph内容とcursor値はRustのrecord queryを使用し、Web側で独立集計しない。
+
+VR Menuのscrollとfocusの正本は`AppModel.menuScroll`とし、`closed | active`の排他型で保持する。
+activeはScene/overlay、panel ID、view keyでscopeを区別し、progress、focus、generationを持つ。
+scope同期には観測時generation、入力にはscopeとgenerationを含むcontextを必須とし、古い要求を拒否する。
+scope変更、閉じる・再表示、実progress変更、明示geometry失効でgenerationを進め、focusを解除する。
+これらの純粋updateはRustの状態・query・clockへのeffectを発行しない。ScreenのDOM状態は既存browser境界で保持する。
+
+font読込や同scopeの入力geometry変更は一旦`pending`とし、旧contextを失効させてから新viewportを公開する。
+pending中はMenuの描画・選択を停止して配置dataを保持し、Screenへの回復を要求しない。
+通常head motionやtelemetry更新はscope・generation・固定anchorの更新条件へ含めない。
+`absent`はMenuを閉じ、`unavailable`は前述の失敗処理へ接続する。測定cacheは派生値だけを保持する。
+
+Head情報板は独立した非操作layerとしてcamera固定を維持する。
+Menuの固定opening anchor、scroll、hit領域をHeadへ流用せず、両layerのtextureとposeを分離する。
 
 ## 座標変換
 
