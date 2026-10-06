@@ -89,7 +89,9 @@ Headが利用不能な場合はsurfaceを消去し、同じMenuに理由と通�
 
 Flightの非操作telemetryとinteractive Menuはtexture、pose、寸法、cursor、hit-test対象を分離する。
 MenuはHeadの追従poseを流用せず、tracking referenceへ配置する。専用painterは実inkの収容を検査し、文字を縮小しない。
-Menuが`unavailable`のframeではHeadとMenuの両surfaceを無効化する。
+Menuが`unavailable`のframeではMenu surfaceを不可視とし、Headは`frame.headHud`の有効性に従って独立更新する。
+Phone VR/WebXR backendは、semantic Menuの準備結果が`unavailable`の分岐、viewer欠損、配置fit失敗でHeadを`absent`として返す。
+`pending`中も有効なHead frameを保持し、Menuだけを描画・選択対象から除外する。
 `viewer-unavailable`を除く失敗は描画後のmicrotaskでScreenへの回復を要求する。
 その要求はpresentationの参照とrequest世代が一致する間だけ有効とし、古い失敗で新しいsessionを終了しない。
 
