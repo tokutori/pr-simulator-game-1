@@ -50,6 +50,9 @@ pub struct AircraftModel {
 
 impl AircraftModel {
     /// Creates a validated model with airframe inertia about fixed datum O.
+    ///
+    /// The supplied tensor already guarantees positive definiteness and physical
+    /// principal-moment triangle inequalities through [`InertiaTensor`].
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         airframe_mass_kg: f64,
