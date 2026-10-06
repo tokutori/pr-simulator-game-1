@@ -37,6 +37,7 @@ import { composePose, inversePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { captureConfiguredViewerFrame, captureXrViewerFrame } from "./viewer-frame.js";
+import { createHeadHudSurface } from "./head-hud-surface.js";
 import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
@@ -179,7 +180,8 @@ export function createThreeRenderer(
   canvas: HTMLCanvasElement,
   panelCanvas: HTMLCanvasElement,
   xrSystem: XRSystem | null,
-  lakeQuality: LakeWaterQuality = "high"
+  lakeQuality: LakeWaterQuality = "high",
+  headHudCanvas?: HTMLCanvasElement
 ): ThreeRendererBundle {
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.shadowMap.enabled = true;
@@ -349,6 +351,8 @@ export function createThreeRenderer(
   const panelMesh = new Mesh(panelGeometry, panelMaterial);
   panelMesh.visible = false;
   scene.add(panelMesh);
+  const headHudSurface = headHudCanvas === undefined ? null : createHeadHudSurface(headHudCanvas);
+  if (headHudSurface !== null) scene.add(headHudSurface.mesh);
   const gazeCursorGeometry = new CircleGeometry(0.035, 32);
   const gazeCursorMaterial = new MeshBasicMaterial({ color: 0xf0d382, side: DoubleSide, transparent: true, opacity: 0.8, depthWrite: false });
   const gazeCursor = new Mesh(gazeCursorGeometry, gazeCursorMaterial);
@@ -518,6 +522,12 @@ export function createThreeRenderer(
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
       updateFixedCameraProjection();
       setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
+      const worldFromTracking = useExternalCamera
+        ? externalPose
+        : flightPose === null
+          ? titlePresentationPose
+          : flightRelativePose(flightPose, currentTrackingMountPose());
+      headHudSurface?.update(frame.headHud, worldFromTracking);
       airframe.setVisualState(
         flightPose?.airspeedMetersPerSecond ?? null,
         flightPose?.actuatorDeflectionRadians?.pitch ?? 0,
@@ -653,6 +663,7 @@ export function createThreeRenderer(
       frameViewport = null;
       renderedTrackingMount = null;
       panelTexture.dispose();
+      headHudSurface?.dispose();
       gazeCursorGeometry.dispose();
       gazeCursorMaterial.dispose();
       panelGeometry.dispose();

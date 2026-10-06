@@ -58,14 +58,15 @@ HUDを水面反射用layerへ追加せず、終了時はtexture・material・geo
 非表示時もmeshを保持し、変更された不変viewだけをtexture更新の入力にする。
 
 公開型、backendのcenter-head供給、独立surface、同一frameの眼別geometryを実装した。
-ゲームviewの既定値はabsentであり、Flightへの有効化・実GPU視認性は後続の接続単位で検証する。
+active VR FlightではHead情報板を有効にし、Pauseと非Flightではabsentとする。Screen HUDは従来のDOMを保持する。
+実font・GPU視認性と実Phone/HMDの受入は、接続のCPU試験から分離して検証する。
 
 ## 純粋layoutとCanvas preflight
 
 `createHeadHudView`は共通の`FlightHudModel`、そのframeの`ViewerFrame`、明示localeから不変layoutを導出する。
 InformationのFull/Standard/Minimal/Realistic/Customと各Custom cueを保持し、架空値と取得不能値を区別する。
 左右眼のposeから前方の水平±15°・垂直±10°の保護領域をHUD面へ写像し、各cardをその領域外へ配置する。
-予約したFlight Menu幾何との分離も検査する。現在のgame Menu接続と実browser/GPUでの操作受入は後続に残る。
+予約したFlight Menu幾何との分離も検査する。実browser/GPUでの操作受入は独立した条件として残る。
 
 `prepareHeadHudPaint`は実advanceとactualBoundingBoxによって改行・card収容を検査し、描画前に不変paint planを作る。
 Canvas adapterは`VisibleHeadHud.locale`をdetached canvasのlanguageへ明示し、対応browserでは2D contextの`lang`も設定する。
@@ -78,6 +79,23 @@ actualBoundingBoxの距離は符号付きのまま扱い、ascent/descent単独�
 0.35°は本製品のソフトウェア配置契約であり、実Phone/HMDの可読性を保証する実測値ではない。
 旧ALTの13px／0.282640168°による拒否をlocale変更だけで解消済みとは扱わず、新sourceでの実metricsとGPUを検証する。
 CPU試験は模擬metricsによるlayout・合成・拒否契約を対象とし、実font選択、contrast、GPU画像、光学受入は別条件とする。
+
+## Flightの同一frame接続
+
+`createFlightFrameViewDraft`はAppModel、snapshot、analysis、共通HUDを一組として固定する。
+ブラウザー境界の表示localeを明示し、同じViewerFrameでHeadのprepare、両眼validate、viewのfinalize、drawを順に実行する。
+rendererへ渡すHead layerとMenuの説明はこの最終viewを共有する。同期的なScene変更で別のcanvasを描き直さない。
+Headが利用不能な場合はsurfaceを消去し、同じMenuに理由と通常のPause操作を表示する。
+
+Flightの非操作telemetryとinteractive Menuはtexture、pose、寸法、cursor、hit-test対象を分離する。
+MenuはHeadの追従poseを流用せず、tracking referenceへ配置する。専用painterは実inkの収容を検査し、文字を縮小しない。
+Menuが描けないframeではHeadとMenuの両surfaceを無効化し、描画後のmicrotaskでScreenへの回復を要求する。
+その要求はpresentationの参照とrequest世代が一致する間だけ有効とし、古い失敗で新しいsessionを終了しない。
+
+Screenのmount、Sceneとoverlayのnode、Flight HUDをVR移行・cache中も接続状態で保持する。
+非表示時はhidden、inert、aria-hiddenをviewから導出し、隠れたcontrolからの操作を受理しない。
+Screen復帰時は同じnodeへ表示内容をpatchし、focus、scroll、既存の退出導線を保持する。
+この接続の数値・DOM試験は実Canvas font、GPU両眼画像、前方可視性、Menu操作、光学受入の代用にしない。
 
 ## 同一frameの眼別geometry
 
@@ -111,8 +129,8 @@ eye offsetは配置検査に使用し、Head HUD meshへ追加しない。描画
 
 `viewer-frame.test.ts`は非対称・回転・shearを含む模擬XR入力、コピー、reference変換、欠損・不正入力と純粋な投影判定を検査する。
 `three-renderer-panel-reference.test.ts`は実renderer adapterのanimation-loop境界と、実`StereoEffect`の両眼出力を検査する。
-後者のXR portは模擬APIである。native consumerの投影証明は、#169の実`WebXRManager`を用いた回帰と
-Head HUDの左右眼投影を接続する後続単位へ残る。GPU視認性と実スマートフォン・実HMD受入も独立した未達条件である。
+後者のXR portは模擬APIである。`three-webxr-mount.test.ts`は実`WebXRManager`と模擬browser XR portで
+Head HUDの左右眼投影を検査する。GPU視認性と実スマートフォン・実HMD受入は独立した未達条件である。
 
 ## Panelの深度合成
 

@@ -1,10 +1,12 @@
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
-import { normalizedRect } from "../render/contracts/ui.js";
+import { FLIGHT_MENU_GEOMETRY, normalizedRect } from "../render/contracts/ui.js";
 import type { UiButton, UiChart, UiPanel, UiRange, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
 import { venueMapForScenario } from "../game/biwa-venue-map.js";
+import { NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
+import type { HeadHudUnavailableReason, HeadHudView } from "../presentation/head-hud-view.js";
 import type {
   AppModel,
   ConfigurationMetadataUiState,
@@ -16,7 +18,8 @@ import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 export function createGameViewModel(
   model: AppModel,
   snapshot: FlightSnapshot | null,
-  analysis: FlightAnalysisData | null = model.flightAnalysis
+  analysis: FlightAnalysisData | null = model.flightAnalysis,
+  headHudView: HeadHudView = NO_HEAD_HUD_VIEW
 ): UiViewModel {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
@@ -66,25 +69,33 @@ export function createGameViewModel(
         controls.push(status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"));
       }
       (phaseCode === 6 ? buttons : flightButtons).forEach((entry) => controls.push(entry));
-    } else if (snapshot !== null) {
-      if (phaseCode === 6 && pauseOverlay === "settings") {
+    } else if (phaseCode === 5) {
+      if (headHudView.kind === "unavailable") controls.push(Object.freeze({
+        ...status("game-head-hud-unavailable", "情報板", headHudUnavailableLabel(headHudView.reason)),
+        rect: normalizedRect(0.06, 0.2, 0.88, 0.42)
+      }));
+      const pause = flightButtons.find((entry) => entry.id === "game-flight-pause");
+      if (pause !== undefined) controls.push(Object.freeze({
+        ...pause, rect: headHudView.kind === "unavailable" ? normalizedRect(0.06, 0.7, 0.88, 0.18) : normalizedRect(0.06, 0.3, 0.88, 0.5)
+      }));
+    } else {
+      if (pauseOverlay === "settings") {
         controls.push(Object.freeze({
           ...status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"),
-          rect: normalizedRect(0.04, 0.64, 0.92, 0.1)
+          rect: normalizedRect(0.08, 0.24, 0.84, 0.25)
         }));
-      } else if (phaseCode === 6 && pauseOverlay === "help") {
+      } else if (pauseOverlay === "help") {
         controls.push(Object.freeze({
           ...status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"),
-          rect: normalizedRect(0.04, 0.64, 0.92, 0.1)
+          rect: normalizedRect(0.08, 0.24, 0.84, 0.25)
         }));
+      } else {
+        controls.push(Object.freeze({ ...status("game-state", "状態", "一時停止中"), rect: normalizedRect(0.08, 0.2, 0.84, 0.12) }));
       }
-      const pauseActions = phaseCode === 6 ? buttons : flightButtons;
-      pauseActions.forEach((entry, index) => {
-        const column = index % 2;
-        const row = Math.floor(index / 2);
+      buttons.forEach((entry, index) => {
         controls.push(Object.freeze({
           ...entry,
-          rect: normalizedRect(0.04 + column * 0.47, 0.77 + row * 0.11, 0.45, 0.095)
+          rect: normalizedRect(0.08, pauseOverlay === "menu" ? 0.4 + index * 0.11 : 0.72, 0.84, 0.085)
         }));
       });
     }
@@ -301,10 +312,12 @@ export function createGameViewModel(
       : control);
   const panel: UiPanel = Object.freeze({
     id: "game-flow",
-    title: "ゲーム進行",
-    anchor: vrFlightPanel ? "cockpit" : "menu",
-    localPose: vrFlightPanel ? pose(vec3(0, 0, -1.25), IDENTITY_POSE.orientation) : IDENTITY_POSE,
-    size: vrFlightPanel ? Object.freeze({ width: 0.95, height: 0.68 }) : Object.freeze({ width: 2.4, height: 1.8 }),
+    title: vrFlightPanel ? phaseCode === 5 ? "Pause" : pauseOverlay === "settings" ? "Settings" : pauseOverlay === "help" ? "Help" : "Pause" : "ゲーム進行",
+    anchor: "menu",
+    localPose: vrFlightPanel && phaseCode === 5 ? pose(vec3(0, FLIGHT_MENU_GEOMETRY.centerY, 0), IDENTITY_POSE.orientation) : IDENTITY_POSE,
+    size: vrFlightPanel && phaseCode === 5
+      ? headHudView.kind === "unavailable" ? Object.freeze({ width: 0.9, height: 0.5 }) : Object.freeze({ width: FLIGHT_MENU_GEOMETRY.width, height: FLIGHT_MENU_GEOMETRY.height })
+      : Object.freeze({ width: 2.4, height: 1.8 }),
     controls: Object.freeze(renderedControls)
   });
   return Object.freeze({
@@ -321,8 +334,19 @@ export function createGameViewModel(
       ? pauseOverlay === "settings" ? "PauseSettings" : pauseOverlay === "help" ? "PauseHelp" : "Pause"
       : null,
     panels: Object.freeze([panel]),
-    headHud: NO_HEAD_HUD
+    headHud: vrFlightPanel && phaseCode === 5 && snapshot !== null && headHudView.kind === "visible" ? headHudView.layer : NO_HEAD_HUD
   });
+}
+
+function headHudUnavailableLabel(reason: HeadHudUnavailableReason): string {
+  switch (reason) {
+    case "not-stereo": return "両眼表示を確認する。";
+    case "viewer-unavailable": return "頭部追跡の復帰を待つ。";
+    case "unsupported-view-configuration": return "このVR表示形式では情報板を表示できない。";
+    case "invalid-view-geometry": return "VRの投影情報を取得できない。";
+    case "insufficient-view-area": return "両眼に収まる情報板の表示領域が不足している。";
+    case "text-overflow": return "情報板の文字を読み取れる大きさで配置できない。";
+  }
 }
 
 function clipMapSegment(

@@ -15,10 +15,21 @@ import type { VNode } from "snabbdom";
 
 const patch = init([attributesModule, classModule, datasetModule, propsModule]);
 
+interface RetainedScreenDom {
+  readonly focus: HTMLElement | null;
+  readonly shell: HTMLElement;
+  readonly scene: string | undefined;
+  readonly overlay: string | undefined;
+  readonly scrollTop: number;
+  readonly scrollLeft: number;
+}
+
 export class ScreenUiAdapter {
   private readonly mount: HTMLElement;
   private currentVNode: VNode;
   private controls = new Map<string, UiControl>();
+  private visible = true;
+  private retainedDom: RetainedScreenDom | null = null;
 
   constructor(private readonly root: HTMLElement, private readonly dispatch: UiActionDispatcher) {
     this.mount = root.ownerDocument.createElement("div");
@@ -30,8 +41,10 @@ export class ScreenUiAdapter {
     this.root.addEventListener("input", this.onInput);
   }
 
-  render(viewModel: UiViewModel): void {
+  render(viewModel: UiViewModel, visible = true): void {
     const documentRef = this.root.ownerDocument;
+    if (this.visible && !visible) this.retainDom();
+    this.visible = visible;
     this.controls = new Map(viewModel.panels.flatMap((panel) => panel.controls.map((control) => [control.id, control])));
     const shell = documentRef.createElement("section");
     shell.className = "screen-ui-shell";
@@ -54,16 +67,45 @@ export class ScreenUiAdapter {
     build.className = "build-version";
     build.textContent = APP_BUILD_LABEL;
     shell.append(build);
-    const nextVNode = h("div.screen-ui-mount", [keyDomTree(shell)]);
+    const nextVNode = h("div.screen-ui-mount", {
+      attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
+    }, [keyDomTree(shell)]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
+    if (visible) this.restoreDom();
   }
 
-  clear(): void {
-    this.controls.clear();
-    this.currentVNode = patch(this.currentVNode, h("div.screen-ui-mount", []));
+  private retainDom(): void {
+    const shell = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
+    if (shell === null) return;
+    const active = this.root.ownerDocument.activeElement;
+    const ElementConstructor = this.root.ownerDocument.defaultView?.HTMLElement;
+    const focus = ElementConstructor !== undefined && active instanceof ElementConstructor && this.mount.contains(active)
+      ? active
+      : null;
+    this.retainedDom = {
+      focus, shell, scene: shell.dataset.scene, overlay: shell.dataset.overlay,
+      scrollTop: shell.scrollTop, scrollLeft: shell.scrollLeft
+    };
+    focus?.blur();
+  }
+
+  private restoreDom(): void {
+    const retained = this.retainedDom;
+    this.retainedDom = null;
+    if (retained === null || !this.mount.contains(retained.shell) ||
+        retained.shell.dataset.scene !== retained.scene || retained.shell.dataset.overlay !== retained.overlay) return;
+    retained.shell.scrollTop = retained.scrollTop;
+    retained.shell.scrollLeft = retained.scrollLeft;
+    const active = this.root.ownerDocument.activeElement;
+    const focus = retained.focus;
+    if ((active === null || active === this.root.ownerDocument.body) && focus !== null && focus.isConnected &&
+        this.mount.contains(focus) && !focus.matches(":disabled") && focus.closest("[hidden], [inert]") === null) {
+      focus.focus({ preventScroll: true });
+    }
   }
 
   private readonly onClick = (event: Event): void => {
+    if (!this.visible) return;
     const target = eventElement(event, this.root);
     const button = target?.closest("button[data-control-id]");
     const controlId = button?.getAttribute("data-control-id");
@@ -75,23 +117,25 @@ export class ScreenUiAdapter {
   };
 
   private readonly onChange = (event: Event): void => {
+    if (!this.visible) return;
     const input = eventElement(event, this.root);
     if (input?.tagName !== "INPUT" || input.getAttribute("type") !== "checkbox") return;
     const controlId = input.getAttribute("data-control-id");
     if (controlId === null) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "toggle") return;
+    if (control?.kind !== "toggle" || !control.enabled) return;
     const checked = (input as HTMLInputElement).checked;
     this.dispatch({ type: "set-toggle", controlId: control.id, value: checked });
   };
 
   private readonly onInput = (event: Event): void => {
+    if (!this.visible) return;
     const input = eventElement(event, this.root);
     if (input?.tagName !== "INPUT" || input.getAttribute("type") !== "range") return;
     const controlId = input.getAttribute("data-control-id");
     if (controlId === null) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "range") return;
+    if (control?.kind !== "range" || !control.enabled) return;
     const value = Number((input as HTMLInputElement).value);
     if (Number.isFinite(value)) this.dispatch({ type: "set-range", controlId: control.id, value });
   };

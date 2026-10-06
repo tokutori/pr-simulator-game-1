@@ -52,6 +52,10 @@ body {
   display: contents;
 }
 
+.screen-ui-mount[hidden] {
+  display: none;
+}
+
 .screen-ui-shell {
   width: min(42rem, 100%);
   max-height: calc(100dvh - 2rem);
