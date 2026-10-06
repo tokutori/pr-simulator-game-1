@@ -136,7 +136,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       driver.draws.length = 0;
       bundle.renderer.render(frame({ panel, panelPose, viewport: size }));
       expect(driver.draws).toHaveLength(2);
-      const basis = poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y));
+      const basis = poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y)).multiply(new Matrix4().makeRotationX(Math.PI / 30));
       for (const [index, draw] of driver.draws.entries()) {
         const eye = new Matrix4().makeTranslation((index === 0 ? -1 : 1) * PHONE_VR_OPTICAL_PROFILE.eyeSeparationMeters / 2, 0, 0);
         expectMatrix(draw.camera, basis.clone().multiply(eye));
@@ -159,8 +159,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const headFrame = frame({ cameraPose: turnedHead, panelPose, panel: { ...panel, anchor: "head" } });
     expect(bundle.renderer.transformTrackingPose(turnedHead)).toBe(turnedHead);
     bundle.renderer.render(headFrame);
-    const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(poseMatrix(turnedHead));
-    const expectedPanel = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(poseMatrix(panelPose));
+    const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(turnedHead));
+    const expectedPanel = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(panelPose));
     expect(driver.draws).toHaveLength(2);
     expectMatrix(centerEye(driver.draws), expectedCenter);
     for (const draw of driver.draws) {
@@ -175,7 +175,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       checkAvailability: () => Promise.resolve({ supported: true, message: "Available" }),
       requestPermissionFromUserGesture: () => Promise.resolve({ ok: true }),
       getScreenOrientationAngle: () => 90,
-      startListening: (reading) => { emit = reading; reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0 }); },
+      startListening: (reading) => { emit = reading; reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } }); },
       stopListening: () => { emit = null; }
     };
     const backend = new PhoneVrPresentationBackend(sensors, bundle.renderer, () => viewport, () => undefined,
@@ -199,7 +199,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       render(0);
       const sendReading = emit as ((reading: PhoneVrSensorReading) => void) | null;
       if (sendReading === null) throw new Error("No sensor listener");
-      sendReading({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10 });
+      sendReading({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
       const before = render(10);
       backend.recenterTracking();
       expectMatrix(render(11).relative, before.relative);
@@ -307,7 +307,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       bundle.renderer.setFlightPose(flight);
       const phone = await startPhone(bundle, viewport);
       try {
-        phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10 });
+        phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
         const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
         const mountedHead = composePose(pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1), rawFrame.cameraPose);
         const view = phonePanel(anchor, mountedHead);
@@ -353,7 +353,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const mount = mode === "platform" ? external : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.35, 0.1);
     const phone = await startPhone(bundle, viewport);
     try {
-      phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10 });
+      phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
       const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
       const view = phonePanel("menu", composePose(mount, rawFrame.cameraPose));
       const render = (timestampMs: number): Matrix4 => {
@@ -388,7 +388,7 @@ async function startPhone(bundle: ThreeRendererBundle, viewport: BackendFrame["v
     checkAvailability: () => Promise.resolve({ supported: true, message: "Available" }),
     requestPermissionFromUserGesture: () => Promise.resolve({ ok: true }),
     getScreenOrientationAngle: () => 90,
-    startListening: (reading) => { listener = reading; reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0 }); },
+    startListening: (reading) => { listener = reading; reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } }); },
     stopListening: () => { listener = null; }
   };
   const actions: UiAction[] = [];

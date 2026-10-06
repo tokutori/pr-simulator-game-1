@@ -7,6 +7,7 @@ interface DeviceOrientationReadingEvent {
   readonly beta: number | null;
   readonly gamma: number | null;
   readonly timeStamp: number;
+  readonly absolute: boolean;
 }
 
 interface PhoneVrBrowserWindow {
@@ -29,9 +30,9 @@ export function createBrowserPhoneVrSensorPort(
   targetWindow: PhoneVrBrowserWindow = globalThis as unknown as PhoneVrBrowserWindow
 ): PhoneVrSensorPort {
   let orientationListener: ((event: DeviceOrientationReadingEvent) => void) | null = null;
+  let absoluteOrientationListener: ((event: DeviceOrientationReadingEvent) => void) | null = null;
   let screenOrientationListener: (() => void) | null = null;
-  let onReading: ((reading: PhoneVrSensorReading) => void) | null = null;
-  let onScreenOrientationChange: ((angle: number | null) => void) | null = null;
+  let listeningGeneration = 0;
 
   return Object.freeze({
     checkAvailability(): Promise<PhoneVrAvailability> {
@@ -45,7 +46,7 @@ export function createBrowserPhoneVrSensorPort(
       if (!Number.isFinite(targetWindow.screen.orientation.angle)) {
         return Promise.resolve({ supported: false, message: "Screen orientation angle is unavailable" });
       }
-      return Promise.resolve({ supported: true, message: "Phone VR sensor API is available; permission and sensor events are still required" });
+      return Promise.resolve({ supported: true, message: "Phone VR sensor API is available; permission and gravity-referenced absolute events are still required" });
     },
     requestPermissionFromUserGesture(): Promise<PhoneVrPermissionResult> {
       if (typeof targetWindow.DeviceOrientationEvent === "undefined") {
@@ -56,7 +57,7 @@ export function createBrowserPhoneVrSensorPort(
       try {
         permission = constructor.requestPermission === undefined
           ? Promise.resolve("granted")
-          : constructor.requestPermission(false);
+          : constructor.requestPermission(true);
       } catch (error) {
         return Promise.resolve({ ok: false, message: `Phone VR permission request failed: ${errorMessage(error)}` });
       }
@@ -73,29 +74,46 @@ export function createBrowserPhoneVrSensorPort(
       screenOrientationHandler: (angle: number | null) => void
     ): void {
       if (orientationListener !== null) throw new Error("Phone VR sensor listener is already active");
-      onReading = readingHandler;
-      onScreenOrientationChange = screenOrientationHandler;
-      orientationListener = (event) => {
-        onReading?.(Object.freeze({
+      const generation = ++listeningGeneration;
+      let source: "deviceorientation" | "deviceorientationabsolute" | null = null;
+      const receive = (eventSource: "deviceorientation" | "deviceorientationabsolute", event: DeviceOrientationReadingEvent) => {
+        if (generation !== listeningGeneration || (source !== null && source !== eventSource)) return;
+        if (event.absolute) source = eventSource;
+        readingHandler(Object.freeze({
           alpha: event.alpha,
           beta: event.beta,
           gamma: event.gamma,
-          timestampMs: event.timeStamp
+          timestampMs: event.timeStamp,
+          gravityEvidence: Object.freeze(event.absolute ? { kind: "earth-z-up" } : { kind: "unavailable" })
         }));
       };
+      orientationListener = (event) => { receive("deviceorientation", event); };
+      absoluteOrientationListener = (event) => { receive("deviceorientationabsolute", event); };
       screenOrientationListener = () => {
-        onScreenOrientationChange?.(readScreenOrientationAngle(targetWindow));
+        if (generation === listeningGeneration) screenOrientationHandler(readScreenOrientationAngle(targetWindow));
       };
       targetWindow.addEventListener("deviceorientation", orientationListener);
+      targetWindow.addEventListener("deviceorientationabsolute", absoluteOrientationListener);
       targetWindow.screen.orientation?.addEventListener("change", screenOrientationListener);
     },
     stopListening(): void {
-      if (orientationListener !== null) targetWindow.removeEventListener("deviceorientation", orientationListener);
-      if (screenOrientationListener !== null) targetWindow.screen.orientation?.removeEventListener("change", screenOrientationListener);
+      listeningGeneration++;
+      const orientation = orientationListener;
+      const absoluteOrientation = absoluteOrientationListener;
+      const screenOrientation = screenOrientationListener;
       orientationListener = null;
+      absoluteOrientationListener = null;
       screenOrientationListener = null;
-      onReading = null;
-      onScreenOrientationChange = null;
+      const removals: Array<() => void> = [];
+      if (orientation !== null) removals.push(() => { targetWindow.removeEventListener("deviceorientation", orientation); });
+      if (absoluteOrientation !== null) removals.push(() => { targetWindow.removeEventListener("deviceorientationabsolute", absoluteOrientation); });
+      if (screenOrientation !== null) removals.push(() => { targetWindow.screen.orientation?.removeEventListener("change", screenOrientation); });
+      let failure: Error | null = null;
+      for (const remove of removals) {
+        try { remove(); }
+        catch (error) { failure ??= new Error(`Phone VR sensor listener removal failed: ${errorMessage(error)}`); }
+      }
+      if (failure !== null) throw failure;
     }
   });
 }

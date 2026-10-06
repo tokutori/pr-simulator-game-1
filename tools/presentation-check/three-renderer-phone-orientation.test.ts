@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Matrix4, Quaternion, Vector3 } from "three";
+import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
-import { createThreeRenderer } from "../../web/src/render/engines/three/three-renderer.js";
+import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
@@ -9,6 +9,8 @@ import type { BackendFrame } from "../../web/src/render/contracts/runtime.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
+import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
+import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 
 interface RecordedDraw {
   readonly camera: Matrix4;
@@ -101,8 +103,8 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
 
   afterAll(() => { bundle.renderer.dispose(); });
 
-  function render(backend: PhoneVrPresentationBackend, timestamp = 100): { frame: BackendFrame; eyes: readonly RecordedDraw[] } {
-    const frame = backend.currentFrame(timestamp, view);
+  function render(backend: PhoneVrPresentationBackend, timestamp = 100, sceneView: UiViewModel = view): { frame: BackendFrame; eyes: readonly RecordedDraw[] } {
+    const frame = backend.currentFrame(timestamp, sceneView);
     driver.draws.length = 0;
     bundle.renderer.render(frame);
     expect(driver.draws).toHaveLength(2);
@@ -204,7 +206,51 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
       expectMatrix(centerCamera(reset.eyes).invert().multiply(centerCamera(later.eyes)), new Matrix4().makeRotationY(Math.PI / 9));
     } finally { await backend.stop(); }
   });
+
+  it.each(orientations)("preserves nonzero startup tilt and returns every non-Flight camera to horizontal at screen $screen degrees", async (orientation) => {
+    bundle.renderer.setFlightPose(null);
+    bundle.renderer.resize(viewport);
+    const screenBase = poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y));
+    const phoneBase = screenBase.clone().multiply(new Matrix4().makeRotationX(6 * Math.PI / 180));
+    for (const pitch of [-30, 30]) {
+      for (const roll of [-20, 20]) {
+        const tilt = new Matrix4().makeRotationX(pitch * Math.PI / 180).multiply(new Matrix4().makeRotationZ(roll * Math.PI / 180));
+        const physical = new Matrix4().makeRotationY(35 * Math.PI / 180).multiply(tilt);
+        const { browser, backend, unavailable } = await start(orientation.screen, deviceAngles(physical, orientation.screen));
+        try {
+          for (const scene of GAME_SCENES) {
+            const sceneView = createSceneFixture(scene);
+            const initial = render(backend, 100, sceneView);
+            expectMatrix(centerCamera(initial.eyes), phoneBase.clone().multiply(tilt));
+            expect(new Vector3(0, 0, -1).transformDirection(centerCamera(initial.eyes)).y).toBeCloseTo(Math.sin(pitch * Math.PI / 180), 10);
+            backend.recenterTracking();
+            expectMatrix(centerCamera(render(backend, 100, sceneView).eyes), centerCamera(initial.eyes));
+          }
+          browser.emit(deviceAngles(new Matrix4().makeRotationY(35 * Math.PI / 180), orientation.screen));
+          for (const scene of GAME_SCENES) {
+            const horizontal = render(backend, 100, createSceneFixture(scene));
+            expectMatrix(centerCamera(horizontal.eyes), phoneBase);
+            expect(new Vector3(0, 0, -1).transformDirection(centerCamera(horizontal.eyes)).y).toBeCloseTo(0, 10);
+          }
+          expect(unavailable).toEqual([]);
+        } finally { await backend.stop(); }
+        driver.draws.length = 0;
+        bundle.renderer.render(backend.currentFrame(100, view));
+        expect(driver.draws).toHaveLength(1);
+        const screenDraw = driver.draws[0];
+        if (screenDraw === undefined) throw new Error("Missing Screen draw");
+        expectMatrix(screenDraw.camera, screenBase);
+      }
+    }
+  });
 });
+
+function deviceAngles(head: Matrix4, screen: number): DeviceAngles {
+  const device = new Matrix4().makeRotationX(Math.PI / 2).multiply(head)
+    .multiply(new Matrix4().makeRotationZ(screen * Math.PI / 180));
+  const angles = new Euler().setFromRotationMatrix(device, "ZXY");
+  return [angles.z * 180 / Math.PI, angles.x * 180 / Math.PI, angles.y * 180 / Math.PI];
+}
 
 function poseMatrix(value: Pose): Matrix4 {
   return new Matrix4().compose(
@@ -232,7 +278,7 @@ function expectMatrix(actual: Matrix4, expected: Matrix4): void {
 }
 
 function createBrowser(initialScreenAngle: number) {
-  type ReadingEvent = { readonly alpha: number; readonly beta: number; readonly gamma: number; readonly timeStamp: number };
+  type ReadingEvent = { readonly alpha: number; readonly beta: number; readonly gamma: number; readonly timeStamp: number; readonly absolute: boolean };
   const orientationListeners = new Set<(event: ReadingEvent) => void>();
   const screenListeners = new Set<() => void>();
   let screenAngle = initialScreenAngle;
@@ -251,7 +297,7 @@ function createBrowser(initialScreenAngle: number) {
     },
     emit(angles: DeviceAngles): void {
       timeStamp++;
-      for (const listener of orientationListeners) listener({ alpha: angles[0], beta: angles[1], gamma: angles[2], timeStamp });
+      for (const listener of orientationListeners) listener({ alpha: angles[0], beta: angles[1], gamma: angles[2], timeStamp, absolute: true });
     },
     rotateScreen(angle: number): void {
       screenAngle = angle;

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { IDENTITY_POSE, quaternion } from "../../web/src/render/contracts/math.js";
+import type { Quaternion } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAnchorFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
@@ -39,20 +40,20 @@ describe("Phone VR browser sensor adapter", () => {
     const sensors = createBrowserPhoneVrSensorPort(browser.window);
     expect(await sensors.checkAvailability()).toMatchObject({ supported: true });
     const permission = sensors.requestPermissionFromUserGesture();
-    expect(browser.permissionRequests).toEqual([false]);
+    expect(browser.permissionRequests).toEqual([true]);
     expect(await permission).toEqual({ ok: true });
 
     const readings: PhoneVrSensorReading[] = [];
     const screenAngles: Array<number | null> = [];
     sensors.startListening((value) => { readings.push(value); }, (angle) => { screenAngles.push(angle); });
-    browser.emitDeviceOrientation({ alpha: null, beta: 20, gamma: -10, timestampMs: 42 });
+    browser.emitDeviceOrientation({ alpha: null, beta: 20, gamma: -10, timestampMs: 42, gravityEvidence: { kind: "earth-z-up" } });
     browser.setScreenAngle(90);
     browser.emitScreenOrientationChange();
-    expect(readings).toEqual([{ alpha: null, beta: 20, gamma: -10, timestampMs: 42 }]);
+    expect(readings).toEqual([{ alpha: null, beta: 20, gamma: -10, timestampMs: 42, gravityEvidence: { kind: "earth-z-up" } }]);
     expect(screenAngles).toEqual([90]);
 
     sensors.stopListening();
-    browser.emitDeviceOrientation({ alpha: 0, beta: 0, gamma: 0, timestampMs: 50 });
+    browser.emitDeviceOrientation({ alpha: 0, beta: 0, gamma: 0, timestampMs: 50, gravityEvidence: { kind: "earth-z-up" } });
     browser.emitScreenOrientationChange();
     expect(readings).toHaveLength(1);
     expect(screenAngles).toHaveLength(1);
@@ -133,7 +134,7 @@ describe("Phone VR presentation backend", () => {
     try {
       await backend.requestPermissionFromUserGesture();
       const startup = backend.start();
-      sensors.emit(reading(0, 0, 0, 1002));
+      sensors.emit(reading(0, 90, 0, 1002));
       await startup;
       expect(backend.currentFrame(1000, createSceneFixture("Title")).panelVisible).toBe(true);
       expect(unavailable).toEqual([]);
@@ -192,7 +193,7 @@ describe("Phone VR presentation backend", () => {
       .toEqual([{ type: "switch-backend", mode: "phone-vr", requestId: 2 }]);
     const startup = runtime.switchTo("phone-vr");
     await browser.orientationListening;
-    browser.emitDeviceOrientation(reading(0, 0, 0, 1002));
+    browser.emitDeviceOrientation(reading(0, 90, 0, 1002));
     expect(await startup).toEqual({ ok: true });
     dispatch({
       type: "backend-transition-completed", requestId: 2, requestedMode: "phone-vr",
@@ -207,8 +208,8 @@ describe("Phone VR presentation backend", () => {
     expect(renderer.frames.at(-1)).toMatchObject({ timestampMs: 1000, panelVisible: true });
 
     currentTimeMs = 1018;
-    browser.emitDeviceOrientation(reading(0, 20, 0, 1018));
-    browser.emitDeviceOrientation(reading(0, 25, 0, 1018));
+    browser.emitDeviceOrientation(reading(0, 110, 0, 1018));
+    browser.emitDeviceOrientation(reading(0, 115, 0, 1018));
     renderer.tick(1016);
     expect(renderer.frames.at(-1)?.cameraPose.orientation).not.toEqual(IDENTITY_POSE.orientation);
     expect(unavailable).toEqual([]);
@@ -226,19 +227,19 @@ describe("Phone VR presentation backend", () => {
     }
 
     currentTimeMs = 61_020;
-    browser.emitDeviceOrientation(reading(0, 35, 0, 61_019));
+    browser.emitDeviceOrientation(reading(0, 125, 0, 61_019));
     renderer.tick(61_018);
     expect(renderer.frames.at(-1)?.cameraPose.orientation).not.toEqual(heldOrientation);
     backend.recenterTracking();
     renderer.tick(61_018);
-    expect(renderer.frames.at(-1)?.cameraPose.orientation).toEqual(IDENTITY_POSE.orientation);
+    expectQuaternion(renderer.frames.at(-1)?.cameraPose.orientation, axisQuaternion("x", 35));
     browser.setScreenAngle(90);
     browser.emitScreenOrientationChange();
     renderer.tick(61_018);
     expect(renderer.frames.at(-1)?.cameraPose.orientation).not.toEqual(IDENTITY_POSE.orientation);
     expect(unavailable).toEqual([]);
 
-    browser.emitDeviceOrientation({ ...reading(0, 35, 0, 61_020), gamma: null });
+    browser.emitDeviceOrientation({ ...reading(0, 125, 0, 61_020), gamma: null });
     expect(unavailable).toEqual(["Phone VR orientation data contains null or non-finite values"]);
     expect(model.presentation).toMatchObject({ type: "transitioning", to: "screen" });
     expect(screenRecoveries).toHaveLength(1);
@@ -246,7 +247,7 @@ describe("Phone VR presentation backend", () => {
     expect(runtime.currentMode).toBe("screen");
     expect(model.presentation).toEqual({ type: "ready", mode: "screen" });
     expect(renderer.stereoProfile).toBeNull();
-    browser.emitDeviceOrientation(reading(0, 0, 0, 61_020));
+    browser.emitDeviceOrientation(reading(0, 90, 0, 61_020));
     browser.emitScreenOrientationChange();
     expect(unavailable).toHaveLength(1);
     expect(screenRecoveries).toHaveLength(1);
@@ -260,9 +261,9 @@ describe("Phone VR presentation backend", () => {
       const backend = createBackend(sensors, new FakeRenderer(), unavailable);
       await backend.requestPermissionFromUserGesture();
       const startup = backend.start();
-      sensors.emit(reading(0, 0, 0, 100));
+      sensors.emit(reading(0, 90, 0, 100));
       await startup;
-      sensors.emit(reading(0, 0, 0, timestampMs), 100);
+      sensors.emit(reading(0, 90, 0, timestampMs), 100);
       expect(unavailable).toEqual(["Phone VR orientation timestamp is invalid"]);
       await backend.stop();
     }
@@ -275,7 +276,7 @@ describe("Phone VR presentation backend", () => {
       const backend = createBackend(sensors, renderer);
       await backend.requestPermissionFromUserGesture();
       const startup = backend.start();
-      sensors.emit(reading(0, 0, 0, timestampMs), 100);
+      sensors.emit(reading(0, 90, 0, timestampMs), 100);
       await expect(startup).rejects.toThrow("orientation timestamp is invalid");
       expect(renderer.stereoProfile).toBeNull();
       expect(sensors.stopCount).toBe(1);
@@ -292,7 +293,7 @@ describe("Phone VR presentation backend", () => {
         await backend.requestPermissionFromUserGesture();
         const startup = backend.start();
         if (active) {
-          sensors.emit(reading(0, 0, 0, 100));
+          sensors.emit(reading(0, 90, 0, 100));
           await startup;
         }
         sensors.emit(reading(0, 20, 0, 100), currentTimeMs);
@@ -321,7 +322,7 @@ describe("Phone VR presentation backend", () => {
     let started = false;
     const startup = backend.start().then(() => { started = true; });
     expect(renderer.stereoProfile).toEqual(PHONE_VR_OPTICAL_PROFILE);
-    sensors.emit(reading(0, 0, 0, 100));
+    sensors.emit(reading(0, 90, 0, 100));
     await startup;
     expect(started).toBe(true);
     expect(backend.currentFrame(110, createSceneFixture("Title")).panelVisible).toBe(true);
@@ -365,7 +366,7 @@ describe("Phone VR presentation backend", () => {
     const startup = backend.start();
     const lateReading = sensors.captureReadingCallback();
     if (operation === "stop") {
-      sensors.emit(reading(0, 0, 0, 100));
+      sensors.emit(reading(0, 90, 0, 100));
       await startup;
       await backend.stop();
     } else {
@@ -395,7 +396,7 @@ describe("Phone VR presentation backend", () => {
     const nullBackend = createBackend(nullSensors, nullRenderer);
     await nullBackend.requestPermissionFromUserGesture();
     const nullStartup = nullBackend.start();
-    nullSensors.emit({ ...reading(0, 0, 0, 100), gamma: null });
+    nullSensors.emit({ ...reading(0, 90, 0, 100), gamma: null });
     await expect(nullStartup).rejects.toThrow("null or non-finite");
     expect(nullRenderer.stereoProfile).toBeNull();
     expect(nullSensors.stopCount).toBe(1);
@@ -409,14 +410,14 @@ describe("Phone VR presentation backend", () => {
       const backend = createBackend(sensors, renderer, unavailable);
       await backend.requestPermissionFromUserGesture();
       const startup = backend.start();
-      sensors.emit(reading(0, 0, 0, 100));
+      sensors.emit(reading(0, 90, 0, 100));
       await startup;
       expect(backend.currentFrame(60_100, createSceneFixture("Title")).panelVisible).toBe(true);
-      sensors.emit({ ...reading(0, 0, 0, 60_101), gamma });
+      sensors.emit({ ...reading(0, 90, 0, 60_101), gamma });
       expect(unavailable).toEqual(["Phone VR orientation data contains null or non-finite values"]);
       expect(renderer.stereoProfile).toBeNull();
       expect(sensors.stopCount).toBe(1);
-      sensors.emit({ ...reading(0, 0, 0, 60_102), gamma });
+      sensors.emit({ ...reading(0, 90, 0, 60_102), gamma });
       expect(unavailable).toHaveLength(1);
       await backend.stop();
     }
@@ -429,7 +430,7 @@ describe("Phone VR presentation backend", () => {
     const backend = createBackend(sensors, renderer, unavailable);
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
-    sensors.emit(reading(0, 0, 0, 100));
+    sensors.emit(reading(0, 90, 0, 100));
     await startup;
     expect(backend.currentFrame(60_100, createSceneFixture("Title")).panelVisible).toBe(true);
     sensors.changeScreenOrientation(angle);
@@ -452,13 +453,13 @@ describe("Phone VR presentation backend", () => {
         );
         await backend.requestPermissionFromUserGesture();
         const startup = backend.start();
-        sensors.emit(reading(0, 0, 0, timestampMs));
+        sensors.emit(reading(0, 90, 0, timestampMs));
         await startup;
         const viewModel = withMenuAnchors(createSceneFixture(scene, overlay));
         const frame = backend.currentFrame(timestampMs + 1, viewModel);
         expect(frame.panelVisible).toBe(true);
         expect(frame.panel?.id).toBe(`${scene.toLowerCase()}-panel`);
-        sensors.emit(reading(0, -10.2, 0, timestampMs + 2));
+        sensors.emit(reading(0, 79.8, 0, timestampMs + 2));
         backend.currentFrame(timestampMs + 2, viewModel);
         const activatedFrame = backend.currentFrame(timestampMs + 1002, viewModel);
         expect(activatedFrame.gazeCursor?.progress).toBe(1);
@@ -477,7 +478,7 @@ describe("Phone VR presentation backend", () => {
     const backend = createBackend(sensors, renderer);
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
-    sensors.emit(reading(0, 0, 0, 100));
+    sensors.emit(reading(0, 90, 0, 100));
     await startup;
     const initial = backend.currentFrame(110, createSceneFixture("Title"));
     sensors.emit(reading(0, 20, 0, 120));
@@ -485,7 +486,7 @@ describe("Phone VR presentation backend", () => {
     expect(turned.cameraPose.orientation).not.toEqual(initial.cameraPose.orientation);
     backend.recenterTracking();
     const recentered = backend.currentFrame(121, createSceneFixture("Title"));
-    expect(recentered.cameraPose.orientation).toEqual(IDENTITY_POSE.orientation);
+    expectQuaternion(recentered.cameraPose.orientation, turned.cameraPose.orientation);
     sensors.changeScreenOrientation(90);
     const rotated = backend.currentFrame(122, createSceneFixture("Title"));
     expect(rotated.cameraPose.orientation).not.toEqual(IDENTITY_POSE.orientation);
@@ -498,7 +499,7 @@ describe("Phone VR presentation backend", () => {
     const backend = createBackend(sensors, renderer);
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
-    sensors.emit(reading(0, 0, 0, 100));
+    sensors.emit(reading(0, 90, 0, 100));
     await startup;
     const menuBefore = backend.currentFrame(110, { ...createSceneFixture("Title"), panels: [createAnchorFixture("menu")] });
     sensors.emit(reading(0, 20, 0, 120));
@@ -507,7 +508,7 @@ describe("Phone VR presentation backend", () => {
     const world = backend.currentFrame(122, { ...createSceneFixture("Title"), panels: [createAnchorFixture("world")] });
     const cockpit = backend.currentFrame(123, { ...createSceneFixture("Flight"), panels: [createAnchorFixture("cockpit")] });
     expect(menuAfter.panelPose).toEqual(menuBefore.panelPose);
-    expect(head.panelPose.orientation).toEqual(head.cameraPose.orientation);
+    expectQuaternion(head.panelPose.orientation, head.cameraPose.orientation);
     expect(world.panelPose).toEqual(cockpit.panelPose);
     await backend.stop();
   });
@@ -523,7 +524,7 @@ describe("Phone VR presentation backend", () => {
     );
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
-    sensors.emit(reading(0, 0, 0, 100));
+    sensors.emit(reading(0, 90, 0, 100));
     await startup;
     const viewModel = withMenuAnchors(createSceneFixture("Title"));
     backend.currentFrame(110, viewModel);
@@ -657,7 +658,7 @@ function viewport(): ViewportSize {
 }
 
 function reading(alpha: number, beta: number, gamma: number, timestampMs = 100): PhoneVrSensorReading {
-  return Object.freeze({ alpha, beta, gamma, timestampMs });
+  return Object.freeze({ alpha, beta, gamma, timestampMs, gravityEvidence: { kind: "earth-z-up" as const } });
 }
 
 function gamepadState(axes: readonly number[], buttons: readonly boolean[]) {
@@ -682,6 +683,10 @@ function axisQuaternion(axis: "x" | "y" | "z", degrees: number) {
     axis === "y" ? sine : 0,
     axis === "z" ? sine : 0
   );
+}
+
+function expectQuaternion(actual: Quaternion | undefined, expected: Quaternion): void {
+  for (const component of ["w", "x", "y", "z"] as const) expect(actual?.[component]).toBeCloseTo(expected[component], 12);
 }
 
 function createMockBrowserWindow(options: {
@@ -725,7 +730,7 @@ function createMockBrowserWindow(options: {
     orientationListening,
     emitDeviceOrientation(value: PhoneVrSensorReading) {
       windowListeners.get("deviceorientation")?.({
-        alpha: value.alpha, beta: value.beta, gamma: value.gamma, timeStamp: value.timestampMs
+        alpha: value.alpha, beta: value.beta, gamma: value.gamma, timeStamp: value.timestampMs, absolute: value.gravityEvidence.kind === "earth-z-up"
       });
     },
     emitScreenOrientationChange() { orientationListeners.get("change")?.(); },

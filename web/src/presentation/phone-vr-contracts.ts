@@ -1,4 +1,5 @@
 import type { StereoPresentationProfile } from "../render/contracts/runtime.js";
+import type { PhoneGravityEvidence } from "./phone-vr-gravity.js";
 
 export interface PhoneVrAvailability {
   readonly supported: boolean;
@@ -14,6 +15,7 @@ export interface PhoneVrSensorReading {
   readonly beta: number | null;
   readonly gamma: number | null;
   readonly timestampMs: number;
+  readonly gravityEvidence: PhoneGravityEvidence;
 }
 
 export interface PhoneVrSensorPort {

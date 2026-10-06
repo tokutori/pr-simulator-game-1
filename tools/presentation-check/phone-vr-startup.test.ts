@@ -16,7 +16,7 @@ type SensorCallbacks = {
 const view = createSceneFixture("Title");
 const viewport = () => ({ x: 1280, y: 720, pixelRatio: 1 });
 const valid = (timestampMs = 100, beta = 90): PhoneVrSensorReading => ({
-  alpha: 0, beta, gamma: 0, timestampMs
+  alpha: 0, beta, gamma: 0, timestampMs, gravityEvidence: { kind: "earth-z-up" }
 });
 const backends: PhoneVrPresentationBackend[] = [];
 
