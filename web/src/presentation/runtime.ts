@@ -1,4 +1,4 @@
-import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize } from "../render/contracts/runtime.js";
+import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize, PanelUnavailableReason } from "../render/contracts/runtime.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
@@ -13,7 +13,8 @@ export class PresentationRuntime {
     private readonly renderer: RendererAdapter,
     backends: readonly PresentationBackendAdapter[],
     private readonly viewModel: (viewer: ViewerFrame) => UiViewModel,
-    private readonly onFrame: (timestampMs: number) => void = () => undefined
+    private readonly onFrame: (timestampMs: number) => void = () => undefined,
+    private readonly onMenuUnavailable: (mode: "webxr" | "phone-vr", reason: PanelUnavailableReason) => void = () => undefined
   ) {
     const entries = backends.map((backend) => [backend.mode, backend] as const);
     if (new Set(entries.map(([mode]) => mode)).size !== entries.length) throw new Error("Presentation backend modes must be unique");
@@ -170,7 +171,11 @@ export class PresentationRuntime {
     if (backend === null || this.disposed) return;
     this.onFrame(timestampMs);
     this.renderer.beginViewFrame();
-    this.renderer.render(backend.currentFrame(timestampMs, this.viewModel(viewer), viewer.trackingFromHead));
+    const frame = backend.currentFrame(timestampMs, this.viewModel(viewer), viewer);
+    this.renderer.render(frame);
+    if (frame.panel.kind === "unavailable" && frame.panel.reason !== "viewer-unavailable" && backend.mode !== "screen") {
+      this.onMenuUnavailable(backend.mode, frame.panel.reason);
+    }
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

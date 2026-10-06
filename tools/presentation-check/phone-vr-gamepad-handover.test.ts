@@ -1,3 +1,4 @@
+import { configuredViewerFixture } from "./viewer-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -192,7 +193,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     expect(vi.getTimerCount()).toBe(1);
     fixture.sensorCallbacks[1]?.reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
     await second;
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(fixture.unavailable).not.toHaveBeenCalled();
     await fixture.backend.stop();
     expect(browser.listenerCount()).toBe(0);
@@ -225,7 +226,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     browser.onAdd = () => undefined;
     await fixture.backend.requestPermissionFromUserGesture();
     await fixture.backend.start();
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(browser.listenerCount()).toBe(2);
   });
 
@@ -267,7 +268,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     browser.onRemove = () => undefined;
     await fixture.backend.requestPermissionFromUserGesture();
     await fixture.backend.start();
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(browser.listenerCount()).toBe(2);
   });
 });
@@ -458,7 +459,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const frame = () => {
     timestamp += 16;
     model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    return backend.currentFrame(timestamp, createGameViewModel(model, null));
+    return backend.currentFrame(timestamp, createGameViewModel(model, null), configuredViewerFixture());
   };
   return { session, backend, input, actions, operations, frame, sensorCallbacks, sensors, renderer, unavailable };
 }

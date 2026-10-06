@@ -1,3 +1,4 @@
+import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Matrix4, Quaternion, Vector3 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
@@ -10,14 +11,14 @@ import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
-import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
+import type { UiAction, UiViewModel, UiPanel } from "../../web/src/render/contracts/ui.js";
 import type { AnchorKind } from "../../web/src/render/anchors.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { placeMenuPanel } from "../../web/src/render/anchors.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
-import { intersectPanel } from "../../web/src/presentation/panel-interaction.js";
+import { hitTestControl, intersectPanel } from "../../web/src/presentation/panel-interaction.js";
 import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -249,7 +250,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const phone = await startPhone(bundle, viewport);
     const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null };
     const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-      currentFrame: (timestamp, view) => phone.backend.currentFrame(timestamp, view) }], (viewer) => {
+      currentFrame: (timestamp, view, viewer) => phone.backend.currentFrame(timestamp, view, viewer) }], (viewer) => {
       evidence.viewer = viewer;
       const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Phone Head layout");
@@ -336,7 +337,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const panelPose = placeMenuPanel(IDENTITY_POSE, 2.4);
     for (const size of [viewport, { x: 1920, y: 1080, pixelRatio: 1 }, { x: 720, y: 1280, pixelRatio: 1 }]) {
       driver.draws.length = 0;
-      bundle.renderer.render(frame({ panel, panelPose, viewport: size }));
+      bundle.renderer.render(frame({ panel: testPanel(panel, panelPose), viewport: size }));
       expect(driver.draws).toHaveLength(2);
       const basis = poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y)).multiply(new Matrix4().makeRotationX(Math.PI / 30));
       for (const [index, draw] of driver.draws.entries()) {
@@ -358,7 +359,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const panel = createSceneFixture("Title", "Credits").panels[0];
     if (panel === undefined) throw new Error("Missing Credits panel");
     const panelPose = placeMenuPanel(turnedHead, 2.4);
-    const headFrame = frame({ cameraPose: turnedHead, panelPose, panel: { ...panel, anchor: "head" } });
+    const headFrame = frame({ cameraPose: turnedHead, panel: testPanel({ ...panel, anchor: "head" }, panelPose) });
     expect(bundle.renderer.transformTrackingPose(turnedHead)).toBe(turnedHead);
     bundle.renderer.render(headFrame);
     const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(turnedHead));
@@ -386,19 +387,19 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     await backend.start();
     const view = createSceneFixture("Title");
     const render = (timestamp: number): { frame: BackendFrame; relative: Matrix4 } => {
-      const current = backend.currentFrame(timestamp, view);
+      const current = backend.currentFrame(timestamp, view, configuredViewerFixture());
       driver.draws.length = 0;
       bundle.renderer.render(current);
       const draw = driver.draws[0];
       if (draw === undefined) throw new Error("No stereo draw");
       const relative = centerEye(driver.draws).invert().multiply(draw.panel);
-      expectMatrix(relative, poseMatrix(current.cameraPose).invert().multiply(poseMatrix(current.panelPose)));
-      const hit = intersectPanel({ origin: current.cameraPose.position, direction: rotateVec3(current.cameraPose.orientation, vec3(0, 0, -1)) }, current.panelPose);
+      expectMatrix(relative, poseMatrix(current.cameraPose).invert().multiply(poseMatrix(visiblePanelFrame(current).pose)));
+      const hit = intersectPanel({ origin: current.cameraPose.position, direction: rotateVec3(current.cameraPose.orientation, vec3(0, 0, -1)) }, visiblePanelFrame(current).pose);
       expect(hit).not.toBeNull();
       return { frame: current, relative };
     };
     try {
-      render(0);
+      const opening = render(0);
       const sendReading = emit as ((reading: PhoneVrSensorReading) => void) | null;
       if (sendReading === null) throw new Error("No sensor listener");
       sendReading({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
@@ -406,7 +407,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       backend.recenterTracking();
       expectMatrix(render(11).relative, before.relative);
       backend.recenterMenu();
-      expectMatrix(render(12).relative, poseMatrix(placeMenuPanel(IDENTITY_POSE, 2.4)));
+      expectMatrix(render(12).relative, opening.relative);
     } finally {
       await backend.stop();
     }
@@ -415,20 +416,20 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it.each(["world", "cockpit"] as const)("retains the existing non-flight %s anchor transform", (anchor) => {
     const panel = createSceneFixture("Title").panels[0];
     if (panel === undefined) throw new Error("Missing panel");
-    const current = frame({ panel: { ...panel, anchor } });
+    const current = frame({ panel: testPanel({ ...panel, anchor }) });
     bundle.renderer.render(current);
-    expectMatrix(singleDraw(driver).panel, poseMatrix(current.panelPose));
+    expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
   });
 
   it("preserves Screen composition and the native XR reference", () => {
-    bundle.renderer.render(frame({ panelVisible: false }));
+    bundle.renderer.render(frame({ panel: { kind: "absent" } }));
     expectMatrix(singleDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(1280, 720)));
     driver.draws.length = 0;
     driver.xr.isPresenting = true;
     const current = frame();
     bundle.renderer.render(current);
     expectMatrix(singleDraw(driver).camera, new Matrix4());
-    expectMatrix(singleDraw(driver).panel, poseMatrix(current.panelPose));
+    expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
   });
 
   it("preserves Pilot/Cockpit and external Replay transforms without an additional Title basis", () => {
@@ -438,11 +439,11 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       pilotPositionMeters: 0.15, initialPilotPositionMeters: 0
     };
     bundle.renderer.setFlightPose(flight);
-    const current = frame({ cameraPose: turnedHead, panel: createSceneFixture("Flight").panels[0] ?? null });
+    const current = frame({ cameraPose: turnedHead, panel: testPanel(requiredScenePanel("Flight")) });
     bundle.renderer.render(current);
     const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.15, 0);
     expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, composePose(eye, turnedHead))));
-    expectMatrix(singleDraw(driver).panel, poseMatrix(flightRelativePose(flight, current.panelPose)));
+    expectMatrix(singleDraw(driver).panel, poseMatrix(flightRelativePose(flight, visiblePanelFrame(current).pose)));
     const external = pose(vec3(100, 25, -40), turnedHead.orientation);
     bundle.renderer.setFlightCameraMode("platform");
     bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
@@ -451,7 +452,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const transformed = bundle.renderer.transformTrackingPose(turnedHead);
     expectMatrix(poseMatrix(transformed), poseMatrix(composePose(external, turnedHead)));
     const worldPanel = placeMenuPanel(transformed, 2.4);
-    bundle.renderer.render(frame({ cameraPose: turnedHead, panelPose: worldPanel }));
+    bundle.renderer.render(frame({ cameraPose: turnedHead, panel: testPanel(requiredScenePanel("Title"), worldPanel) }));
     expectMatrix(centerEye(driver.draws), poseMatrix(transformed));
     for (const draw of driver.draws) expectMatrix(draw.panel, poseMatrix(worldPanel));
   });
@@ -471,8 +472,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     for (const anchor of ["menu", "world", "head", "cockpit", "menu"] as const) {
       driver.draws.length = 0;
       bundle.renderer.render(frame({
-        cameraPose: turnedHead, panelPose, panel: { ...basePanel, anchor },
-        gazeCursor: { point: { x: 0.2, y: -0.3 }, progress: 0.5 }
+        cameraPose: turnedHead, panel: { ...testPanel({ ...basePanel, anchor }, panelPose), cursor: { point: { x: 0.2, y: -0.3 }, progress: 0.5 } }
       }));
       const overlay = anchor === "menu" || anchor === "head";
       expect(driver.draws).toHaveLength(2);
@@ -499,6 +499,78 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     }
   });
 
+  it.each([[1280, 720], [720, 1280]] as const)("fits the actual Pause Menu and hit targets in both frozen StereoEffect eyes at %s x %s", async (width, height) => {
+    const size = { x: width, y: height, pixelRatio: 1 };
+    const values = new Array<number>(33).fill(0);
+    values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9; values[31] = 1;
+    const snapshot = parseFlightSnapshot(values);
+    const gameSession = gameSessionState(6, 0, snapshot, true);
+    if (gameSession === null) throw new Error("Missing Pause domain fixture");
+    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };
+    for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
+      bundle.renderer.resize(size);
+      bundle.renderer.setFlightPose(null);
+      const phone = await startPhone(bundle, size);
+      let paused = false;
+      const observed = { viewer: null as ViewerFrame | null, frame: null as BackendFrame | null };
+      const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
+        currentFrame: (timestamp, view, viewer) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer); return observed.frame; } }], (viewer) => {
+        observed.viewer = viewer;
+        if (!paused) return createSceneFixture("Title");
+        const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
+        return finalizeFlightFrameView(draft, draft.headHud);
+      });
+      try {
+        expect(await runtime.start("phone-vr")).toEqual({ ok: true });
+        driver.tick(1, null);
+        bundle.renderer.setFlightPose({ datumPositionNed: { north: 100, east: 25, down: -8 },
+          attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters, initialPilotPositionMeters: 0.1 });
+        paused = true;
+        driver.draws.length = 0;
+        driver.tick(100, null);
+        const current = observed.frame;
+        const viewer = observed.viewer;
+        if (current === null || viewer?.source !== "configured") throw new Error("Missing same-frame Menu evidence");
+        const visible = visiblePanelFrame(current);
+        expect(visible.panel.title).toBe("Pause");
+        expect(visible.panel.size).toEqual({ width: 2.4, height: 1.8 });
+        expect(driver.draws).toHaveLength(2);
+        for (const [eyeIndex, draw] of driver.draws.entries()) {
+          const eye = viewer.eyes[eyeIndex];
+          if (eye === undefined) throw new Error("Missing eye");
+          expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
+          for (const x of [-1.2, 1.2]) for (const y of [-0.9, 0.9]) expectVisible(new Vector3(x, y, 0), draw);
+          for (const control of visible.panel.controls) {
+            for (const x of [control.rect.x, control.rect.x + control.rect.width]) {
+              for (const y of [control.rect.y, control.rect.y + control.rect.height]) {
+                expectVisible(new Vector3((x - 0.5) * 2.4, (0.5 - y) * 1.8, 0), draw);
+              }
+            }
+          }
+        }
+        const center = centerEye(driver.draws);
+        const worldPanel = driver.draws[0]?.panel;
+        if (worldPanel === undefined) throw new Error("Missing Menu draw");
+        const origin = new Vector3().setFromMatrixPosition(center);
+        for (const control of visible.panel.controls) {
+          if (control.kind === "status") continue;
+          const target = new Vector3((control.rect.x + control.rect.width / 2 - 0.5) * 2.4,
+            (0.5 - control.rect.y - control.rect.height / 2) * 1.8, 0).applyMatrix4(worldPanel);
+          const direction = target.clone().sub(origin).normalize();
+          const point = intersectPanel({ origin: vec3(origin.x, origin.y, origin.z), direction: vec3(direction.x, direction.y, direction.z) }, matrixPose(worldPanel));
+          if (point === null) throw new Error("Rendered Menu ray missed");
+          expect(hitTestControl(visible.panel, point)?.id).toBe(control.id);
+        }
+        driver.draws.length = 0;
+        driver.tick(10_100, null);
+        if (observed.frame === null) throw new Error("Missing silent frame");
+        expect(visiblePanelFrame(observed.frame).pose).toEqual(visible.pose);
+        expect(driver.draws).toHaveLength(2);
+        expect(runtime.currentMode).toBe("phone-vr");
+      } finally { await runtime.dispose(); await phone.backend.stop(); }
+    }
+  });
+
   it.each(["menu", "head", "cockpit", "world"] as const)("matches real Phone VR %s gaze to both rendered eyes for moving PilotEye positions", async (anchor) => {
     for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
       const flight: FlightRenderPose = {
@@ -510,30 +582,30 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const phone = await startPhone(bundle, viewport);
       try {
         phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
-        const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
+        const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
         const mountedHead = composePose(pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1), rawFrame.cameraPose);
         const view = phonePanel(anchor, mountedHead);
-        const current = phone.backend.currentFrame(20, view);
+        const current = phone.backend.currentFrame(20, view, configuredViewerFixture());
         driver.draws.length = 0;
         bundle.renderer.render(current);
         const center = centerEye(driver.draws);
         const panel = driver.draws[0]?.panel;
         if (panel === undefined) throw new Error("Missing Phone panel draw");
         expectMatrix(center, poseMatrix(flightRelativePose(flight, mountedHead)));
-        expectMatrix(panel, poseMatrix(flightRelativePose(flight, current.panelPose)));
+        expectMatrix(panel, poseMatrix(flightRelativePose(flight, visiblePanelFrame(current).pose)));
         const worldCamera = matrixPose(center);
         const point = intersectPanel({ origin: worldCamera.position,
           direction: rotateVec3(worldCamera.orientation, vec3(0, 0, -1)) }, matrixPose(panel));
-        expect(point?.x).toBeCloseTo(current.gazeCursor?.point.x ?? Number.NaN, 8);
-        expect(point?.y).toBeCloseTo(current.gazeCursor?.point.y ?? Number.NaN, 8);
-        expect(current.gazeCursor?.point.x).toBeCloseTo(0, 8);
-        expect(current.gazeCursor?.point.y).toBeCloseTo(0, 8);
+        expect(point?.x).toBeCloseTo(panelFrameCursor(current)?.point.x ?? Number.NaN, 8);
+        expect(point?.y).toBeCloseTo(panelFrameCursor(current)?.point.y ?? Number.NaN, 8);
+        expect(panelFrameCursor(current)?.point.x).toBeCloseTo(0, 8);
+        expect(panelFrameCursor(current)?.point.y).toBeCloseTo(0, 8);
         for (const draw of driver.draws) expectVisible(new Vector3(), draw);
-        phone.backend.currentFrame(2020, view);
+        phone.backend.currentFrame(2020, view, configuredViewerFixture());
         expect(phone.actions).toContainEqual({ type: "activate", controlId: "phone-eye-button" });
         await phone.backend.stop();
         driver.draws.length = 0;
-        bundle.renderer.render(frame({ panelVisible: false }));
+        bundle.renderer.render(frame({ panel: { kind: "absent" } }));
         const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1);
         expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, eye)));
       } finally {
@@ -556,16 +628,16 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const phone = await startPhone(bundle, viewport);
     try {
       phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
-      const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] });
+      const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
       const view = phonePanel("menu", composePose(mount, rawFrame.cameraPose));
       const render = (timestampMs: number): Matrix4 => {
-        const current = phone.backend.currentFrame(timestampMs, view);
+        const current = phone.backend.currentFrame(timestampMs, view, configuredViewerFixture());
         driver.draws.length = 0;
         bundle.renderer.render(current);
         const panel = driver.draws[0]?.panel;
         if (panel === undefined) throw new Error("Missing Phone recenter panel");
-        expect(current.gazeCursor?.point.x).toBeCloseTo(0, 8);
-        expect(current.gazeCursor?.point.y).toBeCloseTo(0, 8);
+        expect(panelFrameCursor(current)?.point.x).toBeCloseTo(0, 8);
+        expect(panelFrameCursor(current)?.point.y).toBeCloseTo(0, 8);
         if (mode === "platform") expectMatrix(centerEye(driver.draws), poseMatrix(composePose(external, current.cameraPose)));
         return centerEye(driver.draws).invert().multiply(panel);
       };
@@ -573,7 +645,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       phone.backend.recenterTracking();
       expectMatrix(render(21), before);
       phone.backend.recenterMenu();
-      expectMatrix(render(22), poseMatrix(placeMenuPanel(IDENTITY_POSE, 2.4)));
+      expectMatrix(render(22), before);
     } finally {
       await phone.backend.stop();
     }
@@ -626,10 +698,19 @@ function matrixPose(matrix: Matrix4): Pose {
 function frame(overrides: Partial<BackendFrame> = {}): BackendFrame {
   return {
     headHud: { kind: "absent" },
-    timestampMs: 0, cameraPose: IDENTITY_POSE, panelPose: placeMenuPanel(IDENTITY_POSE, 2.4),
-    panel: createSceneFixture("Title").panels[0] ?? null, panelVisible: true, gazeCursor: null,
+    timestampMs: 0, cameraPose: IDENTITY_POSE, panel: testPanel(requiredScenePanel("Title")),
     viewport: { x: 1280, y: 720, pixelRatio: 1 }, ...overrides
   };
+}
+
+function requiredScenePanel(scene: UiViewModel["scene"]): UiPanel {
+  const panel = createSceneFixture(scene).panels[0];
+  if (panel === undefined) throw new Error("Missing scene panel");
+  return panel;
+}
+
+function testPanel(panel: UiPanel, panelPose = placeMenuPanel(IDENTITY_POSE, 2.4)): Extract<BackendFrame["panel"], { readonly kind: "visible" }> {
+  return { kind: "visible", panel, pose: panelPose, cursor: null };
 }
 
 function poseMatrix(value: Pose): Matrix4 {

@@ -1,7 +1,6 @@
 import { IDENTITY_POSE } from "../render/contracts/math.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import type { BackendFrame, PresentationBackendAdapter, ViewportSize } from "../render/contracts/runtime.js";
-import { placeMenuPanel } from "../render/anchors.js";
 
 export class ScreenPresentationBackend implements PresentationBackendAdapter {
   readonly mode = "screen" as const;
@@ -26,10 +25,7 @@ export class ScreenPresentationBackend implements PresentationBackendAdapter {
       timestampMs,
       headHud: NO_HEAD_HUD,
       cameraPose: IDENTITY_POSE,
-      panelPose: placeMenuPanel(IDENTITY_POSE, 2.4),
-      panel: null,
-      panelVisible: false,
-      gazeCursor: null,
+      panel: Object.freeze({ kind: "absent" }),
       viewport: this.viewport()
     });
   }

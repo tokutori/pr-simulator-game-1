@@ -6,7 +6,6 @@ import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.j
 import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
 import type { AnchorFrames } from "../../web/src/render/anchors.js";
 import { IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
-import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -137,16 +136,16 @@ describe("scene and overlay fixtures", () => {
 });
 
 describe("same-frame view projection boundary", () => {
-  it("passes the exact immutable frame into pure view derivation and its raw head into the backend", async () => {
+  it("passes the same immutable binocular frame into pure view derivation and the backend", async () => {
     const renderer = new FakeRenderer();
     const backend = new FakeBackend("webxr", new Set());
     const head = pose(vec3(1, 2, 3), IDENTITY_POSE.orientation);
     const frame = unavailableViewerFrame("invalid-view-geometry", head);
     let projectedFrame: ViewerFrame | null = null;
-    let backendPose: Pose | null = null;
+    let backendViewer: ViewerFrame | null = null;
     const originalFrame = backend.currentFrame.bind(backend);
     backend.currentFrame = (timestampMs, _view, viewerPose) => {
-      backendPose = viewerPose ?? null;
+      backendViewer = viewerPose;
       return originalFrame(timestampMs, _view, viewerPose);
     };
     const runtime = new PresentationRuntime(renderer, [backend], (viewer) => {
@@ -156,10 +155,10 @@ describe("same-frame view projection boundary", () => {
     expect(await runtime.start("webxr")).toEqual({ ok: true });
     renderer.tick(25, frame);
     expect(projectedFrame).toBe(frame);
-    expect(backendPose).toBe(head);
+    expect(backendViewer).toBe(frame);
     renderer.tick(26);
     expect(projectedFrame).toEqual(unavailableViewerFrame("not-stereo"));
-    expect(backendPose).toBeNull();
+    expect(backendViewer).toEqual(unavailableViewerFrame("not-stereo"));
     await runtime.dispose();
   });
 });
@@ -437,16 +436,14 @@ class FakeBackend implements PresentationBackendAdapter {
     return Promise.resolve();
   }
 
-  currentFrame(timestampMs: number, _view?: UiViewModel, viewerPose: Pose | null = null): BackendFrame {
+  currentFrame(timestampMs: number, view: UiViewModel, viewer: ViewerFrame): BackendFrame {
     if (!this.running) throw new Error(`${this.mode} is inactive`);
     return Object.freeze({
       timestampMs,
       headHud: { kind: "absent" as const },
-      cameraPose: viewerPose ?? IDENTITY_POSE,
-      panelPose: IDENTITY_POSE,
-      panel: null,
-      panelVisible: this.mode !== "screen",
-      gazeCursor: null,
+      cameraPose: viewer.trackingFromHead ?? IDENTITY_POSE,
+      panel: this.mode === "screen" ? Object.freeze({ kind: "absent" as const }) : Object.freeze({ kind: "visible" as const,
+        panel: requiredPanel(view), pose: IDENTITY_POSE, cursor: null }),
       viewport: Object.freeze({ x: 800, y: 600, pixelRatio: 1 })
     });
   }

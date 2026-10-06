@@ -153,6 +153,13 @@ Result Menuの可視性とdwellの初期確定は別の受入条件である。�
 
 Menu用referenceと景観のcamera rigを分離する。
 panelを開いた時点の頭部方向から配置を決定し、その後のhead poseでは更新しない。
+Scene・overlayの開始時は、そのframeの両眼projectionとhead-to-eye poseからpanel全体を収容する距離を純粋に求める。
+機体・PilotEye・headの同一基底で固定anchorへ変換し、描画とgaze/controller/gamepadのhit判定へ同じpanel寸法とposeを供給する。
+Menuの非表示または別anchorへの変更を閉状態とし、同じMenuの再表示も新規openingとして扱う。
+Menuを表示したままviewerが一時欠損した場合は配置dataだけを保持し、描画・選択を停止する。復帰時に保留したopeningを解決する。
+viewport・optical profile等の実投影変更では再fitを許可する。通常head motionと分解計算の丸め差は配置更新条件へ含めない。
+数学的に無効または収容不能なprojectionは型付き失敗として同frameの表示を停止し、識別子付きScreen回復へ渡す。
+両眼のfrustum収容と文字の可読性は別の受入条件とする。
 距離、幅、文字サイズ、水平化の基準をprofileに保持する。
 Titleのcamera移動、Attractのcut、Replayのseekでもpanelの位置を変更しない。
 利用者の「正面へ配置」操作で再配置する。遅延した自動追従は初期版に導入しない。
@@ -181,7 +188,7 @@ Flight poseを持たないBoot/Title/FlightSetup/Briefing/Result/CreditsのPhone
 panel配置・head-gaze・recenterは共通tracking referenceで計算し、構図用の高度・yaw/pitchを混入させない。
 眼とpanelへの共通基底を $B$、tracking reference内のposeを $H,P$ とすると、
 相対poseは $(BH)^{-1}(BP)=H^{-1}P$ となり、描画とhit testが一致する。
-viewport変更によるTitle構図の更新でもMenuの相対位置を維持する。
+Title構図のみの変更ではMenuの相対位置を維持する。両眼projectionを変えるviewport変更はopeningの再fit条件とする。
 Screenの景観構図、WebXRのreference space、Flight/Cockpitの機体変換、Replayの外部rigは既存の基底を使用する。
 Title基底を`transformTrackingPose`へ追加し、panel側でも再度合成する二重変換を禁止する。
 

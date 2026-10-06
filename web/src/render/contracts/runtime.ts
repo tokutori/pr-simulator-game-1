@@ -3,7 +3,7 @@ import type { CinematicCameraView } from "./camera.js";
 import type { UiPanel, UiViewModel } from "./ui.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 import type { HeadHudFrame } from "./head-hud.js";
-import type { ViewerFrame } from "./viewer-frame.js";
+import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -22,12 +22,16 @@ export interface BackendFrame {
   readonly headHud: HeadHudFrame;
   readonly timestampMs: number;
   readonly cameraPose: Pose;
-  readonly panelPose: Pose;
-  readonly panel: UiPanel | null;
-  readonly panelVisible: boolean;
-  readonly gazeCursor: PanelCursor | null;
+  readonly panel: PanelFrame;
   readonly viewport: ViewportSize;
 }
+
+export type PanelUnavailableReason = ViewerGeometryUnavailableReason | "insufficient-view-area";
+
+export type PanelFrame =
+  | { readonly kind: "absent" }
+  | { readonly kind: "visible"; readonly panel: UiPanel; readonly pose: Pose; readonly cursor: PanelCursor | null }
+  | { readonly kind: "unavailable"; readonly reason: PanelUnavailableReason };
 
 export interface FlightRenderPose {
   readonly datumPositionNed: Readonly<{ north: number; east: number; down: number }>;
@@ -76,7 +80,7 @@ export interface PresentationBackendAdapter {
   readonly mode: PresentationMode;
   start(): Promise<void>;
   stop(): Promise<void>;
-  currentFrame(timestampMs: number, viewModel: UiViewModel, viewerPose: Pose | null): BackendFrame;
+  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame): BackendFrame;
 }
 
 export type RenderError =

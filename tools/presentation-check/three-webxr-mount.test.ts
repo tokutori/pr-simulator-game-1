@@ -1,3 +1,4 @@
+import { panelFrameCursor } from "./viewer-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector2, Vector3 } from "three";
 import type { Camera, Color, Scene, WebGLRenderer } from "three";
@@ -238,7 +239,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       (action) => { actions.push(action); onUiAction?.(action); }, () => undefined);
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      latestFrame = backend.currentFrame(timestamp, view, viewer.trackingFromHead);
+      latestFrame = backend.currentFrame(timestamp, view, viewer);
       bundle.renderer.render(latestFrame);
     });
     await backend.requestSessionFromUserGesture();
@@ -475,7 +476,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
       bundle.renderer.stopLoop();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
     });
     session.run(200, head);
     expect(lastDraw(driver).panel).not.toBeNull();
@@ -484,7 +485,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expect(actions).toHaveLength(0);
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
     });
     session.select(11_000, head);
     expect(actions).toHaveLength(0);
@@ -507,7 +508,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.stopLoop();
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
     });
     session.run(200, head);
     expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(latestFlight, composePose(eyePose(latestFlight), head))));
@@ -520,7 +521,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       bundle.renderer.setFlightCameraMode("pilot");
       bundle.renderer.setFlightPose(updatedFlight);
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer.trackingFromHead));
+      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
     });
     session.run(100, head);
     expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(updatedFlight, composePose(eyePose(updatedFlight), head))));
@@ -577,8 +578,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const panel = lastDraw(driver).panel;
     if (panel === null) throw new Error("Missing panel draw");
     expectMatrix(panel, poseMatrix(flightRelativePose(flight, expectedPanel)));
-    expect(currentFrame().gazeCursor?.point.x).toBeCloseTo(0, 8);
-    expect(currentFrame().gazeCursor?.point.y).toBeCloseTo(0, 8);
+    expect(panelFrameCursor(currentFrame())?.point.x).toBeCloseTo(0, 8);
+    expect(panelFrameCursor(currentFrame())?.point.y).toBeCloseTo(0, 8);
     session.run(2200, head);
     expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
     actions.length = 0;
@@ -602,7 +603,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const afterEye = after.eyes[0];
     if (beforeEye === undefined || afterEye === undefined) throw new Error("Missing native eyes around reset");
     expectMatrix(afterEye.clone().invert().multiply(after.panel), beforeEye.clone().invert().multiply(before.panel));
-    expect(currentFrame().gazeCursor?.point.x).toBeCloseTo(0, 8);
+    expect(panelFrameCursor(currentFrame())?.point.x).toBeCloseTo(0, 8);
     session.select(10_000, newHead);
     expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
   });
@@ -676,11 +677,13 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);
     session.run(2200, null);
-    expect(currentFrame().gazeCursor).toBeNull();
+    expect(currentFrame().panel).toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
+    expect(lastDraw(driver).panel).toBeNull();
+    expect(panelFrameCursor(currentFrame())).toBeNull();
     expect(actions.some((action) => action.type === "activate")).toBe(false);
     actions.length = 0;
     session.select(10_000, null);
-    expect(session.poseQueries).toBe(1);
+    expect(session.poseQueries).toBe(0);
     expect(actions).toHaveLength(0);
   });
 
@@ -710,8 +713,7 @@ function centeredPanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
 }
 
 function screenFrame(viewport: BackendFrame["viewport"]): BackendFrame {
-  return { headHud: { kind: "absent" }, timestampMs: 0, cameraPose: IDENTITY_POSE, panelPose: IDENTITY_POSE, panel: null,
-    panelVisible: false, gazeCursor: null, viewport };
+  return { headHud: { kind: "absent" }, timestampMs: 0, cameraPose: IDENTITY_POSE, panel: { kind: "absent" }, viewport };
 }
 
 function rigidTransform(value: Pose): XRRigidTransform {

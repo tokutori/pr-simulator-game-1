@@ -66,6 +66,9 @@ dispose・resize・world load・frame描画・capability取得の所有者と失
 2D panelのlayoutとhit領域は共通データとし、VR texture/mesh生成をengine adapterへ閉じ込める。
 camera rig、director、anchor変換はengine scene graphを参照せず、数値poseとworld metadataを使用する。
 XR runtime由来の眼別projection・trackingはplatform側で取得し、engineとの結合部で共通契約へ変換する。
+同じ不変ViewerFrameをview導出とbackendのcurrentFrameへ渡し、Menu配置と実描画で眼別projectionを共有する。
+BackendFrameのPanelFrameはabsent、visible、unavailableの排他型とする。visibleだけがUiPanel・共通pose・cursorを保持する。
+unavailable frameには以前のpanelや選択領域を流用しない。viewer欠損時の配置data保持と実表示・選択の可否を分離する。
 Three.jsのStereoEffect/StereoCamera/WebXRManagerは初期adapterの実装候補であり、公開契約に含めない。
 APIごとのnative XRFrame等はplatform結合部に保持し、GameSceneやFlight recordへ公開しない。
 

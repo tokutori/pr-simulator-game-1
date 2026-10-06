@@ -10,6 +10,7 @@ import type { HeadHudView } from "../presentation/head-hud-view.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
+import type { PanelUnavailableReason } from "../render/contracts/runtime.js";
 
 export interface FlightFrameViewDraft {
   readonly model: AppModel;
@@ -58,4 +59,9 @@ export function failFlightMenuFrame(draft: FlightFrameViewDraft, viewModel: UiVi
 export function flightMenuFailureRecovery(model: AppModel, failure: FlightMenuFrameFailure): AppMessage | null {
   if (model.presentation !== failure.presentation || model.nextRequestId !== failure.requestGeneration) return null;
   return Object.freeze({ type: "backend-ended", mode: failure.mode, message: `VR Flight Menu rendering failed: ${failure.reason}` });
+}
+
+export function menuFrameFailureRecovery(model: AppModel, frameModel: AppModel, mode: "phone-vr" | "webxr", reason: PanelUnavailableReason): AppMessage | null {
+  if (reason === "viewer-unavailable" || model !== frameModel || frameModel.presentation.type !== "ready" || frameModel.presentation.mode !== mode) return null;
+  return Object.freeze({ type: "backend-ended", mode, message: `VR Menu rendering failed: ${reason}` });
 }

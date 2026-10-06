@@ -1,3 +1,4 @@
+import { configuredViewerFixture } from "./viewer-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RendererAdapter, StereoPresentationProfile } from "../../web/src/render/contracts/runtime.js";
 import type { UiActionDispatcher } from "../../web/src/render/contracts/ui.js";
@@ -47,7 +48,7 @@ describe("Phone VR startup attempt ownership", () => {
     };
     await fixture.backend.requestPermissionFromUserGesture();
     await expect(fixture.backend.start()).rejects.toThrow(message);
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(false);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(false);
     expect(fixture.unavailable).not.toHaveBeenCalled();
     expectReleased(fixture);
   });
@@ -60,8 +61,8 @@ describe("Phone VR startup attempt ownership", () => {
     };
     await fixture.backend.requestPermissionFromUserGesture();
     await fixture.backend.start();
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(true);
-    expect(fixture.backend.currentFrame(200, view).cameraPose.orientation.x).not.toBe(0);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(true);
+    expect(fixture.backend.currentFrame(200, view, configuredViewerFixture()).cameraPose.orientation.x).not.toBe(0);
     expect(fixture.stereo()).toEqual(PHONE_VR_OPTICAL_PROFILE);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -110,11 +111,11 @@ describe("Phone VR startup attempt ownership", () => {
     currentCallbacks.reading(valid());
     await flushMicrotasks();
     expect(second.result().type).toBe("resolved");
-    const currentFrame = fixture.backend.currentFrame(200, view);
+    const currentFrame = fixture.backend.currentFrame(200, view, configuredViewerFixture());
     previousCallbacks.reading(valid(101, 40));
     previousCallbacks.rotation(90);
     previousCallbacks.reading({ ...valid(), gamma: null });
-    expect(fixture.backend.currentFrame(200, view)).toEqual(currentFrame);
+    expect(fixture.backend.currentFrame(200, view, configuredViewerFixture())).toEqual(currentFrame);
     expect(fixture.stereo()).toEqual(PHONE_VR_OPTICAL_PROFILE);
     expect(fixture.unavailable).not.toHaveBeenCalled();
     expect(fixture.sensors.stopListening).toHaveBeenCalledTimes(1);
@@ -154,7 +155,7 @@ describe("Phone VR startup attempt ownership", () => {
     fixture.sensors.current().reading(valid());
     await startup;
     await vi.advanceTimersByTimeAsync(100);
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(true);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(true);
     expect(fixture.sensors.stopListening).toHaveBeenCalledTimes(1);
   });
 
@@ -227,7 +228,7 @@ describe("Phone VR startup attempt ownership", () => {
     expect(fixture.renderer.setStereoPresentation).toHaveBeenLastCalledWith(null);
     expect(fixture.renderer.setSelectRayHandler).toHaveBeenCalledWith(null);
     expect(vi.getTimerCount()).toBe(0);
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(false);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(false);
   });
 
   it.each(["stop", "cancel"] as const)("settles startup before a throwing cleanup on %s", async (operation) => {
@@ -264,7 +265,7 @@ describe("Phone VR startup attempt ownership", () => {
     const oldCallbacks = fixture.sensors.current();
     oldCallbacks.reading(valid());
     await startup;
-    fixture.backend.currentFrame(200, view);
+    fixture.backend.currentFrame(200, view, configuredViewerFixture());
     expect(fixture.dispatch).toHaveBeenCalledWith({ type: "focus", controlId: "title-toggle" });
     const reentrantPermission: Promise<PhoneVrPermissionResult>[] = [];
     const reentrantStartup: ReturnType<typeof observe>[] = [];
@@ -291,7 +292,7 @@ describe("Phone VR startup attempt ownership", () => {
     if (attemptedStartup === undefined) throw new Error("Missing reentrant startup observation");
     expect(expectRejected(attemptedStartup.result()).message).toContain("explicit user permission");
     expectReleased(fixture);
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(false);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(false);
     expect(await fixture.backend.requestPermissionFromUserGesture()).toEqual({ ok: true });
     const canceledRetry = observe(fixture.backend.start());
     await fixture.backend.cancelPendingRequest();
@@ -308,7 +309,7 @@ describe("Phone VR startup attempt ownership", () => {
     const validRetry = fixture.backend.start();
     fixture.sensors.current().reading(valid());
     await validRetry;
-    fixture.backend.currentFrame(200, view);
+    fixture.backend.currentFrame(200, view, configuredViewerFixture());
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "focus", controlId: "title-toggle" });
   });
 
@@ -318,13 +319,13 @@ describe("Phone VR startup attempt ownership", () => {
     const startup = fixture.backend.start();
     fixture.sensors.current().reading(valid());
     await startup;
-    fixture.backend.currentFrame(200, view);
+    fixture.backend.currentFrame(200, view, configuredViewerFixture());
     const focusFailure = new Error("focus dispatch failed");
     fixture.dispatch.mockImplementation((action) => {
       if (action.type === "focus" && action.controlId === null) throw focusFailure;
     });
     fixture.gamepad.mockReturnValue({ connection: { index: 0, generation: 0 }, axes: [], buttons: [] });
-    expect(() => fixture.backend.currentFrame(201, view)).toThrow(focusFailure);
+    expect(() => fixture.backend.currentFrame(201, view, configuredViewerFixture())).toThrow(focusFailure);
     fixture.dispatch.mockClear();
     const firstFailure = new Error("select handler cleanup failed");
     fixture.renderer.setSelectRayHandler.mockImplementationOnce(() => { throw firstFailure; });
@@ -342,7 +343,7 @@ describe("Phone VR startup attempt ownership", () => {
     fixture.sensors.current().reading(valid());
     await retry;
     fixture.dispatch.mockReset();
-    fixture.backend.currentFrame(202, view);
+    fixture.backend.currentFrame(202, view, configuredViewerFixture());
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "focus", controlId: "title-toggle" });
   });
 
@@ -361,7 +362,7 @@ describe("Phone VR startup attempt ownership", () => {
     expect(fixture.sensors.current()).toBe(callbacks);
     callbacks.reading(valid());
     await startup;
-    expect(fixture.backend.currentFrame(200, view).panelVisible).toBe(true);
+    expect((fixture.backend.currentFrame(200, view, configuredViewerFixture()).panel.kind === "visible")).toBe(true);
   });
 
   it("returns runtime to Screen on synchronous startup failure and on a later active failure", async () => {

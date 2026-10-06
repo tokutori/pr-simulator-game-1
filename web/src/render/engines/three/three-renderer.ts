@@ -388,7 +388,7 @@ export function createThreeRenderer(
   let width = 0;
   let height = 0;
   let pixelRatio = 0;
-  let currentPanel = null as BackendFrame["panel"];
+  let currentPanel: Extract<BackendFrame["panel"], { readonly kind: "visible" }>["panel"] | null = null;
   let stereoPresentation: StereoPresentationProfile | null = null;
   let xrState: ThreeWebXrState = { type: "idle" };
   let requestGeneration = 0;
@@ -546,17 +546,21 @@ export function createThreeRenderer(
       // Keep the light's orthographic shadow volume around the moving airframe.
       sun.target.position.copy(aircraftRoot.position);
       sun.position.copy(aircraftRoot.position).add(sunOffset);
+      const visiblePanel = frame.panel.kind === "visible" ? frame.panel : null;
+      const panel = visiblePanel?.panel ?? null;
+      const panelPose = visiblePanel?.pose ?? IDENTITY_POSE;
+      const panelCursor = visiblePanel?.cursor ?? null;
       if (useExternalCamera) {
         externalCameraRig.add(panelMesh);
-        setPose(panelMesh, composePose(inversePose(externalPose), frame.panelPose));
+        setPose(panelMesh, composePose(inversePose(externalPose), panelPose));
       } else {
         scene.add(panelMesh);
-        const titlePanelPose = frame.panel?.anchor === "menu" || frame.panel?.anchor === "head"
-          ? composePose(titlePresentationPose, frame.panelPose)
-          : frame.panelPose;
-        setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, frame.panelPose));
+        const titlePanelPose = panel?.anchor === "menu" || panel?.anchor === "head"
+          ? composePose(titlePresentationPose, panelPose)
+          : panelPose;
+        setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, panelPose));
       }
-      const overlayPanel = frame.panel !== null && uiPanelComposition(frame.panel.anchor) === "overlay";
+      const overlayPanel = panel !== null && uiPanelComposition(panel.anchor) === "overlay";
       if (panelMaterial.transparent !== overlayPanel) {
         panelMaterial.transparent = overlayPanel;
         panelMaterial.needsUpdate = true;
@@ -566,18 +570,18 @@ export function createThreeRenderer(
       panelMesh.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER : 0;
       gazeCursorMaterial.depthTest = !overlayPanel;
       gazeCursor.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
-      panelMesh.visible = frame.panelVisible;
-      if (frame.panel !== currentPanel) {
+      panelMesh.visible = visiblePanel !== null;
+      if (panel !== currentPanel) {
         panelTexture.needsUpdate = true;
-        currentPanel = frame.panel;
+        currentPanel = panel;
       }
-      const panelWidth = frame.panel?.size.width ?? 2.4;
-      const panelHeight = frame.panel?.size.height ?? 1.8;
+      const panelWidth = panel?.size.width ?? 2.4;
+      const panelHeight = panel?.size.height ?? 1.8;
       panelMesh.scale.set(panelWidth / 2.4, panelHeight / 1.8, 1);
-      gazeCursor.visible = frame.gazeCursor !== null && frame.panelVisible;
-      if (frame.gazeCursor !== null) {
-        gazeCursor.position.set(frame.gazeCursor.point.x, frame.gazeCursor.point.y, 0.015);
-        gazeCursor.scale.setScalar(Math.max(0.05, frame.gazeCursor.progress));
+      gazeCursor.visible = panelCursor !== null && visiblePanel !== null;
+      if (panelCursor !== null) {
+        gazeCursor.position.set(panelCursor.point.x, panelCursor.point.y, 0.015);
+        gazeCursor.scale.setScalar(Math.max(0.05, panelCursor.progress));
       }
       scene.updateMatrixWorld(true);
       const viewCamera = useExternalCamera ? fixedCamera : camera;
@@ -631,7 +635,7 @@ export function createThreeRenderer(
       } else {
         renderer.render(scene, useExternalCamera ? fixedCamera : camera);
       }
-      renderedTrackingMount = loopRunning && renderer.xr.isPresenting && frame.panelVisible ? currentTrackingMountPose() : null;
+      renderedTrackingMount = loopRunning && renderer.xr.isPresenting && visiblePanel !== null ? currentTrackingMountPose() : null;
     },
     resize(viewport: ViewportSize) {
       ensureActive(disposed);

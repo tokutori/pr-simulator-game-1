@@ -2,7 +2,7 @@ import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
-import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery } from "./app/flight-frame-view.js";
+import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -473,8 +473,15 @@ async function initializePresentation(requestId: number): Promise<void> {
     const presentation = new PresentationRuntime(
       bundle.renderer,
       [screenBackend, webXrBackend, phoneVrBackend],
-      currentFrameViewModel,
-      (timestampMs) => flightController?.onFrame(timestampMs)
+        currentFrameViewModel,
+        (timestampMs) => flightController?.onFrame(timestampMs),
+        (mode, reason) => {
+          const frameModel = model;
+          queueMicrotask(() => {
+            const message = menuFrameFailureRecovery(model, frameModel, mode, reason);
+            if (message !== null) dispatch(message);
+          });
+        }
     );
     runtime = presentation;
     const started = await presentation.start("screen");

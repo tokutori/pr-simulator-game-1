@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
-import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery } from "../../web/src/app/flight-frame-view.js";
+import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { headHudCanvasSize, prepareHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -42,6 +42,17 @@ function configuredViewer() {
 }
 
 describe("Immutable same-frame Flight view finalization", () => {
+  it("recovers invalid Menu geometry only for the same model and presentation", () => {
+    const frameModel = flightModel("phone-vr", 6);
+    expect(menuFrameFailureRecovery(frameModel, frameModel, "phone-vr", "invalid-view-geometry"))
+      .toEqual({ type: "backend-ended", mode: "phone-vr", message: "VR Menu rendering failed: invalid-view-geometry" });
+    expect(menuFrameFailureRecovery({ ...frameModel }, frameModel, "phone-vr", "invalid-view-geometry")).toBeNull();
+    expect(menuFrameFailureRecovery(frameModel, frameModel, "webxr", "invalid-view-geometry")).toBeNull();
+    expect(menuFrameFailureRecovery(frameModel, frameModel, "phone-vr", "viewer-unavailable")).toBeNull();
+    const screen = flightModel("screen", 6);
+    expect(menuFrameFailureRecovery(screen, screen, "phone-vr", "invalid-view-geometry")).toBeNull();
+  });
+
   it("preserves the Screen controller failure status through current and later Runtime view frames", async () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
