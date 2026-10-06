@@ -2,7 +2,7 @@ import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
-import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
+import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -17,10 +17,12 @@ import type {
 } from "./app/app-state.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
-import { browserPanelContext } from "./presentation/browser-canvas.js";
-import { drawVrPanel, VR_PANEL_PIXELS } from "./presentation/vr-panel-canvas.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
-import { drawFlightMenu, flightMenuCanvasSize, prepareFlightMenuPaint } from "./presentation/flight-menu-canvas.js";
+import { browserMenuContext, drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
+import { prepareMenuPresentation } from "./presentation/menu-preparation.js";
+import type { MenuMeasurementCache } from "./presentation/menu-preparation.js";
+import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
+import type { MenuInputGeometry } from "./presentation/menu-interaction.js";
 import { PresentationRuntime } from "./presentation/runtime.js";
 import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
@@ -44,8 +46,8 @@ import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
-import type { UiAction } from "./render/contracts/ui.js";
-import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
+import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
+import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
 import type { HeadHudView } from "./presentation/head-hud-view.js";
 
@@ -65,8 +67,8 @@ stage.append(canvas, uiRoot, flightHudRoot);
 mount.replaceChildren(stage);
 
 const panelCanvas = document.createElement("canvas");
-panelCanvas.width = VR_PANEL_PIXELS.width;
-panelCanvas.height = VR_PANEL_PIXELS.height;
+panelCanvas.width = 1536;
+panelCanvas.height = 1152;
 const headHudCanvas = document.createElement("canvas");
 let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
@@ -78,6 +80,10 @@ let countdownGeneration = 0;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
+let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
+let menuFontGeneration = 0;
+let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
+const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
 });
@@ -86,6 +92,7 @@ function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
+  synchronizeMenuScroll();
   if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
   renderModel();
   for (const effect of transition.effects) runEffect(effect);
@@ -121,7 +128,7 @@ function renderModel(): void {
   screenUi.render(viewModel, domVisible);
 }
 
-function currentFrameViewModel(viewer: ViewerFrame) {
+function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const frameModel = model;
   const snapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(frameModel.gameSession);
   const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale);
@@ -142,29 +149,60 @@ function currentFrameViewModel(viewer: ViewerFrame) {
   }
   const viewModel = finalizeFlightFrameView(draft, headView);
   const panel = viewModel.panels[0];
-  const flightMenu = panel !== undefined && gameSessionPhaseCode(frameModel.gameSession) === 5 && frameModel.presentation.type === "ready" && frameModel.presentation.mode !== "screen";
-  const panelDimensions = flightMenu ? flightMenuCanvasSize(panel) : VR_PANEL_PIXELS;
-  if (panelCanvas.width !== panelDimensions.width) panelCanvas.width = panelDimensions.width;
-  if (panelCanvas.height !== panelDimensions.height) panelCanvas.height = panelDimensions.height;
   const panelContext = panelCanvas.getContext("2d");
-  const menuDrawingContext = panelContext === null || !flightMenu ? null : browserHeadHudContext(panelContext);
-  const menuPreparation = menuDrawingContext === null || panel === undefined ? null : prepareFlightMenuPaint(menuDrawingContext, panel, panelCanvas.width, panelCanvas.height, displayLocale);
-  if (flightMenu && (menuPreparation === null || menuPreparation.kind === "unavailable")) {
-    const failure = failFlightMenuFrame(draft, viewModel, menuPreparation === null ? "context-unavailable" : menuPreparation.reason);
-    headContext?.clearRect(0, 0, headHudCanvas.width, headHudCanvas.height);
-    panelContext?.clearRect(0, 0, panelCanvas.width, panelCanvas.height);
-    queueMicrotask(() => {
-      const message = flightMenuFailureRecovery(model, failure);
-      if (message !== null) dispatch(message);
-    });
-    return failure.viewModel;
-  }
+  const scroll = frameModel.menuScroll;
+  preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
+    : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
+    : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
+    : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
+      viewer, { locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
+  if (preparedMenu.kind === "ready") {
+    if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
+      const observedContext = preparedMenu.context;
+      preparedMenu = Object.freeze({ kind: "pending" });
+      queueMicrotask(() => { dispatch({ type: "menu-scroll-invalidated", context: observedContext }); });
+    } else presentedMenuGeometry = menuInputGeometry(preparedMenu);
+  } else if (preparedMenu.kind === "absent") presentedMenuGeometry = Object.freeze({ kind: "none" });
   if (headDrawingContext !== null && preparation !== null) drawHeadHud(headDrawingContext,
     viewModel.headHud.kind === "visible" ? preparation : { kind: "absent", width: preparation.width, height: preparation.height });
-  if (menuDrawingContext !== null && menuPreparation !== null) drawFlightMenu(menuDrawingContext, menuPreparation);
-  else if (panel !== undefined && panelContext !== null) drawVrPanel(browserPanelContext(panelContext), panel, panelCanvas.width, panelCanvas.height);
-  return viewModel;
+  if (preparedMenu.kind === "ready" && panelContext !== null) {
+    const dimensions = menuCanvasSize(preparedMenu.panel.size);
+    if (panelCanvas.width !== dimensions.width) panelCanvas.width = dimensions.width;
+    if (panelCanvas.height !== dimensions.height) panelCanvas.height = dimensions.height;
+    try {
+      drawMeasuredMenu(browserMenuContext(panelContext), preparedMenu.viewport, panelCanvas.width, panelCanvas.height);
+    } catch {
+      preparedMenu = Object.freeze({ kind: "unavailable", reason: "drawing-unavailable" });
+    }
+  } else panelContext?.clearRect(0, 0, panelCanvas.width, panelCanvas.height);
+  return Object.freeze({ viewModel, menu: preparedMenu });
 }
+
+function synchronizeMenuScroll(): void {
+  const observed = model;
+  const view = currentViewModel();
+  const panel = view.panels.find((candidate) => candidate.anchor === "menu");
+  const active = observed.presentation.type === "ready" && observed.presentation.mode !== "screen" && panel !== undefined;
+  const viewKey = view.scene === "Result" ? `${observed.resultTab}:${observed.analysisChart}`
+    : view.scene === "Replay" ? `${observed.replayViewMode}:${observed.analysisChart}` : "main";
+  const scope: MenuScrollScope = view.activeOverlay === null
+    ? { kind: "scene", scene: view.scene, panelId: panel?.id ?? "", viewKey }
+    : { kind: "overlay", scene: view.scene, panelId: panel?.id ?? "", viewKey, overlay: view.activeOverlay };
+  model = updateApp(model, { type: "menu-scroll-synchronized", generation: observed.menuScroll.generation,
+    target: active ? { kind: "active", scope } : { kind: "closed" } }).model;
+}
+
+function invalidateMenuGeometry(): void {
+  const scroll = model.menuScroll;
+  if (scroll.kind === "active") dispatch({ type: "menu-scroll-invalidated", context: { scope: scroll.scope, generation: scroll.generation } });
+  preparedMenu = Object.freeze({ kind: "pending" });
+}
+
+for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fonts.addEventListener(fontEvent, () => {
+  menuFontGeneration++;
+  menuMeasurementCache.clear();
+  invalidateMenuGeometry();
+});
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
@@ -242,10 +280,12 @@ function runEffect(effect: AppEffect): void {
       return;
     case "recenter-tracking":
       phoneVrBackend?.recenterTracking();
+      invalidateMenuGeometry();
       return;
     case "recenter-menu":
       if (runtime?.currentMode === "webxr") webXrBackend?.recenterMenu();
       if (runtime?.currentMode === "phone-vr") phoneVrBackend?.recenterMenu();
+      invalidateMenuGeometry();
       return;
     case "dispose-presentation": {
       const presentation = runtime;
@@ -782,6 +822,21 @@ function createFlightRecordRepository(): FlightRecordRepository {
 }
 
 function dispatchUiAction(action: UiAction): void {
+  if (action.type === "menu-scroll" || action.type === "menu-focus" || action.type === "menu-control") {
+    if (!menuContextCanInteract(preparedMenu, model.menuScroll, action.context) || preparedMenu.kind !== "ready") return;
+    if (action.type === "menu-scroll") {
+      dispatch({ type: "menu-scroll", context: action.context, intent: action.intent });
+      return;
+    }
+    if (action.type === "menu-focus") {
+      if (action.focus.kind === "control" && !menuExposesControl(preparedMenu, action.focus.controlId)) return;
+      dispatch({ type: "menu-focus", context: action.context, focus: action.focus });
+      return;
+    }
+    if (!menuExposesControl(preparedMenu, action.action.controlId)) return;
+    dispatchUiAction(action.action);
+    return;
+  }
   const session = gameSession;
   const displayedPhaseCode = gameSessionPhaseCode(model.gameSession);
   if (session !== null && isGameFlowActivation(action)) {
@@ -808,6 +863,7 @@ function onPhoneVrTrackingUnavailable(message: string): void {
 }
 
 function onResize(): void {
+  invalidateMenuGeometry();
   runtime?.resize(currentViewport());
 }
 

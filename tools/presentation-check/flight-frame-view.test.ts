@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fixturePresentation } from "./menu-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
@@ -70,7 +71,7 @@ describe("Immutable same-frame Flight view finalization", () => {
     }, renderer, hud, 100, () => []);
     const model = flightModel("screen");
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
-      (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentSnapshot, viewer, "ja"); return finalizeFlightFrameView(draft, draft.headHud); },
+      (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentSnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });
     try {
       expect(await runtime.start("screen")).toEqual({ ok: true });

@@ -2,6 +2,8 @@ import type { PanelCursor } from "../render/contracts/runtime.js";
 import type { UiAction, UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
 import type { PhoneVrGamepadConnection, PhoneVrGamepadState } from "./phone-vr-contracts.js";
 import { actionForControl, hitTestControl, rangeAction } from "./panel-interaction.js";
+import { menuActionAt, menuFocusAction, menuHitIdentity, menuPageProgress } from "./menu-interaction.js";
+import type { ReadyMenu } from "./menu-interaction.js";
 
 const AXIS_DEADZONE = 0.2;
 const CURSOR_SPEED_PER_SECOND = 1.2;
@@ -21,6 +23,7 @@ export class GamepadUiSelector {
   private cursor = { x: 0.5, y: 0.5 };
   private focusedControlId: string | null = null;
   private history: GamepadHistory = { type: "unselected" };
+  private menuIdentity = "";
 
   constructor(private readonly dispatch: UiActionDispatcher) {}
 
@@ -92,7 +95,47 @@ export class GamepadUiSelector {
     this.cursor = { x: 0.5, y: 0.5 };
     this.focusedControlId = null;
     this.history = { type: "unselected" };
+    this.menuIdentity = "";
     if (hadFocus) this.dispatch({ type: "focus", controlId: null });
+  }
+
+  updateMenu(menu: ReadyMenu, gamepad: PhoneVrGamepadState, timestampMs: number): PanelCursor | null {
+    if (!Number.isFinite(timestampMs)) throw new RangeError("Gamepad UI timestamp must be finite");
+    const identity = JSON.stringify(menu.context);
+    if (identity !== this.menuIdentity) {
+      this.focusedControlId = null;
+      this.menuIdentity = identity;
+    }
+    const previous = this.history;
+    const sameConnection = previous.type === "selected" && previous.connection.index === gamepad.connection.index && previous.connection.generation === gamepad.connection.generation;
+    const elapsedSeconds = sameConnection ? clamp((timestampMs - previous.timestampMs) / 1000, 0, 0.05) : 0;
+    if (!sameConnection) this.cursor = { x: 0.5, y: 0.5 };
+    this.cursor = { x: clamp(this.cursor.x + readAxis(gamepad.axes, 0) * CURSOR_SPEED_PER_SECOND * elapsedSeconds, 0, 1),
+      y: clamp(this.cursor.y + readAxis(gamepad.axes, 1) * CURSOR_SPEED_PER_SECOND * elapsedSeconds, 0, 1) };
+    const point = Object.freeze({ x: (this.cursor.x - 0.5) * menu.panel.size.width, y: (0.5 - this.cursor.y) * menu.panel.size.height });
+    const controlId = menuHitIdentity(menu, point);
+    const actions: UiAction[] = [];
+    if (controlId !== this.focusedControlId) {
+      this.focusedControlId = controlId;
+      actions.push(menuFocusAction(menu, point));
+    }
+    const primaryPressed = gamepad.buttons[0] ?? false;
+    if (sameConnection && primaryPressed && !previous.primaryPressed) {
+      const action = menuActionAt(menu, point);
+      if (action.kind === "action") actions.push(action.action);
+    }
+    const backPressed = gamepad.buttons[1] ?? false;
+    if (sameConnection && backPressed && !previous.backPressed) actions.push({ type: "back" });
+    const scroll = readAxis(gamepad.axes, 3);
+    if (scroll !== 0 && elapsedSeconds > 0) actions.push({ type: "menu-scroll", context: menu.context,
+      intent: { kind: "delta", viewportPages: scroll * elapsedSeconds * 2, pageProgress: menuPageProgress(menu) } });
+    const history: GamepadHistory = { type: "selected", connection: gamepad.connection, primaryPressed, backPressed, timestampMs };
+    this.history = history;
+    for (const action of actions) {
+      if (this.history !== history) return null;
+      this.dispatch(action);
+    }
+    return this.history === history ? Object.freeze({ point, progress: 0 }) : null;
   }
 }
 

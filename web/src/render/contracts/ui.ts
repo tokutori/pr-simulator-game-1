@@ -108,6 +108,19 @@ export interface PanelSize {
   readonly height: number;
 }
 
+export type MenuScrollScope = Readonly<{ scene: GameScene; panelId: string; viewKey: string }> &
+  ({ readonly kind: "scene" } | { readonly kind: "overlay"; readonly overlay: string });
+export interface MenuScrollContext { readonly scope: MenuScrollScope; readonly generation: number }
+export type MenuScrollState =
+  | { readonly kind: "closed"; readonly generation: number }
+  | Readonly<{ kind: "active"; progress: number }> & MenuScrollContext;
+export type MenuScrollIntent =
+  | { readonly kind: "page"; readonly direction: "previous" | "next"; readonly pageProgress: number }
+  | { readonly kind: "delta"; readonly viewportPages: number; readonly pageProgress: number }
+  | { readonly kind: "set-progress"; readonly progress: number };
+
+export type MenuControlAction = Extract<UiAction, { readonly type: "activate" | "set-toggle" | "set-range" }>;
+
 export interface UiPanel {
   readonly id: string;
   readonly title: string;
@@ -147,6 +160,9 @@ export type UiAction =
   | { readonly type: "focus"; readonly controlId: string | null }
   | { readonly type: "back" }
   | { readonly type: "scroll"; readonly deltaX: number; readonly deltaY: number }
+  | { readonly type: "menu-scroll"; readonly context: MenuScrollContext; readonly intent: MenuScrollIntent }
+  | { readonly type: "menu-focus"; readonly context: MenuScrollContext; readonly focus: { readonly kind: "none" } | { readonly kind: "control"; readonly controlId: string } }
+  | { readonly type: "menu-control"; readonly context: MenuScrollContext; readonly action: MenuControlAction }
   | { readonly type: "recenter-menu" };
 
 export type UiActionDispatcher = (action: UiAction) => void;

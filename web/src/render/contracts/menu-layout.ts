@@ -1,4 +1,5 @@
-import type { GameScene, UiChart, UiControl, UiPanel, PanelSize } from "./ui.js";
+import type { UiChart, UiControl, UiPanel, PanelSize } from "./ui.js";
+export type { MenuScrollScope, MenuScrollContext, MenuScrollState, MenuScrollIntent } from "./ui.js";
 import type { ViewerGeometryUnavailableReason } from "./viewer-frame.js";
 
 export const MENU_MINIMUM_INK_HEIGHT_DEGREES = 0.35;
@@ -12,7 +13,7 @@ export interface MenuRect extends MenuPoint, PanelSize {}
 
 export type MenuFixedTextRole = "title" | "caption" | "previous" | "next";
 export type MenuControlTextRole = "label" | "value" |
-  "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation";
+  "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
 
 export type MenuTextSlot =
   | { readonly kind: "fixed"; readonly role: MenuFixedTextRole }
@@ -125,22 +126,3 @@ export type MenuClippedRect =
 export type MenuRangeResult =
   | { readonly kind: "absent" }
   | { readonly kind: "action"; readonly controlId: string; readonly value: number };
-
-export type MenuScrollScope = Readonly<{ scene: GameScene; panelId: string; viewKey: string }> & (
-  | { readonly kind: "scene" }
-  | { readonly kind: "overlay"; readonly overlay: string }
-);
-
-export interface MenuScrollContext {
-  readonly scope: MenuScrollScope;
-  readonly generation: number;
-}
-
-export type MenuScrollState =
-  | { readonly kind: "closed"; readonly generation: number }
-  | Readonly<{ kind: "active"; progress: number }> & MenuScrollContext;
-
-export type MenuScrollIntent =
-  | { readonly kind: "page"; readonly direction: "previous" | "next"; readonly pageProgress: number }
-  | { readonly kind: "delta"; readonly viewportPages: number; readonly pageProgress: number }
-  | { readonly kind: "set-progress"; readonly progress: number };

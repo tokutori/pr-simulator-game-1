@@ -1,10 +1,11 @@
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion } from "../../web/src/render/contracts/math.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import type { BackendFrame, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
+import type { BackendFrame, MenuPresentation, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
@@ -76,7 +77,7 @@ describe("Phone VR browser sensor adapter", () => {
 describe("Phone VR gamepad UI", () => {
   it("moves a cursor, focuses controls, selects, backs, and scrolls through common actions", () => {
     const actions: UiAction[] = [];
-    const selector = new GamepadUiSelector((action) => { actions.push(action); });
+    const selector = new GamepadUiSelector((action) => { actions.push(fixtureSemanticAction(action)); });
     const panel = createSceneFixture("Title").panels[0];
     if (panel === undefined) throw new Error("Missing UI panel fixture");
     selector.update(panel, gamepadState([0, 0, 0, 0], [false, false]), 100);
@@ -127,13 +128,54 @@ describe("Phone VR gamepad UI", () => {
 });
 
 describe("Phone VR presentation backend", () => {
+  it("holds the Menu anchor and suppresses selection through pending metrics without Screen recovery", async () => {
+    const sensors = new FakePhoneVrSensors();
+    const renderer = new FakeRenderer();
+    const gamepad = new FakePhoneVrGamepad();
+    const actions: UiAction[] = [];
+    const failures: string[] = [];
+    let mount = IDENTITY_POSE;
+    renderer.transformTrackingPose = (head) => composePose(mount, head);
+    const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(action); },
+      (message) => { throw new Error(message); }, { gamepadInput: gamepad, nowMs: () => sensors.currentTimeMs });
+    const view = createSceneFixture("Flight", "Pause");
+    const prepared = fixturePresentation(view);
+    let menu: MenuPresentation = geometryMenuFixture(view);
+    const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(viewport), backend],
+      () => ({ ...prepared, menu }), () => undefined, (mode, reason) => { failures.push(`${mode}:${reason}`); });
+    await backend.requestPermissionFromUserGesture();
+    const startup = runtime.start("phone-vr");
+    await Promise.resolve();
+    sensors.emit(reading(0, 90, 0));
+    await startup;
+    try {
+      renderer.tick(10);
+      const initial = visiblePanelFrame(requiredRenderedFrame(renderer));
+      mount = pose(vec3(2, 0.5, -0.3), IDENTITY_POSE.orientation);
+      menu = { kind: "pending" };
+      actions.length = 0;
+      gamepad.state = gamepadState([0, 0, 0, 0.5], [true, false]);
+      renderer.tick(20);
+      renderer.tick(2020);
+      expect(requiredRenderedFrame(renderer).panel).toEqual({ kind: "absent" });
+      expect(actions.some((action) => action.type === "menu-control" || action.type === "menu-scroll")).toBe(false);
+      expect(failures).toEqual([]);
+      expect(runtime.currentMode).toBe("phone-vr");
+      menu = geometryMenuFixture(view);
+      renderer.tick(2030);
+      expect(visiblePanelFrame(requiredRenderedFrame(renderer)).pose).toEqual(initial.pose);
+      expect(failures).toEqual([]);
+      expect(runtime.currentMode).toBe("phone-vr");
+    } finally { await runtime.dispose(); }
+  });
+
   it.each(["absent", "cockpit"] as const)("opens a new fixed Menu after %s while a missing viewer only suppresses selection", async (closedView) => {
     const sensors = new FakePhoneVrSensors();
     const renderer = new FakeRenderer();
     let mount = IDENTITY_POSE;
     renderer.transformTrackingPose = (head) => composePose(mount, head);
     const actions: UiAction[] = [];
-    const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(action); },
+    const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); },
       (message) => { throw new Error(message); }, { nowMs: () => sensors.currentTimeMs });
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();
@@ -141,20 +183,20 @@ describe("Phone VR presentation backend", () => {
     await startup;
     try {
       const pause = createSceneFixture("Flight", "Pause");
-      const initial = visiblePanelFrame(backend.currentFrame(10, pause, configuredViewerFixture()));
+      const initial = visiblePanelFrame(fixtureBackendFrame(backend, 10, pause, configuredViewerFixture()));
       mount = pose(vec3(2, 0.5, -0.3), IDENTITY_POSE.orientation);
       actions.length = 0;
-      expect(backend.currentFrame(2000, pause, unavailableViewerFrame("viewer-unavailable")).panel)
+      expect(fixtureBackendFrame(backend, 2000, pause, unavailableViewerFrame("viewer-unavailable")).panel)
         .toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
       expect(actions.some((action) => action.type === "activate")).toBe(false);
-      expect(visiblePanelFrame(backend.currentFrame(2010, pause, configuredViewerFixture())).pose).toEqual(initial.pose);
+      expect(visiblePanelFrame(fixtureBackendFrame(backend, 2010, pause, configuredViewerFixture())).pose).toEqual(initial.pose);
       const closed = createSceneFixture("Flight");
-      backend.currentFrame(2020, closedView === "absent" ? { ...closed, panels: [] } : closed, configuredViewerFixture());
-      const reopened = visiblePanelFrame(backend.currentFrame(2030, pause, configuredViewerFixture()));
+      fixtureBackendFrame(backend, 2020, closedView === "absent" ? { ...closed, panels: [] } : closed, configuredViewerFixture());
+      const reopened = visiblePanelFrame(fixtureBackendFrame(backend, 2030, pause, configuredViewerFixture()));
       expect(reopened.pose.position.x).toBeCloseTo(initial.pose.position.x + 2, 10);
       expect(reopened.pose.position.y).toBeCloseTo(initial.pose.position.y + 0.5, 10);
       mount = IDENTITY_POSE;
-      expect(visiblePanelFrame(backend.currentFrame(2040, pause, configuredViewerFixture())).pose).toEqual(reopened.pose);
+      expect(visiblePanelFrame(fixtureBackendFrame(backend, 2040, pause, configuredViewerFixture())).pose).toEqual(reopened.pose);
     } finally { await backend.stop(); }
   });
 
@@ -162,12 +204,12 @@ describe("Phone VR presentation backend", () => {
     const sensors = new FakePhoneVrSensors();
     const renderer = new FakeRenderer();
     const actions: UiAction[] = [];
-    const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(action); },
+    const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); },
       (message) => { throw new Error(message); }, { nowMs: () => sensors.currentTimeMs });
     let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "phone-vr" } };
     const view = createSceneFixture("Flight", "Pause");
     const recoveries: Promise<void>[] = [];
-    const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(viewport), backend], () => view,
+    const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(viewport), backend], () => fixturePresentation(view),
       () => undefined, (mode, failure) => {
         expect(renderer.frames.at(-1)?.panel).toEqual({ kind: "unavailable", reason: failure });
         const frameModel = model;
@@ -219,13 +261,13 @@ describe("Phone VR presentation backend", () => {
     await startup;
     try {
       sensors.emit(reading(0, 110, 0, 110));
-      const frame = backend.currentFrame(110, view, configuredViewerFixture());
+      const frame = fixtureBackendFrame(backend, 110, view, configuredViewerFixture());
       expect(frame.headHud).toEqual({ kind: "visible", trackingFromHead: frame.cameraPose, view: hud });
       expect(frame.headHud.kind === "visible" && frame.headHud.trackingFromHead.position).toEqual(vec3(0, 0, 0));
       expect((frame.panel.kind === "visible")).toBe(true);
       expect(visiblePanelFrame(frame).panel.controls.length).toBeGreaterThan(0);
       sensors.emit({ ...reading(0, 110, 0, 120), alpha: null });
-      expect(backend.currentFrame(120, view, configuredViewerFixture()).headHud).toEqual({ kind: "absent" });
+      expect(fixtureBackendFrame(backend, 120, view, configuredViewerFixture()).headHud).toEqual({ kind: "absent" });
     } finally { await backend.stop(); }
   });
 
@@ -242,7 +284,7 @@ describe("Phone VR presentation backend", () => {
       const startup = backend.start();
       sensors.emit(reading(0, 90, 0, 1002));
       await startup;
-      expect((backend.currentFrame(1000, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
+      expect((fixtureBackendFrame(backend, 1000, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
       expect(unavailable).toEqual([]);
       expect(clock).toHaveBeenCalled();
     } finally {
@@ -284,7 +326,7 @@ describe("Phone VR presentation backend", () => {
       { nowMs: () => currentTimeMs }
     );
     const runtime = new PresentationRuntime(
-      renderer, [new ScreenPresentationBackend(viewport), backend], () => createSceneFixture("Title")
+      renderer, [new ScreenPresentationBackend(viewport), backend], () => fixturePresentation(createSceneFixture("Title"))
     );
     expect(await runtime.start("screen")).toEqual({ ok: true });
     dispatch({ type: "initialize" });
@@ -431,7 +473,7 @@ describe("Phone VR presentation backend", () => {
     sensors.emit(reading(0, 90, 0, 100));
     await startup;
     expect(started).toBe(true);
-    expect((backend.currentFrame(110, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
+    expect((fixtureBackendFrame(backend, 110, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
     await backend.stop();
     expect(renderer.stereoProfile).toBeNull();
     expect(sensors.stopCount).toBe(1);
@@ -485,7 +527,7 @@ describe("Phone VR presentation backend", () => {
     expect(clock).not.toHaveBeenCalled();
     expect(unavailable).toEqual([]);
     expect(renderer.stereoProfile).toBeNull();
-    expect((backend.currentFrame(60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(false);
+    expect((fixtureBackendFrame(backend, 60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(false);
   });
 
   it("cleans up startup after missing or null tracking", async () => {
@@ -518,7 +560,7 @@ describe("Phone VR presentation backend", () => {
       const startup = backend.start();
       sensors.emit(reading(0, 90, 0, 100));
       await startup;
-      expect((backend.currentFrame(60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
+      expect((fixtureBackendFrame(backend, 60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
       sensors.emit({ ...reading(0, 90, 0, 60_101), gamma });
       expect(unavailable).toEqual(["Phone VR orientation data contains null or non-finite values"]);
       expect(renderer.stereoProfile).toBeNull();
@@ -538,7 +580,7 @@ describe("Phone VR presentation backend", () => {
     const startup = backend.start();
     sensors.emit(reading(0, 90, 0, 100));
     await startup;
-    expect((backend.currentFrame(60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
+    expect((fixtureBackendFrame(backend, 60_100, createSceneFixture("Title"), configuredViewerFixture()).panel.kind === "visible")).toBe(true);
     sensors.changeScreenOrientation(angle);
     expect(unavailable).toEqual(["Phone VR screen orientation became unavailable"]);
     expect(renderer.stereoProfile).toBeNull();
@@ -554,7 +596,7 @@ describe("Phone VR presentation backend", () => {
         const renderer = new FakeRenderer();
         const actions: UiAction[] = [];
         const backend = new PhoneVrPresentationBackend(
-          sensors, renderer, viewport, (action) => { actions.push(action); }, () => undefined,
+          sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined,
           { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs: 3000, nowMs: () => sensors.currentTimeMs }
         );
         await backend.requestPermissionFromUserGesture();
@@ -562,12 +604,12 @@ describe("Phone VR presentation backend", () => {
         sensors.emit(reading(0, 90, 0, timestampMs));
         await startup;
         const viewModel = withMenuAnchors(createSceneFixture(scene, overlay));
-        const frame = backend.currentFrame(timestampMs + 1, viewModel, configuredViewerFixture());
+        const frame = fixtureBackendFrame(backend, timestampMs + 1, viewModel, configuredViewerFixture());
         expect((frame.panel.kind === "visible")).toBe(true);
         expect(visiblePanelFrame(frame).panel.id).toBe(`${scene.toLowerCase()}-panel`);
         sensors.emit(reading(0, 79.8, 0, timestampMs + 2));
-        backend.currentFrame(timestampMs + 2, viewModel, configuredViewerFixture());
-        const activatedFrame = backend.currentFrame(timestampMs + 1002, viewModel, configuredViewerFixture());
+        fixtureBackendFrame(backend, timestampMs + 2, viewModel, configuredViewerFixture());
+        const activatedFrame = fixtureBackendFrame(backend, timestampMs + 1002, viewModel, configuredViewerFixture());
         expect(panelFrameCursor(activatedFrame)?.progress).toBe(1);
         if (!actions.some((action) => action.type === "activate" && action.controlId === `${scene.toLowerCase()}-action`)) {
           throw new Error(`Missing gaze activation for ${scene}/${String(overlay)} at ${String(timestampMs)}`);
@@ -586,15 +628,15 @@ describe("Phone VR presentation backend", () => {
     const startup = backend.start();
     sensors.emit(reading(0, 90, 0, 100));
     await startup;
-    const initial = backend.currentFrame(110, createSceneFixture("Title"), configuredViewerFixture());
+    const initial = fixtureBackendFrame(backend, 110, createSceneFixture("Title"), configuredViewerFixture());
     sensors.emit(reading(0, 20, 0, 120));
-    const turned = backend.currentFrame(120, createSceneFixture("Title"), configuredViewerFixture());
+    const turned = fixtureBackendFrame(backend, 120, createSceneFixture("Title"), configuredViewerFixture());
     expect(turned.cameraPose.orientation).not.toEqual(initial.cameraPose.orientation);
     backend.recenterTracking();
-    const recentered = backend.currentFrame(121, createSceneFixture("Title"), configuredViewerFixture());
+    const recentered = fixtureBackendFrame(backend, 121, createSceneFixture("Title"), configuredViewerFixture());
     expectQuaternion(recentered.cameraPose.orientation, turned.cameraPose.orientation);
     sensors.changeScreenOrientation(90);
-    const rotated = backend.currentFrame(122, createSceneFixture("Title"), configuredViewerFixture());
+    const rotated = fixtureBackendFrame(backend, 122, createSceneFixture("Title"), configuredViewerFixture());
     expect(rotated.cameraPose.orientation).not.toEqual(IDENTITY_POSE.orientation);
     await backend.stop();
   });
@@ -607,12 +649,12 @@ describe("Phone VR presentation backend", () => {
     const startup = backend.start();
     sensors.emit(reading(0, 90, 0, 100));
     await startup;
-    const menuBefore = backend.currentFrame(110, { ...createSceneFixture("Title"), panels: [createAnchorFixture("menu")] }, configuredViewerFixture());
+    const menuBefore = fixtureBackendFrame(backend, 110, { ...createSceneFixture("Title"), panels: [createAnchorFixture("menu")] }, configuredViewerFixture());
     sensors.emit(reading(0, 20, 0, 120));
-    const menuAfter = backend.currentFrame(120, { ...createSceneFixture("Title"), panels: [createAnchorFixture("menu")] }, configuredViewerFixture());
-    const head = backend.currentFrame(121, { ...createSceneFixture("Title"), panels: [createAnchorFixture("head")] }, configuredViewerFixture());
-    const world = backend.currentFrame(122, { ...createSceneFixture("Title"), panels: [createAnchorFixture("world")] }, configuredViewerFixture());
-    const cockpit = backend.currentFrame(123, { ...createSceneFixture("Flight"), panels: [createAnchorFixture("cockpit")] }, configuredViewerFixture());
+    const menuAfter = fixtureBackendFrame(backend, 120, { ...createSceneFixture("Title"), panels: [createAnchorFixture("menu")] }, configuredViewerFixture());
+    const head = fixtureBackendFrame(backend, 121, { ...createSceneFixture("Title"), panels: [createAnchorFixture("head")] }, configuredViewerFixture());
+    const world = fixtureBackendFrame(backend, 122, { ...createSceneFixture("Title"), panels: [createAnchorFixture("world")] }, configuredViewerFixture());
+    const cockpit = fixtureBackendFrame(backend, 123, { ...createSceneFixture("Flight"), panels: [createAnchorFixture("cockpit")] }, configuredViewerFixture());
     expect(visiblePanelFrame(menuAfter).pose).toEqual(visiblePanelFrame(menuBefore).pose);
     expectQuaternion(visiblePanelFrame(head).pose.orientation, head.cameraPose.orientation);
     expect(visiblePanelFrame(world).pose).toEqual(visiblePanelFrame(cockpit).pose);
@@ -625,7 +667,7 @@ describe("Phone VR presentation backend", () => {
     const gamepad = new FakePhoneVrGamepad();
     const actions: UiAction[] = [];
     const backend = new PhoneVrPresentationBackend(
-      sensors, renderer, viewport, (action) => { actions.push(action); }, () => undefined,
+      sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined,
       { gamepadInput: gamepad, nowMs: () => sensors.currentTimeMs }
     );
     await backend.requestPermissionFromUserGesture();
@@ -633,21 +675,27 @@ describe("Phone VR presentation backend", () => {
     sensors.emit(reading(0, 90, 0, 100));
     await startup;
     const viewModel = withMenuAnchors(createSceneFixture("Title"));
-    backend.currentFrame(110, viewModel, configuredViewerFixture());
+    fixtureBackendFrame(backend, 110, viewModel, configuredViewerFixture());
     gamepad.state = gamepadState([0, 0, 0, 0], [false, false]);
-    backend.currentFrame(120, viewModel, configuredViewerFixture());
+    fixtureBackendFrame(backend, 120, viewModel, configuredViewerFixture());
     for (let frame = 1; frame <= 13; frame++) {
       gamepad.state = gamepadState([0, 1, 0, 0], [false, false]);
-      backend.currentFrame(120 + frame * 16, viewModel, configuredViewerFixture());
+      fixtureBackendFrame(backend, 120 + frame * 16, viewModel, configuredViewerFixture());
     }
     gamepad.state = gamepadState([0, 0, 0, 0], [true, false]);
-    const selected = backend.currentFrame(344, viewModel, configuredViewerFixture());
+    const selected = fixtureBackendFrame(backend, 344, viewModel, configuredViewerFixture());
     expect(panelFrameCursor(selected)?.point.y).toBeCloseTo(-0.449, 2);
     gamepad.state = gamepadState([0, 0, 0, 0.5], [false, true]);
-    backend.currentFrame(360, viewModel, configuredViewerFixture());
+    fixtureBackendFrame(backend, 360, viewModel, configuredViewerFixture());
     expect(actions).toContainEqual({ type: "activate", controlId: "title-action" });
     expect(actions).toContainEqual({ type: "back" });
-    expectScrollAction(actions);
+    const scrollAction = actions.find((action) => action.type === "menu-scroll");
+    expect(scrollAction?.type).toBe("menu-scroll");
+    if (scrollAction?.type !== "menu-scroll" || scrollAction.intent.kind !== "delta") throw new Error("Missing Menu viewport scroll action");
+    expect(scrollAction.context.generation).toBe(1);
+    expect(scrollAction.context.scope.scene).toBe("Title");
+    expect(scrollAction.intent.viewportPages).toBeCloseTo(0.012);
+    expect(scrollAction.intent.pageProgress).toBe(0);
     await backend.stop();
   });
 });
@@ -738,6 +786,12 @@ class FakePhoneVrGamepad implements PhoneVrGamepadInputPort {
   readState() {
     return this.state;
   }
+}
+
+function requiredRenderedFrame(renderer: FakeRenderer): BackendFrame {
+  const frame = renderer.frames.at(-1);
+  if (frame === undefined) throw new Error("Missing rendered backend frame");
+  return frame;
 }
 
 function createBackend(

@@ -297,12 +297,13 @@ export function createGameViewModel(
     });
   } else if (phaseCode !== 5 && phaseCode !== 6 && !(phaseCode === 7 && model.resultTab === "analysis")) {
     let bottom = 0.795;
+    const totalHeight = buttons.reduce((total, entry) => total + (entry.id === "game-result-configuration" ? 0.11 : 0.075) + 0.01, 0);
+    const scale = Math.min(1, 0.76 / totalHeight);
     buttons.forEach((entry) => {
-      const height = entry.id === "game-result-configuration" ? 0.11 : 0.075;
+      const height = (entry.id === "game-result-configuration" ? 0.11 : 0.075) * scale;
       const y = bottom - height;
-      if (y < 0.035) return;
       controls.push(Object.freeze({ ...entry, rect: normalizedRect(0.08, y, 0.84, height) }));
-      bottom = y - 0.01;
+      bottom = y - 0.01 * scale;
     });
   }
   const renderedControls = model.pendingGameRequestId === null

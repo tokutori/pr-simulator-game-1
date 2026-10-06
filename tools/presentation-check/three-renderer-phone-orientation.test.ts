@@ -1,4 +1,5 @@
 import { configuredViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
@@ -105,7 +106,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
   afterAll(() => { bundle.renderer.dispose(); });
 
   function render(backend: PhoneVrPresentationBackend, timestamp = 100, sceneView: UiViewModel = view): { frame: BackendFrame; eyes: readonly RecordedDraw[] } {
-    const frame = backend.currentFrame(timestamp, sceneView, configuredViewerFixture());
+    const frame = fixtureBackendFrame(backend, timestamp, sceneView, configuredViewerFixture());
     driver.draws.length = 0;
     bundle.renderer.render(frame);
     expect(driver.draws).toHaveLength(2);
@@ -238,7 +239,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
           expect(unavailable).toEqual([]);
         } finally { await backend.stop(); }
         driver.draws.length = 0;
-        bundle.renderer.render(backend.currentFrame(100, view, configuredViewerFixture()));
+        bundle.renderer.render(fixtureBackendFrame(backend, 100, view, configuredViewerFixture()));
         expect(driver.draws).toHaveLength(1);
         const screenDraw = driver.draws[0];
         if (screenDraw === undefined) throw new Error("Missing Screen draw");

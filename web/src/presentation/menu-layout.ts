@@ -5,7 +5,7 @@ import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlT
   MenuFixedTextRole, MenuFontIdentity, MenuHit, MenuLayoutRequest,
   MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
   MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
-import { formatChartTick } from "../render/contracts/ui.js";
+import { chartScaleBarDistance, formatChartTick } from "../render/contracts/ui.js";
 import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
@@ -53,6 +53,10 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
       case "chart": {
         addControlText("x-axis", 0, control.xAxisLabel);
         addControlText("y-axis", 0, control.yAxisLabel);
+        if (control.equalAxisScale) {
+          addControlText("north", 0, "N ↑");
+          addControlText("scale", 0, `${formatChartTick(chartScaleBarDistance(control.xMaximum - control.xMinimum))} m`);
+        }
         for (let tickIndex = 0; tickIndex <= 4; tickIndex++) {
           addControlText("x-tick", tickIndex, formatChartTick(control.xMinimum + (control.xMaximum - control.xMinimum) * tickIndex / 4), width / 5);
           addControlText("y-tick", tickIndex, formatChartTick(control.yMinimum + (control.yMaximum - control.yMinimum) * tickIndex / 4), width / 5);
@@ -127,7 +131,7 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
         texts.push(text);
         textTop += text.bounds.height;
       };
-      specifications.filter((text) => text.slot.role === "label" || text.slot.role === "value" || text.slot.role === "y-axis").forEach(placeText);
+      specifications.filter((text) => text.slot.role === "label" || text.slot.role === "value" || text.slot.role === "y-axis" || text.slot.role === "north" || text.slot.role === "scale").forEach(placeText);
       if (item.control.kind !== "chart") return Object.freeze({ kind: "control", control: item.control,
         bounds: Object.freeze({ x: item.left, y: top, width: item.width, height: textTop - top + request.paddingMeters }), texts: Object.freeze(texts) });
       const ticks = specifications.filter((text) => text.slot.role === "x-tick" || text.slot.role === "y-tick")
@@ -196,14 +200,16 @@ function finiteRect(rectangle: MenuRect): boolean {
 export function menuViewport(document: MenuDocument, progress: number): MenuViewport {
   if (!Number.isFinite(progress) || progress < 0 || progress > 1) throw new RangeError("Menu scroll progress must be in [0, 1]");
   const request = document.request;
-  const footerTop = request.surfaceSize.height - request.paddingMeters - document.footerHeightMeters;
+  const contentFits = document.contentHeightMeters <= request.surfaceSize.height - request.paddingMeters * 2;
+  const footerHeight = contentFits ? 0 : document.footerHeightMeters;
+  const footerTop = request.surfaceSize.height - request.paddingMeters - footerHeight;
   const contentClip = Object.freeze({ x: request.paddingMeters, y: request.paddingMeters,
-    width: request.surfaceSize.width - request.paddingMeters * 2, height: footerTop - request.gapMeters - request.paddingMeters });
+    width: request.surfaceSize.width - request.paddingMeters * 2, height: footerTop - (contentFits ? 0 : request.gapMeters) - request.paddingMeters });
   const pageWidth = (contentClip.width - request.gapMeters) / 2;
   const maximumOffsetMeters = Math.max(0, document.contentHeightMeters - contentClip.height);
   return Object.freeze({ document, contentClip, progress, maximumOffsetMeters, offsetMeters: progress * maximumOffsetMeters,
-    previousBounds: Object.freeze({ x: contentClip.x, y: footerTop, width: pageWidth, height: document.footerHeightMeters }),
-    nextBounds: Object.freeze({ x: contentClip.x + pageWidth + request.gapMeters, y: footerTop, width: pageWidth, height: document.footerHeightMeters }) });
+    previousBounds: Object.freeze({ x: contentClip.x, y: footerTop, width: pageWidth, height: footerHeight }),
+    nextBounds: Object.freeze({ x: contentClip.x + pageWidth + request.gapMeters, y: footerTop, width: pageWidth, height: footerHeight }) });
 }
 
 export function menuPanelPointToDocument(viewport: MenuViewport, point: MenuPoint): MenuContentPoint {

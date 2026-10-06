@@ -1,5 +1,5 @@
 import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize, PanelUnavailableReason } from "../render/contracts/runtime.js";
-import type { UiViewModel } from "../render/contracts/ui.js";
+import type { PreparedPresentationView } from "../render/contracts/runtime.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
 export class PresentationRuntime {
@@ -12,7 +12,7 @@ export class PresentationRuntime {
   constructor(
     private readonly renderer: RendererAdapter,
     backends: readonly PresentationBackendAdapter[],
-    private readonly viewModel: (viewer: ViewerFrame) => UiViewModel,
+    private readonly viewModel: (viewer: ViewerFrame) => PreparedPresentationView,
     private readonly onFrame: (timestampMs: number) => void = () => undefined,
     private readonly onMenuUnavailable: (mode: "webxr" | "phone-vr", reason: PanelUnavailableReason) => void = () => undefined
   ) {
@@ -171,7 +171,8 @@ export class PresentationRuntime {
     if (backend === null || this.disposed) return;
     this.onFrame(timestampMs);
     this.renderer.beginViewFrame();
-    const frame = backend.currentFrame(timestampMs, this.viewModel(viewer), viewer);
+    const prepared = this.viewModel(viewer);
+    const frame = backend.currentFrame(timestampMs, prepared.viewModel, viewer, prepared.menu);
     this.renderer.render(frame);
     if (frame.panel.kind === "unavailable" && frame.panel.reason !== "viewer-unavailable" && backend.mode !== "screen") {
       this.onMenuUnavailable(backend.mode, frame.panel.reason);

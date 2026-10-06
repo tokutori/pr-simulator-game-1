@@ -1,4 +1,5 @@
 import { panelFrameCursor } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector2, Vector3 } from "three";
 import type { Camera, Color, Scene, WebGLRenderer } from "three";
@@ -236,10 +237,10 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     view = { ...createSceneFixture("Flight"), panels: [] };
     latestFrame = null;
     backend = new WebXrPresentationBackend(bundle.webxr, bundle.renderer, () => viewport,
-      (action) => { actions.push(action); onUiAction?.(action); }, () => undefined);
+      (action) => { const semantic = fixtureSemanticAction(action); actions.push(semantic); onUiAction?.(semantic); }, () => undefined);
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      latestFrame = backend.currentFrame(timestamp, view, viewer);
+      latestFrame = fixtureBackendFrame(backend, timestamp, view, viewer);
       bundle.renderer.render(latestFrame);
     });
     await backend.requestSessionFromUserGesture();
@@ -269,7 +270,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null, paint: null as HeadHudPaintPreparation | null };
     const runtime = new PresentationRuntime(bundle.renderer, [{
       mode: "webxr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-      currentFrame: (timestamp, projectedView, rawHead) => backend.currentFrame(timestamp, projectedView, rawHead)
+      currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
     }], (viewer) => {
       evidence.viewer = viewer;
       const values = new Array<number>(33).fill(0);
@@ -296,7 +297,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       if (preparation.kind !== "ready") throw new Error("Head preflight failed");
       evidence.view = finalizeFlightFrameView(draft, preparation.view);
       evidence.paint = preparation;
-      return evidence.view;
+      return fixturePresentation(evidence.view);
     }, () => { bundle.renderer.setFlightPose(currentFlight); });
     bundle.renderer.stopLoop();
     expect(await runtime.start("webxr")).toEqual({ ok: true });
@@ -387,7 +388,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     let captured: UiViewModel | null = null;
     const runtime = new PresentationRuntime(bundle.renderer, [{
       mode: "webxr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-      currentFrame: (timestamp, projectedView, rawHead) => backend.currentFrame(timestamp, projectedView, rawHead)
+      currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
     }], (viewer) => {
       const model = { ...initial, gameSession, presentation: { type: "ready", mode: "webxr" } as const,
         difficulty: { ...initial.difficulty, informationCode: 4, hudProfile: {
@@ -405,7 +406,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
         if (preparation.kind !== "ready") throw new Error(`Custom preflight failed ${String(mask)}`);
         captured = finalizeFlightFrameView(draft, preparation.view);
       }
-      return captured;
+      return fixturePresentation(captured);
     });
     bundle.renderer.stopLoop();
     expect(await runtime.start("webxr")).toEqual({ ok: true });
@@ -476,7 +477,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
       bundle.renderer.stopLoop();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
+      bundle.renderer.render(fixtureBackendFrame(backend, timestamp, view, viewer));
     });
     session.run(200, head);
     expect(lastDraw(driver).panel).not.toBeNull();
@@ -485,7 +486,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expect(actions).toHaveLength(0);
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
+      bundle.renderer.render(fixtureBackendFrame(backend, timestamp, view, viewer));
     });
     session.select(11_000, head);
     expect(actions).toHaveLength(0);
@@ -508,7 +509,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     bundle.renderer.stopLoop();
     bundle.renderer.startLoop((timestamp, viewer) => {
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
+      bundle.renderer.render(fixtureBackendFrame(backend, timestamp, view, viewer));
     });
     session.run(200, head);
     expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(latestFlight, composePose(eyePose(latestFlight), head))));
@@ -521,7 +522,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       bundle.renderer.setFlightCameraMode("pilot");
       bundle.renderer.setFlightPose(updatedFlight);
       bundle.renderer.beginViewFrame();
-      bundle.renderer.render(backend.currentFrame(timestamp, view, viewer));
+      bundle.renderer.render(fixtureBackendFrame(backend, timestamp, view, viewer));
     });
     session.run(100, head);
     expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(updatedFlight, composePose(eyePose(updatedFlight), head))));
@@ -644,7 +645,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const viewTimestamps: number[] = [];
     const screen = new ScreenPresentationBackend(() => viewport);
     const runtime = new PresentationRuntime(bundle.renderer, [screen, backend],
-      () => { viewTimestamps.push(onFrameTimestamps.at(-1) ?? Number.NaN); return view; },
+      () => { viewTimestamps.push(onFrameTimestamps.at(-1) ?? Number.NaN); return fixturePresentation(view); },
       (timestamp) => { onFrameTimestamps.push(timestamp); });
     await backend.requestSessionFromUserGesture();
     expect(await runtime.start("webxr")).toEqual({ ok: true });

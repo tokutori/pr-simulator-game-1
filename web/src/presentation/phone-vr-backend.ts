@@ -6,7 +6,7 @@ import {
   vec3
 } from "../render/contracts/math.js";
 import type { Pose, Quaternion } from "../render/contracts/math.js";
-import type { BackendFrame, PresentationBackendAdapter, RendererAdapter, ViewportSize } from "../render/contracts/runtime.js";
+import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, RendererAdapter, ViewportSize } from "../render/contracts/runtime.js";
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
@@ -189,11 +189,19 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     return this.stopTracking("Phone VR startup was canceled");
   }
 
-  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame): BackendFrame {
+  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     const cameraPose = this.currentViewerPose(timestampMs);
     const viewerPose = cameraPose === null ? null : this.renderer.transformTrackingPose(cameraPose);
-    const panel = viewModel.panels[0] ?? null;
-    if (panel?.anchor !== "menu") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    const semanticPanel = viewModel.panels[0] ?? null;
+    const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
+    if (panel?.anchor !== "menu" || menu.kind === "absent") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    if (panel?.anchor === "menu" && menu.kind !== "ready") {
+      this.gazeDwell.reset();
+      this.gamepadSelector.reset();
+      return Object.freeze({ timestampMs, headHud: menu.kind === "unavailable" ? NO_HEAD_HUD : resolveHeadHudFrame(viewModel.headHud, cameraPose),
+        cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation), viewport: this.viewport(),
+        panel: menu.kind === "unavailable" ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
+    }
     const headPose = viewerPose ?? poseAtOrigin(this.latestViewerOrientation);
     let menuPose = this.menuPlacement.kind === "placed" ? this.menuPlacement.referenceFromMenu : placeMenuPanel(headPose, 2.4);
     if (panel !== null && (viewerPose === null || viewer.source === "unavailable")) {
@@ -220,12 +228,13 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       head: headPose
     });
     const gamepadState = viewerPose === null ? null : this.gamepadInput.readState();
-    const gamepadCursor = this.gamepadSelector.update(panel, gamepadState, timestampMs);
+    const gamepadCursor = menu.kind === "ready" && gamepadState !== null
+      ? this.gamepadSelector.updateMenu(menu, gamepadState, timestampMs) : this.gamepadSelector.update(panel, gamepadState, timestampMs);
     const gazeCursor = gamepadState !== null
       ? this.gazeDwell.update(null, null, timestampMs)
       : viewerPose === null
         ? this.gazeDwell.update(null, null, timestampMs)
-        : this.updateGaze(panel, panelPose, viewerPose, timestampMs);
+        : this.updateGaze(panel, panelPose, viewerPose, timestampMs, menu);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, cameraPose),
@@ -391,14 +400,15 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     panel: UiViewModel["panels"][number] | null,
     panelPose: Pose,
     viewerPose: Pose,
-    timestampMs: number
+    timestampMs: number,
+    menu: MenuPresentation
   ) {
     if (panel === null) return this.gazeDwell.update(null, null, timestampMs);
     const point = intersectPanel({
       origin: viewerPose.position,
       direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1))
     }, panelPose);
-    return this.gazeDwell.update(panel, point, timestampMs);
+    return menu.kind === "ready" ? this.gazeDwell.updateMenu(menu, point, timestampMs) : this.gazeDwell.update(panel, point, timestampMs);
   }
 
   private stopTracking(message: string): Promise<void> {

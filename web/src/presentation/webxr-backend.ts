@@ -1,6 +1,6 @@
 import { composePose, IDENTITY_POSE, inversePose, rotateVec3, vec3 } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
-import type { BackendFrame, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
+import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
@@ -9,6 +9,7 @@ import { CLOSED_MENU_PLACEMENT, openMenuPlacement, recenterMenuPlacement, transf
 import type { MenuPlacementModel } from "./menu-placement.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
 import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "./panel-interaction.js";
+import { menuActionAt, menuFocusAction, menuHitIdentity } from "./menu-interaction.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "./webxr-contracts.js";
 
 type WebXrBackendState =
@@ -27,6 +28,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private lastViewerPose: Pose | null = null;
   private lastPanel: UiViewModel["panels"][number] | null = null;
   private lastPanelPose: Pose | null = null;
+  private lastMenu: MenuPresentation = Object.freeze({ kind: "absent" });
   private referenceFromWorld: Pose = IDENTITY_POSE;
   private menuPlacement: MenuPlacementModel = CLOSED_MENU_PLACEMENT;
   private readonly gazeDwell: GazeDwellSelector;
@@ -132,12 +134,22 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     }
   }
 
-  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame): BackendFrame {
+  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     const viewerPose = viewer.trackingFromHead;
     const presentationViewerPose = viewerPose === null ? null : this.xrRenderer.transformTrackingPose(viewerPose);
     this.lastViewerPose = presentationViewerPose;
-    const panel = viewModel.panels[0] ?? null;
-    if (panel?.anchor !== "menu") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    const semanticPanel = viewModel.panels[0] ?? null;
+    const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
+    if (panel?.anchor !== "menu" || menu.kind === "absent") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    this.lastMenu = menu;
+    if (panel?.anchor === "menu" && menu.kind !== "ready") {
+      this.lastPanel = null;
+      this.lastPanelPose = null;
+      this.gazeDwell.reset();
+      return Object.freeze({ timestampMs, headHud: menu.kind === "unavailable" ? NO_HEAD_HUD : resolveHeadHudFrame(viewModel.headHud, viewerPose),
+        cameraPose: IDENTITY_POSE, viewport: this.viewport(), panel: menu.kind === "unavailable"
+          ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
+    }
     const headPose = presentationViewerPose ?? IDENTITY_POSE;
     let menuPose = this.menuPlacement.kind === "placed" ? this.menuPlacement.referenceFromMenu : placeMenuPanel(headPose, 2.4);
     if (panel !== null && (presentationViewerPose === null || viewer.source === "unavailable")) {
@@ -166,7 +178,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     });
     this.lastPanel = panel;
     this.lastPanelPose = worldFromPanel;
-    const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs);
+    const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs, menu);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, viewerPose),
@@ -184,14 +196,15 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     panel: UiViewModel["panels"][number] | null,
     worldFromPanel: Pose,
     viewerPose: Pose | null,
-    timestampMs: number
+    timestampMs: number,
+    menu: MenuPresentation
   ) {
     if (panel === null || viewerPose === null) return this.gazeDwell.update(null, null, timestampMs);
     const point = intersectPanel({
       origin: viewerPose.position,
       direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1))
     }, worldFromPanel);
-    return this.gazeDwell.update(panel, point, timestampMs);
+    return menu.kind === "ready" ? this.gazeDwell.updateMenu(menu, point, timestampMs) : this.gazeDwell.update(panel, point, timestampMs);
   }
 
   private handleSelectRay(ray: SelectRay): void {
@@ -200,6 +213,17 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     if (panel === null || panelPose === null) return;
     const point = intersectPanel(ray, panelPose);
     if (point === null) return;
+    const menu = this.lastMenu;
+    if (menu.kind === "ready") {
+      const identity = menuHitIdentity(menu, point);
+      if (this.gazeDwell.wasActivatedRecently(identity, ray)) return;
+      const action = menuActionAt(menu, point);
+      if (action.kind === "action") {
+        this.dispatch(menuFocusAction(menu, point));
+        this.dispatch(action.action);
+      }
+      return;
+    }
     const control = hitTestControl(panel, point);
     if (control === null || this.gazeDwell.wasActivatedRecently(control.id, ray)) return;
     this.dispatch({ type: "focus", controlId: control.id });

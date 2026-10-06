@@ -1,6 +1,7 @@
 import type { Pose, Vec2, Vec3 } from "./math.js";
 import type { CinematicCameraView } from "./camera.js";
-import type { UiPanel, UiViewModel } from "./ui.js";
+import type { MenuScrollContext, UiPanel, UiViewModel } from "./ui.js";
+import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
@@ -26,7 +27,19 @@ export interface BackendFrame {
   readonly viewport: ViewportSize;
 }
 
-export type PanelUnavailableReason = ViewerGeometryUnavailableReason | "insufficient-view-area";
+export type PanelUnavailableReason = ViewerGeometryUnavailableReason | "insufficient-view-area" | "insufficient-ink-angle" | "context-unavailable" |
+  Extract<MenuDocumentResult, { kind: "unavailable" }>["reason"] | "measurement-unavailable" | "drawing-unavailable";
+
+export type MenuPresentation =
+  | { readonly kind: "absent" }
+  | { readonly kind: "pending" }
+  | { readonly kind: "unavailable"; readonly reason: PanelUnavailableReason }
+  | { readonly kind: "ready"; readonly panel: UiPanel; readonly viewport: MenuViewport; readonly context: MenuScrollContext };
+
+export interface PreparedPresentationView {
+  readonly viewModel: UiViewModel;
+  readonly menu: MenuPresentation;
+}
 
 export type PanelFrame =
   | { readonly kind: "absent" }
@@ -80,7 +93,7 @@ export interface PresentationBackendAdapter {
   readonly mode: PresentationMode;
   start(): Promise<void>;
   stop(): Promise<void>;
-  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame): BackendFrame;
+  currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame;
 }
 
 export type RenderError =

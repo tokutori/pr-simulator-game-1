@@ -1,4 +1,5 @@
 import { configuredViewerFixture } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixtureSemanticAction } from "./menu-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -282,7 +283,7 @@ describe("connection-scoped Menu cursor history", () => {
 
   it("resets cursor/focus/time, seeds held toggle/back, and retains range and scroll operation", () => {
     const actions: UiAction[] = [];
-    const selector = new GamepadUiSelector((action) => { actions.push(action); });
+    const selector = new GamepadUiSelector((action) => { actions.push(fixtureSemanticAction(action)); });
     selector.update(panel, sample(1), 0);
     selector.update(panel, sample(1, [false, false], [1, 1, 0, 0]), 50);
     actions.length = 0;
@@ -420,9 +421,10 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     };
   };
   const dispatch = (action: UiAction): void => {
-    actions.push(action);
+    const semantic = fixtureSemanticAction(action);
+    actions.push(semantic);
     model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    const update = updateApp(model, { type: "ui-action", action });
+    const update = updateApp(model, { type: "ui-action", action: semantic });
     model = update.model;
     for (const effect of update.effects) {
       if (effect.type !== "game-session-operation") continue;
@@ -459,7 +461,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const frame = () => {
     timestamp += 16;
     model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    return backend.currentFrame(timestamp, createGameViewModel(model, null), configuredViewerFixture());
+    return fixtureBackendFrame(backend, timestamp, createGameViewModel(model, null), configuredViewerFixture());
   };
   return { session, backend, input, actions, operations, frame, sensorCallbacks, sensors, renderer, unavailable };
 }

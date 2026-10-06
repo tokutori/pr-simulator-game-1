@@ -1,4 +1,5 @@
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Matrix4, Quaternion, Vector3 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
@@ -250,7 +251,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const phone = await startPhone(bundle, viewport);
     const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null };
     const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-      currentFrame: (timestamp, view, viewer) => phone.backend.currentFrame(timestamp, view, viewer) }], (viewer) => {
+      currentFrame: (timestamp, view, viewer, menu) => phone.backend.currentFrame(timestamp, view, viewer, menu) }], (viewer) => {
       evidence.viewer = viewer;
       const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Phone Head layout");
@@ -258,7 +259,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const paint = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, size.width, size.height), viewer);
       if (paint.kind !== "ready") throw new Error("Missing Phone Head plan");
       evidence.view = finalizeFlightFrameView(draft, paint.view);
-      return evidence.view;
+      return fixturePresentation(evidence.view);
     }, () => { bundle.renderer.setFlightPose(currentFlight); });
     const projections: Vector3[][] = [];
     try {
@@ -387,7 +388,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     await backend.start();
     const view = createSceneFixture("Title");
     const render = (timestamp: number): { frame: BackendFrame; relative: Matrix4 } => {
-      const current = backend.currentFrame(timestamp, view, configuredViewerFixture());
+      const current = fixtureBackendFrame(backend, timestamp, view, configuredViewerFixture());
       driver.draws.length = 0;
       bundle.renderer.render(current);
       const draw = driver.draws[0];
@@ -514,11 +515,11 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       let paused = false;
       const observed = { viewer: null as ViewerFrame | null, frame: null as BackendFrame | null };
       const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-        currentFrame: (timestamp, view, viewer) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer); return observed.frame; } }], (viewer) => {
+        currentFrame: (timestamp, view, viewer, menu) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer, menu); return observed.frame; } }], (viewer) => {
         observed.viewer = viewer;
-        if (!paused) return createSceneFixture("Title");
+        if (!paused) return fixturePresentation(createSceneFixture("Title"));
         const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
-        return finalizeFlightFrameView(draft, draft.headHud);
+        return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud));
       });
       try {
         expect(await runtime.start("phone-vr")).toEqual({ ok: true });
@@ -582,10 +583,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const phone = await startPhone(bundle, viewport);
       try {
         phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
-        const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
+        const rawFrame = fixtureBackendFrame(phone.backend, 10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
         const mountedHead = composePose(pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1), rawFrame.cameraPose);
         const view = phonePanel(anchor, mountedHead);
-        const current = phone.backend.currentFrame(20, view, configuredViewerFixture());
+        const current = fixtureBackendFrame(phone.backend, 20, view, configuredViewerFixture());
         driver.draws.length = 0;
         bundle.renderer.render(current);
         const center = centerEye(driver.draws);
@@ -601,7 +602,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         expect(panelFrameCursor(current)?.point.x).toBeCloseTo(0, 8);
         expect(panelFrameCursor(current)?.point.y).toBeCloseTo(0, 8);
         for (const draw of driver.draws) expectVisible(new Vector3(), draw);
-        phone.backend.currentFrame(2020, view, configuredViewerFixture());
+        fixtureBackendFrame(phone.backend, 2020, view, configuredViewerFixture());
         expect(phone.actions).toContainEqual({ type: "activate", controlId: "phone-eye-button" });
         await phone.backend.stop();
         driver.draws.length = 0;
@@ -628,10 +629,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const phone = await startPhone(bundle, viewport);
     try {
       phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
-      const rawFrame = phone.backend.currentFrame(10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
+      const rawFrame = fixtureBackendFrame(phone.backend, 10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
       const view = phonePanel("menu", composePose(mount, rawFrame.cameraPose));
       const render = (timestampMs: number): Matrix4 => {
-        const current = phone.backend.currentFrame(timestampMs, view, configuredViewerFixture());
+        const current = fixtureBackendFrame(phone.backend, timestampMs, view, configuredViewerFixture());
         driver.draws.length = 0;
         bundle.renderer.render(current);
         const panel = driver.draws[0]?.panel;
@@ -667,7 +668,7 @@ async function startPhone(bundle: ThreeRendererBundle, viewport: BackendFrame["v
   };
   const actions: UiAction[] = [];
   const backend = new PhoneVrPresentationBackend(sensors, bundle.renderer, () => viewport,
-    (action) => { actions.push(action); }, (message) => { throw new Error(message); }, { nowMs: () => 10_000 });
+    (action) => { actions.push(fixtureSemanticAction(action)); }, (message) => { throw new Error(message); }, { nowMs: () => 10_000 });
   await backend.requestPermissionFromUserGesture();
   await backend.start();
   return { backend, actions, emit: (reading) => {
