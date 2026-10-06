@@ -204,6 +204,7 @@ export type AppMessage =
   | { readonly type: "ui-action"; readonly action: UiAction }
   | {
       readonly type: "menu-scroll-synchronized";
+      readonly generation: number;
       readonly target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope };
     }
   | { readonly type: "menu-scroll"; readonly context: MenuScrollContext; readonly intent: MenuScrollIntent }
@@ -518,7 +519,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "ui-action":
       return updateUiAction(model, message.action);
     case "menu-scroll-synchronized":
-      return synchronizeMenuScroll(model, message.target);
+      return synchronizeMenuScroll(model, message.generation, message.target);
     case "menu-scroll":
       return updateMenuScroll(model, message.context, message.intent);
     case "menu-focus":
@@ -809,9 +810,11 @@ function nextMenuGeneration(generation: number): number | null {
 
 function synchronizeMenuScroll(
   model: AppModel,
+  observedGeneration: number,
   target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope }
 ): AppTransition {
   const current = model.menuScroll;
+  if (observedGeneration !== current.generation) return transition(model);
   if (target.kind === "closed" && current.kind === "closed") return transition(model);
   if (target.kind === "active") {
     if (target.scope.panelId.trim().length === 0 || target.scope.viewKey.trim().length === 0
@@ -847,8 +850,10 @@ function updateMenuScroll(model: AppModel, context: MenuScrollContext, intent: M
     progress = Math.max(0, Math.min(1, current.progress + change));
   }
   if (progress === current.progress) return transition(model);
+  const generation = nextMenuGeneration(current.generation);
+  if (generation === null) return transition(model);
   return transition(withModel(model, {
-    menuScroll: Object.freeze({ ...current, progress, focus: Object.freeze({ kind: "none" }) })
+    menuScroll: Object.freeze({ ...current, generation, progress, focus: Object.freeze({ kind: "none" }) })
   }));
 }
 
