@@ -89,11 +89,24 @@ mock trim、公開終端・旧record扱いはBPG-041〜043の試験とする。
 repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
 polar・provider・モデル構築のallocation 0、static評価10,000回と既存RK4 step 10,000回のallocation 0を確認した。
 測定は非ゼロ流、P offset、空間wind gradient、moving pilotを含むdebug buildで行った。
-coreのunsafe禁止と依存は維持し、計測用allocatorをrepoのsourceやruntimeへ追加しない。
+coreのunsafe禁止と依存は維持し、計測用allocatorをcoreやproduct runtimeへ追加しない。
 
 ### BPG-039 current-reference hybrid
 
 `aerodynamics::hybrid::tests`は公開可能な架空geometry・polarだけを使用する。
+`python tools/allocation-check/main.py`はnative debug build専用の独立計測harnessを実行する。
+この永続probeは上記BPG-038のrepo外計測原本と区別し、core・Cargo依存・product runtimeを変更しない。
+架空の3surface・空間wind gradient・非zero rateとmoving pilotを構築し、warmup・assert・printを窓外に置く。
+Systemへ転送するtest専用allocatorのalloc・alloc_zeroed・reallocを個別に計数し、校正で各1回を検出する。
+provider評価・RK4・実tickの成功とGlobalBetaによる型付き範囲外を各10,000回計測し、各割当数0を要求する。
+範囲外ではdatum site・元cause・直接評価のstageなしとRK4/tickのFirst stage・tick非commitを検査する。
+入力・出力にblack_boxを用い、最適化による評価除去を抑制する。測定は実行したnative debug環境に限定し、
+全最適化設定・全端末・実時間性能の証明とは扱わない。
+[GlobalAllocの最適化・再入条件](https://doc.rust-lang.org/core/alloc/trait.GlobalAlloc.html)と
+[black_boxのbest-effort条件](https://doc.rust-lang.org/std/hint/fn.black_box.html)に従い、
+allocator内ではI/O・lock・panicを使わず、計数のassertを通常の安全なassertとして窓外で行う。
+2026-10-06、Windows / Rust 1.97.0で校正と上記6窓の各10,000回が成功し、割当3種すべて0を確認した。
+旧BPG-038原本の再実行、新Hybridの構築時実測、他の環境・最適化設定の合格をこの結果に含めない。
 次の微係数はproxy増分だけを正規化し、staticの力基底変化と分離する。
 flat rectangular、no-twist、alpha=0、neutralを基準とし、tailのz offset等は個別oracleの条件に固定する。
 
