@@ -80,7 +80,7 @@ function solveMenuView(
 
 function projectHomogeneous(eye: EyeGeometry, point: Vec3, homogeneous: number): readonly [number, number, number, number] {
   const values = [point.x, point.y, point.z, homogeneous];
-  const result = Array.from({ length: 4 }, (_, row) => values.reduce(
+  const result = Array.from({ length: 4 }, (_unusedEntry, row) => values.reduce(
     (sum, value, column) => sum + value * (eye.projection[column * 4 + row] ?? 0), 0));
   return [result[0] ?? Number.NaN, result[1] ?? Number.NaN, result[2] ?? Number.NaN, result[3] ?? Number.NaN];
 }

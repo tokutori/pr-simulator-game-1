@@ -539,11 +539,11 @@ describe("Three adapter panel reference with real StereoEffect", () => {
           const eye = viewer.eyes[eyeIndex];
           if (eye === undefined) throw new Error("Missing eye");
           expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
-          for (const x of [-1.2, 1.2]) for (const y of [-0.9, 0.9]) expectVisible(new Vector3(x, y, 0), draw);
+          for (const coordinateX of [-1.2, 1.2]) for (const coordinateY of [-0.9, 0.9]) expectVisible(new Vector3(coordinateX, coordinateY, 0), draw);
           for (const control of visible.panel.controls) {
-            for (const x of [control.rect.x, control.rect.x + control.rect.width]) {
-              for (const y of [control.rect.y, control.rect.y + control.rect.height]) {
-                expectVisible(new Vector3((x - 0.5) * 2.4, (0.5 - y) * 1.8, 0), draw);
+            for (const normalizedX of [control.rect.x, control.rect.x + control.rect.width]) {
+              for (const normalizedY of [control.rect.y, control.rect.y + control.rect.height]) {
+                expectVisible(new Vector3((normalizedX - 0.5) * 2.4, (0.5 - normalizedY) * 1.8, 0), draw);
               }
             }
           }
