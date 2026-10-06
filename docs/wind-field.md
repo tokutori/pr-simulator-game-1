@@ -59,6 +59,8 @@ BPG-039の`HybridAerodynamicLoad`は各RK4 stageのOと全proxy world位置で�
 全機staticはOの風だけを使用し、proxyは現在のalpha・Vの一様流referenceとの差だけを返す。
 風場の循環・gradientに対する独立forceや加速度を追加しない。式と閉境界は[`aerodynamics.md`](aerodynamics.md)に従う。
 
+`FlightScenario::try_new_with_aerodynamic_provider`では風を別引数で指定しない。
+選択したproviderが所有・借用する一つのfieldを、荷重・CG telemetry・位置queryの全てに使う。
 V=0でも全proxyのsampleを省略せず、局所回転流・差動windと全点静止を区別する。
 範囲外gridや算術故障は元の`WindError`、proxy/surface、RK stageを保持し、失敗tickをcommitしない。
 

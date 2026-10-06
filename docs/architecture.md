@@ -102,7 +102,15 @@ moment軸・固定参照点・共通参照量を持つ。構築と評価にrunti
 既存element-only APIは独立software fixtureとして保持する。
 BPG-039の`HybridModel`は全機staticを一度評価し、幾何・固定normal・current referenceに基づく局所差分だけを加える。
 `HybridError`はcause・surface/proxy・limitを保持し、RK4境界で失敗stageを付与する。
+`FlightScenarioParameters`を共通validatorとし、旧owned ElementOnly入口と新borrowed provider入口で
+launch・初期tick・contactの正本を共用する。風の正本は選択したproviderに一つだけ存在し、telemetryもこれを参照する。
+旧constructorの全3軸travel保証と検査順は保持する。新入口はgeneric tickとの互換境界であり、
+Hybridのphysical tail incidence二値に対するroll非0をtyped拒否する。
 新playableの二系統尾翼操作・authority・q/r FBWはBPG-040で接続する。
+Scenarioのprivate排他enumは旧owned load（Windows nativeで約2.8 KiB）に合わせたサイズを持ち、
+borrowed providerの小さい参照だけを選ぶ場合にも同じstorageを使用する。
+旧self-owned・Copy・allocation不要の契約を保持するtrade-offとして、このenumだけClippyのサイズ差をreason付きexpectで明示する。
+tick・telemetryの評価はScenario内のloadを参照し、評価ごとにowned modelをコピーしない。
 
 BPG-041（[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)）は公開用架空mockの定義・検証までとする。
 公開アプリの既定モデル切替はBPG-042（[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)）で、

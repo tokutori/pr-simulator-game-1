@@ -520,6 +520,41 @@ pub enum AerodynamicLoadProvider<'a> {
     StaticPolar(&'a StaticPolarLoad<'a>),
 }
 
+impl AerodynamicLoadProvider<'_> {
+    /// Samples the selected provider's sole stationary wind field.
+    pub fn wind_velocity_at(
+        &self,
+        position_ned: crate::math::NedPoint,
+    ) -> Result<NedVector, crate::wind_field::WindError> {
+        match self {
+            Self::Hybrid(load) => load.wind_velocity_at(position_ned),
+            Self::ElementOnly(load) => load.wind_velocity_at(position_ned),
+            Self::StaticPolar(load) => load.wind_field.velocity_at(position_ned),
+        }
+    }
+
+    pub(crate) fn validate_scenario_control_boundary(
+        &self,
+        limits: [crate::flight_control::ActuatorConfig; 3],
+        initial: crate::flight_control::ActuatorState,
+    ) -> Result<(), AerodynamicEvaluationError> {
+        match self {
+            Self::Hybrid(load) => load
+                .validate_scenario_control_boundary(limits, initial)
+                .map_err(AerodynamicEvaluationError::Hybrid),
+            Self::ElementOnly(load) => load.aerodynamics.validate_actuator_limits(limits),
+            Self::StaticPolar(_) => {
+                if initial.deflections() != SurfaceDeflections::neutral() {
+                    return Err(AerodynamicEvaluationError::StaticPolar {
+                        cause: AeroError::UnsupportedControl,
+                    });
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl ExternalLoadProvider for AerodynamicLoadProvider<'_> {
     fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         match self {

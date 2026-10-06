@@ -14,8 +14,8 @@ BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空�
 
 BPG-038でborrowed非線形全機static polarと、moment軸・固定参照点・PWL補間を追加した。
 BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)は全機staticとcurrent-reference局所normal-force差分、
-検証済みgeometry・TailIncidence・閉境界・RK stage付きcauseをRust coreへ追加する。
-新playableの二系統actuator・authority・q/r FBWは
+検証済みgeometry・TailIncidence・閉境界・RK stage付きcause・排他的Scenario入口をRust coreへ追加する。
+generic tickとの互換入口は新三軸playableモデルを表さない。二系統actuator・authority・q/r FBWは
 [#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)で接続する。数式と近似範囲は[空力契約](docs/aerodynamics.md)に従う。
 [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)は架空mockの定義・検証、
 [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)は公開型・記録version更新と既定モデル切替を同時に行う。

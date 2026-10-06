@@ -222,6 +222,23 @@ RK4境界は`AerodynamicStage`のFirst〜Fourthを付与し、旧ElementOnly・S
 任意stageで失敗したtickは非commitとなる。非有限計算・wind failure・unsupported controlは
 `OutsideEnvelope`へまとめず、元のfatal causeを維持する。
 
+### Scenarioの互換入口
+
+`FlightScenarioParameters`はprovider独立のlaunch、tick-zero actuator/state、contactを一度だけ検証する。
+`FlightScenario::try_new_with_aerodynamic_provider`は同parametersと一つのborrowed providerを受け取り、
+荷重・telemetry・任意位置のwind queryにそのproviderの同じ風場を使用する。
+旧`try_new`はcontrol全travel、density、launch、初期tick、contactの検査順を保持する。
+
+ElementOnlyは全5要素・全3軸のtravel整合性を検査する。StaticPolarは初期neutralを要求し、
+後続の非neutral評価も`UnsupportedControl`で拒否する。Hybridは両尾翼を要求し、初期roll非0を拒否し、
+pitch/yawの全travelが各0.2 rad以内であることを検査する。
+既存generic tickのroll travelはhybridの空力authorityを保証しない。
+境界adapterはpitch/yawをphysical tail incidenceへ明示的に写像し、後続roll非0を型付き拒否する。
+flow・control込みの動的範囲は各stageで検査し、設定の整合性だけで有効な飛行を保証しない。
+
+この入口はgeneric tickとのcore互換境界である。新playableの二系統actuator・authority・q/r FBWはBPG-040、
+公開default・WASM/TypeScript・terminal・identity・record versionはBPG-042へ保持する。
+
 ## 要素と局所流
 
 既存のelement-onlyモデルは左右主翼・水平尾翼・垂直尾翼・胴体の5要素を使用する。

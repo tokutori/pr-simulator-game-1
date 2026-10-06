@@ -124,8 +124,9 @@ strip数の増加による連続翼$-a_W/6$へのquadrature収束を別に確認
 | 閉境界 | global beta、tail incidence、raw/control込みalpha差、actual/reference span角、速度0.8V/1.2Vは境界を包含し直外を拒否。actual/reference forwardは厳密に正 |
 | 零速・fatal | 全点静止だけ0、O静止+回転流/差動windはUndefinedReference、後続wind errorも検査。微小正速度、算術overflow、非有限wind、密度errorの元causeを区別 |
 | RK/tick原子性 | actual providerを通す全4 stageでheld controlを観測し、各stageへenvelope/fatal/wind failureを注入。元cause/site/limit・失敗stageを保持し、actuator/pilot/tickの直前stateが不変 |
+| Scenario互換 | 同providerのwind正本をtelemetryとloadで使用。Hybrid初期roll・欠落tail・tail travel直外を拒否し、runtime rollも非commit。Static neutral-only、旧Element全3軸travel/検査順を保持 |
 
-ここで検証する対象はcore geometry/providerとload→dynamics/tick境界である。
+ここで検証する対象はcore geometry/provider/Scenarioとload→dynamics/tick境界である。
 新playableのauthority・slew・FBW、公開terminal/Result/record/schema/default、実ブラウザー/HMD・実機精度は別gateである。
 fmt、warning拒否Clippy、workspace test/rustdoc、native/no_std/WASM/WASIとWeb verifyはPRでexact sourceごとに結果を記録する。
 ソフトウェアoracleの合格をwake・失速・Re依存・完全なエネルギー散逸や実機性能の証明として扱わない。

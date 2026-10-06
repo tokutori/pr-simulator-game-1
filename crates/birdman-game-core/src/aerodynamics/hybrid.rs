@@ -10,8 +10,8 @@ use crate::aerodynamics_contract::{
     HybridSurfaceRole,
 };
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
-use crate::flight_control::SurfaceDeflections;
-use crate::math::{BodyVector, NedVector, atan2, hypot2};
+use crate::flight_control::{ActuatorConfig, ActuatorState, SurfaceDeflections};
+use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
 const MAXIMUM_ANGLE_RAD: f64 = 0.2;
@@ -190,6 +190,45 @@ impl<'a> HybridAerodynamicLoad<'a> {
             density_kg_m3,
             wind_field,
         })
+    }
+
+    /// Samples the same stationary wind used by every hybrid load evaluation.
+    pub fn wind_velocity_at(
+        &self,
+        position_ned: NedPoint,
+    ) -> Result<NedVector, crate::wind_field::WindError> {
+        self.wind_field.velocity_at(position_ned)
+    }
+
+    pub(crate) fn validate_scenario_control_boundary(
+        &self,
+        limits: [ActuatorConfig; 3],
+        initial: ActuatorState,
+    ) -> Result<(), HybridError> {
+        TailIncidence::try_from_surface_deflections(initial.deflections())?;
+        for (axis, role) in [
+            (1, HybridSurfaceRole::HorizontalTail),
+            (2, HybridSurfaceRole::VerticalTail),
+        ] {
+            if !self
+                .model
+                .surfaces
+                .iter()
+                .any(|surface| surface.geometry().role() == role)
+            {
+                return Err(HybridError::new(
+                    HybridSite::Surface(role),
+                    AeroError::UnsupportedControl,
+                ));
+            }
+            if limits[axis].maximum_deflection_rad() > MAXIMUM_ANGLE_RAD {
+                return Err(HybridError::new(
+                    HybridSite::Surface(role),
+                    AeroError::IncompatibleControlEnvelope,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Evaluates static plus current-reference increments using physical tail incidence.

@@ -1,5 +1,6 @@
 use super::*;
 mod envelope;
+mod scenario;
 use crate::{
     BodyPoint, ElementOrientation, ElementReference, NedPoint, PolarAnalysisMethod,
     PolarMomentAxes, StaticPolarCoefficients, StaticPolarMetadata, StaticPolarRow, UnitQuaternion,
