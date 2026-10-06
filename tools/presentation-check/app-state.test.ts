@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
+import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
+import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
-import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
+import { GAME_SCENES, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
 flightSnapshotValues[7] = 1;
@@ -1150,6 +1151,248 @@ describe("Boot application state", () => {
     }]);
   });
 });
+
+describe("Single Menu scroll state", () => {
+  const titleScope: MenuScrollScope = { kind: "scene", scene: "Title", panelId: "title-menu", viewKey: "main" };
+
+  it("starts closed and exposes the shared scroll state without a separate focus authority", () => {
+    const model = createInitialAppModel();
+    const scroll: MenuScrollState = model.menuScroll;
+    expect(scroll).toEqual({ kind: "closed", generation: 0 });
+    expect(Object.isFrozen(scroll)).toBe(true);
+  });
+
+  it("freezes copied opening data and preserves identical scope synchronization", () => {
+    const mutableScope: { kind: "scene"; scene: "Title"; panelId: string; viewKey: string } = {
+      kind: "scene", scene: "Title", panelId: "title-menu", viewKey: "main"
+    };
+    const initial = readyModel();
+    const opened = updateApp(initial, { type: "menu-scroll-synchronized", target: { kind: "active", scope: mutableScope } });
+    expect(opened.model.menuScroll).toEqual({
+      kind: "active", scope: titleScope, generation: 1, progress: 0, focus: { kind: "none" }
+    });
+    expect(opened.effects).toEqual([]);
+    expect(initial.menuScroll).toEqual({ kind: "closed", generation: 0 });
+    if (opened.model.menuScroll.kind !== "active") throw new Error("Menu did not open");
+    expect(Object.isFrozen(opened.model.menuScroll.scope)).toBe(true);
+    expect(Object.isFrozen(opened.model.menuScroll.focus)).toBe(true);
+    mutableScope.panelId = "mutated-input";
+    expect(opened.model.menuScroll.scope.panelId).toBe("title-menu");
+    const repeated = updateApp(opened.model, { type: "menu-scroll-synchronized", target: { kind: "active", scope: { ...titleScope } } });
+    expect(repeated.model).toBe(opened.model);
+    expect(repeated.effects).toEqual([]);
+  });
+
+  it("resets scroll and rejects old contexts when any scope component changes", () => {
+    const scopes: readonly MenuScrollScope[] = [
+      { ...titleScope, scene: "Result" },
+      { ...titleScope, panelId: "result-menu" },
+      { ...titleScope, viewKey: "analysis:altitude" },
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "settings" },
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "help" }
+    ];
+    for (const scope of scopes) {
+      const opened = openMenu(readyModel(), titleScope);
+      const context = menuContext(opened);
+      const scrolled = updateApp(opened, { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 0.5 } }).model;
+      const changed = updateApp(scrolled, { type: "menu-scroll-synchronized", target: { kind: "active", scope } });
+      expect(changed.model.menuScroll).toEqual({ kind: "active", scope, generation: 2, progress: 0, focus: { kind: "none" } });
+      expect(updateApp(changed.model, { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 1 } }).model).toBe(changed.model);
+      expect(changed.effects).toEqual([]);
+    }
+    const settingsScope: MenuScrollScope = { kind: "overlay", scene: "Flight", panelId: "pause", viewKey: "main", overlay: "settings" };
+    const settings = openMenu(readyModel(6), settingsScope);
+    const help = updateApp(settings, {
+      type: "menu-scroll-synchronized", target: { kind: "active", scope: { ...settingsScope, overlay: "help" } }
+    });
+    expect(help.model.menuScroll.generation).toBe(2);
+  });
+
+  it("invalidates a close and reopening of the same Menu", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const closed = updateApp(opened, { type: "menu-scroll-synchronized", target: { kind: "closed" } });
+    expect(closed.model.menuScroll).toEqual({ kind: "closed", generation: 2 });
+    expect(updateApp(closed.model, { type: "menu-scroll-synchronized", target: { kind: "closed" } }).model).toBe(closed.model);
+    const reopened = openMenu(closed.model, titleScope);
+    expect(reopened.menuScroll.generation).toBe(3);
+    expect(updateApp(reopened, { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 1 } }).model).toBe(reopened);
+    expect(closed.effects).toEqual([]);
+  });
+
+  it("uses viewport height units for delta and bounded page progress", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const next = updateApp(opened, { type: "menu-scroll", context, intent: { kind: "page", direction: "next", pageProgress: 0.25 } });
+    expect(next.model.menuScroll).toMatchObject({ progress: 0.25 });
+    const delta = updateApp(next.model, { type: "menu-scroll", context, intent: { kind: "delta", viewportPages: 1.5, pageProgress: 0.25 } });
+    expect(delta.model.menuScroll).toMatchObject({ progress: 0.625 });
+    const previous = updateApp(delta.model, { type: "menu-scroll", context, intent: { kind: "page", direction: "previous", pageProgress: 0.25 } });
+    expect(previous.model.menuScroll).toMatchObject({ progress: 0.375 });
+    const end = updateApp(previous.model, { type: "menu-scroll", context, intent: { kind: "delta", viewportPages: 100, pageProgress: 0.25 } });
+    expect(end.model.menuScroll).toMatchObject({ progress: 1 });
+    const start = updateApp(end.model, { type: "menu-scroll", context, intent: { kind: "delta", viewportPages: -100, pageProgress: 0.25 } });
+    expect(start.model.menuScroll).toMatchObject({ progress: 0 });
+    for (const changed of [next, delta, previous, end, start]) expect(changed.effects).toEqual([]);
+  });
+
+  it("rejects nonfinite values, invalid progress ranges and incompatible page units", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const invalidIntents: readonly MenuScrollIntent[] = [
+      { kind: "set-progress", progress: NaN },
+      { kind: "set-progress", progress: Infinity },
+      { kind: "set-progress", progress: -0.1 },
+      { kind: "set-progress", progress: 1.1 },
+      { kind: "page", direction: "next", pageProgress: NaN },
+      { kind: "page", direction: "previous", pageProgress: -0.1 },
+      { kind: "page", direction: "next", pageProgress: 1.1 },
+      { kind: "delta", viewportPages: Infinity, pageProgress: 0.5 },
+      { kind: "delta", viewportPages: NaN, pageProgress: 0.5 },
+      { kind: "delta", viewportPages: 1, pageProgress: Infinity }
+    ];
+    for (const intent of invalidIntents) {
+      const rejected = updateApp(opened, { type: "menu-scroll", context, intent });
+      expect(rejected.model).toBe(opened);
+      expect(rejected.effects).toEqual([]);
+    }
+  });
+
+  it("ignores stale generations and scopes for scroll, focus and invalidation", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const staleContexts: readonly MenuScrollContext[] = [
+      { scope: titleScope, generation: 0 },
+      { scope: titleScope, generation: 2 },
+      { scope: titleScope, generation: NaN },
+      { scope: titleScope, generation: Infinity },
+      { scope: { ...titleScope, viewKey: "other" }, generation: 1 }
+    ];
+    for (const context of staleContexts) {
+      const messages: readonly AppMessage[] = [
+        { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 0.5 } },
+        { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } },
+        { type: "menu-scroll-invalidated", context }
+      ];
+      for (const message of messages) {
+        const rejected = updateApp(opened, message);
+        expect(rejected.model).toBe(opened);
+        expect(rejected.effects).toEqual([]);
+      }
+    }
+  });
+
+  it("clears scoped focus only when scroll actually changes", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const focused = updateApp(opened, { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } });
+    expect(focused.model.menuScroll).toMatchObject({ focus: { kind: "control", controlId: "title-start" } });
+    const unchanged: readonly MenuScrollIntent[] = [
+      { kind: "set-progress", progress: 0 },
+      { kind: "page", direction: "next", pageProgress: 0 },
+      { kind: "page", direction: "previous", pageProgress: 0.25 },
+      { kind: "delta", viewportPages: 0, pageProgress: 0.25 }
+    ];
+    for (const intent of unchanged) expect(updateApp(focused.model, { type: "menu-scroll", context, intent }).model).toBe(focused.model);
+    const changed = updateApp(focused.model, { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 0.5 } });
+    expect(changed.model.menuScroll).toMatchObject({ progress: 0.5, focus: { kind: "none" } });
+    expect(focused.effects).toEqual([]);
+    expect(changed.effects).toEqual([]);
+  });
+
+  it("supports explicit focus removal and ignores identical or empty focus", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    expect(updateApp(opened, { type: "menu-focus", context, focus: { kind: "control", controlId: " " } }).model).toBe(opened);
+    const focused = updateApp(opened, { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } }).model;
+    expect(updateApp(focused, { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } }).model).toBe(focused);
+    const cleared = updateApp(focused, { type: "menu-focus", context, focus: { kind: "none" } });
+    expect(cleared.model.menuScroll).toMatchObject({ focus: { kind: "none" } });
+    expect(cleared.effects).toEqual([]);
+  });
+
+  it("retains scroll but invalidates focus and old inputs on explicit viewport changes", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const scrolled = updateApp(opened, { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 0.75 } }).model;
+    const focused = updateApp(scrolled, { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } }).model;
+    const invalidated = updateApp(focused, { type: "menu-scroll-invalidated", context });
+    expect(invalidated.model.menuScroll).toEqual({ kind: "active", scope: titleScope, generation: 2, progress: 0.75, focus: { kind: "none" } });
+    expect(updateApp(invalidated.model, { type: "menu-scroll-invalidated", context }).model).toBe(invalidated.model);
+    expect(updateApp(invalidated.model, { type: "menu-focus", context, focus: { kind: "control", controlId: "old" } }).model).toBe(invalidated.model);
+    expect(invalidated.effects).toEqual([]);
+  });
+
+  it("does not accept Menu inputs while the page is hidden or cached", () => {
+    const opened = openMenu(readyModel(), titleScope);
+    const context = menuContext(opened);
+    const messages: readonly AppMessage[] = [
+      { type: "menu-scroll-synchronized", target: { kind: "closed" } },
+      { type: "menu-scroll-synchronized", target: { kind: "active", scope: { ...titleScope, viewKey: "other" } } },
+      { type: "menu-scroll", context, intent: { kind: "set-progress", progress: 0.5 } },
+      { type: "menu-focus", context, focus: { kind: "control", controlId: "title-start" } },
+      { type: "menu-scroll-invalidated", context }
+    ];
+    const unavailableModels = [
+      updateApp(opened, { type: "page-hidden" }).model,
+      updateApp(opened, { type: "page-suspended" }).model
+    ];
+    for (const unavailable of unavailableModels) {
+      for (const message of messages) {
+        const rejected = updateApp(unavailable, message);
+        expect(rejected.model).toBe(unavailable);
+        expect(rejected.effects).toEqual([]);
+      }
+    }
+  });
+
+  it("supports every Scene and overlay without changing Rust domain or analysis clocks", () => {
+    const initial = readyModel(7);
+    let current = initial;
+    for (const scene of GAME_SCENES) {
+      const scope: MenuScrollScope = { kind: "scene", scene, panelId: "menu", viewKey: "analysis:altitude" };
+      const synchronized = updateApp(current, { type: "menu-scroll-synchronized", target: { kind: "active", scope } });
+      current = synchronized.model;
+      const scrolled = updateApp(current, { type: "menu-scroll", context: menuContext(current), intent: { kind: "set-progress", progress: 0.5 } });
+      current = scrolled.model;
+      expect(synchronized.effects).toEqual([]);
+      expect(scrolled.effects).toEqual([]);
+    }
+    const overlay = updateApp(current, { type: "menu-scroll-synchronized", target: {
+      kind: "active", scope: { kind: "overlay", scene: "Flight", panelId: "pause", viewKey: "main", overlay: "help" }
+    } });
+    expect(overlay.effects).toEqual([]);
+    expect(overlay.model.gameSession).toBe(initial.gameSession);
+    expect(overlay.model.flightAnalysis).toBe(initial.flightAnalysis);
+    expect(overlay.model.analysisCursorTimeSeconds).toBe(initial.analysisCursorTimeSeconds);
+    expect(overlay.model.pendingAnalysisCursorRequestId).toBe(initial.pendingAnalysisCursorRequestId);
+    expect(overlay.model.replayClockGeneration).toBe(initial.replayClockGeneration);
+    expect(overlay.model.pendingReplayClockRequestId).toBe(initial.pendingReplayClockRequestId);
+    expect(overlay.model.pendingGameRequestId).toBe(initial.pendingGameRequestId);
+  });
+
+  it("rejects empty scope identities and generation overflow without effects", () => {
+    const initial = readyModel();
+    const invalidScopes: readonly MenuScrollScope[] = [
+      { ...titleScope, panelId: " " },
+      { ...titleScope, viewKey: "" },
+      { kind: "overlay", scene: "Flight", panelId: "pause", viewKey: "main", overlay: " " }
+    ];
+    for (const scope of invalidScopes) expect(updateApp(initial, { type: "menu-scroll-synchronized", target: { kind: "active", scope } }).model).toBe(initial);
+    const exhausted: AppModel = { ...initial, menuScroll: { kind: "closed", generation: Number.MAX_SAFE_INTEGER } };
+    const rejected = updateApp(exhausted, { type: "menu-scroll-synchronized", target: { kind: "active", scope: titleScope } });
+    expect(rejected.model).toBe(exhausted);
+    expect(rejected.effects).toEqual([]);
+  });
+});
+
+function openMenu(model: AppModel, scope: MenuScrollScope): AppModel {
+  return updateApp(model, { type: "menu-scroll-synchronized", target: { kind: "active", scope } }).model;
+}
+
+function menuContext(model: AppModel): MenuScrollContext {
+  if (model.menuScroll.kind !== "active") throw new Error("Menu is closed");
+  return { scope: model.menuScroll.scope, generation: model.menuScroll.generation };
+}
 
 function readyModel(phaseCode = 0): AppModel {
   const initialized = updateApp(createInitialAppModel(), { type: "initialize" });
