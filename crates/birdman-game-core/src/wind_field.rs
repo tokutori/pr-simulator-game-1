@@ -9,6 +9,8 @@ pub enum WindError {
     InvalidGridDimensions,
     /// A grid spacing is non-finite or nonpositive.
     InvalidGridSpacing,
+    /// A computed grid upper bound is non-finite or does not exceed its origin.
+    InvalidGridDomain,
     /// The grid velocity count does not match its dimensions.
     GridLengthMismatch,
     /// The query lies outside the closed grid domain.
@@ -93,6 +95,12 @@ impl<'a> WindField<'a> {
             .ok_or(WindError::InvalidGridDimensions)?;
         if velocities_ned_mps.len() != expected_length {
             return Err(WindError::GridLengthMismatch);
+        }
+        for (axis, origin) in origin_ned.components().into_iter().enumerate() {
+            let domain_end = origin + spacing_m[axis] * (counts_ned[axis] - 1) as f64;
+            if !domain_end.is_finite() || domain_end <= origin {
+                return Err(WindError::InvalidGridDomain);
+            }
         }
         Ok(Self {
             model: WindModel::Grid(GridWindField {
@@ -374,6 +382,28 @@ mod tests {
     }
 
     #[test]
+    fn grid_construction_rejects_nonrepresentable_closed_domains_on_each_axis() {
+        let samples = [vector(0.0, 0.0, 0.0); 8];
+        for axis in 0..3 {
+            for (axis_origin, axis_spacing) in [(1.0e16, 1.0), (1.0e308, 1.0e308)] {
+                let mut origin = [0.0; 3];
+                let mut spacing = [1.0; 3];
+                origin[axis] = axis_origin;
+                spacing[axis] = axis_spacing;
+                assert_eq!(
+                    WindField::grid(
+                        point(origin[0], origin[1], origin[2]),
+                        vector(spacing[0], spacing[1], spacing[2]),
+                        [2, 2, 2],
+                        &samples,
+                    ),
+                    Err(WindError::InvalidGridDomain)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn gradient_overflow_and_grid_coordinate_overflow_are_errors() {
         let gradient = WindField::linear_gradient(
             point(-1.0e308, 0.0, 0.0),
@@ -388,8 +418,8 @@ mod tests {
 
         let samples = [vector(0.0, 0.0, 0.0); 8];
         let grid = WindField::grid(
-            point(-1.0e308, 0.0, 0.0),
-            vector(1.0, 1.0, 1.0),
+            point(0.0, 0.0, 0.0),
+            vector(1.0e-308, 1.0, 1.0),
             [2, 2, 2],
             &samples,
         )

@@ -221,7 +221,7 @@ pub enum EnvironmentFormatError {
     Wind(WindError),
     /// An individual grid velocity cannot be represented as a finite NED vector.
     InvalidWindSample(usize),
-    /// Non-finite lower or upper corner, or representative position.
+    /// Non-finite grid origin or representative position.
     InvalidWindPosition,
     /// Wave inputs violate the existing renderer's numerical contract.
     InvalidWaves,
@@ -281,17 +281,6 @@ impl WindGridDocument {
         let spacing = vector(self.spacing_ned_m)
             .map_err(|_| EnvironmentFormatError::Wind(WindError::InvalidGridSpacing))?;
         if self.spacing_ned_m.iter().any(|&value| value <= 0.0) {
-            return Err(EnvironmentFormatError::Wind(WindError::InvalidGridSpacing));
-        }
-        let upper = core::array::from_fn(|axis| {
-            self.origin_ned_m[axis] + self.spacing_ned_m[axis] * (counts[axis] - 1) as f64
-        });
-        point(upper)?;
-        if upper
-            .iter()
-            .zip(self.origin_ned_m)
-            .any(|(&end, start)| end <= start)
-        {
             return Err(EnvironmentFormatError::Wind(WindError::InvalidGridSpacing));
         }
         let velocities = self

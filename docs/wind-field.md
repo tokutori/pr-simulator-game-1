@@ -27,6 +27,9 @@ Gridは原点、N/E/D各軸の正の間隔、各軸2以上の点数、NED速度�
 配列順はNが最速、次いでE、Dとし、indexは `((d * count_e) + e) * count_n + n` とする。
 三線形補間、閉区間の境界を採用する。範囲外、非有限値、overflow、不正な点数はエラーとする。
 閉区間はNED座標の `origin .. origin + spacing * (count - 1)` で判定する。
+`WindField::grid` は各軸の上端が有限かつ原点より大きいことを構築時に検証する。
+overflowまたは丸めによる区間の退化は `WindError::InvalidGridDomain` とする。
+外部formatもcoreの同じ検証を使用し、原因を `EnvironmentFormatError::Wind` に保持する。
 区間内の位置をindexへ換算した際の上端丸め誤差を補正し、1 ULPでも区間外の位置は拒否する。
 暗黙の外挿・clampは行わない。全機の評価点を含む飛行領域をofflineで確保する。
 
