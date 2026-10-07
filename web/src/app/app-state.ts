@@ -117,6 +117,7 @@ export interface AppModel {
   readonly phoneVrAvailable: boolean;
   readonly presentation: PresentationUiState;
   readonly gameSession: GameSessionUiState;
+  readonly flightExecution: FlightExecutionUiState;
   readonly menuScroll: AppMenuScrollState;
   readonly controlModeCode: number;
   readonly difficulty: DifficultyUiState;
@@ -148,6 +149,21 @@ export interface AppModel {
   readonly pendingGameRequestId: number | null;
   readonly nextRequestId: number;
 }
+
+export interface FlightControllerIdentity {
+  readonly sessionId: number;
+  readonly controllerId: number;
+}
+
+export type FlightExecutionUiState =
+  | { readonly kind: "unbound" }
+  | { readonly kind: "ready"; readonly identity: FlightControllerIdentity }
+  | {
+      readonly kind: "stopped";
+      readonly identity: FlightControllerIdentity;
+      readonly message: string;
+      readonly snapshot: FlightSnapshot;
+    };
 
 export interface DifficultyUiState {
   readonly presetCode: number;
@@ -194,6 +210,13 @@ export interface GameSessionProjection {
 
 export type AppMessage =
   | { readonly type: "initialize" }
+  | { readonly type: "flight-controller-ready"; readonly identity: FlightControllerIdentity }
+  | {
+      readonly type: "flight-controller-stopped";
+      readonly identity: FlightControllerIdentity;
+      readonly message: string;
+      readonly snapshot: FlightSnapshot;
+    }
   | {
       readonly type: "presentation-initialized";
       readonly requestId: number;
@@ -380,6 +403,7 @@ export function createInitialAppModel(): AppModel {
     phoneVrAvailable: false,
     presentation: Object.freeze({ type: "uninitialized" }),
     gameSession: Object.freeze({ kind: "boot", phaseCode: -1 }),
+    flightExecution: Object.freeze({ kind: "unbound" }),
     menuScroll: Object.freeze({ kind: "closed", generation: 0 }),
     controlModeCode: 0,
     difficulty: Object.freeze({
@@ -456,6 +480,26 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "flight-controller-ready": {
+      const previous = model.flightExecution;
+      const identity = message.identity;
+      if (!validFlightControllerIdentity(identity)
+          || (previous.kind !== "unbound" && (identity.controllerId <= previous.identity.controllerId
+            || identity.sessionId < previous.identity.sessionId))) return transition(model);
+      return transition(withModel(model, {
+        flightExecution: Object.freeze({ kind: "ready", identity: Object.freeze({ ...identity }) })
+      }));
+    }
+    case "flight-controller-stopped": {
+      const execution = model.flightExecution;
+      if (execution.kind !== "ready" || execution.identity.sessionId !== message.identity.sessionId
+          || execution.identity.controllerId !== message.identity.controllerId
+          || ![5, 6].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      return transition(withModel(model, {
+        flightExecution: Object.freeze({ kind: "stopped", identity: execution.identity,
+          message: message.message, snapshot: message.snapshot })
+      }));
+    }
     case "page-restored":
       return transition(model);
     case "page-suspended": {
@@ -1125,6 +1169,7 @@ function informationCueCode(controlId: string): number | null {
 }
 
 function beginGameOperation(model: AppModel, operation: GameSessionOperation): AppTransition {
+  if (operation === "resume" && model.flightExecution.kind === "stopped") return transition(model);
   if (model.pendingGameRequestId !== null) return transition(model);
   const requestId = model.nextRequestId;
   return transition(withModel(model, {
@@ -1132,6 +1177,11 @@ function beginGameOperation(model: AppModel, operation: GameSessionOperation): A
     nextRequestId: requestId + 1,
     status: "ゲーム状態を更新している"
   }), [{ type: "game-session-operation", operation, requestId }]);
+}
+
+function validFlightControllerIdentity(identity: FlightControllerIdentity): boolean {
+  return Number.isSafeInteger(identity.sessionId) && identity.sessionId > 0
+    && Number.isSafeInteger(identity.controllerId) && identity.controllerId > 0;
 }
 
 function beginStoredFlightRecordLoad(model: AppModel): AppTransition {

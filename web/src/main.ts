@@ -2,9 +2,10 @@ import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
-import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
+import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./game/environment-briefing.js";
 import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
+import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -82,6 +83,11 @@ let countdownGeneration = 0;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
+const flightControllerUi = new FlightControllerUiBindings();
+const controllerHudDisplay = Object.freeze({
+  render: (snapshot: FlightSnapshot): void => { flightHud.render(snapshot, createFlightUiHudModel(model, snapshot)); },
+  setVisible: (visible: boolean): void => { flightHud.setVisible(visible); }
+});
 let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
 let menuFontGeneration = 0;
 let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
@@ -108,6 +114,8 @@ function renderModel(): void {
   const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
   flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
+  const flightSnapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession);
+  if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);
   flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
@@ -743,7 +751,7 @@ function scheduleCountdownTick(generation: number): void {
       if (remainingTicks === 0) {
         const initial = session.launch();
         if (flightController === null) createFlightController(session);
-        else flightController.reset(initial);
+        else resetFlightController(initial);
         dispatch({
           type: "game-session-synced",
           phaseCode: session.phase_code(),
@@ -778,14 +786,15 @@ function createFlightController(
 ): void {
   const renderer = flightRenderer;
   if (renderer === null) throw new Error("Flight renderer is unavailable");
-  flightController = new FlightController(
+  const binding = flightControllerUi.bind(session, controllerHudDisplay, (): FlightSnapshot => controller.currentSnapshot, dispatch);
+  const controller: FlightController = new FlightController(
     session,
     new BrowserPilotInput(window, {
       ...DEFAULT_PILOT_INPUT_CONFIGURATION,
       physicsHz
     }),
     renderer,
-    flightHud,
+    binding.port,
     physicsHz,
     undefined,
     (snapshot: FlightSnapshot) => {
@@ -803,6 +812,17 @@ function createFlightController(
       });
     }
   );
+  flightController = controller;
+  dispatch({ type: "flight-controller-ready", identity: binding.identity });
+}
+
+function resetFlightController(snapshot: ArrayLike<number>): void {
+  const controller = flightController;
+  const session = gameSession;
+  if (controller === null || session === null) throw new Error("Flight controller is unavailable");
+  const binding = flightControllerUi.bind(session, controllerHudDisplay, () => controller.currentSnapshot, dispatch);
+  controller.reset(snapshot, binding.port);
+  dispatch({ type: "flight-controller-ready", identity: binding.identity });
 }
 
 async function persistFlightRecord(

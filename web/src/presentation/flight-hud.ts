@@ -1,7 +1,7 @@
 import type { FlightHudPort } from "../game/flight-controller.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { createFlightHudModel } from "./flight-hud-model.js";
-import type { InformationLevelCode } from "./flight-hud-model.js";
+import type { FlightHudModel, InformationLevelCode } from "./flight-hud-model.js";
 import type { HudProfileUiState } from "../app/app-state.js";
 
 export class FlightHudAdapter implements FlightHudPort {
@@ -189,8 +189,7 @@ export class FlightHudAdapter implements FlightHudPort {
     this.informationProfile = profile;
   }
 
-  render(snapshot: FlightSnapshot): void {
-    const model = createFlightHudModel(snapshot, this.informationCode, this.informationProfile);
+  render(snapshot: FlightSnapshot, model: FlightHudModel = createFlightHudModel(snapshot, this.informationCode, this.informationProfile)): void {
     this.status.textContent = model.status;
     this.warning.textContent = model.warning ?? "";
     this.warning.hidden = model.warning === null;

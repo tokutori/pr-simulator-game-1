@@ -26,7 +26,8 @@ export function createGameViewModel(
 ): UiViewModel {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
-  const canResume = model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
+  const stopped = model.flightExecution.kind === "stopped" && (phaseCode === 5 || phaseCode === 6);
+  const canResume = !stopped && model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
   const pauseOverlay = model.gameSession.kind === "paused-flight" ? model.gameSession.overlay.kind : null;
   const scene = sceneForPhase(phaseCode);
   const buttons = gameButtons(
@@ -62,7 +63,14 @@ export function createGameViewModel(
     ? []
     : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, countdownRemaining, canResume))];
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
-  if (phaseCode === 5 || phaseCode === 6) {
+  if (stopped) {
+    const retained = model.flightExecution.snapshot;
+    const description = `飛行処理停止: ${model.flightExecution.message}\nLast valid · tick ${String(retained.tick)} · ${retained.flightTimeSeconds.toFixed(2)} s`;
+    controls.length = 0;
+    controls.push(Object.freeze({ ...status("game-controller-stopped", "飛行処理停止", description), rect: normalizedRect(0.08, 0.16, 0.84, 0.38) }));
+    if (phaseCode === 6) controls.push(Object.freeze({ ...button("game-flight-resume", "Resume", false), rect: normalizedRect(0.08, 0.61, 0.84, 0.085) }));
+    controls.push(Object.freeze({ ...button(phaseCode === 5 ? "game-flight-abort" : "game-paused-abort", "飛行を終了", true), rect: normalizedRect(0.08, 0.74, 0.84, 0.085) }));
+  } else if (phaseCode === 5 || phaseCode === 6) {
     if (!vrFlightPanel) {
       if (phaseCode === 6 && pauseOverlay === "settings") {
         controls.push(status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"));
@@ -287,10 +295,10 @@ export function createGameViewModel(
       : control);
   const panel: UiPanel = Object.freeze({
     id: "game-flow",
-    title: vrFlightPanel ? phaseCode === 5 ? "Pause" : pauseOverlay === "settings" ? "Settings" : pauseOverlay === "help" ? "Help" : "Pause" : [1, 2, 3, 4, 8].includes(phaseCode) ? "飛行準備" : "ゲーム進行",
+    title: stopped ? "飛行処理停止" : vrFlightPanel ? phaseCode === 5 ? "Pause" : pauseOverlay === "settings" ? "Settings" : pauseOverlay === "help" ? "Help" : "Pause" : [1, 2, 3, 4, 8].includes(phaseCode) ? "飛行準備" : "ゲーム進行",
     anchor: "menu",
-    localPose: vrFlightPanel && phaseCode === 5 ? pose(vec3(0, FLIGHT_MENU_GEOMETRY.centerY, 0), IDENTITY_POSE.orientation) : IDENTITY_POSE,
-    size: vrFlightPanel && phaseCode === 5
+    localPose: vrFlightPanel && phaseCode === 5 && !stopped ? pose(vec3(0, FLIGHT_MENU_GEOMETRY.centerY, 0), IDENTITY_POSE.orientation) : IDENTITY_POSE,
+    size: vrFlightPanel && phaseCode === 5 && !stopped
       ? headHudView.kind === "unavailable" ? Object.freeze({ width: 0.9, height: 0.5 }) : Object.freeze({ width: FLIGHT_MENU_GEOMETRY.width, height: FLIGHT_MENU_GEOMETRY.height })
       : Object.freeze({ width: 2.4, height: 1.8 }),
     controls: Object.freeze(renderedControls)
@@ -298,7 +306,7 @@ export function createGameViewModel(
   return Object.freeze({
     scene,
     title: titleForScene(scene),
-    description: phaseCode === 0
+    description: stopped ? "飛行処理が停止している。表示値は最後の有効なsnapshotである。飛行を終了できる。" : phaseCode === 0
       ? [descriptionForPhase(phaseCode, countdownRemaining, canResume),
         model.storedFlightRecordsStatus,
         model.storedFlightRecords.length > 0 ? `保存FlightRecord ${String(model.storedFlightRecords.length)}件` : ""]

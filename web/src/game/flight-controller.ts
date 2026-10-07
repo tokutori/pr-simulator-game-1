@@ -40,7 +40,7 @@ export class FlightController {
     private readonly session: FlightSessionPort,
     private readonly input: PilotInputPort,
     private readonly renderer: FlightPosePort,
-    private readonly hud: FlightHudPort,
+    private hud: FlightHudPort,
     physicsHz: number,
     private readonly readGamepads: () => readonly (Gamepad | null)[] = readAvailableGamepads,
     private readonly onTerminal: (snapshot: FlightSnapshot) => void = () => undefined
@@ -94,18 +94,19 @@ export class FlightController {
     this.clock.resume();
   }
 
-  reset(snapshot: ArrayLike<number>): void {
+  reset(snapshot: ArrayLike<number>, hud: FlightHudPort = this.hud): void {
     if (this.disposed) throw new Error("Cannot reset a disposed flight controller");
     this.failed = true;
     this.clock.suspend();
     try {
       const nextSnapshot = parseFlightSnapshot(snapshot);
       this.initializeInput(nextSnapshot);
-      this.applySnapshot(nextSnapshot, nextSnapshot.pilotPositionMeters);
+      this.applySnapshot(nextSnapshot, nextSnapshot.pilotPositionMeters, hud);
       this.snapshotValue = nextSnapshot;
       this.initialPilotPositionMeters = nextSnapshot.pilotPositionMeters;
       this.terminalReported = false;
       this.clock.reset();
+      this.hud = hud;
       this.failed = false;
     } catch (error: unknown) {
       let failure = error;
@@ -138,7 +139,7 @@ export class FlightController {
     this.hud.setVisible(false);
   }
 
-  private applySnapshot(snapshot: FlightSnapshot, initialPilotPositionMeters = this.initialPilotPositionMeters): void {
+  private applySnapshot(snapshot: FlightSnapshot, initialPilotPositionMeters = this.initialPilotPositionMeters, hud: FlightHudPort = this.hud): void {
     const pose: FlightRenderPose = Object.freeze({
       datumPositionNed: snapshot.positionNed,
       attitudeBodyToNed: snapshot.attitudeBodyToNed,
@@ -150,7 +151,7 @@ export class FlightController {
       windVelocityNedMetersPerSecond: snapshot.telemetry?.windVelocityNedMetersPerSecond ?? null
     });
     this.renderer.setFlightPose(pose);
-    this.hud.render(snapshot);
+    hud.render(snapshot);
   }
 }
 
