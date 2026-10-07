@@ -95,6 +95,8 @@ TimeLimitはscenarioの明示的な最大tick数に達した場合であり、�
 致命的なboot/assetエラーは架空のFlightResultを生成しない。
 
 Resultの背景は最後の有効snapshotで固定する。Summary、Analysis、Replayは同じimmutable recordを参照する。
+Rust terminal確定後は、描画・HUD・入力cleanupの成否から独立してResult通知を一度送る。
+live描画とResult通知はfixed-tick clockの更新完了後に行い、描画・通知中のresetやdispose後へ旧frameの描画・cleanupを適用しない。
 着水以外は終了点をEndとして表示し、Splashという名称を使用しない。
 初期のPersonal Best登録対象は検査済み完全recordのWaterContactのみとする。
 保存容量不足等は型付きの保存結果として通知し、記録保存の失敗を成功と表示しない。
