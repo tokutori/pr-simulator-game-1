@@ -47,10 +47,53 @@ function fixture() {
       return facade.flightPort.snapshot_json();
     });
   };
-  return { facade, controller, port, input, renderer, display, binding, effects, messages, dispatch, abortAtNextTick, model: () => model };
+  return { facade, controller, port, input, renderer, display, bindings, binding, effects, messages, dispatch, abortAtNextTick, model: () => model };
 }
 
 describe("authoritative Result synchronization across tail adapter failures", () => {
+  it("commits the new Retry terminal callback with the new controller binding", () => {
+    const trial = fixture();
+    trial.abortAtNextTick();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(10);
+    const previousResult = trial.facade.readGameSessionProjection();
+    if (previousResult.phaseCode !== 7) throw new Error("Expected the first Rust Result");
+    trial.facade.executeOperation("retry");
+    trial.facade.executeOperation("start-flight");
+    while (trial.facade.advanceCountdown() > 0) continue;
+    trial.facade.launch();
+    trial.dispatch({ type: "game-session-synced", ...trial.facade.readGameSessionProjection() });
+    const binding = trial.bindings.bindAppDisplay(trial.port, trial.display, () => trial.facade.readGameSessionProjection(),
+      () => trial.controller.currentDisplaySnapshot, trial.dispatch);
+    trial.controller.reset(trial.port.snapshot_json(), binding.port, binding.onTerminal);
+    trial.dispatch({ type: "flight-controller-ready", identity: binding.identity });
+    const current = trial.model();
+    trial.dispatch({ type: "tail-controller-terminal", identity: trial.binding.identity, projection: previousResult });
+    expect(trial.model()).toBe(current);
+    trial.abortAtNextTick();
+    trial.controller.onFrame(20);
+    trial.controller.onFrame(30);
+    expect(trial.model().gameSession.kind).toBe("result");
+    expect(trial.model().flightExecution).toMatchObject({ kind: "ready", identity: binding.identity });
+    expect(trial.effects.filter((effect) => effect.type === "persist-flight-record")).toHaveLength(2);
+  });
+
+  it("retains the previous binding and callback after a failed reset", () => {
+    const trial = fixture();
+    const previous = trial.controller.currentSnapshot;
+    const callback = vi.fn();
+    const brokenHud = { render: () => { throw new Error("Retry HUD reset failed"); }, fail: vi.fn(), setVisible: vi.fn() };
+    expect(() => { trial.controller.reset(trial.port.snapshot_json(), brokenHud, callback); }).toThrow("Retry HUD reset failed");
+    expect(trial.controller.currentSnapshot).toBe(previous);
+    trial.controller.reset(trial.port.snapshot_json());
+    trial.abortAtNextTick();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(10);
+    expect(callback).not.toHaveBeenCalled();
+    expect(trial.model().gameSession.kind).toBe("result");
+    expect(trial.messages.filter((message) => message.type === "tail-controller-terminal")).toHaveLength(1);
+  });
+
   it.each(["pose", "hud", "input", "pose-and-cleanup"] as const)("retains Rust phase, record and finalization when %s throws", (site) => {
     const trial = fixture();
     trial.abortAtNextTick();

@@ -41,7 +41,7 @@ export class TailFlightController {
   constructor(private readonly session: TailSessionPort, private readonly input: TailPilotInputPort,
     private readonly renderer: FlightPosePort, private hud: TailFlightHudPort, physicsHz: number,
     private readonly readGamepads: () => readonly (Gamepad | null)[] = availableGamepads,
-    private readonly onTerminal: (snapshot: TailResultSnapshot) => void = () => undefined) {
+    private onTerminal: (snapshot: TailResultSnapshot) => void = () => undefined) {
     if (!Number.isSafeInteger(physicsHz) || physicsHz <= 0) throw new RangeError("Tail physics frequency must be a positive integer");
     this.physicsHz = physicsHz;
     this.clock = new FixedTickClock(1_000 / physicsHz);
@@ -150,7 +150,7 @@ export class TailFlightController {
     }
   }
 
-  reset(json: string, hud: TailFlightHudPort = this.hud): void {
+  reset(json: string, hud: TailFlightHudPort = this.hud, onTerminal: (snapshot: TailResultSnapshot) => void = this.onTerminal): void {
     if (this.execution === "disposed") throw new Error("Cannot reset a disposed tail controller");
     this.generation = Symbol("reset tail controller generation");
     this.execution = "failed";
@@ -164,6 +164,7 @@ export class TailFlightController {
       this.profile = profile;
       this.initialPilotPositionMeters = next.frame.state.pilotPositionMeters;
       this.hud = hud;
+      this.onTerminal = onTerminal;
       this.clock.reset();
       if (next.phaseCode === 5) this.execution = "running";
       else {
