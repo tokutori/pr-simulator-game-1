@@ -42,6 +42,53 @@ pub struct TailFlightRecordFinalizationDocument {
     pub failure: Option<TailTickFailureDocument>,
 }
 
+impl TailFlightRecordFinalizationDocument {
+    /// Converts one terminal value without copying samples or recomputing its original cause.
+    /// The record boundary additionally checks its stamp against the last valid sample.
+    pub fn try_from_core(
+        finalization: FlightRecordFinalization,
+    ) -> Result<Self, FlightRecordFormatError> {
+        let reason = finalization.reason.into();
+        let disposition = finalization.disposition.into();
+        if !super::disposition_matches(reason, disposition)
+            || !finalization.terminal_fraction.is_finite()
+            || !(0.0..=1.0).contains(&finalization.terminal_fraction)
+            || finalization
+                .failure
+                .is_some_and(|cause| cause.end_reason() != finalization.reason)
+            || (finalization.reason == birdman_game_core::SessionEndReason::OutOfValidEnvelope
+                && finalization.failure.is_none())
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        let failure = finalization
+            .failure
+            .map(|failure| match failure {
+                birdman_game_core::SessionSimulationFailure::TailIncidence(cause) => {
+                    TailTickFailureDocument::from_core(cause)
+                }
+                birdman_game_core::SessionSimulationFailure::LegacyThreeAxis(_) => {
+                    Err(FlightRecordFormatError::IncompatibleTerminalCause)
+                }
+            })
+            .transpose()?;
+        Ok(Self {
+            reason,
+            disposition,
+            terminal_tick: finalization.terminal_tick,
+            terminal_fraction: finalization.terminal_fraction,
+            score_m: finalization.score.map(|score| {
+                [
+                    score.course_parallel_m(),
+                    score.cross_track_m(),
+                    score.net_horizontal_m(),
+                ]
+            }),
+            failure,
+        })
+    }
+}
+
 fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
     decoder: Decoder,
 ) -> Result<Option<TailTickFailureDocument>, Decoder::Error> {
@@ -206,17 +253,7 @@ impl TailFlightRecordDocument {
         let finalization = record
             .finalization()
             .ok_or(FlightRecordFormatError::RecordUnavailable)?;
-        let failure = finalization
-            .failure
-            .map(|failure| match failure {
-                birdman_game_core::SessionSimulationFailure::TailIncidence(cause) => {
-                    TailTickFailureDocument::from_core(cause)
-                }
-                birdman_game_core::SessionSimulationFailure::LegacyThreeAxis(_) => {
-                    Err(FlightRecordFormatError::IncompatibleTerminalCause)
-                }
-            })
-            .transpose()?;
+        let finalization = TailFlightRecordFinalizationDocument::try_from_core(finalization)?;
         let core_header = record.header();
         let scenario = core_header.scenario;
         let document = Self {
@@ -242,20 +279,7 @@ impl TailFlightRecordDocument {
                 .iter()
                 .map(TailFlightRecordSampleDocument::from_core)
                 .collect::<Result<Vec<_>, _>>()?,
-            finalization: TailFlightRecordFinalizationDocument {
-                reason: finalization.reason.into(),
-                disposition: finalization.disposition.into(),
-                terminal_tick: finalization.terminal_tick,
-                terminal_fraction: finalization.terminal_fraction,
-                score_m: finalization.score.map(|score| {
-                    [
-                        score.course_parallel_m(),
-                        score.cross_track_m(),
-                        score.net_horizontal_m(),
-                    ]
-                }),
-                failure,
-            },
+            finalization,
         };
         document.validate()?;
         Ok(document)

@@ -9,6 +9,61 @@ fn identity() -> FlightRecordTailIdentityDocument {
     }
 }
 
+#[test]
+fn terminal_converter_preserves_typed_rejection_without_a_record_copy() {
+    use birdman_game_core::{
+        FlightRecordDisposition, FlightTickError, SessionEndReason, SessionSimulationFailure,
+        TailFlightTickError,
+    };
+    let original = document()
+        .to_finalized_core_record()
+        .unwrap()
+        .finalization()
+        .unwrap();
+    let mut invalid = original;
+    invalid.terminal_fraction = f64::NAN;
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(invalid),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid = original;
+    invalid.disposition = FlightRecordDisposition::Failed;
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(invalid),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid = original;
+    invalid.reason = SessionEndReason::OutOfValidEnvelope;
+    invalid.disposition = FlightRecordDisposition::Failed;
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(invalid),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid.reason = SessionEndReason::FatalSimulationError;
+    invalid.failure = Some(SessionSimulationFailure::LegacyThreeAxis(
+        FlightTickError::TickOverflow,
+    ));
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(invalid),
+        Err(FlightRecordFormatError::IncompatibleTerminalCause)
+    );
+    invalid.failure = Some(SessionSimulationFailure::TailIncidence(
+        TailFlightTickError::TickOverflow,
+    ));
+    let converted = TailFlightRecordFinalizationDocument::try_from_core(invalid).unwrap();
+    assert_eq!(
+        converted.failure,
+        Some(TailTickFailureDocument::TickOverflow)
+    );
+    assert_eq!(converted.terminal_tick, invalid.terminal_tick);
+    assert_eq!(converted.terminal_fraction, invalid.terminal_fraction);
+    invalid.reason = SessionEndReason::OutOfValidEnvelope;
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(invalid),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+}
+
 fn document() -> TailFlightRecordDocument {
     let source = super::super::tests::completed_record();
     let telemetry = FlightRecordTelemetryDocument {
@@ -195,6 +250,10 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
             .unwrap()
             .to_finalized_core_record()
             .unwrap();
+        assert_eq!(
+            TailFlightRecordFinalizationDocument::try_from_core(finalization).unwrap(),
+            document.finalization
+        );
         assert_eq!(restored.finalization(), record.finalization());
         assert_eq!(restored.samples(), record.samples());
         assert_eq!(
@@ -269,6 +328,11 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
         FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap()).unwrap();
     assert_eq!(archive, FlightRecordArchiveDocument::Tail(document.clone()));
     let restored = archive.to_finalized_core_record().unwrap();
+    assert_eq!(
+        TailFlightRecordFinalizationDocument::try_from_core(restored.finalization().unwrap())
+            .unwrap(),
+        document.finalization
+    );
     let rebuilt = TailFlightRecordDocument::from_record(
         &restored,
         DifficultySettings::custom(
