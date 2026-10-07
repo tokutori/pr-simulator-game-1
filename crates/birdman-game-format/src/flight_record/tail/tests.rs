@@ -241,6 +241,28 @@ fn v6_requires_explicit_failure_field_and_consistent_reason() {
 }
 
 #[test]
+fn archive_rejects_impossible_control_incidence_diagnostics() {
+    for diagnostic in [
+        serde_json::json!({"site":"static_polar","cause":"outside_envelope",
+            "limit":"global_beta","stage":"fourth"}),
+        serde_json::json!({"site":"tail_incidence","cause":"outside_envelope",
+            "limit":"elevator_incidence","stage":"fourth"}),
+        serde_json::json!({"site":"datum","cause":"non_finite","limit":null,"stage":null}),
+        serde_json::json!({"site":"tail_incidence","cause":{"wind":"outside_grid"},
+            "limit":null,"stage":null}),
+    ] {
+        let mut value = serde_json::to_value(document()).unwrap();
+        value["finalization"]["reason"] = "fatal_simulation_error".into();
+        value["finalization"]["disposition"] = "failed".into();
+        value["finalization"]["failure"] = serde_json::json!({"control":{"incidence":diagnostic}});
+        assert_eq!(
+            FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+}
+
+#[test]
 fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
     let document = document();
     let archive =

@@ -126,61 +126,211 @@ fn hybrid_stage_site_limit_and_cause_round_trip_without_reclassification() {
         Some(AerodynamicStage::Third),
         Some(AerodynamicStage::Fourth),
     ] {
+        for (site, limit) in [
+            (HybridSite::Datum, HybridLimit::UndefinedReference),
+            (HybridSite::Datum, HybridLimit::GlobalBeta),
+            (HybridSite::StaticPolar, HybridLimit::StaticAlpha),
+        ] {
+            let error = HybridError::try_from_recorded(
+                site,
+                AeroError::OutsideEnvelope,
+                Some(limit),
+                stage,
+            )
+            .unwrap();
+            round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
+                LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
+            )));
+        }
         for surface in [
             HybridSurfaceRole::MainWing,
             HybridSurfaceRole::HorizontalTail,
             HybridSurfaceRole::VerticalTail,
         ] {
-            for site in [
-                HybridSite::Datum,
-                HybridSite::StaticPolar,
-                HybridSite::Surface(surface),
-                HybridSite::Proxy { surface, index: 17 },
-                HybridSite::TailIncidence,
-                HybridSite::Aggregate,
+            let site = HybridSite::Proxy { surface, index: 17 };
+            for limit in [
+                HybridLimit::UndefinedReference,
+                HybridLimit::LocalAlphaDifference,
+                HybridLimit::LocalSpanAngle(HybridFlowKind::Actual),
+                HybridLimit::LocalSpanAngle(HybridFlowKind::Reference),
+                HybridLimit::LocalForward(HybridFlowKind::Actual),
+                HybridLimit::LocalForward(HybridFlowKind::Reference),
+                HybridLimit::LocalSpeed,
             ] {
-                for limit in [
-                    None,
-                    Some(HybridLimit::StaticAlpha),
-                    Some(HybridLimit::UndefinedReference),
-                    Some(HybridLimit::GlobalBeta),
-                    Some(HybridLimit::ElevatorIncidence),
-                    Some(HybridLimit::RudderIncidence),
-                    Some(HybridLimit::LocalAlphaDifference),
+                let error = HybridError::try_from_recorded(
+                    site,
+                    AeroError::OutsideEnvelope,
+                    Some(limit),
+                    stage,
+                )
+                .unwrap();
+                round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
+                    LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
+                )));
+            }
+            if surface != HybridSurfaceRole::MainWing {
+                let error = HybridError::try_from_recorded(
+                    site,
+                    AeroError::OutsideEnvelope,
                     Some(HybridLimit::ControlledAlphaDifference),
-                    Some(HybridLimit::LocalSpanAngle(HybridFlowKind::Actual)),
-                    Some(HybridLimit::LocalSpanAngle(HybridFlowKind::Reference)),
-                    Some(HybridLimit::LocalForward(HybridFlowKind::Actual)),
-                    Some(HybridLimit::LocalForward(HybridFlowKind::Reference)),
-                    Some(HybridLimit::LocalSpeed),
-                ] {
-                    let error = HybridError::try_from_recorded(
-                        site,
-                        AeroError::OutsideEnvelope,
-                        limit,
-                        stage,
-                    )
-                    .unwrap();
-                    round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
-                        LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
-                    )));
-                    round_trip(TailFlightTickError::Control(TailControlError::Incidence(
-                        error,
-                    )));
-                }
-                for cause in [
-                    AeroError::NonFinite,
-                    AeroError::Wind(WindError::OutsideGrid),
-                    AeroError::Wind(WindError::NonFinite),
-                ] {
-                    let error = HybridError::try_from_recorded(site, cause, None, stage).unwrap();
+                    stage,
+                )
+                .unwrap();
+                round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
+                    LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
+                )));
+            }
+            for cause in [
+                AeroError::NonFinite,
+                AeroError::Wind(WindError::OutsideGrid),
+                AeroError::Wind(WindError::NonFinite),
+            ] {
+                for wind_site in [site, HybridSite::Datum] {
+                    let error =
+                        HybridError::try_from_recorded(wind_site, cause, None, stage).unwrap();
                     round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
                         LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
                     )));
                 }
             }
         }
+        for site in [HybridSite::StaticPolar, HybridSite::Aggregate] {
+            let error =
+                HybridError::try_from_recorded(site, AeroError::NonFinite, None, stage).unwrap();
+            round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
+                LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
+            )));
+        }
     }
+    for (elevator, rudder) in [(f64::NAN, 0.0), (0.21, 0.0), (0.0, -0.21)] {
+        let cause = birdman_game_core::TailIncidence::try_new(elevator, rudder).unwrap_err();
+        round_trip(TailFlightTickError::Control(TailControlError::Incidence(
+            cause,
+        )));
+    }
+    let surface = HybridSite::Surface(HybridSurfaceRole::HorizontalTail);
+    let cause = HybridError::try_from_recorded(
+        surface,
+        AeroError::OutsideEnvelope,
+        Some(HybridLimit::ControlledAlphaDifference),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        HybridFailureDocument::from_core(cause)
+            .unwrap()
+            .to_core()
+            .unwrap(),
+        cause
+    );
+}
+
+#[test]
+fn contradictory_hybrid_site_limit_cause_and_control_stage_are_rejected() {
+    for (site, cause, limit) in [
+        (
+            HybridSite::StaticPolar,
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::GlobalBeta),
+        ),
+        (
+            HybridSite::Datum,
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::StaticAlpha),
+        ),
+        (
+            HybridSite::Datum,
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::LocalSpeed),
+        ),
+        (
+            HybridSite::Aggregate,
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::LocalAlphaDifference),
+        ),
+        (
+            HybridSite::TailIncidence,
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::GlobalBeta),
+        ),
+        (
+            HybridSite::Proxy {
+                surface: HybridSurfaceRole::MainWing,
+                index: 1,
+            },
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::ControlledAlphaDifference),
+        ),
+        (HybridSite::StaticPolar, AeroError::OutsideEnvelope, None),
+        (
+            HybridSite::TailIncidence,
+            AeroError::NonFinite,
+            Some(HybridLimit::RudderIncidence),
+        ),
+    ] {
+        assert_eq!(
+            HybridError::try_from_recorded(site, cause, limit, None),
+            Err(AeroError::InvalidEnvelope)
+        );
+    }
+    for (site, cause, limit, stage) in [
+        (
+            HybridSiteDocument::StaticPolar,
+            AeroFailureDocument::OutsideEnvelope,
+            Some(HybridLimitDocument::GlobalBeta),
+            Some(AerodynamicStageDocument::Fourth),
+        ),
+        (
+            HybridSiteDocument::TailIncidence,
+            AeroFailureDocument::OutsideEnvelope,
+            Some(HybridLimitDocument::ElevatorIncidence),
+            Some(AerodynamicStageDocument::First),
+        ),
+        (
+            HybridSiteDocument::Datum,
+            AeroFailureDocument::NonFinite,
+            None,
+            None,
+        ),
+        (
+            HybridSiteDocument::TailIncidence,
+            AeroFailureDocument::Wind(WindFailureDocument::OutsideGrid),
+            None,
+            None,
+        ),
+        (
+            HybridSiteDocument::TailIncidence,
+            AeroFailureDocument::UnsupportedControl,
+            None,
+            None,
+        ),
+    ] {
+        let document = TailTickFailureDocument::Control(TailControlFailureDocument::Incidence(
+            HybridFailureDocument {
+                site,
+                cause,
+                limit,
+                stage,
+            },
+        ));
+        assert_eq!(
+            document.to_core(),
+            Err(FlightRecordFormatError::InvalidRecord)
+        );
+    }
+    let invalid = HybridError::try_from_recorded(
+        HybridSite::TailIncidence,
+        AeroError::OutsideEnvelope,
+        Some(HybridLimit::ElevatorIncidence),
+        Some(AerodynamicStage::Fourth),
+    )
+    .unwrap();
+    assert_eq!(
+        TailTickFailureDocument::from_core(TailFlightTickError::Control(
+            TailControlError::Incidence(invalid)
+        )),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
 }
 
 #[test]

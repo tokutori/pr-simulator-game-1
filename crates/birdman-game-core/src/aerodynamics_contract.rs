@@ -210,7 +210,36 @@ impl HybridError {
         limit: Option<HybridLimit>,
         stage: Option<AerodynamicStage>,
     ) -> Result<Self, AeroError> {
-        if limit.is_some() && cause != AeroError::OutsideEnvelope {
+        if (cause == AeroError::OutsideEnvelope) != limit.is_some() {
+            return Err(AeroError::InvalidEnvelope);
+        }
+        let matching_site = match limit {
+            None => true,
+            Some(HybridLimit::StaticAlpha) => matches!(site, HybridSite::StaticPolar),
+            Some(HybridLimit::UndefinedReference) => {
+                matches!(site, HybridSite::Datum | HybridSite::Proxy { .. })
+            }
+            Some(HybridLimit::GlobalBeta) => matches!(site, HybridSite::Datum),
+            Some(HybridLimit::ElevatorIncidence | HybridLimit::RudderIncidence) => {
+                matches!(site, HybridSite::TailIncidence)
+            }
+            Some(HybridLimit::ControlledAlphaDifference) => matches!(
+                site,
+                HybridSite::Surface(
+                    HybridSurfaceRole::HorizontalTail | HybridSurfaceRole::VerticalTail
+                ) | HybridSite::Proxy {
+                    surface: HybridSurfaceRole::HorizontalTail | HybridSurfaceRole::VerticalTail,
+                    ..
+                }
+            ),
+            Some(
+                HybridLimit::LocalAlphaDifference
+                | HybridLimit::LocalSpanAngle(_)
+                | HybridLimit::LocalForward(_)
+                | HybridLimit::LocalSpeed,
+            ) => matches!(site, HybridSite::Surface(_) | HybridSite::Proxy { .. }),
+        };
+        if !matching_site {
             return Err(AeroError::InvalidEnvelope);
         }
         Ok(Self {

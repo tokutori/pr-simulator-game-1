@@ -436,6 +436,7 @@ impl TailControlFailureDocument {
             TailControlError::InvalidRateTarget => Self::InvalidRateTarget,
             TailControlError::Actuator(cause) => Self::Actuator(cause.into()),
             TailControlError::Incidence(cause) => {
+                validate_control_incidence(cause)?;
                 Self::Incidence(HybridFailureDocument::from_core(cause)?)
             }
         })
@@ -447,9 +448,30 @@ impl TailControlFailureDocument {
             Self::InvalidPilotIntent => TailControlError::InvalidPilotIntent,
             Self::InvalidRateTarget => TailControlError::InvalidRateTarget,
             Self::Actuator(cause) => TailControlError::Actuator(cause.into()),
-            Self::Incidence(cause) => TailControlError::Incidence(cause.to_core()?),
+            Self::Incidence(cause) => {
+                let cause = cause.to_core()?;
+                validate_control_incidence(cause)?;
+                TailControlError::Incidence(cause)
+            }
         })
     }
+}
+
+fn validate_control_incidence(cause: HybridError) -> Result<(), FlightRecordFormatError> {
+    if cause.site() != HybridSite::TailIncidence
+        || cause.stage().is_some()
+        || !matches!(
+            (cause.cause(), cause.limit()),
+            (AeroError::NonFinite, None)
+                | (
+                    AeroError::OutsideEnvelope,
+                    Some(HybridLimit::ElevatorIncidence | HybridLimit::RudderIncidence)
+                )
+        )
+    {
+        return Err(FlightRecordFormatError::InvalidRecord);
+    }
+    Ok(())
 }
 
 impl DynamicsFailureDocument {
@@ -544,6 +566,8 @@ impl AerodynamicFailureDocument {
 
 impl HybridFailureDocument {
     fn from_core(value: HybridError) -> Result<Self, FlightRecordFormatError> {
+        HybridError::try_from_recorded(value.site(), value.cause(), value.limit(), value.stage())
+            .map_err(|_| FlightRecordFormatError::InvalidRecord)?;
         Ok(Self {
             site: match value.site() {
                 HybridSite::Datum => HybridSiteDocument::Datum,

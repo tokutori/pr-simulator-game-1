@@ -98,6 +98,8 @@ coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、
 v6 finalizationはtyped failureを明示し、元のcontrol/contact/dynamics/load原因と
 Hybridのstage/site/limit/causeを個別に保存する。OutOfValidEnvelopeには元causeを必須とし、
 原因と終了理由の不一致・未知tag・余剰fieldを拒否する。保存queryは最後の成功sampleを利用する。
+Hybrid診断のlimitはcauseとsiteへ照合し、Control incidenceはTailIncidenceのsiteと
+stage未指定、NonFiniteまたは水平・垂直尾翼のincidence限界へ限定する。
 
 f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
 
