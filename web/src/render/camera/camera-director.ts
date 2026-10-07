@@ -1,16 +1,18 @@
-import type { FlightAnalysisData } from "../../game/flight-record-query.js";
+import { projectAnalysisView } from "../../game/flight-analysis-view.js";
+import type { FlightAnalysisInput } from "../../game/flight-analysis-view.js";
 import type { FlightCameraMode, PresentationMode } from "../contracts/runtime.js";
 
 export type ReplayCameraSelection = "auto" | FlightCameraMode;
 
 export function resolveReplayCameraMode(
   selection: ReplayCameraSelection,
-  analysis: FlightAnalysisData | null,
+  analysisInput: FlightAnalysisInput | null,
   timeSeconds: number,
   presentationMode: PresentationMode
 ): FlightCameraMode {
   if (selection === "auto" && presentationMode !== "screen") return "pilot";
   if (selection !== "auto") return selection;
+  const analysis = analysisInput === null ? null : projectAnalysisView(analysisInput);
   if (analysis === null || analysis.samples.length === 0) return "pilot";
   if (!Number.isFinite(timeSeconds) || timeSeconds < 0) throw new RangeError("Camera time must be finite and non-negative");
 
@@ -37,11 +39,13 @@ export function resolveReplayCameraMode(
 }
 
 export function resolveAttractCameraMode(
-  analysis: FlightAnalysisData | null,
+  analysisInput: FlightAnalysisInput | null,
   timeSeconds: number,
   presentationMode: PresentationMode
 ): FlightCameraMode {
-  if (presentationMode !== "screen" || analysis === null || analysis.samples.length === 0) return "pilot";
+  if (presentationMode !== "screen") return "pilot";
+  const analysis = analysisInput === null ? null : projectAnalysisView(analysisInput);
+  if (analysis === null || analysis.samples.length === 0) return "pilot";
   if (!Number.isFinite(timeSeconds) || timeSeconds < 0) throw new RangeError("Camera time must be finite and non-negative");
 
   const durationSeconds = analysis.summary.durationSeconds;

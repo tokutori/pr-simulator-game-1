@@ -5,7 +5,8 @@ import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import { attractSessionProjection, isPlaybackSessionSnapshot, isRetainedLiveSnapshot, liveSessionProjection, normalizeFlightSnapshot, projectionSnapshot, terminalSessionProjection } from "./session-snapshot.js";
 import type { AttractSessionProjection, FlightSnapshotInput, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, SessionControlLayout, TerminalSessionProjection, TerminalSessionSnapshot } from "./session-snapshot.js";
-import type { FlightAnalysisData, FlightAnalysisSample } from "../game/flight-record-query.js";
+import type { FlightAnalysisInput, FlightAnalysisCursorInput } from "../game/flight-analysis-view.js";
+import { analysisCursorMatches, isNamedAnalysis, validateAnalysisInput } from "../game/flight-analysis-view.js";
 
 export interface StoredFlightRecordUiEntry {
   readonly id: number;
@@ -121,13 +122,13 @@ export interface AppModel {
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
   readonly briefingDetailsOpen: boolean;
-  readonly flightAnalysis: FlightAnalysisData | null;
+  readonly flightAnalysis: FlightAnalysisInput | null;
   readonly pendingAnalysisRequestId: number | null;
   readonly nextAnalysisRequestId: number;
   readonly resultTab: "summary" | "analysis";
   readonly analysisChart: "map" | "altitude" | "speed";
   readonly analysisCursorTimeSeconds: number;
-  readonly analysisCursorSample: FlightAnalysisSample | null;
+  readonly analysisCursorSample: FlightAnalysisCursorInput | null;
   readonly pendingAnalysisCursorRequestId: number | null;
   readonly nextAnalysisCursorRequestId: number;
   readonly replayPose: FlightRenderPose | null;
@@ -274,9 +275,9 @@ export type AppMessage =
   | (Readonly<{ type: "game-session-synced" }> & GameSessionProjection)
   | (Readonly<{ type: "game-operation-completed"; requestId: number }> & GameSessionProjection)
   | { readonly type: "game-session-status"; readonly message: string }
-  | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisData }
+  | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisInput }
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
-  | { readonly type: "flight-analysis-cursor-loaded"; readonly requestId: number; readonly sample: FlightAnalysisSample }
+  | { readonly type: "flight-analysis-cursor-loaded"; readonly requestId: number; readonly sample: FlightAnalysisCursorInput }
   | { readonly type: "flight-analysis-cursor-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "flight-replay-pose-loaded"; readonly requestId: number; readonly pose: FlightRenderPose }
   | { readonly type: "flight-replay-pose-failed"; readonly requestId: number; readonly message: string }
@@ -635,26 +636,28 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
       const returningReplay = previousPhaseCode === 9 && nextPhaseCode === 7;
       const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
-      const analysisRequestId = enteringResult ? model.nextAnalysisRequestId : null;
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(model.flightAnalysis, nextPhaseCode)
+        || (returningReplay && model.flightAnalysis === null));
+      const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.nextAnalysisRequestId : null;
       const effects: AppEffect[] = enteringResult && analysisRequestId !== null
         ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
-        : [];
+        : refreshingNamedAnalysis && analysisRequestId !== null ? [{ type: "load-flight-analysis", requestId: analysisRequestId }] : [];
       return transition(withModel(model, {
         gameSession: Object.freeze(gameSession),
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
         briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
-        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
+        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
         analysisChart: enteringResult ? "map" : model.analysisChart,
         analysisCursorTimeSeconds: enteringResult ? 0 : model.analysisCursorTimeSeconds,
-        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult ? model.analysisCursorSample : null,
-        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult
+        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
+        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.pendingAnalysisCursorRequestId
           : null,
-        nextAnalysisRequestId: enteringResult ? model.nextAnalysisRequestId + 1 : model.nextAnalysisRequestId,
+        nextAnalysisRequestId: analysisRequestId === null ? model.nextAnalysisRequestId : analysisRequestId + 1,
         replayPlaying: nextPhaseCode === 10 || nextPhaseCode === 9 ? model.replayPlaying : false,
         replayClockGeneration: [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1,
         pendingReplayClockRequestId: [9, 10].includes(nextPhaseCode) ? model.pendingReplayClockRequestId : null
@@ -679,7 +682,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const replayClockGeneration = enteringPlayback || leavingPlayback
         ? model.replayClockGeneration + 1
         : model.replayClockGeneration;
-      const analysisRequestId = enteringResult || enteringAttract || (enteringReplay && model.flightAnalysis === null)
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(model.flightAnalysis, nextPhaseCode)
+        || (returningReplay && model.flightAnalysis === null));
+      const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && model.flightAnalysis === null)
         ? model.nextAnalysisRequestId
         : null;
       const effects: AppEffect[] = [];
@@ -698,7 +703,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }
       if (enteringResult && analysisRequestId !== null) {
         effects.push({ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId });
-      } else if (enteringPlayback && analysisRequestId !== null) {
+      } else if ((enteringPlayback || refreshingNamedAnalysis) && analysisRequestId !== null) {
         effects.push({ type: "load-flight-analysis", requestId: analysisRequestId });
       }
       return transition(withModel(model, {
@@ -709,15 +714,15 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         configurationMetadata: message.configurationMetadata,
         status: "",
         briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
-        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
+        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
         analysisChart: enteringResult ? "map" : model.analysisChart,
         analysisCursorTimeSeconds: enteringResult || enteringAttract || (enteringReplay && previousPhaseCode !== 7)
           ? 0
           : model.analysisCursorTimeSeconds,
-        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult ? model.analysisCursorSample : null,
-        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult
+        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
+        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.pendingAnalysisCursorRequestId
           : null,
         nextAnalysisRequestId: analysisRequestId === null ? model.nextAnalysisRequestId : analysisRequestId + 1,
@@ -737,6 +742,15 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "flight-analysis-loaded":
       if (model.pendingAnalysisRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
       {
+        try {
+          validateAnalysisInput(message.data);
+          if (analysisPhaseMismatch(message.data, gameSessionPhaseCode(model.gameSession))) {
+            throw new RangeError("Analysis context and Rust session phase disagree");
+          }
+        } catch (error: unknown) {
+          if (!(error instanceof RangeError)) throw error;
+          return transition(withModel(model, { pendingAnalysisRequestId: null, status: `Analysisデータが一致しない: ${error.message}` }));
+        }
         const requestId = model.nextAnalysisCursorRequestId;
         const playbackPhase = gameSessionPhaseCode(model.gameSession);
         const replayPoseRequestId = [9, 10].includes(playbackPhase) ? model.nextReplayPoseRequestId : null;
@@ -750,6 +764,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         }
         return transition(withModel(model, {
           flightAnalysis: message.data,
+          analysisCursorSample: null,
           pendingAnalysisRequestId: null,
           pendingAnalysisCursorRequestId: requestId,
           nextAnalysisCursorRequestId: requestId + 1,
@@ -771,6 +786,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }));
     case "flight-analysis-cursor-loaded":
       if (model.pendingAnalysisCursorRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      if (!analysisCursorMatches(model.flightAnalysis, message.sample) || ("kind" in message.sample
+          && message.sample.context.phase !== analysisPhase(gameSessionPhaseCode(model.gameSession)))) return transition(withModel(model, {
+        pendingAnalysisCursorRequestId: null, status: "Analysis cursorの記録または操縦layoutが一致しない"
+      }));
       return transition(withModel(model, { analysisCursorSample: message.sample, pendingAnalysisCursorRequestId: null }));
     case "flight-analysis-cursor-failed":
       if (model.pendingAnalysisCursorRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
@@ -1321,6 +1340,17 @@ function canRequestPresentation(state: PresentationUiState): boolean {
 
 function isInVr(state: PresentationUiState): boolean {
   return state.type === "ready" && state.mode !== "screen";
+}
+
+function analysisPhase(phaseCode: number): "result" | "replay" | "attract" | "unavailable" {
+  if (phaseCode === 7) return "result";
+  if (phaseCode === 9) return "replay";
+  if (phaseCode === 10) return "attract";
+  return "unavailable";
+}
+
+function analysisPhaseMismatch(data: FlightAnalysisInput | null, phaseCode: number): boolean {
+  return data !== null && isNamedAnalysis(data) && data.context.phase !== analysisPhase(phaseCode);
 }
 
 function labelForMode(mode: PresentationMode): string {

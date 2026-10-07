@@ -44,6 +44,7 @@ import {
 } from "./game/flight-record-query.js";
 import { parseFlightSnapshot } from "./game/flight-snapshot.js";
 import { venueMapForScenario } from "./game/biwa-venue-map.js";
+import { analysisInitialPilotPositionMeters, analysisScenarioId, projectAnalysisView } from "./game/flight-analysis-view.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
@@ -127,9 +128,10 @@ function renderModel(): void {
     : phaseCode === 9
       ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
       : "pilot";
-  const cameraPoints = venueMapForScenario(model.configurationMetadata?.scenarioId ?? 1)?.cameraPoints ?? [];
+  const cameraScenarioId = analysisScenarioId(model.flightAnalysis, model.configurationMetadata?.scenarioId ?? 1);
+  const cameraPoints = cameraScenarioId === null ? [] : venueMapForScenario(cameraScenarioId)?.cameraPoints ?? [];
   const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
-    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis?.samples)
+    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis === null ? undefined : projectAnalysisView(model.flightAnalysis).samples)
     : null;
   flightRenderer?.setCinematicCameraView(cinematicView);
   flightRenderer?.setFlightCameraMode(cameraMode);
@@ -386,7 +388,7 @@ function runEffect(effect: AppEffect): void {
           session,
           physicsHz,
           effect.timeSeconds,
-          analysis.initialPilotPositionMeters
+          analysisInitialPilotPositionMeters(analysis)
         );
         dispatch({ type: "flight-replay-pose-loaded", requestId: effect.requestId, pose });
       } catch (error: unknown) {

@@ -5,7 +5,8 @@ import type { UiButton, UiChart, UiControl, UiPanel, UiStatus, UiToggle, UiViewM
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
 import type { FlightSnapshotInput } from "./session-snapshot.js";
-import type { FlightAnalysisData } from "../game/flight-record-query.js";
+import { analysisScenarioId, projectAnalysisView, projectAnalysisCursor } from "../game/flight-analysis-view.js";
+import type { FlightAnalysisInput, AnalysisViewData, AnalysisViewSample } from "../game/flight-analysis-view.js";
 import { venueMapForScenario } from "../game/biwa-venue-map.js";
 import { NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "../presentation/head-hud-view.js";
@@ -20,10 +21,13 @@ import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 export function createGameViewModel(
   model: AppModel,
   snapshot: FlightSnapshotInput | null,
-  analysis: FlightAnalysisData | null = model.flightAnalysis,
+  analysisInput: FlightAnalysisInput | null = model.flightAnalysis,
   headHudView: HeadHudView = NO_HEAD_HUD_VIEW,
   environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING
 ): UiViewModel {
+  const analysis = analysisInput === null ? null : projectAnalysisView(analysisInput);
+  const cursorSample = model.analysisCursorSample === null ? null : projectAnalysisCursor(model.analysisCursorSample, analysisInput);
+  const scenarioId = analysisScenarioId(analysisInput, model.configurationMetadata?.scenarioId ?? null);
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const countdownRemaining = gameSessionCountdown(model.gameSession);
   const stopped = model.flightExecution.kind === "stopped" && (phaseCode === 5 || phaseCode === 6);
@@ -120,7 +124,7 @@ export function createGameViewModel(
       Object.freeze({ ...button("game-analysis-speed", model.analysisChart === "speed" ? "● Speed" : "Speed", true), rect: normalizedRect(0.68, 0.025, 0.30, 0.06) })
     );
     controls.push(Object.freeze({
-      ...status("game-result-configuration", "Configuration", configurationSummary(model.configurationMetadata)),
+      ...status("game-result-configuration", "保存条件 / 風", analysisConfigurationSummary(analysis, model.configurationMetadata)),
       rect: normalizedRect(0.04, 0.735, 0.92, 0.065)
     }));
     if (analysis !== null) controls.push(Object.freeze({
@@ -134,9 +138,9 @@ export function createGameViewModel(
       enabled: true,
       rect: normalizedRect(0.04, 0.61, 0.92, 0.045)
     }));
-    if (model.analysisCursorSample !== null) {
+    if (cursorSample !== null) {
       controls.push(Object.freeze({
-        ...status("game-analysis-cursor-values", "At cursor", cursorReadout(model.analysisCursorSample)),
+        ...status("game-analysis-cursor-values", "At cursor", cursorReadout(cursorSample)),
         rect: normalizedRect(0.04, 0.66, 0.92, 0.065)
       }));
     }
@@ -146,8 +150,8 @@ export function createGameViewModel(
       controls.push(createAnalysisChart(
         analysis,
         model.analysisChart,
-        model.analysisCursorSample,
-        model.configurationMetadata?.scenarioId ?? null,
+        cursorSample,
+        scenarioId,
         normalizedRect(0.04, 0.105, 0.92, 0.49)
       ));
     }
@@ -168,8 +172,8 @@ export function createGameViewModel(
     if (analysis !== null) controls.push(createAnalysisChart(
       analysis,
       model.analysisChart,
-      model.analysisCursorSample,
-      model.configurationMetadata?.scenarioId ?? null,
+      cursorSample,
+      scenarioId,
       normalizedRect(0.04, 0.12, 0.92, 0.59)
     ));
     else controls.push(Object.freeze({
@@ -193,7 +197,7 @@ export function createGameViewModel(
         rect: normalizedRect(0.21, 0.74, 0.75, 0.06)
       }),
       Object.freeze({
-        ...status("game-replay-analysis-cursor-values", "At cursor", model.analysisCursorSample === null ? "記録時刻を読み込み中" : cursorReadout(model.analysisCursorSample)),
+        ...status("game-replay-analysis-cursor-values", "At cursor / 風", `${cursorSample === null ? "記録時刻を読み込み中" : cursorReadout(cursorSample)} · ${analysisWindDescription(analysis)}`),
         rect: normalizedRect(0.04, 0.82, 0.92, 0.075)
       }),
       Object.freeze({
@@ -262,8 +266,8 @@ export function createGameViewModel(
         ...status("game-attract-time", "Record time", `${model.analysisCursorTimeSeconds.toFixed(2)} / ${(analysis?.summary.durationSeconds ?? 0).toFixed(2)} s`),
         rect: normalizedRect(0.04, 0.62, 0.92, 0.07)
       }),
-      ...(model.analysisCursorSample === null ? [] : [Object.freeze({
-        ...status("game-attract-distance", "Distance", `${Math.hypot(model.analysisCursorSample.northMeters, model.analysisCursorSample.eastMeters).toFixed(1)} m`),
+      ...(cursorSample === null ? [] : [Object.freeze({
+        ...status("game-attract-distance", "確定距離 / 保存時刻", `${analysis?.summary.score.kind === "available" ? `${analysis.summary.score.value.courseParallelMeters.toFixed(1)} m` : "距離未記録"} · t ${cursorSample.timeSeconds.toFixed(2)} s`),
         rect: normalizedRect(0.04, 0.52, 0.92, 0.07)
       })]),
       Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
@@ -400,9 +404,9 @@ function clipMapPolyline(
 }
 
 function createAnalysisChart(
-  analysis: FlightAnalysisData,
+  analysis: AnalysisViewData,
   chart: AppModel["analysisChart"],
-  cursorSample: AppModel["analysisCursorSample"],
+  cursorSample: AnalysisViewSample | null,
   scenarioId: number | null,
   rect = normalizedRect(0.08, 0.22, 0.84, 0.30)
 ): UiChart {
@@ -428,15 +432,15 @@ function createAnalysisChart(
       y: cursorSample.northMeters + cursorSample.windNorthMetersPerSecond * windScale
     };
     const timeMarkers = mapTimeMarkers(samples, analysis.summary.durationSeconds);
-    const windGrid = analysis.windGrid;
-    const gridMaximumHorizontalWind = windGrid === null || windGrid === undefined
+    const windGrid = analysis.windGrid.kind === "available" ? analysis.windGrid.value : null;
+    const gridMaximumHorizontalWind = windGrid === null
       ? 0
       : Math.max(...windGrid.samples.map((sample) => Math.hypot(
         sample.windNorthMetersPerSecond,
         sample.windEastMetersPerSecond
       )));
     const gridWindScale = gridMaximumHorizontalWind > 0 ? baseHalfRange * 0.12 / gridMaximumHorizontalWind : 0;
-    const verticalWindRange = windGrid === null || windGrid === undefined
+    const verticalWindRange = windGrid === null
       ? null
       : [
         Math.min(...windGrid.samples.map((sample) => sample.windDownMetersPerSecond)),
@@ -485,7 +489,7 @@ function createAnalysisChart(
         start: selectedWind?.start ?? null,
         end: selectedWind?.end ?? null
       }]),
-      ...(windGrid === null || windGrid === undefined ? [] : windGrid.samples.map((sample, index) => {
+      ...(windGrid === null ? [] : windGrid.samples.map((sample, index) => {
         const horizontalSpeed = Math.hypot(sample.windNorthMetersPerSecond, sample.windEastMetersPerSecond);
         const hasHorizontalWind = horizontalSpeed > 0 && gridWindScale > 0;
         const clipped = hasHorizontalWind ? clipVector(
@@ -543,7 +547,7 @@ function createAnalysisChart(
 }
 
 function mapTimeMarkers(
-  samples: readonly FlightAnalysisData["samples"][number][],
+  samples: readonly AnalysisViewSample[],
   durationSeconds: number
 ): UiChart["timeMarkers"] {
   const intervalSeconds = durationSeconds <= 12 ? 1 : 5;
@@ -567,7 +571,7 @@ function mapTimeMarkers(
   return Object.freeze(markers);
 }
 
-function modelTimeCursor(analysis: FlightAnalysisData, sample: AppModel["analysisCursorSample"]): number | null {
+function modelTimeCursor(analysis: AnalysisViewData, sample: AnalysisViewSample | null): number | null {
   return sample === null ? null : Math.min(analysis.summary.durationSeconds, sample.timeSeconds);
 }
 
@@ -652,17 +656,36 @@ function paddedRange(values: readonly number[]): readonly [number, number] {
   return [minimum - padding, maximum + padding];
 }
 
-function resultAnalysisSummary(analysis: FlightAnalysisData | null): string {
+function resultAnalysisSummary(analysis: AnalysisViewData | null): string {
   if (analysis === null) return "FlightRecordを解析中、または解析データを取得できない";
   const { summary } = analysis;
-  const score = summary.score === null ? "score unavailable" : `距離 ${summary.score.courseParallelMeters.toFixed(1)} m`;
-  const aoa = summary.maximumAngleOfAttackRadians === null
-    ? "AoA unavailable"
-    : `最大AoA ${(summary.maximumAngleOfAttackRadians * 180 / Math.PI).toFixed(1)}°`;
-  return `${terminalMarkerLabel(summary.terminal.reason)} · ${score} · 飛行時間 ${summary.durationSeconds.toFixed(1)} s · 最大対気速度 ${summary.maximumAirspeedMetersPerSecond.toFixed(1)} m/s · ${aoa} · 最大|roll| ${(summary.maximumAbsoluteRollRadians * 180 / Math.PI).toFixed(1)}°`;
+  const score = summary.score.kind === "unavailable" ? `score unavailable (${summary.score.reason})` : `距離 ${summary.score.value.courseParallelMeters.toFixed(1)} m`;
+  const aoa = summary.maximumAngleOfAttackRadians.kind === "unavailable"
+    ? `AoA unavailable (${summary.maximumAngleOfAttackRadians.reason})`
+    : `最大AoA ${(summary.maximumAngleOfAttackRadians.value * 180 / Math.PI).toFixed(1)}°`;
+  const failure = analysis.origin.kind === "named_record" && analysis.origin.context.controlLayout === "tail_incidence"
+    ? analysis.origin.context.finalization.failure : null;
+  return `${terminalMarkerLabel(summary.terminal.reason)} · ${score} · 飛行時間 ${summary.durationSeconds.toFixed(1)} s · 最大対気速度 ${summary.maximumAirspeedMetersPerSecond.toFixed(1)} m/s · ${aoa} · 最大|roll| ${(summary.maximumAbsoluteRollRadians * 180 / Math.PI).toFixed(1)}° · ${analysisWindDescription(analysis)}${failure === null ? "" : ` · 原因 ${JSON.stringify(failure)}`}`;
 }
 
-function terminalMarkerLabel(reason: FlightAnalysisData["summary"]["terminal"]["reason"]): string {
+function analysisWindDescription(analysis: AnalysisViewData | null): string {
+  if (analysis === null) return "風断面を読み込み中";
+  if (analysis.windGrid.kind === "available") return `風断面 h ${analysis.windGrid.value.altitudeMeters.toFixed(1)} m`;
+  switch (analysis.windGrid.reason) {
+    case "not_requested": return "風断面は未要求";
+    case "unregistered_environment_identity": return "保存環境が未登録 (unregistered_environment_identity)";
+    case "outside_registered_domain": return "風断面が登録領域外 (outside_registered_domain)";
+    case "legacy_wind_grid_unavailable": return "旧記録の風断面を取得できない";
+  }
+}
+
+function analysisConfigurationSummary(analysis: AnalysisViewData | null, metadata: ConfigurationMetadataUiState | null): string {
+  if (analysis?.origin.kind !== "named_record") return `${configurationSummary(metadata)} · ${analysisWindDescription(analysis)}`;
+  const { scenario, difficulty, controlLayout } = analysis.origin.context;
+  return `保存条件 ${difficulty.information} / ${difficulty.assistance} / ${difficulty.weather} · ${controlLayout} · Scenario ${String(scenario.scenarioId)} v${String(scenario.scenarioVersion)} · Environment v${String(scenario.environmentVersion)} · ${analysisWindDescription(analysis)}`;
+}
+
+function terminalMarkerLabel(reason: AnalysisViewData["summary"]["terminal"]["reason"]): string {
   switch (reason) {
     case "water-contact": return "Splash";
     case "time-limit": return "TimeLimit";
@@ -672,7 +695,7 @@ function terminalMarkerLabel(reason: FlightAnalysisData["summary"]["terminal"]["
   }
 }
 
-function cursorReadout(sample: NonNullable<AppModel["analysisCursorSample"]>): string {
+function cursorReadout(sample: AnalysisViewSample): string {
   return `t ${sample.timeSeconds.toFixed(2)} s · N ${sample.northMeters.toFixed(1)} m · E ${sample.eastMeters.toFixed(1)} m · h ${sample.altitudeMeters.toFixed(1)} m\nVair ${sample.airspeedMetersPerSecond.toFixed(1)} · Vground ${sample.groundspeedMetersPerSecond.toFixed(1)} · WN ${sample.windNorthMetersPerSecond.toFixed(1)} · WE ${sample.windEastMetersPerSecond.toFixed(1)} · WD ${sample.windDownMetersPerSecond.toFixed(1)} m/s`;
 }
 
