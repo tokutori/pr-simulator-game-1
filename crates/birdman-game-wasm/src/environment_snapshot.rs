@@ -83,6 +83,13 @@ pub(crate) fn legacy_winds() -> impl Iterator<Item = [f64; 3]> {
         .map(|environment| environment.wind_velocity_ned_mps)
 }
 
+pub(crate) fn legacy_wind_for_version(version: u32) -> Option<[f64; 3]> {
+    LEGACY_ENVIRONMENTS
+        .iter()
+        .find(|environment| environment.version == version)
+        .map(|environment| environment.wind_velocity_ned_mps)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EnvironmentSnapshotError {
     InvalidInputType,

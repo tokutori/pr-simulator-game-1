@@ -6,17 +6,26 @@ use birdman_game_core::{
     HybridAerodynamicLoad, HybridError, HybridMockConfiguration, HybridMockDefinition,
     HybridMockError, HybridMockTrim, HybridModel, HybridSurface, MathError, NedPoint, NedVector,
     SessionScenarioIdentity, TailControlProfile, TailFlightScenario, TailFlightScenarioError,
-    TailFlightScenarioParameters, TailIncidence,
+    TailFlightScenarioParameters, TailIncidence, WindField,
 };
-use birdman_game_format::{EnvironmentFormatError, FlightRecordTailIdentityDocument};
+use birdman_game_format::{
+    ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
+    ScenarioCatalogEntry, ScenarioSelection, WeatherClass,
+};
 
-use crate::environment::bundled_environment;
+use crate::{environment::bundled_environment, environment_snapshot::legacy_wind_for_version};
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
 const CONTROLLER_PROFILE_VERSION: u32 = 1;
 const CATALOG_VERSION: u32 = 2;
-const SCENARIO_ID: u32 = 6;
 const SCENARIO_VERSION: u32 = 1;
+const SCENARIOS: [ScenarioCatalogEntry; 5] = [
+    entry(1, WeatherClass::Calm),
+    entry(2, WeatherClass::Mild),
+    entry(4, WeatherClass::Challenging),
+    entry(5, WeatherClass::NearLimit),
+    entry(6, WeatherClass::Typical),
+];
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
 static HYBRID_DEFINITION: OnceLock<Result<HybridMockDefinition, HybridMockError>> = OnceLock::new();
 static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockError>> =
@@ -25,6 +34,8 @@ static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockE
 /// Typed preparation failures before any hybrid session state or record is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
+    /// The requested weather has no matching registered scenario or model identity.
+    Configuration(ConfigurationError),
     /// The fictional model or its geometric load view failed validation.
     Mock(HybridMockError),
     /// The owned offline environment or its wind grid failed validation.
@@ -52,6 +63,8 @@ pub enum HybridSessionPreparationError {
 pub struct HybridSessionPreparation {
     configuration: GameSessionConfiguration<'static>,
     record_identity: FlightRecordTailIdentityDocument,
+    controller_profile: TailControlProfile,
+    course_axis: CourseAxis,
 }
 
 impl HybridSessionPreparation {
@@ -64,13 +77,40 @@ impl HybridSessionPreparation {
         maximum_flight_ticks: u64,
         seed: u64,
     ) -> Result<Self, HybridSessionPreparationError> {
+        Self::try_new_for_weather(
+            control_mode,
+            maximum_flight_ticks,
+            seed,
+            WeatherClass::Typical,
+        )
+    }
+
+    /// Resolves Weather against catalog two and uses the matching registered wind provider.
+    pub fn try_new_for_weather(
+        control_mode: ControlMode,
+        maximum_flight_ticks: u64,
+        seed: u64,
+        weather: WeatherClass,
+    ) -> Result<Self, HybridSessionPreparationError> {
+        let selection = Self::select_scenario(weather, seed)?;
         let definition = cached_definition()?;
         let surfaces = cached_surfaces()?;
-        let environment =
-            bundled_environment().map_err(HybridSessionPreparationError::Environment)?;
-        let wind = environment
-            .wind_field()
-            .map_err(HybridSessionPreparationError::Environment)?;
+        let wind = if selection.environment_version == 6 {
+            bundled_environment()
+                .map_err(HybridSessionPreparationError::Environment)?
+                .wind_field()
+                .map_err(HybridSessionPreparationError::Environment)?
+        } else {
+            let velocity = legacy_wind_for_version(selection.environment_version).ok_or(
+                HybridSessionPreparationError::Configuration(
+                    ConfigurationError::ScenarioUnavailable,
+                ),
+            )?;
+            WindField::uniform(
+                NedVector::try_new(velocity[0], velocity[1], velocity[2])
+                    .map_err(HybridSessionPreparationError::Math)?,
+            )
+        };
         let trim =
             HybridMockTrim::try_new(definition).map_err(HybridSessionPreparationError::Mock)?;
         let cg_position =
@@ -100,6 +140,8 @@ impl HybridSessionPreparation {
             0.0,
         )
         .map_err(HybridSessionPreparationError::Dynamics)?;
+        let course_axis =
+            CourseAxis::try_new(1.0, 0.0).map_err(HybridSessionPreparationError::Course)?;
         let parameters = TailFlightScenarioParameters::try_new(
             definition.aircraft(),
             launch,
@@ -107,7 +149,7 @@ impl HybridSessionPreparation {
             Gravity::try_new(HybridMockTrim::GRAVITY_MPS2)
                 .map_err(HybridSessionPreparationError::Dynamics)?,
             &CONTACT_POINTS,
-            CourseAxis::try_new(1.0, 0.0).map_err(HybridSessionPreparationError::Course)?,
+            course_axis,
         )
         .map_err(HybridSessionPreparationError::Scenario)?;
         let load = HybridAerodynamicLoad::try_new(
@@ -122,22 +164,11 @@ impl HybridSessionPreparation {
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;
-        let scenario = TailFlightScenario::try_new(
-            parameters,
-            load,
-            TailControlProfile::try_new(0.2, 0.2, 1.0)
-                .map_err(HybridSessionPreparationError::Control)?,
-        )
-        .map_err(HybridSessionPreparationError::Scenario)?;
-        let identity = SessionScenarioIdentity {
-            catalog_version: CATALOG_VERSION,
-            scenario_id: SCENARIO_ID,
-            scenario_version: SCENARIO_VERSION,
-            aircraft_model_version: definition.configuration().model_version(),
-            environment_version: environment.document().environment_version,
-            controller_profile_version: CONTROLLER_PROFILE_VERSION,
-            seed,
-        };
+        let controller_profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
+            .map_err(HybridSessionPreparationError::Control)?;
+        let scenario = TailFlightScenario::try_new(parameters, load, controller_profile)
+            .map_err(HybridSessionPreparationError::Scenario)?;
+        let identity = identity_for_selection(selection);
         let configuration = GameSessionConfiguration::try_new_tail(
             scenario,
             control_mode,
@@ -152,7 +183,29 @@ impl HybridSessionPreparation {
         Ok(Self {
             configuration,
             record_identity,
+            controller_profile,
+            course_axis,
         })
+    }
+
+    /// Selects registered catalog-two identities without constructing a flight state.
+    pub fn select_scenario(
+        weather: WeatherClass,
+        seed: u64,
+    ) -> Result<ScenarioSelection, HybridSessionPreparationError> {
+        ScenarioCatalog::try_new(CATALOG_VERSION, &SCENARIOS)
+            .and_then(|catalog| catalog.select(weather, seed))
+            .map_err(HybridSessionPreparationError::Configuration)
+    }
+
+    /// Returns the exact software profile used to seal this scenario.
+    pub const fn controller_profile(&self) -> TailControlProfile {
+        self.controller_profile
+    }
+
+    /// Returns the exact course axis used to seal the distance-scoring contract.
+    pub const fn course_axis(&self) -> CourseAxis {
+        self.course_axis
     }
 
     /// Moves the sealed core configuration and its definition-derived archive identity to adapters.
@@ -163,6 +216,28 @@ impl HybridSessionPreparation {
         FlightRecordTailIdentityDocument,
     ) {
         (self.configuration, self.record_identity)
+    }
+}
+
+const fn entry(version: u32, weather: WeatherClass) -> ScenarioCatalogEntry {
+    ScenarioCatalogEntry {
+        scenario_id: version,
+        scenario_version: SCENARIO_VERSION,
+        aircraft_model_version: HybridMockConfiguration::Standard.model_version(),
+        environment_version: version,
+        weather,
+    }
+}
+
+pub(crate) fn identity_for_selection(selection: ScenarioSelection) -> SessionScenarioIdentity {
+    SessionScenarioIdentity {
+        catalog_version: selection.catalog_version,
+        scenario_id: selection.scenario_id,
+        scenario_version: selection.scenario_version,
+        aircraft_model_version: selection.aircraft_model_version,
+        environment_version: selection.environment_version,
+        controller_profile_version: CONTROLLER_PROFILE_VERSION,
+        seed: selection.seed,
     }
 }
 

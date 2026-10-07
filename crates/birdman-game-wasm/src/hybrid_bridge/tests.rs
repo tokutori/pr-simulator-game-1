@@ -203,3 +203,213 @@ fn all_authorities_keep_one_core_lifecycle_and_consistent_terminal_time() {
         assert_eq!(snapshot(&bridge)["scenario"]["seed_high"], u32::MAX);
     }
 }
+
+#[test]
+fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() {
+    for (weather_code, version) in [(0, 1), (1, 2), (2, 6), (3, 4), (4, 5)] {
+        let mut bridge = HybridGameSessionBridge::new(0, 19, 0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.set_weather_class(weather_code).unwrap();
+        let selected: Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(selected["projection"]["source"], "selected");
+        assert_eq!(selected["projection"]["kind"], "available");
+        assert_eq!(selected["projection"]["identity"]["catalog_version"], 2);
+        assert_eq!(selected["projection"]["identity"]["scenario_id"], version);
+        bridge.prepare_internal().unwrap();
+        let metadata = bridge.configuration_metadata().unwrap();
+        assert_eq!(metadata.len(), 18);
+        assert_eq!(metadata[3], weather_code);
+        assert_eq!(metadata[5], version);
+        assert_eq!(metadata[8], version);
+        assert_eq!(metadata[10], 19);
+        let sealed: Value =
+            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
+        assert_eq!(sealed["projection"]["source"], "sealed");
+        assert_eq!(
+            sealed["projection"]["identity"],
+            selected["projection"]["identity"]
+        );
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        let telemetry = bridge.session.telemetry().unwrap().unwrap();
+        if version == 6 {
+            assert_eq!(
+                sealed["projection"]["metadata"]["wind_domain"]["kind"],
+                "grid"
+            );
+            assert_eq!(
+                telemetry.wind_velocity_ned_mps,
+                crate::environment::bundled_environment()
+                    .unwrap()
+                    .wind_field()
+                    .unwrap()
+                    .velocity_at(telemetry.composite_cg_position_ned_m)
+                    .unwrap()
+            );
+        } else {
+            assert_eq!(
+                sealed["projection"]["metadata"]["wind_domain"]["kind"],
+                "uniform"
+            );
+            assert_eq!(
+                json!(telemetry.wind_velocity_ned_mps.components()),
+                selected["projection"]["metadata"]["representative_velocity_ned_mps"]
+            );
+        }
+        assert!(
+            (telemetry.airspeed_mps - birdman_game_core::HybridMockTrim::AIRSPEED_MPS).abs()
+                < 1e-12
+        );
+    }
+}
+
+#[test]
+fn existing_presets_and_light_authority_seal_the_same_selected_contract() {
+    for preset in 0..4 {
+        let mut bridge = HybridGameSessionBridge::new(0, 0, 0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.set_difficulty_preset(preset).unwrap();
+        let selected = bridge.difficulty;
+        bridge.prepare_internal().unwrap();
+        let metadata = bridge.configuration_metadata().unwrap();
+        assert_eq!(metadata[0], preset);
+        assert_eq!(metadata[1], crate::information_code(selected.information()));
+        assert_eq!(metadata[2], crate::assistance_code(selected.assistance()));
+        let recorded = bridge.sealed_record_configuration().unwrap();
+        assert_eq!(recorded.difficulty, selected);
+        match selected.assistance() {
+            birdman_game_format::AssistanceLevel::Strong => {
+                assert_eq!(recorded.control_mode, ControlMode::Automatic)
+            }
+            birdman_game_format::AssistanceLevel::Manual => {
+                assert_eq!(recorded.control_mode, ControlMode::Manual)
+            }
+            birdman_game_format::AssistanceLevel::Assisted => assert_eq!(
+                recorded.control_mode,
+                ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap())
+            ),
+            birdman_game_format::AssistanceLevel::Light => assert_eq!(
+                recorded.control_mode,
+                ControlMode::Shared(FbwAuthority::try_new(0.2).unwrap())
+            ),
+        }
+        assert_eq!(recorded.controller_profile.gains_seconds(), [0.2, 0.2]);
+        assert_eq!(
+            recorded.controller_profile.maximum_slew_rad_per_second(),
+            1.0
+        );
+        assert_eq!(
+            bridge.sealed_course_axis().unwrap().components(),
+            [1.0, 0.0]
+        );
+    }
+}
+
+#[test]
+fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_physics() {
+    let mut bridge = HybridGameSessionBridge::new(1, 8, 9).unwrap();
+    assert_eq!(snapshot(&bridge)["scenario"], Value::Null);
+    assert_eq!(snapshot(&bridge)["control_identity"], Value::Null);
+    bridge.open_setup().unwrap();
+    assert_eq!(snapshot(&bridge)["scenario"], Value::Null);
+    assert_eq!(snapshot(&bridge)["control_identity"], Value::Null);
+    bridge.set_weather_class(0).unwrap();
+    bridge.set_information_level(4).unwrap();
+    bridge.set_information_cue(2, false).unwrap();
+    assert_eq!(bridge.information_profile_codes()[2], 0);
+    bridge.prepare_internal().unwrap();
+    let difficulty = bridge.difficulty;
+    let identity = bridge.session.configuration_identity();
+    let sealed_snapshot = snapshot(&bridge);
+    assert_eq!(sealed_snapshot["phase_code"], 2);
+    assert!(sealed_snapshot["scenario"].is_object());
+    assert!(sealed_snapshot["control_identity"].is_object());
+    assert!(
+        bridge
+            .select_difficulty(difficulty.with_weather(WeatherClass::Typical))
+            .is_err()
+    );
+    assert_eq!(bridge.difficulty, difficulty);
+    assert_eq!(bridge.session.configuration_identity(), identity);
+    bridge.fail_briefing(0).unwrap();
+    assert_eq!(snapshot(&bridge)["phase_code"], 8);
+    assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
+    assert_eq!(
+        snapshot(&bridge)["control_identity"],
+        sealed_snapshot["control_identity"]
+    );
+    bridge.retry_briefing().unwrap();
+    assert_eq!(bridge.phase_code(), 2);
+    assert_eq!(bridge.session.configuration_identity(), identity);
+    assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+    bridge.mark_briefing_ready().unwrap();
+    assert_eq!(snapshot(&bridge)["phase_code"], 3);
+    assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
+    assert_eq!(
+        snapshot(&bridge)["control_identity"],
+        sealed_snapshot["control_identity"]
+    );
+    bridge.start_countdown(2).unwrap();
+    assert_eq!(snapshot(&bridge)["phase_code"], 4);
+    assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
+    assert_eq!(
+        snapshot(&bridge)["control_identity"],
+        sealed_snapshot["control_identity"]
+    );
+    bridge.advance_countdown().unwrap();
+    bridge.cancel_countdown().unwrap();
+    assert_eq!(bridge.phase_code(), 3);
+    assert_eq!(bridge.session.configuration_identity(), identity);
+    bridge.cancel_briefing().unwrap();
+    assert_eq!(bridge.phase_code(), 1);
+    assert!(bridge.sealed_record_configuration().is_none());
+    assert!(bridge.sealed_course_axis().is_none());
+    assert_eq!(bridge.difficulty, difficulty);
+    assert_eq!(snapshot(&bridge)["scenario"], Value::Null);
+    assert_eq!(snapshot(&bridge)["control_identity"], Value::Null);
+}
+
+#[test]
+fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explicit_rate_abi() {
+    let mut bridge = HybridGameSessionBridge::new(1, 0, 0).unwrap();
+    assert!(bridge.control_profile_internal().is_err());
+    bridge.open_setup().unwrap();
+    assert!(bridge.control_profile_internal().is_err());
+    bridge.set_assistance_level(2).unwrap();
+    bridge.prepare_internal().unwrap();
+    let profile: Value = serde_json::from_str(&bridge.control_profile_json().unwrap()).unwrap();
+    let snapshot = snapshot(&bridge);
+    assert_eq!(profile["schema_version"], 2);
+    assert_eq!(profile["control_layout"], "tail_incidence");
+    assert_eq!(
+        profile["controller_profile_id"],
+        snapshot["control_identity"]["controller_profile_id"]
+    );
+    assert_eq!(
+        profile["controller_profile_version"],
+        snapshot["scenario"]["controller_profile_version"]
+    );
+    let limits = TailRateTarget::limits_rad_per_second();
+    let desired_pitch = limits[0] * 0.5;
+    let desired_yaw = -limits[1];
+    assert_eq!(
+        profile["desired_body_rate_limit_rad_s"],
+        json!({"pitch":limits[0],"yaw":limits[1]})
+    );
+    let mut document: Value = serde_json::from_str(&input(json!({"kind":"hold"}))).unwrap();
+    document["desired_pitch_rate_rad_s"] = json!(desired_pitch);
+    document["desired_yaw_rate_rad_s"] = json!(desired_yaw);
+    let decoded = InputDocument::decode(&document.to_string()).unwrap();
+    assert_eq!(
+        decoded.desired_body_rate(),
+        TailRateTarget::try_new(desired_pitch, desired_yaw).unwrap()
+    );
+    assert_eq!(
+        profile["feedback_gain_seconds"],
+        json!({"pitch":0.2,"yaw":0.2})
+    );
+    assert_eq!(profile["maximum_slew_rad_s"], 1.0);
+}

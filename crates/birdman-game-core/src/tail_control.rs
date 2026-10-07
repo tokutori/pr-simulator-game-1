@@ -60,6 +60,11 @@ pub struct TailRateTarget {
 }
 
 impl TailRateTarget {
+    /// Returns the body-positive pitch/yaw demand limits in rad/s, in that order.
+    pub const fn limits_rad_per_second() -> [f64; 2] {
+        [RATE_TARGET_LIMIT_RAD_PER_SECOND; 2]
+    }
+
     /// Validates pitch q and yaw r targets within the inclusive +/-0.2 rad/s range.
     pub fn try_new(
         pitch_rad_per_second: f64,

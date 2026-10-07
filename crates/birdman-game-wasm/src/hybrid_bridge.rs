@@ -1,11 +1,13 @@
 use birdman_game_core::{
-    ControlMode, FlightState, FlightTelemetry, GameSession, GameSessionError, SessionPhase,
-    SessionSnapshot, SessionTerminalState, TailControlError, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    ControlMode, CourseAxis, FlightState, FlightTelemetry, GameSession, GameSessionError,
+    SessionPhase, SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
+    TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailRateTarget,
 };
 use birdman_game_format::{
-    FlightRecordFormatError, FlightRecordTailIdentityDocument,
-    TailFlightRecordFinalizationDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
+    DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
+    InformationLevel, TailFlightRecordFinalizationDocument, TailIncidenceDocument,
+    TailPersonalBestConfiguration, TailPilotPositionCommandDocument, WeatherClass,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{JsValue, prelude::*};
@@ -17,6 +19,15 @@ use crate::{
 
 const SCHEMA_VERSION: u32 = 2;
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
+
+mod setup;
+
+struct PreparedMetadata {
+    record_identity: FlightRecordTailIdentityDocument,
+    controller_profile: TailControlProfile,
+    course_axis: CourseAxis,
+    control_mode: ControlMode,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -203,10 +214,10 @@ impl BoundaryError {
 #[wasm_bindgen]
 pub struct HybridGameSessionBridge {
     session: GameSession<'static>,
-    control_mode: ControlMode,
+    difficulty: DifficultySettings,
     maximum_flight_ticks: u64,
     seed: u64,
-    record_identity: Option<FlightRecordTailIdentityDocument>,
+    prepared: Option<PreparedMetadata>,
 }
 
 #[wasm_bindgen]
@@ -226,11 +237,11 @@ impl HybridGameSessionBridge {
         self.session
             .open_setup()
             .map_err(crate::game_session_error)?;
-        self.record_identity = None;
+        self.prepared = None;
         Ok(())
     }
 
-    /// Seals the named fictional hybrid model in the registered Typical environment.
+    /// Seals the named fictional hybrid model in the selected registered environment.
     pub fn prepare(&mut self) -> Result<(), JsValue> {
         self.prepare_internal().map_err(BoundaryError::into_js)
     }
@@ -318,10 +329,11 @@ impl HybridGameSessionBridge {
 
     /// Returns the constructor's selected Manual, Shared or Automatic mode code.
     pub fn control_mode_code(&self) -> u32 {
-        match self.control_mode {
-            ControlMode::Manual => 0,
-            ControlMode::Shared(_) => 1,
-            ControlMode::Automatic => 2,
+        match self.difficulty.assistance() {
+            birdman_game_format::AssistanceLevel::Manual => 0,
+            birdman_game_format::AssistanceLevel::Assisted
+            | birdman_game_format::AssistanceLevel::Light => 1,
+            birdman_game_format::AssistanceLevel::Strong => 2,
         }
     }
 
@@ -343,25 +355,38 @@ impl HybridGameSessionBridge {
     fn from_mode(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
             session: GameSession::new(),
-            control_mode,
+            difficulty: DifficultySettings::custom(
+                InformationLevel::Full,
+                crate::assistance_from_control_mode(control_mode),
+                WeatherClass::Typical,
+            ),
             maximum_flight_ticks,
             seed,
-            record_identity: None,
+            prepared: None,
         }
     }
 
     fn prepare_internal(&mut self) -> Result<(), BoundaryError> {
-        let (configuration, identity) = HybridSessionPreparation::try_new(
-            self.control_mode,
+        let control_mode = setup::control_mode(self.difficulty.assistance())?;
+        let preparation = HybridSessionPreparation::try_new_for_weather(
+            control_mode,
             self.maximum_flight_ticks,
             self.seed,
+            self.difficulty.weather(),
         )
-        .map_err(BoundaryError::Preparation)?
-        .into_parts();
+        .map_err(BoundaryError::Preparation)?;
+        let controller_profile = preparation.controller_profile();
+        let course_axis = preparation.course_axis();
+        let (configuration, identity) = preparation.into_parts();
         self.session
             .prepare_flight(configuration)
             .map_err(BoundaryError::Session)?;
-        self.record_identity = Some(identity);
+        self.prepared = Some(PreparedMetadata {
+            record_identity: identity,
+            controller_profile,
+            course_axis,
+            control_mode,
+        });
         Ok(())
     }
 
@@ -432,7 +457,10 @@ impl HybridGameSessionBridge {
                 .session
                 .configuration_identity()
                 .map(EnvironmentIdentity::from),
-            control_identity: self.record_identity.as_ref(),
+            control_identity: self
+                .prepared
+                .as_ref()
+                .map(|metadata| &metadata.record_identity),
             frame,
         })
         .map_err(BoundaryError::Json)
@@ -444,6 +472,23 @@ impl HybridGameSessionBridge {
             .map_err(|error| BoundaryError::Session(GameSessionError::Telemetry(error)))?
             .map(TelemetryDocument::from)
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
+    }
+
+    /// Returns format/PB metadata from the same successful preparation, without recomputation.
+    pub fn sealed_record_configuration(&self) -> Option<TailPersonalBestConfiguration<'_>> {
+        let prepared = self.prepared.as_ref()?;
+        Some(TailPersonalBestConfiguration {
+            scenario: self.session.configuration_identity()?,
+            difficulty: self.difficulty,
+            identity: &prepared.record_identity,
+            control_mode: prepared.control_mode,
+            controller_profile: prepared.controller_profile,
+        })
+    }
+
+    /// Returns the prepared course axis while the sealed session is retained.
+    pub fn sealed_course_axis(&self) -> Option<CourseAxis> {
+        self.prepared.as_ref().map(|metadata| metadata.course_axis)
     }
 }
 

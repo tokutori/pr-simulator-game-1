@@ -101,6 +101,15 @@ model/controllerの文字列identityはRust定義からrecordへ渡し、UI側�
 snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
 terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
 旧factory・33値ABI・公開既定モデルは維持し、Replay/Attract・公開切替は後続のBPG-042統合で接続する。
+hybridのSetupは既存`DifficultySettings`とcatalog 2を使用する。Calm/Mild/Challenging/NearLimitは
+登録済みuniform provider 1/2/4/5、Typicalはoffline asset 6のgridを使用し、環境metadataと物理のproviderを一致させる。
+Informationは表示だけに作用し、Assistanceは既存Strong/Assisted/Light/Manualをauthority 1/0.5/0.2/0へ解決する。
+Briefing開始後は選択を固定し、18値のconfiguration metadataとmodel/controller identityをRustから供給する。
+snapshotはTitle/FlightSetupで両identityを`null`、BriefingPreparing/BriefingFailed/BriefingReady/Countdown以降で両identityを必須とする。
+Setupの候補は別environment projectionの`selected`で示し、準備失敗・再準備・Countdown取消でもsealed identityを保持する。
+record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。旧三軸feedback profileを生成しない。
+`control_profile_json()`はsealed controller ID/versionとpitch/yawのrate上限・feedback gain・slewを供給する。
+device adapterは型付き上限へnormalized demandを写像し、TSに物理定数を定義しない。explicit q/r入力は同一ABIを維持する。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
