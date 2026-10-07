@@ -47,7 +47,7 @@ import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
-import { createBirdmanAirframe } from "./birdman-airframe.js";
+import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
 import { createLakeVenue } from "./lake-venue-mesh.js";
 
 type ThreeWebXrState =
@@ -529,11 +529,9 @@ export function createThreeRenderer(
           : flightRelativePose(flightPose, currentTrackingMountPose());
       headHudSurface?.update(frame.headHud, worldFromTracking);
       const controls = flightPose?.controls;
-      if (controls?.layout === "tail_incidence") throw new Error("Two-tail visual geometry is not supported by this airframe adapter");
       airframe.setVisualState(
         flightPose?.airspeedMetersPerSecond ?? null,
-        controls?.pitchRadians ?? 0,
-        controls?.yawRadians ?? 0
+        controls ?? NO_AIRFRAME_CONTROLS
       );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;

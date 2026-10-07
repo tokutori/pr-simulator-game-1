@@ -17,6 +17,7 @@ import {
   UnsignedByteType,
   Vector3
 } from "three";
+import type { PhysicalFlightControls } from "../../contracts/flight-controls.js";
 
 // tokutori_2026 three-view reference: measured tip-to-tip span is 20,863 mm.
 const HALF_SPAN_METERS = 20.863 / 2;
@@ -189,9 +190,12 @@ function universityMark(onVisualReady?: () => void): CanvasTexture | null {
 
 export interface BirdmanAirframe {
   readonly root: Group;
-  setVisualState(airspeedMetersPerSecond: number | null, elevatorRadians: number, rudderRadians: number): void;
+  setVisualState(airspeedMetersPerSecond: number | null, controls: AirframeVisualControls): void;
   dispose(): void;
 }
+
+export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout: "absent" }>;
+export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const);
 
 /** Visual cantilever approximation; these assumptions do not enter flight physics. */
 export function wingDeflectionMeters(spanMeters: number, airspeedMetersPerSecond: number): number {
@@ -601,6 +605,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   }
 
   const tail = new Group();
+  tail.name = "legacy-tail-assembly";
   tail.position.set(0, -0.52, TAIL_Z_METERS);
   root.add(tail);
   for (const side of [-1, 1] as const) {
@@ -709,8 +714,31 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     0.006, ribMaterial);
   rudderStringer.name = "rudder-balsa-stringer";
 
+  const horizontalIncidence = new Group();
+  horizontalIncidence.name = "horizontal-tail-incidence";
+  horizontalIncidence.position.set(0, -0.1, 1.8);
+  const tailChordMeters = 2.5 / 3.4;
+  horizontalIncidence.add(rectangularTailSurface([
+    [-1.7, 0, -tailChordMeters / 4], [1.7, 0, -tailChordMeters / 4],
+    [1.7, 0, 3 * tailChordMeters / 4], [-1.7, 0, 3 * tailChordMeters / 4]
+  ], whiteTail));
+  root.add(horizontalIncidence);
+  const verticalIncidence = new Group();
+  verticalIncidence.name = "vertical-tail-incidence";
+  verticalIncidence.position.set(0, 0.1, 1.8);
+  const finChordMeters = 0.5 / 0.7;
+  verticalIncidence.add(rectangularTailSurface([
+    [0, -0.35, -finChordMeters / 4], [0, 0.35, -finChordMeters / 4],
+    [0, 0.35, 3 * finChordMeters / 4], [0, -0.35, 3 * finChordMeters / 4]
+  ], skin));
+  root.add(verticalIncidence);
+
   let currentSpeed = Number.NaN;
-  const setVisualState = (airspeedMetersPerSecond: number | null, elevatorRadians: number, rudderRadians: number): void => {
+  const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls): void => {
+    if (controls.layout === "tail_incidence" &&
+        (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
+      throw new RangeError("Physical tail incidence must be finite");
+    }
     const speed = airspeedMetersPerSecond ?? REFERENCE_AIRSPEED_METERS_PER_SECOND;
     if (!Number.isFinite(currentSpeed) || Math.abs(speed - currentSpeed) > 0.03) {
       currentSpeed = speed;
@@ -741,10 +769,31 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
           wingRibPoint(stringer.side, stringer.to, stringer.chordFraction, speed));
       }
     }
-    elevator.rotation.x = -Math.max(-0.35, Math.min(0.35, elevatorRadians));
-    rudder.rotation.y = Math.max(-0.35, Math.min(0.35, rudderRadians));
+    tail.visible = controls.layout !== "tail_incidence";
+    horizontalIncidence.visible = controls.layout === "tail_incidence";
+    verticalIncidence.visible = controls.layout === "tail_incidence";
+    switch (controls.layout) {
+      case "legacy_three_axis":
+        elevator.rotation.x = -Math.max(-0.35, Math.min(0.35, controls.pitchRadians));
+        rudder.rotation.y = Math.max(-0.35, Math.min(0.35, controls.yawRadians));
+        horizontalIncidence.rotation.x = 0;
+        verticalIncidence.rotation.y = 0;
+        break;
+      case "tail_incidence":
+        horizontalIncidence.rotation.x = controls.physicalIncidence.horizontalTailRadians;
+        verticalIncidence.rotation.y = -controls.physicalIncidence.verticalTailRadians;
+        elevator.rotation.x = 0;
+        rudder.rotation.y = 0;
+        break;
+      case "absent":
+        elevator.rotation.x = 0;
+        rudder.rotation.y = 0;
+        horizontalIncidence.rotation.x = 0;
+        verticalIncidence.rotation.y = 0;
+        break;
+    }
   };
-  setVisualState(null, 0, 0);
+  setVisualState(null, NO_AIRFRAME_CONTROLS);
   return {
     root,
     setVisualState,
@@ -766,4 +815,14 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       universityTexture?.dispose();
     }
   };
+}
+
+function rectangularTailSurface(vertices: readonly (readonly [number, number, number])[], material: MeshLambertMaterial): Mesh {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(vertices.flat(), 3));
+  geometry.setIndex([0, 1, 2, 0, 2, 3]);
+  geometry.computeVertexNormals();
+  const surface = new Mesh(geometry, material);
+  surface.name = "physical-tail-surface";
+  return surface;
 }

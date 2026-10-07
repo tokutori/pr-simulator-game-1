@@ -71,6 +71,12 @@ volumetric raymarchは初期版の対象外である。
 
 主翼の上反角は半翼幅の約60%と80%で勾配が増す二段構成とし、翼面・桁・芯材・縁材で同じ高さを使う。上向きのたわみは、その上反角に重ね、一様分布荷重を受ける片持ち梁の近似式で描画する。試作値はヤング率45 GPa、桁断面二次モーメント4×10⁻⁶ m⁴、支持質量110 kg、基準対気速度9.5 m/sである。速度の二乗を荷重の視覚的な代理値とし、極端な変形を避けるため倍率を制限する。これらは実機の構造諸元や強度の推定ではなく、飛行力学、操縦応答、衝突判定を変更しない。
 
+## 二系統尾翼の表示
+
+`tail_incidence`の両尾翼はBPG-041の公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-1.8,y,0.1)` m、垂直尾翼は面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDからThree.jsへの変換後の回転は水平`+X`、垂直`−Y`である。
+
+`legacy_three_axis`は従来の外観・hinge・符号を保持し、layout切替時には両表示系の回転をresetする。二系統尾翼の値を旧pitch/yaw actuatorへ変換しない。主翼・コックピット・構造材は既存のrender-only外観を共有する。これらの寸法とたわみはBPG-041の力学geometryを表す情報には使用しない。表示は実機CADや全機geometryの再現性を保証しない。
+
 ## 画質
 
 Auto / Low / Medium / High / Ultra / Customを用意する計画である。

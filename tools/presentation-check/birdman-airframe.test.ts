@@ -185,7 +185,7 @@ describe("synthetic Birdman airframe", () => {
     const initialY = leftPosition.getY(tipVertex);
     const initialRibY = rib.position.y;
     const initialFoamY = foam.position.y;
-    airframe.setVisualState(13, 0.12, -0.08);
+    airframe.setVisualState(13, { layout: "legacy_three_axis", rollRadians: 0, pitchRadians: 0.12, yawRadians: -0.08 });
     expect(leftPosition.getY(tipVertex)).toBeGreaterThan(initialY);
     expect(rib.position.y).toBeGreaterThan(initialRibY);
     expect(foam.position.y).toBeGreaterThan(initialFoamY);
