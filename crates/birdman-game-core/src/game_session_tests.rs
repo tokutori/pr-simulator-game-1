@@ -83,7 +83,7 @@ fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     let record = session.flight_record().unwrap();
     assert_eq!(record.sample_count(), 1);
     assert_eq!(record.sample(0).unwrap().tick_index, 0);
-    assert!(record.sample(0).unwrap().input_from_previous.is_none());
+    assert!(!record.sample(0).unwrap().controls.has_input());
     assert_eq!(session.launch(), Err(GameSessionError::InvalidTransition));
 }
 
@@ -404,7 +404,7 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
     let record = session.flight_record().unwrap();
     assert_eq!(record.sample_count(), 3);
     assert_eq!(record.sample(2).unwrap().tick_index, 2);
-    assert!(record.sample(2).unwrap().input_from_previous.is_some());
+    assert!(record.sample(2).unwrap().controls.has_input());
     assert_eq!(
         record.finalization().unwrap().disposition,
         crate::FlightRecordDisposition::Complete
@@ -527,7 +527,7 @@ fn synthetic_flight_reaches_contact_result_without_skipping_terminal_state() {
                     <= 2.0 * f64::EPSILON * (last.tick_index as f64 + 1.0)
             );
             assert_eq!(sample.flight_state, last.flight_state);
-            assert_eq!(sample.actuator_state, last.actuator_state);
+            assert_eq!(sample.actuators, last.controls.actuators());
             assert_eq!(sample.telemetry, last.telemetry);
             assert_eq!(session.snapshot(), snapshot);
             break;

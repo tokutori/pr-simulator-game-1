@@ -23,11 +23,23 @@ pub enum FlightRecordActuators {
     TailIncidence(TailIncidence),
 }
 
+impl FlightRecordActuators {
+    /// Returns legacy physical values only when the stored layout is explicitly compatible.
+    pub const fn legacy_three_axis(self) -> Result<ActuatorState, FlightRecordControlError> {
+        match self {
+            Self::LegacyThreeAxis(state) => Ok(state),
+            Self::TailIncidence(_) => Err(FlightRecordControlError::IncompatibleControlLayout),
+        }
+    }
+}
+
 /// Invalid externally restored control data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightRecordControlError {
     /// The recorded resolved pilot-position target is non-finite.
     NonFinitePilotPositionTarget,
+    /// The requested operation belongs to a different semantic control layout.
+    IncompatibleControlLayout,
 }
 
 /// One tail interval's intent and core-computed command targets, distinct from its actuator.
@@ -139,6 +151,53 @@ pub enum FlightRecordControls {
 }
 
 impl FlightRecordControls {
+    /// Returns legacy physical/input values without interpreting tail data as three axes.
+    pub const fn legacy_three_axis(
+        self,
+    ) -> Result<(ActuatorState, Option<FlightRecordInput>), FlightRecordControlError> {
+        match self {
+            Self::LegacyThreeAxis {
+                actuator_state,
+                input_from_previous,
+            } => Ok((actuator_state, input_from_previous)),
+            Self::TailIncidence { .. } => Err(FlightRecordControlError::IncompatibleControlLayout),
+        }
+    }
+
+    /// Returns whether this sample carries a transition input of its own control layout.
+    pub const fn has_input(self) -> bool {
+        match self {
+            Self::LegacyThreeAxis {
+                input_from_previous,
+                ..
+            } => input_from_previous.is_some(),
+            Self::TailIncidence {
+                input_from_previous,
+                ..
+            } => input_from_previous.is_some(),
+        }
+    }
+
+    /// Returns the interval's saved resolved pilot target, absent for the initial sample.
+    pub const fn pilot_position_target_m(self) -> Option<f64> {
+        match self {
+            Self::LegacyThreeAxis {
+                input_from_previous,
+                ..
+            } => match input_from_previous {
+                Some(input) => Some(input.pilot_position_target_m),
+                None => None,
+            },
+            Self::TailIncidence {
+                input_from_previous,
+                ..
+            } => match input_from_previous {
+                Some(input) => Some(input.resolved_pilot_position_target_m()),
+                None => None,
+            },
+        }
+    }
+
     /// Creates the initial tail sample with no newly applied interval input.
     pub const fn initial_tail(state: TailFlightTickState) -> Self {
         Self::TailIncidence {

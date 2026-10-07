@@ -804,7 +804,9 @@ impl GameSessionBridge {
         let sample = record
             .sample(index as usize)
             .ok_or_else(|| JsValue::from_str("flight record sample index is out of range"))?;
-        Ok(pack_flight_record_sample(sample).to_vec())
+        pack_flight_record_sample(sample)
+            .map(|packed| packed.to_vec())
+            .map_err(record_control_error)
     }
 
     /// Returns all retained sample fields in one packed WebAssembly transfer.
@@ -820,7 +822,9 @@ impl GameSessionBridge {
         let mut packed = reserve_record_transfer_buffer(capacity)
             .ok_or_else(|| JsValue::from_str("flight record transfer buffer allocation failed"))?;
         for sample in record.samples() {
-            packed.extend_from_slice(&pack_flight_record_sample(sample));
+            packed.extend_from_slice(
+                &pack_flight_record_sample(sample).map_err(record_control_error)?,
+            );
         }
         Ok(packed)
     }
@@ -840,7 +844,9 @@ impl GameSessionBridge {
             .map_err(|error| {
                 JsValue::from_str(&format!("flight record query failed: {error:?}"))
             })?;
-        Ok(pack_flight_record_playback_sample(sample).to_vec())
+        pack_flight_record_playback_sample(sample)
+            .map(|packed| packed.to_vec())
+            .map_err(record_control_error)
     }
 
     /// Returns a read-only Rust-interpolated sample in Result, Replay or Attract.
@@ -849,7 +855,9 @@ impl GameSessionBridge {
             .session
             .playback_sample_at_seconds(time_seconds)
             .map_err(game_session_error)?;
-        Ok(pack_flight_record_playback_sample(sample).to_vec())
+        pack_flight_record_playback_sample(sample)
+            .map(|packed| packed.to_vec())
+            .map_err(record_control_error)
     }
 
     /// Returns a fixed-altitude 5×5 wind grid as [N, E, WN, WE, WD] tuples.
@@ -1188,7 +1196,16 @@ fn flight_record_sample_layout() -> String {
         .to_owned()
 }
 
-fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE_LENGTH] {
+fn record_control_error(error: birdman_game_core::FlightRecordControlError) -> JsValue {
+    JsValue::from_str(&format!(
+        "flight record control layout is incompatible: {error:?}"
+    ))
+}
+
+fn pack_flight_record_sample(
+    sample: &FlightRecordSample,
+) -> Result<[f64; RECORD_SAMPLE_LENGTH], birdman_game_core::FlightRecordControlError> {
+    let (actuator_state, input) = sample.controls.legacy_three_axis()?;
     let flight = sample.flight_state;
     let [north, east, down] = flight.datum_position_ned().components();
     let [velocity_north, velocity_east, velocity_down] = flight.datum_velocity_ned().components();
@@ -1196,9 +1213,8 @@ fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE
         flight.attitude_body_to_ned().components();
     let [rate_roll, rate_pitch, rate_yaw] = flight.angular_velocity_body().components();
     let [wind_north, wind_east, wind_down] = sample.wind_at_cg_ned_mps.components();
-    let actuators = sample.actuator_state.deflections();
+    let actuators = actuator_state.deflections();
     let telemetry = sample.telemetry;
-    let input = sample.input_from_previous;
     let (pilot_roll, pilot_pitch, pilot_yaw, target_rate, position_target, fbw, mixed) =
         if let Some(input) = input {
             (
@@ -1275,7 +1291,7 @@ fn pack_flight_record_sample(sample: &FlightRecordSample) -> [f64; RECORD_SAMPLE
         telemetry.composite_cg_position_ned_m.components()[1],
         telemetry.composite_cg_position_ned_m.components()[2],
     ]);
-    packed
+    Ok(packed)
 }
 
 fn reserve_record_transfer_buffer(capacity: usize) -> Option<Vec<f64>> {
@@ -1286,7 +1302,8 @@ fn reserve_record_transfer_buffer(capacity: usize) -> Option<Vec<f64>> {
 
 fn pack_flight_record_playback_sample(
     sample: FlightRecordPlaybackSample,
-) -> [f64; PLAYBACK_SAMPLE_LENGTH] {
+) -> Result<[f64; PLAYBACK_SAMPLE_LENGTH], birdman_game_core::FlightRecordControlError> {
+    let actuator_state = sample.actuators.legacy_three_axis()?;
     let flight = sample.flight_state;
     let [north, east, down] = flight.datum_position_ned().components();
     let [velocity_north, velocity_east, velocity_down] = flight.datum_velocity_ned().components();
@@ -1321,9 +1338,9 @@ fn pack_flight_record_playback_sample(
         rate_yaw,
         flight.pilot_position_m(),
         flight.pilot_velocity_mps(),
-        sample.actuator_state.roll_rad(),
-        sample.actuator_state.pitch_rad(),
-        sample.actuator_state.yaw_rad(),
+        actuator_state.roll_rad(),
+        actuator_state.pitch_rad(),
+        actuator_state.yaw_rad(),
         wind_north,
         wind_east,
         wind_down,
@@ -1341,7 +1358,7 @@ fn pack_flight_record_playback_sample(
         sample.telemetry.composite_cg_position_ned_m.components()[1],
         sample.telemetry.composite_cg_position_ned_m.components()[2],
     ]);
-    packed
+    Ok(packed)
 }
 
 fn snapshot_from_tick(
@@ -2249,13 +2266,21 @@ mod tests {
         );
         assert!(demo.record.samples().iter().all(|sample| {
             sample.wind_at_cg_ned_mps.components() == [0.0; 3]
-                && sample.input_from_previous.is_none_or(|input| {
-                    input.mixed_surface_commands == input.pilot_surface_commands
-                })
+                && sample
+                    .controls
+                    .legacy_three_axis()
+                    .unwrap()
+                    .1
+                    .is_none_or(|input| {
+                        input.mixed_surface_commands == input.pilot_surface_commands
+                    })
         }));
         assert!(demo.record.samples().iter().any(|sample| {
             sample
-                .input_from_previous
+                .controls
+                .legacy_three_axis()
+                .unwrap()
+                .1
                 .is_some_and(|input| input.fbw_surface_commands != input.pilot_surface_commands)
         }));
     }

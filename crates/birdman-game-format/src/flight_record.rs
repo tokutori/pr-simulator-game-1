@@ -294,6 +294,8 @@ pub enum FlightRecordFormatError {
     RecordUnavailable,
     /// A valid in-memory record could not be encoded.
     EncodingFailed,
+    /// The requested schema cannot represent the record's semantic control layout.
+    IncompatibleControlLayout,
 }
 
 impl FlightRecordDocument {
@@ -307,7 +309,11 @@ impl FlightRecordDocument {
         }
         let header = record.header();
         let identity = header.scenario;
-        let samples = record.samples().iter().map(sample_document).collect();
+        let samples = record
+            .samples()
+            .iter()
+            .map(sample_document)
+            .collect::<Result<Vec<_>, _>>()?;
         let finalization = record.finalization().map(|finalization| {
             let score_m = finalization.score.map(|score| {
                 [
@@ -681,9 +687,11 @@ fn core_sample(
         tick_index: sample.tick_index,
         fraction: sample.fraction,
         flight_state: state,
-        actuator_state,
+        controls: birdman_game_core::FlightRecordControls::LegacyThreeAxis {
+            actuator_state,
+            input_from_previous,
+        },
         wind_at_cg_ned_mps: vector(sample.wind_at_cg_ned_mps)?,
-        input_from_previous,
         telemetry: birdman_game_core::FlightTelemetry {
             composite_cg_position_ned_m: point(telemetry.composite_cg_position_ned_m)?,
             altitude_m: telemetry.altitude_m,
@@ -772,31 +780,35 @@ impl From<WeatherClass> for FlightRecordWeatherDocument {
     }
 }
 
-fn sample_document(sample: &FlightRecordSample) -> FlightRecordSampleDocument {
+fn sample_document(
+    sample: &FlightRecordSample,
+) -> Result<FlightRecordSampleDocument, FlightRecordFormatError> {
     let flight = sample.flight_state;
-    let input_from_previous = sample
-        .input_from_previous
-        .map(|input| FlightRecordInputDocument {
-            pilot_surface_commands_rad: [
-                input.pilot_surface_commands.roll_rad(),
-                input.pilot_surface_commands.pitch_rad(),
-                input.pilot_surface_commands.yaw_rad(),
-            ],
-            target_angular_rate_body_rad_s: input.target_angular_rate_body.components(),
-            pilot_position_target_m: input.pilot_position_target_m,
-            fbw_surface_commands_rad: [
-                input.fbw_surface_commands.roll_rad(),
-                input.fbw_surface_commands.pitch_rad(),
-                input.fbw_surface_commands.yaw_rad(),
-            ],
-            mixed_surface_commands_rad: [
-                input.mixed_surface_commands.roll_rad(),
-                input.mixed_surface_commands.pitch_rad(),
-                input.mixed_surface_commands.yaw_rad(),
-            ],
-        });
+    let (actuator_state, input) = sample
+        .controls
+        .legacy_three_axis()
+        .map_err(|_| FlightRecordFormatError::IncompatibleControlLayout)?;
+    let input_from_previous = input.map(|input| FlightRecordInputDocument {
+        pilot_surface_commands_rad: [
+            input.pilot_surface_commands.roll_rad(),
+            input.pilot_surface_commands.pitch_rad(),
+            input.pilot_surface_commands.yaw_rad(),
+        ],
+        target_angular_rate_body_rad_s: input.target_angular_rate_body.components(),
+        pilot_position_target_m: input.pilot_position_target_m,
+        fbw_surface_commands_rad: [
+            input.fbw_surface_commands.roll_rad(),
+            input.fbw_surface_commands.pitch_rad(),
+            input.fbw_surface_commands.yaw_rad(),
+        ],
+        mixed_surface_commands_rad: [
+            input.mixed_surface_commands.roll_rad(),
+            input.mixed_surface_commands.pitch_rad(),
+            input.mixed_surface_commands.yaw_rad(),
+        ],
+    });
     let telemetry = sample.telemetry;
-    FlightRecordSampleDocument {
+    Ok(FlightRecordSampleDocument {
         tick_index: sample.tick_index,
         fraction: sample.fraction,
         datum_position_ned_m: flight.datum_position_ned().components(),
@@ -806,9 +818,9 @@ fn sample_document(sample: &FlightRecordSample) -> FlightRecordSampleDocument {
         pilot_position_m: flight.pilot_position_m(),
         pilot_velocity_mps: flight.pilot_velocity_mps(),
         actuator_deflections_rad: [
-            sample.actuator_state.roll_rad(),
-            sample.actuator_state.pitch_rad(),
-            sample.actuator_state.yaw_rad(),
+            actuator_state.roll_rad(),
+            actuator_state.pitch_rad(),
+            actuator_state.yaw_rad(),
         ],
         wind_at_cg_ned_mps: sample.wind_at_cg_ned_mps.components(),
         telemetry: FlightRecordTelemetryDocument {
@@ -825,7 +837,7 @@ fn sample_document(sample: &FlightRecordSample) -> FlightRecordSampleDocument {
             ],
         },
         input_from_previous,
-    }
+    })
 }
 
 fn sample_is_valid(sample: &FlightRecordSampleDocument, maximum_ticks: u64) -> bool {
@@ -1063,6 +1075,51 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn legacy_schema_rejects_tail_control_data_without_fabricating_three_axes() {
+        let source = completed_record().to_finalized_core_record().unwrap();
+        let input = birdman_game_core::FlightRecordTailInput::try_from_recorded(
+            birdman_game_core::TailFlightTickInput::new(
+                birdman_game_core::TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+                birdman_game_core::TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                birdman_game_core::TailPilotPositionCommand::Hold,
+            ),
+            0.0,
+            birdman_game_core::TailIncidence::neutral(),
+            birdman_game_core::TailIncidence::neutral(),
+            birdman_game_core::TailIncidence::neutral(),
+        )
+        .unwrap();
+        let mut samples = source.samples().to_vec();
+        for sample in &mut samples {
+            sample.controls = birdman_game_core::FlightRecordControls::TailIncidence {
+                incidence: birdman_game_core::TailIncidence::neutral(),
+                input_from_previous: if sample.tick_index == 0 {
+                    None
+                } else {
+                    Some(input)
+                },
+            };
+        }
+        let record = birdman_game_core::FlightRecord::try_from_finalized_samples(
+            source.header(),
+            samples,
+            source.finalization().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            FlightRecordDocument::from_record(
+                &record,
+                DifficultySettings::custom(
+                    InformationLevel::Full,
+                    AssistanceLevel::Manual,
+                    WeatherClass::Calm
+                ),
+            ),
+            Err(FlightRecordFormatError::IncompatibleControlLayout)
+        );
+    }
+
     fn water_contact_record() -> FlightRecordDocument {
         let (aircraft, scenario, feedback, _) =
             SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
@@ -1145,27 +1202,27 @@ mod tests {
                     let decoded = FlightRecordDocument::decode_json(&bytes).unwrap();
                     assert_eq!(decoded.samples, document.samples);
                     let restored = decoded.to_finalized_core_record().unwrap();
-                    let stored_initial = restored.samples()[0].actuator_state;
-                    let stored_terminal = restored.samples()[1].actuator_state;
+                    let stored_initial = restored.samples()[0].controls.actuators();
+                    let stored_terminal = restored.samples()[1].controls.actuators();
                     assert_eq!(
-                        restored.sample_at_time(0, 0.0).unwrap().actuator_state,
+                        restored.sample_at_time(0, 0.0).unwrap().actuators,
                         stored_initial,
                     );
                     for fraction in [f64::from_bits(1), 0.25, 0.5] {
                         assert_eq!(
-                            restored.sample_at_time(0, fraction).unwrap().actuator_state,
+                            restored.sample_at_time(0, fraction).unwrap().actuators,
                             stored_terminal,
                         );
                     }
                     assert_eq!(
-                        restored.sample_at_seconds(0.0025).unwrap().actuator_state,
+                        restored.sample_at_seconds(0.0025).unwrap().actuators,
                         stored_terminal,
                     );
                     assert_eq!(
-                        restored.sample_at_seconds(0.005).unwrap().actuator_state,
+                        restored.sample_at_seconds(0.005).unwrap().actuators,
                         stored_terminal,
                     );
-                    assert_eq!(restored.samples()[1].actuator_state, stored_terminal);
+                    assert_eq!(restored.samples()[1].controls.actuators(), stored_terminal);
                     assert_eq!(decoded.samples[1].actuator_deflections_rad, terminal);
                 }
             }
@@ -1207,8 +1264,8 @@ mod tests {
                 assert_eq!(restored_sample.fraction, original_sample.fraction);
                 assert_eq!(restored_sample.telemetry, original_sample.telemetry);
                 assert_eq!(
-                    restored_sample.input_from_previous,
-                    original_sample.input_from_previous
+                    restored_sample.controls.legacy_three_axis().unwrap().1,
+                    original_sample.controls.legacy_three_axis().unwrap().1
                 );
             }
             let (tick, fraction) = if terminal.fraction == 1.0 {
@@ -1225,14 +1282,14 @@ mod tests {
                 exact.flight_state.datum_position_ned(),
                 terminal.flight_state.datum_position_ned()
             );
-            assert_eq!(exact.actuator_state, terminal.actuator_state);
+            assert_eq!(exact.actuators, terminal.controls.actuators());
             assert_eq!(exact.telemetry, terminal.telemetry);
             let at_duration = restored
                 .sample_at_seconds(restored.duration_seconds().unwrap())
                 .unwrap();
             assert_eq!(at_duration.tick_index, exact.tick_index);
             assert_eq!(at_duration.flight_state, exact.flight_state);
-            assert_eq!(at_duration.actuator_state, exact.actuator_state);
+            assert_eq!(at_duration.actuators, exact.actuators);
             assert_eq!(at_duration.telemetry, exact.telemetry);
         }
     }
@@ -1877,7 +1934,7 @@ mod tests {
                     };
                     let queried = restored.sample_at_time(tick, fraction).unwrap();
                     assert_eq!(queried.flight_state, stored.flight_state);
-                    assert_eq!(queried.actuator_state, stored.actuator_state);
+                    assert_eq!(queried.actuators, stored.controls.actuators());
                     assert_eq!(queried.telemetry, stored.telemetry);
                     assert_eq!(
                         queried.flight_state.datum_position_ned().components(),
@@ -1889,9 +1946,9 @@ mod tests {
                     );
                     assert_eq!(
                         [
-                            queried.actuator_state.roll_rad(),
-                            queried.actuator_state.pitch_rad(),
-                            queried.actuator_state.yaw_rad(),
+                            queried.actuators.legacy_three_axis().unwrap().roll_rad(),
+                            queried.actuators.legacy_three_axis().unwrap().pitch_rad(),
+                            queried.actuators.legacy_three_axis().unwrap().yaw_rad(),
                         ],
                         external.actuator_deflections_rad,
                     );
@@ -1901,7 +1958,7 @@ mod tests {
                     .sample_at_seconds(restored.duration_seconds().unwrap())
                     .unwrap();
                 assert_eq!(final_query.flight_state, terminal.flight_state);
-                assert_eq!(final_query.actuator_state, terminal.actuator_state);
+                assert_eq!(final_query.actuators, terminal.controls.actuators());
                 assert_eq!(final_query.telemetry, terminal.telemetry);
                 assert_eq!(restored.samples(), before_query);
             }

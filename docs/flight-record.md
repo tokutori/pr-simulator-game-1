@@ -74,8 +74,10 @@ BPG-042のcore制御契約は`FlightRecordControls`で旧三軸と二系統尾�
 二系統inputは正規化nose-up/right intent、body q/r target、身体Hold/Set指令、解決済身体目標、
 coreで一度評価したmanual/FBW/mixed incidenceを区別する。記録層でFBWや身体mappingを再計算しない。
 正の接触fractionはtick reportの保持incidenceを保存し、fraction=0は新しいinput/sampleを追加しない。
-この型の追加段階では既存sample/query、schema v1–5、WASM ABI、公開既定モデルを変更しない。
-後続のschema接続で保存済三軸snapshot閲覧と新hybrid再計算の非互換を明示する。
+`FlightRecordSample.controls`とplaybackの`actuators`は同じ判別型を使い、既存の時刻query・summaryを共用する。
+`begin_tail`と`append_tail_report`は同じ予約済bufferへ記録し、record内の制御方式混在を拒否する。
+schema v1–5と旧WASM packed layoutはlegacy値を維持し、二系統値を受けると型付き非互換を返す。
+後続のv6 codecと公開WASM更新で二系統保存を接続する。公開既定モデルは最終統合まで維持する。
 
 f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
 

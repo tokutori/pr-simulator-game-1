@@ -99,13 +99,11 @@ pub struct FlightRecordSample {
     pub fraction: f64,
     /// Aircraft-datum and internal pilot-motion state.
     pub flight_state: FlightState,
-    /// Physical actuator deflections held in the interval ending at this sample.
-    /// The initial `(0, 0)` sample retains the configured initial deflections.
-    pub actuator_state: crate::ActuatorState,
+    /// Paired physical actuator and transition input in one semantic control layout.
+    /// The initial `(0, 0)` sample retains configured physical values without an input.
+    pub controls: FlightRecordControls,
     /// Composite-center ambient wind in NED axes.
     pub wind_at_cg_ned_mps: NedVector,
-    /// Input that advanced the preceding sample to this sample, absent at tick zero.
-    pub input_from_previous: Option<FlightRecordInput>,
     /// Derived telemetry retained for presentation and analysis.
     pub telemetry: FlightTelemetry,
 }
@@ -147,7 +145,7 @@ pub struct FlightRecordPlaybackSample {
     pub flight_state: FlightState,
     /// Physical actuator state, held from the interval's ending sample.
     /// An exact recorded time retains that recorded sample's state.
-    pub actuator_state: crate::ActuatorState,
+    pub actuators: FlightRecordActuators,
     /// Interpolated wind and telemetry values.
     pub telemetry: FlightTelemetry,
 }
@@ -209,6 +207,8 @@ pub enum FlightRecordError {
     FinalizationMismatch,
     /// Imported record samples violate the core record invariants.
     InvalidArchive,
+    /// A sample uses a different semantic control layout from the initial sample.
+    IncompatibleControlLayout,
 }
 
 /// Bounded flight samples with capacity reserved before simulation begins.
@@ -258,7 +258,7 @@ impl FlightRecord {
             || samples.len() > capacity
             || samples[0].tick_index != 0
             || samples[0].fraction != 0.0
-            || samples[0].input_from_previous.is_some()
+            || samples[0].controls.has_input()
         {
             return Err(FlightRecordError::InvalidArchive);
         }
@@ -268,10 +268,12 @@ impl FlightRecord {
                 || !sample.fraction.is_finite()
                 || !(0.0..=1.0).contains(&sample.fraction)
                 || previous_time.is_some_and(|previous| sample_time(sample) <= previous)
-                || (index > 0 && sample.input_from_previous.is_none())
+                || sample.controls.kind() != samples[0].controls.kind()
+                || (index > 0 && !sample.controls.has_input())
                 || sample
-                    .input_from_previous
-                    .is_some_and(|input| !input.pilot_position_target_m.is_finite())
+                    .controls
+                    .pilot_position_target_m()
+                    .is_some_and(|target| !target.is_finite())
                 || sample.wind_at_cg_ned_mps != sample.telemetry.wind_velocity_ned_mps
                 || validate_telemetry(sample.telemetry).is_err()
             {
@@ -350,6 +352,9 @@ impl FlightRecord {
             return Err(FlightRecordError::AlreadyFinalized);
         }
         let previous = self.latest().ok_or(FlightRecordError::NotStarted)?;
+        if previous.controls.kind() != FlightRecordControlKind::LegacyThreeAxis {
+            return Err(FlightRecordError::IncompatibleControlLayout);
+        }
         let expected = previous
             .tick_index
             .checked_add(1)
@@ -392,6 +397,9 @@ impl FlightRecord {
         }
         validate_telemetry(telemetry)?;
         let previous = self.latest().ok_or(FlightRecordError::NotStarted)?;
+        if previous.controls.kind() != FlightRecordControlKind::LegacyThreeAxis {
+            return Err(FlightRecordError::IncompatibleControlLayout);
+        }
         if previous.tick_index != interval_start_tick
             || previous.fraction != 0.0
             || interval_start_tick >= header.maximum_flight_ticks
@@ -409,6 +417,84 @@ impl FlightRecord {
             telemetry,
             Some(input),
         ))
+    }
+
+    /// Begins the same bounded record with two tail incidences and no transition input.
+    pub fn begin_tail(
+        &mut self,
+        initial: crate::TailFlightTickState,
+        telemetry: FlightTelemetry,
+    ) -> Result<(), FlightRecordError> {
+        if !self.samples.is_empty() || self.finalization.is_some() {
+            return Err(FlightRecordError::AlreadyStarted);
+        }
+        if initial.tick_index() != 0 {
+            return Err(FlightRecordError::InvalidHeader);
+        }
+        validate_telemetry(telemetry)?;
+        self.push(FlightRecordSample {
+            tick_index: 0,
+            fraction: 0.0,
+            flight_state: initial.flight_state(),
+            controls: FlightRecordControls::initial_tail(initial),
+            wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
+            telemetry,
+        })
+    }
+
+    /// Appends the committed tail tick/contact report without reevaluating any control.
+    /// Fraction-zero contact retains the existing sample and adds no transition input.
+    pub fn append_tail_report(
+        &mut self,
+        report: crate::TailFlightTickReport,
+        telemetry: FlightTelemetry,
+    ) -> Result<(), FlightRecordError> {
+        if self.finalization.is_some() {
+            return Err(FlightRecordError::AlreadyFinalized);
+        }
+        let previous = self.latest().ok_or(FlightRecordError::NotStarted)?;
+        if previous.controls.kind() != FlightRecordControlKind::TailIncidence {
+            return Err(FlightRecordError::IncompatibleControlLayout);
+        }
+        if previous.fraction != 0.0 {
+            return Err(FlightRecordError::InvalidTime);
+        }
+        let (tick_index, fraction, flight_state) = match report.outcome() {
+            crate::TailFlightTickOutcome::Advanced(state) => {
+                if previous.tick_index.checked_add(1) != Some(state.tick_index())
+                    || state.tick_index() > self.header.maximum_flight_ticks
+                {
+                    return Err(FlightRecordError::InvalidTime);
+                }
+                (state.tick_index(), 0.0, state.flight_state())
+            }
+            crate::TailFlightTickOutcome::WaterContact(sample) => {
+                if sample.interval_start_tick() != previous.tick_index
+                    || sample.interval_start_tick() >= self.header.maximum_flight_ticks
+                {
+                    return Err(FlightRecordError::InvalidTime);
+                }
+                (
+                    sample.interval_start_tick(),
+                    sample.fraction(),
+                    sample.flight_state(),
+                )
+            }
+        };
+        validate_telemetry(telemetry)?;
+        let FlightRecordControlCapture::Applied(controls) =
+            FlightRecordControls::from_tail_report(report)
+        else {
+            return Ok(());
+        };
+        self.push(FlightRecordSample {
+            tick_index,
+            fraction,
+            flight_state,
+            controls,
+            wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
+            telemetry,
+        })
     }
 
     /// Finalizes the current record exactly once at its latest stored time.
@@ -694,7 +780,7 @@ fn playback_sample(
         tick_index,
         fraction,
         flight_state: sample.flight_state,
-        actuator_state: sample.actuator_state,
+        actuators: sample.controls.actuators(),
         telemetry: sample.telemetry,
     })
 }
@@ -753,12 +839,12 @@ fn interpolate_samples(
     let telemetry = interpolate_telemetry(start.telemetry, end.telemetry, fraction)?;
     // This function is called only for strict interior times. The ending
     // sample stores the updated actuator held throughout that interval.
-    let actuator_state = end.actuator_state;
+    let actuators = end.controls.actuators();
     Ok(FlightRecordPlaybackSample {
         tick_index,
         fraction: tick_fraction,
         flight_state,
-        actuator_state,
+        actuators,
         telemetry,
     })
 }
@@ -859,9 +945,11 @@ fn record_sample(
         tick_index,
         fraction,
         flight_state,
-        actuator_state,
+        controls: FlightRecordControls::LegacyThreeAxis {
+            actuator_state,
+            input_from_previous,
+        },
         wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
-        input_from_previous,
         telemetry,
     }
 }
@@ -1353,8 +1441,14 @@ mod tests {
         assert!((midpoint_position[2] - (initial_position[2] - 8.0) * 0.5).abs() < 1.0e-12);
         assert_eq!(midpoint.telemetry.altitude_m, 11.0);
         assert!((midpoint.telemetry.heading_rad.abs() - core::f64::consts::PI).abs() < 0.05);
-        assert_eq!(midpoint.actuator_state, end_actuator);
-        assert_eq!(seconds_midpoint.actuator_state, end_actuator);
+        assert_eq!(
+            midpoint.actuators.legacy_three_axis().unwrap(),
+            end_actuator
+        );
+        assert_eq!(
+            seconds_midpoint.actuators.legacy_three_axis().unwrap(),
+            end_actuator
+        );
 
         let summary = record.summary().unwrap();
         assert_eq!(summary.sample_count, 2);
@@ -1425,26 +1519,59 @@ mod tests {
                     .unwrap();
                     for record in [&original, &restored] {
                         assert_eq!(
-                            record.sample_at_time(0, 0.0).unwrap().actuator_state,
+                            record
+                                .sample_at_time(0, 0.0)
+                                .unwrap()
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             initial.actuator_state(),
                         );
                         assert_eq!(
-                            record.sample_at_seconds(0.0).unwrap().actuator_state,
+                            record
+                                .sample_at_seconds(0.0)
+                                .unwrap()
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             initial.actuator_state(),
                         );
                         for fraction in [f64::from_bits(1), 0.5, 1.0_f64.next_down()] {
                             assert_eq!(
-                                record.sample_at_time(0, fraction).unwrap().actuator_state,
+                                record
+                                    .sample_at_time(0, fraction)
+                                    .unwrap()
+                                    .actuators
+                                    .legacy_three_axis()
+                                    .unwrap(),
                                 first,
                             );
                         }
                         assert_eq!(
-                            record.sample_at_seconds(0.005).unwrap().actuator_state,
+                            record
+                                .sample_at_seconds(0.005)
+                                .unwrap()
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             first
                         );
-                        assert_eq!(record.sample_at_time(1, 0.0).unwrap().actuator_state, first);
                         assert_eq!(
-                            record.sample_at_seconds(0.01).unwrap().actuator_state,
+                            record
+                                .sample_at_time(1, 0.0)
+                                .unwrap()
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
+                            first
+                        );
+                        assert_eq!(
+                            record
+                                .sample_at_seconds(0.01)
+                                .unwrap()
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             first
                         );
                         let expected_terminal = if terminal_fraction == 0.0 {
@@ -1452,7 +1579,12 @@ mod tests {
                         } else {
                             for fraction in [f64::from_bits(1), terminal_fraction * 0.5] {
                                 assert_eq!(
-                                    record.sample_at_time(1, fraction).unwrap().actuator_state,
+                                    record
+                                        .sample_at_time(1, fraction)
+                                        .unwrap()
+                                        .actuators
+                                        .legacy_three_axis()
+                                        .unwrap(),
                                     terminal,
                                 );
                             }
@@ -1460,7 +1592,9 @@ mod tests {
                                 record
                                     .sample_at_seconds(0.01 + terminal_fraction * 0.005)
                                     .unwrap()
-                                    .actuator_state,
+                                    .actuators
+                                    .legacy_three_axis()
+                                    .unwrap(),
                                 terminal,
                             );
                             terminal
@@ -1474,19 +1608,30 @@ mod tests {
                             record
                                 .sample_at_time(terminal_time.0, terminal_time.1)
                                 .unwrap()
-                                .actuator_state,
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             expected_terminal,
                         );
                         assert_eq!(
                             record
                                 .sample_at_seconds(record.duration_seconds().unwrap())
                                 .unwrap()
-                                .actuator_state,
+                                .actuators
+                                .legacy_three_axis()
+                                .unwrap(),
                             expected_terminal,
                         );
                         assert_eq!(record.samples(), archived_samples);
                         assert_eq!(
-                            record.samples().last().unwrap().actuator_state,
+                            record
+                                .samples()
+                                .last()
+                                .unwrap()
+                                .controls
+                                .actuators()
+                                .legacy_three_axis()
+                                .unwrap(),
                             expected_terminal
                         );
                     }
@@ -1809,7 +1954,10 @@ mod tests {
             let queried = record.sample_at_seconds(duration).unwrap();
             assert_eq!(queried.flight_state, terminal.flight_state);
             assert_eq!(queried.telemetry, terminal.telemetry);
-            assert_eq!(queried.actuator_state, terminal.actuator_state);
+            assert_eq!(
+                queried.actuators.legacy_three_axis().unwrap(),
+                terminal.controls.actuators().legacy_three_axis().unwrap()
+            );
             assert_eq!(
                 (queried.tick_index, queried.fraction),
                 if fraction == 1.0 {
