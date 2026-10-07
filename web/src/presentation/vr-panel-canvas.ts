@@ -91,6 +91,10 @@ export function drawVrFlightInstruments(context: PanelDrawingContext, model: Fli
   context.fillText(model.location, 52, 578, 920);
   context.setFont("400 14px system-ui, sans-serif");
   context.fillText(model.mapAttribution, 52, 603, 920);
+  context.setFont("500 17px system-ui, sans-serif");
+  model.supplementaryReadouts.forEach((line, index) => {
+    context.fillText(line, 52, 628 + index * 24, 920);
+  });
 }
 
 function drawInstrumentCard(

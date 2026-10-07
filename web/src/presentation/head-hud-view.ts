@@ -46,7 +46,8 @@ export function createHeadHudView(model: FlightHudModel, viewer: ViewerFrame, lo
   validateProfile(profile);
   const instruments = instrumentElements(model);
   const readouts = model.readouts.split("\n").filter((line) => !line.startsWith("PITCH ")).join("\n");
-  const text = [readouts, model.telemetry].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
+  const basicText = [readouts, model.telemetry].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
+  const text = [basicText, ...model.supplementaryReadouts].filter((line) => line !== "").join("\n");
   const textElements: HeadHudElement[] = [];
   if (model.warning !== null) textElements.push(Object.freeze({
     kind: "text", id: "head-warning", label: "WARNING", bounds: unitRect,
@@ -186,6 +187,9 @@ function instrumentElements(model: FlightHudModel): readonly HeadHudElement[] {
   if (model.pilotPositionRatio !== null && model.pilotPosition !== null) elements.push(Object.freeze({
     kind: "pilot-position", id: "head-pilot", label: "PILOT CG", bounds: unitRect,
     ratio: model.pilotPositionRatio, value: model.pilotPosition
+  }));
+  if (model.pilotPositionRatio === null && model.pilotPosition !== null) elements.push(Object.freeze({
+    kind: "text", id: "head-pilot", label: "PILOT POSITION", bounds: unitRect, value: model.pilotPosition, tone: "normal"
   }));
   if (model.wind !== null) elements.push(model.windDirectionDegrees === null
     ? Object.freeze({ kind: "text", id: "head-wind", label: "WIND", bounds: unitRect, value: model.wind, tone: "normal" })

@@ -1,6 +1,7 @@
 import type { FlightHudPort } from "../game/flight-controller.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
-import { createFlightHudModel } from "./flight-hud-model.js";
+import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
+import { createFlightDisplayHudModel, createFlightHudModel } from "./flight-hud-model.js";
 import type { FlightHudModel, InformationLevelCode } from "./flight-hud-model.js";
 import type { HudProfileUiState } from "../app/app-state.js";
 
@@ -29,6 +30,7 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly windNeedle: SVGGElement;
   private readonly angleIndicator: SVGPolygonElement;
   private readonly flightPathIndicator: SVGCircleElement;
+  private readonly controls: HTMLParagraphElement;
   private informationCode: InformationLevelCode = 0;
   private informationProfile: HudProfileUiState = fullProfile;
 
@@ -169,15 +171,14 @@ export class FlightHudAdapter implements FlightHudPort {
     angleGauge.append(this.angleIndicator);
     this.readouts = documentRef.createElement("output");
     this.readouts.className = "flight-hud-readouts";
-    const controls = documentRef.createElement("p");
-    controls.className = "flight-hud-controls";
-    controls.textContent = "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
+    this.controls = documentRef.createElement("p");
+    this.controls.className = "flight-hud-controls";
     const attributions = documentRef.createElement("div");
     attributions.className = "flight-hud-attributions";
     attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice);
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
-    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, controls);
+    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, this.controls);
     this.setVisible(false);
   }
 
@@ -190,6 +191,15 @@ export class FlightHudAdapter implements FlightHudPort {
   }
 
   render(snapshot: FlightSnapshot, model: FlightHudModel = createFlightHudModel(snapshot, this.informationCode, this.informationProfile)): void {
+    this.applyModel(model);
+    this.onRender(snapshot);
+  }
+
+  renderDisplaySnapshot(snapshot: FlightDisplaySnapshot, model: FlightHudModel = createFlightDisplayHudModel(snapshot, this.informationCode, this.informationProfile)): void {
+    this.applyModel(model);
+  }
+
+  private applyModel(model: FlightHudModel): void {
     this.status.textContent = model.status;
     this.warning.textContent = model.warning ?? "";
     this.warning.hidden = model.warning === null;
@@ -198,7 +208,8 @@ export class FlightHudAdapter implements FlightHudPort {
     } else {
       this.adi.classList.remove("is-hidden");
     }
-    this.readouts.textContent = model.readouts;
+    this.readouts.textContent = [model.readouts, ...model.supplementaryReadouts].filter((line) => line !== "").join("\n");
+    this.controls.textContent = model.controlsDescription;
     this.flightPathIndicator.setAttribute("visibility", model.flightPathAngleDegrees === null ? "hidden" : "visible");
     if (model.flightPathAngleDegrees !== null) {
       const y = 90 - Math.max(-30, Math.min(30, model.flightPathAngleDegrees)) * 2.2;
@@ -210,6 +221,7 @@ export class FlightHudAdapter implements FlightHudPort {
     if (model.headingDegrees !== null) renderHeadingScale(this.headingScale, model.headingDegrees);
     this.pilotPositionInstrument.hidden = model.pilotPosition === null;
     this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
+    this.pilotPositionIndicator.setAttribute("visibility", model.pilotPositionRatio === null ? "hidden" : "visible");
     if (model.pilotPositionRatio !== null) {
       const x = 20 + ((model.pilotPositionRatio + 1) / 2) * 160;
       this.pilotPositionIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
@@ -220,6 +232,7 @@ export class FlightHudAdapter implements FlightHudPort {
     if (model.windDirectionDegrees !== null) this.windNeedle.setAttribute("transform", `rotate(${String(model.windDirectionDegrees)} 36 36)`);
     this.angleInstrument.hidden = model.angleOfAttack === null;
     this.angleReadout.textContent = model.angleOfAttack ?? "";
+    this.angleIndicator.setAttribute("visibility", model.angleOfAttackDegrees === null ? "hidden" : "visible");
     if (model.angleOfAttackDegrees !== null) {
       const ratio = (Math.max(-10, Math.min(20, model.angleOfAttackDegrees)) + 10) / 30;
       const x = 10 + ratio * 180;
@@ -232,7 +245,6 @@ export class FlightHudAdapter implements FlightHudPort {
       const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
       this.horizon.setAttribute("transform", `rotate(${String(-model.attitude.rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);
     }
-    this.onRender(snapshot);
   }
 
   fail(message: string): void {
