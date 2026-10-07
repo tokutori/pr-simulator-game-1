@@ -1,8 +1,8 @@
 use birdman_game_core::{
-    ControlMode, CourseAxis, FlightState, FlightTelemetry, GameSession, GameSessionError,
-    SessionPhase, SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
-    TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailRateTarget,
+    ControlMode, CourseAxis, DynamicsError, FlightState, FlightTelemetry, GameSession,
+    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
+    TailControlError, TailControlProfile, TailFlightTickInput, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
@@ -115,6 +115,7 @@ struct StateDocument {
     pilot_position_m: f64,
     pilot_velocity_mps: f64,
     pilot_position_target_m: f64,
+    pilot_position_target_normalized: f64,
     physical_incidence: TailIncidenceDocument,
 }
 
@@ -124,9 +125,13 @@ impl StateDocument {
         fraction: f64,
         state: FlightState,
         incidence: birdman_game_core::TailIncidence,
-        pilot_target_m: f64,
-    ) -> Self {
-        Self {
+        pilot_target: PilotPositionTarget,
+        pilot_mapping: TailPilotPositionMapping,
+    ) -> Result<Self, BoundaryError> {
+        let normalized = pilot_mapping
+            .normalized_target(pilot_target)
+            .map_err(BoundaryError::PilotPosition)?;
+        Ok(Self {
             tick,
             fraction,
             flight_time_s: (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
@@ -136,21 +141,26 @@ impl StateDocument {
             angular_rate_body_rad_s: state.angular_velocity_body().components(),
             pilot_position_m: state.pilot_position_m(),
             pilot_velocity_mps: state.pilot_velocity_mps(),
-            pilot_position_target_m: pilot_target_m,
+            pilot_position_target_m: pilot_target.position_m(),
+            pilot_position_target_normalized: normalized.value(),
             physical_incidence: TailIncidenceDocument {
                 horizontal_tail_rad: incidence.elevator_rad(),
                 vertical_tail_rad: incidence.rudder_rad(),
             },
-        }
+        })
     }
 
-    fn from_tick(state: birdman_game_core::TailFlightTickState) -> Self {
+    fn from_tick(
+        state: birdman_game_core::TailFlightTickState,
+        mapping: TailPilotPositionMapping,
+    ) -> Result<Self, BoundaryError> {
         Self::new(
             state.tick_index(),
             0.0,
             state.flight_state(),
             state.incidence(),
-            state.pilot_position_target().position_m(),
+            state.pilot_position_target(),
+            mapping,
         )
     }
 }
@@ -195,6 +205,7 @@ enum BoundaryError {
     Preparation(HybridSessionPreparationError),
     Session(GameSessionError),
     Control(TailControlError),
+    PilotPosition(DynamicsError),
     Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
@@ -206,6 +217,9 @@ impl BoundaryError {
             Self::Preparation(error) => format!("hybrid preparation failed: {error:?}"),
             Self::Session(error) => format!("hybrid session operation failed: {error:?}"),
             Self::Control(error) => format!("hybrid input failed: {error:?}"),
+            Self::PilotPosition(error) => {
+                format!("hybrid pilot target projection failed: {error:?}")
+            }
             Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
@@ -414,19 +428,22 @@ impl HybridGameSessionBridge {
         let frame = match snapshot {
             SessionSnapshot::TailFlightRunning { state, .. }
             | SessionSnapshot::TailFlightPaused { state, .. } => FrameDocument::Flight {
-                state: StateDocument::from_tick(state),
+                state: StateDocument::from_tick(state, self.required_pilot_mapping()?)?,
                 telemetry: self.required_telemetry()?,
             },
             SessionSnapshot::Result(result) => {
                 let state = match result.state {
-                    SessionTerminalState::TailTick(state) => StateDocument::from_tick(state),
+                    SessionTerminalState::TailTick(state) => {
+                        StateDocument::from_tick(state, self.required_pilot_mapping()?)?
+                    }
                     SessionTerminalState::TailWaterContact(sample) => StateDocument::new(
                         sample.interval_start_tick(),
                         sample.fraction(),
                         sample.flight_state(),
                         sample.incidence(),
-                        sample.pilot_position_target().position_m(),
-                    ),
+                        sample.pilot_position_target(),
+                        self.required_pilot_mapping()?,
+                    )?,
                     SessionTerminalState::Tick(_) | SessionTerminalState::WaterContact(_) => {
                         return Err(BoundaryError::IncompatibleControlLayout);
                     }
@@ -472,6 +489,14 @@ impl HybridGameSessionBridge {
             frame,
         })
         .map_err(BoundaryError::Json)
+    }
+
+    fn required_pilot_mapping(&self) -> Result<TailPilotPositionMapping, BoundaryError> {
+        self.session
+            .tail_pilot_position_mapping()
+            .ok_or(BoundaryError::Session(
+                GameSessionError::InvalidControlLayout,
+            ))
     }
 
     fn required_telemetry(&self) -> Result<TelemetryDocument, BoundaryError> {

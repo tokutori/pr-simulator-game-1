@@ -240,3 +240,58 @@ fn pilot_position_mapping_rejects_invalid_intent_and_trim_without_changing_the_t
     );
     assert_eq!(previous, mapping.trim_target());
 }
+
+#[test]
+fn pilot_position_inverse_preserves_trim_endpoints_and_round_trips_held_targets() {
+    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
+        .unwrap()
+        .aircraft();
+    for trim in [-0.4, 0.12, 0.4] {
+        let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
+        for normalized in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            let held = mapping
+                .resolve(
+                    &aircraft,
+                    mapping.trim_target(),
+                    TailPilotPositionCommand::Set(
+                        TailPilotPositionIntent::try_new(normalized).unwrap(),
+                    ),
+                )
+                .unwrap();
+            let recovered = mapping.normalized_target(held).unwrap();
+            if held == mapping.trim_target() {
+                assert_eq!(recovered.value(), 0.0);
+            } else {
+                assert!((recovered.value() - normalized).abs() < 1.0e-15);
+            }
+            let reapplied = mapping
+                .resolve(&aircraft, held, TailPilotPositionCommand::Set(recovered))
+                .unwrap();
+            assert!((reapplied.position_m() - held.position_m()).abs() < 1.0e-16);
+        }
+    }
+}
+
+#[test]
+fn pilot_position_inverse_rejects_targets_outside_software_travel() {
+    let aircraft = crate::AircraftModel::try_new(
+        30.0,
+        crate::InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+        70.0,
+        0.0,
+        -0.6,
+        0.6,
+        0.5,
+        1.0,
+    )
+    .unwrap();
+    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
+    for position in [-0.5, -0.400_000_000_000_000_1, 0.400_000_000_000_000_1, 0.5] {
+        let target = crate::PilotPositionTarget::try_new(&aircraft, position).unwrap();
+        assert_eq!(
+            mapping.normalized_target(target),
+            Err(crate::DynamicsError::PilotOutOfRange)
+        );
+        assert_eq!(target.position_m(), position);
+    }
+}

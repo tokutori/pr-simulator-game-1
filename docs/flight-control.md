@@ -110,6 +110,10 @@ Setupの候補は別environment projectionの`selected`で示し、準備失敗�
 record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。旧三軸feedback profileを生成しない。
 `control_profile_json()`はsealed controller ID/versionとpitch/yawのrate上限・feedback gain・slewを供給する。
 device adapterは型付き上限へnormalized demandを写像し、TSに物理定数を定義しない。explicit q/r入力は同一ABIを維持する。
+live stateの`pilot_position_target_normalized`は、同じsealed mappingで現在のheld physical targetを逆写像した値である。
+trimを0、両端を±1とし、trimと端点が一致する場合は同じphysical targetを0へ正規化する。
+初期化・Resume・入力機器の再取得はこの値を参照し、現在のphysical positionや初期positionから目標を推定しない。
+`Hold`は直前目標を保持する。旧保存queryへnormalized targetを追加せず、記録値とlive入力状態を区別する。
 Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
 queryのschema 2は保存physics/telemetryと`controls.layout`による`legacy_three_axis`/`tail_incidence`の排他値を返す。
 Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。

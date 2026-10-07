@@ -39,6 +39,7 @@ fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default()
     assert_eq!(title["control_layout"], "tail_incidence");
     assert_eq!(title["frame"]["kind"], "menu");
     assert_eq!(title["scenario"], Value::Null);
+    assert!(bridge.session.tail_pilot_position_mapping().is_none());
 
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
@@ -95,6 +96,10 @@ fn versioned_input_preserves_signs_and_independent_hold_set_position() {
         -0.01
     );
     assert_eq!(next["frame"]["state"]["pilot_position_target_m"], 0.4);
+    assert_eq!(
+        next["frame"]["state"]["pilot_position_target_normalized"],
+        1.0
+    );
     let held: Value = serde_json::from_str(
         &bridge
             .advance_internal(&input(json!({"kind":"hold"})))
@@ -102,6 +107,10 @@ fn versioned_input_preserves_signs_and_independent_hold_set_position() {
     )
     .unwrap();
     assert_eq!(held["frame"]["state"]["pilot_position_target_m"], 0.4);
+    assert_eq!(
+        held["frame"]["state"]["pilot_position_target_normalized"],
+        1.0
+    );
     let previous_input = bridge.session.flight_record().unwrap().samples()[1].controls;
     let birdman_game_core::FlightRecordControls::TailIncidence {
         input_from_previous: Some(recorded),
@@ -156,11 +165,76 @@ fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
         0.375,
         initial.flight_state(),
         initial.incidence(),
-        initial.pilot_position_target().position_m(),
-    );
+        initial.pilot_position_target(),
+        bridge.required_pilot_mapping().unwrap(),
+    )
+    .unwrap();
     assert_eq!(projected.tick, 8);
     assert_eq!(projected.fraction, 0.375);
     assert_eq!(projected.flight_time_s, 0.08375);
+    assert_eq!(projected.pilot_position_target_normalized, 0.0);
+}
+
+#[test]
+fn held_position_projection_survives_hold_pause_result_and_resets_to_sealed_trim() {
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        let mut bridge = launch(mode, 3);
+        let initial = snapshot(&bridge);
+        assert_eq!(
+            initial["frame"]["state"]["pilot_position_target_normalized"],
+            0.0
+        );
+        let updated: Value = serde_json::from_str(
+            &bridge
+                .advance_internal(&input(json!({"kind":"set", "normalized":0.5})))
+                .unwrap(),
+        )
+        .unwrap();
+        let held = &updated["frame"]["state"];
+        let normalized = held["pilot_position_target_normalized"].as_f64().unwrap();
+        assert!((normalized - 0.5).abs() < 1.0e-15);
+        assert_ne!(held["pilot_position_target_m"], held["pilot_position_m"]);
+        bridge.pause(0).unwrap();
+        assert_eq!(snapshot(&bridge)["frame"]["state"], *held);
+        bridge.resume().unwrap();
+        assert_eq!(snapshot(&bridge)["frame"]["state"], *held);
+        let hold = input(json!({"kind":"hold"}));
+        bridge.advance_internal(&hold).unwrap();
+        bridge.advance_internal(&hold).unwrap();
+        let terminal = snapshot(&bridge);
+        assert_eq!(terminal["frame"]["kind"], "result");
+        assert_eq!(
+            terminal["frame"]["state"]["pilot_position_target_normalized"],
+            normalized
+        );
+        assert_eq!(
+            terminal["frame"]["state"]["pilot_position_target_m"],
+            held["pilot_position_target_m"]
+        );
+        let samples: Value =
+            serde_json::from_str(&bridge.flight_analysis_samples_json().unwrap()).unwrap();
+        assert!(
+            samples["samples"][0]["state"]
+                .get("pilot_position_target_normalized")
+                .is_none()
+        );
+        bridge.retry().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        assert_eq!(
+            snapshot(&bridge)["frame"]["state"]["pilot_position_target_normalized"],
+            0.0
+        );
+        assert_eq!(
+            snapshot(&bridge)["frame"]["state"]["pilot_position_target_m"],
+            initial["frame"]["state"]["pilot_position_target_m"]
+        );
+    }
 }
 
 #[test]

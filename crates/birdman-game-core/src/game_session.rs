@@ -13,6 +13,7 @@ use crate::session_contract::{
     SessionEndReason, SessionScenarioIdentity, SessionSimulationFailure,
 };
 use crate::simulation::{FlightFeedbackInput, FlightTickError, FlightTickOutcome, FlightTickState};
+use crate::tail_control::TailPilotPositionMapping;
 use crate::tail_scenario::TailFlightScenario;
 use crate::tail_simulation::{
     TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState,
@@ -651,6 +652,14 @@ impl<'a> GameSession<'a> {
             .as_mut()
             .ok_or(GameSessionError::InvalidTransition)?
             .set_state(state)
+    }
+
+    /// Returns the sealed tail-position mapping without deriving it from the moving pilot.
+    pub fn tail_pilot_position_mapping(&self) -> Option<TailPilotPositionMapping> {
+        match &self.configuration.as_ref()?.engine {
+            SessionEngine::TailIncidence { scenario, .. } => Some(scenario.pilot_mapping()),
+            SessionEngine::LegacyThreeAxis { .. } => None,
+        }
     }
 
     /// Returns the sealed configuration identity while its briefing, flight, or result is retained.

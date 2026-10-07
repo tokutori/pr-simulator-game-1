@@ -57,6 +57,26 @@ impl TailPilotPositionMapping {
         self.trim_target
     }
 
+    /// Inverts the sealed mapping for a held target, choosing zero at neutral trim.
+    pub fn normalized_target(
+        self,
+        target: PilotPositionTarget,
+    ) -> Result<TailPilotPositionIntent, DynamicsError> {
+        let position = target.position_m();
+        if position.abs() > POSITION_LIMIT_METERS {
+            return Err(DynamicsError::PilotOutOfRange);
+        }
+        let trim = self.trim_target.position_m();
+        let normalized = if position == trim {
+            0.0
+        } else if position < trim {
+            (position - trim) / (trim + POSITION_LIMIT_METERS)
+        } else {
+            (position - trim) / (POSITION_LIMIT_METERS - trim)
+        };
+        TailPilotPositionIntent::try_new(normalized).map_err(|_| DynamicsError::PilotOutOfRange)
+    }
+
     /// Resolves Hold or bounded piecewise-linear input, validating the physical target.
     pub fn resolve(
         self,
