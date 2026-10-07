@@ -153,7 +153,7 @@ reset・snapshot同期・描画の失敗時は入力とclockを停止し、再�
 `LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
 facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
 非同期queryは観測開始時のopaque owner/generation tokenを保持し、Retry・設定変更・archive開閉・cursor変更・free後の結果を拒否する。
-scenario/seedが同一でもresource世代が異なる結果は受理しない。新Analysis集計入口の接続は別の目的単位で扱う。
+scenario/seedが同一でもresource世代が異なる結果は受理しない。
 Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
 Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
 enter/leave・再生操作はresource世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
@@ -165,6 +165,11 @@ enter/leave・再生操作はresource世代を更新し、同demoへ再入した
 同sessionのRust terminal projectionとphysics frequencyを使用し、layout・stamp・初期/終端・時系列・clockの整合を検査する。
 queryは保存snapshotとRust-owned Replay clockを参照し、再simulation・物理/score/controllerの再評価を行わない。
 queryにrecord identityが含まれないため、非同期の古い応答は呼出し側のsession generation/request IDで拒否する。
+`named-record-analysis`はRust集計のSummaryと固定5×5 Wind queryをfacadeへ接続する。
+Result/Replay/Attractのphase・保存identity・元finalizationを照合し、最大迎角とscoreの不足理由をavailability tagとして保持する。
+風は同recordの登録providerだけを参照し、全25点のfinite値・北row/東column順序・request echo・sourceを検査する。
+未知環境と登録領域外は個別の`unavailable`を保持し、欠損風速や集計値を数値で補填しない。
+Web側で物理・集計・scoreを再評価せず、確定Summaryと保存cursorを分離する。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。

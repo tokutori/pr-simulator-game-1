@@ -56,6 +56,9 @@ export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay" }
 export type NamedAttractContext = PlaybackEnvelope & Readonly<{ phase: "attract"; controlLayout: "tail_incidence";
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 export type NamedPlaybackContext = NamedReplayContext | NamedAttractContext;
+export type NamedResultContext = PlaybackEnvelope & Readonly<{ phase: "result"; controlLayout: "tail_incidence";
+  controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
+export type NamedRecordContext = NamedResultContext | NamedPlaybackContext;
 export interface NamedPlaybackClock {
   readonly timeSeconds: number;
   readonly rateCode: 0 | 1 | 2;
@@ -81,16 +84,22 @@ export function parseNamedAttractContext(json: string): NamedAttractContext {
 }
 
 export function parseNamedPlaybackContext(json: string): NamedPlaybackContext {
-  const document = boundaryObject(boundedJson(json, 16_384), ["schema_version", "phase", "scenario", "control_layout", "control_identity", "difficulty", "finalization"]);
+  const context = decodeNamedRecordContext(boundedJson(json, 16_384));
+  if (context.phase === "result") throw new RangeError("Named playback requires Replay or Attract");
+  return context;
+}
+
+export function decodeNamedRecordContext(value: unknown): NamedRecordContext {
+  const document = boundaryObject(value, ["schema_version", "phase", "scenario", "control_layout", "control_identity", "difficulty", "finalization"]);
   if (document.schema_version !== 2) throw new RangeError("Unsupported named playback context schema");
-  const phase = boundaryTag(document.phase, ["replay", "attract"]);
+  const phase = boundaryTag(document.phase, ["result", "replay", "attract"]);
   const layout = boundaryTag(document.control_layout, ["legacy_three_axis", "tail_incidence"]);
   const finalization = boundaryObject(document.finalization, ["layout", "value"]);
   if (finalization.layout !== layout) throw new RangeError("Playback finalization and physical control layout disagree");
   const envelope: PlaybackEnvelope = { schemaVersion: 2, scenario: decodeTailScenarioIdentity(document.scenario),
     difficulty: decodeRecordedDifficulty(document.difficulty) };
   if (layout === "legacy_three_axis") {
-    if (phase === "attract") throw new RangeError("Named Attract requires the Rust two-tail demo layout");
+    if (phase !== "replay") throw new RangeError("Legacy named records require the archived Replay phase");
     if (document.control_identity !== null) throw new RangeError("Legacy Replay cannot declare a two-tail controller identity");
     return Object.freeze({ ...envelope, phase, controlLayout: layout, controlIdentity: null, finalization: decodeLegacyFinalization(finalization.value) });
   }

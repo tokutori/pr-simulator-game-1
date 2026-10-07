@@ -10,6 +10,8 @@ import { parseFlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
 import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
+import { parseNamedRecordSummary, parseNamedWindGrid, sameNamedRecordContext } from "../game/named-record-analysis.js";
+import type { NamedRecordSummary, NamedWindGrid, NamedWindGridRequest } from "../game/named-record-analysis.js";
 import type { TailSessionPort } from "../game/tail-flight-controller.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
 import { parseTailSessionSnapshot } from "../game/tail-session-codec.js";
@@ -55,6 +57,9 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     set_playback_rate_code(code: number): ArrayLike<number>;
     set_playback_playing(playing: boolean): ArrayLike<number>;
     advance_playback(elapsedSeconds: number): ArrayLike<number>;
+    flight_record_summary_json(): string;
+    flight_wind_grid_json(northMinimumMeters: number, eastMinimumMeters: number, altitudeMeters: number, spacingMeters: number): string;
+    is_archived_replay(): boolean;
   };
 type CompletedOperation = Readonly<{ kind: "completed" }> | Readonly<{ kind: "countdown-started" }>;
 export type LegacyAppOperationResult = CompletedOperation | Readonly<{ kind: "aborted"; terminalSnapshot: FlightSnapshot }>;
@@ -235,6 +240,36 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 
   readAnalysisSamples(): readonly NamedRecordSample[] {
     return this.observe(() => parseNamedAnalysisSamples(this.port.flight_analysis_samples_json(), this.physicsHz, this.recordContext()));
+  }
+
+  readRecordSummary(): NamedRecordSummary {
+    return this.observe(() => {
+      const summary = parseNamedRecordSummary(this.port.flight_record_summary_json(), this.physicsHz);
+      const phase = this.readLifecycle().phaseCode;
+      if (phase === 9 || phase === 10) {
+        if (!sameNamedRecordContext(summary.context, this.readPlaybackContext())) throw new RangeError("Summary belongs to another Rust playback context");
+      } else {
+        const snapshot = this.readSnapshot();
+        if (snapshot.phaseCode !== 7 || summary.context.phase !== "result"
+            || JSON.stringify(summary.context.scenario) !== JSON.stringify(snapshot.identity.scenario)
+            || JSON.stringify(summary.context.controlIdentity) !== JSON.stringify(snapshot.identity.controls)
+            || JSON.stringify(summary.context.finalization) !== JSON.stringify(snapshot.frame.finalization)) {
+          throw new RangeError("Summary belongs to another Rust Result context");
+        }
+      }
+      return summary;
+    });
+  }
+
+  queryWindGrid(request: NamedWindGridRequest): NamedWindGrid {
+    return this.observe(() => {
+      const context = this.readRecordSummary().context;
+      const archived = this.port.is_archived_replay();
+      if (typeof archived !== "boolean") throw new RangeError("Rust archive projection requires a boolean");
+      const source = context.phase === "attract" ? "attract" : archived ? "archive" : "record";
+      const json = this.port.flight_wind_grid_json(request.northMinimumMeters, request.eastMinimumMeters, request.altitudeMeters, request.spacingMeters);
+      return parseNamedWindGrid(json, context, request, source);
+    });
   }
 
   queryRecordSample(seconds: number): NamedRecordSample {
