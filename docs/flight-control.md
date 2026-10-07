@@ -58,7 +58,7 @@ software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airf
 `advance_tail_control`は既存ControlModeのauthority混合、physical saturation、slewを純粋に評価し、
 混合targetと次区間の保持incidenceを返す。pilot位置指令はこのmixerの対象外である。
 既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
-新mock機体とWASM・input・record・既定モデル切替は後続単位で実施する。
+新mockのWASM・input・record・既定モデルはBPG-042のアプリ統合で同じ二系統契約へ接続する。
 
 `TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
 `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
@@ -80,7 +80,7 @@ fraction 0のreportは未適用の新controlを保持せず、正fractionと整�
 `TailFlightScenario`はborrowed Hybrid load/wind、pilot trim、contact、courseを固定し、software profileを機体から分離する。
 telemetry式とdistance scoreは旧scenarioと共有する。`run`はTimeLimit/WaterContactで同時刻のstateとscoreを返す。
 失敗時は直前成功の二系統stateと元のcause/stageを返し、そのtickをcommitしない。
-新mock機体の公開WASM/input/record/default切替はBPG-042の後続範囲である。
+新mock機体のWASM/input/record/defaultはBPG-042で一体として接続する。
 
 GameSessionは既存lifecycleを共有し、scenarioと同型のactive stateをlegacy/tailの排他的engineへ保持する。
 hybrid tickの成功reportをFlightRecordへ渡し、記録・telemetryの成功後に整数tickを公開する。
@@ -93,14 +93,16 @@ FlightRecordのfinalizationにも同じ型付きerrorを保存し、失敗tick�
 WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを固定owned cacheへ保持し、
 既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
 trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
-model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。旧JS factoryの既定モデルは保持する。
+model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。
+アプリ既定は`bpg041-rectangular-hybrid-mock`/version 1と`bpg040-tail-rate-feedback`/version 1である。
+旧JS factoryはlegacy三軸の明示的な互換入口として保持する。
 
 明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、
 入力は`nose_up`/`turn_right`、body-positiveの`desired_pitch_rate_rad_s`/`desired_yaw_rate_rad_s`、
 `pilot_position_command`の`hold`/`set`を受け取る。余剰axis・未知field・異なるschemaを拒否する。
 snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
 terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
-旧factory・33値ABI・公開既定モデルは維持し、Replay/Attract・公開切替は後続のBPG-042統合で接続する。
+旧factory・33値ABIはlegacy互換入口として保持する。既定アプリのReplay/Attractは同じbridgeのnamed保存queryを使用する。
 hybridのSetupは既存`DifficultySettings`とcatalog 2を使用する。Calm/Mild/Challenging/NearLimitは
 登録済みuniform provider 1/2/4/5、Typicalはoffline asset 6のgridを使用し、環境metadataと物理のproviderを一致させる。
 Informationは表示だけに作用し、Assistanceは既存Strong/Assisted/Light/Manualをauthority 1/0.5/0.2/0へ解決する。
@@ -135,11 +137,11 @@ Attractの描画・分析は保存queryを使用し、live snapshot・player rec
 Webの`tail-session-codec`はschema 2と`tail_incidence`を検査し、phaseとframeを結合したimmutableな直和型へ変換する。
 physical incidenceは水平・垂直尾翼の二値、body角速度はroll/pitch/yawの三値として保持する。
 terminalのfraction・stamp・typed causeとRust由来identityを保存し、旧33値decoderへroll制御値を補填しない。
-このcodecの追加は公開factory・既定モデルを変更しない。
+既定アプリはこのcodecから共通表示snapshotを導出し、旧33値decoderはlegacy互換入口に限定する。
 二系統device adapterはArrowUp/Downをnose-up/down、ArrowRight/Leftをright/left turn、J/Lをnormalized身体指令に対応付ける。
 Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キーボード解放はHold、Gamepadの身体軸はSetとする。
 身体の物理target・FBW出力・gain・slewはRustに保持し、Webは呼出し側から受け取ったexplicit q/r demandを変更せず渡す。
-旧三軸keyboard/Gamepad adapterと公開factoryの接続は維持する。
+旧三軸keyboard/Gamepad adapterはlegacy互換入口で保持する。
 
 `parseTailControlProfile`はRustのsealed controller ID/version・pitch/yaw rate limit・gain・slew metadataをstrictに検査する。
 `tailInputFromControlProfile`は同じsealed scenario/aircraft/controller/seedのsnapshotと照合し、normalized demandをRust所有rate limitへ写像する。
@@ -149,23 +151,27 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
-この接続はheadless検証用の独立入口であり、公開factory・既定モデル・app mainの切替を含まない。
+既定アプリはこの二系統port/controllerを使用し、入力・HUD・Resultへ同じsnapshotを渡す。
 `LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
 facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
-非同期queryは観測開始時のopaque owner/generation tokenを保持し、Retry・設定変更・archive開閉・cursor変更・free後の結果を拒否する。
+非同期queryは観測開始時のopaque owner/query generation tokenを保持し、取得途中の変更後に届いた結果を拒否する。
+Analysis datasetのproofは別のrecord source generationを保持し、Retry・設定変更・archive開閉・disposeで失効する。
+同recordのseek・再生速度・再生可否・clock更新ではdatasetを維持し、cursor queryだけを実行する。
 scenario/seedが同一でもresource世代が異なる結果は受理しない。
 `session-factory`はlayoutを明示した構成からWASM resourceを生成し、単一のfacade ownerへ渡す。
 新factoryはraw bridgeを公開せず、初回projectionに失敗したresourceを解放する。
 `archived-personal-best`は保存schema v1〜5とv6を各Rust selectorへ接続する。
 異なるlayoutの既存recordも対応するRust decoderで検証し、同layoutの比較・key・適格性はRust selectorへ委譲する。
-現公開factoryの切替は、main・入力・HUD・Result・保存・Replayの全consumer接続後に行う。
+既定アプリのmain・入力・HUD・Result・保存・Replayは同じtail facadeを使用する。
+Scene退出とBFCache退避ではcontrollerを停止し、非復帰teardownとowner置換でresourceを最終解放する。
 AppModelのFlight/Pausedはcontrol layout・Rust phase・共通snapshotを相関した直和型で保持する。
 Resultの保存snapshotはfinalizationと同じ終端stampだけを受理し、Replay/Attractのcursorとは分離する。
 record未取得は理由付きavailabilityで保持し、旧33値のnullable入力は互換境界で正規化する。
 adapter停止ではcontroller世代とlayoutを照合し、Pause同期前の最後の有効snapshotも保持する。Rust domain phaseは変更しない。
 Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
 Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
-enter/leave・再生操作はresource世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
+enter/leaveはrecord sourceの世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
+再生操作はquery generationを更新し、同recordのdataset proofを維持する。
 共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
 旧live ABIと保存queryは不足理由を持つ`unavailable`とし、保存cursorの距離を再計算・補填しない。
 

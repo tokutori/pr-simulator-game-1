@@ -7,14 +7,14 @@ record型、tick sample追記、終端確定、domain validation、集計値はR
 Replay時刻・再生速度・再生状態もRust coreが所有する。Webは操作intentと経過wall-clock時間を送り、確定clock stateを表示へ投影する。
 秒単位のsample queryはRust coreでrecord時刻へ変換する。TypeScriptはsecondsをtick/fractionへ分解しない。
 recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
-coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。現行layoutの`FlightRecordSample`はx86_64と`wasm32-unknown-unknown`で各424 byteであり、最大sample payloadは1,696,424 byte（約1.62 MiB）となる。一括WASM転送はsampleごとに51個の`f64`を別bufferへ展開し、最大payloadは1,632,408 byte（約1.56 MiB）である。全recordの転送時、両bufferの論理payload合計は3,328,832 byte（約3.18 MiB）となる。allocator overhead、`FlightRecord`本体、wasm-bindgen境界のcopy、TypeScript解析配列、JSON encode/decode用memoryは含まない。実allocatorが要求capacityを超える領域を確保する可能性もある。layout変更時は回帰試験と本値を更新する。予約失敗は型付きerrorとしてReady遷移を拒否する。
+coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。現行layoutの`FlightRecordSample`はx86_64と`wasm32-unknown-unknown`で各424 byteであり、最大sample payloadは1,696,424 byte（約1.62 MiB）となる。legacy packed ABIの一括転送はsampleごとに51個の`f64`を別bufferへ展開し、最大payloadは1,632,408 byte（約1.56 MiB）である。このlegacy転送時、両bufferの論理payload合計は3,328,832 byte（約3.18 MiB）となる。named二系統JSON queryの容量へこの転送値を適用しない。allocator overhead、`FlightRecord`本体、wasm-bindgen境界のcopy、TypeScript解析配列、JSON encode/decode用memoryは含まない。実allocatorが要求capacityを超える領域を確保する可能性もある。layout変更時は回帰試験と本値を更新する。予約失敗は型付きerrorとしてReady遷移を拒否する。
 上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
 公開fieldから構築した`FlightRecordHeader`も、`FlightRecord::try_new`のbuffer予約前に再検証する。
 最大tick数は1〜4,000、physics frequencyは`PHYSICS_HZ`と一致し、catalog・scenario・aircraft・environment・controllerの各versionは非0を必須とする。
 `FlightRecordHeader::try_new`とarchive復元は同じheader条件を用いる。scenario IDとseedの数値範囲は追加で制限せず、catalog解決は呼出し側の責務とする。
 不正headerは構築時に`InvalidHeader`、archive復元時に`InvalidArchive`となる。正当な容量の予約失敗は`AllocationFailed`とし、domain errorと区別する。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
-WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。bulk transfer bufferはfallibleに予約し、確保失敗をadapter errorとして返す。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1〜3からのupgrade、metadata移行、version 4初回一覧時のindex再構築はfake-indexeddbで検証している。実ブラウザー操作は未検証である。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
+WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。既定の`HybridGameSessionBridge`はnamed sample・Summary・風queryと、保存v1〜5/v6の復元を同じcore recordへ接続する。旧`GameSessionBridge`のpacked queryはlegacy互換入口として保持する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。Analysis datasetは同recordのcontextを照合して取得し、通常のReplay clock更新ではcursorだけをqueryする。毎frameの全record変換・Summary再集計を行わない。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。IndexedDB version 1〜3からのupgrade、metadata移行、version 4のindex revisionによる再構築はfake-indexeddbで検証する。実ブラウザー操作は未検証である。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
 WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
@@ -77,7 +77,7 @@ coreで一度評価したmanual/FBW/mixed incidenceを区別する。記録層�
 `FlightRecordSample.controls`とplaybackの`actuators`は同じ判別型を使い、既存の時刻query・summaryを共用する。
 `begin_tail`と`append_tail_report`は同じ予約済bufferへ記録し、record内の制御方式混在を拒否する。
 schema v1–5と旧WASM packed layoutはlegacy値を維持し、二系統値を受けると型付き非互換を返す。
-後続のv6 codecと公開WASM更新で二系統保存を接続する。公開既定モデルは最終統合まで維持する。
+既定のhybrid flightはv6 codecとnamed WASM queryへ接続し、legacy三軸と二系統を同じsample/query正本で扱う。
 
 二系統の確定済archiveは`TailFlightRecordDocument`のschema v6で保存する。
 `control_identity`はaircraft configurationとcontroller profileのIDを保持し、各versionはheaderを正本とする。
@@ -90,7 +90,7 @@ archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだ�
 二系統canonical keyは専用domainで明示identity、各version、resolved difficulty、二軸profileのgain/slew、
 course、content hash、初期physical incidence・姿勢・身体状態を保持する。三軸feedbackは使用しない。
 `TailPersonalBestSelection`はv6同identity・同keyの完全なWaterContactだけを比較し、tieは最初の既存recordを維持する。
-公開WASM/default切替はBPG-042の後続結合範囲である。
+layout別archive/PB factoryはschemaを明示してRust decoder/selectorへ委譲し、未知schemaを拒否する。
 
 coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、causeの分類と終了理由、
 三軸・二系統のcontrol layoutを照合する。最新の成功sampleと一致するstampだけを確定し、
@@ -184,7 +184,7 @@ graph cursorと再生位置は同じrecord時刻を参照する。
 
 BPG-021の現行実装はRustのResult/Replay phase往復、記録時刻scrub、Result Analysis cursor同期、
 Rust補間sampleからのrender pose適用、連続playback clock、pause、0.5×/1×/2×速度選択、ScreenでのPilot/Chase選択までを含む。
-その他のReplay rigとブラウザー／VR受入は未実装であり、Scene受入完了条件として残す。
+Replay rigごとの実ブラウザー/GPU・VR表示と操作は未検証であり、Scene受入完了条件として残す。
 
 ## 検証
 

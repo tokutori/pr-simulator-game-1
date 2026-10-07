@@ -3,8 +3,8 @@
 琵琶湖を舞台とする短時間の無推力滑空ゲーム。
 Rust / WebAssembly による物理計算と TypeScript / Three.js による描画を分離する。
 
-松原水泳場付近から湖中央方向への約500 m、数十秒のフライトを対象とする。
-keyboard / gamepad、manual / shared / automatic、FBWを備える計画である。
+広報版の設計目標は、松原水泳場付近から湖中央方向への約500 m、数十秒のフライトである。
+keyboard / gamepad、Manual / Shared / Automatic、FBWを備える。設計目標は架空mockの性能保証と区別する。
 
 ## 現在の実装範囲
 
@@ -13,19 +13,22 @@ BPG-014のScreen表示shell、BPG-015のnative WebXR sessionとVR操作、BPG-01
 BPG-002〜005・024で6DoF、5要素空力、空力境界の数値検証、空間風場を実装した。BPG-025〜034ではRust coreにauthority mixer、actuator dynamics、pilot position policy、決定的flight tick、fractional water contact、score、launch変換、固定tick flight sequenceを追加した。Rust coreの`FlightScenario`はlaunch・機体・空力・空間風・actuator・contact・score設定を統合する。
 
 BPG-038でborrowed非線形全機static polarと、moment軸・固定参照点・PWL補間を追加した。
-BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)は全機staticとcurrent-reference局所normal-force差分、
-検証済みgeometry・TailIncidence・閉境界・RK stage付きcause・排他的Scenario入口をRust coreへ追加する。
-generic tickとの互換入口は新三軸playableモデルを表さない。二系統actuator・authority・q/r FBWは
-[#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)で接続する。数式と近似範囲は[空力契約](docs/aerodynamics.md)に従う。
-[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)は架空mockの定義・検証、
-[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)は公開型・記録version更新と既定モデル切替を同時に行う。
+BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)で全機staticとcurrent-reference局所normal-force差分、
+検証済みgeometry・TailIncidence・閉境界・RK stage付きcause・排他的Scenario入口をRust coreへ追加した。
+[#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)は二系統actuator・authority・q/r FBW、
+[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)は公開架空mockとtrim・launchを実装する。
+数式と近似範囲は[空力契約](docs/aerodynamics.md)に従う。
+[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)のアプリ統合は、このmockを既定として入力・表示・保存・Replayを接続する。
+physical controlsは水平尾翼・垂直尾翼の二系統であり、姿勢・body rateのroll/pitch/yaw三成分と区別する。
 以下の飛距離条件は既存fixtureの検証記録であり、新しいhybrid mockの合否基準には使用しない。実機数値・非公開xlsxは導入しない。
 
-BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007のWASM browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約220 m・約23秒、100 msのpilot-position keyboard入力を与えたManual flightで約193 mの飛行を確認する。このfixtureの係数はplayability用であり、実機性能やcontroller tuningを示さない。
+BPG-006の旧CLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007の旧browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約220 m・約23秒、100 msのpilot-position keyboard入力を与えたManual flightで約193 mの飛行を確認した。これらはlegacy fixtureの検証記録であり、新hybrid mockの飛距離・安定性や実機性能を示さない。
 
-現在の作業差分では、keyboard/gamepad入力、fixed-tick更新、HUD、fractional water-contactに加え、Rust `GameSession`のTitle・Setup・Briefing・Countdown・Flight・Result・Replay遷移をWASM／Screen UIへ接続している。SetupではInformation・Assistance・Weatherの各軸とpresetを選択でき、解決結果をRustのflight制御・scenarioへ反映する。Rust coreは初期sample・tick入力・終端状態を記録し、`birdman-game-format`のJSON schema version 1とWASM exportを提供する。WebはResult確定時にIndexedDBへ保存し、Rust由来summaryを表示する。保存recordはTitleに最新3件を表示し、選択時はRust GameSessionでarchiveを検証してReplayへ遷移する。Analysis graphは水平map、altitude/speed系列、共有cursor、固定高度の5×5 wind queryを備える。模式的な湖岸・platform・地物は非地理データとして管理する。Replayは確定recordのseek、Result Analysis cursor同期、Rust補間pose、連続再生・速度選択、Screen上のPilot/Chase選択を実装した。追加Replay rig、生成WASM宣言の更新、実ブラウザー受入は未完了であり、BPG-007は未完了である。
+Rust `GameSession`はTitle・Setup・Briefing・Countdown・Flight・Result・Replayと独立demo recordのAttractを管理する。SetupでInformation・Assistance・Weatherを選択し、Briefingで準備結果を確認する。二系統のモデルIDは`bpg041-rectangular-hybrid-mock`、controller IDは`bpg040-tail-rate-feedback`であり、各versionは1とする。ID・物理制限・環境・終了理由はRustから供給する。
 
-FlightRecordの永続record読出しUI、追加Replay rig、Attract、実環境データ、公開受入検証は後続BPGで実装する。Replayには連続再生・速度選択とScreen上のPilot/Chase切替がある。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。
+新規flightはJSON record schema 6へ保存する。保存v1〜5は元の三軸snapshotとして閲覧し、v6の二系統と排他的に扱う。旧recordを新mockで再積分しない。Result・Analysis・Replayは同じ保存record、元causeと終端stampを参照し、再生clockと集計値をRustが所有する。WebはIndexedDB保存、layout別Personal Best selector、水平map・高度/速度graph・共通cursor・理由付き風queryを接続する。未知保存環境へ現在の環境・地図を流用しない。
+
+Screen・WebXR・Phone VRは共通ModelからUIを導出し、同じsession ownerを使用する。VRのHead HUDとMenu anchorを分離する。実ブラウザー/GPU・実HMD・スマートフォンによる全gameplay loopの受入は未検証である。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、ゲーム機能の開発をblockしない。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 開発環境
@@ -46,10 +49,11 @@ cargo build -p birdman-game-wasm --target wasm32-unknown-unknown --locked
 cargo build -p birdman-game-cli --target wasm32-wasip2 --locked
 cargo run -p birdman-game-cli --locked
 cargo run -p birdman-game-cli --locked -- verify-flight all
+cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all
 npm run dev
 ```
 
-Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。現行差分にはGameSessionを含む基本Scene遷移があるが、生成bindingの更新、実ブラウザー上のWebGL操作確認、全gameplay loopの受入、実機検証は未完了である。
+Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。型・自動試験・buildの合格と、実ブラウザー上のWebGL操作・全gameplay loop・実機の受入を区別する。
 
 `main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。現段階は試験公開とし、BPG-013の配布条件と実ブラウザー受入は未完了のまま追跡する。
 

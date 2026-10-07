@@ -19,7 +19,7 @@ world差し替え・context復旧・終了時には所有者がresourceを明示
 | FlightSetup | Rust format境界がpreset・Information・Assistance・Weatherを保持し、coreは確定したscenario/controllerとmodel identityをsealする | Start intent→Briefing、Back→Title |
 | Briefing | Rustが準備sessionと容量を確定し、Webが必要assetを取得 | Ready→Countdown、Back→FlightSetup |
 | Countdown | Rustが初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
-| Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、Webは同じFlightHudModelをScreen HUDとVRのcockpit panelへ投影する。VR panelはInformation設定に応じたtelemetryとPause/Abort操作を含む | 終了→Result、Pause→同じFlight内で停止 |
+| Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、Webは共通snapshotからScreen HUDとcamera固定のVR Head HUDを導出する。Pause/AbortのMenuは独立anchorに配置する | 終了→Result、Pause→同じFlight内で停止 |
 | Result | Rustが確定したrecord・metricsを参照 | Replay、Retry→Briefing、Setup、Title |
 | Replay | Rust queryが確定recordを時刻指定で再生・seek | 戻るintent→Result |
 
@@ -95,6 +95,8 @@ TimeLimitはscenarioの明示的な最大tick数に達した場合であり、�
 致命的なboot/assetエラーは架空のFlightResultを生成しない。
 
 Resultの背景は最後の有効snapshotで固定する。Summary、Analysis、Replayは同じimmutable recordを参照する。
+既定flightはtail二系統、保存閲覧はlegacy三軸/v6二系統を判別型で保持する。
+Resultの確定score・元cause・終端stampと、Replay/Attractの任意cursorを分離する。
 Rust terminal確定後は、描画・HUD・入力cleanupの成否から独立してResult通知を一度送る。
 live描画とResult通知はfixed-tick clockの更新完了後に行い、描画・通知中のresetやdispose後へ旧frameの描画・cleanupを適用しない。
 着水以外は終了点をEndとして表示し、Splashという名称を使用しない。
@@ -123,7 +125,7 @@ API権限、退出、エラー表示はInformation設定にかかわらず利用
 
 BPG-017ではRust coreの遷移表、不許可intent、二重launch/finalize、pause理由・resume条件、同条件Retryをunit testし、
 WASM browser試験ではsnapshotからのScene導出とstale requestの破棄を確認する。
-load競合、Pause→Settings→Pause、非表示復帰、三軸固定も検証する。
+load競合、Pause→Settings→Pause、非表示復帰、difficulty三軸固定も検証する。
 Replayの再生操作はBPG-021、AttractとCameraDirectorはBPG-022で接続する。
 Scene追加とcamera追加を独立に扱い、world resourceの再生成・listener重複を検査する。
 

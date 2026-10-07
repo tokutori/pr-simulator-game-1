@@ -14,7 +14,7 @@
 
 CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
-BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`とブラウザー用`SyntheticPlayableFlight`は分離する。playable fixtureは無風・neutral入力で200–300 mを15–35秒で飛行するRust core受入試験を持つ。WASM browser integrationはManual modeで100 msのpilot-position keyboard入力後に180–230 mで着水することも検証する。これらの係数はplayability用であり、実機性能を示さない。
+BPG-007では旧playable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`と旧browser用`SyntheticPlayableFlight`は分離する。legacy playable fixtureは無風・neutral入力で200–300 mを15–35秒で飛行するRust core受入試験を持つ。WASM browser integrationはManual modeで100 msのpilot-position keyboard入力後に180–230 mで着水することも検証する。これらの距離・時間・係数は旧fixtureだけへ適用し、新hybrid mockの合否基準や実機性能に使用しない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
 
 ### CLI検証flight
@@ -33,6 +33,16 @@ Manual/Shared/Automaticから同じ`GameSession`のhybrid tick・記録・終端
 fixtureは架空Standard modelのtrim・明示zero windとnative-smoke controller identityを使用する。
 browser Typical環境、旧`verify-flight`、距離目標、長時間安定性、収束・実機検証を個別の検証範囲として維持する。
 旧CLIコマンド・公開default・WASM ABIの切替はこの検査単位に含めない。
+
+### BPG-042 アプリ統合
+
+既定の二系統flightはnamed schema 2 snapshot、保存schema 6、同じRust GameSessionの入力・記録・終了へ接続する。
+保存v1〜5は元のlegacy snapshotとして閲覧し、v6との排他layout・元identity・cause・stampを検査する。
+旧recordの新mock再積分、tailへのdummy roll、TSによるFBW・score再計算を拒否する。
+単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
+Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、混在archive/PB routingを対象とする。
+CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
+実ブラウザー/GPU・実端末の受入は未検証であり、新mockの飛距離・長時間安定性・実機性能を実証済みと扱わない。
 
 ### BPG-002 core検証
 
@@ -189,7 +199,7 @@ scenario構築ではactuatorの全travelがdomainに収まる場合を受理し�
 | 032 | course-distance score v1の北・東・斜行・逆行・高度不変性、cross-track/net horizontal解析値、極端軸正規化、無効軸・差分overflowのtyped error |
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
 | 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
-| 007 | playable synthetic fixtureのneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
+| 007 | legacy `SyntheticPlayableFlight`のneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。この距離条件を新hybrid mockへ適用しない。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
 | 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。環境assetの選択activation・描画接続と実ブラウザー受入は別途検証する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |

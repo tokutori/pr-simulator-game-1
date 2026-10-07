@@ -64,6 +64,10 @@ event handlerはMessageのみを送信する。非同期完了にはrequest ID�
 GameSessionの開始可否、domain phase、pause理由、終了・再試行規則、score、record確定値はRust coreが所有する。
 Webはimmutableなsession snapshotからScene・HUD・button availabilityを導出し、session変更intentをWASMへ送る。
 Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
+アプリの既定sessionは二系統tailとし、旧三軸APIは明示的な互換入口へ限定する。
+layout別facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
+query途中の変更と保存record自体の変更は別の世代で検査し、同recordの通常再生操作ではAnalysis datasetを再取得しない。
+Scene退出・BFCache退避は入力とclockの停止として扱い、owner置換・非復帰teardownで最終解放する。
 
 ## 実行契約
 
@@ -71,6 +75,7 @@ simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatf
 物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
 Rust coreの `advance_flight_tick` は一つの入力sampleからauthority・actuator・pilot motion・6DoFを原子的に進める。
 `advance_flight_tick_with_contact`は水面接触時にfractional terminal sampleだけを返し、接触後stateを公開しない。
+二系統の`advance_tail_flight_tick_with_contact_report`は同じ力学・contactを共用し、physical incidenceと適用control reportを一度の評価から返す。
 Tail controllerはfixed-tick clockの更新完了後、確定snapshotをframe単位で描画し、Result通知を描画・HUD・入力停止から独立して発行する。
 同じcontrollerの通知は一度だけResultへの同期とrecord確定effectを発行し、adapterの失敗は元の終了理由・cause・scoreを維持した表示通知として扱う。
 通知内のreset/disposeが世代を変更した場合、旧frameの描画・cleanup・失敗通知を新しいcontroller状態へ適用しない。
@@ -134,6 +139,7 @@ no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計�
 crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
-GameSession、record、metrics、analysis/replay queryとそのWASM commandは後続BPGで実装する。
-BootのAppModelはbrowser/presentation状態のみを持ち、Rust側のgameplay state実装を代替しない。
+GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。
+保存v1〜5の三軸とv6の二系統を排他的に扱い、元cause・identity・stampを保持する。旧保存値を新mockへ再積分しない。
+AppModelはbrowser/presentation状態とimmutableな表示snapshotを保持し、domain phase・score・再生clockを独自更新しない。
 開発原則は[設計指針](https://zenn.dev/bem130/articles/1b352797de94e7)に基づく。
