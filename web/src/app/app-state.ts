@@ -35,7 +35,8 @@ export type NamedGameSessionOperation =
   | "leave-attract";
 
 export type GameSessionOperation = NamedGameSessionOperation
-  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean };
+  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean }
+  | { readonly kind: "set-difficulty-option"; readonly axis: "preset" | "information" | "assistance" | "weather"; readonly code: number };
 
 export interface ReplayClockState {
   readonly timeSeconds: number;
@@ -879,6 +880,19 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId.startsWith("game-setup-select-")) {
+    if (model.gameSession.kind !== "setup") return transition(model);
+    const selection = /^game-setup-select-(preset|information|assistance|weather)-([0-4])$/.exec(action.controlId);
+    if (selection === null) return transition(model);
+    const axis = selection[1];
+    const code = Number(selection[2]);
+    if (axis !== "preset" && axis !== "information" && axis !== "assistance" && axis !== "weather") return transition(model);
+    if ((axis === "preset" || axis === "assistance") && code > 3) return transition(model);
+    const currentCode = axis === "preset" ? model.difficulty.presetCode : axis === "information"
+      ? model.difficulty.informationCode : axis === "assistance" ? model.difficulty.assistanceCode : model.difficulty.weatherCode;
+    if (code === currentCode) return transition(model);
+    return beginGameOperation(model, { kind: "set-difficulty-option", axis, code });
+  }
   if (action.type === "activate" && action.controlId === "game-flight-resume"
       && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
     return transition(model);

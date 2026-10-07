@@ -683,7 +683,9 @@ function dispatchGameOperationFailure(
 function gameOperationLabel(operation: GameSessionOperation): string {
   return typeof operation === "string"
     ? operation
-    : `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`;
+    : operation.kind === "set-information-cue"
+      ? `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`
+      : `set-${operation.axis}-${String(operation.code)}`;
 }
 
 function completeGameOperation(requestId: number, rawSnapshot?: ArrayLike<number>): void {
