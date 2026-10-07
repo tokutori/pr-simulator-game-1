@@ -282,7 +282,7 @@ describe("Game scene view model", () => {
     expect(configuration?.label).toContain("Controller v4");
     expect(configuration?.label).toContain("Seed 0:0");
     expect(configuration?.label).toContain("\n");
-    expect(configuration?.rect.height).toBe(0.11);
+    expect(configuration?.rect.height).toBe(0.11 * 0.81);
   });
 
   it("shows Rust-derived FlightRecord summary metrics in Result", () => {
@@ -354,17 +354,17 @@ describe("Game scene view model", () => {
     ]));
     const chartControl = controls.find((control) => control.kind === "chart");
     if (chartControl?.kind !== "chart") throw new Error("Analysis chart is missing");
-    expect(chartControl.rect).toMatchObject({ x: 0.04, y: 0.105, width: 0.92, height: 0.49 });
+    expect(chartControl.rect).toMatchObject({ x: 0.04, y: 0.105 * 0.81, width: 0.92, height: 0.49 * 0.81 });
     for (const id of ["game-analysis-map", "game-analysis-altitude", "game-analysis-speed"] as const) {
       const selector = controls.find((control) => control.id === id);
-      expect(selector?.rect.y).toBe(0.025);
+      expect(selector?.rect.y).toBe(0.025 * 0.81);
     }
     for (const id of ["game-result-open-summary", "game-result-replay", "game-result-retry", "game-result-setup", "game-result-title"] as const) {
       const action = controls.find((control) => control.id === id);
       if (action?.rect === undefined) throw new Error(`Result action has no layout: ${id}`);
-      expect(action.rect.y).toBeGreaterThanOrEqual(0.82);
+      expect(action.rect.y).toBeGreaterThanOrEqual(0.82 * 0.81);
       expect(action.rect.y).toBeLessThan(1);
-      expect(action.rect.y + action.rect.height).toBeLessThanOrEqual(0.98);
+      expect(action.rect.y + action.rect.height).toBeLessThanOrEqual(0.98 * 0.81);
     }
     if (cursorValues?.kind !== "status") throw new Error("Analysis cursor status is missing");
     expect(cursorValues.value).toContain("t 1.00 s · N 8.0 m · E 6.0 m · h 8.0 m");

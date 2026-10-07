@@ -6,6 +6,7 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { actionForControl } from "../../web/src/presentation/panel-interaction.js";
 import { readFlightLog } from "../../web/src/game/flight-log-export.js";
+import type { FlightAnalysisData } from "../../web/src/game/flight-record-query.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -26,7 +27,68 @@ function beginDownload(model: AppModel, format: "csv" | "json" = "csv") {
   return { ...requested, effect };
 }
 
+const analysisFixture: FlightAnalysisData = {
+  samples: [0, 1].map((timeSeconds) => ({
+    timeSeconds, northMeters: timeSeconds * 8, eastMeters: timeSeconds * 6,
+    altitudeMeters: 10 - timeSeconds, airspeedMetersPerSecond: 9, groundspeedMetersPerSecond: 10,
+    windNorthMetersPerSecond: 0, windEastMetersPerSecond: 0, windDownMetersPerSecond: 0,
+    angleOfAttackRadians: null, sideslipRadians: null, rollRadians: 0, pitchRadians: 0, headingRadians: 0
+  })),
+  initialPilotPositionMeters: 0,
+  summary: {
+    sampleCount: 2, durationSeconds: 1, maximumAltitudeMeters: 10,
+    maximumAirspeedMetersPerSecond: 9, maximumGroundspeedMetersPerSecond: 10,
+    maximumAngleOfAttackRadians: null, maximumAbsoluteRollRadians: 0, score: null,
+    terminal: { reason: "manual-abort", disposition: "interrupted", timeSeconds: 1 }
+  }
+};
+
 describe("flight log download state and common presentation", () => {
+  it.each([
+    { label: "Result Summary", phaseCode: 7, resultTab: "summary", replayViewMode: "cinematic" },
+    { label: "Result Analysis", phaseCode: 7, resultTab: "analysis", replayViewMode: "cinematic" },
+    { label: "Replay Analysis", phaseCode: 9, resultTab: "summary", replayViewMode: "analysis" },
+    { label: "Replay Telemetry", phaseCode: 9, resultTab: "summary", replayViewMode: "telemetry" },
+    { label: "Replay Cinematic", phaseCode: 9, resultTab: "summary", replayViewMode: "cinematic" }
+  ] as const)("reserves a nonintersecting download footer and preserves navigation in $label", ({ phaseCode, resultTab, replayViewMode }) => {
+    for (const mode of ["screen", "phone-vr", "webxr"] as const) {
+      for (const analysisChart of ["map", "altitude", "speed"] as const) {
+        const model: AppModel = {
+          ...readyModel(phaseCode), presentation: { type: "ready", mode },
+          resultTab, replayViewMode, analysisChart, flightAnalysis: analysisFixture,
+          analysisCursorSample: analysisFixture.samples[1] ?? null
+        };
+        const panel = createGameViewModel(model, null).panels[0];
+        if (panel === undefined) throw new Error("Download panel is unavailable");
+        expect(panel.anchor).toBe("menu");
+        const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
+        expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
+        for (const control of panel.controls) {
+          expect(control.rect.x).toBeGreaterThanOrEqual(0);
+          expect(control.rect.y).toBeGreaterThanOrEqual(0);
+          expect(control.rect.width).toBeGreaterThan(0);
+          expect(control.rect.height).toBeGreaterThan(0);
+          expect(control.rect.x + control.rect.width).toBeLessThanOrEqual(1);
+          expect(control.rect.y + control.rect.height).toBeLessThanOrEqual(1);
+        }
+        for (const exported of exports) {
+          for (const control of panel.controls) {
+            if (control.id === exported.id) continue;
+            const horizontal = Math.min(exported.rect.x + exported.rect.width, control.rect.x + control.rect.width)
+              - Math.max(exported.rect.x, control.rect.x);
+            const vertical = Math.min(exported.rect.y + exported.rect.height, control.rect.y + control.rect.height)
+              - Math.max(exported.rect.y, control.rect.y);
+            expect(horizontal > 1e-12 && vertical > 1e-12, `${exported.id} overlaps ${control.id}`).toBe(false);
+          }
+        }
+        const navigation = phaseCode === 7
+          ? ["game-result-replay", "game-result-retry", "game-result-setup", "game-result-title", resultTab === "summary" ? "game-result-open-analysis" : "game-result-open-summary"]
+          : ["game-replay-return", "game-replay-camera", "game-replay-view-mode", "game-replay-play-pause", ...(replayViewMode === "cinematic" ? [] : ["game-replay-cursor"])];
+        for (const id of navigation) expect(panel.controls.some((control) => control.id === id)).toBe(true);
+      }
+    }
+  });
+
   it.each([7, 9])("exposes explicit CSV/JSON choices in phase %s for Screen and VR", async (phaseCode) => {
     const browser = new BrowserWindow();
     vi.stubGlobal("window", browser);
