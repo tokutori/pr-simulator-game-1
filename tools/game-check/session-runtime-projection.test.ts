@@ -103,6 +103,10 @@ describe("registered environment and venue projection", () => {
       const expectedIdentity = snapshot.identity.scenario;
       expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 0, expectedIdentity)).toThrow(RangeError);
       const malformed = jsonObject(session.readEnvironmentJson());
+      for (const phase of [0, -1, 11, 2.5]) {
+        const wrongPhase = { ...malformed, context: { kind: "session", phase_code: phase } };
+        expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(wrongPhase), phase)).toThrow(RangeError);
+      }
       nested(nested(malformed, "projection"), "metadata").local_frame = { kind: "unavailable", value: { latitude_degrees: 0 } };
       expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(malformed), 3)).toThrow(RangeError);
     } finally { session.dispose(); }

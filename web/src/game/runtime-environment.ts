@@ -9,7 +9,7 @@ export interface RuntimeEnvironmentMetadata {
   readonly localFrame: DisplayAvailability<Readonly<{ latitudeDegrees: number; longitudeDegrees: number; waterLevelDatum: string }>, "origin_not_recorded">;
   readonly waves: LakeVisualCondition;
 }
-export type RuntimeEnvironmentProjection = DisplayAvailability<RuntimeEnvironmentMetadata, "no_selection" | "unregistered_environment_identity">;
+export type RuntimeEnvironmentProjection = DisplayAvailability<RuntimeEnvironmentMetadata, "no_selection" | "unregistered_environment_identity" | "invalid_snapshot">;
 
 export function parseRuntimeEnvironmentSnapshot(json: string, phaseCode: number, expectedIdentity?: TailScenarioIdentity): RuntimeEnvironmentProjection {
   const document = boundaryObject(JSON.parse(json), ["schema_version", "context", "projection"]);
@@ -26,7 +26,7 @@ export function parseRuntimeEnvironmentSnapshot(json: string, phaseCode: number,
   const projection = boundaryObject(raw, kind === "available" ? ["kind", "source", "identity", "metadata"] : ["kind", "source", "identity"]);
   const source = boundaryTag(projection.source, ["selected", "sealed", "record", "archive", "attract"]);
   const validSource = phaseCode === 1 ? source === "selected" : phaseCode === 9 ? source === "record" || source === "archive"
-    : phaseCode === 10 ? source === "attract" : source === "sealed";
+    : phaseCode === 10 ? source === "attract" : phaseCode >= 2 && phaseCode <= 8 && Number.isInteger(phaseCode) && source === "sealed";
   if (!validSource) throw new RangeError("Environment source disagrees with its Rust phase");
   const identity = decodeTailScenarioIdentity(projection.identity);
   if (expectedIdentity !== undefined && !sameEnvironmentIdentity(identity, expectedIdentity)) throw new RangeError("Environment projection belongs to another saved identity");
