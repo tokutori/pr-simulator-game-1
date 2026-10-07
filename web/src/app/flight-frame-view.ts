@@ -2,10 +2,12 @@ import { createBootViewModel } from "./boot-view.js";
 import { createGameViewModel } from "./game-view.js";
 import { gameSessionPhaseCode } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
+import { normalizeFlightSnapshot } from "./session-snapshot.js";
+import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
-import { createFlightHudModel } from "../presentation/flight-hud-model.js";
+import { createFlightDisplayHudModel } from "../presentation/flight-hud-model.js";
 import type { FlightHudModel, InformationLevelCode } from "../presentation/flight-hud-model.js";
 import { createHeadHudView, NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudView } from "../presentation/head-hud-view.js";
@@ -16,18 +18,19 @@ import type { PanelUnavailableReason } from "../render/contracts/runtime.js";
 
 export interface FlightFrameViewDraft {
   readonly model: AppModel;
-  readonly snapshot: FlightSnapshot | null;
+  readonly snapshot: FlightDisplaySnapshot | null;
   readonly analysis: AppModel["flightAnalysis"];
   readonly hud: FlightHudModel | null;
   readonly headHud: HeadHudView;
   readonly environment: EnvironmentBriefingProjection;
 }
 
-export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnapshot | null, viewer: ViewerFrame, locale: string,
+export function createFlightFrameViewDraft(model: AppModel, snapshotInput: FlightSnapshotInput | null, viewer: ViewerFrame, locale: string,
   environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING): FlightFrameViewDraft {
   const phase = gameSessionPhaseCode(model.gameSession);
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
+  let snapshot = snapshotInput === null ? null : normalizeFlightSnapshot(snapshotInput);
   if (model.flightExecution.kind === "stopped" && (phase === 5 || phase === 6)) snapshot = model.flightExecution.snapshot;
   const hud = snapshot !== null && (phase === 5 || phase === 6)
     ? createFlightUiHudModel(model, snapshot)
@@ -38,17 +41,17 @@ export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnap
   return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment });
 }
 
-export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshot): FlightHudModel {
+export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshotInput): FlightHudModel {
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
   const stopped = model.flightExecution;
   const failure = stopped.kind === "stopped" && [5, 6].includes(gameSessionPhaseCode(model.gameSession));
-  const retained = failure ? stopped.snapshot : snapshot;
-  const hud = createFlightHudModel(retained, code as InformationLevelCode, model.difficulty.hudProfile);
+  const retained = failure ? stopped.snapshot : normalizeFlightSnapshot(snapshot);
+  const hud = createFlightDisplayHudModel(retained, code as InformationLevelCode, model.difficulty.hudProfile);
   return failure ? Object.freeze({ ...hud,
     status: "飛行処理停止",
     warning: `停止理由: ${stopped.message}`,
-    telemetry: `Last valid · tick ${String(retained.tick)} · ${retained.flightTimeSeconds.toFixed(2)} s`
+    telemetry: `Last valid · tick ${String(retained.stamp.tick)} · ${retained.stamp.timeSeconds.toFixed(2)} s`
   }) : hud;
 }
 

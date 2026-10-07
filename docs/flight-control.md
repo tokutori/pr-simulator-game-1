@@ -159,6 +159,10 @@ scenario/seedが同一でもresource世代が異なる結果は受理しない�
 `archived-personal-best`は保存schema v1〜5とv6を各Rust selectorへ接続する。
 異なるlayoutの既存recordも対応するRust decoderで検証し、同layoutの比較・key・適格性はRust selectorへ委譲する。
 現公開factoryの切替は、main・入力・HUD・Result・保存・Replayの全consumer接続後に行う。
+AppModelのFlight/Pausedはcontrol layout・Rust phase・共通snapshotを相関した直和型で保持する。
+Resultの保存snapshotはfinalizationと同じ終端stampだけを受理し、Replay/Attractのcursorとは分離する。
+record未取得は理由付きavailabilityで保持し、旧33値のnullable入力は互換境界で正規化する。
+adapter停止ではcontroller世代とlayoutを照合し、Pause同期前の最後の有効snapshotも保持する。Rust domain phaseは変更しない。
 Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
 Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
 enter/leave・再生操作はresource世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。

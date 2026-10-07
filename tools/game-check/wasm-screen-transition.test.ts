@@ -4,9 +4,9 @@ import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { GameSessionBridge, PersonalBestSelectionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
-import type { AppEffect, AppModel, GameSessionProjection } from "../../web/src/app/app-state.js";
+import type { AppEffect, AppModel, LegacyGameSessionProjection } from "../../web/src/app/app-state.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSampleAt } from "../../web/src/game/flight-record-query.js";
 import { FlightRecordRepository } from "../../web/src/game/flight-record-store.js";
@@ -131,7 +131,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       presentation: Object.freeze({ type: "ready", mode: "screen" })
     });
 
-    const sessionProjection = (): GameSessionProjection => {
+    const sessionProjection = (): LegacyGameSessionProjection => {
       const phaseCode = session.phase_code();
       return {
         phaseCode,
@@ -288,7 +288,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       if (analysisRequestId === null) throw new Error("Result analysis request was not created");
       const analysis = loadFlightAnalysis(session, physics_hz());
       model = updateApp(model, { type: "flight-analysis-loaded", requestId: analysisRequestId, data: analysis }).model;
-      adapter.render(createGameViewModel(model, model.gameSession.kind === "result" ? model.gameSession.snapshot : null, model.flightAnalysis));
+      adapter.render(createGameViewModel(model, gameSessionSnapshot(model.gameSession), model.flightAnalysis));
       activate("game-result-replay");
       expect(model.gameSession.kind).toBe("replay");
       activate("game-replay-return");
@@ -336,7 +336,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
     });
     let lastActionEffects: readonly AppEffect[] = [];
     const render = (): void => {
-      adapter.render(createGameViewModel(model, model.gameSession.kind === "result" ? model.gameSession.snapshot : null, model.flightAnalysis));
+      adapter.render(createGameViewModel(model, gameSessionSnapshot(model.gameSession), model.flightAnalysis));
     };
     const adapter = new ScreenUiAdapter(root, (action) => {
       const transition = updateApp(model, { type: "ui-action", action });

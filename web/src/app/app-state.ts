@@ -2,6 +2,9 @@ import type { FlightCameraMode, FlightRenderPose, PresentationMode } from "../re
 import type { UiAction } from "../render/contracts/ui.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
+import { attractSessionProjection, isPlaybackSessionSnapshot, isRetainedLiveSnapshot, liveSessionProjection, normalizeFlightSnapshot, projectionSnapshot, terminalSessionProjection } from "./session-snapshot.js";
+import type { AttractSessionProjection, FlightSnapshotInput, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, SessionControlLayout, TerminalSessionProjection, TerminalSessionSnapshot } from "./session-snapshot.js";
 import type { FlightAnalysisData, FlightAnalysisSample } from "../game/flight-record-query.js";
 
 export interface StoredFlightRecordUiEntry {
@@ -78,25 +81,20 @@ export type PresentationUiState = LivePresentationUiState
   | { readonly type: "cached"; readonly retained: LivePresentationUiState }
   | { readonly type: "hidden" };
 
-export type GameSessionUiState =
-  | { readonly kind: "boot"; readonly phaseCode: -1 }
+export type GameSessionUiState = { readonly kind: "boot"; readonly phaseCode: -1 }
+  | ({ readonly controlLayout: SessionControlLayout } & (
   | { readonly kind: "title"; readonly phaseCode: 0 }
   | { readonly kind: "setup"; readonly phaseCode: 1 }
   | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
   | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
-  | { readonly kind: "flight"; readonly phaseCode: 5; readonly snapshot: FlightSnapshot }
-  | {
-      readonly kind: "paused-flight";
-      readonly phaseCode: 6;
-      readonly snapshot: FlightSnapshot;
-      readonly canResume: boolean;
-      readonly overlay: PauseOverlayState;
-    }
-  | { readonly kind: "result"; readonly phaseCode: 7; readonly snapshot: FlightSnapshot | null }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
-  | { readonly kind: "replay"; readonly phaseCode: 9; readonly snapshot: FlightSnapshot | null }
-  | { readonly kind: "attract"; readonly phaseCode: 10; readonly snapshot: null };
+  | { readonly kind: "replay"; readonly phaseCode: 9; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
+))
+  | (Readonly<{ kind: "flight"; phaseCode: 5 }> & LiveSessionProjection<5>)
+  | (Readonly<{ kind: "paused-flight"; phaseCode: 6; canResume: boolean; overlay: PauseOverlayState }> & LiveSessionProjection<6>)
+  | (Readonly<{ kind: "result"; phaseCode: 7 }> & TerminalSessionProjection)
+  | (Readonly<{ kind: "attract"; phaseCode: 10 }> & AttractSessionProjection);
 
 export type PauseOverlayState =
   | { readonly kind: "menu" }
@@ -162,7 +160,7 @@ export type FlightExecutionUiState =
       readonly kind: "stopped";
       readonly identity: FlightControllerIdentity;
       readonly message: string;
-      readonly snapshot: FlightSnapshot;
+      readonly snapshot: LiveSessionSnapshot;
     };
 
 export interface DifficultyUiState {
@@ -198,15 +196,27 @@ export interface ConfigurationMetadataUiState {
   readonly seedHigh: number;
 }
 
-export interface GameSessionProjection {
-  readonly phaseCode: number;
+interface SessionSelectionProjection {
   readonly controlModeCode: number;
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
   readonly countdownRemaining: number;
-  readonly snapshot: FlightSnapshot | null;
-  readonly canResume: boolean;
 }
+export interface LegacyGameSessionProjection extends SessionSelectionProjection {
+  readonly controlLayout?: "legacy_three_axis";
+  readonly phaseCode: number;
+  readonly snapshot: FlightSnapshot | Extract<FlightDisplaySnapshot, { kind: "legacy_live" | "legacy_record" }> | null;
+  readonly canResume?: boolean;
+}
+export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
+  | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
+  | Readonly<{ phaseCode: 5; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<5>, { kind: "tail_flight" }> }> }>
+  | Readonly<{ phaseCode: 6; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<6>, { kind: "tail_flight" }> }> }>
+  | Readonly<{ phaseCode: 7; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>
+  | Readonly<{ phaseCode: 9; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "legacy_record" | "tail_record" }>> }>
+  | Readonly<{ phaseCode: 10; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
+);
+export type GameSessionProjection = LegacyGameSessionProjection | TailGameSessionProjection;
 
 export type AppMessage =
   | { readonly type: "initialize" }
@@ -215,7 +225,7 @@ export type AppMessage =
       readonly type: "flight-controller-stopped";
       readonly identity: FlightControllerIdentity;
       readonly message: string;
-      readonly snapshot: FlightSnapshot;
+      readonly snapshot: FlightSnapshotInput;
     }
   | {
       readonly type: "presentation-initialized";
@@ -258,27 +268,8 @@ export type AppMessage =
   | { readonly type: "page-hidden" }
   | { readonly type: "page-suspended" }
   | { readonly type: "page-restored" }
-  | {
-      readonly type: "game-session-synced";
-      readonly phaseCode: number;
-      readonly controlModeCode: number;
-      readonly difficulty: DifficultyUiState;
-      readonly configurationMetadata: ConfigurationMetadataUiState | null;
-      readonly countdownRemaining: number;
-      readonly snapshot: FlightSnapshot | null;
-      readonly canResume?: boolean;
-    }
-  | {
-      readonly type: "game-operation-completed";
-      readonly requestId: number;
-      readonly phaseCode: number;
-      readonly controlModeCode: number;
-      readonly difficulty: DifficultyUiState;
-      readonly configurationMetadata: ConfigurationMetadataUiState | null;
-      readonly countdownRemaining: number;
-      readonly snapshot: FlightSnapshot | null;
-      readonly canResume?: boolean;
-    }
+  | (Readonly<{ type: "game-session-synced" }> & GameSessionProjection)
+  | (Readonly<{ type: "game-operation-completed"; requestId: number }> & GameSessionProjection)
   | { readonly type: "game-session-status"; readonly message: string }
   | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisData }
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
@@ -353,8 +344,13 @@ export function isGameFlowActivation(action: UiAction): boolean {
   return (action.type === "activate" || action.type === "set-toggle") && action.controlId.startsWith("game-");
 }
 
-export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshot | null {
-  return "snapshot" in session ? session.snapshot : null;
+export function gameSessionSnapshot(session: GameSessionUiState): FlightDisplaySnapshot | null {
+  return "snapshot" in session ? session.snapshot : "display" in session && session.display.kind === "available" ? session.display.value : null;
+}
+
+export function gameSessionLegacySnapshot(session: GameSessionUiState): Extract<FlightDisplaySnapshot, { kind: "legacy_live" | "legacy_record" }> | null {
+  const snapshot = gameSessionSnapshot(session);
+  return snapshot?.kind === "legacy_live" || snapshot?.kind === "legacy_record" ? snapshot : null;
 }
 
 export function gameSessionCountdown(session: GameSessionUiState): number {
@@ -364,34 +360,51 @@ export function gameSessionCountdown(session: GameSessionUiState): number {
 export function gameSessionState(
   phaseCode: number,
   countdownRemaining: number,
-  snapshot: FlightSnapshot | null,
+  snapshotInput: FlightSnapshotInput | null,
   canResume = false,
-  previous: GameSessionUiState | null = null
+  previous: GameSessionUiState | null = null,
+  controlLayout: SessionControlLayout = "legacy_three_axis"
 ): GameSessionUiState | null {
+  const snapshot = snapshotInput === null ? null : normalizeFlightSnapshot(snapshotInput);
+  const selection = { controlLayout };
+  if (controlLayout === "tail_incidence" && [0, 1, 2, 3, 4, 8].includes(phaseCode) && snapshot !== null) return null;
   switch (phaseCode) {
     case -1: return { kind: "boot", phaseCode: -1 };
-    case 0: return { kind: "title", phaseCode: 0 };
-    case 1: return { kind: "setup", phaseCode: 1 };
-    case 2: return { kind: "briefing-preparing", phaseCode: 2 };
-    case 3: return { kind: "briefing-ready", phaseCode: 3 };
+    case 0: return { ...selection, kind: "title", phaseCode: 0 };
+    case 1: return { ...selection, kind: "setup", phaseCode: 1 };
+    case 2: return { ...selection, kind: "briefing-preparing", phaseCode: 2 };
+    case 3: return { ...selection, kind: "briefing-ready", phaseCode: 3 };
     case 4:
       return Number.isSafeInteger(countdownRemaining) && countdownRemaining >= 0
-        ? { kind: "countdown", phaseCode: 4, countdownRemaining }
+        ? { ...selection, kind: "countdown", phaseCode: 4, countdownRemaining }
         : null;
-    case 5:
-      return snapshot === null ? null : { kind: "flight", phaseCode, snapshot };
-    case 6:
-      return snapshot === null ? null : {
+    case 5: {
+      const live = snapshot === null ? null : liveSessionProjection(snapshot, phaseCode, controlLayout);
+      return live === null ? null : { ...live, kind: "flight", phaseCode };
+    }
+    case 6: {
+      const live = snapshot === null ? null : liveSessionProjection(snapshot, phaseCode, controlLayout);
+      return live === null ? null : {
+        ...live,
         kind: "paused-flight",
         phaseCode,
-        snapshot,
         canResume,
         overlay: previous?.kind === "paused-flight" ? previous.overlay : { kind: "menu" }
       };
-    case 7: return { kind: "result", phaseCode: 7, snapshot };
-    case 8: return { kind: "briefing-failed", phaseCode: 8 };
-    case 9: return { kind: "replay", phaseCode: 9, snapshot };
-    case 10: return { kind: "attract", phaseCode: 10, snapshot: null };
+    }
+    case 7: {
+      const terminal = terminalSessionProjection(snapshot, controlLayout);
+      return terminal === null ? null : { ...terminal, kind: "result", phaseCode: 7 };
+    }
+    case 8: return { ...selection, kind: "briefing-failed", phaseCode: 8 };
+    case 9:
+      return snapshot !== null && !isPlaybackSessionSnapshot(snapshot) ? null
+        : { ...selection, kind: "replay", phaseCode: 9, display: snapshot === null
+          ? Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) : Object.freeze({ kind: "available", value: snapshot }) };
+    case 10: {
+      const attract = attractSessionProjection(snapshot, controlLayout);
+      return attract === null ? null : { ...attract, kind: "attract", phaseCode: 10 };
+    }
     default: return null;
   }
 }
@@ -494,10 +507,12 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const execution = model.flightExecution;
       if (execution.kind !== "ready" || execution.identity.sessionId !== message.identity.sessionId
           || execution.identity.controllerId !== message.identity.controllerId
-          || ![5, 6].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || (model.gameSession.kind !== "flight" && model.gameSession.kind !== "paused-flight")) return transition(model);
+      const snapshot = normalizeFlightSnapshot(message.snapshot);
+      if (!isRetainedLiveSnapshot(snapshot, model.gameSession.controlLayout)) return transition(model);
       return transition(withModel(model, {
         flightExecution: Object.freeze({ kind: "stopped", identity: execution.identity,
-          message: message.message, snapshot: message.snapshot })
+          message: message.message, snapshot })
       }));
     }
     case "page-restored":
@@ -597,7 +612,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis");
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -629,7 +644,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, message.snapshot, message.canResume ?? false, model.gameSession);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis");
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,

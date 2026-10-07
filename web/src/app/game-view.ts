@@ -4,7 +4,7 @@ import { FLIGHT_MENU_GEOMETRY, normalizedRect } from "../render/contracts/ui.js"
 import type { UiButton, UiChart, UiControl, UiPanel, UiStatus, UiToggle, UiViewModel } from "../render/contracts/ui.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import type { FlightSnapshotInput } from "./session-snapshot.js";
 import type { FlightAnalysisData } from "../game/flight-record-query.js";
 import { venueMapForScenario } from "../game/biwa-venue-map.js";
 import { NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
@@ -19,7 +19,7 @@ import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 
 export function createGameViewModel(
   model: AppModel,
-  snapshot: FlightSnapshot | null,
+  snapshot: FlightSnapshotInput | null,
   analysis: FlightAnalysisData | null = model.flightAnalysis,
   headHudView: HeadHudView = NO_HEAD_HUD_VIEW,
   environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING
@@ -65,7 +65,7 @@ export function createGameViewModel(
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
   if (stopped) {
     const retained = model.flightExecution.snapshot;
-    const description = `飛行処理停止: ${model.flightExecution.message}\nLast valid · tick ${String(retained.tick)} · ${retained.flightTimeSeconds.toFixed(2)} s`;
+    const description = `飛行処理停止: ${model.flightExecution.message}\nLast valid · tick ${String(retained.stamp.tick)} · ${retained.stamp.timeSeconds.toFixed(2)} s`;
     controls.length = 0;
     controls.push(Object.freeze({ ...status("game-controller-stopped", "飛行処理停止", description), rect: normalizedRect(0.08, 0.16, 0.84, 0.38) }));
     if (phaseCode === 6) controls.push(Object.freeze({ ...button("game-flight-resume", "Resume", false), rect: normalizedRect(0.08, 0.61, 0.84, 0.085) }));
@@ -75,7 +75,7 @@ export function createGameViewModel(
       if (phaseCode === 6 && pauseOverlay === "settings") {
         controls.push(status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"));
       } else if (phaseCode === 6 && pauseOverlay === "help") {
-        controls.push(status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"));
+        controls.push(status("game-pause-help-info", "操縦方法", flightControlInstructions(model)));
       }
       (phaseCode === 6 ? buttons : flightButtons).forEach((entry) => controls.push(entry));
     } else if (phaseCode === 5) {
@@ -95,7 +95,7 @@ export function createGameViewModel(
         }));
       } else if (pauseOverlay === "help") {
         controls.push(Object.freeze({
-          ...status("game-pause-help-info", "操縦方法", "Roll A / D · Pitch ↑ / ↓ · Yaw ← / → · 重心 J / L"),
+          ...status("game-pause-help-info", "操縦方法", flightControlInstructions(model)),
           rect: normalizedRect(0.08, 0.24, 0.84, 0.25)
         }));
       } else {
@@ -788,7 +788,7 @@ function briefingControls(model: AppModel, phaseCode: number, environment: Envir
       `気象: ${weatherLabel(metadata.weatherCode)}`
     ].join("\n")),
     weatherConditions(environment),
-    status("game-briefing-controls", "操縦", "Pitch ↑ / ↓ · Roll A / D · Yaw ← / →\n重心移動 J / L · Keyboard / Gamepad対応"),
+    status("game-briefing-controls", "操縦", flightControlInstructions(model)),
     status("game-briefing-readiness", "発進準備", phaseCode === 3 ? "✓ 発進準備完了" : phaseCode === 8 ? model.status || "準備に失敗した。再試行または設定変更を選択する。" : "飛行条件を確認し、必要なデータを準備している。"),
     Object.freeze({
       ...button("game-briefing-technical", "技術情報", true),
@@ -802,6 +802,12 @@ function briefingControls(model: AppModel, phaseCode: number, environment: Envir
 function preparationProgress(phaseCode: number): UiStatus {
   return status("game-preparation-progress", "発進までの手順", phaseCode === 1 ? "● 設定 ─ ○ 確認 ─ ○ 発進"
     : phaseCode === 4 ? "✓ 設定 ─ ✓ 確認 ─ ● 発進" : "✓ 設定 ─ ● 確認 ─ ○ 発進");
+}
+
+function flightControlInstructions(model: AppModel): string {
+  return model.gameSession.kind !== "boot" && model.gameSession.controlLayout === "tail_incidence"
+    ? "機首上げ / 下げ ↑ / ↓ · 右 / 左旋回 → / ←\n水平・垂直尾翼のincidenceを制御する。独立したroll入力はない。\n重心移動 J / L · Keyboardは解放時Hold、Gamepadは位置をSetする。"
+    : "Pitch ↑ / ↓ · Roll A / D · Yaw ← / →\n重心移動 J / L · Keyboard / Gamepad対応";
 }
 
 function weatherConditions(environment: EnvironmentBriefingProjection): UiStatus {

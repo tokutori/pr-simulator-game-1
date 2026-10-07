@@ -8,7 +8,7 @@ import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionLegacySnapshot as gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -49,6 +49,7 @@ import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
+import type { FlightSnapshotInput } from "./app/session-snapshot.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
@@ -85,7 +86,10 @@ let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
 const flightControllerUi = new FlightControllerUiBindings();
 const controllerHudDisplay = Object.freeze({
-  render: (snapshot: FlightSnapshot): void => { flightHud.render(snapshot, createFlightUiHudModel(model, snapshot)); },
+  render: (snapshot: FlightSnapshotInput): void => {
+    if ("kind" in snapshot) flightHud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model, snapshot));
+    else flightHud.render(snapshot, createFlightUiHudModel(model, snapshot));
+  },
   setVisible: (visible: boolean): void => { flightHud.setVisible(visible); }
 });
 let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });

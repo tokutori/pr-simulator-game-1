@@ -53,7 +53,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     const hudRoot = documentRef.createElement("section");
     documentRef.body.append(root, hudRoot);
     const renderedTicks: number[] = [];
-    const hud = new FlightHudAdapter(hudRoot, (snapshot) => renderedTicks.push(snapshot.tick));
+    const hud = new FlightHudAdapter(hudRoot);
     const actions: UiAction[] = [];
     let model = readyModel(phaseCode);
     const adapter = new ScreenUiAdapter(root, (action) => {
@@ -64,7 +64,10 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
       const snapshot = gameSessionSnapshot(model.gameSession);
       const visible = screenUiVisible(model.presentation);
       hud.setVisible(visible && (model.gameSession.kind === "flight" || model.gameSession.kind === "paused-flight"));
-      if (snapshot !== null) hud.render(snapshot);
+      if (snapshot !== null) {
+        renderedTicks.push(snapshot.stamp.tick);
+        hud.renderDisplaySnapshot(snapshot);
+      }
       adapter.render(model.gameSession.kind === "boot" ? createBootViewModel(model) : createGameViewModel(model, snapshot), visible);
     }
     function send(message: AppMessage): void {

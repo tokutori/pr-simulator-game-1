@@ -3,6 +3,7 @@ import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
+import { normalizeFlightSnapshot } from "../../web/src/app/session-snapshot.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
@@ -12,6 +13,9 @@ const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
 flightSnapshotValues[7] = 1;
 flightSnapshotValues[19] = -1;
 const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
+const terminalFlightSnapshotValues = [...flightSnapshotValues];
+terminalFlightSnapshotValues[16] = 4;
+const terminalFlightSnapshot = parseFlightSnapshot(terminalFlightSnapshotValues);
 const fullHudProfile = Object.freeze({
   telemetry: true,
   attitude: true,
@@ -626,7 +630,7 @@ describe("Boot application state", () => {
       countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
     });
     expect(synced.model.gameSession).toEqual({
-      kind: "paused-flight", phaseCode: 6, snapshot: flightSnapshot, canResume: false, overlay: { kind: "menu" }
+      kind: "paused-flight", phaseCode: 6, controlLayout: "legacy_three_axis", snapshot: normalizeFlightSnapshot(flightSnapshot), canResume: false, overlay: { kind: "menu" }
     });
   });
 
@@ -637,7 +641,7 @@ describe("Boot application state", () => {
     });
     expect(openedSettings.effects).toEqual([]);
     expect(openedSettings.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: flightSnapshot });
+    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: normalizeFlightSnapshot(flightSnapshot) });
 
     const synchronized = updateApp(openedSettings.model, {
       type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
@@ -645,7 +649,7 @@ describe("Boot application state", () => {
       countdownRemaining: 0, canResume: true, snapshot: flightSnapshot
     });
     expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: flightSnapshot });
+    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: normalizeFlightSnapshot(flightSnapshot) });
 
     const returned = updateApp(synchronized.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-pause-settings-back" }
@@ -1054,8 +1058,8 @@ describe("Boot application state", () => {
     const setup = gameSessionState(1, 7, flightSnapshot);
     const countdown = gameSessionState(4, 3, null);
 
-    expect(setup).toEqual({ kind: "setup", phaseCode: 1 });
-    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, countdownRemaining: 3 });
+    expect(setup).toEqual({ kind: "setup", phaseCode: 1, controlLayout: "legacy_three_axis" });
+    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, controlLayout: "legacy_three_axis", countdownRemaining: 3 });
     expect(gameSessionState(4, -1, null)).toBeNull();
     expect(gameSessionState(5, 0, null)).toBeNull();
     expect(gameSessionState(11, 0, null)).toBeNull();
@@ -1137,12 +1141,13 @@ describe("Boot application state", () => {
         difficulty: requested.model.difficulty,
         configurationMetadata: null,
         countdownRemaining: 0,
-        snapshot: flightSnapshot,
+        snapshot: terminalFlightSnapshot,
         canResume: false
       }
     });
 
-    expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, snapshot: flightSnapshot });
+    expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, controlLayout: "legacy_three_axis",
+      display: { kind: "available", value: normalizeFlightSnapshot(terminalFlightSnapshot) } });
     expect(rejected.model.flightAnalysis).toBe(analysis);
     expect(rejected.model.resultTab).toBe("analysis");
     expect(rejected.model.analysisCursorTimeSeconds).toBe(1);

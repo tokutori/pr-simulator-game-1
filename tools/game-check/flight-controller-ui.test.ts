@@ -5,6 +5,7 @@ import type { AppMessage, AppModel } from "../../web/src/app/app-state.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { normalizeFlightSnapshot } from "../../web/src/app/session-snapshot.js";
 import { FlightController } from "../../web/src/game/flight-controller.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
@@ -16,7 +17,7 @@ describe("Flight controller shared stop diagnosis", () => {
       const trial = fixture(mode, informationCode);
       const retained = trial.stop();
       const model = trial.model();
-      expect(model.flightExecution).toMatchObject({ kind: "stopped", message: "Gamepad permission denied", snapshot: retained });
+      expect(model.flightExecution).toMatchObject({ kind: "stopped", message: "Gamepad permission denied", snapshot: normalizeFlightSnapshot(retained) });
       expect(model.gameSession.kind).toBe("flight");
       expect(trial.controller.currentSnapshot).toBe(retained);
       expect(trial.onTerminal).not.toHaveBeenCalled();
@@ -25,7 +26,8 @@ describe("Flight controller shared stop diagnosis", () => {
       expect(hud.warning).toContain("Gamepad permission denied");
       expect(hud.telemetry).toContain("Last valid · tick 1");
       const draft = createFlightFrameViewDraft(model, parseFlightSnapshot(snapshotValues(99)), viewer(), "ja");
-      expect(draft.snapshot).toBe(retained);
+      if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained controller state");
+      expect(draft.snapshot).toBe(model.flightExecution.snapshot);
       const view = finalizeFlightFrameView(draft, draft.headHud);
       expect(view.description).toContain("停止");
       const diagnosis = view.panels[0]?.controls.find((control) => control.id === "game-controller-stopped");

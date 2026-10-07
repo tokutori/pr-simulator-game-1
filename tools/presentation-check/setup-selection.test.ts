@@ -5,7 +5,7 @@ import { executeGameSessionOperation } from "../../web/src/app/game-session-oper
 import type { GameSessionOperationPort } from "../../web/src/app/game-session-operation.js";
 
 function setupModel(): AppModel {
-  return { ...createInitialAppModel(), gameSession: { kind: "setup", phaseCode: 1 } };
+  return { ...createInitialAppModel(), gameSession: { kind: "setup", phaseCode: 1, controlLayout: "legacy_three_axis" } };
 }
 
 describe("Direct flight setup selection", () => {
