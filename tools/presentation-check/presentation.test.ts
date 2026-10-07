@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseThree } from "../../web/src/render/camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
 import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
 import type { AnchorFrames } from "../../web/src/render/anchors.js";
 import { IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
-import type { Pose } from "../../web/src/render/contracts/math.js";
-import type { BackendFrame, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
+import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
@@ -134,6 +136,34 @@ describe("scene and overlay fixtures", () => {
   });
 });
 
+describe("same-frame view projection boundary", () => {
+  it("passes the same immutable binocular frame into pure view derivation and the backend", async () => {
+    const renderer = new FakeRenderer();
+    const backend = new FakeBackend("webxr", new Set());
+    const head = pose(vec3(1, 2, 3), IDENTITY_POSE.orientation);
+    const frame = unavailableViewerFrame("invalid-view-geometry", head);
+    let projectedFrame: ViewerFrame | null = null;
+    let backendViewer: ViewerFrame | null = null;
+    const originalFrame = backend.currentFrame.bind(backend);
+    backend.currentFrame = (timestampMs, frameView, viewerPose, menu) => {
+      backendViewer = viewerPose;
+      return originalFrame(timestampMs, frameView, viewerPose, menu);
+    };
+    const runtime = new PresentationRuntime(renderer, [backend], (viewer) => {
+      projectedFrame = viewer;
+      return fixturePresentation(createSceneFixture("Flight"));
+    });
+    expect(await runtime.start("webxr")).toEqual({ ok: true });
+    renderer.tick(25, frame);
+    expect(projectedFrame).toBe(frame);
+    expect(backendViewer).toBe(frame);
+    renderer.tick(26);
+    expect(projectedFrame).toEqual(unavailableViewerFrame("not-stereo"));
+    expect(backendViewer).toEqual(unavailableViewerFrame("not-stereo"));
+    await runtime.dispose();
+  });
+});
+
 describe("anchor and camera transforms", () => {
   it("keeps Menu fixed while Head changes and lets Cockpit follow the aircraft", () => {
     const frames: AnchorFrames = {
@@ -214,7 +244,7 @@ describe("head-gaze selection", () => {
     if (button === undefined) throw new Error("Missing button fixture");
     const point = normalizedPoint(panel, button.rect.x + button.rect.width / 2, button.rect.y + button.rect.height / 2);
     const actions: UiAction[] = [];
-    const selector = new GazeDwellSelector((action) => { actions.push(action); }, 1000);
+    const selector = new GazeDwellSelector((action) => { actions.push(fixtureSemanticAction(action)); }, 1000);
     expect(selector.update(panel, point, 100)?.progress).toBe(0);
     expect(selector.update(panel, point, 600)?.progress).toBe(0.5);
     expect(selector.update(panel, point, 1100)?.progress).toBe(1);
@@ -233,7 +263,7 @@ describe("head-gaze selection", () => {
     if (range === undefined) throw new Error("Missing range fixture");
     const point = normalizedPoint(panel, range.rect.x + range.rect.width, range.rect.y + range.rect.height / 2);
     const actions: UiAction[] = [];
-    const selector = new GazeDwellSelector((action) => { actions.push(action); }, 500);
+    const selector = new GazeDwellSelector((action) => { actions.push(fixtureSemanticAction(action)); }, 500);
     selector.update(panel, point, 200);
     selector.update(panel, point, 700);
     expect(actions).toContainEqual({ type: "set-range", controlId: range.id, value: 1 });
@@ -245,7 +275,7 @@ describe("presentation runtime", () => {
     const active = new Set<PresentationMode>();
     const renderer = new FakeRenderer();
     const backends = ["screen", "webxr", "phone-vr"].map((mode) => new FakeBackend(mode as PresentationMode, active));
-    const runtime = new PresentationRuntime(renderer, backends, () => createSceneFixture("Title"));
+    const runtime = new PresentationRuntime(renderer, backends, () => fixturePresentation(createSceneFixture("Title")));
     expect(await runtime.start("screen")).toEqual({ ok: true });
     renderer.tick(10);
     expect(await runtime.switchTo("webxr")).toEqual({ ok: true });
@@ -267,7 +297,7 @@ describe("presentation runtime", () => {
     const renderer = new FakeRenderer();
     const screen = new FakeBackend("screen", active);
     const webxr = new FakeBackend("webxr", active, "permission denied");
-    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => createSceneFixture("Flight"));
+    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => fixturePresentation(createSceneFixture("Flight")));
     expect(await runtime.start("screen")).toEqual({ ok: true });
     const switched = await runtime.switchTo("webxr");
     expect(switched.ok).toBe(false);
@@ -287,7 +317,7 @@ describe("presentation runtime", () => {
     const screen = new FakeBackend("screen", active);
     const webxr = new FakeBackend("webxr", active);
     const phoneVr = new FakeBackend("phone-vr", active, "sensor startup failed");
-    const runtime = new PresentationRuntime(renderer, [screen, webxr, phoneVr], () => createSceneFixture("Boot"));
+    const runtime = new PresentationRuntime(renderer, [screen, webxr, phoneVr], () => fixturePresentation(createSceneFixture("Boot")));
     expect(await runtime.start("webxr")).toEqual({ ok: true });
     const switched = await runtime.switchTo("phone-vr");
     expect(switched.ok).toBe(false);
@@ -305,7 +335,7 @@ describe("presentation runtime", () => {
     const renderer = new FakeRenderer();
     const screen = new FakeBackend("screen", active, "screen recovery failed", 2);
     const webxr = new FakeBackend("webxr", active, "session startup failed");
-    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => createSceneFixture("Boot"));
+    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => fixturePresentation(createSceneFixture("Boot")));
     expect(await runtime.start("screen")).toEqual({ ok: true });
     const switched = await runtime.switchTo("webxr");
     expect(switched.ok).toBe(false);
@@ -319,7 +349,7 @@ describe("presentation runtime", () => {
 
   it("returns an explicit unsupported result when no backend is registered", async () => {
     const renderer = new FakeRenderer();
-    const runtime = new PresentationRuntime(renderer, [], () => createSceneFixture("Boot"));
+    const runtime = new PresentationRuntime(renderer, [], () => fixturePresentation(createSceneFixture("Boot")));
     expect(await runtime.start("phone-vr")).toEqual({ ok: false, error: { type: "unsupported", mode: "phone-vr" } });
     expect(renderer.startCount).toBe(0);
     await runtime.dispose();
@@ -327,14 +357,15 @@ describe("presentation runtime", () => {
 });
 
 class FakeRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   startCount = 0;
   stopCount = 0;
   disposeCount = 0;
   readonly frames: BackendFrame[] = [];
   lastViewport: ViewportSize | null = null;
-  private callback: ((timestampMs: number, viewerPose: Pose | null) => void) | null = null;
+  private callback: Parameters<RendererAdapter["startLoop"]>[0] | null = null;
 
-  startLoop(callback: (timestampMs: number, viewerPose: Pose | null) => void): void {
+  startLoop(callback: Parameters<RendererAdapter["startLoop"]>[0]): void {
     if (this.callback !== null) throw new Error("Only one frame loop may run");
     this.callback = callback;
     this.startCount++;
@@ -373,8 +404,8 @@ class FakeRenderer implements RendererAdapter {
     this.disposeCount++;
   }
 
-  tick(timestampMs: number): void {
-    this.callback?.(timestampMs, null);
+  tick(timestampMs: number, viewer: ViewerFrame = unavailableViewerFrame("not-stereo")): void {
+    this.callback?.(timestampMs, viewer);
   }
 }
 
@@ -406,15 +437,14 @@ class FakeBackend implements PresentationBackendAdapter {
     return Promise.resolve();
   }
 
-  currentFrame(timestampMs: number): BackendFrame {
+  currentFrame(timestampMs: number, view: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     if (!this.running) throw new Error(`${this.mode} is inactive`);
     return Object.freeze({
       timestampMs,
-      cameraPose: IDENTITY_POSE,
-      panelPose: IDENTITY_POSE,
-      panel: null,
-      panelVisible: this.mode !== "screen",
-      gazeCursor: null,
+      headHud: { kind: "absent" as const },
+      cameraPose: viewer.trackingFromHead ?? IDENTITY_POSE,
+      panel: this.mode === "screen" ? Object.freeze({ kind: "absent" as const }) : Object.freeze({ kind: "visible" as const,
+        panel: menu.kind === "ready" ? menu.panel : requiredPanel(view), pose: IDENTITY_POSE, cursor: null }),
       viewport: Object.freeze({ x: 800, y: 600, pixelRatio: 1 })
     });
   }

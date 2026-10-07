@@ -21,6 +21,10 @@ export interface GameSessionOperationPort {
   retry_briefing(): void;
   return_to_title(): void;
   set_control_mode(code: number): void;
+  set_difficulty_preset(code: number): void;
+  set_information_level(code: number): void;
+  set_assistance_level(code: number): void;
+  set_weather_class(code: number): void;
   set_information_cue(code: number, visible: boolean): void;
   start_countdown(ticks: number): void;
 }
@@ -35,7 +39,16 @@ export function executeGameSessionOperation(
   operation: GameSessionOperation
 ): GameSessionOperationResult {
   if (typeof operation !== "string") {
-    session.set_information_cue(operation.cueCode, operation.visible);
+    if (operation.kind === "set-information-cue") {
+      session.set_information_cue(operation.cueCode, operation.visible);
+    } else {
+      switch (operation.axis) {
+        case "preset": session.set_difficulty_preset(operation.code); break;
+        case "information": session.set_information_level(operation.code); break;
+        case "assistance": session.set_assistance_level(operation.code); break;
+        case "weather": session.set_weather_class(operation.code); break;
+      }
+    }
     return { kind: "completed" };
   }
   switch (operation) {

@@ -1,8 +1,12 @@
 import type { AnchorKind } from "../anchors.js";
 import type { Pose } from "./math.js";
+import { validateHeadHudLayer } from "./head-hud.js";
+import type { HeadHudLayer } from "./head-hud.js";
 
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];
+
+export const FLIGHT_MENU_GEOMETRY = Object.freeze({ distanceMeters: 2.4, centerY: -1.12, width: 0.62, height: 0.25 });
 
 export type UiControl = UiButton | UiToggle | UiRange | UiStatus | UiChart;
 
@@ -12,6 +16,30 @@ export interface UiButton {
   readonly label: string;
   readonly enabled: boolean;
   readonly rect: NormalizedRect;
+  readonly presentation?: UiButtonPresentation;
+}
+
+export type UiButtonPresentation =
+  | { readonly kind: "action"; readonly emphasis: "primary" | "secondary" }
+  | { readonly kind: "choice"; readonly group: string; readonly groupLabel: string; readonly selected: boolean; readonly description: string }
+  | { readonly kind: "disclosure"; readonly expanded: boolean };
+
+export function uiButtonLabel(control: UiButton): string {
+  const presentation = control.presentation;
+  if (presentation?.kind === "choice") {
+    return `${presentation.selected ? "●" : "○"} ${control.label}\n${presentation.description}`;
+  }
+  if (presentation?.kind === "disclosure") return `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
+  return control.label;
+}
+
+export function uiControlBackground(control: UiControl): string {
+  if (control.kind !== "button") return "#183139";
+  const presentation = control.presentation;
+  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? "#356d68" : "#10242d";
+  if (presentation?.kind === "choice") return presentation.selected ? "#356d68" : "#183139";
+  if (presentation?.kind === "disclosure") return "#10242d";
+  return "#294853";
 }
 
 export interface UiToggle {
@@ -104,6 +132,19 @@ export interface PanelSize {
   readonly height: number;
 }
 
+export type MenuScrollScope = Readonly<{ scene: GameScene; panelId: string; viewKey: string }> &
+  ({ readonly kind: "scene" } | { readonly kind: "overlay"; readonly overlay: string });
+export interface MenuScrollContext { readonly scope: MenuScrollScope; readonly generation: number }
+export type MenuScrollState =
+  | { readonly kind: "closed"; readonly generation: number }
+  | Readonly<{ kind: "active"; progress: number }> & MenuScrollContext;
+export type MenuScrollIntent =
+  | { readonly kind: "page"; readonly direction: "previous" | "next"; readonly pageProgress: number }
+  | { readonly kind: "delta"; readonly viewportPages: number; readonly pageProgress: number }
+  | { readonly kind: "set-progress"; readonly progress: number };
+
+export type MenuControlAction = Extract<UiAction, { readonly type: "activate" | "set-toggle" | "set-range" }>;
+
 export interface UiPanel {
   readonly id: string;
   readonly title: string;
@@ -133,6 +174,7 @@ export interface UiViewModel {
   readonly presentationStyle?: "default" | "cinematic";
   readonly activeOverlay: string | null;
   readonly panels: readonly UiPanel[];
+  readonly headHud: HeadHudLayer;
 }
 
 export type UiAction =
@@ -142,6 +184,9 @@ export type UiAction =
   | { readonly type: "focus"; readonly controlId: string | null }
   | { readonly type: "back" }
   | { readonly type: "scroll"; readonly deltaX: number; readonly deltaY: number }
+  | { readonly type: "menu-scroll"; readonly context: MenuScrollContext; readonly intent: MenuScrollIntent }
+  | { readonly type: "menu-focus"; readonly context: MenuScrollContext; readonly focus: { readonly kind: "none" } | { readonly kind: "control"; readonly controlId: string } }
+  | { readonly type: "menu-control"; readonly context: MenuScrollContext; readonly action: MenuControlAction }
   | { readonly type: "recenter-menu" };
 
 export type UiActionDispatcher = (action: UiAction) => void;
@@ -206,6 +251,7 @@ export function chartScaleBarDistance(span: number): number {
 }
 
 export function validateUiViewModel(viewModel: UiViewModel): void {
+  validateHeadHudLayer(viewModel.headHud);
   const ids = new Set<string>();
   for (const panel of viewModel.panels) {
     if (ids.has(panel.id)) throw new Error(`Duplicate UI identifier: ${panel.id}`);

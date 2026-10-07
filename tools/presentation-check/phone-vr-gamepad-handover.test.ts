@@ -1,3 +1,5 @@
+import { configuredViewerFixture } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixtureSemanticAction } from "./menu-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -192,7 +194,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     expect(vi.getTimerCount()).toBe(1);
     fixture.sensorCallbacks[1]?.reading({ alpha: 0, beta: 90, gamma: 0, timestampMs: 0, gravityEvidence: { kind: "earth-z-up" } });
     await second;
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(fixture.unavailable).not.toHaveBeenCalled();
     await fixture.backend.stop();
     expect(browser.listenerCount()).toBe(0);
@@ -225,7 +227,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     browser.onAdd = () => undefined;
     await fixture.backend.requestPermissionFromUserGesture();
     await fixture.backend.start();
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(browser.listenerCount()).toBe(2);
   });
 
@@ -267,7 +269,7 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
     browser.onRemove = () => undefined;
     await fixture.backend.requestPermissionFromUserGesture();
     await fixture.backend.start();
-    expect(fixture.frame().panelVisible).toBe(true);
+    expect((fixture.frame().panel.kind === "visible")).toBe(true);
     expect(browser.listenerCount()).toBe(2);
   });
 });
@@ -281,7 +283,7 @@ describe("connection-scoped Menu cursor history", () => {
 
   it("resets cursor/focus/time, seeds held toggle/back, and retains range and scroll operation", () => {
     const actions: UiAction[] = [];
-    const selector = new GamepadUiSelector((action) => { actions.push(action); });
+    const selector = new GamepadUiSelector((action) => { actions.push(fixtureSemanticAction(action)); });
     selector.update(panel, sample(1), 0);
     selector.update(panel, sample(1, [false, false], [1, 1, 0, 0]), 50);
     actions.length = 0;
@@ -419,9 +421,10 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     };
   };
   const dispatch = (action: UiAction): void => {
-    actions.push(action);
+    const semantic = fixtureSemanticAction(action);
+    actions.push(semantic);
     model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    const update = updateApp(model, { type: "ui-action", action });
+    const update = updateApp(model, { type: "ui-action", action: semantic });
     model = update.model;
     for (const effect of update.effects) {
       if (effect.type !== "game-session-operation") continue;
@@ -442,7 +445,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     stopListening: vi.fn<PhoneVrSensorPort["stopListening"]>()
   } satisfies PhoneVrSensorPort;
   const renderer = {
-    startLoop: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
+    startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
     setFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), setStereoPresentation: vi.fn(),
     transformTrackingPose: (pose) => pose
   } satisfies RendererAdapter;
@@ -458,14 +461,19 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const frame = () => {
     timestamp += 16;
     model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    return backend.currentFrame(timestamp, createGameViewModel(model, null));
+    return fixtureBackendFrame(backend, timestamp, createGameViewModel(model, null), configuredViewerFixture());
   };
   return { session, backend, input, actions, operations, frame, sensorCallbacks, sensors, renderer, unavailable };
 }
 
 function moveToStart(fixture: Awaited<ReturnType<typeof createFixture>>, pad: TestGamepad): void {
-  pad.axes = [0, 1, 0, 0];
-  for (let frame = 0; frame < 13; frame++) fixture.frame();
+  for (let frame = 0; frame < 120; frame++) {
+    const focus = fixture.actions.filter((action) => action.type === "focus").at(-1);
+    if (focus?.controlId === "game-briefing-start") break;
+    pad.axes = [0, 1, 0, 0];
+    fixture.frame();
+  }
   pad.axes = [0, 0, 0, 0];
-  expect(fixture.actions).toContainEqual({ type: "focus", controlId: "game-briefing-start" });
+  fixture.frame();
+  expect(fixture.actions.filter((action) => action.type === "focus").at(-1)).toEqual({ type: "focus", controlId: "game-briefing-start" });
 }

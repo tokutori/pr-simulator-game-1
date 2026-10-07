@@ -1,14 +1,75 @@
+import { runtimeViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
-import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import { composePose, IDENTITY_POSE, inversePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
-import type { RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
+import type { BackendFrame, MenuPresentation, RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
+import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../web/src/presentation/webxr-contracts.js";
 import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 
 describe("WebXR session backend", () => {
+  it("holds the Menu anchor and rejects controller selection through pending metrics without Screen recovery", async () => {
+    const adapter = new FakeWebXrAdapter();
+    const renderer = new FakeRenderer();
+    const actions: UiAction[] = [];
+    const failures: string[] = [];
+    const backend = new WebXrPresentationBackend(adapter, renderer, viewport, (action) => { actions.push(action); }, () => undefined);
+    const view = createSceneFixture("Flight", "Pause");
+    const prepared = fixturePresentation(view);
+    let menu: MenuPresentation = geometryMenuFixture(view);
+    const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(viewport), backend],
+      () => ({ ...prepared, menu }), () => undefined, (mode, reason) => { failures.push(`${mode}:${reason}`); });
+    await backend.requestSessionFromUserGesture();
+    expect(await runtime.start("webxr")).toEqual({ ok: true });
+    try {
+      renderer.tick(10, runtimeViewerFixture(IDENTITY_POSE));
+      const initial = visiblePanelFrame(requiredRenderedFrame(renderer));
+      const moved = pose(vec3(2, 0.5, -0.3), IDENTITY_POSE.orientation);
+      menu = { kind: "pending" };
+      actions.length = 0;
+      renderer.tick(20, runtimeViewerFixture(moved));
+      renderer.tick(2020, runtimeViewerFixture(moved));
+      expect(requiredRenderedFrame(renderer).panel).toEqual({ kind: "absent" });
+      renderer.selectHandler?.({ origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2030 });
+      expect(actions.some((action) => action.type === "menu-control" || action.type === "menu-scroll")).toBe(false);
+      expect(failures).toEqual([]);
+      expect(runtime.currentMode).toBe("webxr");
+      menu = geometryMenuFixture(view);
+      renderer.tick(2040, runtimeViewerFixture(moved));
+      expect(visiblePanelFrame(requiredRenderedFrame(renderer)).pose).toEqual(initial.pose);
+      expect(failures).toEqual([]);
+      expect(runtime.currentMode).toBe("webxr");
+    } finally { await runtime.dispose(); }
+  });
+
+  it("supplies the runtime viewer center to Head HUD independently of the identity user camera and transformed Menu", async () => {
+    const adapter = new FakeWebXrAdapter();
+    const renderer = new FakeRenderer();
+    renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
+    const backend = new WebXrPresentationBackend(adapter, renderer, viewport, () => undefined, () => undefined);
+    const hud = createHeadHudFixture();
+    const view = { ...createSceneFixture("Flight"), headHud: hud };
+    const runtimeHead = pose(vec3(0.02, 0.05, -0.03), IDENTITY_POSE.orientation);
+    await backend.requestSessionFromUserGesture();
+    await backend.start();
+    try {
+      const frame = fixtureBackendFrame(backend, 10, view, runtimeViewerFixture(runtimeHead));
+      expect(frame.cameraPose).toEqual(IDENTITY_POSE);
+      expect(frame.headHud).toEqual({ kind: "visible", trackingFromHead: runtimeHead, view: hud });
+      expect((frame.panel.kind === "visible")).toBe(true);
+      expect(visiblePanelFrame(frame).panel.controls.length).toBeGreaterThan(0);
+      expect(fixtureBackendFrame(backend, 20, view, runtimeViewerFixture(null)).headHud).toEqual({ kind: "absent" });
+      expect(fixtureBackendFrame(backend, 30, createSceneFixture("Flight"), runtimeViewerFixture(runtimeHead)).headHud).toEqual({ kind: "absent" });
+    } finally { await backend.stop(); }
+  });
+
   it("checks immersive support and requests a session synchronously from the user action", async () => {
     const adapter = new FakeWebXrAdapter();
     const backend = createBackend(adapter);
@@ -17,7 +78,7 @@ describe("WebXR session backend", () => {
     expect(adapter.requestCount).toBe(1);
     expect(await request).toEqual({ ok: true });
     await backend.start();
-    expect(backend.currentFrame(10, createSceneFixture("Title"), IDENTITY_POSE).panelVisible).toBe(true);
+    expect((fixtureBackendFrame(backend, 10, createSceneFixture("Title"), runtimeViewerFixture(IDENTITY_POSE)).panel.kind === "visible")).toBe(true);
     await backend.stop();
     expect(adapter.endCount).toBe(1);
   });
@@ -45,24 +106,25 @@ describe("WebXR session backend", () => {
     const actions: UiAction[] = [];
     const renderer = new FakeRenderer();
     const backend = new WebXrPresentationBackend(
-      adapter, renderer, viewport, (action) => { actions.push(action); }, () => undefined
+      adapter, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined
     );
     await backend.requestSessionFromUserGesture();
     await backend.start();
     const headPose = pose(vec3(1, 1.6, 3), IDENTITY_POSE.orientation);
-    const frame = backend.currentFrame(10, createSceneFixture("Title"), headPose);
-    expect(frame.panelPose.position.x).toBe(1);
-    expect(frame.panelPose.position.y).toBe(1.6);
-    expect(frame.panelPose.position.z).toBeCloseTo(0.6);
-    const panel = frame.panel;
-    if (panel === null) throw new Error("Expected a VR UI panel");
+    const frame = fixtureBackendFrame(backend, 10, createSceneFixture("Title"), runtimeViewerFixture(headPose));
+    expect(visiblePanelFrame(frame).pose.position.x).toBe(1);
+    expect(visiblePanelFrame(frame).pose.position.y).toBe(1.6);
+    expect(visiblePanelFrame(frame).pose.position.z).toBeLessThanOrEqual(headPose.position.z - 2.4);
+    expect(headPlaneFitsViews(runtimeViewerFixture(headPose), composePose(inversePose(headPose), visiblePanelFrame(frame).pose),
+      visiblePanelFrame(frame).panel.size.width, visiblePanelFrame(frame).panel.size.height, 0.035)).toBe(true);
+    const panel = visiblePanelFrame(frame).panel;
     const button = panel.controls.find((control) => control.kind === "button");
     if (button === undefined) throw new Error("Expected a panel button");
     const normalizedX = button.rect.x + button.rect.width / 2;
     const normalizedY = button.rect.y + button.rect.height / 2;
     const localPoint = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
     renderer.selectHandler?.({
-      origin: vec3(frame.panelPose.position.x + localPoint.x, frame.panelPose.position.y + localPoint.y, frame.panelPose.position.z + 2),
+      origin: vec3(visiblePanelFrame(frame).pose.position.x + localPoint.x, visiblePanelFrame(frame).pose.position.y + localPoint.y, visiblePanelFrame(frame).pose.position.z + 2),
       direction: vec3(0, 0, -1),
       timestampMs: 2000
     });
@@ -75,16 +137,16 @@ describe("WebXR session backend", () => {
     const backend = createBackend(adapter);
     await backend.requestSessionFromUserGesture();
     await backend.start();
-    const initial = backend.currentFrame(10, createSceneFixture("Title"), IDENTITY_POSE);
+    const initial = fixtureBackendFrame(backend, 10, createSceneFixture("Title"), runtimeViewerFixture(IDENTITY_POSE));
     adapter.emitReferenceSpaceReset(pose(vec3(1, 0, 0), IDENTITY_POSE.orientation));
-    const remappedMenu = backend.currentFrame(15, createSceneFixture("Title"), pose(vec3(-1, 0, 0), IDENTITY_POSE.orientation));
-    const remapped = backend.currentFrame(20, {
+    const remappedMenu = fixtureBackendFrame(backend, 15, createSceneFixture("Title"), runtimeViewerFixture(pose(vec3(-1, 0, 0), IDENTITY_POSE.orientation)));
+    const remapped = fixtureBackendFrame(backend, 20, {
       ...createSceneFixture("Title"),
       panels: [createAnchorFixture("world")]
-    }, pose(vec3(-1, 0, 0), IDENTITY_POSE.orientation));
-    expect(initial.panelPose.position.x).toBe(0);
-    expect(remappedMenu.panelPose.position.x).toBe(-1);
-    expect(remapped.panelPose.position.x).toBe(-1);
+    }, runtimeViewerFixture(pose(vec3(-1, 0, 0), IDENTITY_POSE.orientation)));
+    expect(visiblePanelFrame(initial).pose.position.x).toBe(0);
+    expect(visiblePanelFrame(remappedMenu).pose.position.x).toBe(-1);
+    expect(visiblePanelFrame(remapped).pose.position.x).toBe(-1);
     await backend.stop();
   });
 
@@ -110,7 +172,7 @@ describe("WebXR session backend", () => {
     const actions: UiAction[] = [];
     const renderer = new FakeRenderer();
     const backend = new WebXrPresentationBackend(
-      adapter, renderer, viewport, (action) => { actions.push(action); }, () => undefined
+      adapter, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined
     );
     await backend.requestSessionFromUserGesture();
     await backend.start();
@@ -119,16 +181,15 @@ describe("WebXR session backend", () => {
       const overlays = [null, ...SCENE_FIXTURE_OVERLAYS[scene]];
       for (const overlay of overlays) {
         const viewModel = createSceneFixture(scene, overlay);
-        const frame = backend.currentFrame(++timestampMs, viewModel, null);
-        const panel = frame.panel;
-        if (panel === null) throw new Error(`Missing panel for ${scene}`);
+        const frame = fixtureBackendFrame(backend, ++timestampMs, viewModel, runtimeViewerFixture(IDENTITY_POSE));
+        const panel = visiblePanelFrame(frame).panel;
         const button = panel.controls.find((control) => control.kind === "button");
         if (button === undefined) throw new Error(`Missing button for ${scene}`);
         const normalizedX = button.rect.x + button.rect.width / 2;
         const normalizedY = button.rect.y + button.rect.height / 2;
         const point = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
         renderer.selectHandler?.({
-          origin: vec3(frame.panelPose.position.x + point.x, frame.panelPose.position.y + point.y, frame.panelPose.position.z + 2),
+          origin: vec3(visiblePanelFrame(frame).pose.position.x + point.x, visiblePanelFrame(frame).pose.position.y + point.y, visiblePanelFrame(frame).pose.position.z + 2),
           direction: vec3(0, 0, -1),
           timestampMs: timestampMs + 1000
         });
@@ -137,6 +198,32 @@ describe("WebXR session backend", () => {
       }
     }
     await backend.stop();
+  });
+
+  it.each(["absent", "cockpit"] as const)("opens a new fixed Menu after %s and holds placement data through a missing viewer", async (closedView) => {
+    const adapter = new FakeWebXrAdapter();
+    const renderer = new FakeRenderer();
+    const actions: UiAction[] = [];
+    const backend = new WebXrPresentationBackend(adapter, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined);
+    await backend.requestSessionFromUserGesture();
+    await backend.start();
+    try {
+      const pause = createSceneFixture("Flight", "Pause");
+      const initial = visiblePanelFrame(fixtureBackendFrame(backend, 10, pause, runtimeViewerFixture(IDENTITY_POSE)));
+      const moved = pose(vec3(2, 0.5, -0.3), IDENTITY_POSE.orientation);
+      const missing = fixtureBackendFrame(backend, 20, pause, unavailableViewerFrame("viewer-unavailable"));
+      expect(missing.panel).toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
+      actions.length = 0;
+      renderer.selectHandler?.({ origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2000 });
+      expect(actions).toEqual([]);
+      expect(visiblePanelFrame(fixtureBackendFrame(backend, 30, pause, runtimeViewerFixture(moved))).pose).toEqual(initial.pose);
+      const closed = createSceneFixture("Flight");
+      fixtureBackendFrame(backend, 40, closedView === "absent" ? { ...closed, panels: [] } : closed, runtimeViewerFixture(moved));
+      const reopened = visiblePanelFrame(fixtureBackendFrame(backend, 50, pause, runtimeViewerFixture(moved)));
+      expect(reopened.pose.position.x).toBeCloseTo(initial.pose.position.x + 2, 10);
+      expect(reopened.pose.position.y).toBeCloseTo(initial.pose.position.y + 0.5, 10);
+      expect(visiblePanelFrame(fixtureBackendFrame(backend, 60, pause, runtimeViewerFixture(IDENTITY_POSE))).pose).toEqual(reopened.pose);
+    } finally { await backend.stop(); }
   });
 
   it("reports missing support and rejected user session requests", async () => {
@@ -221,11 +308,14 @@ class FakeWebXrAdapter implements WebXrSessionPort {
 }
 
 class FakeRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   selectHandler: ((ray: SelectRay) => void) | null = null;
+  readonly frames: BackendFrame[] = [];
+  private frameCallback: Parameters<RendererAdapter["startLoop"]>[0] | null = null;
 
-  startLoop(): void {}
-  stopLoop(): void {}
-  render(): void {}
+  startLoop(callback: Parameters<RendererAdapter["startLoop"]>[0]): void { this.frameCallback = callback; }
+  stopLoop(): void { this.frameCallback = null; }
+  render(frame: BackendFrame): void { this.frames.push(frame); }
   setFlightPose(): void {}
   setLakeVisualCondition(): void {}
   setFlightCameraMode(): void {}
@@ -235,6 +325,14 @@ class FakeRenderer implements RendererAdapter {
   setStereoPresentation(): void {}
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void { this.selectHandler = handler; }
   dispose(): void {}
+
+  tick(timestampMs: number, viewer: ViewerFrame): void { this.frameCallback?.(timestampMs, viewer); }
+}
+
+function requiredRenderedFrame(renderer: FakeRenderer): BackendFrame {
+  const frame = renderer.frames.at(-1);
+  if (frame === undefined) throw new Error("Missing rendered backend frame");
+  return frame;
 }
 
 function createBackend(adapter: FakeWebXrAdapter): WebXrPresentationBackend {

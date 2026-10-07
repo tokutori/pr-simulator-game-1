@@ -2,6 +2,8 @@ import type { PanelCursor, SelectRay } from "../render/contracts/runtime.js";
 import type { UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
 import { actionForControl, hitTestControl, rangeAction } from "./panel-interaction.js";
 import type { PanelPoint } from "./panel-interaction.js";
+import { menuActionAt, menuFocusAction, menuHitIdentity } from "./menu-interaction.js";
+import type { ReadyMenu } from "./menu-interaction.js";
 
 interface FocusedControl {
   readonly controlId: string;
@@ -17,6 +19,7 @@ interface GazeActivation {
 export class GazeDwellSelector {
   private focused: FocusedControl | null = null;
   private lastActivation: GazeActivation | null = null;
+  private menuIdentity = "";
 
   constructor(private readonly dispatch: UiActionDispatcher, private readonly dwellDurationMs = 1000) {
     if (!Number.isFinite(dwellDurationMs) || dwellDurationMs <= 0) {
@@ -55,9 +58,40 @@ export class GazeDwellSelector {
     return this.lastActivation.controlId === controlId && age >= 0 && age <= intervalMs;
   }
 
+  updateMenu(menu: ReadyMenu, point: PanelPoint | null, timestampMs: number): PanelCursor | null {
+    if (!Number.isFinite(timestampMs)) throw new RangeError("Gaze timestamp must be finite");
+    const identity = JSON.stringify(menu.context);
+    if (identity !== this.menuIdentity) {
+      this.reset();
+      this.menuIdentity = identity;
+    }
+    const controlId = point === null ? "" : menuHitIdentity(menu, point);
+    if (controlId === "" || point === null) {
+      if (this.focused !== null) this.dispatch({ type: "menu-focus", context: menu.context, focus: { kind: "none" } });
+      this.focused = null;
+      return point === null ? null : Object.freeze({ point, progress: 0 });
+    }
+    if (this.focused?.controlId !== controlId || timestampMs < this.focused.startedAtMs) {
+      this.focused = { controlId, startedAtMs: timestampMs, activated: false };
+      this.dispatch(menuFocusAction(menu, point));
+    }
+    const focused = this.focused;
+    const progress = Math.min(1, Math.max(0, (timestampMs - focused.startedAtMs) / this.dwellDurationMs));
+    if (progress >= 1 && !focused.activated) {
+      const action = menuActionAt(menu, point);
+      if (action.kind === "action") {
+        this.dispatch(action.action);
+        this.lastActivation = { controlId, timestampMs };
+      }
+      this.focused = { ...focused, activated: true };
+    }
+    return Object.freeze({ point, progress });
+  }
+
   reset(): void {
     this.clearFocus();
     this.lastActivation = null;
+    this.menuIdentity = "";
   }
 
   private clearFocus(): void {

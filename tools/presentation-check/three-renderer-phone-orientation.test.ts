@@ -1,3 +1,5 @@
+import { configuredViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
@@ -104,7 +106,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
   afterAll(() => { bundle.renderer.dispose(); });
 
   function render(backend: PhoneVrPresentationBackend, timestamp = 100, sceneView: UiViewModel = view): { frame: BackendFrame; eyes: readonly RecordedDraw[] } {
-    const frame = backend.currentFrame(timestamp, sceneView);
+    const frame = fixtureBackendFrame(backend, timestamp, sceneView, configuredViewerFixture());
     driver.draws.length = 0;
     bundle.renderer.render(frame);
     expect(driver.draws).toHaveLength(2);
@@ -159,7 +161,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
           if (movement === "up") expect(displacement.y).toBeLessThan(-0.1);
           if (movement === "roll") expect(displacement.x).toBeLessThan(-0.01);
         }
-        expect(current.frame.panelPose).toEqual(initial.frame.panelPose);
+        expect(visiblePanelFrame(current.frame).pose).toEqual(visiblePanelFrame(initial.frame).pose);
       }
       expect(unavailable).toEqual([]);
     } finally {
@@ -189,18 +191,20 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
   it.each(orientations)("keeps Menu and head recenter coherent at screen $screen degrees", async (orientation) => {
     const { browser, backend } = await start(orientation.screen, orientation.neutral);
     try {
-      render(backend);
+      const opening = render(backend);
+      const openingRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(opening.frame.cameraPose)).invert()
+        .multiply(poseMatrix(visiblePanelFrame(opening.frame).pose));
       browser.emit(orientation.right);
       const turned = render(backend);
       backend.recenterMenu();
       const movedMenu = render(backend);
       expectMatrix(centerCamera(movedMenu.eyes), centerCamera(turned.eyes));
-      const menuRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(movedMenu.frame.cameraPose)).invert().multiply(poseMatrix(movedMenu.frame.panelPose));
-      expectMatrix(menuRelativeToHead, new Matrix4().makeTranslation(0, 0, -2.4));
+      const menuRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(movedMenu.frame.cameraPose)).invert().multiply(poseMatrix(visiblePanelFrame(movedMenu.frame).pose));
+      expectMatrix(menuRelativeToHead, openingRelativeToHead);
       backend.recenterTracking();
       const reset = render(backend);
       expectMatrix(poseMatrix(reset.frame.cameraPose), new Matrix4());
-      expectMatrix(poseMatrix(bundle.renderer.transformTrackingPose(reset.frame.cameraPose)).invert().multiply(poseMatrix(reset.frame.panelPose)), menuRelativeToHead);
+      expectMatrix(poseMatrix(bundle.renderer.transformTrackingPose(reset.frame.cameraPose)).invert().multiply(poseMatrix(visiblePanelFrame(reset.frame).pose)), menuRelativeToHead);
       browser.emit(orientation.left);
       const later = render(backend);
       expectMatrix(centerCamera(reset.eyes).invert().multiply(centerCamera(later.eyes)), new Matrix4().makeRotationY(Math.PI / 9));
@@ -235,7 +239,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
           expect(unavailable).toEqual([]);
         } finally { await backend.stop(); }
         driver.draws.length = 0;
-        bundle.renderer.render(backend.currentFrame(100, view));
+        bundle.renderer.render(fixtureBackendFrame(backend, 100, view, configuredViewerFixture()));
         expect(driver.draws).toHaveLength(1);
         const screenDraw = driver.draws[0];
         if (screenDraw === undefined) throw new Error("Missing Screen draw");

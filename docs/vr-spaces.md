@@ -14,7 +14,7 @@ worldに固定した地形・湖面・雲の姿勢を頭部回転へ同期させ
 | Menu | menu用tracking reference内の配置位置 | 開いた位置を維持し、頭部運動で視野内位置が変化する |
 | Head | 現在の頭部poseと固定offset | 視野内の位置を維持する |
 
-interactive panelの提案既定値はMenuである。Flightの計器はCockpitに配置する。
+interactive panelの提案既定値はMenuである。機体の実物相当計器はCockpit、非modal Flight情報板はHeadに配置する。
 視野内固定を要するcontrolはHeadとして明示し、gamepad等の頭部から独立した選択方法を必須にする。
 head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用しない。
 
@@ -26,7 +26,8 @@ head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用し�
 | 太陽・無限遠の空 | 方向をWorldへ固定。sky geometryを眼の位置へ平行移動しても回転は同期しない |
 | 機体、cockpit、実機相当の計器 | 機体poseと固定取付位置。計器はCockpit |
 | Boot/Title/Setup/Briefing/Result/Replayのpanel | Menu。背景のcinematic cameraから独立する |
-| Countdown表示、Flight HUD | Cockpit内の所定位置。頭部正面へ自動追従させない |
+| Countdown表示 | Cockpit内の所定位置。頭部正面へ自動追従させない |
+| 非modal Flight情報板 | Head。前方中央を空け、周辺へtelemetryを配置する。操作controlを含めない |
 | Pause/Settings/Help/Credits | Menu。開いた時点の配置を維持する |
 | head-gaze cursor | Head方向からrayを生成し、hit点へ表示する |
 | controller ray | controller poseから生成する |
@@ -34,6 +35,105 @@ head-gazeだけでHead固定panel上の複数項目を選ぶ構成は採用し�
 
 flight-path marker等は定義された方向を眼へ投影し、固定panelの文字項目と区別する。
 Screen HUDはviewport基準であり、VRのanchorをpixel位置へ直接置換しない。
+
+## Head情報板と操作panelの分離
+
+`UiViewModel.headHud`は`absent | visible`の排他型とする。visibleはHead anchor、local pose、
+表示言語のlocale、大きさ、中央clear region、背景alpha、foreground alpha、非操作の表示要素を持つ。
+文字、ADI、heading、pilot position、wind、迎角、flight-pathの型を区別し、`UiControl`と`UiAction`を含めない。
+flight-pathは姿勢計を非表示にしたCustom設定でも独立表示できる。interactive Menuは従来の`panels`へ残す。
+HUDの背景alphaを下げる際も文字・警告・計器foregroundのalphaを独立して維持する。
+
+clear regionと表示要素のboundsは左上原点の正規化矩形とし、要素の範囲・重複ID・clear regionとの交差を検査する。
+この矩形検査に加え、profileの角寸法、左右projection、身体前後移動、head姿勢を使って実際の前方可視領域を確認する。
+`BackendFrame.headHud`は表示内容とraw center-head poseを一組として保持し、tracking欠損時はabsentとする。
+Phone VRは基準化したsensor姿勢、WebXRは`XRFrame.getViewerPose().transform`を使用する。
+XRのuser camera用identity、片眼pose、frustum union用cameraをcenter-headの代替にしない。
+表示用のworld basisはengine adapterが一度だけ合成し、Flightでは機体・PilotEye・head・HUD localの順とする。
+左右眼のIPDはstereo projectionだけへ適用する。外部rigと非Flight背景基底もheadとの合成を一度だけ行う。
+
+Three.jsのHUD surfaceは独立したCanvasTextureとmeshを所有し、transparent、opacity 1、depthWrite false、
+depthTest falseで描画する。背景alphaとforeground alphaはcanvas側で別に適用する。
+HUDを水面反射用layerへ追加せず、終了時はtexture・material・geometryを一度ずつ解放する。
+非表示時もmeshを保持し、変更された不変viewだけをtexture更新の入力にする。
+
+公開型、backendのcenter-head供給、独立surface、同一frameの眼別geometryを実装した。
+active VR FlightではHead情報板を有効にし、Pauseと非Flightではabsentとする。Screen HUDは従来のDOMを保持する。
+実font・GPU視認性と実Phone/HMDの受入は、接続のCPU試験から分離して検証する。
+
+## 純粋layoutとCanvas preflight
+
+`createHeadHudView`は共通の`FlightHudModel`、そのframeの`ViewerFrame`、明示localeから不変layoutを導出する。
+InformationのFull/Standard/Minimal/Realistic/Customと各Custom cueを保持し、架空値と取得不能値を区別する。
+左右眼のposeから前方の水平±15°・垂直±10°の保護領域をHUD面へ写像し、各cardをその領域外へ配置する。
+予約したFlight Menu幾何との分離も検査する。実browser/GPUでの操作受入は独立した条件として残る。
+
+`prepareHeadHudPaint`は実advanceとactualBoundingBoxによって改行・card収容を検査し、描画前に不変paint planを作る。
+Canvas adapterは`VisibleHeadHud.locale`をdetached canvasのlanguageへ明示し、対応browserでは2D contextの`lang`も設定する。
+measureとdrawは同じfont・language・baseline・alignを使用し、`fillText`のmaxWidthで文字を縮小しない。
+actualBoundingBoxの距離は符号付きのまま扱い、ascent/descent単独の負値を拒否しない。
+左右端からのink幅とbaselineからのink高を合算して実矩形を復元する。
+参照: [HTML StandardのlanguageとTextMetrics](https://html.spec.whatwg.org/dev/canvas.html)。
+
+`validateHeadHudPaint`は各非空行の実inkを左右眼へ投影し、clip内の収容と両端で0.35°以上の角高さを検査する。
+0.35°は本製品のソフトウェア配置契約であり、実Phone/HMDの可読性を保証する実測値ではない。
+旧ALTの13px／0.282640168°による拒否をlocale変更だけで解消済みとは扱わず、新sourceでの実metricsとGPUを検証する。
+CPU試験は模擬metricsによるlayout・合成・拒否契約を対象とし、実font選択、contrast、GPU画像、光学受入は別条件とする。
+
+## Flightの同一frame接続
+
+`createFlightFrameViewDraft`はAppModel、snapshot、analysis、共通HUDを一組として固定する。
+ブラウザー境界の表示localeを明示し、同じViewerFrameでHeadのprepare、両眼validate、viewのfinalize、drawを順に実行する。
+rendererへ渡すHead layerとMenuの説明はこの最終viewを共有する。同期的なScene変更で別のcanvasを描き直さない。
+Headが利用不能な場合はsurfaceを消去し、同じMenuに理由と通常のPause操作を表示する。
+
+Flightの非操作telemetryとinteractive Menuはtexture、pose、寸法、cursor、hit-test対象を分離する。
+MenuはHeadの追従poseを流用せず、tracking referenceへ配置する。専用painterは実inkの収容を検査し、文字を縮小しない。
+Menuが`unavailable`のframeではMenu surfaceを不可視とし、Headは`frame.headHud`の有効性に従って独立更新する。
+Phone VR/WebXR backendは、semantic Menuの準備結果が`unavailable`の分岐、viewer欠損、配置fit失敗でHeadを`absent`として返す。
+`pending`中も有効なHead frameを保持し、Menuだけを描画・選択対象から除外する。
+`viewer-unavailable`を除く失敗は描画後のmicrotaskでScreenへの回復を要求する。
+その要求はpresentationの参照とrequest世代が一致する間だけ有効とし、古い失敗で新しいsessionを終了しない。
+
+Screenのmount、Sceneとoverlayのnode、Flight HUDをVR移行・cache中も接続状態で保持する。
+非表示時はhidden、inert、aria-hiddenをviewから導出し、隠れたcontrolからの操作を受理しない。
+Screen復帰時は同じnodeへ表示内容をpatchし、focus、scroll、既存の退出導線を保持する。
+この接続の数値・DOM試験は実Canvas font、GPU両眼画像、前方可視性、Menu操作、光学受入の代用にしない。
+
+## 同一frameの眼別geometry
+
+`RendererAdapter.startLoop`はtimestampと不変の`ViewerFrame`を渡す。
+`ViewerFrame`は`configured`、`runtime-derived`、`unavailable`を排他的に表現する。
+Runtimeは同じframeをview導出関数へ渡し、そのraw center-headをbackendへ供給する。
+AppModel、DOM、window上に眼別geometryの正本を追加せず、前frameのgeometryを再利用しない。
+現frameの順序は前frameのpending入力適用、geometry取得、physics・機体pose更新callback、
+`beginViewFrame()`、view導出、backend frame、描画とする。
+physics callbackはcamera選択とintrinsicsを変えない非null poseを同frameへ反映する。
+geometry取得後のprojection設定・光学profile・camera cut・viewportとposeの明示取消は次animationへ送る。
+view開始後のpose・lake入力も次animationへ送り、取得projectionと実描画の構成を同frameで一致させる。
+外部XRFrameやreference spaceが欠けた場合はraw geometryを利用不能として扱い、
+XR終了後の通常rAFはScreen/Phoneの構成済み光学状態から処理する。
+
+WebXRでは一つの`XRFrame.getViewerPose()`結果からcenter transformと各viewのtransform・projectionをコピーする。
+`headFromEye`はcenter transformの逆変換とeye transformから導出する。
+projectionは16要素のcolumn-major行列のまま保持し、非対称frustum、眼の回転、shearをFOV単一値へ変換しない。
+公開型へWebXR・Three.jsの具体型を含めない。配列とposeはコピー・freezeし、browser所有の配列を保持しない。
+初期対応はleft/right各1眼の組である。入力順序を正規化し、他のview数・重複・未知の眼編成は利用不能理由を返す。
+非有限値、非単位pose、退化projectionも理由を保持する。有効なcenter-headがある場合、geometry失敗時もtrackingは維持する。
+参照: [WebXRのview geometry](https://www.w3.org/TR/webxr/#xrviewgeometry-interface)、
+[viewer pose](https://www.w3.org/TR/webxr/#xrviewerpose-interface)。
+
+Phone VRでは実`StereoCamera`を描画と同じcamera projection設定、aspect倍率0.5、eye separationで評価する。
+fov、aspect、zoom、near/far、focusを個別に近似せず、左右projectionをコピーする。
+これは構成済みのソフトウェア光学モデルであり、実端末・viewerの較正値を意味しない。
+Screenおよび取得不能なXR frameは`unavailable`とする。raw sensor headは従来どおりPhone backendが所有する。
+`headPlaneFitsViews`はhead基準の矩形四隅を各眼のview/projectionへ写像し、両眼のclip範囲を検査する。
+eye offsetは配置検査に使用し、Head HUD meshへ追加しない。描画時のIPD適用はstereo rendererが一度だけ行う。
+
+`viewer-frame.test.ts`は非対称・回転・shearを含む模擬XR入力、コピー、reference変換、欠損・不正入力と純粋な投影判定を検査する。
+`three-renderer-panel-reference.test.ts`は実renderer adapterのanimation-loop境界と、実`StereoEffect`の両眼出力を検査する。
+後者のXR portは模擬APIである。`three-webxr-mount.test.ts`は実`WebXRManager`と模擬browser XR portで
+Head HUDの左右眼投影を検査する。GPU視認性と実スマートフォン・実HMD受入は独立した未達条件である。
 
 ## Panelの深度合成
 
@@ -56,6 +156,13 @@ Result Menuの可視性とdwellの初期確定は別の受入条件である。�
 
 Menu用referenceと景観のcamera rigを分離する。
 panelを開いた時点の頭部方向から配置を決定し、その後のhead poseでは更新しない。
+Scene・overlayの開始時は、そのframeの両眼projectionとhead-to-eye poseからpanel全体を収容する距離を純粋に求める。
+機体・PilotEye・headの同一基底で固定anchorへ変換し、描画とgaze/controller/gamepadのhit判定へ同じpanel寸法とposeを供給する。
+Menuの非表示または別anchorへの変更を閉状態とし、同じMenuの再表示も新規openingとして扱う。
+Menuを表示したままviewerが一時欠損した場合は配置dataだけを保持し、描画・選択を停止する。復帰時に保留したopeningを解決する。
+viewport・optical profile等の実投影変更では再fitを許可する。通常head motionと分解計算の丸め差は配置更新条件へ含めない。
+数学的に無効または収容不能なprojectionは型付き失敗として同frameの表示を停止し、識別子付きScreen回復へ渡す。
+両眼のfrustum収容と文字の可読性は別の受入条件とする。
 距離、幅、文字サイズ、水平化の基準をprofileに保持する。
 Titleのcamera移動、Attractのcut、Replayのseekでもpanelの位置を変更しない。
 利用者の「正面へ配置」操作で再配置する。遅延した自動追従は初期版に導入しない。
@@ -65,6 +172,37 @@ head-gazeの確定時間を表示し、視線を外すか取消操作で確定�
 Head固定controlはgamepad focusまたは独立controller rayで選択する。
 phone viewerでもtouchなしで戻る・閉じる・再配置・退出を操作できるようにする。
 GameScene変更時もXR sessionを維持し、必要なpanel内容だけを更新する。
+
+### MenuDocumentとscoped入力
+
+`PreparedPresentationView`は同一frameの`UiViewModel`と`MenuPresentation`を一組として渡す。
+`MenuPresentation`は`absent | pending | unavailable | ready`の排他型とし、
+`ready`だけが測定済みpanel、`MenuViewport`、`MenuScrollContext`を持つ。
+
+Canvas adapterは明示localeとfont識別子・世代を用い、実fontのadvanceとactualBoundingBoxを測定する。
+測定値から純粋layoutで不変`MenuDocument`を導出し、改行、control矩形、chart領域、頁操作を確定する。
+portraitではsurface幅と行構成を調整し、縦方向の超過をviewport内のscrollへ接続する。
+文字を縮小して収容せず、開いた時点の両眼projectionで実inkの角高さ0.35°以上を検査する。
+この閾値はソフトウェア配置契約であり、実font・GPU・実Phone/HMDの可読性受入は別条件とする。
+
+描画、clip、gaze/controllerのhit、range値、graph cursor、頁操作は同じ`MenuViewport`を共有する。
+documentの物理座標とviewport座標は共通のoffsetで変換し、clip外のcontrolは選択対象から除外する。
+`delta.viewportPages`は表示域の高さ単位とし、`pageProgress`は最大scroll量に対する一頁分の比率とする。
+Result/Replayのgraph内容とcursor値はRustのrecord queryを使用し、Web側で独立集計しない。
+
+VR Menuのscrollとfocusの正本は`AppModel.menuScroll`とし、`closed | active`の排他型で保持する。
+activeはScene/overlay、panel ID、view keyでscopeを区別し、progress、focus、generationを持つ。
+scope同期には観測時generation、入力にはscopeとgenerationを含むcontextを必須とし、古い要求を拒否する。
+scope変更、閉じる・再表示、実progress変更、明示geometry失効でgenerationを進め、focusを解除する。
+これらの純粋updateはRustの状態・query・clockへのeffectを発行しない。ScreenのDOM状態は既存browser境界で保持する。
+
+font読込や同scopeの入力geometry変更は一旦`pending`とし、旧contextを失効させてから新viewportを公開する。
+pending中はMenuの描画・選択を停止して配置dataを保持し、Screenへの回復を要求しない。
+通常head motionやtelemetry更新はscope・generation・固定anchorの更新条件へ含めない。
+`absent`はMenuを閉じ、`unavailable`は前述の失敗処理へ接続する。測定cacheは派生値だけを保持する。
+
+Head情報板は独立した非操作layerとしてcamera固定を維持する。
+Menuの固定opening anchor、scroll、hit領域をHeadへ流用せず、両layerのtextureとposeを分離する。
 
 ## 座標変換
 
@@ -84,7 +222,7 @@ Flight poseを持たないBoot/Title/FlightSetup/Briefing/Result/CreditsのPhone
 panel配置・head-gaze・recenterは共通tracking referenceで計算し、構図用の高度・yaw/pitchを混入させない。
 眼とpanelへの共通基底を $B$、tracking reference内のposeを $H,P$ とすると、
 相対poseは $(BH)^{-1}(BP)=H^{-1}P$ となり、描画とhit testが一致する。
-viewport変更によるTitle構図の更新でもMenuの相対位置を維持する。
+Title構図のみの変更ではMenuの相対位置を維持する。両眼projectionを変えるviewport変更はopeningの再fit条件とする。
 Screenの景観構図、WebXRのreference space、Flight/Cockpitの機体変換、Replayの外部rigは既存の基底を使用する。
 Title基底を`transformTrackingPose`へ追加し、panel側でも再度合成する二重変換を禁止する。
 

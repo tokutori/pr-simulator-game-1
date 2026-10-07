@@ -187,7 +187,15 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       expect(model.gameSession.kind).toBe("title");
       activate("game-title-start");
       expect(model.gameSession.kind).toBe("setup");
-      for (let index = 0; index < 4; index += 1) activate("game-setup-information");
+      const selectedInformation = (code: number): string | null => root
+        .querySelector(`button[data-control-id="game-setup-select-information-${String(code)}"]`)
+        ?.getAttribute("aria-pressed") ?? null;
+      expect(selectedInformation(0)).toBe("true");
+      activate("game-setup-select-information-3");
+      expect(selectedInformation(3)).toBe("true");
+      activate("game-setup-select-information-4");
+      expect(selectedInformation(4)).toBe("true");
+      expect(selectedInformation(3)).toBe("false");
       const windCue = root.querySelector('input[data-control-id="game-setup-information-wind"]') as unknown as HTMLInputElement | null;
       if (windCue === null) throw new Error("Custom wind cue toggle is missing");
       windCue.checked = false;

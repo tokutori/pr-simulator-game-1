@@ -1,3 +1,5 @@
+import { configuredViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { fixtureBackendFrame, fixturePresentation } from "./menu-fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion as ThreeQuaternion, Vector3 } from "three";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
@@ -31,9 +33,9 @@ describe("Phone gravity browser/backend connection", () => {
           const startup = await begin(fixture.backend);
           fixture.browser.emit(head(heading, pitch, roll));
           await startup.promise;
-          expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, pitch, roll));
+          expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, pitch, roll));
           fixture.browser.emit(head(heading, 0, 0));
-          expectRotation(fixture.backend.currentFrame(100, title).cameraPose, new Matrix4());
+          expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, new Matrix4());
           expect(fixture.unavailable).toEqual([]);
           await fixture.backend.stop();
           expect(fixture.browser.listenerCount()).toBe(0);
@@ -51,22 +53,22 @@ describe("Phone gravity browser/backend connection", () => {
     fixture.browser.emit(head(75, 30, 20));
     const before = new Map<string, Matrix4>();
     for (const anchor of ["menu", "world", "cockpit", "head"] as const) {
-      const frame = fixture.backend.currentFrame(100, { ...title, panels: [createAnchorFixture(anchor)] });
-      before.set(anchor, matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(frame.panelPose)));
+      const frame = fixtureBackendFrame(fixture.backend, 100, { ...title, panels: [createAnchorFixture(anchor)] }, configuredViewerFixture());
+      before.set(anchor, matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(visiblePanelFrame(frame).pose)));
     }
     fixture.backend.recenterTracking();
     for (const anchor of ["menu", "world", "cockpit", "head"] as const) {
-      const frame = fixture.backend.currentFrame(100, { ...title, panels: [createAnchorFixture(anchor)] });
+      const frame = fixtureBackendFrame(fixture.backend, 100, { ...title, panels: [createAnchorFixture(anchor)] }, configuredViewerFixture());
       expectRotation(frame.cameraPose, head(0, 30, 20));
       const expected = before.get(anchor);
       if (expected === undefined) throw new Error("Missing anchor relationship");
-      expectMatrix(matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(frame.panelPose)), expected);
+      expectMatrix(matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(visiblePanelFrame(frame).pose)), expected);
     }
-    const current = fixture.backend.currentFrame(100, title).cameraPose;
+    const current = fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose;
     fixture.backend.recenterMenu();
-    expect(fixture.backend.currentFrame(100, title).cameraPose).toEqual(current);
+    expect(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose).toEqual(current);
     fixture.browser.emit(head(90, -30, -20));
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(15, -30, -20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(15, -30, -20));
   });
 
   it("waits for gravity evidence and a nondegenerate heading without manufacturing an identity viewer", async () => {
@@ -75,16 +77,16 @@ describe("Phone gravity browser/backend connection", () => {
     fixture.browser.emit(head(10, 30, 20), false, "deviceorientation");
     await Promise.resolve();
     expect(startup.completed()).toBe(false);
-    expect(fixture.backend.currentFrame(100, title).panelVisible).toBe(false);
+    expect((fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).panel.kind === "visible")).toBe(false);
     fixture.browser.emit(head(10, 90, 20));
     await Promise.resolve();
     expect(startup.completed()).toBe(false);
     fixture.browser.emit(head(10, 30, 20));
     await startup.promise;
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, 30, 20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, 30, 20));
     fixture.browser.emit(head(0, 0, 0), false, "deviceorientation");
     expect(fixture.unavailable).toEqual([]);
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, 30, 20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, 30, 20));
   });
 
   it("reports a relative-only source as an unsuccessful startup and releases both orientation listeners", async () => {
@@ -108,22 +110,22 @@ describe("Phone gravity browser/backend connection", () => {
     await startup.promise;
     for (const pitch of [89.5, 90, 90.5, 120, -89.5, -90, -90.5, -120]) {
       fixture.browser.emit(head(65, pitch, 20));
-      const before = fixture.backend.currentFrame(100, title);
+      const before = fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture());
       expectRotation(before.cameraPose, head(45, pitch, 20));
       if (Math.abs(pitch) <= 90) {
         fixture.backend.recenterTracking();
-        expect(fixture.backend.currentFrame(100, title)).toEqual(before);
+        expect(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture())).toEqual(before);
       }
     }
     fixture.browser.emit(head(65, 30, 20));
     fixture.backend.recenterTracking();
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, 30, 20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, 30, 20));
   });
 
   it("keeps the Model in starting until relative-only startup fails and Screen recovery completes", async () => {
     vi.useFakeTimers();
     const fixture = createFixture(0);
-    const runtime = new PresentationRuntime(fixture.renderer, [new ScreenPresentationBackend(viewport), fixture.backend], () => title);
+    const runtime = new PresentationRuntime(fixture.renderer, [new ScreenPresentationBackend(viewport), fixture.backend], () => fixturePresentation(title));
     let model = createInitialAppModel();
     const dispatch = (message: AppMessage) => { model = updateApp(model, message).model; };
     expect(await runtime.start("screen")).toEqual({ ok: true });
@@ -182,7 +184,7 @@ describe("Phone gravity browser/backend connection", () => {
       if (order === "screen-first") fixture.browser.rotateScreen(angle);
       fixture.browser.emit(head(65, 30, -20), true, "deviceorientationabsolute", angle);
       if (order === "device-first") fixture.browser.rotateScreen(angle);
-      expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(15, 30, -20));
+      expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(15, 30, -20));
     }
   });
 
@@ -202,7 +204,7 @@ describe("Phone gravity browser/backend connection", () => {
     expect(retry.completed()).toBe(false);
     fixture.browser.emit(head(75, 30, -20));
     await retry.promise;
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, 30, -20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, 30, -20));
   });
 
   it("keeps a canceled pending gravity attempt separate from a later session", async () => {
@@ -219,7 +221,7 @@ describe("Phone gravity browser/backend connection", () => {
     expect(retry.completed()).toBe(false);
     fixture.browser.emit(head(-20, -30, 20));
     await retry.promise;
-    expectRotation(fixture.backend.currentFrame(100, title).cameraPose, head(0, -30, 20));
+    expectRotation(fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose, head(0, -30, 20));
   });
 
   it("accepts a caller-confirmed relative reference but rejects changes to that reference", async () => {
@@ -243,7 +245,7 @@ describe("Phone gravity browser/backend connection", () => {
     const angles = anglesFor(head(75, 30, -20), 0, referenceFromEarth);
     emit({ ...angles, timestampMs: 10, gravityEvidence: { kind: "relative-reference-up", referenceUp } });
     await startup.promise;
-    expectRotation(backend.currentFrame(100, title).cameraPose, head(0, 30, -20));
+    expectRotation(fixtureBackendFrame(backend, 100, title, configuredViewerFixture()).cameraPose, head(0, 30, -20));
     emit({ ...angles, timestampMs: 11, gravityEvidence: { kind: "relative-reference-up", referenceUp: { x: 0, y: 0, z: 0 } } });
     expect(unavailable).toEqual(["Phone VR gravity reference became unavailable or changed"]);
   });
@@ -267,6 +269,7 @@ function createFixture(screenAngle: number, mount: Pose = IDENTITY_POSE) {
 }
 
 class RecordingRenderer implements RendererAdapter {
+  beginViewFrame(): void {}
   stereo: StereoPresentationProfile | null = null;
   constructor(private readonly mount: Pose = IDENTITY_POSE) {}
   startLoop(): void {}

@@ -1,5 +1,5 @@
 import { APP_BUILD_LABEL } from "./build-info.js";
-import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick } from "../render/contracts/ui.js";
+import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick, uiButtonLabel, uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../render/contracts/ui.js";
 import type { FlightHudModel } from "./flight-hud-model.js";
 
@@ -301,7 +301,7 @@ function drawControl(context: PanelDrawingContext, control: UiControl, width: nu
   const controlWidth = control.rect.width * width;
   const controlHeight = control.rect.height * height;
   context.setGlobalAlpha(control.enabled ? 1 : 0.45);
-  context.setFillStyle(control.kind === "button" ? "#31555a" : "#233c42");
+  context.setFillStyle(uiControlBackground(control));
   context.fillRect(x, y, controlWidth, controlHeight);
   context.setStrokeStyle("#91b4b3");
   context.setLineWidth(2);
@@ -309,7 +309,8 @@ function drawControl(context: PanelDrawingContext, control: UiControl, width: nu
   context.setFillStyle("#f3f4e8");
   context.setTextBaseline("middle");
   const value = controlValue(control);
-  const lines = (value === "" ? control.label : `${control.label}  ${value}`).split("\n");
+  const label = control.kind === "button" ? uiButtonLabel(control) : control.label;
+  const lines = (value === "" ? label : `${label}  ${value}`).split("\n");
   context.setFont(lines.length > 1 ? "500 17px system-ui, sans-serif" : "500 24px system-ui, sans-serif");
   const lineSpacing = lines.length > 1 ? 22 : 0;
   const firstLineY = y + controlHeight / 2 - (lines.length - 1) * lineSpacing / 2;

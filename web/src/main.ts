@@ -2,6 +2,10 @@ import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
+import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
+import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./game/environment-briefing.js";
+import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
+import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
@@ -15,8 +19,12 @@ import type {
 } from "./app/app-state.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
-import { browserPanelContext } from "./presentation/browser-canvas.js";
-import { drawVrFlightInstruments, drawVrPanel, VR_PANEL_PIXELS } from "./presentation/vr-panel-canvas.js";
+import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
+import { browserMenuContext, drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
+import { prepareMenuPresentation } from "./presentation/menu-preparation.js";
+import type { MenuMeasurementCache } from "./presentation/menu-preparation.js";
+import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
+import type { MenuInputGeometry } from "./presentation/menu-interaction.js";
 import { PresentationRuntime } from "./presentation/runtime.js";
 import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
@@ -37,15 +45,17 @@ import { parseFlightSnapshot } from "./game/flight-snapshot.js";
 import { venueMapForScenario } from "./game/biwa-venue-map.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
-import { createFlightHudModel } from "./presentation/flight-hud-model.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { FlightSnapshot } from "./game/flight-snapshot.js";
-import type { UiAction } from "./render/contracts/ui.js";
-import type { PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
+import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
+import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
+import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
+import type { HeadHudView } from "./presentation/head-hud-view.js";
 
 const mount = document.getElementById("app");
 if (!(mount instanceof HTMLElement)) throw new Error("Required app element is missing");
+const displayLocale = document.documentElement.lang || "ja";
 
 const stage = document.createElement("div");
 stage.className = "presentation-shell";
@@ -59,8 +69,9 @@ stage.append(canvas, uiRoot, flightHudRoot);
 mount.replaceChildren(stage);
 
 const panelCanvas = document.createElement("canvas");
-panelCanvas.width = VR_PANEL_PIXELS.width;
-panelCanvas.height = VR_PANEL_PIXELS.height;
+panelCanvas.width = 1536;
+panelCanvas.height = 1152;
+const headHudCanvas = document.createElement("canvas");
 let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
 let flightController: FlightController | null = null;
@@ -70,18 +81,11 @@ let flightRenderer: RendererAdapter | null = null;
 let countdownGeneration = 0;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
-const flightHud = new FlightHudAdapter(flightHudRoot, (snapshot) => {
-  if (model.presentation.type !== "ready" || model.presentation.mode === "screen") return;
-  const phaseCode = gameSessionPhaseCode(model.gameSession);
-  if ((phaseCode !== 5 && phaseCode !== 6) || snapshot.tick % 3 !== 0) return;
-  if (phaseCode === 6 && (model.gameSession.kind !== "paused-flight" || model.gameSession.overlay.kind !== "menu")) return;
-  const panel = createGameViewModel(model, snapshot, model.flightAnalysis).panels[0];
-  const context = panelCanvas.getContext("2d");
-  if (panel !== undefined && context !== null) {
-    drawVrPanel(browserPanelContext(context), panel, VR_PANEL_PIXELS.width, VR_PANEL_PIXELS.height);
-    drawVrFlightInstruments(browserPanelContext(context), flightHudModel(snapshot, phaseCode === 6));
-  }
-});
+const flightHud = new FlightHudAdapter(flightHudRoot);
+let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
+let menuFontGeneration = 0;
+let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
+const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
 });
@@ -90,6 +94,7 @@ function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
+  synchronizeMenuScroll();
   if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
   renderModel();
   for (const effect of transition.effects) runEffect(effect);
@@ -97,12 +102,13 @@ function dispatch(message: AppMessage): void {
 
 function renderModel(): void {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
+  const domVisible = screenUiVisible(model.presentation);
   // The attract record is a separate, fixed scenario-1 flight. Its water
   // condition must not inherit the player's last setup selection.
   const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
   flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
-  flightHud.setVisible(phaseCode === 5 || phaseCode === 6);
+  flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
     ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
@@ -120,34 +126,85 @@ function renderModel(): void {
   } else if (phaseCode <= 3 || phaseCode === 8 || (phaseCode === 7 && flightController === null)) {
     flightRenderer?.setFlightPose(null);
   }
-  if (model.presentation.type === "hidden" || model.presentation.type === "cached") {
-    flightHud.setVisible(false);
-    screenUi.clear();
-    return;
-  }
   const viewModel = currentViewModel();
-  screenUi.render(viewModel);
-  const panel = viewModel.panels[0];
-  const context = panelCanvas.getContext("2d");
-  if (panel !== undefined && context !== null) {
-    drawVrPanel(browserPanelContext(context), panel, VR_PANEL_PIXELS.width, VR_PANEL_PIXELS.height);
-    const currentSnapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession);
-    if (model.presentation.type === "ready" && model.presentation.mode !== "screen" && currentSnapshot !== null &&
-        (phaseCode === 5 ||
-         (phaseCode === 6 && model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind === "menu"))) {
-      drawVrFlightInstruments(browserPanelContext(context), flightHudModel(currentSnapshot, phaseCode === 6));
-    }
-  }
+  screenUi.render(viewModel, domVisible);
 }
 
-function flightHudModel(snapshot: FlightSnapshot, paused: boolean) {
-  const informationCode = model.difficulty.informationCode;
-  if (!Number.isInteger(informationCode) || informationCode < 0 || informationCode > 4) {
-    throw new RangeError("Information code must lie in [0, 4]");
+function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
+  const frameModel = model;
+  const snapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(frameModel.gameSession);
+  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing());
+  let headView: HeadHudView = draft.headHud;
+  if (headView.kind === "visible") {
+    const dimensions = headHudCanvasSize(headView.layer);
+    if (headHudCanvas.width !== dimensions.width) headHudCanvas.width = dimensions.width;
+    if (headHudCanvas.height !== dimensions.height) headHudCanvas.height = dimensions.height;
   }
-  const hud = createFlightHudModel(snapshot, informationCode as 0 | 1 | 2 | 3 | 4, model.difficulty.hudProfile);
-  return paused ? Object.freeze({ ...hud, status: "一時停止中" }) : hud;
+  const headContext = headHudCanvas.getContext("2d");
+  const headDrawingContext = headContext === null ? null : browserHeadHudContext(headContext);
+  const preparation = headDrawingContext === null ? null : validateHeadHudPaint(
+    prepareHeadHudPaint(headDrawingContext, headView, headHudCanvas.width, headHudCanvas.height), viewer);
+  if (preparation !== null) {
+    if (preparation.kind === "unavailable") headView = Object.freeze({ kind: "unavailable", reason: preparation.reason });
+  } else if (headView.kind === "visible") {
+    headView = Object.freeze({ kind: "unavailable", reason: "text-overflow" });
+  }
+  const viewModel = finalizeFlightFrameView(draft, headView);
+  const panel = viewModel.panels[0];
+  const panelContext = panelCanvas.getContext("2d");
+  const scroll = frameModel.menuScroll;
+  preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
+    : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
+    : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
+    : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
+      viewer, { locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
+  if (preparedMenu.kind === "ready") {
+    if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
+      const observedContext = preparedMenu.context;
+      preparedMenu = Object.freeze({ kind: "pending" });
+      queueMicrotask(() => { dispatch({ type: "menu-scroll-invalidated", context: observedContext }); });
+    } else presentedMenuGeometry = menuInputGeometry(preparedMenu);
+  } else if (preparedMenu.kind === "absent") presentedMenuGeometry = Object.freeze({ kind: "none" });
+  if (headDrawingContext !== null && preparation !== null) drawHeadHud(headDrawingContext,
+    viewModel.headHud.kind === "visible" ? preparation : { kind: "absent", width: preparation.width, height: preparation.height });
+  if (preparedMenu.kind === "ready" && panelContext !== null) {
+    const dimensions = menuCanvasSize(preparedMenu.panel.size);
+    if (panelCanvas.width !== dimensions.width) panelCanvas.width = dimensions.width;
+    if (panelCanvas.height !== dimensions.height) panelCanvas.height = dimensions.height;
+    try {
+      drawMeasuredMenu(browserMenuContext(panelContext), preparedMenu.viewport, panelCanvas.width, panelCanvas.height);
+    } catch {
+      preparedMenu = Object.freeze({ kind: "unavailable", reason: "drawing-unavailable" });
+    }
+  } else panelContext?.clearRect(0, 0, panelCanvas.width, panelCanvas.height);
+  return Object.freeze({ viewModel, menu: preparedMenu });
 }
+
+function synchronizeMenuScroll(): void {
+  const observed = model;
+  const view = currentViewModel();
+  const panel = view.panels.find((candidate) => candidate.anchor === "menu");
+  const active = observed.presentation.type === "ready" && observed.presentation.mode !== "screen" && panel !== undefined;
+  const viewKey = view.scene === "Result" ? `${observed.resultTab}:${observed.analysisChart}`
+    : view.scene === "Replay" ? `${observed.replayViewMode}:${observed.analysisChart}` : "main";
+  const scope: MenuScrollScope = view.activeOverlay === null
+    ? { kind: "scene", scene: view.scene, panelId: panel?.id ?? "", viewKey }
+    : { kind: "overlay", scene: view.scene, panelId: panel?.id ?? "", viewKey, overlay: view.activeOverlay };
+  model = updateApp(model, { type: "menu-scroll-synchronized", generation: observed.menuScroll.generation,
+    target: active ? { kind: "active", scope } : { kind: "closed" } }).model;
+}
+
+function invalidateMenuGeometry(): void {
+  const scroll = model.menuScroll;
+  if (scroll.kind === "active") dispatch({ type: "menu-scroll-invalidated", context: { scope: scroll.scope, generation: scroll.generation } });
+  preparedMenu = Object.freeze({ kind: "pending" });
+}
+
+for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fonts.addEventListener(fontEvent, () => {
+  menuFontGeneration++;
+  menuMeasurementCache.clear();
+  invalidateMenuGeometry();
+});
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
@@ -225,10 +282,12 @@ function runEffect(effect: AppEffect): void {
       return;
     case "recenter-tracking":
       phoneVrBackend?.recenterTracking();
+      invalidateMenuGeometry();
       return;
     case "recenter-menu":
       if (runtime?.currentMode === "webxr") webXrBackend?.recenterMenu();
       if (runtime?.currentMode === "phone-vr") phoneVrBackend?.recenterMenu();
+      invalidateMenuGeometry();
       return;
     case "dispose-presentation": {
       const presentation = runtime;
@@ -425,7 +484,7 @@ async function initializePresentation(requestId: number): Promise<void> {
   try {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
-    const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null);
+    const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
     rendererAdapter = bundle.renderer;
     const initializedSession = await initializeGameSession();
     if (isPageHidden()) {
@@ -456,8 +515,15 @@ async function initializePresentation(requestId: number): Promise<void> {
     const presentation = new PresentationRuntime(
       bundle.renderer,
       [screenBackend, webXrBackend, phoneVrBackend],
-      currentViewModel,
-      (timestampMs) => flightController?.onFrame(timestampMs)
+        currentFrameViewModel,
+        (timestampMs) => flightController?.onFrame(timestampMs),
+        (mode, reason) => {
+          const frameModel = model;
+          queueMicrotask(() => {
+            const message = menuFrameFailureRecovery(model, frameModel, mode, reason);
+            if (message !== null) dispatch(message);
+          });
+        }
     );
     runtime = presentation;
     const started = await presentation.start("screen");
@@ -548,8 +614,23 @@ function currentViewModel() {
   return createGameViewModel(
     model,
     flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession),
-    model.flightAnalysis
+    model.flightAnalysis,
+    NO_HEAD_HUD_VIEW,
+    currentEnvironmentBriefing()
   );
+}
+
+function currentEnvironmentBriefing() {
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  let environment = NO_ENVIRONMENT_BRIEFING;
+  if ([1, 2, 3, 8].includes(phaseCode) && gameSession !== null) {
+    try {
+      environment = parseEnvironmentBriefingSnapshot(gameSession.environment_snapshot_json(), phaseCode);
+    } catch {
+      environment = NO_ENVIRONMENT_BRIEFING;
+    }
+  }
+  return environment;
 }
 
 function runGameSessionOperation(operation: GameSessionOperation, requestId: number, requestedPhaseCode: number): void {
@@ -619,7 +700,9 @@ function dispatchGameOperationFailure(
 function gameOperationLabel(operation: GameSessionOperation): string {
   return typeof operation === "string"
     ? operation
-    : `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`;
+    : operation.kind === "set-information-cue"
+      ? `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`
+      : `set-${operation.axis}-${String(operation.code)}`;
 }
 
 function completeGameOperation(requestId: number, rawSnapshot?: ArrayLike<number>): void {
@@ -758,6 +841,21 @@ function createFlightRecordRepository(): FlightRecordRepository {
 }
 
 function dispatchUiAction(action: UiAction): void {
+  if (action.type === "menu-scroll" || action.type === "menu-focus" || action.type === "menu-control") {
+    if (!menuContextCanInteract(preparedMenu, model.menuScroll, action.context) || preparedMenu.kind !== "ready") return;
+    if (action.type === "menu-scroll") {
+      dispatch({ type: "menu-scroll", context: action.context, intent: action.intent });
+      return;
+    }
+    if (action.type === "menu-focus") {
+      if (action.focus.kind === "control" && !menuExposesControl(preparedMenu, action.focus.controlId)) return;
+      dispatch({ type: "menu-focus", context: action.context, focus: action.focus });
+      return;
+    }
+    if (!menuExposesControl(preparedMenu, action.action.controlId)) return;
+    dispatchUiAction(action.action);
+    return;
+  }
   const session = gameSession;
   const displayedPhaseCode = gameSessionPhaseCode(model.gameSession);
   if (session !== null && isGameFlowActivation(action)) {
@@ -766,6 +864,8 @@ function dispatchUiAction(action: UiAction): void {
     if (isStaleGameFlowActivation(action, displayedPhaseCode, synchronizedPhaseCode)
         && !viewExposesAction(currentViewModel(), action)) return;
   }
+  if ((action.type === "activate" || action.type === "set-toggle" || action.type === "set-range")
+      && !viewExposesAction(currentViewModel(), action)) return;
   dispatch({ type: "ui-action", action });
 }
 
@@ -782,6 +882,7 @@ function onPhoneVrTrackingUnavailable(message: string): void {
 }
 
 function onResize(): void {
+  invalidateMenuGeometry();
   runtime?.resize(currentViewport());
 }
 

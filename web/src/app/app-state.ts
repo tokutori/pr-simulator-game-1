@@ -1,5 +1,6 @@
 import type { FlightCameraMode, FlightRenderPose, PresentationMode } from "../render/contracts/runtime.js";
 import type { UiAction } from "../render/contracts/ui.js";
+import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightAnalysisData, FlightAnalysisSample } from "../game/flight-record-query.js";
 
@@ -34,7 +35,8 @@ export type NamedGameSessionOperation =
   | "leave-attract";
 
 export type GameSessionOperation = NamedGameSessionOperation
-  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean };
+  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean }
+  | { readonly kind: "set-difficulty-option"; readonly axis: "preset" | "information" | "assistance" | "weather"; readonly code: number };
 
 export interface ReplayClockState {
   readonly timeSeconds: number;
@@ -101,15 +103,25 @@ export type PauseOverlayState =
   | { readonly kind: "settings" }
   | { readonly kind: "help" };
 
+export type MenuFocusState =
+  | { readonly kind: "none" }
+  | { readonly kind: "control"; readonly controlId: string };
+
+export type AppMenuScrollState =
+  | Extract<MenuScrollState, { kind: "closed" }>
+  | (Extract<MenuScrollState, { kind: "active" }> & { readonly focus: MenuFocusState });
+
 export interface AppModel {
   readonly status: string;
   readonly webXrAvailable: boolean;
   readonly phoneVrAvailable: boolean;
   readonly presentation: PresentationUiState;
   readonly gameSession: GameSessionUiState;
+  readonly menuScroll: AppMenuScrollState;
   readonly controlModeCode: number;
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
+  readonly briefingDetailsOpen: boolean;
   readonly flightAnalysis: FlightAnalysisData | null;
   readonly pendingAnalysisRequestId: number | null;
   readonly nextAnalysisRequestId: number;
@@ -192,6 +204,14 @@ export type AppMessage =
     }
   | { readonly type: "presentation-initialization-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "ui-action"; readonly action: UiAction }
+  | {
+      readonly type: "menu-scroll-synchronized";
+      readonly generation: number;
+      readonly target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope };
+    }
+  | { readonly type: "menu-scroll"; readonly context: MenuScrollContext; readonly intent: MenuScrollIntent }
+  | { readonly type: "menu-focus"; readonly context: MenuScrollContext; readonly focus: MenuFocusState }
+  | { readonly type: "menu-scroll-invalidated"; readonly context: MenuScrollContext }
   | { readonly type: "refresh-stored-flight-records" }
   | { readonly type: "stored-flight-records-loaded"; readonly requestId: number; readonly records: readonly StoredFlightRecordUiEntry[] }
   | { readonly type: "stored-flight-records-failed"; readonly requestId: number; readonly message: string }
@@ -360,6 +380,7 @@ export function createInitialAppModel(): AppModel {
     phoneVrAvailable: false,
     presentation: Object.freeze({ type: "uninitialized" }),
     gameSession: Object.freeze({ kind: "boot", phaseCode: -1 }),
+    menuScroll: Object.freeze({ kind: "closed", generation: 0 }),
     controlModeCode: 0,
     difficulty: Object.freeze({
       presetCode: 4,
@@ -369,6 +390,7 @@ export function createInitialAppModel(): AppModel {
       weatherCode: 0
     }),
     configurationMetadata: null,
+    briefingDetailsOpen: false,
     flightAnalysis: null,
     pendingAnalysisRequestId: null,
     nextAnalysisRequestId: 1,
@@ -400,7 +422,9 @@ export function createInitialAppModel(): AppModel {
 export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   if (model.presentation.type === "cached") {
     if (message.type === "page-suspended" || message.type === "ui-action"
-        || message.type === "replay-clock-tick" || message.type === "backend-ended") return transition(model);
+        || message.type === "replay-clock-tick" || message.type === "backend-ended"
+        || message.type === "menu-scroll-synchronized" || message.type === "menu-scroll"
+        || message.type === "menu-focus" || message.type === "menu-scroll-invalidated") return transition(model);
     if (message.type === "permission-completed") {
       return transition(model, message.ok ? [{ type: "cancel-pending-request", mode: message.mode }] : []);
     }
@@ -497,6 +521,14 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     }
     case "ui-action":
       return updateUiAction(model, message.action);
+    case "menu-scroll-synchronized":
+      return synchronizeMenuScroll(model, message.generation, message.target);
+    case "menu-scroll":
+      return updateMenuScroll(model, message.context, message.intent);
+    case "menu-focus":
+      return updateMenuFocus(model, message.context, message.focus);
+    case "menu-scroll-invalidated":
+      return invalidateMenuScroll(model, message.context);
     case "refresh-stored-flight-records":
       return beginStoredFlightRecordLoad(model);
     case "stored-flight-records-loaded":
@@ -536,6 +568,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
+        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
@@ -599,6 +632,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
         status: "",
+        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
@@ -764,7 +798,109 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 }
 
+function sameMenuScope(left: MenuScrollScope, right: MenuScrollScope): boolean {
+  return left.scene === right.scene && left.panelId === right.panelId && left.viewKey === right.viewKey
+    && (left.kind === "scene" ? right.kind === "scene" : right.kind === "overlay" && left.overlay === right.overlay);
+}
+
+function menuContextMatches(state: AppMenuScrollState, context: MenuScrollContext): boolean {
+  return state.kind === "active" && state.generation === context.generation
+    && sameMenuScope(state.scope, context.scope);
+}
+
+function nextMenuGeneration(generation: number): number | null {
+  return Number.isSafeInteger(generation) && generation >= 0 && generation < Number.MAX_SAFE_INTEGER
+    ? generation + 1 : null;
+}
+
+function synchronizeMenuScroll(
+  model: AppModel,
+  observedGeneration: number,
+  target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope }
+): AppTransition {
+  const current = model.menuScroll;
+  if (observedGeneration !== current.generation) return transition(model);
+  if (target.kind === "closed" && current.kind === "closed") return transition(model);
+  if (target.kind === "active") {
+    if (target.scope.panelId.trim().length === 0 || target.scope.viewKey.trim().length === 0
+        || target.scope.kind === "overlay" && target.scope.overlay.trim().length === 0) return transition(model);
+    if (current.kind === "active" && sameMenuScope(current.scope, target.scope)) return transition(model);
+  }
+  const generation = nextMenuGeneration(current.generation);
+  if (generation === null) return transition(model);
+  if (target.kind === "closed") {
+    return transition(withModel(model, { menuScroll: Object.freeze({ kind: "closed", generation }) }));
+  }
+  const scope = target.scope.kind === "scene"
+    ? Object.freeze({ kind: target.scope.kind, scene: target.scope.scene, panelId: target.scope.panelId, viewKey: target.scope.viewKey })
+    : Object.freeze({ kind: target.scope.kind, scene: target.scope.scene, panelId: target.scope.panelId, viewKey: target.scope.viewKey, overlay: target.scope.overlay });
+  return transition(withModel(model, {
+    menuScroll: Object.freeze({ kind: "active", scope, generation, progress: 0, focus: Object.freeze({ kind: "none" }) })
+  }));
+}
+
+function updateMenuScroll(model: AppModel, context: MenuScrollContext, intent: MenuScrollIntent): AppTransition {
+  const current = model.menuScroll;
+  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
+  let progress: number;
+  if (intent.kind === "set-progress") {
+    if (!Number.isFinite(intent.progress) || intent.progress < 0 || intent.progress > 1) return transition(model);
+    progress = intent.progress;
+  } else {
+    if (!Number.isFinite(intent.pageProgress) || intent.pageProgress < 0 || intent.pageProgress > 1) return transition(model);
+    const pages = intent.kind === "page" ? (intent.direction === "previous" ? -1 : 1) : intent.viewportPages;
+    if (!Number.isFinite(pages)) return transition(model);
+    const change = pages * intent.pageProgress;
+    if (!Number.isFinite(change)) return transition(model);
+    progress = Math.max(0, Math.min(1, current.progress + change));
+  }
+  if (progress === current.progress) return transition(model);
+  const generation = nextMenuGeneration(current.generation);
+  if (generation === null) return transition(model);
+  return transition(withModel(model, {
+    menuScroll: Object.freeze({ ...current, generation, progress, focus: Object.freeze({ kind: "none" }) })
+  }));
+}
+
+function updateMenuFocus(model: AppModel, context: MenuScrollContext, focus: MenuFocusState): AppTransition {
+  const current = model.menuScroll;
+  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
+  if (focus.kind === "control" && focus.controlId.trim().length === 0) return transition(model);
+  if (focus.kind === "none" ? current.focus.kind === "none"
+      : current.focus.kind === "control" && current.focus.controlId === focus.controlId) return transition(model);
+  const nextFocus = focus.kind === "none" ? Object.freeze({ kind: focus.kind })
+    : Object.freeze({ kind: focus.kind, controlId: focus.controlId });
+  return transition(withModel(model, { menuScroll: Object.freeze({ ...current, focus: nextFocus }) }));
+}
+
+function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppTransition {
+  const current = model.menuScroll;
+  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
+  const generation = nextMenuGeneration(current.generation);
+  if (generation === null) return transition(model);
+  return transition(withModel(model, {
+    menuScroll: Object.freeze({ ...current, generation, focus: Object.freeze({ kind: "none" }) })
+  }));
+}
+
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId === "game-briefing-technical") {
+    if (model.pendingGameRequestId !== null || ![2, 3, 8].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+    return transition(withModel(model, { briefingDetailsOpen: !model.briefingDetailsOpen }));
+  }
+  if (action.type === "activate" && action.controlId.startsWith("game-setup-select-")) {
+    if (model.gameSession.kind !== "setup") return transition(model);
+    const selection = /^game-setup-select-(preset|information|assistance|weather)-([0-4])$/.exec(action.controlId);
+    if (selection === null) return transition(model);
+    const axis = selection[1];
+    const code = Number(selection[2]);
+    if (axis !== "preset" && axis !== "information" && axis !== "assistance" && axis !== "weather") return transition(model);
+    if ((axis === "preset" || axis === "assistance") && code > 3) return transition(model);
+    const currentCode = axis === "preset" ? model.difficulty.presetCode : axis === "information"
+      ? model.difficulty.informationCode : axis === "assistance" ? model.difficulty.assistanceCode : model.difficulty.weatherCode;
+    if (code === currentCode) return transition(model);
+    return beginGameOperation(model, { kind: "set-difficulty-option", axis, code });
+  }
   if (action.type === "activate" && action.controlId === "game-flight-resume"
       && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
     return transition(model);
@@ -955,10 +1091,6 @@ function operationForGameAction(phaseCode: number, controlId: string): NamedGame
     "game-setup-mode-manual": [1, "set-control-manual"],
     "game-setup-mode-shared": [1, "set-control-shared"],
     "game-setup-mode-automatic": [1, "set-control-automatic"],
-    "game-setup-preset": [1, "cycle-difficulty-preset"],
-    "game-setup-information": [1, "cycle-information-level"],
-    "game-setup-assistance": [1, "cycle-assistance-level"],
-    "game-setup-weather": [1, "cycle-weather-class"],
     "game-setup-back": [1, "return-to-title"],
     "game-briefing-start": [3, "start-flight"],
     "game-countdown-cancel": [4, "cancel-countdown"],
