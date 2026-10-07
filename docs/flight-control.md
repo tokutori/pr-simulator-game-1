@@ -76,7 +76,11 @@ fraction 0では直前incidence/target、正fractionでは新incidence/targetを
 normalized manual intent、body q/r target、manual/FBW/mixed incidence targetを型とaccessorで区別する。
 physical incidenceと保持pilot targetはoutcomeのstate/sampleを参照し、record側で制御を再計算しない。
 fraction 0のreportは未適用の新controlを保持せず、正fractionと整数tickはその区間の適用controlを返す。
-新mock機体と公開WASM/input/record/default切替はBPG-041/042の後続範囲である。
+`TailFlightScenarioParameters`は共通のComposite-CG launch/contact検証から二系統のtick-zero stateを生成する。
+`TailFlightScenario`はborrowed Hybrid load/wind、pilot trim、contact、courseを固定し、software profileを機体から分離する。
+telemetry式とdistance scoreは旧scenarioと共有する。`run`はTimeLimit/WaterContactで同時刻のstateとscoreを返す。
+失敗時は直前成功の二系統stateと元のcause/stageを返し、そのtickをcommitしない。
+新mock機体の公開WASM/input/record/default切替はBPG-042の後続範囲である。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。

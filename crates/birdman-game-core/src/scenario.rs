@@ -163,8 +163,7 @@ impl<'a> FlightScenarioParameters<'a> {
         contact_points_body: &'a [BodyPoint],
         course_axis: CourseAxis,
     ) -> Result<Self, FlightScenarioError> {
-        let initial_flight = flight_state_from_composite_cg_launch(&aircraft, launch)
-            .map_err(FlightScenarioError::Launch)?;
+        let initial_flight = prepare_scenario_launch(&aircraft, launch)?;
         let initial_state = FlightTickState::try_new(
             &aircraft,
             actuator_limits,
@@ -173,8 +172,7 @@ impl<'a> FlightScenarioParameters<'a> {
             initial_actuator_state,
         )
         .map_err(FlightScenarioError::InitialState)?;
-        let contact_geometry = WaterContactGeometry::try_new(contact_points_body)
-            .map_err(FlightScenarioError::Contact)?;
+        let contact_geometry = prepare_scenario_contact(contact_points_body)?;
         Ok(Self {
             aircraft,
             initial_state,
@@ -184,6 +182,19 @@ impl<'a> FlightScenarioParameters<'a> {
             course_axis,
         })
     }
+}
+
+pub(crate) fn prepare_scenario_launch(
+    aircraft: &AircraftModel,
+    launch: CompositeCgLaunchConditions,
+) -> Result<FlightState, FlightScenarioError> {
+    flight_state_from_composite_cg_launch(aircraft, launch).map_err(FlightScenarioError::Launch)
+}
+
+pub(crate) fn prepare_scenario_contact(
+    contact_points_body: &[BodyPoint],
+) -> Result<WaterContactGeometry<'_>, FlightScenarioError> {
+    WaterContactGeometry::try_new(contact_points_body).map_err(FlightScenarioError::Contact)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -387,73 +398,8 @@ impl<'a> FlightScenario<'a> {
 
     /// Derives telemetry at the composite center of mass.
     pub fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
-        let mass_fraction = self.aircraft.pilot_mass_kg()
-            / (self.aircraft.airframe_mass_kg() + self.aircraft.pilot_mass_kg());
-        let offset_body = BodyVector::try_new(
-            mass_fraction * state.pilot_position_m(),
-            0.0,
-            mass_fraction * self.aircraft.pilot_vertical_offset_m(),
-        )
-        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let position_ned = state
-            .datum_position_ned()
-            .translated(
-                state
-                    .attitude_body_to_ned()
-                    .body_to_ned(offset_body)
-                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
-            )
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let rotational_velocity = state
-            .angular_velocity_body()
-            .cross(offset_body)
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let relative_velocity =
-            BodyVector::try_new(mass_fraction * state.pilot_velocity_mps(), 0.0, 0.0)
-                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let cg_velocity_body = rotational_velocity
-            .plus(relative_velocity)
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let cg_velocity_ned = state
-            .datum_velocity_ned()
-            .plus(
-                state
-                    .attitude_body_to_ned()
-                    .body_to_ned(cg_velocity_body)
-                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
-            )
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let wind = self
-            .loads
-            .wind_velocity_at(position_ned)
-            .map_err(FlightTelemetryError::Wind)?;
-        let air_velocity_body = state
-            .attitude_body_to_ned()
-            .ned_to_body(
-                cg_velocity_ned
-                    .minus(wind)
-                    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
-            )
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let [u, v, w] = air_velocity_body.components();
-        let airspeed = air_velocity_body
-            .norm()
-            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-        let [qw, qx, qy, qz] = state.attitude_body_to_ned().components();
-        Ok(FlightTelemetry {
-            composite_cg_position_ned_m: position_ned,
-            altitude_m: -position_ned.components()[2],
-            airspeed_mps: airspeed,
-            groundspeed_mps: cg_velocity_ned
-                .norm()
-                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
-            wind_velocity_ned_mps: wind,
-            angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
-            sideslip_angle_rad: (airspeed > 0.0)
-                .then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
-            roll_rad: libm::atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)),
-            pitch_rad: libm::asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0)),
-            heading_rad: libm::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)),
+        derive_flight_telemetry(&self.aircraft, state, |position| {
+            self.loads.wind_velocity_at(position)
         })
     }
 
@@ -535,6 +481,77 @@ impl<'a> FlightScenario<'a> {
             self.contact_geometry,
         )
     }
+}
+
+pub(crate) fn derive_flight_telemetry(
+    aircraft: &AircraftModel,
+    state: FlightState,
+    wind_at: impl FnOnce(NedPoint) -> Result<NedVector, crate::wind_field::WindError>,
+) -> Result<FlightTelemetry, FlightTelemetryError> {
+    let mass_fraction =
+        aircraft.pilot_mass_kg() / (aircraft.airframe_mass_kg() + aircraft.pilot_mass_kg());
+    let offset_body = BodyVector::try_new(
+        mass_fraction * state.pilot_position_m(),
+        0.0,
+        mass_fraction * aircraft.pilot_vertical_offset_m(),
+    )
+    .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let position_ned = state
+        .datum_position_ned()
+        .translated(
+            state
+                .attitude_body_to_ned()
+                .body_to_ned(offset_body)
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+        )
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let rotational_velocity = state
+        .angular_velocity_body()
+        .cross(offset_body)
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let relative_velocity =
+        BodyVector::try_new(mass_fraction * state.pilot_velocity_mps(), 0.0, 0.0)
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let cg_velocity_body = rotational_velocity
+        .plus(relative_velocity)
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let cg_velocity_ned = state
+        .datum_velocity_ned()
+        .plus(
+            state
+                .attitude_body_to_ned()
+                .body_to_ned(cg_velocity_body)
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+        )
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let wind = wind_at(position_ned).map_err(FlightTelemetryError::Wind)?;
+    let air_velocity_body = state
+        .attitude_body_to_ned()
+        .ned_to_body(
+            cg_velocity_ned
+                .minus(wind)
+                .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+        )
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let [u, v, w] = air_velocity_body.components();
+    let airspeed = air_velocity_body
+        .norm()
+        .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
+    let [qw, qx, qy, qz] = state.attitude_body_to_ned().components();
+    Ok(FlightTelemetry {
+        composite_cg_position_ned_m: position_ned,
+        altitude_m: -position_ned.components()[2],
+        airspeed_mps: airspeed,
+        groundspeed_mps: cg_velocity_ned
+            .norm()
+            .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?,
+        wind_velocity_ned_mps: wind,
+        angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
+        sideslip_angle_rad: (airspeed > 0.0).then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
+        roll_rad: libm::atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)),
+        pitch_rad: libm::asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0)),
+        heading_rad: libm::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)),
+    })
 }
 
 fn negate_ned_vector(vector: NedVector) -> Result<NedVector, DynamicsError> {

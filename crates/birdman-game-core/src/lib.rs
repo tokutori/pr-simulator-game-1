@@ -23,6 +23,7 @@ mod session_contract;
 mod simulation;
 mod synthetic_flight;
 mod tail_control;
+mod tail_scenario;
 mod tail_simulation;
 mod wind_field;
 
@@ -83,6 +84,10 @@ pub use tail_control::{
     TailControlCommands, TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
     TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
     advance_tail_control, tail_rate_feedback_incidence,
+};
+pub use tail_scenario::{
+    TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,
+    TailFlightScenarioParameters,
 };
 pub use tail_simulation::{
     TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
