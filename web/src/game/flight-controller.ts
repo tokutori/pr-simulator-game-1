@@ -35,6 +35,7 @@ export class FlightController {
   private disposed = false;
   private failed = false;
   private terminalReported = false;
+  private executionGeneration = 0;
   private initialPilotPositionMeters: number;
 
   constructor(
@@ -60,27 +61,50 @@ export class FlightController {
 
   onFrame(timestampMs: number): void {
     if (this.disposed || this.failed || this.snapshotValue.terminal !== "airborne") return;
+    const generation = this.executionGeneration;
+    const presentation: { pending: { readonly kind: "none" } | { readonly kind: "live" | "terminal"; readonly snapshot: FlightSnapshot } } = { pending: { kind: "none" } };
     try {
       this.clock.advanceFrame(timestampMs, () => {
         const intent = this.input.readIntent(this.readGamepads());
-        this.snapshotValue = parseFlightSnapshot(this.session.advance_tick(
+        const snapshot = parseFlightSnapshot(this.session.advance_tick(
           intent.roll,
           intent.pitch,
           intent.yaw,
           intent.pilotPositionMeters
         ));
-        this.applySnapshot(this.snapshotValue);
-        if (this.snapshotValue.terminal !== "airborne" && !this.terminalReported) {
-          this.terminalReported = true;
-          this.input.suspend();
-          this.onTerminal(this.snapshotValue);
+        this.snapshotValue = snapshot;
+        if (snapshot.terminal !== "airborne") {
+          this.clock.suspend();
+          if (!this.terminalReported) {
+            this.terminalReported = true;
+            presentation.pending = { kind: "terminal", snapshot };
+          }
+          return false;
         }
-        return this.snapshotValue.terminal === "airborne";
+        presentation.pending = { kind: "live", snapshot };
+        return true;
       });
+      if (!this.isCurrentExecution(generation)) return;
+      if (presentation.pending.kind === "terminal") this.deliverTerminal(presentation.pending.snapshot, generation);
+      else if (presentation.pending.kind === "live") this.applySnapshot(presentation.pending.snapshot);
     } catch (error: unknown) {
+      if (!this.isCurrentExecution(generation)) return;
       this.failed = true;
-      this.suspend();
-      this.hud.fail(error instanceof Error ? error.message : String(error));
+      this.clock.suspend();
+      let failure = error;
+      try {
+        this.input.suspend();
+      } catch (cleanupError: unknown) {
+        failure = new AggregateError([error, cleanupError], "Flight frame and input suspension failed", { cause: error });
+      }
+      if (!this.isCurrentExecution(generation)) return;
+      let diagnostic: { readonly kind: "none" } | { readonly kind: "failed"; readonly error: unknown } = { kind: "none" };
+      try {
+        this.hud.fail(failure instanceof Error ? failure.message : String(failure));
+      } catch (diagnosticError: unknown) {
+        diagnostic = { kind: "failed", error: diagnosticError };
+      }
+      if (diagnostic.kind === "failed") throw new AggregateError([failure, diagnostic.error], "Flight frame and failure reporting failed", { cause: error });
     }
   }
 
@@ -97,6 +121,7 @@ export class FlightController {
 
   reset(snapshot: ArrayLike<number>, hud: FlightHudPort = this.hud): void {
     if (this.disposed) throw new Error("Cannot reset a disposed flight controller");
+    this.executionGeneration += 1;
     this.failed = true;
     this.clock.suspend();
     try {
@@ -140,10 +165,40 @@ export class FlightController {
     this.hud.setVisible(false);
   }
 
+  private deliverTerminal(snapshot: FlightSnapshot, generation: number): void {
+    const failures: unknown[] = [];
+    try {
+      this.onTerminal(snapshot);
+    } catch (error: unknown) {
+      failures.push(error);
+    }
+    if (!this.isCurrentExecution(generation)) return;
+    try {
+      this.applySnapshot(snapshot);
+    } catch (error: unknown) {
+      failures.push(error);
+    }
+    if (!this.isCurrentExecution(generation)) return;
+    try {
+      this.input.suspend();
+    } catch (error: unknown) {
+      failures.push(error);
+    }
+    if (!this.isCurrentExecution(generation)) return;
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Terminal delivery and presentation cleanup failed", { cause: failures[0] });
+  }
+
   private applySnapshot(snapshot: FlightSnapshot, initialPilotPositionMeters = this.initialPilotPositionMeters, hud: FlightHudPort = this.hud): void {
+    const generation = this.executionGeneration;
     const pose = projectFlightRenderPose(projectLegacyFlightSnapshot(snapshot), initialPilotPositionMeters);
     this.renderer.setFlightPose(pose);
+    if (!this.isCurrentExecution(generation)) return;
     hud.render(snapshot);
+  }
+
+  private isCurrentExecution(generation: number): boolean {
+    return !this.disposed && this.executionGeneration === generation;
   }
 }
 

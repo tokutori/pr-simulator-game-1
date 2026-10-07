@@ -13,11 +13,14 @@ import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { keyboardIntent } from "../../web/src/game/keyboard-intent.js";
 import { BrowserPilotInput } from "../../web/src/game/browser-input.js";
 import { FlightController } from "../../web/src/game/flight-controller.js";
+import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
+import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel, GameSessionOperation } from "../../web/src/app/app-state.js";
+import type { AppMessage, AppModel, GameSessionOperation } from "../../web/src/app/app-state.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
@@ -78,6 +81,91 @@ function hudProfile(session: GameSessionBridge) {
 }
 
 describe("generated WebAssembly browser binding", () => {
+  it.each(["renderer", "hud", "input-suspend"] as const)("publishes Rust Result despite terminal %s failure", (port) => {
+    initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+    const session = new GameSessionBridge(0);
+    const update = (message: AppMessage): void => {
+      const transition = updateApp(model, message);
+      model = transition.model;
+      effects.push(...transition.effects);
+    };
+    let model = createInitialAppModel();
+    const effects: ReturnType<typeof updateApp>["effects"][number][] = [];
+    const terminalRecords: string[] = [];
+    const failure = new Error(`Injected terminal ${port} failure`);
+    const advanceTick = vi.fn((roll: number, pitch: number, yaw: number, pilot: number) =>
+      session.advance_tick(roll, pitch, yaw, pilot));
+    const controllerSession = { snapshot: () => session.snapshot(), advance_tick: advanceTick, free: () => { session.free(); } };
+    const bindings = new FlightControllerUiBindings();
+    const display = {
+      render: (snapshot: FlightSnapshot): void => { if (port === "hud" && snapshot.terminal !== "airborne") throw failure; },
+      setVisible: (): void => undefined
+    };
+    const binding = bindings.bind(controllerSession, display, () => parseFlightSnapshot(session.snapshot()), update);
+    const input = {
+      reset: (): void => undefined,
+      resume: (): void => undefined,
+      dispose: (): void => undefined,
+      suspend: (): void => { if (port === "input-suspend" && session.phase_code() === 7) throw failure; },
+      readIntent: () => ({ roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: 0 })
+    };
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.advance_countdown();
+    session.launch();
+    const sync = (snapshot: FlightSnapshot): void => {
+      update({ type: "game-session-synced", phaseCode: session.phase_code(), controlModeCode: session.control_mode_code(),
+        countdownRemaining: session.countdown_remaining(), canResume: session.can_resume(),
+        difficulty: model.difficulty, configurationMetadata: null, snapshot });
+    };
+    sync(parseFlightSnapshot(session.snapshot()));
+    update({ type: "flight-controller-ready", identity: binding.identity });
+    const onTerminal = vi.fn((snapshot: FlightSnapshot): void => {
+      terminalRecords.push(session.export_flight_record_json());
+      sync(snapshot);
+    });
+    const controller = new FlightController(controllerSession, input, {
+      setFlightPose: (pose: FlightRenderPose | null): void => { if (pose !== null && port === "renderer" && session.phase_code() === 7) throw failure; }
+    }, binding.port, physics_hz(), () => [], onTerminal);
+    try {
+      controller.onFrame(0);
+      for (let frame = 1; frame <= 3_000 && controller.currentSnapshot.terminal === "airborne"; frame += 1) controller.onFrame(frame * 10);
+      const terminal = controller.currentSnapshot;
+      expect(terminal.terminal).toBe("water-contact");
+      expect(onTerminal).toHaveBeenCalledExactlyOnceWith(terminal);
+      expect(session.phase_code()).toBe(7);
+      expect(model.gameSession.kind).toBe("result");
+      expect(model.flightExecution.kind).toBe("ready");
+      expect(effects).toEqual(expect.arrayContaining([expect.objectContaining({ type: "persist-flight-record" })]));
+      const record = session.export_flight_record_json();
+      expect(terminalRecords).toEqual([record]);
+      const finalization = (JSON.parse(record) as { finalization: { reason: string; terminal_tick: number; terminal_fraction: number; score_m: number[] } }).finalization;
+      expect(finalization.reason).toBe("water_contact");
+      expect(finalization.terminal_tick).toBe(terminal.tick);
+      expect(finalization.terminal_fraction).toBe(terminal.contactFraction);
+      expect(finalization.score_m[0]).toBe(terminal.scoreCourseMeters);
+      expect(finalization.score_m[1]).toBe(terminal.crossTrackMeters);
+      for (const mode of ["screen", "phone-vr", "webxr"] as const) {
+        const view = createGameViewModel({ ...model, presentation: { type: "ready", mode } }, terminal);
+        expect(view.scene).toBe("Result");
+        for (const controlId of ["game-flight-pause", "game-flight-abort", "game-flight-resume", "game-paused-abort"]) {
+          expect(viewExposesAction(view, { type: "activate", controlId })).toBe(false);
+        }
+      }
+      const advances = advanceTick.mock.calls.length;
+      controller.resume();
+      controller.onFrame(40_000);
+      controller.onFrame(50_000);
+      expect(advanceTick).toHaveBeenCalledTimes(advances);
+      expect(onTerminal).toHaveBeenCalledTimes(1);
+      expect(session.export_flight_record_json()).toBe(record);
+    } finally {
+      controller.dispose();
+    }
+  });
+
   it("plays an independent Title demo without exporting it as a player flight", () => {
     initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
     const session = new GameSessionBridge(0);

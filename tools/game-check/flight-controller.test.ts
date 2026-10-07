@@ -152,6 +152,171 @@ describe("FlightController reset transaction", () => {
     expect(trial.hud.setVisible).toHaveBeenLastCalledWith(false);
     expect(trial.session.advance_tick).not.toHaveBeenCalled();
   });
+
+  it.each(["pose", "hud", "input-suspend"] as const)("delivers terminal once when %s fails", (port) => {
+    const trial = fixture();
+    const failure = new Error(`Terminal ${port} failed`);
+    const fail = (): never => { throw failure; };
+    trial.endNextTick();
+    if (port === "pose") trial.renderer.setFlightPose.mockImplementationOnce(fail);
+    if (port === "hud") trial.hud.render.mockImplementationOnce(fail);
+    if (port === "input-suspend") trial.input.suspend.mockImplementationOnce(fail);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    const terminal = trial.controller.currentSnapshot;
+    expect(terminal.terminal).toBe("water-contact");
+    expect(trial.onTerminal).toHaveBeenCalledExactlyOnceWith(terminal);
+    expect(trial.hud.fail).toHaveBeenCalledWith(failure.message);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(1);
+    expectStopped(trial, terminal);
+    trial.controller.dispose();
+  });
+
+  it("does not resume catch-up or apply old cleanup after a terminal callback resets the controller", () => {
+    const trial = fixture();
+    trial.endNextTick();
+    trial.onTerminal.mockImplementationOnce(() => {
+      trial.clearTerminal();
+      trial.controller.reset(snapshotValues(0.12));
+    });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(1);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(expect.objectContaining({ pilotPositionMeters: 0.12 }));
+    trial.controller.onFrame(110);
+    trial.controller.onFrame(120);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(2);
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    trial.controller.dispose();
+  });
+
+  it("does not apply terminal presentation or input cleanup after callback disposal", () => {
+    const trial = fixture();
+    trial.endNextTick();
+    trial.onTerminal.mockImplementationOnce(() => { trial.controller.dispose(); });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
+    expect(trial.session.free).toHaveBeenCalledTimes(1);
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+  });
+
+  it("attempts terminal delivery once even when the callback throws", () => {
+    const trial = fixture();
+    trial.endNextTick();
+    trial.onTerminal.mockImplementationOnce(() => { throw new Error("Terminal observer failed"); });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.input.suspend).toHaveBeenCalled();
+    expect(trial.hud.fail).toHaveBeenCalledWith("Terminal observer failed");
+    expectStopped(trial, trial.controller.currentSnapshot);
+    trial.controller.dispose();
+  });
+
+  it("preserves the terminal presentation failure when reporting also throws", () => {
+    const trial = fixture();
+    const primary = new Error("Terminal renderer failed");
+    const diagnostic = new Error("Failure reporting failed");
+    trial.endNextTick();
+    trial.renderer.setFlightPose.mockImplementationOnce(() => { throw primary; });
+    trial.hud.fail.mockImplementationOnce(() => { throw diagnostic; });
+    trial.controller.onFrame(0);
+    let caught: unknown;
+    try {
+      trial.controller.onFrame(100);
+    } catch (error: unknown) {
+      caught = error;
+    }
+    if (!(caught instanceof AggregateError)) throw new Error("Expected primary and diagnostic failures");
+    expect(caught.errors).toEqual([primary, diagnostic]);
+    expect(caught.cause).toBe(primary);
+    expect(trial.onTerminal).toHaveBeenCalledExactlyOnceWith(trial.controller.currentSnapshot);
+    expectStopped(trial, trial.controller.currentSnapshot);
+    trial.controller.dispose();
+  });
+
+  it("does not deliver old cleanup diagnostics to a replacement HUD after cleanup resets the controller", () => {
+    const trial = fixture();
+    const replacementHud = { render: vi.fn(), fail: vi.fn(), setVisible: vi.fn() };
+    trial.endNextTick();
+    trial.input.suspend.mockImplementationOnce(() => { throw new Error("Terminal input cleanup failed"); })
+      .mockImplementationOnce(() => {
+        trial.clearTerminal();
+        trial.controller.reset(snapshotValues(0.12), replacementHud);
+      });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.controller.currentSnapshot.terminal).toBe("airborne");
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    expect(replacementHud.fail).not.toHaveBeenCalled();
+    trial.controller.onFrame(110);
+    trial.controller.onFrame(120);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(2);
+    expect(replacementHud.render).toHaveBeenLastCalledWith(trial.controller.currentSnapshot);
+    trial.controller.dispose();
+  });
+
+  it("preserves catch-up ticks while presenting the latest live snapshot after clock bookkeeping", () => {
+    const trial = fixture();
+    trial.renderer.setFlightPose.mockClear();
+    trial.hud.render.mockClear();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(10);
+    expect(trial.input.readIntent).toHaveBeenCalledTimes(10);
+    expect(trial.controller.currentSnapshot.tick).toBe(10);
+    expect(trial.renderer.setFlightPose).toHaveBeenCalledTimes(1);
+    expect(trial.hud.render).toHaveBeenCalledExactlyOnceWith(trial.controller.currentSnapshot);
+    trial.controller.dispose();
+  });
+
+  it.each(["pose", "hud"] as const)("preserves the new execution clock after live %s resets the controller", (port) => {
+    const trial = fixture();
+    const replacementHud = { render: vi.fn(), fail: vi.fn(), setVisible: vi.fn() };
+    const reset = (): void => { trial.controller.reset(snapshotValues(0.12), replacementHud); };
+    trial.hud.render.mockClear();
+    if (port === "pose") trial.renderer.setFlightPose.mockImplementationOnce(reset);
+    else trial.hud.render.mockImplementationOnce(reset);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(10);
+    expect(trial.controller.currentSnapshot.pilotPositionMeters).toBe(0.12);
+    expect(trial.hud.render).toHaveBeenCalledTimes(port === "pose" ? 0 : 1);
+    expect(replacementHud.render).toHaveBeenCalledExactlyOnceWith(trial.controller.currentSnapshot);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    trial.controller.onFrame(110);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(10);
+    trial.controller.onFrame(120);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(11);
+    expect(replacementHud.render).toHaveBeenLastCalledWith(trial.controller.currentSnapshot);
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    expect(replacementHud.fail).not.toHaveBeenCalled();
+    trial.controller.dispose();
+  });
+
+  it.each(["pose", "hud"] as const)("stops the old frame when live %s disposes the controller", (port) => {
+    const trial = fixture();
+    const dispose = (): void => { trial.controller.dispose(); };
+    trial.hud.render.mockClear();
+    if (port === "pose") trial.renderer.setFlightPose.mockImplementationOnce(dispose);
+    else trial.hud.render.mockImplementationOnce(dispose);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(10);
+    expect(trial.hud.render).toHaveBeenCalledTimes(port === "pose" ? 0 : 1);
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
+    expect(trial.session.free).toHaveBeenCalledTimes(1);
+    trial.controller.onFrame(110);
+    trial.controller.onFrame(120);
+    expect(trial.session.advance_tick).toHaveBeenCalledTimes(10);
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+  });
 });
 
 function fixture() {
