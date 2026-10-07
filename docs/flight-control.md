@@ -154,6 +154,11 @@ reset・snapshot同期・描画の失敗時は入力とclockを停止し、再�
 facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
 非同期queryは観測開始時のopaque owner/generation tokenを保持し、Retry・設定変更・archive開閉・cursor変更・free後の結果を拒否する。
 scenario/seedが同一でもresource世代が異なる結果は受理しない。
+`session-factory`はlayoutを明示した構成からWASM resourceを生成し、単一のfacade ownerへ渡す。
+新factoryはraw bridgeを公開せず、初回projectionに失敗したresourceを解放する。
+`archived-personal-best`は保存schema v1〜5とv6を各Rust selectorへ接続する。
+異なるlayoutの既存recordも対応するRust decoderで検証し、同layoutの比較・key・適格性はRust selectorへ委譲する。
+現公開factoryの切替は、main・入力・HUD・Result・保存・Replayの全consumer接続後に行う。
 Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
 Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
 enter/leave・再生操作はresource世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
