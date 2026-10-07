@@ -72,6 +72,10 @@ pilot target policy・moving mass・積分器・contact検索/slerpは既存処�
 `advance_tail_flight_tick_with_contact`は着水時にfractional terminal sampleだけを返す。
 fraction 0では直前incidence/target、正fractionでは新incidence/targetを保持し、body/pilot stateは同時刻へ補間する。
 制御・pilot policy・荷重stage・contactの失敗時は部分stateをcommitしない。
+`advance_tail_flight_tick_with_contact_report`は同一評価の`TailControlCommands`と入力を成功outcomeへ付属させる。
+normalized manual intent、body q/r target、manual/FBW/mixed incidence targetを型とaccessorで区別する。
+physical incidenceと保持pilot targetはoutcomeのstate/sampleを参照し、record側で制御を再計算しない。
+fraction 0のreportは未適用の新controlを保持せず、正fractionと整数tickはその区間の適用controlを返す。
 新mock機体と公開WASM/input/record/default切替はBPG-041/042の後続範囲である。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。

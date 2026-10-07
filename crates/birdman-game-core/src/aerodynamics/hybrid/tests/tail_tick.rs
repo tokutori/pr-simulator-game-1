@@ -6,7 +6,8 @@ use crate::{
     TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState, TailPilotIntent,
     TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
     WaterContactGeometry, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
-    advance_with_surface_deflections, pilot_target_acceleration,
+    advance_tail_flight_tick_with_contact_report, advance_with_surface_deflections,
+    pilot_target_acceleration,
 };
 
 fn initial_state(down: f64, velocity: [f64; 3], rate: [f64; 3]) -> TailFlightTickState {
@@ -100,6 +101,99 @@ fn tail_tick_feedback_uses_previous_qr_once_and_holds_incidence_at_every_rk_stag
         next.flight_state().angular_velocity_body(),
         previous_body.angular_velocity_body()
     );
+}
+
+#[test]
+fn tail_tick_report_retains_normalized_intent_rate_targets_and_physical_command_outputs() {
+    let fixture = Fixture::new(4);
+    let surfaces = fixture.surfaces();
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let previous = initial_state(-10.0, [10.0, 0.0, 0.0], [0.0, 0.1, -0.1]);
+    let contacts = [BodyPoint::origin()];
+    let geometry = WaterContactGeometry::try_new(&contacts).unwrap();
+    let command = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.5, -0.25).unwrap(),
+        TailRateTarget::try_new(0.15, -0.1).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    for (mode, targets) in [
+        (ControlMode::Manual, [-0.1, 0.05]),
+        (
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            [-0.055, 0.025],
+        ),
+        (ControlMode::Automatic, [-0.01, 0.0]),
+    ] {
+        let report = advance_tail_flight_tick_with_contact_report(
+            &aircraft(),
+            previous,
+            config(mode),
+            command,
+            &load,
+            geometry,
+        )
+        .unwrap();
+        let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
+            panic!("expected completed airborne tick");
+        };
+        let applied = report.applied_controls().unwrap();
+        assert_eq!(applied.input(), command);
+        assert_eq!(applied.input().manual_intent().nose_up(), 0.5);
+        assert_eq!(applied.input().manual_intent().turn_right(), -0.25);
+        assert_eq!(
+            applied.input().desired_body_rate().pitch_rad_per_second(),
+            0.15
+        );
+        assert_eq!(
+            applied.input().desired_body_rate().yaw_rad_per_second(),
+            -0.1
+        );
+        assert_eq!(
+            applied.input().pilot_position_command(),
+            TailPilotPositionCommand::Hold
+        );
+        let commands = applied.commands();
+        assert_eq!(
+            commands.manual_incidence_target(),
+            TailIncidence::try_new(-0.1, 0.05).unwrap()
+        );
+        near(
+            commands.fbw_incidence_target().elevator_rad(),
+            -0.01,
+            1.0e-16,
+        );
+        assert_eq!(commands.fbw_incidence_target().rudder_rad(), 0.0);
+        near(
+            commands.mixed_incidence_target().elevator_rad(),
+            targets[0],
+            1.0e-16,
+        );
+        near(
+            commands.mixed_incidence_target().rudder_rad(),
+            targets[1],
+            1.0e-16,
+        );
+        near(next.incidence().elevator_rad(), -0.01, 1.0e-16);
+        near(next.incidence().rudder_rad(), targets[1].min(0.01), 1.0e-16);
+        assert_eq!(next.pilot_position_target().position_m(), 0.12);
+        assert_eq!(
+            report.outcome(),
+            advance_tail_flight_tick_with_contact(
+                &aircraft(),
+                previous,
+                config(mode),
+                command,
+                &load,
+                geometry,
+            )
+            .unwrap()
+        );
+    }
 }
 
 #[test]
@@ -200,6 +294,20 @@ fn tail_tick_load_failure_preserves_stage_cause_and_every_previous_state_field()
     );
     assert_eq!(error.site(), HybridSite::Datum);
     assert_eq!(error.stage(), Some(AerodynamicStage::Second));
+    let contacts = [BodyPoint::origin()];
+    assert_eq!(
+        advance_tail_flight_tick_with_contact_report(
+            &aircraft(),
+            previous,
+            config(ControlMode::Manual),
+            input([1.0, -1.0], set_position(1.0)),
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
+        ),
+        Err(TailFlightTickError::Dynamics(DynamicsError::Load(
+            LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error),)
+        )))
+    );
     assert_eq!(previous, before);
     assert_eq!(previous.tick_index(), 7);
     assert_eq!(previous.incidence(), TailIncidence::neutral());
@@ -256,6 +364,16 @@ fn tail_tick_contact_interpolates_body_and_pilot_at_one_time_with_interval_input
             geometry,
         )
         .unwrap();
+        let report = advance_tail_flight_tick_with_contact_report(
+            &aircraft(),
+            previous,
+            config(ControlMode::Manual),
+            command,
+            &load,
+            geometry,
+        )
+        .unwrap();
+        assert_eq!(report.outcome(), outcome);
         let TailFlightTickOutcome::WaterContact(contact) = outcome else {
             panic!("expected fractional water contact");
         };
@@ -315,9 +433,16 @@ fn tail_tick_contact_interpolates_body_and_pilot_at_one_time_with_interval_input
         let held = if down == 0.0 {
             assert_eq!(fraction, 0.0);
             assert_eq!(sampled, initial);
+            assert_eq!(report.applied_controls(), None);
             previous
         } else {
             assert!(fraction > 0.0 && fraction < 1.0);
+            let applied = report.applied_controls().unwrap();
+            assert_eq!(applied.input(), command);
+            assert_eq!(
+                applied.commands().manual_incidence_target(),
+                TailIncidence::try_new(-0.2, 0.2).unwrap()
+            );
             next
         };
         assert_eq!(contact.incidence(), held.incidence());

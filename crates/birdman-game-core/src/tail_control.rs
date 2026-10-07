@@ -152,17 +152,47 @@ pub fn tail_rate_feedback_incidence(
     )
 }
 
-/// Mixed target and next held physical incidences for one successful control step.
+/// Physical-incidence command targets produced by one manual/FBW authority evaluation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailControlCommands {
+    manual: TailIncidence,
+    feedback: TailIncidence,
+    mixed: TailIncidence,
+}
+
+impl TailControlCommands {
+    /// Returns manual intent mapped to horizontal/vertical tail incidence targets in rad.
+    pub const fn manual_incidence_target(self) -> TailIncidence {
+        self.manual
+    }
+
+    /// Returns observed-minus-target q/r feedback incidence targets in rad.
+    pub const fn fbw_incidence_target(self) -> TailIncidence {
+        self.feedback
+    }
+
+    /// Returns the authority-mixed saturated incidence targets before software slew.
+    pub const fn mixed_incidence_target(self) -> TailIncidence {
+        self.mixed
+    }
+}
+
+/// Command report and next held physical incidences for one successful control step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailControlUpdate {
-    mixed_target: TailIncidence,
+    commands: TailControlCommands,
     incidence: TailIncidence,
 }
 
 impl TailControlUpdate {
     /// Returns the authority-mixed, saturated physical target.
     pub const fn mixed_target(self) -> TailIncidence {
-        self.mixed_target
+        self.commands.mixed
+    }
+
+    /// Returns all command targets from this single control evaluation.
+    pub const fn commands(self) -> TailControlCommands {
+        self.commands
     }
 
     /// Returns the slew-limited physical incidence held for the next integration interval.
@@ -218,7 +248,11 @@ pub fn advance_tail_control(
     )
     .map_err(TailControlError::Incidence)?;
     Ok(TailControlUpdate {
-        mixed_target,
+        commands: TailControlCommands {
+            manual,
+            feedback,
+            mixed: mixed_target,
+        },
         incidence,
     })
 }

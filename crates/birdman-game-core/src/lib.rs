@@ -76,14 +76,15 @@ pub use simulation::{
 };
 pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
 pub use tail_control::{
-    TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
+    TailControlCommands, TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
     TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
     advance_tail_control, tail_rate_feedback_incidence,
 };
 pub use tail_simulation::{
-    TailFlightTickConfig, TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome,
-    TailFlightTickState, TailWaterContactSample, advance_tail_flight_tick,
-    advance_tail_flight_tick_with_contact,
+    TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactSample,
+    advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    advance_tail_flight_tick_with_contact_report,
 };
 pub use wind_field::{WindError, WindField};
 

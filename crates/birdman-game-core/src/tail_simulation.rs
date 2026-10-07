@@ -8,8 +8,8 @@ use crate::dynamics::{
 };
 use crate::flight_control::ControlMode;
 use crate::tail_control::{
-    TailControlError, TailControlProfile, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionMapping, TailRateTarget, advance_tail_control,
+    TailControlCommands, TailControlError, TailControlProfile, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionMapping, TailRateTarget, advance_tail_control,
 };
 
 /// One immutable integer-tick state with exactly two held physical tail incidences.
@@ -109,6 +109,21 @@ impl TailFlightTickInput {
             pilot_position,
         }
     }
+
+    /// Returns normalized nose-up/right-turn manual intent, distinct from physical incidence.
+    pub const fn manual_intent(self) -> TailPilotIntent {
+        self.pilot
+    }
+
+    /// Returns desired body pitch/yaw rates in rad/s, with body-positive target signs.
+    pub const fn desired_body_rate(self) -> TailRateTarget {
+        self.desired_rate
+    }
+
+    /// Returns the independent normalized position command or explicit Hold.
+    pub const fn pilot_position_command(self) -> TailPilotPositionCommand {
+        self.pilot_position
+    }
 }
 
 /// Classified failures without publishing a partially advanced control or physics state.
@@ -176,6 +191,60 @@ pub enum TailFlightTickOutcome {
     WaterContact(TailWaterContactSample),
 }
 
+/// Input and command evaluation applied over a successfully elapsed physics interval.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailAppliedControls {
+    input: TailFlightTickInput,
+    commands: TailControlCommands,
+}
+
+impl TailAppliedControls {
+    /// Returns the sampled manual intent, body-rate target and pilot command without reevaluation.
+    pub const fn input(self) -> TailFlightTickInput {
+        self.input
+    }
+
+    /// Returns manual/FBW/mixed incidence targets from the interval's single evaluation.
+    pub const fn commands(self) -> TailControlCommands {
+        self.commands
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum TailReportedOutcome {
+    Advanced(TailFlightTickState, TailAppliedControls),
+    ContactAtStart(TailWaterContactSample),
+    ContactWithinInterval(TailWaterContactSample, TailAppliedControls),
+}
+
+/// Atomic outcome and applied-control report; an unelapsed contact interval has no new input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailFlightTickReport {
+    result: TailReportedOutcome,
+}
+
+impl TailFlightTickReport {
+    /// Returns the authoritative physical incidence and pilot target through the state/sample.
+    pub const fn outcome(self) -> TailFlightTickOutcome {
+        match self.result {
+            TailReportedOutcome::Advanced(state, _) => TailFlightTickOutcome::Advanced(state),
+            TailReportedOutcome::ContactAtStart(sample)
+            | TailReportedOutcome::ContactWithinInterval(sample, _) => {
+                TailFlightTickOutcome::WaterContact(sample)
+            }
+        }
+    }
+
+    /// Returns newly applied controls, absent only when water contact occurred at fraction zero.
+    pub const fn applied_controls(self) -> Option<TailAppliedControls> {
+        match self.result {
+            TailReportedOutcome::Advanced(_, controls)
+            | TailReportedOutcome::ContactWithinInterval(_, controls) => Some(controls),
+            TailReportedOutcome::ContactAtStart(_) => None,
+        }
+    }
+}
+
 struct HeldTailLoad<'provider, 'environment> {
     loads: &'provider HybridAerodynamicLoad<'environment>,
     incidence: TailIncidence,
@@ -206,6 +275,16 @@ pub fn advance_tail_flight_tick(
     input: TailFlightTickInput,
     loads: &HybridAerodynamicLoad<'_>,
 ) -> Result<TailFlightTickState, TailFlightTickError> {
+    evaluate_tail_flight_tick(aircraft, previous, config, input, loads).map(|(state, _)| state)
+}
+
+fn evaluate_tail_flight_tick(
+    aircraft: &AircraftModel,
+    previous: TailFlightTickState,
+    config: TailFlightTickConfig,
+    input: TailFlightTickInput,
+    loads: &HybridAerodynamicLoad<'_>,
+) -> Result<(TailFlightTickState, TailAppliedControls), TailFlightTickError> {
     let tick_index = previous
         .tick_index
         .checked_add(1)
@@ -246,12 +325,18 @@ pub fn advance_tail_flight_tick(
         PHYSICS_DT_SECONDS,
     )
     .map_err(TailFlightTickError::Dynamics)?;
-    Ok(TailFlightTickState {
-        tick_index,
-        flight_state,
-        incidence,
-        pilot_position_target,
-    })
+    Ok((
+        TailFlightTickState {
+            tick_index,
+            flight_state,
+            incidence,
+            pilot_position_target,
+        },
+        TailAppliedControls {
+            input,
+            commands: control.commands(),
+        },
+    ))
 }
 
 /// Applies the same shared contact geometry and slerp as the legacy tick without legacy axes.
@@ -263,7 +348,23 @@ pub fn advance_tail_flight_tick_with_contact(
     loads: &HybridAerodynamicLoad<'_>,
     geometry: WaterContactGeometry<'_>,
 ) -> Result<TailFlightTickOutcome, TailFlightTickError> {
-    let next = advance_tail_flight_tick(aircraft, previous, config, input, loads)?;
+    advance_tail_flight_tick_with_contact_report(aircraft, previous, config, input, loads, geometry)
+        .map(TailFlightTickReport::outcome)
+}
+
+/// Returns the committed physical outcome and its once-evaluated applied controls atomically.
+///
+/// No report escapes a failed tick. Contact at fraction zero retains the preceding state and
+/// discards newly evaluated controls because that interval elapsed no simulation time.
+pub fn advance_tail_flight_tick_with_contact_report(
+    aircraft: &AircraftModel,
+    previous: TailFlightTickState,
+    config: TailFlightTickConfig,
+    input: TailFlightTickInput,
+    loads: &HybridAerodynamicLoad<'_>,
+    geometry: WaterContactGeometry<'_>,
+) -> Result<TailFlightTickReport, TailFlightTickError> {
+    let (next, controls) = evaluate_tail_flight_tick(aircraft, previous, config, input, loads)?;
     let contact = detect_flight_state_water_contact(
         aircraft,
         previous.tick_index,
@@ -273,24 +374,28 @@ pub fn advance_tail_flight_tick_with_contact(
         geometry,
     )
     .map_err(TailFlightTickError::Contact)?;
-    match contact {
-        None => Ok(TailFlightTickOutcome::Advanced(next)),
+    let result = match contact {
+        None => TailReportedOutcome::Advanced(next, controls),
         Some(sample) => {
             let held = if sample.fraction == 0.0 {
                 previous
             } else {
                 next
             };
-            Ok(TailFlightTickOutcome::WaterContact(
-                TailWaterContactSample {
-                    interval_start_tick: sample.interval_start_tick,
-                    fraction: sample.fraction,
-                    contact_point_index: sample.contact_point_index,
-                    flight_state: sample.flight_state,
-                    incidence: held.incidence,
-                    pilot_position_target: held.pilot_position_target,
-                },
-            ))
+            let contact = TailWaterContactSample {
+                interval_start_tick: sample.interval_start_tick,
+                fraction: sample.fraction,
+                contact_point_index: sample.contact_point_index,
+                flight_state: sample.flight_state,
+                incidence: held.incidence,
+                pilot_position_target: held.pilot_position_target,
+            };
+            if sample.fraction == 0.0 {
+                TailReportedOutcome::ContactAtStart(contact)
+            } else {
+                TailReportedOutcome::ContactWithinInterval(contact, controls)
+            }
         }
-    }
+    };
+    Ok(TailFlightTickReport { result })
 }
