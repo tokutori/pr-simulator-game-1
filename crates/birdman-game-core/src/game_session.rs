@@ -902,6 +902,32 @@ impl<'a> GameSession<'a> {
             .transpose()
     }
 
+    /// Returns signed datum displacement for Flight or Paused without finalizing a score.
+    pub fn flight_progress(&self) -> Result<Option<DistanceScore>, DistanceScoreError> {
+        if !matches!(
+            self.phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        ) {
+            return Ok(None);
+        }
+        let Some(configuration) = self.configuration.as_ref() else {
+            return Ok(None);
+        };
+        configuration
+            .state()
+            .map(|state| {
+                course_distance_score(
+                    configuration
+                        .initial_state()
+                        .flight_state()
+                        .datum_position_ned(),
+                    state.flight_state().datum_position_ned(),
+                    configuration.course_axis(),
+                )
+            })
+            .transpose()
+    }
+
     /// Opens FlightSetup from Title, Briefing, Countdown, or Result.
     pub fn open_setup(&mut self) -> Result<(), GameSessionError> {
         if !matches!(

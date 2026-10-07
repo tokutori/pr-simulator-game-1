@@ -30,15 +30,35 @@ fn configuration<'a>(
     maximum_ticks: u64,
     mode: ControlMode,
 ) -> GameSessionConfiguration<'a> {
+    configuration_for_heading(
+        definition,
+        surfaces,
+        wind,
+        cg_down,
+        maximum_ticks,
+        mode,
+        0.0,
+    )
+}
+
+fn configuration_for_heading<'a>(
+    definition: &'a HybridMockDefinition,
+    surfaces: &'a [HybridSurface<'a>],
+    wind: WindField<'a>,
+    cg_down: f64,
+    maximum_ticks: u64,
+    mode: ControlMode,
+    heading_rad: f64,
+) -> GameSessionConfiguration<'a> {
     let trim = HybridMockTrim::try_new(definition).unwrap();
     let ground = trim
-        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, cg_down).unwrap(), 0.0)
+        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, cg_down).unwrap(), heading_rad)
         .unwrap();
     let launch = CompositeCgLaunchConditions::try_new(
         NedPoint::try_new(0.0, 0.0, cg_down).unwrap(),
         NedVector::try_new(
-            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()),
-            0.0,
+            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::cos(heading_rad),
+            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::sin(heading_rad),
             -HybridMockTrim::AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
         )
         .unwrap(),
@@ -54,7 +74,7 @@ fn configuration<'a>(
         TailIncidence::neutral(),
         Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
         &CONTACT_POINTS,
-        CourseAxis::try_new(1.0, 0.0).unwrap(),
+        CourseAxis::try_new(libm::cos(heading_rad), libm::sin(heading_rad)).unwrap(),
     )
     .unwrap();
     let load = HybridAerodynamicLoad::try_new(
@@ -89,6 +109,79 @@ fn input() -> TailFlightTickInput {
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
         TailPilotPositionCommand::Hold,
     )
+}
+
+#[test]
+fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let heading_rad = 0.37;
+    let mut session = launch(configuration_for_heading(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+        heading_rad,
+    ));
+    let initial = session.snapshot().tail_flight_state().unwrap();
+    let initial_cg = session
+        .telemetry()
+        .unwrap()
+        .unwrap()
+        .composite_cg_position_ned_m;
+    let initial_datum = initial.flight_state().datum_position_ned();
+    let [north, east, down] = initial_datum.components();
+    let position = NedPoint::try_new(
+        north - 4.0 * libm::cos(heading_rad) - 3.0 * libm::sin(heading_rad),
+        east - 4.0 * libm::sin(heading_rad) + 3.0 * libm::cos(heading_rad),
+        down,
+    )
+    .unwrap();
+    let physical = crate::FlightState::try_new(
+        position,
+        initial.flight_state().datum_velocity_ned(),
+        initial.flight_state().attitude_body_to_ned(),
+        BodyVector::zero(),
+        0.2,
+        0.0,
+    )
+    .unwrap();
+    let current = crate::TailFlightTickState::try_new(
+        &definition.aircraft(),
+        1,
+        physical,
+        initial.incidence(),
+        initial.pilot_position_target(),
+    )
+    .unwrap();
+    session
+        .configuration
+        .as_mut()
+        .unwrap()
+        .set_state(SessionFlightState::TailIncidence(current))
+        .unwrap();
+    let progress = session.flight_progress().unwrap().unwrap();
+    assert!((progress.course_parallel_m() + 4.0).abs() < 1.0e-12);
+    assert!((progress.cross_track_m() - 3.0).abs() < 1.0e-12);
+    assert!((progress.net_horizontal_m() - 5.0).abs() < 1.0e-12);
+    let cg_progress = course_distance_score(
+        initial_cg,
+        session
+            .telemetry()
+            .unwrap()
+            .unwrap()
+            .composite_cg_position_ned_m,
+        CourseAxis::try_new(libm::cos(heading_rad), libm::sin(heading_rad)).unwrap(),
+    )
+    .unwrap();
+    assert!((cg_progress.course_parallel_m() - progress.course_parallel_m()).abs() > 0.01);
+    assert_eq!(session.snapshot().tail_flight_state(), Some(current));
+    session.pause(PauseReason::Manual).unwrap();
+    assert_eq!(session.flight_progress(), Ok(Some(progress)));
+    session.resume().unwrap();
+    assert_eq!(session.flight_progress(), Ok(Some(progress)));
 }
 
 #[test]
@@ -190,6 +283,18 @@ fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time(
         );
         assert_eq!(record.finalization().unwrap().score, result.score);
         assert_eq!(record.personal_best_candidate_score(), result.score);
+        assert_eq!(
+            result.score,
+            Some(
+                course_distance_score(
+                    record.samples()[0].flight_state.datum_position_ned(),
+                    contact.flight_state().datum_position_ned(),
+                    CourseAxis::try_new(1.0, 0.0).unwrap(),
+                )
+                .unwrap()
+            )
+        );
+        assert_eq!(session.flight_progress(), Ok(None));
         let playback = record
             .sample_at_seconds(record.duration_seconds().unwrap())
             .unwrap();

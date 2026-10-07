@@ -1,8 +1,9 @@
 use birdman_game_core::{
-    ControlMode, CourseAxis, DynamicsError, FlightState, FlightTelemetry, GameSession,
-    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
-    TailControlError, TailControlProfile, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    ControlMode, CourseAxis, DistanceScore, DistanceScoreError, DynamicsError, FlightState,
+    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionPhase,
+    SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
+    TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
@@ -95,12 +96,30 @@ enum FrameDocument {
     Flight {
         state: StateDocument,
         telemetry: TelemetryDocument,
+        progress_m: ProgressDocument,
     },
     Result {
         state: StateDocument,
         telemetry: TelemetryDocument,
         finalization: TailFlightRecordFinalizationDocument,
     },
+}
+
+#[derive(Serialize)]
+struct ProgressDocument {
+    course_parallel_m: f64,
+    cross_track_m: f64,
+    net_horizontal_m: f64,
+}
+
+impl From<DistanceScore> for ProgressDocument {
+    fn from(progress: DistanceScore) -> Self {
+        Self {
+            course_parallel_m: progress.course_parallel_m(),
+            cross_track_m: progress.cross_track_m(),
+            net_horizontal_m: progress.net_horizontal_m(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -206,6 +225,7 @@ enum BoundaryError {
     Session(GameSessionError),
     Control(TailControlError),
     PilotPosition(DynamicsError),
+    Progress(DistanceScoreError),
     Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
@@ -220,6 +240,7 @@ impl BoundaryError {
             Self::PilotPosition(error) => {
                 format!("hybrid pilot target projection failed: {error:?}")
             }
+            Self::Progress(error) => format!("hybrid flight progress failed: {error:?}"),
             Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
@@ -430,6 +451,7 @@ impl HybridGameSessionBridge {
             | SessionSnapshot::TailFlightPaused { state, .. } => FrameDocument::Flight {
                 state: StateDocument::from_tick(state, self.required_pilot_mapping()?)?,
                 telemetry: self.required_telemetry()?,
+                progress_m: self.required_progress()?,
             },
             SessionSnapshot::Result(result) => {
                 let state = match result.state {
@@ -504,6 +526,14 @@ impl HybridGameSessionBridge {
             .telemetry()
             .map_err(|error| BoundaryError::Session(GameSessionError::Telemetry(error)))?
             .map(TelemetryDocument::from)
+            .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
+    }
+
+    fn required_progress(&self) -> Result<ProgressDocument, BoundaryError> {
+        self.session
+            .flight_progress()
+            .map_err(BoundaryError::Progress)?
+            .map(ProgressDocument::from)
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
     }
 

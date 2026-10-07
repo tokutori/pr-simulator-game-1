@@ -63,6 +63,48 @@ fn neutral_input(session: &GameSession<'_>) -> FlightFeedbackInput {
 }
 
 #[test]
+fn flight_progress_is_read_only_and_unavailable_outside_live_phases() {
+    let mut session = GameSession::new();
+    assert_eq!(session.flight_progress(), Ok(None));
+    session.open_setup().unwrap();
+    assert_eq!(session.flight_progress(), Ok(None));
+    session.prepare_flight(configuration(4)).unwrap();
+    assert_eq!(session.flight_progress(), Ok(None));
+    session.mark_briefing_ready().unwrap();
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    assert_eq!(session.flight_progress(), Ok(None));
+    session.launch().unwrap();
+    let initial = session.flight_progress().unwrap().unwrap();
+    assert_eq!(initial.course_parallel_m(), 0.0);
+    assert_eq!(initial.cross_track_m(), 0.0);
+    assert_eq!(initial.net_horizontal_m(), 0.0);
+    session
+        .advance_flight_tick(neutral_input(&session))
+        .unwrap();
+    let progress = session.flight_progress().unwrap().unwrap();
+    assert!(progress.course_parallel_m() > 0.0);
+    let before = session.snapshot();
+    let sample_count = session.flight_record().unwrap().sample_count();
+    let clock = session.playback_clock;
+    assert_eq!(session.flight_progress(), Ok(Some(progress)));
+    assert_eq!(session.snapshot(), before);
+    assert_eq!(
+        session.flight_record().unwrap().sample_count(),
+        sample_count
+    );
+    assert_eq!(session.playback_clock, clock);
+    session.pause(PauseReason::Manual).unwrap();
+    assert_eq!(session.flight_progress(), Ok(Some(progress)));
+    session.resume().unwrap();
+    let result = session.abort_flight().unwrap().result().unwrap();
+    assert_eq!(result.score, Some(progress));
+    assert_eq!(session.flight_progress(), Ok(None));
+    session.enter_replay().unwrap();
+    assert_eq!(session.flight_progress(), Ok(None));
+}
+
+#[test]
 fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     let mut session = GameSession::new();
     assert_eq!(session.snapshot().phase(), SessionPhase::Title);

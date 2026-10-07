@@ -114,6 +114,9 @@ live stateの`pilot_position_target_normalized`は、同じsealed mappingで現�
 trimを0、両端を±1とし、trimと端点が一致する場合は同じphysical targetを0へ正規化する。
 初期化・Resume・入力機器の再取得はこの値を参照し、現在のphysical positionや初期positionから目標を推定しない。
 `Hold`は直前目標を保持する。旧保存queryへnormalized targetを追加せず、記録値とlive入力状態を区別する。
+Flight/Pausedの`frame.progress_m`は`course_parallel_m`・`cross_track_m`・`net_horizontal_m`をRustから供給する。
+sealed initial datumと最新成功datumの変位へdistance score v1の幾何計算を適用し、CG移動・累積経路長と区別する。
+進行値は未確定の診断値であり、Resultは同時刻の既存`finalization.score_m`を保持する。保存queryへcursor scoreを追加しない。
 Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
 queryのschema 2は保存physics/telemetryと`controls.layout`による`legacy_three_axis`/`tail_incidence`の排他値を返す。
 Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。

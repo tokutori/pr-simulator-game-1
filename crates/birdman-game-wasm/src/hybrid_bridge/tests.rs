@@ -31,6 +31,79 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_queries() {
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        let mut bridge = launch(mode, 2);
+        let initial = snapshot(&bridge);
+        assert_eq!(
+            initial["frame"]["progress_m"],
+            json!({
+                "course_parallel_m": 0.0, "cross_track_m": 0.0, "net_horizontal_m": 0.0
+            })
+        );
+        let next: Value = serde_json::from_str(
+            &bridge
+                .advance_internal(&input(json!({"kind":"set", "normalized":0.5})))
+                .unwrap(),
+        )
+        .unwrap();
+        let progress = bridge.session.flight_progress().unwrap().unwrap();
+        assert_eq!(
+            next["frame"]["progress_m"],
+            json!({
+                "course_parallel_m": progress.course_parallel_m(),
+                "cross_track_m": progress.cross_track_m(),
+                "net_horizontal_m": progress.net_horizontal_m(),
+            })
+        );
+        assert!(progress.course_parallel_m() > 0.0);
+        assert!(next["frame"].get("finalization").is_none());
+        let before = bridge.session.snapshot();
+        let sample_count = bridge.session.flight_record().unwrap().sample_count();
+        assert_eq!(snapshot(&bridge), next);
+        assert_eq!(bridge.session.snapshot(), before);
+        assert_eq!(
+            bridge.session.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+        bridge.pause(0).unwrap();
+        assert_eq!(
+            snapshot(&bridge)["frame"]["progress_m"],
+            next["frame"]["progress_m"]
+        );
+        bridge.resume().unwrap();
+        let terminal: Value = serde_json::from_str(
+            &bridge
+                .advance_internal(&input(json!({"kind":"hold"})))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(terminal["frame"]["kind"], "result");
+        assert!(terminal["frame"].get("progress_m").is_none());
+        let result = bridge.session.snapshot().result().unwrap();
+        let final_score = result.score.unwrap();
+        assert_eq!(
+            terminal["frame"]["finalization"]["score_m"],
+            json!([
+                final_score.course_parallel_m(),
+                final_score.cross_track_m(),
+                final_score.net_horizontal_m()
+            ])
+        );
+        let named: Value =
+            serde_json::from_str(&bridge.flight_record_sample_at_seconds(0.005).unwrap()).unwrap();
+        assert!(named.get("progress_m").is_none());
+        assert!(named["state"].get("progress_m").is_none());
+        bridge.retry().unwrap();
+        assert!(snapshot(&bridge)["frame"].get("progress_m").is_none());
+    }
+}
+
+#[test]
 fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default() {
     let bridge = HybridGameSessionBridge::new(0, u32::MAX, u32::MAX).unwrap();
     assert_eq!(bridge.seed, u64::MAX);
