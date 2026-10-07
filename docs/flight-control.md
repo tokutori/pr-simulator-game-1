@@ -141,6 +141,10 @@ Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キー�
 身体の物理target・FBW出力・gain・slewはRustに保持し、Webは呼出し側から受け取ったexplicit q/r demandを変更せず渡す。
 旧三軸keyboard/Gamepad adapterと公開factoryの接続は維持する。
 
+`parseTailControlProfile`はRustのsealed controller ID/version・pitch/yaw rate limit・gain・slew metadataをstrictに検査する。
+`tailInputFromControlProfile`は同じsealed scenario/aircraft/controller/seedのsnapshotと照合し、normalized demandをRust所有rate limitへ写像する。
+gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator更新はRust coreが所有し、Web側には追加のcontrol loopを設けない。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 
