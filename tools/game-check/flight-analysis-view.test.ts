@@ -30,14 +30,11 @@ function result(ticks = 3, seed = 41): TailAppSessionFacade {
 }
 
 function dataset(session: TailAppSessionFacade, request: NamedWindGridRequest = windRequest): NamedAnalysisDataset {
-  const summary = session.readRecordSummary();
-  const windGrid: NamedAnalysisDataset["windGrid"] = { kind: "available", value: session.queryWindGrid(request) };
-  return Object.freeze({ kind: "named_record", context: summary.context, summary, samples: session.readAnalysisSamples(),
-    windGrid });
+  return session.readAnalysisDataset({ kind: "available", value: request });
 }
 
 function cursor(session: TailAppSessionFacade, data: NamedAnalysisDataset, time = 0): NamedAnalysisCursor {
-  return Object.freeze({ ...session.queryRecordSample(time), kind: "named_record", context: data.context });
+  return session.queryAnalysisCursor(time, data);
 }
 
 function archive(version: number): string {

@@ -2,12 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { LegacyAppSessionFacade, TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppSessionFacade, TailAppSessionPort } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const neutralTail = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+const windRequest = { northMinimumMeters: -10, eastMinimumMeters: -10, altitudeMeters: 10, spacingMeters: 5 };
 
 function launch(facade: AppSessionFacade): void {
   facade.executeOperation("open-setup");
@@ -26,6 +28,215 @@ function advance(facade: AppSessionFacade): void {
 }
 
 describe("layout-discriminated application session facade", () => {
+  it("preserves its observation through the raw Model and rejects plain or foreign datasets before a cursor read", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const other = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    try {
+      for (const owner of [facade, other]) {
+        launch(owner);
+        advance(owner);
+        owner.executeOperation("abort");
+      }
+      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const current = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
+      const model = updateApp({ ...current, pendingAnalysisRequestId: 4 }, { type: "flight-analysis-loaded", requestId: 4, data: dataset }).model;
+      const raw = model.flightAnalysis;
+      if (raw === null || !("kind" in raw)) throw new Error("Expected the original named Model dataset");
+      expect(raw).toBe(dataset);
+      expect(facade.queryAnalysisCursor(0.005, raw).context).toBe(dataset.context);
+      const foreign = other.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      expect(foreign.context).toEqual(dataset.context);
+      const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
+      expect(() => facade.queryAnalysisCursor(0.005, foreign)).toThrow("stale");
+      const plain = Object.freeze({ kind: "named_record" as const, context: dataset.context, summary: dataset.summary,
+        samples: dataset.samples, windGrid: dataset.windGrid });
+      expect(() => facade.queryAnalysisCursor(0.005, plain)).toThrow("observed dataset");
+      expect(read).not.toHaveBeenCalled();
+    } finally { facade.dispose(); other.dispose(); }
+  });
+
+  it.each(["replace", "retry", "dispose"] as const)("rejects the old dataset between bundle and cursor observation (%s)", (operation) => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const saved = facade.exportRecordJson();
+      if (operation === "replace") facade.openArchive(saved);
+      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
+      if (operation === "replace") {
+        facade.executeOperation("leave-replay");
+        facade.openArchive(saved);
+        expect(facade.readRecordSummary().context).toEqual(observed.context);
+      } else if (operation === "retry") facade.executeOperation("retry");
+      else facade.dispose();
+      expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow(operation === "dispose" ? "disposed" : "stale");
+      expect(read).not.toHaveBeenCalled();
+    } finally { facade.dispose(); }
+  });
+
+  it.each(["replay", "attract"] as const)("reuses the same immutable %s dataset after clock operations without a full record reload", (phase) => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      if (phase === "replay") {
+        launch(facade);
+        advance(facade);
+        facade.executeOperation("abort");
+        facade.executeOperation("enter-replay");
+      } else facade.executeOperation("enter-attract");
+      const samples = vi.spyOn(bridge, "flight_analysis_samples_json");
+      const summary = vi.spyOn(bridge, "flight_record_summary_json");
+      const wind = vi.spyOn(bridge, "flight_wind_grid_json");
+      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const summaryReads = summary.mock.calls.length;
+      const operations = [
+        () => facade.setPlaybackPlaying(false), () => facade.seekPlayback(0.005), () => facade.setPlaybackRate(2),
+        () => facade.setPlaybackPlaying(true), () => facade.advancePlayback(0.005), () => facade.setPlaybackRate(0)
+      ];
+      if (phase === "replay") operations.push(() => facade.seekReplay(0.005));
+      for (const operation of operations) {
+        const pending = facade.captureQueryToken();
+        const clock = operation();
+        expect(facade.acceptQuery(pending, "old clock").kind).toBe("stale");
+        expect(facade.queryAnalysisCursor(clock.timeSeconds, observed).context).toBe(observed.context);
+      }
+      expect(samples).toHaveBeenCalledTimes(1);
+      expect(summary).toHaveBeenCalledTimes(summaryReads);
+      expect(wind).not.toHaveBeenCalled();
+    } finally { facade.dispose(); }
+  });
+
+  it("rejects clock reentry during a cursor read while retaining the unchanged record source for the next read", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      facade.executeOperation("enter-replay");
+      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const original = bridge.flight_record_sample_at_seconds.bind(bridge);
+      vi.spyOn(bridge, "flight_record_sample_at_seconds").mockImplementationOnce((seconds) => {
+        const json = original(seconds);
+        facade.seekPlayback(0);
+        return json;
+      });
+      expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow("generation changed");
+      expect(facade.queryAnalysisCursor(0.005, observed).timeSeconds).toBe(0.005);
+    } finally { facade.dispose(); }
+  });
+
+  it("bundles original samples, Summary and optional wind under one record context without changing the Rust clock", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const wind = vi.spyOn(bridge, "flight_wind_grid_json");
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      expect(dataset.windGrid).toEqual({ kind: "unavailable", reason: "not_requested" });
+      expect(dataset.context).toBe(dataset.summary.context);
+      expect(dataset.samples).toHaveLength(dataset.summary.sampleCount);
+      expect(wind).not.toHaveBeenCalled();
+      const sample = facade.queryAnalysisCursor(0.005, dataset);
+      expect(sample.context).toBe(dataset.context);
+      expect(sample.controls.layout).toBe(dataset.context.controlLayout);
+      facade.executeOperation("enter-replay");
+      const clock = facade.readPlaybackClock();
+      expect(() => facade.queryAnalysisCursor(0.005, dataset)).toThrow("stale");
+      const playback = facade.readAnalysisDataset({ kind: "available", value: windRequest });
+      expect(playback.context.phase).toBe("replay");
+      expect(playback.windGrid.kind).toBe("available");
+      if (playback.windGrid.kind !== "available") throw new Error("Expected the requested Rust wind query");
+      expect(playback.windGrid.value.context).toEqual(playback.context);
+      expect(facade.queryAnalysisCursor(0.005, playback).timeSeconds).toBe(0.005);
+      expect(facade.readPlaybackClock()).toEqual(clock);
+      expect(wind).toHaveBeenCalledTimes(1);
+    } finally { facade.dispose(); }
+  });
+
+  it.each(["dataset", "cursor"] as const)("rejects a same-record %s observation if a failed operation changes its generation", (query) => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const context = facade.readRecordSummary().context;
+      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const changeGeneration = (): void => { expect(() => facade.executeOperation("resume")).toThrow(); };
+      if (query === "dataset") {
+        const original = bridge.flight_analysis_samples_json.bind(bridge);
+        vi.spyOn(bridge, "flight_analysis_samples_json").mockImplementationOnce(() => {
+          const json = original();
+          changeGeneration();
+          return json;
+        });
+        expect(() => facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" })).toThrow("generation changed");
+      } else {
+        const original = bridge.flight_record_sample_at_seconds.bind(bridge);
+        vi.spyOn(bridge, "flight_record_sample_at_seconds").mockImplementationOnce((seconds) => {
+          const json = original(seconds);
+          changeGeneration();
+          return json;
+        });
+        expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow("generation changed");
+      }
+      expect(facade.readRecordSummary().context).toEqual(context);
+    } finally { facade.dispose(); }
+  });
+
+  it("rejects a bundled observation after disposal without calling the freed Rust resource again", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const summary = vi.spyOn(bridge, "flight_record_summary_json");
+      const free = vi.spyOn(bridge, "free");
+      const original = bridge.flight_analysis_samples_json.bind(bridge);
+      vi.spyOn(bridge, "flight_analysis_samples_json").mockImplementationOnce(() => {
+        const json = original();
+        facade.dispose();
+        return json;
+      });
+      expect(() => facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" })).toThrow("disposed");
+      expect(summary).toHaveBeenCalledTimes(1);
+      expect(free).toHaveBeenCalledTimes(1);
+      expect(() => facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" })).toThrow("disposed");
+      expect(summary).toHaveBeenCalledTimes(1);
+    } finally { facade.dispose(); }
+  });
+
+  it("invalidates a same-identity archive replacement during cursor observation", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const saved = facade.exportRecordJson();
+      facade.openArchive(saved);
+      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const context = observed.context;
+      const original = bridge.flight_record_sample_at_seconds.bind(bridge);
+      vi.spyOn(bridge, "flight_record_sample_at_seconds").mockImplementationOnce((seconds) => {
+        const json = original(seconds);
+        facade.executeOperation("leave-replay");
+        facade.openArchive(saved);
+        return json;
+      });
+      expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow("generation changed");
+      expect(facade.readRecordSummary().context).toEqual(context);
+    } finally { facade.dispose(); }
+  });
+
   it("derives Title and independent Attract projections while preserving player selections and query generations", async () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());

@@ -8,12 +8,15 @@ import type { GameSessionOperationPort } from "./game-session-operation.js";
 import type { FlightSessionPort } from "../game/flight-controller.js";
 import { projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
+import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
+import { validateAnalysisInput } from "../game/flight-analysis-view.js";
+import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../game/flight-analysis-view.js";
 import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSampleAt } from "../game/flight-record-query.js";
 import type { FlightAnalysisData, FlightAnalysisSample, FlightRecordQueryPort } from "../game/flight-record-query.js";
 import { parseFlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
-import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
+import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
 import { parseNamedRecordSummary, parseNamedWindGrid, sameNamedRecordContext } from "../game/named-record-analysis.js";
 import type { NamedRecordSummary, NamedWindGrid, NamedWindGridRequest } from "../game/named-record-analysis.js";
 import type { TailSessionPort } from "../game/tail-flight-controller.js";
@@ -24,11 +27,24 @@ import type { FlightRenderPose } from "../render/contracts/runtime.js";
 
 const queryOwner = Symbol("session query owner");
 const queryGeneration = Symbol("session query generation");
+const recordSourceGeneration = Symbol("record source generation");
+const analysisObservation = Symbol("saved analysis observation");
 export interface SessionQueryToken {
   readonly [queryOwner]: symbol;
   readonly [queryGeneration]: symbol;
 }
 export type SessionQueryAcceptance<Value> = Readonly<{ kind: "accepted"; value: Value }> | Readonly<{ kind: "stale" }>;
+interface RecordSourceToken {
+  readonly [queryOwner]: symbol;
+  readonly [recordSourceGeneration]: symbol;
+}
+interface AnalysisObservationProof {
+  readonly source: RecordSourceToken;
+  readonly context: NamedRecordContext;
+}
+export interface ObservedNamedAnalysisDataset extends NamedAnalysisDataset {
+  readonly [analysisObservation]: AnalysisObservationProof;
+}
 export interface SessionResourcePort extends SessionSelectionPort {
   phase_code(): number;
   control_mode_code(): number;
@@ -81,6 +97,7 @@ export type TailTitleProjection = Readonly<{ kind: "idle"; phaseCode: 0 }>
 abstract class SessionResourceOwner {
   private readonly owner = Symbol("session owner");
   private generation = Symbol("session generation");
+  private sourceGeneration = Symbol("record source generation");
   private resourceState: "alive" | "disposed" = "alive";
 
   protected constructor(private readonly resource: SessionResourcePort, readonly physicsHz: number) {
@@ -96,6 +113,14 @@ abstract class SessionResourceOwner {
   acceptQuery<Value>(token: SessionQueryToken, value: Value): SessionQueryAcceptance<Value> {
     return this.resourceState === "alive" && token[queryOwner] === this.owner && token[queryGeneration] === this.generation
       ? Object.freeze({ kind: "accepted", value }) : Object.freeze({ kind: "stale" });
+  }
+
+  protected captureRecordSourceToken(): RecordSourceToken {
+    return this.observe(() => Object.freeze({ [queryOwner]: this.owner, [recordSourceGeneration]: this.sourceGeneration }));
+  }
+
+  protected recordSourceIsCurrent(token: RecordSourceToken): boolean {
+    return this.resourceState === "alive" && token[queryOwner] === this.owner && token[recordSourceGeneration] === this.sourceGeneration;
   }
 
   readLifecycle(): SessionLifecycleProjection {
@@ -140,6 +165,7 @@ abstract class SessionResourceOwner {
     if (this.resourceState === "disposed") return;
     this.resourceState = "disposed";
     this.generation = Symbol("disposed session generation");
+    this.sourceGeneration = Symbol("disposed record source generation");
     this.resource.free();
   }
 
@@ -148,9 +174,10 @@ abstract class SessionResourceOwner {
     return read();
   }
 
-  protected change<Value>(operation: () => Value): Value {
+  protected change<Value>(operation: () => Value, recordPolicy: "replace_record" | "retain_record" = "replace_record"): Value {
     return this.observe(() => {
       this.generation = Symbol("session generation");
+      if (recordPolicy === "replace_record") this.sourceGeneration = Symbol("record source generation");
       return operation();
     });
   }
@@ -263,6 +290,40 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.observe(() => parseNamedAnalysisSamples(this.port.flight_analysis_samples_json(), this.physicsHz, this.recordContext()));
   }
 
+  readAnalysisDataset(wind: DisplayAvailability<NamedWindGridRequest, "not_requested">): ObservedNamedAnalysisDataset {
+    return this.observeRecordQuery(() => {
+      const source = this.captureRecordSourceToken();
+      const summary = this.readRecordSummary();
+      const context = summary.context;
+      const samples = parseNamedAnalysisSamples(this.port.flight_analysis_samples_json(), this.physicsHz, context);
+      const windGrid: NamedAnalysisDataset["windGrid"] = wind.kind === "unavailable" ? wind
+        : Object.freeze({ kind: "available", value: this.queryWindGridWithContext(wind.value, context) });
+      const dataset: ObservedNamedAnalysisDataset = Object.freeze({ kind: "named_record", context, summary, samples, windGrid,
+        [analysisObservation]: Object.freeze({ source, context }) });
+      validateAnalysisInput(dataset);
+      this.requireRecordContext(context);
+      return dataset;
+    });
+  }
+
+  queryAnalysisCursor(seconds: number, expectedDataset: NamedAnalysisDataset): NamedAnalysisCursor {
+    return this.observeRecordQuery(() => {
+      if (!(analysisObservation in expectedDataset) || !isAnalysisObservationProof(expectedDataset[analysisObservation])) {
+        throw new RangeError("Analysis cursor requires an observed dataset");
+      }
+      const proof = expectedDataset[analysisObservation];
+      if (!this.recordSourceIsCurrent(proof.source)) {
+        throw new RangeError("Analysis dataset owner or generation is stale");
+      }
+      const expectedContext = expectedDataset.context;
+      if (!sameNamedRecordContext(expectedContext, proof.context)) throw new RangeError("Analysis dataset differs from its observed record context");
+      this.requireCursorRecordContext(expectedContext);
+      const sample = parseNamedRecordSample(this.port.flight_record_sample_at_seconds(seconds), this.physicsHz, expectedContext);
+      this.requireCursorRecordContext(expectedContext);
+      return Object.freeze({ ...sample, kind: "named_record", context: expectedContext });
+    });
+  }
+
   readRecordSummary(): NamedRecordSummary {
     return this.observe(() => {
       const summary = parseNamedRecordSummary(this.port.flight_record_summary_json(), this.physicsHz);
@@ -283,14 +344,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   queryWindGrid(request: NamedWindGridRequest): NamedWindGrid {
-    return this.observe(() => {
-      const context = this.readRecordSummary().context;
-      const archived = this.port.is_archived_replay();
-      if (typeof archived !== "boolean") throw new RangeError("Rust archive projection requires a boolean");
-      const source = context.phase === "attract" ? "attract" : archived ? "archive" : "record";
-      const json = this.port.flight_wind_grid_json(request.northMinimumMeters, request.eastMinimumMeters, request.altitudeMeters, request.spacingMeters);
-      return parseNamedWindGrid(json, context, request, source);
-    });
+    return this.observe(() => this.queryWindGridWithContext(request, this.readRecordSummary().context));
   }
 
   queryRecordSample(seconds: number): NamedRecordSample {
@@ -313,7 +367,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.change(() => {
       const context = this.readReplayContext();
       return parseNamedPlaybackClock(this.port.seek_playback(seconds), this.physicsHz, context);
-    });
+    }, "retain_record");
   }
 
   readPlaybackClock(): NamedPlaybackClock {
@@ -340,7 +394,43 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.change(() => {
       const context = this.readPlaybackContext();
       return parseNamedPlaybackClock(operation(), this.physicsHz, context);
+    }, "retain_record");
+  }
+
+  private queryWindGridWithContext(request: NamedWindGridRequest, context: NamedRecordContext): NamedWindGrid {
+    return this.observe(() => {
+      const archived = this.port.is_archived_replay();
+      if (typeof archived !== "boolean") throw new RangeError("Rust archive projection requires a boolean");
+      const source = context.phase === "attract" ? "attract" : archived ? "archive" : "record";
+      const json = this.port.flight_wind_grid_json(request.northMinimumMeters, request.eastMinimumMeters, request.altitudeMeters, request.spacingMeters);
+      return parseNamedWindGrid(json, context, request, source);
     });
+  }
+
+  private requireRecordContext(context: NamedRecordContext): void {
+    if (!sameNamedRecordContext(context, this.readRecordSummary().context)) throw new RangeError("Saved query belongs to another record context");
+  }
+
+  private requireCursorRecordContext(context: NamedRecordContext): void {
+    const phaseCode = this.readLifecycle().phaseCode;
+    if (phaseCode === 9 || phaseCode === 10) {
+      if (!sameNamedRecordContext(context, this.readPlaybackContext())) throw new RangeError("Saved cursor belongs to another playback context");
+      return;
+    }
+    if (phaseCode !== 7 || context.phase !== "result") throw new RangeError("Saved cursor requires the expected Rust record phase");
+    const snapshot = this.readSnapshot();
+    if (snapshot.phaseCode !== 7 || JSON.stringify(context.scenario) !== JSON.stringify(snapshot.identity.scenario)
+        || JSON.stringify(context.controlIdentity) !== JSON.stringify(snapshot.identity.controls)
+        || JSON.stringify(context.finalization) !== JSON.stringify(snapshot.frame.finalization)) {
+      throw new RangeError("Saved cursor belongs to another Result context");
+    }
+  }
+
+  private observeRecordQuery<Value>(read: () => Value): Value {
+    const token = this.captureQueryToken();
+    const value = this.observe(read);
+    if (this.acceptQuery(token, value).kind === "stale") throw new RangeError("Saved record query owner or generation changed during observation");
+    return value;
   }
 
   private recordContext(): RecordQueryContext {
@@ -350,6 +440,14 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 }
 
 export type AppSessionFacade = LegacyAppSessionFacade | TailAppSessionFacade;
+
+function isAnalysisObservationProof(value: unknown): value is AnalysisObservationProof {
+  if (typeof value !== "object" || value === null || !("source" in value) || !("context" in value)) return false;
+  const source = value.source;
+  return typeof source === "object" && source !== null && queryOwner in source && recordSourceGeneration in source
+    && typeof source[queryOwner] === "symbol" && typeof source[recordSourceGeneration] === "symbol"
+    && typeof value.context === "object" && value.context !== null;
+}
 
 function executeTailOperation(port: TailAppSessionPort, operation: TailAppSessionOperation, physicsHz: number): TailAppOperationResult {
   if (typeof operation !== "string") {
