@@ -88,7 +88,7 @@ describe("tail-aware shared Flight HUD", () => {
     }
   });
 
-  it("uses the same immutable tail model for DOM and camera-anchored Head HUD", async () => {
+  it.each([1280 / 720, 720 / 1280])("uses the same tail model for DOM and camera-anchored Head HUD at aspect %s", async (aspect) => {
     const session = new HybridGameSessionBridge(0, 21, 22);
     const window = new Window();
     try {
@@ -110,7 +110,7 @@ describe("tail-aware shared Flight HUD", () => {
       adapter.renderDisplaySnapshot(snapshot, model);
       expect([...root.children]).toEqual(nodes);
 
-      const camera = new PerspectiveCamera(60, 1280 / 720, 0.05, 100);
+      const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
       camera.updateMatrixWorld(true);
       const stereo = new StereoCamera();
       stereo.aspect = 0.5;
