@@ -41,12 +41,67 @@ function terminalDocument(failure: unknown = null, reason = "manual_abort") {
   const frame = nested(document, "frame");
   document.phase_code = 7;
   frame.kind = "result";
+  delete frame.progress_m;
   frame.finalization = { reason, disposition: reason === "manual_abort" ? "interrupted" : "failed",
     terminal_tick: 0, terminal_fraction: 0, score_m: [0, 0, 0], failure };
   return document;
 }
 
 describe("versioned two-tail TypeScript boundary", () => {
+  it("retains Rust live progress for Flight and Pause and keeps terminal score separate", () => {
+    const session = launch();
+    try {
+      const initial = parseTailSessionSnapshot(session.snapshot_json());
+      if (initial.frame.kind !== "flight") throw new Error("Expected flight frame");
+      expect(initial.frame.progressMeters).toEqual({ courseParallelMeters: 0, crossTrackMeters: 0, netHorizontalMeters: 0 });
+      const next = parseTailSessionSnapshot(session.advance_tick_json(encodeTailLogicalInput(neutral)));
+      const payload: unknown = JSON.parse(session.snapshot_json());
+      const progress = nested(nested(payload as Record<string, unknown>, "frame"), "progress_m");
+      if (next.frame.kind !== "flight") throw new Error("Expected flight frame");
+      expect(next.frame.progressMeters).toEqual({ courseParallelMeters: progress.course_parallel_m,
+        crossTrackMeters: progress.cross_track_m, netHorizontalMeters: progress.net_horizontal_m });
+      expect(Object.isFrozen(next.frame.progressMeters)).toBe(true);
+      session.pause(0);
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 6, frame: { progressMeters: next.frame.progressMeters } });
+      session.clear_pause_reason(0);
+      session.resume();
+      const result = parseTailSessionSnapshot(session.abort());
+      if (result.frame.kind !== "result") throw new Error("Expected Result frame");
+      expect(result.frame).not.toHaveProperty("progressMeters");
+      expect(result.frame.finalization.scoreMeters).toEqual([next.frame.progressMeters.courseParallelMeters,
+        next.frame.progressMeters.crossTrackMeters, next.frame.progressMeters.netHorizontalMeters]);
+    } finally {
+      session.free();
+    }
+  });
+
+  it("rejects missing, non-finite, inconsistent and surplus live progress", () => {
+    const corruptions: readonly ((frame: Record<string, unknown>) => void)[] = [
+      (frame) => { delete frame.progress_m; },
+      (frame) => { frame.progress_m = null; },
+      (frame) => { nested(frame, "progress_m").course_parallel_m = Infinity; },
+      (frame) => { nested(frame, "progress_m").cross_track_m = null; },
+      (frame) => { nested(frame, "progress_m").net_horizontal_m = -1; },
+      (frame) => { frame.progress_m = { course_parallel_m: 3, cross_track_m: 4, net_horizontal_m: 0 }; },
+      (frame) => { nested(frame, "progress_m").extra = 0; }
+    ];
+    for (const corrupt of corruptions) {
+      const document = snapshotDocument();
+      corrupt(nested(document, "frame"));
+      expect(() => parseTailSessionSnapshot(JSON.stringify(document))).toThrow(RangeError);
+    }
+    const result = terminalDocument();
+    nested(result, "frame").progress_m = { course_parallel_m: 0, cross_track_m: 0, net_horizontal_m: 0 };
+    expect(() => parseTailSessionSnapshot(JSON.stringify(result))).toThrow(RangeError);
+    const menu = snapshotDocument();
+    menu.phase_code = 3;
+    menu.frame = { kind: "menu", progress_m: { course_parallel_m: 0, cross_track_m: 0, net_horizontal_m: 0 } };
+    expect(() => parseTailSessionSnapshot(JSON.stringify(menu))).toThrow(RangeError);
+    const legal = snapshotDocument();
+    nested(legal, "frame").progress_m = { course_parallel_m: -3, cross_track_m: 4, net_horizontal_m: 5 };
+    expect(parseTailSessionSnapshot(JSON.stringify(legal))).toMatchObject({ frame: { progressMeters: {
+      courseParallelMeters: -3, crossTrackMeters: 4, netHorizontalMeters: 5 } } });
+  });
   it("requires sealed identity for every Briefing and Countdown phase and clears it for Title and Setup", () => {
     const session = new HybridGameSessionBridge(0, 1, 2);
     try {

@@ -150,6 +150,8 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
 この接続はheadless検証用の独立入口であり、公開factory・既定モデル・app mainの切替を含まない。
+共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
+旧live ABIと保存queryは不足理由を持つ`unavailable`とし、保存cursorの距離を再計算・補填しない。
 
 `named-record-query`はschema 2の保存query・Analysis batch・Replay contextをimmutableな型へ変換する。
 保存v1〜5の三軸とv6の二系統尾翼はcontrolsの直和型で保持し、tail snapshotへroll制御値を補填しない。

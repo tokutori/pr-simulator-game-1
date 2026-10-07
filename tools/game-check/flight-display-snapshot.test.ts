@@ -31,6 +31,7 @@ describe("control-layout-aware display snapshots", () => {
         angularRateBodyRadiansPerSecond: { kind: "unavailable", reason: "legacy_body_rate_unavailable" },
         compositeCgPositionNedMeters: { kind: "unavailable", reason: "legacy_cg_unavailable" },
         pilotPositionTargetMeters: { kind: "unavailable", reason: "legacy_pilot_target_unavailable" } });
+      expect(snapshot.progressMeters).toEqual({ kind: "unavailable", reason: "legacy_progress_unavailable" });
       expect(snapshot.controls).not.toHaveProperty("physicalIncidence");
       expect(snapshot).not.toHaveProperty("finalization");
       if (snapshot.telemetry.kind !== "available") throw new Error("Expected legacy telemetry");
@@ -66,6 +67,9 @@ describe("control-layout-aware display snapshots", () => {
         angularRateBodyRadiansPerSecond: { kind: "available", value: { roll: state.angularRateBodyRadiansPerSecond[0], pitch: state.angularRateBodyRadiansPerSecond[1], yaw: state.angularRateBodyRadiansPerSecond[2] } } });
       expect(snapshot.controls).not.toHaveProperty("rollRadians");
       expect(snapshot).not.toHaveProperty("scoreCourseMeters");
+      expect(snapshot.progressMeters).toEqual({ kind: "available", value: raw.frame.progressMeters });
+      if (snapshot.progressMeters.kind !== "available") throw new Error("Expected Rust progress");
+      expect(snapshot.progressMeters.value).toBe(raw.frame.progressMeters);
       if (snapshot.telemetry.kind !== "available") throw new Error("Expected tail telemetry");
       expect(snapshot.telemetry.value.rollRadians).toBe(raw.frame.telemetry.attitudeEulerRadians[0]);
       session.pause(0);
@@ -93,6 +97,7 @@ describe("control-layout-aware display snapshots", () => {
       const snapshot = projected.value;
       expect(snapshot.finalization).toBe(raw.frame.finalization);
       expect(snapshot.finalization.failure).toBe(raw.frame.finalization.failure);
+      expect(snapshot.progressMeters).toEqual({ kind: "unavailable", reason: "terminal_progress_unavailable" });
       expect(snapshot.stamp).toEqual({ kind: "exact", tick: 0, fraction: 0.375, timeSeconds: 0.00375 });
       expect(projectFlightRenderPose(snapshot, 0)).toMatchObject({ simulationTimeSeconds: 0.00375, controls: snapshot.controls });
       expect(snapshot.controls).not.toHaveProperty("pitchRadians");
@@ -119,6 +124,8 @@ describe("control-layout-aware display snapshots", () => {
         stamp: { kind: "exact", tick: sample.tickIndex, fraction: sample.fraction, timeSeconds: sample.timeSeconds }, controls: sample.controls });
       if (display.kind !== "legacy_record" && display.kind !== "tail_record") throw new Error("Expected saved display");
       expect(display.finalization).toBe(context.finalization);
+      expect(display.progressMeters).toEqual({ kind: "unavailable", reason: "record_course_axis_unavailable" });
+      expect(sample).not.toHaveProperty("progressMeters");
       expect(display.angularRateBodyRadiansPerSecond).toEqual({ kind: "available", value: { roll: sample.state.angularVelocityBodyRadiansPerSecond[0],
         pitch: sample.state.angularVelocityBodyRadiansPerSecond[1], yaw: sample.state.angularVelocityBodyRadiansPerSecond[2] } });
       expect(display).not.toHaveProperty("terminal");

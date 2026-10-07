@@ -56,6 +56,11 @@ export interface TailFlightTelemetry {
   readonly sideslipAngleRadians: number | null;
   readonly attitudeEulerRadians: Vector3;
 }
+export interface TailFlightProgressMeters {
+  readonly courseParallelMeters: number;
+  readonly crossTrackMeters: number;
+  readonly netHorizontalMeters: number;
+}
 export type TailTerminalReason = "water_contact" | "time_limit" | "manual_abort" | "out_of_valid_envelope" | "fatal_simulation_error";
 export interface TailTerminalFinalization {
   readonly reason: TailTerminalReason;
@@ -74,7 +79,7 @@ export type TailSessionSnapshot = TailSessionEnvelope & (
   | Readonly<{ phaseCode: 0 | 1; identity: Extract<TailSessionIdentity, { kind: "unprepared" }>; frame: Readonly<{ kind: "menu" }> }>
   | Readonly<{ phaseCode: 2 | 3 | 4 | 8; identity: PreparedIdentity; frame: Readonly<{ kind: "menu" }> }>
   | Readonly<{ phaseCode: 5 | 6; identity: PreparedIdentity;
-      frame: Readonly<{ kind: "flight"; state: TailFlightState; telemetry: TailFlightTelemetry }> }>
+      frame: Readonly<{ kind: "flight"; state: TailFlightState; telemetry: TailFlightTelemetry; progressMeters: TailFlightProgressMeters }> }>
   | Readonly<{ phaseCode: 7; identity: PreparedIdentity;
       frame: Readonly<{ kind: "result"; state: TailFlightState; telemetry: TailFlightTelemetry; finalization: TailTerminalFinalization }> }>
 );
@@ -130,12 +135,13 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
   }
   if (identity.kind !== "prepared") throw new RangeError("Flight snapshot requires sealed identity");
   const frame = boundaryObject(document.frame, frameTag === "flight"
-    ? ["kind", "state", "telemetry"] : ["kind", "state", "telemetry", "finalization"]);
+    ? ["kind", "state", "telemetry", "progress_m"] : ["kind", "state", "telemetry", "finalization"]);
   const state = decodeState(frame.state, physicsHz);
   const telemetry = decodeTelemetry(frame.telemetry);
   if (frameTag === "flight") {
     if ((phase !== 5 && phase !== 6) || state.fraction !== 0) throw new RangeError("Airborne frame requires an integer flight phase");
-    return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frameTag, state, telemetry }) });
+    return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frameTag, state, telemetry,
+      progressMeters: decodeTailFlightProgress(frame.progress_m) }) });
   }
   if (phase !== 7) throw new RangeError("Terminal frame requires Result phase");
   const finalization = decodeTailTerminalFinalization(frame.finalization);
@@ -239,4 +245,13 @@ export function decodeRecordedDistanceScore(value: unknown): Vector3 {
     throw new RangeError("Tail distance score violates its horizontal displacement invariant");
   }
   return score;
+}
+
+function decodeTailFlightProgress(value: unknown): TailFlightProgressMeters {
+  const progress = boundaryObject(value, ["course_parallel_m", "cross_track_m", "net_horizontal_m"]);
+  const course = boundaryNumber(progress.course_parallel_m);
+  const crossTrack = boundaryNumber(progress.cross_track_m);
+  const net = boundaryNumber(progress.net_horizontal_m, 0);
+  decodeRecordedDistanceScore([course, crossTrack, net]);
+  return Object.freeze({ courseParallelMeters: course, crossTrackMeters: crossTrack, netHorizontalMeters: net });
 }

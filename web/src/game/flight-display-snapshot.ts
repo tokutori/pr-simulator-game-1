@@ -2,7 +2,7 @@ import type { LegacyPhysicalFlightControls, TailPhysicalFlightControls } from ".
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
 import type { FlightSnapshot } from "./flight-snapshot.js";
 import type { LegacyTerminalFinalization, NamedRecordSample, RecordQueryContext } from "./named-record-query.js";
-import type { TailFlightTelemetry, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
+import type { TailFlightProgressMeters, TailFlightTelemetry, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
 
 type NedVector = FlightSnapshot["positionNed"];
 type BodyRate = Readonly<{ roll: number; pitch: number; yaw: number }>;
@@ -42,6 +42,7 @@ export type FlightDisplaySnapshot =
       compositeCgPositionNedMeters: Readonly<{ kind: "unavailable"; reason: "legacy_cg_unavailable" }>;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "legacy_pilot_target_unavailable" }>;
       pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "legacy_pilot_target_unavailable" }>;
+      progressMeters: Readonly<{ kind: "unavailable"; reason: "legacy_progress_unavailable" }>;
       terminal: FlightSnapshot["terminal"];
       scoreCourseMeters: number;
       crossTrackMeters: number;
@@ -52,12 +53,14 @@ export type FlightDisplaySnapshot =
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Available<number>;
       pilotPositionTargetNormalized: Available<number>;
+      progressMeters: Available<TailFlightProgressMeters>;
     }>)
   | (NamedDisplayState & Readonly<{
       kind: "tail_result";
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Available<number>;
       pilotPositionTargetNormalized: Available<number>;
+      progressMeters: Readonly<{ kind: "unavailable"; reason: "terminal_progress_unavailable" }>;
       finalization: TailTerminalFinalization;
     }>)
   | (NamedDisplayState & Readonly<{
@@ -65,6 +68,7 @@ export type FlightDisplaySnapshot =
       controls: LegacyPhysicalFlightControls;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
       pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
+      progressMeters: Readonly<{ kind: "unavailable"; reason: "record_course_axis_unavailable" }>;
       finalization: LegacyTerminalFinalization;
     }>)
   | (NamedDisplayState & Readonly<{
@@ -72,6 +76,7 @@ export type FlightDisplaySnapshot =
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
       pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
+      progressMeters: Readonly<{ kind: "unavailable"; reason: "record_course_axis_unavailable" }>;
       finalization: TailTerminalFinalization;
     }>);
 
@@ -89,6 +94,7 @@ export function projectLegacyFlightSnapshot(snapshot: FlightSnapshot): FlightDis
     angularRateBodyRadiansPerSecond: unavailable("legacy_body_rate_unavailable"), compositeCgPositionNedMeters: unavailable("legacy_cg_unavailable"),
     pilotPositionTargetMeters: unavailable("legacy_pilot_target_unavailable"),
     pilotPositionTargetNormalized: unavailable("legacy_pilot_target_unavailable"),
+    progressMeters: unavailable("legacy_progress_unavailable"),
     terminal: snapshot.terminal, scoreCourseMeters: snapshot.scoreCourseMeters, crossTrackMeters: snapshot.crossTrackMeters });
 }
 
@@ -105,11 +111,12 @@ export function projectTailFlightSnapshot(snapshot: TailSessionSnapshot): Displa
   if (snapshot.frame.kind === "result") {
     return available(Object.freeze({ ...values, kind: "tail_result", controls, pilotPositionTargetMeters: available(state.pilotPositionTargetMeters),
       pilotPositionTargetNormalized: available(state.pilotPositionTargetNormalized),
+      progressMeters: unavailable("terminal_progress_unavailable"),
       finalization: snapshot.frame.finalization }));
   }
   if (snapshot.phaseCode !== 5 && snapshot.phaseCode !== 6) throw new RangeError("Tail flight display requires a Rust flight phase");
   return available(Object.freeze({ ...values, kind: "tail_flight", phaseCode: snapshot.phaseCode, controls, pilotPositionTargetMeters: available(state.pilotPositionTargetMeters),
-    pilotPositionTargetNormalized: available(state.pilotPositionTargetNormalized) }));
+    pilotPositionTargetNormalized: available(state.pilotPositionTargetNormalized), progressMeters: available(snapshot.frame.progressMeters) }));
 }
 
 export function projectRecordedFlightSnapshot(sample: NamedRecordSample, context: RecordQueryContext): FlightDisplaySnapshot {
@@ -121,11 +128,11 @@ export function projectRecordedFlightSnapshot(sample: NamedRecordSample, context
     angularRateBodyRadiansPerSecond: available(bodyRate(state.angularVelocityBodyRadiansPerSecond)), compositeCgPositionNedMeters: available(ned(state.telemetry.compositeCgPositionNedMeters)) };
   if (sample.controls.layout === "legacy_three_axis" && context.controlLayout === "legacy_three_axis") {
     return Object.freeze({ ...values, kind: "legacy_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"),
-      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
+      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), progressMeters: unavailable("record_course_axis_unavailable"), finalization: context.finalization });
   }
   if (sample.controls.layout === "tail_incidence" && context.controlLayout === "tail_incidence") {
     return Object.freeze({ ...values, kind: "tail_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"),
-      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
+      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), progressMeters: unavailable("record_course_axis_unavailable"), finalization: context.finalization });
   }
   throw new RangeError("Recorded display controls and finalization require the same layout");
 }
