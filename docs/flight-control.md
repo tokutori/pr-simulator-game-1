@@ -95,6 +95,13 @@ WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを�
 trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
 model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。旧JS factoryの既定モデルは保持する。
 
+明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、
+入力は`nose_up`/`turn_right`、body-positiveの`desired_pitch_rate_rad_s`/`desired_yaw_rate_rad_s`、
+`pilot_position_command`の`hold`/`set`を受け取る。余剰axis・未知field・異なるschemaを拒否する。
+snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
+terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
+旧factory・33値ABI・公開既定モデルは維持し、Replay/Attract・公開切替は後続のBPG-042統合で接続する。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 
