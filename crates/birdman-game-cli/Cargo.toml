@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

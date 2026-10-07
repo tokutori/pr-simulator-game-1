@@ -23,6 +23,17 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 
 ## 後続の物理検証
 
+### BPG-042 native hybrid smoke
+
+`cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all`は公開coreの二系統intentを
+Manual/Shared/Automaticから同じ`GameSession`のhybrid tick・記録・終端へ接続する。
+各modeは短い固定入力列を二度実行し、v6 recordとnamed terminal JSONの決定性・保存controls・finalizationを照合する。
+保存queryには既存held-incidence則を適用し、身体targetのSet/Holdは舵authorityから独立させる。
+低初速の独立回帰は適用範囲終了時の元causeと直前成功recordだけを保持し、失敗stageのstateを出力しない。
+fixtureは架空Standard modelのtrim・明示zero windとnative-smoke controller identityを使用する。
+browser Typical環境、旧`verify-flight`、距離目標、長時間安定性、収束・実機検証を個別の検証範囲として維持する。
+旧CLIコマンド・公開default・WASM ABIの切替はこの検査単位に含めない。
+
 ### BPG-002 core検証
 
 `birdman-game-core`のunit testsは解析解または運動量不変量を期待値に使用する。

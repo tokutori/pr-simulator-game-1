@@ -7,6 +7,8 @@ use birdman_game_core::{
 
 const DEFAULT_TICK_LIMIT: usize = 400;
 
+mod hybrid_smoke;
+
 fn main() {
     if let Err(error) = run_command() {
         eprintln!("{error}");
@@ -31,6 +33,13 @@ fn run_command() -> Result<(), String> {
             }
             run_verification(&requested_mode)
         }
+        Some("verify-hybrid-flight") => {
+            let requested_mode = arguments.next().unwrap_or_else(|| "all".to_owned());
+            if arguments.next().is_some() {
+                return Err(usage());
+            }
+            hybrid_smoke::run_verification(&requested_mode)
+        }
         Some("--help" | "-h") | None => {
             println!("{}", usage());
             Ok(())
@@ -40,7 +49,7 @@ fn run_command() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage: birdman-game-cli verify-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>".to_owned()
+    "Usage: birdman-game-cli verify-flight [all|manual|shared|automatic]\n       birdman-game-cli verify-hybrid-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>".to_owned()
 }
 
 fn validate_environment(path: &str) -> Result<(), String> {
