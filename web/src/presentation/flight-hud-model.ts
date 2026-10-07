@@ -258,6 +258,7 @@ function legacyPilotPositionRatio(snapshot: FlightDisplaySnapshot): number | nul
 
 function distanceReadout(snapshot: FlightDisplaySnapshot): string {
   if (snapshot.kind === "legacy_live") return `距離 ${snapshot.scoreCourseMeters.toFixed(1)} m`;
+  if (snapshot.kind === "tail_flight") return `距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`;
   if (snapshot.kind === "tail_result" && snapshot.finalization.scoreMeters !== null) {
     return `確定距離 ${snapshot.finalization.scoreMeters[0].toFixed(1)} m`;
   }
@@ -284,7 +285,9 @@ function supplementaryReadouts(snapshot: FlightDisplaySnapshot, attitudeVisible 
     const incidence = snapshot.controls.physicalIncidence;
     lines.push(`水平尾翼 ${degrees(incidence.horizontalTailRadians)}°  垂直尾翼 ${degrees(incidence.verticalTailRadians)}°`);
     const target = snapshot.pilotPositionTargetMeters;
-    lines.push(target.kind === "available" ? `PILOT TARGET ${target.value.toFixed(2)} m` : "PILOT TARGET unavailable");
+    const normalized = snapshot.pilotPositionTargetNormalized;
+    const targetLabel = target.kind === "available" ? `PILOT TARGET ${target.value.toFixed(2)} m` : "PILOT TARGET unavailable";
+    lines.push(normalized.kind === "available" ? `${targetLabel} [u=${normalized.value.toFixed(2)}]` : targetLabel);
   }
   return Object.freeze(lines);
 }

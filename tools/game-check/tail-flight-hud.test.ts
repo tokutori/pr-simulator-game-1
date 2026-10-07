@@ -36,14 +36,13 @@ function advance(session: HybridGameSessionBridge): void {
 }
 
 describe("tail-aware shared Flight HUD", () => {
-  it("displays Rust attitude, body rates, physical tails and held target without a fabricated score", () => {
+  it("displays Rust attitude, body rates, physical tails, held target and signed live progress", () => {
     const session = new HybridGameSessionBridge(0, 21, 22);
     try {
       launch(session);
       advance(session);
       const snapshot = display(session);
-      if (snapshot.controls.layout !== "tail_incidence" || snapshot.telemetry.kind !== "available" ||
-          snapshot.angularRateBodyRadiansPerSecond.kind !== "available" || snapshot.pilotPositionTargetMeters.kind !== "available") {
+      if (snapshot.kind !== "tail_flight") {
         throw new Error("Expected Rust two-tail fields");
       }
       const model = createFlightDisplayHudModel(snapshot, 0);
@@ -54,9 +53,15 @@ describe("tail-aware shared Flight HUD", () => {
       expect(model.supplementaryReadouts).toEqual([
         `p ${degrees(rate.roll)}  q ${degrees(rate.pitch)}  r ${degrees(rate.yaw)} °/s`,
         `水平尾翼 ${degrees(snapshot.controls.physicalIncidence.horizontalTailRadians)}°  垂直尾翼 ${degrees(snapshot.controls.physicalIncidence.verticalTailRadians)}°`,
-        `PILOT TARGET ${snapshot.pilotPositionTargetMeters.value.toFixed(2)} m`
+        `PILOT TARGET ${snapshot.pilotPositionTargetMeters.value.toFixed(2)} m [u=${snapshot.pilotPositionTargetNormalized.value.toFixed(2)}]`
       ]);
-      expect(model.telemetry).toContain("距離 unavailable");
+      expect(model.telemetry).toContain(`距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`);
+      expect(model.telemetry).not.toContain("確定距離");
+      const reverse = { ...snapshot, progressMeters: { kind: "available" as const, value: {
+        courseParallelMeters: -12.3, crossTrackMeters: 4.5, netHorizontalMeters: Math.hypot(12.3, 4.5)
+      } } };
+      expect(createFlightDisplayHudModel(reverse, 0).telemetry).toContain("距離 -12.3 m");
+      expect(model.pilotPosition).toContain(snapshot.pilotPositionMeters.toFixed(2));
       expect(model.controlsDescription).toContain("nose-up/down intent");
       expect(model.controlsDescription).toContain("←/→ left/right intent");
       expect(model.controlsDescription).toContain("pilot Hold");
