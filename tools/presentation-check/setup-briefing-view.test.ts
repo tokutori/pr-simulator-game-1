@@ -180,6 +180,22 @@ describe("Flight Setup and Briefing presentation", () => {
       .toContain("代表風情報を取得できない");
   });
 
+  it.each([1, 2, 3, 8])("states undefined launch-wind thresholds and preserves Rust preparation phase %i", (phaseCode) => {
+    for (const metadata of [environment, NO_ENVIRONMENT_BRIEFING]) {
+      const view = createGameViewModel(preparationModel(phaseCode), null, null, NO_HEAD_HUD_VIEW, metadata);
+      const weather = statusValue(view, "game-weather-conditions");
+      expect(weather).toContain("気象による発進風速の上限・下限: 未定義。");
+      expect(weather).not.toContain("準備処理で開始可能かを確認する");
+      if (phaseCode === 1) {
+        expect(view.panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-briefing-readiness")).toBe(false);
+      } else {
+        const readiness = statusValue(view, "game-briefing-readiness");
+        if (phaseCode === 3) expect(readiness).toBe("✓ 発進準備完了");
+        else expect(readiness).not.toContain("発進準備完了");
+      }
+    }
+  });
+
   it.each([
     [[-1, 0, 0], "北から（0.0°）", "鉛直流なし"],
     [[0, -1, 0.2], "東から（90.0°）", "下降 0.20 m/s"],

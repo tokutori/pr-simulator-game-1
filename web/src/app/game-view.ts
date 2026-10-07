@@ -797,7 +797,10 @@ function preparationProgress(phaseCode: number): UiStatus {
 }
 
 function weatherConditions(environment: EnvironmentBriefingProjection): UiStatus {
-  if (environment.kind === "unavailable") return status("game-weather-conditions", "気象", "代表風情報を取得できない。飛行準備時に条件を確認する。");
+  const launchWindCondition = "気象による発進風速の上限・下限: 未定義。";
+  if (environment.kind === "unavailable") return status("game-weather-conditions", "気象", [
+    "代表風情報を取得できない。飛行準備時に条件を確認する。", launchWindCondition
+  ].join("\n"));
   const [north, east, down] = environment.representativeWindNedMetersPerSecond;
   const [positionNorth, positionEast, positionDown] = environment.representativePositionNedMeters;
   const basis = environment.windBasis === "observed" ? "観測値" : environment.windBasis === "derived" ? "資料から導出した環境"
@@ -814,7 +817,7 @@ function weatherConditions(environment: EnvironmentBriefingProjection): UiStatus
     `速度成分 N/E/D: ${north.toFixed(2)} / ${east.toFixed(2)} / ${down.toFixed(2)} m/s`,
     `代表地点 N/E/D: ${positionNorth.toFixed(1)} / ${positionEast.toFixed(1)} / ${positionDown.toFixed(1)} m · 高度 ${environment.representativeAltitudeMeters.toFixed(1)} m`,
     environment.spatialVariation === "uniform" ? "空間変動: 一様な定常風" : "空間変動: 位置に応じて変化する定常風",
-    "発進条件: シナリオの指定条件を使用する。準備処理で開始可能かを確認する。"
+    launchWindCondition
   ].join("\n"));
 }
 
