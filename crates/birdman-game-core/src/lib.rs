@@ -13,6 +13,7 @@ mod dynamics;
 mod flight_control;
 mod flight_record;
 mod game_session;
+mod hybrid_mock;
 mod math;
 mod personal_best;
 mod replay_clock;
@@ -58,6 +59,7 @@ pub use game_session::{
     PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
+pub use hybrid_mock::{HybridMockConfiguration, HybridMockDefinition, HybridMockError};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
     FlightScenarioParameters, FlightTelemetry, FlightTelemetryError,

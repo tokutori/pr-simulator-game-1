@@ -100,6 +100,34 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 公開アプリの既定hybrid切替はBPG-042 / [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)で、
 二系統入力の公開型・model/controller identity・record versionの更新と同時に行う。
 
+### BPG-041の独立mock定義
+
+`HybridMockDefinition`は公開可能な架空値だけを所有し、既存constructorで全geometry・strip・anchor・
+全機polarを検証する。構築・借用viewはheapとI/Oを使用しない。既定の`SyntheticPlayableFlight`と
+公開WASM・recordはこの定義へ切り替えない。trim荷重・moving pilot連成残差・launch・controllerの
+検証は後続工程であり、この定義の構築成功と区別する。
+
+| 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
+|---|---|---|---|
+| 主翼 | 18 / 18 / 1 | 左右各8 | root=O、$z=-|y|\tan5^\circ$、left $R_x(+5^\circ)$、right $R_x(-5^\circ)$ |
+| 水平尾翼 | 2.5 / 3.4 / 2.5/3.4 | 8 | $(-1.8,y,0.1)$、body frame |
+| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-1.8,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
+
+作用点は各矩形stripのmidpointである。主翼の実面積weightは投影weightを$\cos5^\circ$で除した値とする。
+面全体の$AR=b^2/S$から$a=2\pi/(1+2/AR)$を求める。anchorはbody alpha=0・正の前進流で
+各frameへ変換した幾何alphaを保持し、主翼CL=0.70、水平尾翼CL=-0.225、垂直尾翼CL=0とする。
+
+全機表のalpha節点は`[-0.12,-0.06,0,0.06,0.12]` rad、主翼CLは`[0.10,0.36,0.70,1.00,1.18]`である。
+各節点でIssueのCL・CDi・Cm生成式を一度評価し、CDv=0.03、CY=Cl=Cn=0を保存する。
+実行時は7列を個別にPWL補間し、二乗や尾翼moment生成式を再評価しない。
+全機参照はS=18 m²・b=18 m・c=1 m・P=O・`WindAtBetaZero`であり、neutralではproxy静荷重を再加算しない。
+理想e=1、profile drag、主翼固有Cm=-0.02はsoftware仮定であり、実機性能・矩形実翼の効率を表さない。
+
+質量はairframe24 kg・pilot70 kg、datum慣性はdiag(900,1000,980) kg m²である。
+pilotのy=z=0、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を維持する。
+`bpg041-rectangular-hybrid-mock`と、dihedral=0の`bpg041-zero-dihedral-oracle`は独立identityであり、
+各configuration内のmodel versionは1とする。oracleは同じ投影形状と節点表を使用する。
+
 ### 根拠と来歴
 
 非公開xlsxの監査は設計者が完了しており、この実装に実係数・実機の質量・慣性・形状数値・元解析ファイルを導入しない。
