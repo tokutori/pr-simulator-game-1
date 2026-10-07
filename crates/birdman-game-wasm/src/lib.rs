@@ -19,6 +19,9 @@ use wasm_bindgen::{JsValue, prelude::*};
 
 mod environment;
 mod environment_snapshot;
+mod hybrid_session;
+
+pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 
 mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));

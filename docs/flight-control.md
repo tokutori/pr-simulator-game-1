@@ -90,6 +90,10 @@ Resultは元のtick errorを保持する。空力envelopeと有限windのOutside
 FlightRecordのfinalizationにも同じ型付きerrorを保存し、失敗tickのsampleを追加しない。
 旧三軸snapshot ABIはtail payloadを型付きerrorで拒否し、余剰rollを生成しない。
 新既定モデル・新ABI・record schemaの公開切替はBPG-042の同一PRで結合する。
+WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを固定owned cacheへ保持し、
+既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
+trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
+model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。旧JS factoryの既定モデルは保持する。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
