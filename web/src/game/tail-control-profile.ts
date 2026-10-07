@@ -41,12 +41,7 @@ export function parseTailControlProfile(json: string, snapshot: TailSessionSnaps
 }
 
 export function tailInputFromControlProfile(demand: TailPilotDemand, profile: TailControlProfile, snapshot: TailSessionSnapshot): TailLogicalInput {
-  const identity = preparedIdentity(snapshot);
-  if (profile.controllerProfileId !== identity.controls.controllerProfileId
-      || profile.controllerProfileVersion !== identity.scenario.controllerProfileVersion
-      || !samePreparedIdentity(profile.identity, identity)) {
-    throw new RangeError("Tail control profile belongs to another sealed session");
-  }
+  validateTailControlProfileSession(profile, snapshot);
   const noseUp = boundaryNumber(demand.noseUp, -1, 1);
   const turnRight = boundaryNumber(demand.turnRight, -1, 1);
   const limits = profile.desiredBodyRateLimitRadiansPerSecond;
@@ -54,6 +49,15 @@ export function tailInputFromControlProfile(demand: TailPilotDemand, profile: Ta
     pitchRadiansPerSecond: noseUp * boundaryNumber(limits.pitch, Number.MIN_VALUE),
     yawRadiansPerSecond: turnRight * boundaryNumber(limits.yaw, Number.MIN_VALUE)
   });
+}
+
+export function validateTailControlProfileSession(profile: TailControlProfile, snapshot: TailSessionSnapshot): void {
+  const identity = preparedIdentity(snapshot);
+  if (profile.controllerProfileId !== identity.controls.controllerProfileId
+      || profile.controllerProfileVersion !== identity.scenario.controllerProfileVersion
+      || !samePreparedIdentity(profile.identity, identity)) {
+    throw new RangeError("Tail control profile belongs to another sealed session");
+  }
 }
 
 function preparedIdentity(snapshot: TailSessionSnapshot): PreparedIdentity {

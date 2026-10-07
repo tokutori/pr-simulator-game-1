@@ -145,6 +145,12 @@ Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キー�
 `tailInputFromControlProfile`は同じsealed scenario/aircraft/controller/seedのsnapshotと照合し、normalized demandをRust所有rate limitへ写像する。
 gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator更新はRust coreが所有し、Web側には追加のcontrol loopを設けない。
 
+`BrowserTailPilotInput`は毎tickのRust held targetを使用し、Gamepad再取得時はneutralと身体軸のpickupを確認する。
+身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
+`TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
+reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
+この接続はheadless検証用の独立入口であり、公開factory・既定モデル・app mainの切替を含まない。
+
 `named-record-query`はschema 2の保存query・Analysis batch・Replay contextをimmutableな型へ変換する。
 保存v1〜5の三軸とv6の二系統尾翼はcontrolsの直和型で保持し、tail snapshotへroll制御値を補填しない。
 同sessionのRust terminal projectionとphysics frequencyを使用し、layout・stamp・初期/終端・時系列・clockの整合を検査する。

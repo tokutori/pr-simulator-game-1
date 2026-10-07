@@ -41,6 +41,7 @@ export type FlightDisplaySnapshot =
       angularRateBodyRadiansPerSecond: Readonly<{ kind: "unavailable"; reason: "legacy_body_rate_unavailable" }>;
       compositeCgPositionNedMeters: Readonly<{ kind: "unavailable"; reason: "legacy_cg_unavailable" }>;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "legacy_pilot_target_unavailable" }>;
+      pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "legacy_pilot_target_unavailable" }>;
       terminal: FlightSnapshot["terminal"];
       scoreCourseMeters: number;
       crossTrackMeters: number;
@@ -50,23 +51,27 @@ export type FlightDisplaySnapshot =
       phaseCode: 5 | 6;
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Available<number>;
+      pilotPositionTargetNormalized: Available<number>;
     }>)
   | (NamedDisplayState & Readonly<{
       kind: "tail_result";
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Available<number>;
+      pilotPositionTargetNormalized: Available<number>;
       finalization: TailTerminalFinalization;
     }>)
   | (NamedDisplayState & Readonly<{
       kind: "legacy_record";
       controls: LegacyPhysicalFlightControls;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
+      pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
       finalization: LegacyTerminalFinalization;
     }>)
   | (NamedDisplayState & Readonly<{
       kind: "tail_record";
       controls: TailPhysicalFlightControls;
       pilotPositionTargetMeters: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
+      pilotPositionTargetNormalized: Readonly<{ kind: "unavailable"; reason: "record_pilot_target_unavailable" }>;
       finalization: TailTerminalFinalization;
     }>);
 
@@ -83,6 +88,7 @@ export function projectLegacyFlightSnapshot(snapshot: FlightSnapshot): FlightDis
       contactFraction: snapshot.contactFraction === null ? unavailable("non_contact_snapshot") : available(snapshot.contactFraction), timeSeconds: snapshot.flightTimeSeconds }),
     angularRateBodyRadiansPerSecond: unavailable("legacy_body_rate_unavailable"), compositeCgPositionNedMeters: unavailable("legacy_cg_unavailable"),
     pilotPositionTargetMeters: unavailable("legacy_pilot_target_unavailable"),
+    pilotPositionTargetNormalized: unavailable("legacy_pilot_target_unavailable"),
     terminal: snapshot.terminal, scoreCourseMeters: snapshot.scoreCourseMeters, crossTrackMeters: snapshot.crossTrackMeters });
 }
 
@@ -98,10 +104,12 @@ export function projectTailFlightSnapshot(snapshot: TailSessionSnapshot): Displa
   const controls: TailPhysicalFlightControls = Object.freeze({ layout: "tail_incidence", physicalIncidence: state.physicalIncidence });
   if (snapshot.frame.kind === "result") {
     return available(Object.freeze({ ...values, kind: "tail_result", controls, pilotPositionTargetMeters: available(state.pilotPositionTargetMeters),
+      pilotPositionTargetNormalized: available(state.pilotPositionTargetNormalized),
       finalization: snapshot.frame.finalization }));
   }
   if (snapshot.phaseCode !== 5 && snapshot.phaseCode !== 6) throw new RangeError("Tail flight display requires a Rust flight phase");
-  return available(Object.freeze({ ...values, kind: "tail_flight", phaseCode: snapshot.phaseCode, controls, pilotPositionTargetMeters: available(state.pilotPositionTargetMeters) }));
+  return available(Object.freeze({ ...values, kind: "tail_flight", phaseCode: snapshot.phaseCode, controls, pilotPositionTargetMeters: available(state.pilotPositionTargetMeters),
+    pilotPositionTargetNormalized: available(state.pilotPositionTargetNormalized) }));
 }
 
 export function projectRecordedFlightSnapshot(sample: NamedRecordSample, context: RecordQueryContext): FlightDisplaySnapshot {
@@ -112,10 +120,12 @@ export function projectRecordedFlightSnapshot(sample: NamedRecordSample, context
     stamp: Object.freeze({ kind: "exact", tick: sample.tickIndex, fraction: sample.fraction, timeSeconds: sample.timeSeconds }),
     angularRateBodyRadiansPerSecond: available(bodyRate(state.angularVelocityBodyRadiansPerSecond)), compositeCgPositionNedMeters: available(ned(state.telemetry.compositeCgPositionNedMeters)) };
   if (sample.controls.layout === "legacy_three_axis" && context.controlLayout === "legacy_three_axis") {
-    return Object.freeze({ ...values, kind: "legacy_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
+    return Object.freeze({ ...values, kind: "legacy_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"),
+      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
   }
   if (sample.controls.layout === "tail_incidence" && context.controlLayout === "tail_incidence") {
-    return Object.freeze({ ...values, kind: "tail_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
+    return Object.freeze({ ...values, kind: "tail_record", controls: sample.controls, pilotPositionTargetMeters: unavailable("record_pilot_target_unavailable"),
+      pilotPositionTargetNormalized: unavailable("record_pilot_target_unavailable"), finalization: context.finalization });
   }
   throw new RangeError("Recorded display controls and finalization require the same layout");
 }

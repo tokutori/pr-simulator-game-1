@@ -43,6 +43,7 @@ export interface TailFlightState {
   readonly pilotPositionMeters: number;
   readonly pilotVelocityMetersPerSecond: number;
   readonly pilotPositionTargetMeters: number;
+  readonly pilotPositionTargetNormalized: number;
   readonly physicalIncidence: Readonly<{ horizontalTailRadians: number; verticalTailRadians: number }>;
 }
 export interface TailFlightTelemetry {
@@ -185,7 +186,7 @@ function vector3(value: unknown): Vector3 {
 
 function decodeState(value: unknown, physicsHz: number): TailFlightState {
   const state = boundaryObject(value, ["tick", "fraction", "flight_time_s", "datum_position_ned_m", "datum_velocity_ned_mps",
-    "attitude_body_to_ned", "angular_rate_body_rad_s", "pilot_position_m", "pilot_velocity_mps", "pilot_position_target_m", "physical_incidence"]);
+    "attitude_body_to_ned", "angular_rate_body_rad_s", "pilot_position_m", "pilot_velocity_mps", "pilot_position_target_m", "pilot_position_target_normalized", "physical_incidence"]);
   const tick = boundaryInteger(state.tick);
   const fraction = boundaryNumber(state.fraction, 0, 1);
   const flightTimeSeconds = boundaryNumber(state.flight_time_s, 0);
@@ -196,7 +197,8 @@ function decodeState(value: unknown, physicsHz: number): TailFlightState {
     datumPositionNedMeters: vector3(state.datum_position_ned_m), datumVelocityNedMetersPerSecond: vector3(state.datum_velocity_ned_mps),
     attitudeBodyToNed: attitude, angularRateBodyRadiansPerSecond: vector3(state.angular_rate_body_rad_s),
     pilotPositionMeters: boundaryNumber(state.pilot_position_m), pilotVelocityMetersPerSecond: boundaryNumber(state.pilot_velocity_mps),
-    pilotPositionTargetMeters: boundaryNumber(state.pilot_position_target_m), physicalIncidence: decodeTailPhysicalIncidence(state.physical_incidence) });
+    pilotPositionTargetMeters: boundaryNumber(state.pilot_position_target_m), pilotPositionTargetNormalized: boundaryNumber(state.pilot_position_target_normalized, -1, 1),
+    physicalIncidence: decodeTailPhysicalIncidence(state.physical_incidence) });
 }
 
 export function decodeTailPhysicalIncidence(value: unknown): TailFlightState["physicalIncidence"] {
