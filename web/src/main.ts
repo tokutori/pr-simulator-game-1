@@ -504,7 +504,8 @@ async function initializePresentation(requestId: number): Promise<void> {
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
-    gameSession = initializedSession;
+    const session = initializedSession;
+    gameSession = session;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
     physicsHz = initializedSession.physicsHz;
     flightRenderer = bundle.renderer;
@@ -548,6 +549,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       webXrBackend.checkAvailability(),
       phoneVrBackend.checkAvailability()
     ]);
+    if (isPageHidden() || gameSession !== session) throw new Error("Page became hidden during initialization");
     dispatch({
       type: "presentation-initialized",
       requestId,
