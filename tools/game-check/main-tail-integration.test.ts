@@ -107,6 +107,15 @@ async function fixture(failInitialization = false, seedLegacyArchive = false) {
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
 }
 
+function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTimestampMilliseconds: number,
+  maximumElapsedMilliseconds: number): void {
+  const frameMilliseconds = 1_000 / 30;
+  for (let elapsed = frameMilliseconds; elapsed < maximumElapsedMilliseconds && trial.scene() === "Flight"; elapsed += frameMilliseconds) {
+    trial.frame(initialTimestampMilliseconds + elapsed);
+  }
+  if (trial.scene() === "Flight") trial.frame(initialTimestampMilliseconds + maximumElapsedMilliseconds);
+}
+
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it("connects explicit Setup, flight, Result, Retry, named Replay and Attract without disposing the Rust owner", async () => {
     const trial = await fixture(false, true);
@@ -135,7 +144,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-result-retry");
     trial.launch();
     trial.frame(20);
-    for (let tick = 1; tick < 20_000 && trial.scene() === "Flight"; tick += 1) trial.frame(20 + tick * 10);
+    runFlightToResult(trial, 20, 199_990);
     expect(trial.scene()).toBe("Result");
     expect(trial.exportRecord).toHaveBeenCalledTimes(2);
     expect(JSON.parse(trial.exportRecord.mock.results[1]?.value as string)).toMatchObject({ schema_version: 6, finalization: { reason: "water_contact" } });
@@ -212,7 +221,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     });
     trial.frame(0);
     if (reason === "manual_abort") trial.click("game-flight-abort");
-    else for (let index = 1; index <= 20_000 && trial.scene() === "Flight"; index += 1) trial.frame(index * 10);
+    else runFlightToResult(trial, 0, 200_000);
     expect(injected).toBe(true);
     expect(trial.scene()).toBe("Result");
     expect(trial.browser.document.body.textContent).toContain("Injected committed Result view failure");
