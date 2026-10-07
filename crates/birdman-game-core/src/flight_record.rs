@@ -6,6 +6,12 @@ use crate::simulation::{FlightFeedbackInput, FlightTickState};
 use crate::{FlightState, SurfaceCommands};
 use alloc::vec::Vec;
 
+mod control;
+pub use control::{
+    FlightRecordActuators, FlightRecordControlCapture, FlightRecordControlError,
+    FlightRecordControlKind, FlightRecordControls, FlightRecordTailInput,
+};
+
 /// Maximum configured physical flight ticks in the initial record implementation.
 pub const MAX_FLIGHT_RECORD_TICKS: usize = 4_000;
 

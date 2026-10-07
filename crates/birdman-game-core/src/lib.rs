@@ -51,9 +51,11 @@ pub use flight_control::{
     body_rate_feedback_commands, mix_surface_commands,
 };
 pub use flight_record::{
-    FlightRecord, FlightRecordDisposition, FlightRecordError, FlightRecordFinalization,
-    FlightRecordHeader, FlightRecordInput, FlightRecordPlaybackSample, FlightRecordQueryError,
-    FlightRecordSample, FlightRecordSummary, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
+    FlightRecord, FlightRecordActuators, FlightRecordControlCapture, FlightRecordControlError,
+    FlightRecordControlKind, FlightRecordControls, FlightRecordDisposition, FlightRecordError,
+    FlightRecordFinalization, FlightRecordHeader, FlightRecordInput, FlightRecordPlaybackSample,
+    FlightRecordQueryError, FlightRecordSample, FlightRecordSummary, FlightRecordTailInput,
+    MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
 };
 pub use game_session::{
     BriefingFailure, GameSession, GameSessionConfiguration, GameSessionError, PauseReason,
