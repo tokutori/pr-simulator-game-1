@@ -50,6 +50,16 @@ sample間の内点はその区間の終端sampleに保存された保持値を�
 
 ## エラーと検証
 
+BPG-040の専用二系統境界は`TailPilotIntent`、`TailRateTarget`、`TailControlProfile`とする。
+manual nose-up/right intentは各[-1,1]で、水平・垂直尾翼のphysical incidenceへ各-0.2 rad倍で写像する。
+body q/r targetは各±0.2 rad/sである。`tail_rate_feedback_incidence`は
+gain×(observed-target)を各±0.2 radで飽和する。observed roll rateを操作へ使用しない。
+software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airframe/polar parameterから分離する。
+`advance_tail_control`は既存ControlModeのauthority混合、physical saturation、slewを純粋に評価し、
+混合targetと次区間の保持incidenceを返す。pilot位置指令はこのmixerの対象外である。
+既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
+新playable tick/pilot targetへの接続、WASM・input・record・既定モデル切替は後続単位で実施する。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 

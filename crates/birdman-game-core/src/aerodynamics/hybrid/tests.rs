@@ -502,6 +502,74 @@ fn slope_has_explicit_analytic_values_and_asymptotic_limits() {
 }
 
 #[test]
+fn two_axis_manual_intent_and_feedback_reach_hybrid_tail_arm_moments() {
+    let fixture = Fixture::new(2);
+    let profile = crate::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    for sign in [-1.0, 1.0] {
+        let manual = crate::TailPilotIntent::try_new(sign * 0.25, sign * 0.25)
+            .unwrap()
+            .incidence()
+            .unwrap();
+        let elevator = isolated_increment(
+            &fixture,
+            1,
+            [10.0, 0.0, 0.0],
+            [0.0; 3],
+            TailIncidence::try_new(manual.elevator_rad(), 0.0).unwrap(),
+        );
+        let rudder = isolated_increment(
+            &fixture,
+            2,
+            [10.0, 0.0, 0.0],
+            [0.0; 3],
+            TailIncidence::try_new(0.0, manual.rudder_rad()).unwrap(),
+        );
+        near(
+            elevator.force_body_newtons().components()[2],
+            sign * 60.0 * (4.0 * core::f64::consts::PI / 3.0) * 0.05,
+            1.0e-12,
+        );
+        near(
+            elevator.moment_about_datum_newton_meters().components()[1],
+            sign * 3.0 * 60.0 * (4.0 * core::f64::consts::PI / 3.0) * 0.05,
+            1.0e-12,
+        );
+        near(
+            rudder.force_body_newtons().components()[1],
+            -sign * 60.0 * 0.5 * core::f64::consts::PI * 0.05,
+            1.0e-12,
+        );
+        near(
+            rudder.moment_about_datum_newton_meters().components()[2],
+            sign * 2.5 * 60.0 * 0.5 * core::f64::consts::PI * 0.05,
+            1.0e-12,
+        );
+        let feedback = crate::tail_rate_feedback_incidence(
+            profile,
+            crate::TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            vector([0.0, sign * 0.1, sign * 0.1]),
+        )
+        .unwrap();
+        let pitch = isolated_increment(
+            &fixture,
+            1,
+            [10.0, 0.0, 0.0],
+            [0.0; 3],
+            TailIncidence::try_new(feedback.elevator_rad(), 0.0).unwrap(),
+        );
+        let yaw = isolated_increment(
+            &fixture,
+            2,
+            [10.0, 0.0, 0.0],
+            [0.0; 3],
+            TailIncidence::try_new(0.0, feedback.rudder_rad()).unwrap(),
+        );
+        assert!(sign * pitch.moment_about_datum_newton_meters().components()[1] < 0.0);
+        assert!(sign * yaw.moment_about_datum_newton_meters().components()[2] < 0.0);
+    }
+}
+
+#[test]
 fn midpoint_roll_derivative_has_finite_strip_oracle_and_quadrature_convergence() {
     let mut previous_error = f64::INFINITY;
     for count in [2, 4, 8, 16, 32] {

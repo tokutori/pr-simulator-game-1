@@ -21,6 +21,7 @@ mod scoring;
 mod session_contract;
 mod simulation;
 mod synthetic_flight;
+mod tail_control;
 mod wind_field;
 
 pub use aerodynamics::{
@@ -73,6 +74,10 @@ pub use simulation::{
     advance_flight_tick_with_contact, run_feedback_flight, run_flight,
 };
 pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
+pub use tail_control::{
+    TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent, TailRateTarget,
+    advance_tail_control, tail_rate_feedback_incidence,
+};
 pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{
