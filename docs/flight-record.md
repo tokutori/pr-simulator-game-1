@@ -79,6 +79,16 @@ coreで一度評価したmanual/FBW/mixed incidenceを区別する。記録層�
 schema v1–5と旧WASM packed layoutはlegacy値を維持し、二系統値を受けると型付き非互換を返す。
 後続のv6 codecと公開WASM更新で二系統保存を接続する。公開既定モデルは最終統合まで維持する。
 
+二系統の確定済archiveは`TailFlightRecordDocument`のschema v6で保存する。
+`control_identity`はaircraft configurationとcontroller profileのIDを保持し、各versionはheaderを正本とする。
+control payloadは`layout: tail_incidence`で判別し、水平尾翼・垂直尾翼の実効incidence、
+normalized manual intent、body q/r target、身体Hold/Set、manual/FBW/mixed commandを名前付きで保持する。
+`FlightRecordArchiveDocument`はv1–5とv6をversion別にdecodeし、同じcore queryへ保存snapshotを復元する。
+未知schema、未知field、余剰roll軸、破損値は型付きerrorで拒否する。旧recordのidentityと保存値は保持する。
+新hybrid再積分の互換性はsnapshot閲覧と独立に検査し、旧三軸またはmodel/controller/scenario/physicsの不一致を拒否する。
+archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだけに限定し、旧三軸recordを混在させない。
+canonical keyの二系統configuration接続とterminal cause保存、公開WASM/default切替はBPG-042の後続結合範囲である。
+
 f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
 
 | 項目 | 定義 |

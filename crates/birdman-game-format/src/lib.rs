@@ -17,12 +17,16 @@ pub use environment::{
 };
 
 pub use flight_record::{
-    FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
-    FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
-    FlightRecordFinalizationDocument, FlightRecordFormatError, FlightRecordHeaderDocument,
-    FlightRecordHudProfileDocument, FlightRecordInformationDocument, FlightRecordInputDocument,
-    FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordTelemetryDocument,
-    FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
+    FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordArchiveDocument, FlightRecordAssistanceDocument,
+    FlightRecordDifficultyDocument, FlightRecordDispositionDocument, FlightRecordDocument,
+    FlightRecordEndReasonDocument, FlightRecordFinalizationDocument, FlightRecordFormatError,
+    FlightRecordHeaderDocument, FlightRecordHudProfileDocument, FlightRecordInformationDocument,
+    FlightRecordInputDocument, FlightRecordPresetDocument, FlightRecordSampleDocument,
+    FlightRecordStateDocument, FlightRecordTailIdentityDocument, FlightRecordTelemetryDocument,
+    FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES, TAIL_FLIGHT_RECORD_SCHEMA_VERSION,
+    TailFlightRecordControlsDocument, TailFlightRecordDocument, TailFlightRecordInputDocument,
+    TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
+    compare_archive_personal_best_records,
 };
 pub use personal_best::{
     PersonalBestContentHashes, PersonalBestSelection, canonical_personal_best_key,

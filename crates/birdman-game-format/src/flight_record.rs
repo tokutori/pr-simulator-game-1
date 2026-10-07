@@ -11,6 +11,14 @@ use birdman_game_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod tail;
+pub use tail::{
+    FlightRecordArchiveDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
+    TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailFlightRecordControlsDocument, TailFlightRecordDocument,
+    TailFlightRecordInputDocument, TailFlightRecordSampleDocument, TailIncidenceDocument,
+    TailPilotPositionCommandDocument, compare_archive_personal_best_records,
+};
+
 /// Current external flight-record schema version.
 pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 5;
 const LEGACY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
@@ -296,6 +304,8 @@ pub enum FlightRecordFormatError {
     EncodingFailed,
     /// The requested schema cannot represent the record's semantic control layout.
     IncompatibleControlLayout,
+    /// Saved snapshots belong to a model/controller/control layout incompatible with reintegration.
+    IncompatibleReintegration,
 }
 
 impl FlightRecordDocument {
@@ -1027,7 +1037,7 @@ mod tests {
         assert!(document.validate().is_err());
     }
 
-    fn completed_record() -> FlightRecordDocument {
+    pub(super) fn completed_record() -> FlightRecordDocument {
         let (aircraft, scenario, feedback, _) =
             SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
         let identity = SessionScenarioIdentity {
@@ -1120,7 +1130,7 @@ mod tests {
         );
     }
 
-    fn water_contact_record() -> FlightRecordDocument {
+    pub(super) fn water_contact_record() -> FlightRecordDocument {
         let (aircraft, scenario, feedback, _) =
             SyntheticPlayableFlight::try_new(10.5).unwrap().into_parts();
         let identity = SessionScenarioIdentity {
