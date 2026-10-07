@@ -1,13 +1,220 @@
 use birdman_game_core::DistanceScore;
 use birdman_game_core::{
-    ControlMode, CourseAxis, PersonalBestComparison, PersonalBestKey, compare_personal_best,
+    ControlMode, CourseAxis, PersonalBestComparison, PersonalBestKey, SessionScenarioIdentity,
+    TailControlProfile, compare_personal_best,
 };
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AssistanceLevel, FlightRecordDocument, FlightRecordFormatError, InformationLevel,
-    ResolvedConfiguration, WeatherClass,
+    AssistanceLevel, DifficultySettings, FlightRecordArchiveDocument, FlightRecordDocument,
+    FlightRecordFormatError, FlightRecordTailIdentityDocument, InformationLevel,
+    ResolvedConfiguration, TailFlightRecordControlsDocument, TailFlightRecordDocument,
+    WeatherClass,
 };
+
+/// Resolved two-tail comparison conditions with a sealed profile and no legacy feedback axes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailPersonalBestConfiguration<'a> {
+    /// Exact immutable scenario and model versions used by the session.
+    pub scenario: SessionScenarioIdentity,
+    /// Resolved information, assistance and weather settings.
+    pub difficulty: DifficultySettings,
+    /// Exact model/controller names accompanying those versions.
+    pub identity: &'a FlightRecordTailIdentityDocument,
+    /// Authority mode used by the session.
+    pub control_mode: ControlMode,
+    /// Once-resolved two-axis feedback and software slew profile.
+    pub controller_profile: TailControlProfile,
+}
+
+/// Deterministic selection among eligible schema-six records of one explicit configuration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TailPersonalBestSelection {
+    selection: PersonalBestSelection,
+    identity: FlightRecordTailIdentityDocument,
+    aircraft_model_version: u32,
+    controller_profile_version: u32,
+}
+
+impl TailPersonalBestSelection {
+    /// Starts selection from a keyed complete contact record.
+    pub fn try_new(
+        candidate: &TailFlightRecordDocument,
+    ) -> Result<Option<Self>, FlightRecordFormatError> {
+        let Some(score) = candidate.personal_best_candidate_score()? else {
+            return Ok(None);
+        };
+        let Some(key) = candidate.header.personal_best_key else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            selection: PersonalBestSelection {
+                key: PersonalBestKey::from_digest(key),
+                best_score: score,
+                selected_existing_id: None,
+            },
+            identity: candidate.control_identity.clone(),
+            aircraft_model_version: candidate.header.aircraft_model_version,
+            controller_profile_version: candidate.header.controller_profile_version,
+        }))
+    }
+
+    /// Considers a validated archive, excluding legacy layouts and mismatched identities.
+    pub fn consider_existing(
+        &mut self,
+        id: u64,
+        archive: &FlightRecordArchiveDocument,
+    ) -> Result<(), FlightRecordFormatError> {
+        if id == 0 {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        let FlightRecordArchiveDocument::Tail(existing) = archive else {
+            archive.to_finalized_core_record()?;
+            return Ok(());
+        };
+        let Some(score) = existing.personal_best_candidate_score()? else {
+            return Ok(());
+        };
+        let Some(key) = existing.header.personal_best_key else {
+            return Ok(());
+        };
+        if existing.control_identity != self.identity
+            || existing.header.aircraft_model_version != self.aircraft_model_version
+            || existing.header.controller_profile_version != self.controller_profile_version
+        {
+            return Ok(());
+        }
+        match compare_personal_best(
+            self.selection.key,
+            self.selection.best_score,
+            PersonalBestKey::from_digest(key),
+            score,
+        ) {
+            PersonalBestComparison::ExistingWins => {
+                self.selection.best_score = score;
+                self.selection.selected_existing_id = Some(id);
+            }
+            PersonalBestComparison::EqualScore if self.selection.selected_existing_id.is_none() => {
+                self.selection.selected_existing_id = Some(id);
+            }
+            PersonalBestComparison::CandidateWins
+            | PersonalBestComparison::EqualScore
+            | PersonalBestComparison::DifferentConfiguration => {}
+        }
+        Ok(())
+    }
+
+    /// Returns the distinct two-tail canonical key.
+    pub const fn key(&self) -> PersonalBestKey {
+        self.selection.key
+    }
+
+    /// Returns the first winning persisted record identifier, if present.
+    pub const fn selected_existing_id(&self) -> Option<u64> {
+        self.selection.selected_existing_id
+    }
+}
+
+/// Hashes exact two-tail conditions without using legacy gains or recomputing flight outputs.
+pub fn canonical_tail_personal_best_key(
+    record: &TailFlightRecordDocument,
+    configuration: TailPersonalBestConfiguration<'_>,
+    course_axis: CourseAxis,
+    content_hashes: PersonalBestContentHashes,
+) -> Result<Option<PersonalBestKey>, FlightRecordFormatError> {
+    if record.personal_best_candidate_score()?.is_none() {
+        return Ok(None);
+    }
+    let header = &record.header;
+    let scenario = configuration.scenario;
+    if header.catalog_version != scenario.catalog_version
+        || header.scenario_id != scenario.scenario_id
+        || header.scenario_version != scenario.scenario_version
+        || header.aircraft_model_version != scenario.aircraft_model_version
+        || header.environment_version != scenario.environment_version
+        || header.controller_profile_version != scenario.controller_profile_version
+        || header.seed != scenario.seed
+        || header.difficulty != configuration.difficulty.into()
+        || record.control_identity != *configuration.identity
+        || matches!(
+            configuration.difficulty.assistance(),
+            AssistanceLevel::Manual
+        ) != matches!(configuration.control_mode, ControlMode::Manual)
+    {
+        return Err(FlightRecordFormatError::InvalidRecord);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v1\0");
+    hash_u32(&mut hasher, record.schema_version);
+    for name in [
+        &configuration.identity.aircraft_configuration_id,
+        &configuration.identity.controller_profile_id,
+    ] {
+        hash_u64(&mut hasher, name.len() as u64);
+        hasher.update(name.as_bytes());
+    }
+    hash_u32(&mut hasher, header.catalog_version);
+    hash_u32(&mut hasher, header.scenario_id);
+    hash_u32(&mut hasher, header.scenario_version);
+    hash_u32(&mut hasher, header.aircraft_model_version);
+    hash_u32(&mut hasher, header.environment_version);
+    hash_u32(&mut hasher, header.controller_profile_version);
+    hash_u64(&mut hasher, header.seed);
+    hash_information(&mut hasher, configuration.difficulty.information());
+    hash_hud_profile(&mut hasher, configuration.difficulty.hud_profile());
+    hash_assistance(&mut hasher, configuration.difficulty.assistance());
+    hash_weather(&mut hasher, configuration.difficulty.weather());
+    hash_controller_mode(&mut hasher, configuration.control_mode);
+    for gain in configuration.controller_profile.gains_seconds() {
+        hash_f64(&mut hasher, gain);
+    }
+    hash_f64(
+        &mut hasher,
+        configuration
+            .controller_profile
+            .maximum_slew_rad_per_second(),
+    );
+    for component in course_axis.components() {
+        hash_f64(&mut hasher, component);
+    }
+    hasher.update(content_hashes.scenario);
+    hasher.update(content_hashes.aircraft);
+    hasher.update(content_hashes.environment);
+    hasher.update(content_hashes.physics_build);
+    hash_u32(
+        &mut hasher,
+        header.physics_model_version.unwrap_or_default(),
+    );
+    hash_u32(
+        &mut hasher,
+        header.score_definition_version.unwrap_or_default(),
+    );
+    hash_u32(&mut hasher, header.physics_hz);
+    hash_u64(&mut hasher, header.maximum_flight_ticks);
+    let initial = &record.samples[0];
+    for values in [
+        &initial.state.datum_position_ned_m,
+        &initial.state.datum_velocity_ned_mps,
+        &initial.state.angular_velocity_body_rad_s,
+        &initial.state.wind_at_cg_ned_mps,
+    ] {
+        for value in values {
+            hash_f64(&mut hasher, *value);
+        }
+    }
+    for value in initial.state.attitude_body_to_ned {
+        hash_f64(&mut hasher, value);
+    }
+    hash_f64(&mut hasher, initial.state.pilot_position_m);
+    hash_f64(&mut hasher, initial.state.pilot_velocity_mps);
+    let TailFlightRecordControlsDocument::TailIncidence {
+        physical_incidence, ..
+    } = initial.controls;
+    hash_f64(&mut hasher, physical_incidence.horizontal_tail_rad);
+    hash_f64(&mut hasher, physical_incidence.vertical_tail_rad);
+    let digest: [u8; 32] = hasher.finalize().into();
+    Ok(Some(PersonalBestKey::from_digest(digest)))
+}
 
 /// Content hashes required to distinguish the exact simulation inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

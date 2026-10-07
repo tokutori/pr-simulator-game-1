@@ -35,7 +35,8 @@ pub use flight_record::{
     TailTickFailureDocument, WindFailureDocument, compare_archive_personal_best_records,
 };
 pub use personal_best::{
-    PersonalBestContentHashes, PersonalBestSelection, canonical_personal_best_key,
+    PersonalBestContentHashes, PersonalBestSelection, TailPersonalBestConfiguration,
+    TailPersonalBestSelection, canonical_personal_best_key, canonical_tail_personal_best_key,
     compare_personal_best_records,
 };
 

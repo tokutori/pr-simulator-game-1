@@ -87,7 +87,10 @@ normalized manual intent、body q/r target、身体Hold/Set、manual/FBW/mixed c
 未知schema、未知field、余剰roll軸、破損値は型付きerrorで拒否する。旧recordのidentityと保存値は保持する。
 新hybrid再積分の互換性はsnapshot閲覧と独立に検査し、旧三軸またはmodel/controller/scenario/physicsの不一致を拒否する。
 archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだけに限定し、旧三軸recordを混在させない。
-canonical keyの二系統configuration接続と公開WASM/default切替はBPG-042の後続結合範囲である。
+二系統canonical keyは専用domainで明示identity、各version、resolved difficulty、二軸profileのgain/slew、
+course、content hash、初期physical incidence・姿勢・身体状態を保持する。三軸feedbackは使用しない。
+`TailPersonalBestSelection`はv6同identity・同keyの完全なWaterContactだけを比較し、tieは最初の既存recordを維持する。
+公開WASM/default切替はBPG-042の後続結合範囲である。
 
 coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、causeの分類と終了理由、
 三軸・二系統のcontrol layoutを照合する。最新の成功sampleと一致するstampだけを確定し、
