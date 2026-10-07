@@ -46,6 +46,7 @@ interface RecordedDraw {
 
 interface RecordingDriver {
   readonly draws: RecordedDraw[];
+  readonly scene: Scene | null;
   readonly xr: { isPresenting: boolean; enabled: boolean };
   tick(timestamp: number, viewer: XRViewerPose | null): void;
 }
@@ -56,6 +57,7 @@ vi.mock("three", async (importOriginal) => {
   const actual = await importOriginal<typeof import("three")>();
   class RecordingWebGlRenderer {
     readonly draws: RecordedDraw[] = [];
+    scene: Scene | null = null;
     readonly xr = { isPresenting: false, enabled: false, getReferenceSpace: () => ({}) as XRReferenceSpace };
     readonly shadowMap = { enabled: false };
     autoClear = true;
@@ -85,6 +87,7 @@ vi.mock("three", async (importOriginal) => {
     dispose(): void {}
     render(scene: Scene, camera: Camera): void {
       if (this.target !== null) return;
+      this.scene = scene;
       scene.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
       let headHud: Matrix4 | null = null;
