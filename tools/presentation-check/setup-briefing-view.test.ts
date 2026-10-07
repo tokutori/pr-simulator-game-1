@@ -155,6 +155,19 @@ describe("Flight Setup and Briefing presentation", () => {
     expect(view.panels[0]?.controls.map((control) => control.id)).not.toContain("game-preparation-feedback");
   });
 
+  it.each(["screen", "phone-vr", "webxr"] as const)("distinguishes failed Briefing recovery actions in %s", (mode) => {
+    const model: AppModel = { ...preparationModel(8), presentation: { type: "ready", mode } };
+    const view = createGameViewModel(model, null);
+    const controls = view.panels.flatMap((panel) => panel.controls);
+    expect(controls.find((control) => control.id === "game-briefing-retry")).toMatchObject({
+      kind: "button", label: "準備を再試行", enabled: true, presentation: { kind: "action", emphasis: "primary" }
+    });
+    expect(controls.find((control) => control.id === "game-failed-setup")).toMatchObject({
+      kind: "button", label: "設定へ戻る", enabled: true, presentation: { kind: "action", emphasis: "secondary" }
+    });
+    validateUiViewModel(view);
+  });
+
   it("disables every Setup interaction while a Rust operation is pending", () => {
     const base = preparationModel(1);
     const model = { ...base, pendingGameRequestId: 1, difficulty: { ...base.difficulty, informationCode: 4 } };

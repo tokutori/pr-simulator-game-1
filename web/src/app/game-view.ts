@@ -713,8 +713,8 @@ function gameButtons(
       ];
     case 8:
       return [
-        button("game-briefing-retry", "準備を再試行", true),
-        button("game-failed-setup", "設定へ戻る", true)
+        actionButton("game-briefing-retry", "準備を再試行", "primary"),
+        actionButton("game-failed-setup", "設定へ戻る", "secondary")
       ];
     case 9:
       return [button("game-replay-return", "Resultへ戻る", true)];
