@@ -238,6 +238,10 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.change(() => executeTailOperation(this.port, operation, this.physicsHz));
   }
 
+  pauseForReason(reason: "page_hidden" | "presentation_transition"): void {
+    this.change(() => { this.port.pause(reason === "page_hidden" ? 1 : 2); });
+  }
+
   readSnapshot(): TailSessionSnapshot {
     return this.observe(() => parseTailSessionSnapshot(this.port.snapshot_json(), this.physicsHz));
   }

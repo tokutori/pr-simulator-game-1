@@ -7,14 +7,16 @@ import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./gam
 import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
-import { executeGameSessionOperation } from "./app/game-session-operation.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionLegacySnapshot as gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { initializeAppSession } from "./app/session-factory.js";
+import type { TailAppSessionFacade } from "./app/session-facade.js";
+import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
   AppModel,
+  FlightControllerIdentity,
   GameSessionOperation,
-  GameSessionProjection,
   ReplayClockCommand,
   ReplayClockState
 } from "./app/app-state.js";
@@ -31,25 +33,22 @@ import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
-import { BrowserPilotInput, DEFAULT_PILOT_INPUT_CONFIGURATION } from "./game/browser-input.js";
-import { FlightController } from "./game/flight-controller.js";
+import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "./game/browser-tail-input.js";
+import { TailFlightController } from "./game/tail-flight-controller.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
-import { syntheticLakeVisualCondition } from "./game/synthetic-lake-condition.js";
-import { createPersonalBestSelection, initializeGameSession } from "./game/wasm-flight.js";
+import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
+import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
-import {
-  loadFlightAnalysis,
-  queryFlightRecordRenderPoseAt,
-  queryFlightRecordSampleAt
-} from "./game/flight-record-query.js";
-import { parseFlightSnapshot } from "./game/flight-snapshot.js";
-import { venueMapForScenario } from "./game/biwa-venue-map.js";
-import { analysisInitialPilotPositionMeters, analysisScenarioId, projectAnalysisView } from "./game/flight-analysis-view.js";
+import { NO_VENUE_MAP, venueMapForEnvironment } from "./game/biwa-venue-map.js";
+import { analysisCursorMatches, isNamedAnalysis, projectAnalysisView } from "./game/flight-analysis-view.js";
+import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
+import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
+import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
+import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
-import type { FlightSnapshot } from "./game/flight-snapshot.js";
 import type { FlightSnapshotInput } from "./app/session-snapshot.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
@@ -77,8 +76,8 @@ panelCanvas.height = 1152;
 const headHudCanvas = document.createElement("canvas");
 let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
-let flightController: FlightController | null = null;
-let gameSession: Awaited<ReturnType<typeof initializeGameSession>>["session"] | null = null;
+let flightController: TailFlightController | null = null;
+let gameSession: TailAppSessionFacade | null = null;
 let physicsHz = 0;
 let flightRenderer: RendererAdapter | null = null;
 let countdownGeneration = 0;
@@ -105,21 +104,33 @@ function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
-  synchronizeMenuScroll();
-  if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
-  renderModel();
-  for (const effect of transition.effects) runEffect(effect);
+  runSideEffects([
+    () => {
+      synchronizeMenuScroll();
+      if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
+      renderModel();
+    },
+    ...transition.effects.map((effect) => () => { runEffect(effect); })
+  ]);
+}
+
+function runSideEffects(actions: readonly (() => void)[]): void {
+  const failures: unknown[] = [];
+  for (const action of actions) {
+    try { action(); }
+    catch (error: unknown) { failures.push(error); }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, failures.map(errorMessage).join("; "), { cause: failures[0] });
 }
 
 function renderModel(): void {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const domVisible = screenUiVisible(model.presentation);
-  // The attract record is a separate, fixed scenario-1 flight. Its water
-  // condition must not inherit the player's last setup selection.
-  const weatherCode = phaseCode === 10 ? 0 : model.configurationMetadata?.weatherCode ?? model.difficulty.weatherCode;
-  flightRenderer?.setLakeVisualCondition(syntheticLakeVisualCondition(weatherCode));
+  const environment = currentRuntimeEnvironment();
+  flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
-  const flightSnapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession);
+  const flightSnapshot = currentFlightSnapshot();
   if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);
   flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
@@ -128,8 +139,8 @@ function renderModel(): void {
     : phaseCode === 9
       ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
       : "pilot";
-  const cameraScenarioId = analysisScenarioId(model.flightAnalysis, model.configurationMetadata?.scenarioId ?? 1);
-  const cameraPoints = cameraScenarioId === null ? [] : venueMapForScenario(cameraScenarioId)?.cameraPoints ?? [];
+  const venue = currentVenueMap();
+  const cameraPoints = venue.kind === "available" ? venue.value.cameraPoints : [];
   const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
     ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis === null ? undefined : projectAnalysisView(model.flightAnalysis).samples)
     : null;
@@ -146,8 +157,8 @@ function renderModel(): void {
 
 function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const frameModel = model;
-  const snapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(frameModel.gameSession);
-  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing());
+  const snapshot = currentFlightSnapshot();
+  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap());
   let headView: HeadHudView = draft.headHud;
   if (headView.kind === "visible") {
     const dimensions = headHudCanvasSize(headView.layer);
@@ -334,12 +345,14 @@ function runEffect(effect: AppEffect): void {
         dispatch({ type: "game-operation-failed", requestId: effect.requestId, message: "Rust GameSession is unavailable" });
         return;
       }
+      const token = session.captureQueryToken();
       void createFlightRecordRepository().load(effect.id).then((json) => {
         if (json === null) throw new Error(`FlightRecord ${String(effect.id)} does not exist`);
-        if (gameSession !== session || model.pendingGameRequestId !== effect.requestId) return;
-        session.open_archived_flight_record(json);
+        if (gameSession !== session || session.acceptQuery(token, json).kind === "stale" || model.pendingGameRequestId !== effect.requestId) return;
+        session.openArchive(json);
         completeGameOperation(effect.requestId);
       }).catch((error: unknown) => {
+        if (gameSession !== session || model.pendingGameRequestId !== effect.requestId) return;
         dispatchGameOperationFailure(effect.requestId, errorMessage(error));
       });
       return;
@@ -351,11 +364,11 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       try {
-        // Archived records retain sampled wind but no live scenario wind field.
-        const scenarioId = session.is_archived_replay()
-          ? null
-          : readConfigurationMetadata(session)?.scenarioId ?? null;
-        const analysis = loadFlightAnalysis(session, physicsHz, scenarioId);
+        const token = session.captureQueryToken();
+        const analysis = session.readAnalysisDataset({ kind: "available", value: {
+          northMinimumMeters: -1_500, eastMinimumMeters: -1_500, altitudeMeters: 10, spacingMeters: 750
+        } });
+        if (gameSession !== session || session.acceptQuery(token, analysis).kind === "stale") return;
         dispatch({ type: "flight-analysis-loaded", requestId: effect.requestId, data: analysis });
       } catch (error: unknown) {
         dispatch({ type: "flight-analysis-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -364,12 +377,15 @@ function runEffect(effect: AppEffect): void {
     }
     case "load-flight-analysis-cursor": {
       const session = gameSession;
-      if (session === null) {
+      const analysis = model.flightAnalysis;
+      if (session === null || analysis === null || !isNamedAnalysis(analysis)) {
         dispatch({ type: "flight-analysis-cursor-failed", requestId: effect.requestId, message: "Rust GameSession is unavailable" });
         return;
       }
       try {
-        const sample = queryFlightRecordSampleAt(session, physicsHz, effect.timeSeconds);
+        const token = session.captureQueryToken();
+        const sample = session.queryAnalysisCursor(effect.timeSeconds, analysis);
+        if (gameSession !== session || session.acceptQuery(token, sample).kind === "stale") return;
         dispatch({ type: "flight-analysis-cursor-loaded", requestId: effect.requestId, sample });
       } catch (error: unknown) {
         dispatch({ type: "flight-analysis-cursor-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -379,17 +395,14 @@ function runEffect(effect: AppEffect): void {
     case "load-flight-replay-pose": {
       const session = gameSession;
       const analysis = model.flightAnalysis;
-      if (session === null || analysis === null) {
+      if (session === null || analysis === null || !isNamedAnalysis(analysis)) {
         dispatch({ type: "flight-replay-pose-failed", requestId: effect.requestId, message: "Rust FlightRecord is unavailable" });
         return;
       }
       try {
-        const pose = queryFlightRecordRenderPoseAt(
-          session,
-          physicsHz,
-          effect.timeSeconds,
-          analysisInitialPilotPositionMeters(analysis)
-        );
+        const token = session.captureQueryToken();
+        const { pose } = queryRuntimeRecordPose(session, analysis, effect.timeSeconds);
+        if (gameSession !== session || session.acceptQuery(token, pose).kind === "stale") return;
         dispatch({ type: "flight-replay-pose-loaded", requestId: effect.requestId, pose });
       } catch (error: unknown) {
         dispatch({ type: "flight-replay-pose-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -398,7 +411,11 @@ function runEffect(effect: AppEffect): void {
     }
     case "schedule-replay-clock-tick": {
       const startedAt = performance.now();
+      const session = gameSession;
+      if (session === null) return;
+      const token = session.captureQueryToken();
       window.setTimeout(() => {
+        if (gameSession !== session || session.acceptQuery(token, effect).kind === "stale") return;
         dispatch({
           type: "replay-clock-tick",
           generation: effect.generation,
@@ -430,22 +447,22 @@ function runReplayClockCommand(
   try {
     switch (command.kind) {
       case "synchronize":
-        if (command.seekTimeSeconds !== null) session.seek_playback(command.seekTimeSeconds);
+        if (command.seekTimeSeconds !== null) session.seekPlayback(command.seekTimeSeconds);
         break;
       case "play":
-        session.set_playback_playing(true);
+        session.setPlaybackPlaying(true);
         break;
       case "pause":
-        session.set_playback_playing(false);
+        session.setPlaybackPlaying(false);
         break;
       case "seek":
-        session.seek_playback(command.timeSeconds);
+        session.seekPlayback(command.timeSeconds);
         break;
       case "rate":
-        session.set_playback_rate_code(command.rateCode);
+        session.setPlaybackRate(command.rateCode);
         break;
       case "advance":
-        session.advance_playback(command.elapsedSeconds);
+        session.advancePlayback(command.elapsedSeconds);
         break;
       default:
         return assertNever(command);
@@ -454,14 +471,14 @@ function runReplayClockCommand(
       type: "replay-clock-command-completed",
       requestId,
       generation,
-      state: readReplayClockState(session.playback_clock_state())
+      state: projectRuntimePlaybackClock(session.readPlaybackClock())
     });
   } catch (error: unknown) {
     let state: ReplayClockState | undefined;
     try {
-      if (session.phase_code() === 9 || session.phase_code() === 10) {
-        session.set_playback_playing(false);
-        state = readReplayClockState(session.playback_clock_state());
+      if (gameSession === session && [9, 10].includes(session.readLifecycle().phaseCode)) {
+        session.setPlaybackPlaying(false);
+        state = projectRuntimePlaybackClock(session.readPlaybackClock());
       }
     } catch {
       state = undefined;
@@ -476,23 +493,6 @@ function runReplayClockCommand(
   }
 }
 
-function readReplayClockState(values: ArrayLike<number>): ReplayClockState {
-  if (values.length !== 3) throw new TypeError("Rust Replay clock returned an incompatible state length");
-  const timeSeconds = Number(values[0]);
-  const rateCode = Number(values[1]);
-  const playingCode = Number(values[2]);
-  if (!Number.isFinite(timeSeconds) || timeSeconds < 0
-      || !Number.isInteger(rateCode) || rateCode < 0 || rateCode > 2
-      || (playingCode !== 0 && playingCode !== 1)) {
-    throw new TypeError("Rust Replay clock returned invalid state values");
-  }
-  return Object.freeze({
-    timeSeconds,
-    rateCode: rateCode as ReplayClockState["rateCode"],
-    playing: playingCode === 1
-  });
-}
-
 async function initializePresentation(requestId: number): Promise<void> {
   let rendererAdapter: RendererAdapter | null = null;
   try {
@@ -500,13 +500,9 @@ async function initializePresentation(requestId: number): Promise<void> {
     if (model.presentation.type === "hidden") return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
     rendererAdapter = bundle.renderer;
-    const initializedSession = await initializeGameSession();
-    if (isPageHidden()) {
-      initializedSession.session.free();
-      bundle.renderer.dispose();
-      return;
-    }
-    gameSession = initializedSession.session;
+    const initializedSession = await initializeAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
+    gameSession = initializedSession;
+    if (isPageHidden()) throw new Error("Page became hidden during initialization");
     physicsHz = initializedSession.physicsHz;
     flightRenderer = bundle.renderer;
     const screenBackend = new ScreenPresentationBackend(currentViewport);
@@ -541,26 +537,8 @@ async function initializePresentation(requestId: number): Promise<void> {
     );
     runtime = presentation;
     const started = await presentation.start("screen");
-    if (!started.ok) {
-      const status = `Renderer initialization failed: ${runtimeErrorMessage(started)}`;
-      await presentation.dispose();
-      gameSession.free();
-      gameSession = null;
-      rendererAdapter = null;
-      flightRenderer = null;
-      if (runtime === presentation) runtime = null;
-      dispatch({ type: "presentation-initialization-failed", requestId, message: status });
-      return;
-    }
-    if (isPageHidden()) {
-      await presentation.dispose();
-      gameSession.free();
-      gameSession = null;
-      rendererAdapter = null;
-      flightRenderer = null;
-      if (runtime === presentation) runtime = null;
-      return;
-    }
+    if (!started.ok) throw new Error(`Renderer initialization failed: ${runtimeErrorMessage(started)}`);
+    if (isPageHidden()) throw new Error("Page became hidden during initialization");
     window.addEventListener("resize", onResize);
     const [webXrAvailability, phoneVrAvailability] = await Promise.all([
       webXrBackend.checkAvailability(),
@@ -574,34 +552,33 @@ async function initializePresentation(requestId: number): Promise<void> {
       phoneVrAvailable: phoneVrAvailability.supported,
       status: `${webXrAvailability.message}; ${phoneVrAvailability.message}`
     });
-    dispatch({
-      type: "game-session-synced",
-      phaseCode: gameSession.phase_code(),
-      controlModeCode: gameSession.control_mode_code(),
-      difficulty: readDifficulty(gameSession),
-      configurationMetadata: readConfigurationMetadata(gameSession),
-      countdownRemaining: gameSession.countdown_remaining(),
-      canResume: gameSession.can_resume(),
-      snapshot: null
-    });
+    syncGameSession();
   } catch (error) {
     window.removeEventListener("resize", onResize);
     const presentation = runtime;
+    const controller = flightController;
+    const session = gameSession;
     runtime = null;
-    if (presentation !== null) {
-      await presentation.dispose();
-    } else {
-      rendererAdapter?.dispose();
-    }
-    flightController?.dispose();
     flightController = null;
-    gameSession?.free();
     gameSession = null;
     flightRenderer = null;
+    const cleanupFailures: string[] = [];
+    const cleanups = [
+      { name: "presentation", run: () => presentation === null ? rendererAdapter?.dispose() : presentation.dispose() },
+      { name: "controller", run: () => controller?.dispose() },
+      { name: "session", run: () => session?.dispose() }
+    ];
+    for (const cleanup of cleanups) {
+      try {
+        const result = await cleanup.run();
+        if (result !== undefined && !result.ok) cleanupFailures.push(`${cleanup.name} cleanup failed: ${runtimeErrorMessage(result)}`);
+      }
+      catch (cleanupError: unknown) { cleanupFailures.push(`${cleanup.name} cleanup failed: ${errorMessage(cleanupError)}`); }
+    }
     dispatch({
       type: "presentation-initialization-failed",
       requestId,
-      message: `3D rendering unavailable; Screen UI remains active: ${errorMessage(error)}`
+      message: `3D rendering unavailable; Screen UI remains active: ${[errorMessage(error), ...cleanupFailures].join("; ")}`
     });
   }
 }
@@ -627,10 +604,11 @@ function currentViewModel() {
   if (gameSessionPhaseCode(model.gameSession) < 0) return createBootViewModel(model);
   return createGameViewModel(
     model,
-    flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession),
+    currentFlightSnapshot(),
     model.flightAnalysis,
     NO_HEAD_HUD_VIEW,
-    currentEnvironmentBriefing()
+    currentEnvironmentBriefing(),
+    currentVenueMap()
   );
 }
 
@@ -639,7 +617,7 @@ function currentEnvironmentBriefing() {
   let environment = NO_ENVIRONMENT_BRIEFING;
   if ([1, 2, 3, 8].includes(phaseCode) && gameSession !== null) {
     try {
-      environment = parseEnvironmentBriefingSnapshot(gameSession.environment_snapshot_json(), phaseCode);
+      environment = parseEnvironmentBriefingSnapshot(gameSession.readEnvironmentJson(), phaseCode);
     } catch {
       environment = NO_ENVIRONMENT_BRIEFING;
     }
@@ -655,7 +633,9 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
   }
   try {
     if (operation === "cancel-countdown") countdownGeneration += 1;
-    const result = executeGameSessionOperation(session, operation);
+    if (operation === "cycle-difficulty-preset" || operation === "cycle-information-level"
+        || operation === "cycle-assistance-level" || operation === "cycle-weather-class") throw new RangeError("Tail settings require an explicit candidate selection");
+    const result = session.executeOperation(operation);
     if (result.kind === "countdown-started") {
       completeGameOperation(requestId);
       countdownGeneration += 1;
@@ -665,8 +645,7 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
     if (operation === "pause") flightController?.suspend();
     if (operation === "resume") flightController?.resume();
     if (result.kind === "aborted") {
-      flightController?.reset(result.terminalSnapshot);
-      completeGameOperation(requestId, result.terminalSnapshot);
+      runSideEffects([() => { completeGameOperation(requestId); }, () => { flightController?.suspend(); }]);
       return;
     }
     completeGameOperation(requestId);
@@ -686,18 +665,12 @@ function dispatchGameOperationFailure(
     return;
   }
   try {
-    const phaseCode = session.phase_code();
-    const currentSession: GameSessionProjection = {
-      phaseCode,
-      controlModeCode: session.control_mode_code(),
-      difficulty: readDifficulty(session),
-      configurationMetadata: readConfigurationMetadata(session),
-      countdownRemaining: session.countdown_remaining(),
-      snapshot: [5, 6, 7].includes(phaseCode)
-        ? parseFlightSnapshot(session.snapshot())
-        : gameSessionSnapshot(model.gameSession),
-      canResume: session.can_resume()
-    };
+    const currentSession = readRuntimeSessionProjection(session);
+    const phaseCode = currentSession.phaseCode;
+    if (phaseCode === 7 && model.gameSession.kind === "result" && model.pendingGameRequestId !== requestId) {
+      dispatch({ type: "game-session-status", message: `終端表示処理に失敗した: ${message}` });
+      return;
+    }
     const failureMessage = context === undefined
       ? message
       : `${gameOperationLabel(context.operation)} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
@@ -719,126 +692,95 @@ function gameOperationLabel(operation: GameSessionOperation): string {
       : `set-${operation.axis}-${String(operation.code)}`;
 }
 
-function completeGameOperation(requestId: number, rawSnapshot?: ArrayLike<number>): void {
+function completeGameOperation(requestId: number): void {
   const session = gameSession;
   if (session === null) return;
-  const snapshot = rawSnapshot === undefined
-    ? flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession)
-    : parseFlightSnapshot(rawSnapshot);
   dispatch({
     type: "game-operation-completed",
     requestId,
-    phaseCode: session.phase_code(),
-    controlModeCode: session.control_mode_code(),
-    difficulty: readDifficulty(session),
-    configurationMetadata: readConfigurationMetadata(session),
-    countdownRemaining: session.countdown_remaining(),
-    canResume: session.can_resume(),
-    snapshot
+    ...readRuntimeSessionProjection(session)
   });
 }
 
 function scheduleCountdownTick(generation: number): void {
+  const owner = gameSession;
+  if (owner === null) return;
+  const token = owner.captureQueryToken();
   window.setTimeout(() => {
     const session = gameSession;
-    if (session === null || generation !== countdownGeneration || session.phase_code() !== 4) return;
+    if (session !== owner || owner.acceptQuery(token, generation).kind === "stale" || generation !== countdownGeneration
+        || owner.readLifecycle().phaseCode !== 4) return;
     try {
-      const remainingTicks = session.advance_countdown();
-      dispatch({
-        type: "game-session-synced",
-        phaseCode: session.phase_code(),
-        controlModeCode: session.control_mode_code(),
-        difficulty: readDifficulty(session),
-        configurationMetadata: readConfigurationMetadata(session),
-        countdownRemaining: remainingTicks,
-        canResume: session.can_resume(),
-        snapshot: gameSessionSnapshot(model.gameSession)
-      });
+      const remainingTicks = owner.advanceCountdown();
+      syncGameSession();
       if (remainingTicks === 0) {
-        const initial = session.launch();
-        if (flightController === null) createFlightController(session);
-        else resetFlightController(initial);
-        dispatch({
-          type: "game-session-synced",
-          phaseCode: session.phase_code(),
-          controlModeCode: session.control_mode_code(),
-          difficulty: readDifficulty(session),
-          configurationMetadata: readConfigurationMetadata(session),
-          countdownRemaining: 0,
-          canResume: session.can_resume(),
-          snapshot: parseFlightSnapshot(initial)
-        });
+        owner.launch();
+        syncGameSession();
+        if (flightController === null) createFlightController(owner);
+        else resetFlightController();
       } else {
         scheduleCountdownTick(generation);
       }
     } catch (error: unknown) {
-      dispatch({
-        type: "game-session-synced",
-        phaseCode: session.phase_code(),
-        controlModeCode: session.control_mode_code(),
-        difficulty: readDifficulty(session),
-        configurationMetadata: readConfigurationMetadata(session),
-        countdownRemaining: session.countdown_remaining(),
-        canResume: session.can_resume(),
-        snapshot: gameSessionSnapshot(model.gameSession)
-      });
+      syncGameSession();
       dispatch({ type: "game-session-status", message: `発進準備に失敗した: ${errorMessage(error)}` });
     }
   }, 800);
 }
 
-function createFlightController(
-  session: Awaited<ReturnType<typeof initializeGameSession>>["session"]
-): void {
+function createFlightController(session: TailAppSessionFacade): void {
   const renderer = flightRenderer;
   if (renderer === null) throw new Error("Flight renderer is unavailable");
-  const binding = flightControllerUi.bind(session, controllerHudDisplay, (): FlightSnapshot => controller.currentSnapshot, dispatch);
-  const controller: FlightController = new FlightController(
-    session,
-    new BrowserPilotInput(window, {
-      ...DEFAULT_PILOT_INPUT_CONFIGURATION,
-      physicsHz
-    }),
-    renderer,
-    binding.port,
-    physicsHz,
-    undefined,
-    (snapshot: FlightSnapshot) => {
-      const activeSession = gameSession;
-      if (activeSession === null) return;
-      dispatch({
-        type: "game-session-synced",
-        phaseCode: activeSession.phase_code(),
-        controlModeCode: activeSession.control_mode_code(),
-        difficulty: readDifficulty(activeSession),
-        configurationMetadata: readConfigurationMetadata(activeSession),
-        countdownRemaining: activeSession.countdown_remaining(),
-        canResume: activeSession.can_resume(),
-        snapshot
-      });
-    }
-  );
+  const binding = flightControllerUi.bindAppDisplay(session.flightPort, controllerHudDisplay,
+    () => session.readGameSessionProjection(), () => controller.currentDisplaySnapshot, dispatch);
+  const input = new BrowserTailPilotInput(window, { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION,
+    keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz } });
+  let controller: TailFlightController;
+  try {
+    controller = new TailFlightController(session.flightPort, input, renderer, binding.port, physicsHz, undefined, binding.onTerminal);
+  } catch (error: unknown) {
+    let failure = error;
+    try { input.dispose(); }
+    catch (cleanup: unknown) { failure = new AggregateError([error, cleanup], `${errorMessage(error)}; input cleanup failed: ${errorMessage(cleanup)}`, { cause: error }); }
+    publishControllerInitializationFailure(session, binding.identity, failure);
+    throw failure;
+  }
   flightController = controller;
   dispatch({ type: "flight-controller-ready", identity: binding.identity });
 }
 
-function resetFlightController(snapshot: ArrayLike<number>): void {
+function resetFlightController(): void {
   const controller = flightController;
   const session = gameSession;
   if (controller === null || session === null) throw new Error("Flight controller is unavailable");
-  const binding = flightControllerUi.bind(session, controllerHudDisplay, () => controller.currentSnapshot, dispatch);
-  controller.reset(snapshot, binding.port);
+  const binding = flightControllerUi.bindAppDisplay(session.flightPort, controllerHudDisplay,
+    () => session.readGameSessionProjection(), () => controller.currentDisplaySnapshot, dispatch);
+  try { controller.reset(session.flightPort.snapshot_json(), binding.port, binding.onTerminal); }
+  catch (error: unknown) {
+    publishControllerInitializationFailure(session, binding.identity, error);
+    throw error;
+  }
   dispatch({ type: "flight-controller-ready", identity: binding.identity });
+}
+
+function publishControllerInitializationFailure(session: TailAppSessionFacade,
+  identity: FlightControllerIdentity, error: unknown): void {
+  dispatch({ type: "flight-controller-ready", identity });
+  const projection = session.readGameSessionProjection();
+  if (projection.phaseCode === 5 || projection.phaseCode === 6) {
+    dispatch({ type: "flight-controller-stopped", identity, message: errorMessage(error), snapshot: projection.display.value });
+  }
 }
 
 async function persistFlightRecord(
   session: NonNullable<typeof gameSession>
 ): Promise<void> {
+  const token = session.captureQueryToken();
   try {
     const repository = createFlightRecordRepository();
-    const saved = await repository.saveFrom(session);
+    const saved = await repository.saveFrom({ export_flight_record_json: () => session.exportRecordJson() });
     dispatch({ type: "refresh-stored-flight-records" });
-    if (gameSession === session && session.phase_code() === 7) {
+    if (gameSession === session && session.acceptQuery(token, saved).kind === "accepted" && session.readLifecycle().phaseCode === 7) {
       const personalBestMessage = saved.personalBest.kind === "candidate"
         ? "Personal Bestを更新した"
         : saved.personalBest.kind === "existing"
@@ -852,7 +794,7 @@ async function persistFlightRecord(
       });
     }
   } catch (error: unknown) {
-    if (gameSession === session && session.phase_code() === 7) {
+    if (gameSession === session && session.acceptQuery(token, undefined).kind === "accepted" && session.readLifecycle().phaseCode === 7) {
       dispatch({ type: "game-session-status", message: `FlightRecord保存に失敗した: ${errorMessage(error)}` });
     }
   }
@@ -862,7 +804,7 @@ function createFlightRecordRepository(): FlightRecordRepository {
   return new FlightRecordRepository(
     new IndexedDbFlightRecordPersistence(window.indexedDB),
     undefined,
-    createPersonalBestSelection
+    createArchivedPersonalBestSelection
   );
 }
 
@@ -915,11 +857,16 @@ function onResize(): void {
 function onPageHide(): void {
   window.removeEventListener("resize", onResize);
   document.removeEventListener("visibilitychange", onVisibilityChange);
-  if (flightController !== null) flightController.dispose();
-  else gameSession?.free();
+  const controller = flightController;
+  const session = gameSession;
   flightController = null;
   gameSession = null;
-  dispatch({ type: "page-hidden" });
+  try {
+    controller?.dispose();
+  } finally {
+    try { session?.dispose(); }
+    finally { dispatch({ type: "page-hidden" }); }
+  }
 }
 
 function onVisibilityChange(): void {
@@ -936,7 +883,16 @@ function onVisibilityChange(): void {
 
 function suspendPageFlightState(): void {
   try {
-    suspendPageFlight(gameSession, flightController, () => { countdownGeneration += 1; }, syncGameSession);
+    const session = gameSession;
+    const pagePort = session === null ? null : {
+      phase_code: () => session.readLifecycle().phaseCode,
+      cancel_countdown: () => { session.executeOperation("cancel-countdown"); },
+      pause: (reason: number) => {
+        if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
+        session.pauseForReason("page_hidden");
+      }
+    };
+    suspendPageFlight(pagePort, flightController, () => { countdownGeneration += 1; }, syncGameSession);
   } catch (error: unknown) {
     dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
   }
@@ -952,18 +908,18 @@ function onPageRestore(): void {
 }
 
 function pauseForPresentationTransition(): void {
-  pauseSessionForReason(2);
+  pauseSessionForReason("presentation_transition");
 }
 
 function resolvePresentationTransitionPause(): void {
   clearSessionPauseReason(2);
 }
 
-function pauseSessionForReason(reason: number): void {
+function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"): void {
   const session = gameSession;
-  if (session === null || (session.phase_code() !== 5 && session.phase_code() !== 6)) return;
+  if (session === null || ![5, 6].includes(session.readLifecycle().phaseCode)) return;
   try {
-    session.pause(reason);
+    session.pauseForReason(reason);
     syncGameSession();
   } catch (error: unknown) {
     dispatch({ type: "game-session-status", message: `飛行の一時停止に失敗した: ${errorMessage(error)}` });
@@ -972,9 +928,9 @@ function pauseSessionForReason(reason: number): void {
 
 function clearSessionPauseReason(reason: number): void {
   const session = gameSession;
-  if (session === null || session.phase_code() !== 6) return;
+  if (session === null || session.readLifecycle().phaseCode !== 6) return;
   try {
-    session.clear_pause_reason(reason);
+    session.clearPauseReason(reason);
     syncGameSession();
   } catch (error: unknown) {
     dispatch({ type: "game-session-status", message: `一時停止状態の更新に失敗した: ${errorMessage(error)}` });
@@ -984,92 +940,47 @@ function clearSessionPauseReason(reason: number): void {
 function syncGameSession(): void {
   const session = gameSession;
   if (session === null) return;
-  dispatch({
-    type: "game-session-synced",
-    phaseCode: session.phase_code(),
-    controlModeCode: session.control_mode_code(),
-    difficulty: readDifficulty(session),
-    configurationMetadata: readConfigurationMetadata(session),
-    countdownRemaining: session.countdown_remaining(),
-    canResume: session.can_resume(),
-    snapshot: flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession)
-  });
+  dispatch({ type: "game-session-synced", ...readRuntimeSessionProjection(session) });
 }
 
-function readDifficulty(session: NonNullable<typeof gameSession>): AppModel["difficulty"] {
-  return Object.freeze({
-    presetCode: session.difficulty_preset_code(),
-    informationCode: session.information_level_code(),
-    hudProfile: readHudProfile(session.information_profile_codes()),
-    assistanceCode: session.assistance_level_code(),
-    weatherCode: session.weather_class_code()
-  });
-}
-
-function readConfigurationMetadata(
-  session: NonNullable<typeof gameSession>
-): AppModel["configurationMetadata"] {
-  const phaseCode = session.phase_code();
-  if (phaseCode < 2 || phaseCode > 9) return null;
-  // A newly opened archive can replace a Result's configuration. Once Replay
-  // has been synchronized, its immutable identity may be reused.
-  if (model.configurationMetadata !== null &&
-      (!session.is_archived_replay() || gameSessionPhaseCode(model.gameSession) === 9)) {
-    return model.configurationMetadata;
+function currentFlightSnapshot(): FlightDisplaySnapshot | null {
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  const cursor = model.analysisCursorSample;
+  const analysis = model.flightAnalysis;
+  if ((phaseCode === 9 || phaseCode === 10) && cursor !== null && "kind" in cursor && analysis !== null
+      && analysisCursorMatches(analysis, cursor)) return projectRecordedFlightSnapshot(cursor, cursor.context);
+  if (model.flightExecution.kind === "stopped" && (phaseCode === 5 || phaseCode === 6)) return model.flightExecution.snapshot;
+  if (phaseCode === 5 && flightController !== null && model.flightExecution.kind === "ready") {
+    const current = flightController.currentDisplaySnapshot;
+    if (current.kind === "tail_flight" && current.phaseCode === phaseCode) return current;
   }
-  const values = session.configuration_metadata();
-  if (values.length !== 18) throw new RangeError("Resolved configuration metadata has an invalid length");
-  const valueAt = (index: number): number => {
-    const value = values[index];
-    if (value === undefined || !Number.isInteger(value) || value < 0) {
-      throw new RangeError("Resolved configuration metadata contains an invalid value");
-    }
-    return value;
-  };
-  const cueAt = (index: number): boolean => {
-    const value = valueAt(index);
-    if (value !== 0 && value !== 1) throw new RangeError("Resolved HUD cue metadata must be 0 or 1");
-    return value === 1;
-  };
-  return Object.freeze({
-    presetCode: valueAt(0),
-    informationCode: valueAt(1),
-    hudProfile: Object.freeze({
-      telemetry: cueAt(12),
-      attitude: cueAt(13),
-      wind: cueAt(14),
-      flightPath: cueAt(15),
-      angleOfAttack: cueAt(16),
-      warnings: cueAt(17)
-    }),
-    assistanceCode: valueAt(2),
-    weatherCode: valueAt(3),
-    catalogVersion: valueAt(4),
-    scenarioId: valueAt(5),
-    scenarioVersion: valueAt(6),
-    aircraftModelVersion: valueAt(7),
-    environmentVersion: valueAt(8),
-    controllerProfileVersion: valueAt(9),
-    seedLow: valueAt(10),
-    seedHigh: valueAt(11)
-  });
+  return gameSessionSnapshot(model.gameSession);
 }
 
-function readHudProfile(values: ArrayLike<number>): AppModel["difficulty"]["hudProfile"] {
-  if (values.length !== 6) throw new RangeError("HUD profile must contain six cue values");
-  const valueAt = (index: number): boolean => {
-    const value = values[index];
-    if (value !== 0 && value !== 1) throw new RangeError("HUD profile cue values must be 0 or 1");
-    return value === 1;
-  };
-  return Object.freeze({
-    telemetry: valueAt(0),
-    attitude: valueAt(1),
-    wind: valueAt(2),
-    flightPath: valueAt(3),
-    angleOfAttack: valueAt(4),
-    warnings: valueAt(5)
-  });
+function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
+  const session = gameSession;
+  if (session === null) return Object.freeze({ kind: "unavailable", reason: "no_selection" });
+  try {
+    const phaseCode = session.readLifecycle().phaseCode;
+    const identity = phaseCode === 9 || phaseCode === 10 ? session.readPlaybackContext().scenario
+      : session.readSnapshot().identity;
+    const expected = "kind" in identity ? identity.kind === "prepared" ? identity.scenario : undefined : identity;
+    const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, expected);
+    const analysis = model.flightAnalysis;
+    if (analysis !== null && isNamedAnalysis(analysis) && environment.kind === "available"
+        && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
+    return environment;
+  } catch {
+    return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
+  }
+}
+
+function currentVenueMap() {
+  const analysis = model.flightAnalysis;
+  const environment = currentRuntimeEnvironment();
+  if (analysis !== null && isNamedAnalysis(analysis) && environment.kind === "available"
+      && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return NO_VENUE_MAP;
+  return venueMapForEnvironment(environment);
 }
 
 function currentViewport(): ViewportSize {

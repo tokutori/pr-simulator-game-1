@@ -11,7 +11,7 @@ export function createBootViewModel(model: AppModel): UiViewModel {
   return Object.freeze({
     scene: "Boot",
     title: "鳥人間滑空ゲーム",
-    description: "Rust/WASMの合成flightを開始した。A/D・矢印キー・J/LまたはGamepadで操縦する。",
+    description: "Rust/WASMと表示基盤を初期化する。操縦方法は飛行準備画面で確認する。",
     activeOverlay: null,
     headHud: NO_HEAD_HUD,
     panels: Object.freeze([Object.freeze({
