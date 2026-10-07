@@ -1,4 +1,8 @@
 import type { GameSessionOperation } from "./app-state.js";
+import type { DifficultyUiState, TailGameSessionProjection } from "./app-state.js";
+import { decodePreparedUiConfiguration, decodeSessionDifficulty } from "./session-selection.js";
+import type { PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
+import { projectTailGameSession } from "./session-snapshot.js";
 import { executeGameSessionOperation } from "./game-session-operation.js";
 import type { GameSessionOperationPort } from "./game-session-operation.js";
 import type { FlightSessionPort } from "../game/flight-controller.js";
@@ -25,7 +29,7 @@ export interface SessionQueryToken {
   readonly [queryGeneration]: symbol;
 }
 export type SessionQueryAcceptance<Value> = Readonly<{ kind: "accepted"; value: Value }> | Readonly<{ kind: "stale" }>;
-export interface SessionResourcePort {
+export interface SessionResourcePort extends SessionSelectionPort {
   phase_code(): number;
   control_mode_code(): number;
   countdown_remaining(): number;
@@ -102,6 +106,14 @@ abstract class SessionResourceOwner {
         controlModeCode: boundaryInteger(this.resource.control_mode_code(), 0, 2) as 0 | 1 | 2,
         countdownRemaining: boundaryInteger(this.resource.countdown_remaining()), canResume });
     });
+  }
+
+  readDifficulty(): DifficultyUiState {
+    return this.observe(() => decodeSessionDifficulty(this.resource));
+  }
+
+  readPreparedConfiguration(): PreparedUiConfiguration {
+    return this.observe(() => decodePreparedUiConfiguration(this.readLifecycle().phaseCode, () => this.resource.configuration_metadata()));
   }
 
   advanceCountdown(): number {
@@ -201,6 +213,15 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 
   readSnapshot(): TailSessionSnapshot {
     return this.observe(() => parseTailSessionSnapshot(this.port.snapshot_json(), this.physicsHz));
+  }
+
+  readGameSessionProjection(): TailGameSessionProjection {
+    return this.observe(() => {
+      const lifecycle = this.readLifecycle();
+      const configuration = this.readPreparedConfiguration();
+      return projectTailGameSession(this.readSnapshot(), lifecycle, this.readDifficulty(),
+        configuration.kind === "available" ? configuration.value : null);
+    });
   }
 
   launch(): TailSessionSnapshot {

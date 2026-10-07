@@ -36,6 +36,7 @@ export class TailFlightController {
   private snapshotValue: TailControllerSnapshot;
   private profile: TailControlProfile;
   private initialPilotPositionMeters: number;
+  private generation = Symbol("tail controller generation");
 
   constructor(private readonly session: TailSessionPort, private readonly input: TailPilotInputPort,
     private readonly renderer: FlightPosePort, private hud: TailFlightHudPort, physicsHz: number,
@@ -62,24 +63,46 @@ export class TailFlightController {
 
   onFrame(timestampMs: number): void {
     if (this.execution !== "running" || this.snapshotValue.phaseCode !== 5) return;
+    const generation = this.generation;
+    const completion: { value: Readonly<{ kind: "none" }> | Readonly<{ kind: "terminal"; snapshot: TailResultSnapshot }> } = { value: { kind: "none" } };
     try {
-      this.clock.advanceFrame(timestampMs, () => {
+      const advancedTicks = this.clock.advanceFrame(timestampMs, () => {
         const demand = this.input.readDemand(this.readGamepads(), this.snapshotValue.frame.state.pilotPositionTargetNormalized);
         const intent = tailInputFromControlProfile(demand, this.profile, this.snapshotValue);
         const next = this.decodeSnapshot(this.session.advance_tick_json(encodeTailLogicalInput(intent)));
         validateTailControlProfileSession(this.profile, next);
         this.snapshotValue = next;
-        this.applySnapshot(next);
         if (next.phaseCode === 7) {
-          this.input.suspend();
-          this.onTerminal(next);
+          completion.value = { kind: "terminal", snapshot: next };
+          return false;
         }
         return next.phaseCode === 5;
       });
+      const completed = completion.value;
+      if (completed.kind === "terminal") {
+        this.onTerminal(completed.snapshot);
+        if (!this.isCurrentFrame(generation, completed.snapshot)) return;
+      }
+      if (advancedTicks === 0 || !this.isCurrentGeneration(generation)) return;
+      const committed = this.snapshotValue;
+      if (!this.isCurrentFrame(generation, committed)) return;
+      this.renderer.setFlightPose(projectFlightRenderPose(displaySnapshot(committed), this.initialPilotPositionMeters));
+      if (!this.isCurrentFrame(generation, committed)) return;
+      this.hud.render(displaySnapshot(committed));
+      if (!this.isCurrentFrame(generation, committed)) return;
+      if (completed.kind === "terminal") this.input.suspend();
     } catch (error: unknown) {
+      if (!this.isCurrentGeneration(generation)) return;
       this.execution = "failed";
-      this.suspend();
-      this.hud.fail(error instanceof Error ? error.message : String(error));
+      this.clock.suspend();
+      let message = error instanceof Error ? error.message : String(error);
+      try {
+        this.input.suspend();
+      } catch (cleanup: unknown) {
+        message += `; input suspension failed: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`;
+      }
+      if (!this.isCurrentGeneration(generation)) return;
+      this.hud.fail(message);
     }
   }
 
@@ -129,6 +152,7 @@ export class TailFlightController {
 
   reset(json: string, hud: TailFlightHudPort = this.hud): void {
     if (this.execution === "disposed") throw new Error("Cannot reset a disposed tail controller");
+    this.generation = Symbol("reset tail controller generation");
     this.execution = "failed";
     this.clock.suspend();
     try {
@@ -164,6 +188,7 @@ export class TailFlightController {
 
   dispose(): void {
     if (this.execution === "disposed") return;
+    this.generation = Symbol("disposed tail controller generation");
     this.execution = "disposed";
     this.input.dispose();
     this.session.free();
@@ -177,6 +202,14 @@ export class TailFlightController {
       throw new RangeError("Tail controller requires a Rust flight or Result snapshot");
     }
     return snapshot;
+  }
+
+  private isCurrentGeneration(generation: symbol): boolean {
+    return this.generation === generation && this.execution !== "disposed";
+  }
+
+  private isCurrentFrame(generation: symbol, snapshot: TailControllerSnapshot): boolean {
+    return this.isCurrentGeneration(generation) && this.execution === "running" && this.snapshotValue === snapshot;
   }
 
   private initializeInput(snapshot: TailControllerSnapshot): void {

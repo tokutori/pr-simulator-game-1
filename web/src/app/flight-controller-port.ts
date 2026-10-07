@@ -1,4 +1,5 @@
-import type { AppMessage, FlightControllerIdentity } from "./app-state.js";
+import type { AppMessage, FlightControllerIdentity, TailGameSessionProjection } from "./app-state.js";
+import type { TailResultSnapshot } from "../game/tail-flight-controller.js";
 import type { FlightHudPort, FlightSessionPort } from "../game/flight-controller.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { TailFlightHudPort, TailSessionPort } from "../game/tail-flight-controller.js";
@@ -36,6 +37,31 @@ export class FlightControllerUiBindings {
       fail: (message: string): void => { dispatch({ type: "flight-controller-stopped", identity, message, snapshot: readSnapshot() }); }
     });
     return Object.freeze({ identity, port });
+  }
+
+  bindAppDisplay(session: TailSessionPort, display: Pick<TailFlightHudPort, "render" | "setVisible">,
+    readProjection: () => TailGameSessionProjection, readSnapshot: () => FlightDisplaySnapshot, dispatch: (message: AppMessage) => void
+  ): { readonly identity: FlightControllerIdentity; readonly port: TailFlightHudPort; readonly onTerminal: (snapshot: TailResultSnapshot) => void } {
+    const identity = this.identityFor(session);
+    const publishTerminal = (): void => {
+      const projection = readProjection();
+      if (projection.phaseCode !== 7) throw new RangeError("Terminal notification requires the Rust Result projection");
+      dispatch({ type: "tail-controller-terminal", identity, projection });
+    };
+    const port: TailFlightHudPort = Object.freeze({
+      render: (snapshot: FlightDisplaySnapshot): void => { display.render(snapshot); },
+      setVisible: (visible: boolean): void => { display.setVisible(visible); },
+      fail: (message: string): void => {
+        const projection = readProjection();
+        if (projection.phaseCode === 7) {
+          dispatch({ type: "tail-controller-terminal", identity, projection });
+          dispatch({ type: "flight-controller-result-feedback", identity, message });
+          return;
+        }
+        dispatch({ type: "flight-controller-stopped", identity, message, snapshot: readSnapshot() });
+      }
+    });
+    return Object.freeze({ identity, port, onTerminal: publishTerminal });
   }
 
   private identityFor(session: FlightSessionPort | TailSessionPort): FlightControllerIdentity {

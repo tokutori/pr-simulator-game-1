@@ -218,4 +218,104 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(trial.controller.currentSnapshot).toBe(retained);
     expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])("finishes old clock bookkeeping before a terminal callback resets the controller (throws=%s)", (throws) => {
+    const trial = fixture();
+    trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
+    trial.onTerminal.mockImplementation(() => {
+      trial.controller.onFrame(20_000);
+      trial.session.retry();
+      trial.session.start_countdown(1);
+      trial.session.advance_countdown();
+      trial.controller.reset(trial.session.launch());
+      if (throws) throw new Error("Old terminal callback failure after reset");
+    });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
+    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0, fraction: 0 } });
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    trial.controller.onFrame(2_000);
+    trial.controller.onFrame(2_010);
+    expect(trial.controller.currentSnapshot.frame.state.tick).toBe(1);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])("suppresses old terminal rendering, cleanup and diagnostics after callback disposal (throws=%s)", (throws) => {
+    const trial = fixture();
+    trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
+    trial.onTerminal.mockImplementation(() => {
+      trial.controller.dispose();
+      if (throws) throw new Error("Old terminal callback failure after disposal");
+    });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(2_000);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
+    expect(trial.hud.render).toHaveBeenCalledTimes(1);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["pose", "hud"] as const)("suppresses terminal work after %s reentrantly resets the controller", (site) => {
+    const trial = fixture();
+    trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
+    const reset = (): void => {
+      trial.session.retry();
+      trial.session.start_countdown(1);
+      trial.session.advance_countdown();
+      trial.controller.reset(trial.session.launch());
+    };
+    if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(reset);
+    else trial.hud.render.mockImplementationOnce(reset);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0 } });
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    trial.controller.onFrame(2_000);
+    trial.controller.onFrame(2_010);
+    expect(trial.controller.currentSnapshot.frame.state.tick).toBe(1);
+  });
+
+  it("finishes live clock work before a renderer resets the controller and rejects the old HUD update", () => {
+    const trial = fixture();
+    const restart = (): void => {
+      trial.session.abort();
+      trial.session.retry();
+      trial.session.start_countdown(1);
+      trial.session.advance_countdown();
+      trial.controller.reset(trial.session.launch());
+    };
+    trial.renderer.setFlightPose.mockImplementationOnce(restart);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(30);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(3);
+    expect(trial.controller.currentSnapshot.frame.state.tick).toBe(0);
+    expect(trial.hud.render).toHaveBeenCalledTimes(2);
+    trial.controller.onFrame(100);
+    trial.controller.onFrame(110);
+    expect(trial.controller.currentSnapshot.frame.state.tick).toBe(1);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+  });
+
+  it.each(["pose", "hud"] as const)("suppresses terminal work after %s reentrantly disposes the controller", (site) => {
+    const trial = fixture();
+    trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
+    const dispose = (): void => { trial.controller.dispose(); };
+    if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(dispose);
+    else trial.hud.render.mockImplementationOnce(dispose);
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
+  });
 });

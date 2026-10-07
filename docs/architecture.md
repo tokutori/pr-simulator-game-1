@@ -71,6 +71,9 @@ simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatf
 物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
 Rust coreの `advance_flight_tick` は一つの入力sampleからauthority・actuator・pilot motion・6DoFを原子的に進める。
 `advance_flight_tick_with_contact`は水面接触時にfractional terminal sampleだけを返し、接触後stateを公開しない。
+Tail controllerはfixed-tick clockの更新完了後、確定snapshotをframe単位で描画し、Result通知を描画・HUD・入力停止から独立して発行する。
+同じcontrollerの通知は一度だけResultへの同期とrecord確定effectを発行し、adapterの失敗は元の終了理由・cause・scoreを維持した表示通知として扱う。
+通知内のreset/disposeが世代を変更した場合、旧frameの描画・cleanup・失敗通知を新しいcontroller状態へ適用しない。
 `FlightScenario`は検証済みAircraftModel・launch・aerodynamics・WindField・actuator・contact geometry・course axisを
 一つの不変構成へ組み立て、native CLIとWASM adapterが共通利用する。外部format decode・I/O・device inputから機器非依存pilot intentへの変換はadapter境界に置く。
 FBW rate feedbackはRust coreが直前tickの角速度から生成し、一tick内でpilot intentとともに適用する。

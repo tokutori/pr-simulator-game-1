@@ -227,6 +227,9 @@ export type AppMessage =
       readonly message: string;
       readonly snapshot: FlightSnapshotInput;
     }
+  | { readonly type: "tail-controller-terminal"; readonly identity: FlightControllerIdentity;
+      readonly projection: Extract<TailGameSessionProjection, { phaseCode: 7 }> }
+  | { readonly type: "flight-controller-result-feedback"; readonly identity: FlightControllerIdentity; readonly message: string }
   | {
       readonly type: "presentation-initialized";
       readonly requestId: number;
@@ -514,6 +517,20 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         flightExecution: Object.freeze({ kind: "stopped", identity: execution.identity,
           message: message.message, snapshot })
       }));
+    }
+    case "tail-controller-terminal": {
+      const execution = model.flightExecution;
+      if (execution.kind === "unbound" || execution.identity.sessionId !== message.identity.sessionId
+          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.kind === "boot"
+          || model.gameSession.controlLayout !== "tail_incidence" || ![5, 6, 7].includes(model.gameSession.phaseCode)) return transition(model);
+      if (model.gameSession.kind === "result") return transition(model);
+      return updateApp(model, { type: "game-session-synced", ...message.projection });
+    }
+    case "flight-controller-result-feedback": {
+      const execution = model.flightExecution;
+      if (execution.kind === "unbound" || execution.identity.sessionId !== message.identity.sessionId
+          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.kind !== "result") return transition(model);
+      return transition(withModel(model, { status: `終端表示処理に失敗した: ${message.message}` }));
     }
     case "page-restored":
       return transition(model);
