@@ -17,6 +17,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
+  Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);
   vi.stubGlobal("navigator", browser.navigator);
@@ -25,7 +26,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     startLoop: vi.fn<RendererAdapter["startLoop"]>(() => {
       if (options.failStart === true) throw new Error("Injected renderer start failure");
     }),
-    stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
+    beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
@@ -88,7 +89,9 @@ describe("Legacy main startup resource ownership", () => {
     await Promise.all(trial.runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
     await vi.waitFor(() => { expect(trial.renderer.dispose).toHaveBeenCalledTimes(1); });
     expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.scene()).toBeUndefined();
+    expect(trial.scene()).toBe("Boot");
+    expect(trial.browser.document.querySelector(".screen-ui-mount")?.hasAttribute("hidden")).toBe(true);
+    expect(trial.browser.document.querySelector('button[data-control-id^="game-"]')).toBeNull();
   });
 
   it("retains ownership until non-BFCache teardown after normal Legacy initialization", async () => {
