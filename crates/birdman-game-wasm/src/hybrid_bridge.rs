@@ -21,6 +21,7 @@ use crate::{
 const SCHEMA_VERSION: u32 = 2;
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
+mod attract;
 mod record;
 mod setup;
 
@@ -259,6 +260,7 @@ pub struct HybridGameSessionBridge {
     seed: u64,
     prepared: Option<PreparedMetadata>,
     archived: Option<record::ArchiveMetadata>,
+    attract: Option<attract::AttractMetadata>,
 }
 
 #[wasm_bindgen]
@@ -406,6 +408,7 @@ impl HybridGameSessionBridge {
             seed,
             prepared: None,
             archived: None,
+            attract: None,
         }
     }
 

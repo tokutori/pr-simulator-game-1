@@ -174,12 +174,22 @@ impl HybridGameSessionBridge {
 
 impl HybridGameSessionBridge {
     pub(super) fn display_difficulty(&self) -> DifficultySettings {
+        if self.session.snapshot().phase() == SessionPhase::Attract {
+            return self
+                .attract
+                .as_ref()
+                .expect("Attract must retain the installed demonstration metadata")
+                .difficulty;
+        }
         self.archived
             .as_ref()
             .map_or(self.difficulty, ArchiveMetadata::settings)
     }
 
-    fn export_record_internal(&self) -> Result<String, BoundaryError> {
+    pub(super) fn export_record_internal(&self) -> Result<String, BoundaryError> {
+        if self.session.snapshot().phase() == SessionPhase::Attract {
+            return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
+        }
         let configuration = self
             .sealed_record_configuration()
             .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
@@ -205,7 +215,7 @@ impl HybridGameSessionBridge {
     fn analysis_internal(&self) -> Result<String, BoundaryError> {
         if !matches!(
             self.session.snapshot().phase(),
-            SessionPhase::Result | SessionPhase::Replay
+            SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
         ) {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
@@ -243,42 +253,55 @@ impl HybridGameSessionBridge {
     }
 
     fn playback_context_internal(&self) -> Result<String, BoundaryError> {
-        if self.session.snapshot().phase() != SessionPhase::Replay {
+        let phase = self.session.snapshot().phase();
+        if !matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
         let record = self
             .session
             .playback_record()
             .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
-        let (control_layout, control_identity, difficulty) = match &self.archived {
-            Some(ArchiveMetadata::Legacy { difficulty, .. }) => {
-                (PlaybackLayout::LegacyThreeAxis, None, *difficulty)
-            }
-            Some(ArchiveMetadata::Tail {
-                difficulty,
-                control_identity,
-            }) => (
+        let (control_layout, control_identity, difficulty) = if phase == SessionPhase::Attract {
+            let metadata = self
+                .attract
+                .as_ref()
+                .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
+            (
                 PlaybackLayout::TailIncidence,
-                Some(control_identity),
-                *difficulty,
-            ),
-            None => (
-                PlaybackLayout::TailIncidence,
-                Some(
-                    &self
-                        .prepared
-                        .as_ref()
-                        .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?
-                        .record_identity,
+                Some(&metadata.record_identity),
+                metadata.difficulty.into(),
+            )
+        } else {
+            match &self.archived {
+                Some(ArchiveMetadata::Legacy { difficulty, .. }) => {
+                    (PlaybackLayout::LegacyThreeAxis, None, *difficulty)
+                }
+                Some(ArchiveMetadata::Tail {
+                    difficulty,
+                    control_identity,
+                }) => (
+                    PlaybackLayout::TailIncidence,
+                    Some(control_identity),
+                    *difficulty,
                 ),
-                self.difficulty.into(),
-            ),
+                None => (
+                    PlaybackLayout::TailIncidence,
+                    Some(
+                        &self
+                            .prepared
+                            .as_ref()
+                            .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?
+                            .record_identity,
+                    ),
+                    self.difficulty.into(),
+                ),
+            }
         };
-        let finalization = match &self.archived {
-            Some(ArchiveMetadata::Legacy { finalization, .. }) => {
+        let finalization = match (&self.archived, phase) {
+            (Some(ArchiveMetadata::Legacy { finalization, .. }), SessionPhase::Replay) => {
                 PlaybackFinalization::LegacyThreeAxis(finalization.clone())
             }
-            Some(ArchiveMetadata::Tail { .. }) | None => {
+            _ => {
                 let finalization = record
                     .finalization()
                     .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
@@ -290,7 +313,11 @@ impl HybridGameSessionBridge {
         };
         serde_json::to_string(&PlaybackContext {
             schema_version: SCHEMA_VERSION,
-            phase: "replay",
+            phase: if phase == SessionPhase::Attract {
+                "attract"
+            } else {
+                "replay"
+            },
             scenario: record.header().scenario.into(),
             control_layout,
             control_identity,

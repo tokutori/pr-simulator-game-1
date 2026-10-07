@@ -120,10 +120,13 @@ sealed initial datumと最新成功datumの変位へdistance score v1の幾何�
 Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
 queryのschema 2は保存physics/telemetryと`controls.layout`による`legacy_three_axis`/`tail_incidence`の排他値を返す。
 Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。
-`playback_context_json()`はnamed phase `replay`、保存scenario/control identity、difficulty、layout別finalization/causeを返す。
+`playback_context_json()`はnamed phase `replay`/`attract`、保存scenario/control identity、difficulty、layout別finalization/causeを返す。
 live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/queryを使用する。保存v1–5を二系統へ読み替えない。
 `export_flight_record_json()`は同じsealed metadataからschema 6とcanonical PB keyを生成する。archiveはsnapshot閲覧へ限定する。
 `TailPersonalBestSelectionBridge`は既存Rust比較を使用し、旧layoutやmodel/controller/key不一致を比較対象から除外する。
+`enter_attract()`はTitleから独立した有界demo recordを一度生成・保持し、再入時は同recordのclockだけを初期化する。
+demoは登録Calm環境・Automatic制御の架空hybridモデルを使用し、playerのdifficulty・seed・recordへ書き込まない。
+Attractの描画・分析は保存queryを使用し、live snapshot・player record exportを拒否する。`leave_attract()`はTitleへ戻る。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
