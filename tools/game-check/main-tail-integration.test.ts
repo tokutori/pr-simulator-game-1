@@ -13,7 +13,7 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
 });
 
-async function fixture(failInitialization = false, seedLegacyArchive = false) {
+async function fixture(failInitialization = false, seedLegacyArchive = false, deferScreenStart = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
@@ -81,6 +81,18 @@ async function fixture(failInitialization = false, seedLegacyArchive = false) {
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
   const abort = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "abort");
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
+  const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
+  const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
+  let releaseInitialization: () => void = () => undefined;
+  let initializationPaused = false;
+  if (deferScreenStart) {
+    const gate = new Promise<void>((resolve) => { releaseInitialization = resolve; });
+    const { ScreenPresentationBackend } = await import("../../web/src/presentation/screen-backend.js");
+    vi.spyOn(ScreenPresentationBackend.prototype, "start").mockImplementation(() => {
+      initializationPaused = true;
+      return gate;
+    });
+  }
   await import("../../web/src/main.js");
   const scene = () => documentRef.querySelector<HTMLElement>(".screen-ui-shell")?.dataset.scene;
   const page = (type: "pagehide" | "pageshow", persisted: boolean): void => {
@@ -104,6 +116,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false) {
     expect(scene()).toBe("Flight");
   };
   return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, abort, tick,
+    runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
 }
 
@@ -164,6 +177,20 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.browser.document.body.textContent).toContain("Injected renderer cleanup failure");
     expect(trial.free).toHaveBeenCalledTimes(1);
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes the initialized runtime owner once when pagehide races with deferred backend start", async () => {
+    const trial = await fixture(false, false, true);
+    await vi.waitFor(() => { expect(trial.initializationPaused()).toBe(true); });
+    trial.page("pagehide", false);
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.dispose).not.toHaveBeenCalled();
+    trial.releaseInitialization();
+    await vi.waitFor(() => { expect(trial.runtimeDispose).toHaveBeenCalledTimes(2); });
+    await Promise.all(trial.runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
+    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.browser.document.body.textContent).toContain("Page hidden");
   });
 
   it("opens a legacy saved snapshot through the Tail owner and preserves its explicit three-axis render layout", async () => {

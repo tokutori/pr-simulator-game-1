@@ -494,12 +494,15 @@ function runReplayClockCommand(
 }
 
 async function initializePresentation(requestId: number): Promise<void> {
-  let rendererAdapter: RendererAdapter | null = null;
+  let presentationOwner:
+    | { readonly kind: "uncreated" }
+    | { readonly kind: "renderer"; readonly renderer: RendererAdapter }
+    | { readonly kind: "runtime"; readonly runtime: PresentationRuntime } = { kind: "uncreated" };
   try {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
-    rendererAdapter = bundle.renderer;
+    presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
     gameSession = initializedSession;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
@@ -535,6 +538,7 @@ async function initializePresentation(requestId: number): Promise<void> {
           });
         }
     );
+    presentationOwner = { kind: "runtime", runtime: presentation };
     runtime = presentation;
     const started = await presentation.start("screen");
     if (!started.ok) throw new Error(`Renderer initialization failed: ${runtimeErrorMessage(started)}`);
@@ -555,7 +559,7 @@ async function initializePresentation(requestId: number): Promise<void> {
     syncGameSession();
   } catch (error) {
     window.removeEventListener("resize", onResize);
-    const presentation = runtime;
+    const ownedPresentation = presentationOwner;
     const controller = flightController;
     const session = gameSession;
     runtime = null;
@@ -564,7 +568,13 @@ async function initializePresentation(requestId: number): Promise<void> {
     flightRenderer = null;
     const cleanupFailures: string[] = [];
     const cleanups = [
-      { name: "presentation", run: () => presentation === null ? rendererAdapter?.dispose() : presentation.dispose() },
+      { name: "presentation", run: () => {
+        switch (ownedPresentation.kind) {
+          case "uncreated": return;
+          case "renderer": ownedPresentation.renderer.dispose(); return;
+          case "runtime": return ownedPresentation.runtime.dispose();
+        }
+      } },
       { name: "controller", run: () => controller?.dispose() },
       { name: "session", run: () => session?.dispose() }
     ];
