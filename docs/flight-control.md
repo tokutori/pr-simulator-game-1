@@ -132,6 +132,11 @@ Attractの描画・分析は保存queryを使用し、live snapshot・player rec
 `flight_wind_grid_json(north_min_m, east_min_m, altitude_m, spacing_m)`は登録済み環境を5×5点でqueryする。
 未知identityと登録領域外は理由付き`unavailable`とし、部分gridや無風への代替値を生成しない。
 
+Webの`tail-session-codec`はschema 2と`tail_incidence`を検査し、phaseとframeを結合したimmutableな直和型へ変換する。
+physical incidenceは水平・垂直尾翼の二値、body角速度はroll/pitch/yawの三値として保持する。
+terminalのfraction・stamp・typed causeとRust由来identityを保存し、旧33値decoderへroll制御値を補填しない。
+このcodecの追加は公開factory・既定モデルを変更しない。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 
