@@ -152,10 +152,30 @@ export class ScreenUiAdapter {
     title.textContent = panel.title;
     const controls = documentRef.createElement("div");
     controls.className = "screen-ui-controls";
+    let choiceGroup: HTMLElement | null = null;
+    let previousChoiceGroup = "";
     for (const control of panel.controls) {
       const element = this.createControl(documentRef, control);
       if (usesNormalizedLayout) applyNormalizedRect(element, control.rect);
-      controls.append(element);
+      if (control.kind === "button" && control.presentation?.kind === "choice" && !usesNormalizedLayout) {
+        if (choiceGroup === null || previousChoiceGroup !== control.presentation.group) {
+          const fieldset = documentRef.createElement("fieldset");
+          fieldset.className = "screen-ui-choice-group";
+          fieldset.dataset.vnodeKey = `${panel.id}-choices-${control.presentation.group}`;
+          const legend = documentRef.createElement("legend");
+          legend.textContent = control.presentation.groupLabel;
+          choiceGroup = documentRef.createElement("div");
+          choiceGroup.className = "screen-ui-choice-options";
+          fieldset.append(legend, choiceGroup);
+          controls.append(fieldset);
+          previousChoiceGroup = control.presentation.group;
+        }
+        choiceGroup.append(element);
+      } else {
+        choiceGroup = null;
+        previousChoiceGroup = "";
+        controls.append(element);
+      }
     }
     section.append(title, controls);
     return section;
@@ -170,6 +190,24 @@ export class ScreenUiAdapter {
       if (control.id === "game-result-configuration") button.className = "screen-ui-multiline";
       button.disabled = !control.enabled;
       button.textContent = control.label;
+      const presentation = control.presentation;
+      if (presentation?.kind === "action") button.dataset.emphasis = presentation.emphasis;
+      if (presentation?.kind === "choice") {
+        button.className = "screen-ui-choice";
+        button.setAttribute("aria-pressed", String(presentation.selected));
+        const label = documentRef.createElement("span");
+        label.className = "screen-ui-choice-label";
+        label.textContent = `${presentation.selected ? "● " : ""}${control.label}`;
+        const description = documentRef.createElement("small");
+        description.textContent = presentation.description;
+        button.replaceChildren(label, description);
+      }
+      if (presentation?.kind === "disclosure") {
+        button.dataset.emphasis = "secondary";
+        button.setAttribute("aria-expanded", String(presentation.expanded));
+        button.setAttribute("aria-controls", "game-briefing-technical-content");
+        button.textContent = `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
+      }
       return button;
     }
     if (control.kind === "toggle") {
@@ -208,6 +246,7 @@ export class ScreenUiAdapter {
     if (control.kind === "chart") return this.createChart(documentRef, control);
     const output = documentRef.createElement("output");
     output.className = "screen-ui-status";
+    output.id = control.id;
     output.dataset.vnodeKey = control.id;
     output.setAttribute("aria-live", "polite");
     output.textContent = `${control.label}: ${control.value}`;

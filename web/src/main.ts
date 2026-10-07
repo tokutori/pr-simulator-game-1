@@ -3,6 +3,8 @@ import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
+import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./game/environment-briefing.js";
+import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -131,7 +133,7 @@ function renderModel(): void {
 function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const frameModel = model;
   const snapshot = flightController?.currentSnapshot ?? gameSessionSnapshot(frameModel.gameSession);
-  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale);
+  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing());
   let headView: HeadHudView = draft.headHud;
   if (headView.kind === "visible") {
     const dimensions = headHudCanvasSize(headView.layer);
@@ -612,8 +614,23 @@ function currentViewModel() {
   return createGameViewModel(
     model,
     flightController?.currentSnapshot ?? gameSessionSnapshot(model.gameSession),
-    model.flightAnalysis
+    model.flightAnalysis,
+    NO_HEAD_HUD_VIEW,
+    currentEnvironmentBriefing()
   );
+}
+
+function currentEnvironmentBriefing() {
+  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  let environment = NO_ENVIRONMENT_BRIEFING;
+  if ([1, 2, 3, 8].includes(phaseCode) && gameSession !== null) {
+    try {
+      environment = parseEnvironmentBriefingSnapshot(gameSession.environment_snapshot_json(), phaseCode);
+    } catch {
+      environment = NO_ENVIRONMENT_BRIEFING;
+    }
+  }
+  return environment;
 }
 
 function runGameSessionOperation(operation: GameSessionOperation, requestId: number, requestedPhaseCode: number): void {

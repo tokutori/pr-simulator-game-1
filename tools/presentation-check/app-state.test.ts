@@ -87,6 +87,11 @@ describe("Boot application state", () => {
         if (control.kind !== "button" || !control.enabled) continue;
         const updated = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: control.id } });
         expect(updated.model.status, `${view.scene}: ${control.id}`).not.toContain("is unavailable");
+        if (control.presentation?.kind === "choice" && control.presentation.selected) {
+          expect(updated.model).toBe(model);
+          expect(updated.effects).toEqual([]);
+          continue;
+        }
         expect(updated.model !== model || updated.effects.length > 0, `${view.scene}: ${control.id}`).toBe(true);
       }
     }
@@ -698,8 +703,8 @@ describe("Boot application state", () => {
 
   it("projects the Rust-selected control mode after a Setup update", () => {
     const setupModel = readyModel(1);
-    const requested = updateApp(setupModel, { type: "ui-action", action: { type: "activate", controlId: "game-setup-assistance" } });
-    expect(requested.effects).toEqual([{ type: "game-session-operation", operation: "cycle-assistance-level", requestId: 2 }]);
+    const requested = updateApp(setupModel, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-assistance-0" } });
+    expect(requested.effects).toEqual([{ type: "game-session-operation", operation: { kind: "set-difficulty-option", axis: "assistance", code: 0 }, requestId: 2 }]);
     const completed = updateApp(requested.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 1, controlModeCode: 2,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 0 },

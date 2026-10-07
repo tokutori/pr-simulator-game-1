@@ -44,6 +44,14 @@ Fullは対気速度、対地速度、高度、AoA、風、姿勢、flight-path m
 Standardは主要計器、Minimalは高度・距離・時間、Realisticは対象機の実際の計器構成に近づける。
 対象機の計器構成が未確定の段階では、Realisticを実機と同一と表示しない。
 Customはtelemetry、attitude、wind、flight-path、AoA、warning cueの表示設定を保持する。
+Flight Setupはプリセットによる三軸の一括選択と、各軸の直接選択を分離する。
+候補一覧・現在値・説明をScreen/VR共通のviewへ投影し、設定変更は既存GameSession setterへ送る。
+Custom presetは個別変更済みの表示とし、選択候補に含めない。
+Briefingは飛行条件・操縦方法・準備結果を確認する画面とする。version/seedは初期状態で閉じた技術情報へ格納し、
+開閉はAppModelと純粋なupdateで管理する。代表風・地点・高度・空間変動はWASMのenvironment snapshotを表示し、
+取得不能を明示する。風速・風向・発進可否をWeatherの名称から推定しない。
+代表水平風速と風向は公開されたN/E成分の純粋な表示導出とする。風向は真北を0°とする時計回りの方位で、
+[NOAA/NWSの定義](https://www.weather.gov/ggw/GlossaryW)に従い吹いてくる方向を示す。水平風が0の場合は方向なしと表示し、鉛直流は上昇・下降を別記する。
 FlightはPilot視点に固定する。Replay/Attractのcamera選択はInformation presetから独立させる。
 情報補助の低減でアプリケーションエラー、permission状態、退出操作を隠さない。
 

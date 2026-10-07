@@ -236,10 +236,10 @@ describe("Game scene view model", () => {
       })
     });
     const controls = createGameViewModel(model, null).panels[0]?.controls;
-    expect(controls?.find((control) => control.id === "game-setup-preset")).toMatchObject({ label: "Preset: Custom" });
-    expect(controls?.find((control) => control.id === "game-setup-information")).toMatchObject({ label: "Information: Minimal" });
-    expect(controls?.find((control) => control.id === "game-setup-assistance")).toMatchObject({ label: "Assistance: Strong / Automatic FBW" });
-    expect(controls?.find((control) => control.id === "game-setup-weather")).toMatchObject({ label: "Weather: Synthetic Challenging" });
+    expect(controls?.find((control) => control.id === "game-setup-preset-current")).toMatchObject({ value: "Custom · プリセットから変更済み" });
+    expect(controls?.find((control) => control.id === "game-setup-select-information-2")).toMatchObject({ label: "Minimal", presentation: { kind: "choice", selected: true } });
+    expect(controls?.find((control) => control.id === "game-setup-select-assistance-0")).toMatchObject({ label: "Strong / Automatic FBW", presentation: { kind: "choice", selected: true } });
+    expect(controls?.find((control) => control.id === "game-setup-select-weather-3")).toMatchObject({ label: "Synthetic Challenging", presentation: { kind: "choice", selected: true } });
   });
 
   it("shows independently configured HUD cues only for Custom Information", () => {

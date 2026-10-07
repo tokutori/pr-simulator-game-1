@@ -16,6 +16,30 @@ export interface UiButton {
   readonly label: string;
   readonly enabled: boolean;
   readonly rect: NormalizedRect;
+  readonly presentation?: UiButtonPresentation;
+}
+
+export type UiButtonPresentation =
+  | { readonly kind: "action"; readonly emphasis: "primary" | "secondary" }
+  | { readonly kind: "choice"; readonly group: string; readonly groupLabel: string; readonly selected: boolean; readonly description: string }
+  | { readonly kind: "disclosure"; readonly expanded: boolean };
+
+export function uiButtonLabel(control: UiButton): string {
+  const presentation = control.presentation;
+  if (presentation?.kind === "choice") {
+    return `${presentation.selected ? "●" : "○"} ${control.label}\n${presentation.description}`;
+  }
+  if (presentation?.kind === "disclosure") return `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
+  return control.label;
+}
+
+export function uiControlBackground(control: UiControl): string {
+  if (control.kind !== "button") return "#183139";
+  const presentation = control.presentation;
+  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? "#356d68" : "#10242d";
+  if (presentation?.kind === "choice") return presentation.selected ? "#356d68" : "#183139";
+  if (presentation?.kind === "disclosure") return "#10242d";
+  return "#294853";
 }
 
 export interface UiToggle {

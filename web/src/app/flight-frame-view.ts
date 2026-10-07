@@ -3,6 +3,8 @@ import { createGameViewModel } from "./game-view.js";
 import { gameSessionPhaseCode } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
+import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
 import { createFlightHudModel } from "../presentation/flight-hud-model.js";
 import type { FlightHudModel, InformationLevelCode } from "../presentation/flight-hud-model.js";
 import { createHeadHudView, NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
@@ -18,9 +20,11 @@ export interface FlightFrameViewDraft {
   readonly analysis: AppModel["flightAnalysis"];
   readonly hud: FlightHudModel | null;
   readonly headHud: HeadHudView;
+  readonly environment: EnvironmentBriefingProjection;
 }
 
-export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnapshot | null, viewer: ViewerFrame, locale: string): FlightFrameViewDraft {
+export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnapshot | null, viewer: ViewerFrame, locale: string,
+  environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING): FlightFrameViewDraft {
   const phase = gameSessionPhaseCode(model.gameSession);
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
@@ -30,13 +34,13 @@ export function createFlightFrameViewDraft(model: AppModel, snapshot: FlightSnap
   const headHud = hud !== null && phase === 5 && model.presentation.type === "ready" && model.presentation.mode !== "screen"
     ? createHeadHudView(hud, viewer, locale)
     : NO_HEAD_HUD_VIEW;
-  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud });
+  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment });
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {
   return gameSessionPhaseCode(draft.model.gameSession) < 0
     ? createBootViewModel(draft.model)
-    : createGameViewModel(draft.model, draft.snapshot, draft.analysis, headHud);
+    : createGameViewModel(draft.model, draft.snapshot, draft.analysis, headHud, draft.environment);
 }
 
 export interface FlightMenuFrameFailure {

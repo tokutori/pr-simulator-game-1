@@ -1,6 +1,6 @@
 import type { MenuLayoutRequest, MenuMeasuredLine, MenuRect, MenuTextLayout, MenuTextMeasurement,
   MenuTextRequest, MenuViewport } from "../render/contracts/menu-layout.js";
-import { chartScaleBarDistance } from "../render/contracts/ui.js";
+import { chartScaleBarDistance, uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart } from "../render/contracts/ui.js";
 import { browserHeadHudContext } from "./head-hud-canvas.js";
 import type { HeadHudDrawingContext } from "./head-hud-canvas.js";
@@ -151,7 +151,7 @@ export function drawMeasuredMenu(context: HeadHudDrawingContext, viewport: MenuV
       for (const control of viewport.document.controls) {
         const clipped = menuRectInViewport(viewport, control.bounds);
         if (clipped.kind === "outside") continue;
-        context.setFillStyle(control.control.kind === "button" ? "#294853" : "#183139");
+        context.setFillStyle(uiControlBackground(control.control));
         drawRect(clipped.rect);
         if (control.kind === "chart") drawChart(context, control.control, control.plot, viewport, scaleX, scaleY);
         for (const layout of control.texts) text(layout, false, control.control.enabled || control.control.kind === "status" || control.control.kind === "chart" ? "#f3fff9" : "#899ba0");

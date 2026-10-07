@@ -121,6 +121,7 @@ export interface AppModel {
   readonly controlModeCode: number;
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
+  readonly briefingDetailsOpen: boolean;
   readonly flightAnalysis: FlightAnalysisData | null;
   readonly pendingAnalysisRequestId: number | null;
   readonly nextAnalysisRequestId: number;
@@ -389,6 +390,7 @@ export function createInitialAppModel(): AppModel {
       weatherCode: 0
     }),
     configurationMetadata: null,
+    briefingDetailsOpen: false,
     flightAnalysis: null,
     pendingAnalysisRequestId: null,
     nextAnalysisRequestId: 1,
@@ -566,6 +568,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
+        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
@@ -629,6 +632,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
         status: "",
+        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
         resultTab: enteringResult ? "summary" : model.resultTab,
@@ -880,6 +884,10 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId === "game-briefing-technical") {
+    if (model.pendingGameRequestId !== null || ![2, 3, 8].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+    return transition(withModel(model, { briefingDetailsOpen: !model.briefingDetailsOpen }));
+  }
   if (action.type === "activate" && action.controlId.startsWith("game-setup-select-")) {
     if (model.gameSession.kind !== "setup") return transition(model);
     const selection = /^game-setup-select-(preset|information|assistance|weather)-([0-4])$/.exec(action.controlId);
@@ -1083,10 +1091,6 @@ function operationForGameAction(phaseCode: number, controlId: string): NamedGame
     "game-setup-mode-manual": [1, "set-control-manual"],
     "game-setup-mode-shared": [1, "set-control-shared"],
     "game-setup-mode-automatic": [1, "set-control-automatic"],
-    "game-setup-preset": [1, "cycle-difficulty-preset"],
-    "game-setup-information": [1, "cycle-information-level"],
-    "game-setup-assistance": [1, "cycle-assistance-level"],
-    "game-setup-weather": [1, "cycle-weather-class"],
     "game-setup-back": [1, "return-to-title"],
     "game-briefing-start": [3, "start-flight"],
     "game-countdown-cancel": [4, "cancel-countdown"],

@@ -467,8 +467,13 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
 }
 
 function moveToStart(fixture: Awaited<ReturnType<typeof createFixture>>, pad: TestGamepad): void {
-  pad.axes = [0, 1, 0, 0];
-  for (let frame = 0; frame < 13; frame++) fixture.frame();
+  for (let frame = 0; frame < 120; frame++) {
+    const focus = fixture.actions.filter((action) => action.type === "focus").at(-1);
+    if (focus?.controlId === "game-briefing-start") break;
+    pad.axes = [0, 1, 0, 0];
+    fixture.frame();
+  }
   pad.axes = [0, 0, 0, 0];
-  expect(fixture.actions).toContainEqual({ type: "focus", controlId: "game-briefing-start" });
+  fixture.frame();
+  expect(fixture.actions.filter((action) => action.type === "focus").at(-1)).toEqual({ type: "focus", controlId: "game-briefing-start" });
 }

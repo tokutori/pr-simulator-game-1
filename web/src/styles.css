@@ -358,6 +358,73 @@ body {
   font-size: 0.9rem;
 }
 
+.screen-ui-choice-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid #547278;
+  border-radius: 0.65rem;
+}
+
+.screen-ui-choice-group legend {
+  padding: 0 0.35rem;
+  font-weight: 600;
+}
+
+.screen-ui-choice-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 0.5rem;
+}
+
+.screen-ui-controls button.screen-ui-choice {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  height: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  background: #183139;
+  border-color: #547278;
+}
+
+.screen-ui-choice small {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: #c7d7d1;
+}
+
+.screen-ui-controls button.screen-ui-choice[aria-pressed="true"] {
+  background: #356d68;
+  border-color: #d2e6c4;
+}
+
+.screen-ui-controls button[data-emphasis="primary"] {
+  min-height: 3.25rem;
+  font-weight: 700;
+  background: #356d68;
+  border-color: #d2e6c4;
+}
+
+.screen-ui-controls button[data-emphasis="secondary"] {
+  background: transparent;
+  border-color: transparent;
+  color: #c7d7d1;
+}
+
+.screen-ui-shell[data-scene="FlightSetup"],
+.screen-ui-shell[data-scene="Briefing"],
+.screen-ui-shell[data-scene="Countdown"] {
+  overscroll-behavior: contain;
+  scroll-padding-block: 1rem;
+}
+
+.screen-ui-shell[data-scene="FlightSetup"] .screen-ui-status,
+.screen-ui-shell[data-scene="Briefing"] .screen-ui-status {
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+
 .screen-ui-controls button:focus-visible,
 .screen-ui-controls input:focus-visible {
   outline: 3px solid #f0d382;

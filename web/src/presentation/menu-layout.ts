@@ -5,7 +5,7 @@ import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlT
   MenuFixedTextRole, MenuFontIdentity, MenuHit, MenuLayoutRequest,
   MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
   MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
-import { chartScaleBarDistance, formatChartTick } from "../render/contracts/ui.js";
+import { chartScaleBarDistance, formatChartTick, uiButtonLabel } from "../render/contracts/ui.js";
 import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
@@ -44,7 +44,7 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
     const addControlText = (role: MenuControlTextRole, index: number, value: string, textWidth = width): void => {
       addText({ kind: "control", controlId: control.id, role, index }, value, textWidth);
     };
-    addControlText("label", 0, control.label);
+    addControlText("label", 0, control.kind === "button" ? uiButtonLabel(control) : control.label);
     switch (control.kind) {
       case "button": break;
       case "toggle": addControlText("value", 0, control.value ? "On" : "Off"); break;
