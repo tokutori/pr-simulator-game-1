@@ -11,7 +11,7 @@ if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata")
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
-  ["birdman-game-cli", ["birdman-game-core", "birdman-game-format"]],
+  ["birdman-game-cli", ["birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
   ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "wasm-bindgen"]]
 ]);
 for (const value of metadata.packages) {

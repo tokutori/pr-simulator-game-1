@@ -33,6 +33,7 @@ formatは外部表現をdeserializeして検証し、coreのconstructorから有
 core型の内部不変条件を保持するため、数値フィールドを無条件に公開しない。
 filesystemアクセスとエラー表示はCLI、browser APIと表示はWeb/WASM adapterの責務である。
 CLI/WASMはcoreを直接使用してよい。format経由で物理計算を呼ぶ必要はない。
+CLIはコマンド固有の診断JSONを投影し、FlightRecordの保存codecはformatへ委譲する。
 
 ## 責務とディレクトリ
 
