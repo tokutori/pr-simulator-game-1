@@ -59,7 +59,9 @@ pub use game_session::{
     PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
-pub use hybrid_mock::{HybridMockConfiguration, HybridMockDefinition, HybridMockError};
+pub use hybrid_mock::{
+    HybridMockConfiguration, HybridMockDefinition, HybridMockError, HybridMockTrim,
+};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
     FlightScenarioParameters, FlightTelemetry, FlightTelemetryError,

@@ -6,6 +6,9 @@ use crate::{
     StaticPolarMetadata, StaticPolarRow,
 };
 
+mod trim;
+pub use trim::HybridMockTrim;
+
 const POLAR_KNOTS: [(f64, f64); 5] = [
     (-0.12, 0.10),
     (-0.06, 0.36),
@@ -63,6 +66,8 @@ pub enum HybridMockError {
     Aerodynamics(AeroError),
     /// Invalid complete geometry, strip partition or hybrid model.
     Hybrid(HybridError),
+    /// The specified steady glide has no upright trim in its designated polar segment.
+    TrimNotBracketed,
 }
 
 /// Owned, allocation-free BPG-041 mock data with borrowed validated load views.

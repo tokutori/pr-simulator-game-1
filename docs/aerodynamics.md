@@ -104,8 +104,8 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 
 `HybridMockDefinition`は公開可能な架空値だけを所有し、既存constructorで全geometry・strip・anchor・
 全機polarを検証する。構築・借用viewはheapとI/Oを使用しない。既定の`SyntheticPlayableFlight`と
-公開WASM・recordはこの定義へ切り替えない。trim荷重・moving pilot連成残差・launch・controllerの
-検証は後続工程であり、この定義の構築成功と区別する。
+公開WASM・recordはこの定義へ切り替えない。定義の構築、trim荷重・moving pilot連成残差、
+動的応答・controller・公開経路の検証を区別する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
 |---|---|---|---|
@@ -127,6 +127,19 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 pilotのy=z=0、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を維持する。
 `bpg041-rectangular-hybrid-mock`と、dihedral=0の`bpg041-zero-dihedral-oracle`は独立identityであり、
 各configuration内のmodel versionは1とする。oracleは同じ投影形状と節点表を使用する。
+
+`HybridMockTrim`は無風・rho=1.225 kg/m³・g=9.80665 m/s²・V=9.7 m/sで、
+生成済PWL列から力の大きさを釣り合わせ、$\gamma=\operatorname{atan2}(-C_D,C_L)$、
+$\theta=\alpha+\gamma$を求める。upright解を持つalpha `[0,0.06]` radを二分し、
+datum荷重と$r_{OG}=(70/94)(x_p,0,0)$から$M_G=0$を満たすpilot位置を求める。
+参照解はalpha≈0.0390014274433、gamma≈-0.0503294807294、theta≈-0.0113280532861 rad、
+pilot x≈-0.00982742971072 mである。実hybrid荷重の力・Gまわりmomentと、既存のmoving pilot
+RK4更新を検査する。trimの存在は無制御安定性・飛距離の保証と分離する。
+
+launchは指定された会場の合成重心位置・方位を使用し、yawとtrim pitchを合成する。
+trimのground velocityを既存CG→datum変換へ渡し、風を暗黙加算せず、platform傾斜をpitchへ混入しない。
+pilot速度は0とし、既存`TailPilotPositionMapping`のneutralとHoldはtrim位置を保持する。
+これらのAPIは独立構築用であり、公開default・record/controller versionの切替はBPG-042で行う。
 
 ### 根拠と来歴
 
