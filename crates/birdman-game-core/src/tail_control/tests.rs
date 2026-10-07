@@ -169,3 +169,74 @@ fn invalid_profile_and_timestep_preserve_previous_incidence() {
         assert_eq!(previous, TailIncidence::try_new(0.12, -0.08).unwrap());
     }
 }
+
+#[test]
+fn pilot_position_mapping_preserves_trim_endpoints_and_explicit_hold() {
+    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
+        .unwrap()
+        .aircraft();
+    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
+    let mut held = mapping.trim_target();
+    assert_eq!(held.position_m(), 0.12);
+    for (normalized, expected) in [
+        (-1.0, -0.4),
+        (-0.5, -0.14),
+        (0.0, 0.12),
+        (0.5, 0.26),
+        (1.0, 0.4),
+    ] {
+        held = mapping
+            .resolve(
+                &aircraft,
+                held,
+                TailPilotPositionCommand::Set(
+                    TailPilotPositionIntent::try_new(normalized).unwrap(),
+                ),
+            )
+            .unwrap();
+        assert!((held.position_m() - expected).abs() < 1.0e-16);
+        assert_eq!(
+            mapping
+                .resolve(&aircraft, held, TailPilotPositionCommand::Hold)
+                .unwrap(),
+            held
+        );
+    }
+    let neutral = mapping
+        .resolve(
+            &aircraft,
+            held,
+            TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(0.0).unwrap()),
+        )
+        .unwrap();
+    assert_eq!(neutral, mapping.trim_target());
+    assert_ne!(neutral.position_m(), 0.0);
+}
+
+#[test]
+fn pilot_position_mapping_rejects_invalid_intent_and_trim_without_changing_the_target() {
+    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
+        .unwrap()
+        .aircraft();
+    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
+    let previous = mapping.trim_target();
+    for invalid in [-1.0000000000000002, 1.0000000000000002] {
+        assert_eq!(
+            TailPilotPositionIntent::try_new(invalid),
+            Err(TailControlError::InvalidPilotIntent)
+        );
+    }
+    assert_eq!(
+        TailPilotPositionIntent::try_new(f64::NAN),
+        Err(TailControlError::NonFinite)
+    );
+    assert_eq!(
+        TailPilotPositionMapping::try_new(&aircraft, 0.41),
+        Err(crate::DynamicsError::PilotOutOfRange)
+    );
+    assert_eq!(
+        TailPilotPositionMapping::try_new(&aircraft, f64::NAN),
+        Err(crate::DynamicsError::NonFinite)
+    );
+    assert_eq!(previous, mapping.trim_target());
+}

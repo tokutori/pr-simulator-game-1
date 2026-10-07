@@ -75,7 +75,8 @@ pub use simulation::{
 };
 pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
 pub use tail_control::{
-    TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent, TailRateTarget,
+    TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
     advance_tail_control, tail_rate_feedback_incidence,
 };
 pub use wind_field::{WindError, WindField};

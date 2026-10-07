@@ -3,6 +3,11 @@ use crate::aerodynamics_contract::HybridError;
 use crate::flight_control::{ActuatorConfig, ActuatorError, ControlMode, saturated_rate_command};
 use crate::math::BodyVector;
 
+mod pilot_position;
+pub use pilot_position::{
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping,
+};
+
 const INCIDENCE_LIMIT_RAD: f64 = 0.2;
 const RATE_TARGET_LIMIT_RAD_PER_SECOND: f64 = 0.2;
 
@@ -223,7 +228,7 @@ pub fn advance_tail_control(
 pub enum TailControlError {
     /// A normalized intent or desired rate is not finite.
     NonFinite,
-    /// A manual intent is outside [-1, 1].
+    /// A manual surface or position intent is outside [-1, 1].
     InvalidPilotIntent,
     /// A pitch/yaw target is outside +/-0.2 rad/s.
     InvalidRateTarget,

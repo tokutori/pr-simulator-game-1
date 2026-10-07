@@ -60,6 +60,11 @@ software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airf
 既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
 新playable tick/pilot targetへの接続、WASM・input・record・既定モデル切替は後続単位で実施する。
 
+`TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
+`TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
+新flightの保持targetはtrimで初期化する。中立inputはtrimへ写像し、input欠損・機器切断の`Hold`は直前targetを維持する。
+この位置commandはControlMode・舵authorityから独立する。物理travel・速度・加速度制約は既存pilot policyが検証する。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 
