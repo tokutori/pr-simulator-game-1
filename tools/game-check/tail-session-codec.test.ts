@@ -47,6 +47,39 @@ function terminalDocument(failure: unknown = null, reason = "manual_abort") {
 }
 
 describe("versioned two-tail TypeScript boundary", () => {
+  it("requires sealed identity for every Briefing and Countdown phase and clears it for Title and Setup", () => {
+    const session = new HybridGameSessionBridge(0, 1, 2);
+    try {
+      const title = parseTailSessionSnapshot(session.snapshot_json());
+      expect(title).toMatchObject({ phaseCode: 0, identity: { kind: "unprepared" }, frame: { kind: "menu" } });
+      session.open_setup();
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 1, identity: { kind: "unprepared" } });
+      session.prepare();
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 2, identity: { kind: "prepared" } });
+      session.mark_briefing_ready();
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 3, identity: { kind: "prepared" } });
+      session.start_countdown(1);
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 4, identity: { kind: "prepared" } });
+      session.open_setup();
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 1, identity: { kind: "unprepared" } });
+    } finally {
+      session.free();
+    }
+    for (const phase of [0, 1, 2, 3, 4, 8]) {
+      const prepared = snapshotDocument();
+      prepared.phase_code = phase;
+      prepared.frame = { kind: "menu" };
+      const unprepared = { ...prepared, scenario: null, control_identity: null };
+      if (phase === 0 || phase === 1) {
+        expect(() => parseTailSessionSnapshot(JSON.stringify(prepared))).toThrow(RangeError);
+        expect(parseTailSessionSnapshot(JSON.stringify(unprepared)).identity.kind).toBe("unprepared");
+      } else {
+        expect(() => parseTailSessionSnapshot(JSON.stringify(unprepared))).toThrow(RangeError);
+        expect(parseTailSessionSnapshot(JSON.stringify(prepared)).identity.kind).toBe("prepared");
+      }
+    }
+  });
+
   it("reads generated WASM identities and lifecycle without changing the legacy factory", () => {
     for (const mode of [0, 1, 2]) {
       const session = launch(mode);
@@ -137,6 +170,26 @@ describe("versioned two-tail TypeScript boundary", () => {
     expect(parsed.frame.state.flightTimeSeconds).toBe(0.08375);
     expect(parsed.frame.telemetry.angleOfAttackRadians).toBeNull();
     expect(Object.isFrozen(parsed.frame.state.attitudeBodyToNed)).toBe(true);
+  });
+
+  it("rejects negative or inconsistent net distance and preserves signed valid score components", () => {
+    for (const score of [[0, 0, -1], [3, 4, 0], [Number.MAX_VALUE, Number.MAX_VALUE, 1], [3, 4, 5 + 6e-9]]) {
+      const document = terminalDocument();
+      nested(nested(document, "frame"), "finalization").score_m = score;
+      expect(() => parseTailSessionSnapshot(JSON.stringify(document))).toThrow(RangeError);
+    }
+    for (const score of [[0, 0, 0], [3, 4, 5], [-3, -4, 5], [3, 4, 5 + 4e-9]]) {
+      const document = terminalDocument();
+      nested(nested(document, "frame"), "finalization").score_m = score;
+      const snapshot = parseTailSessionSnapshot(JSON.stringify(document));
+      if (snapshot.frame.kind !== "result") throw new Error("Expected terminal frame");
+      expect(snapshot.frame.finalization.scoreMeters).toEqual(score);
+    }
+    const document = terminalDocument();
+    nested(nested(document, "frame"), "finalization").score_m = null;
+    const snapshot = parseTailSessionSnapshot(JSON.stringify(document));
+    if (snapshot.frame.kind !== "result") throw new Error("Expected terminal frame");
+    expect(snapshot.frame.finalization.scoreMeters).toBeNull();
   });
 
   it("rejects wrong schema/layout, unsafe seed, surplus roll, phase/frame and stamp conflicts", () => {

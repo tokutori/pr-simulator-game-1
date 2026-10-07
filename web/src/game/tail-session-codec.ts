@@ -70,7 +70,8 @@ interface TailSessionEnvelope {
   readonly controlModeCode: 0 | 1 | 2;
 }
 export type TailSessionSnapshot = TailSessionEnvelope & (
-  | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; identity: TailSessionIdentity; frame: Readonly<{ kind: "menu" }> }>
+  | Readonly<{ phaseCode: 0 | 1; identity: Extract<TailSessionIdentity, { kind: "unprepared" }>; frame: Readonly<{ kind: "menu" }> }>
+  | Readonly<{ phaseCode: 2 | 3 | 4 | 8; identity: PreparedIdentity; frame: Readonly<{ kind: "menu" }> }>
   | Readonly<{ phaseCode: 5 | 6; identity: PreparedIdentity;
       frame: Readonly<{ kind: "flight"; state: TailFlightState; telemetry: TailFlightTelemetry }> }>
   | Readonly<{ phaseCode: 7; identity: PreparedIdentity;
@@ -117,9 +118,14 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
   const frameTag = boundaryObjectWithKind(document.frame);
   if (frameTag === "menu") {
     boundaryObject(document.frame, ["kind"]);
-    if (phase === 5 || phase === 6 || phase === 7) throw new RangeError("Flight phase requires a flight or terminal frame");
-    if ((phase === 3 || phase === 4) && identity.kind !== "prepared") throw new RangeError("Prepared phase requires sealed identity");
-    return Object.freeze({ ...envelope, phaseCode: phase as 0 | 1 | 2 | 3 | 4 | 8, identity, frame: Object.freeze({ kind: "menu" }) });
+    const frame = Object.freeze({ kind: "menu" as const });
+    if (phase === 0 || phase === 1) {
+      if (identity.kind !== "unprepared") throw new RangeError("Title and Setup cannot retain sealed identity");
+      return Object.freeze({ ...envelope, phaseCode: phase, identity, frame });
+    }
+    if (phase !== 2 && phase !== 3 && phase !== 4 && phase !== 8) throw new RangeError("Flight phase requires a flight or terminal frame");
+    if (identity.kind !== "prepared") throw new RangeError("Prepared phase requires sealed identity");
+    return Object.freeze({ ...envelope, phaseCode: phase, identity, frame });
   }
   if (identity.kind !== "prepared") throw new RangeError("Flight snapshot requires sealed identity");
   const frame = boundaryObject(document.frame, frameTag === "flight"
@@ -211,5 +217,14 @@ function decodeFinalization(value: unknown): TailTerminalFinalization {
     throw new RangeError("Tail finalization reason, disposition or cause is contradictory");
   }
   return Object.freeze({ reason, disposition, terminalTick: boundaryInteger(terminal.terminal_tick),
-    terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1), scoreMeters: terminal.score_m === null ? null : vector3(terminal.score_m), failure });
+    terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1), scoreMeters: terminal.score_m === null ? null : decodeScore(terminal.score_m), failure });
+}
+
+function decodeScore(value: unknown): Vector3 {
+  const score = vector3(value);
+  const expectedNet = boundaryNumber(Math.hypot(score[0], score[1]), 0);
+  if (score[2] < 0 || Math.abs(expectedNet - score[2]) > 1e-9 * Math.max(1, expectedNet)) {
+    throw new RangeError("Tail distance score violates its horizontal displacement invariant");
+  }
+  return score;
 }
