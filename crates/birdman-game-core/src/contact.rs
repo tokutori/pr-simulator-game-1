@@ -115,9 +115,55 @@ pub fn detect_water_contact(
     validate_actuator_state(actuator_limits, previous.actuator_state())?;
     validate_actuator_state(actuator_limits, next.actuator_state())?;
 
+    let Some(sample) = detect_flight_state_water_contact(
+        aircraft,
+        previous.tick_index(),
+        previous.flight_state(),
+        next.tick_index(),
+        next.flight_state(),
+        geometry,
+    )?
+    else {
+        return Ok(None);
+    };
+    let actuator_state = if sample.fraction == 0.0 {
+        previous.actuator_state()
+    } else {
+        next.actuator_state()
+    };
+    Ok(Some(WaterContactSample {
+        interval_start_tick: sample.interval_start_tick,
+        fraction: sample.fraction,
+        contact_point_index: sample.contact_point_index,
+        state: InterpolatedFlightState {
+            flight_state: sample.flight_state,
+            actuator_state,
+        },
+    }))
+}
+
+pub(crate) struct FlightStateContactSample {
+    pub(crate) interval_start_tick: u64,
+    pub(crate) fraction: f64,
+    pub(crate) contact_point_index: usize,
+    pub(crate) flight_state: FlightState,
+}
+
+pub(crate) fn detect_flight_state_water_contact(
+    aircraft: &AircraftModel,
+    previous_tick: u64,
+    previous: FlightState,
+    next_tick: u64,
+    next: FlightState,
+    geometry: WaterContactGeometry<'_>,
+) -> Result<Option<FlightStateContactSample>, ContactError> {
+    if previous_tick.checked_add(1) != Some(next_tick) {
+        return Err(ContactError::NonAdjacentTicks);
+    }
+
     let mut earliest: Option<(f64, usize)> = None;
     for (contact_point_index, contact_point) in geometry.points_body.iter().copied().enumerate() {
-        let fraction = find_contact_fraction(previous, next, actuator_limits, contact_point)?;
+        let fraction = find_contact_fraction(previous, next, contact_point)?;
         if let Some(fraction) = fraction
             && earliest.is_none_or(|(earliest_fraction, _)| fraction < earliest_fraction)
         {
@@ -128,36 +174,34 @@ pub fn detect_water_contact(
     let Some((fraction, contact_point_index)) = earliest else {
         return Ok(None);
     };
-    let state = interpolate_tick_state(previous, next, actuator_limits, fraction)?;
-    total_momentum(aircraft, &state.flight_state).map_err(ContactError::Dynamics)?;
-    Ok(Some(WaterContactSample {
-        interval_start_tick: previous.tick_index(),
+    let flight_state = interpolate_flight_state(previous, next, fraction)?;
+    total_momentum(aircraft, &flight_state).map_err(ContactError::Dynamics)?;
+    Ok(Some(FlightStateContactSample {
+        interval_start_tick: previous_tick,
         fraction,
         contact_point_index,
-        state,
+        flight_state,
     }))
 }
 
 fn find_contact_fraction(
-    previous: FlightTickState,
-    next: FlightTickState,
-    actuator_limits: [ActuatorConfig; 3],
+    previous: FlightState,
+    next: FlightState,
     contact_point: BodyPoint,
 ) -> Result<Option<f64>, ContactError> {
-    let start_down = contact_point_down(previous.flight_state(), contact_point)?;
+    let start_down = contact_point_down(previous, contact_point)?;
     if start_down >= 0.0 {
         return Ok(Some(0.0));
     }
     let mut above_fraction = 0.0;
     for subdivision in 1..=CONTACT_SEARCH_SUBDIVISIONS {
         let fraction = subdivision as f64 / CONTACT_SEARCH_SUBDIVISIONS as f64;
-        let interpolated = interpolate_tick_state(previous, next, actuator_limits, fraction)?;
-        let down = contact_point_down(interpolated.flight_state, contact_point)?;
+        let interpolated = interpolate_flight_state(previous, next, fraction)?;
+        let down = contact_point_down(interpolated, contact_point)?;
         if down >= 0.0 {
             return refine_contact_fraction(
                 previous,
                 next,
-                actuator_limits,
                 contact_point,
                 above_fraction,
                 fraction,
@@ -170,9 +214,8 @@ fn find_contact_fraction(
 }
 
 fn refine_contact_fraction(
-    previous: FlightTickState,
-    next: FlightTickState,
-    actuator_limits: [ActuatorConfig; 3],
+    previous: FlightState,
+    next: FlightState,
     contact_point: BodyPoint,
     mut above: f64,
     mut at_or_below: f64,
@@ -182,8 +225,8 @@ fn refine_contact_fraction(
         if midpoint == above || midpoint == at_or_below {
             break;
         }
-        let interpolated = interpolate_tick_state(previous, next, actuator_limits, midpoint)?;
-        let down = contact_point_down(interpolated.flight_state, contact_point)?;
+        let interpolated = interpolate_flight_state(previous, next, midpoint)?;
+        let down = contact_point_down(interpolated, contact_point)?;
         if down >= 0.0 {
             at_or_below = midpoint;
         } else {
@@ -193,14 +236,11 @@ fn refine_contact_fraction(
     Ok(at_or_below)
 }
 
-fn interpolate_tick_state(
-    previous: FlightTickState,
-    next: FlightTickState,
-    actuator_limits: [ActuatorConfig; 3],
+fn interpolate_flight_state(
+    previous_flight: FlightState,
+    next_flight: FlightState,
     fraction: f64,
-) -> Result<InterpolatedFlightState, ContactError> {
-    let previous_flight = previous.flight_state();
-    let next_flight = next.flight_state();
+) -> Result<FlightState, ContactError> {
     let position = interpolate_components(
         previous_flight.datum_position_ned().components(),
         next_flight.datum_position_ned().components(),
@@ -242,18 +282,7 @@ fn interpolate_tick_state(
         ),
     )
     .map_err(ContactError::Dynamics)?;
-    // Exact tick snapshots retain their completed-interval actuator. A positive
-    // fraction belongs to the following interval and uses its updated held value.
-    let actuator_state = if fraction == 0.0 {
-        previous.actuator_state()
-    } else {
-        next.actuator_state()
-    };
-    validate_actuator_state(actuator_limits, actuator_state)?;
-    Ok(InterpolatedFlightState {
-        flight_state,
-        actuator_state,
-    })
+    Ok(flight_state)
 }
 
 fn contact_point_down(
