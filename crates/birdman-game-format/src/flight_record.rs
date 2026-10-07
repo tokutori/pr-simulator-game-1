@@ -306,6 +306,8 @@ pub enum FlightRecordFormatError {
     IncompatibleControlLayout,
     /// Saved snapshots belong to a model/controller/control layout incompatible with reintegration.
     IncompatibleReintegration,
+    /// The requested schema cannot preserve an original typed terminal failure.
+    IncompatibleTerminalCause,
 }
 
 impl FlightRecordDocument {
@@ -316,6 +318,12 @@ impl FlightRecordDocument {
     ) -> Result<Self, FlightRecordFormatError> {
         if record.samples().is_empty() {
             return Err(FlightRecordFormatError::RecordUnavailable);
+        }
+        if record
+            .finalization()
+            .is_some_and(|finalization| finalization.failure.is_some())
+        {
+            return Err(FlightRecordFormatError::IncompatibleTerminalCause);
         }
         let header = record.header();
         let identity = header.scenario;
@@ -573,6 +581,7 @@ impl FlightRecordDocument {
             terminal_tick: finalization.terminal_tick,
             terminal_fraction: finalization.terminal_fraction,
             score,
+            failure: None,
         };
         FlightRecord::try_from_finalized_samples(header, samples, finalization)
             .map_err(|_| FlightRecordFormatError::InvalidRecord)

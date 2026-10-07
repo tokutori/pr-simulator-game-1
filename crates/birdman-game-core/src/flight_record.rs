@@ -1,7 +1,9 @@
 use crate::math::{BodyVector, NedPoint, NedVector};
 use crate::scenario::FlightTelemetry;
 use crate::scoring::DistanceScore;
-use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
+use crate::session_contract::{
+    SessionEndReason, SessionScenarioIdentity, SessionSimulationFailure,
+};
 use crate::simulation::{FlightFeedbackInput, FlightTickState};
 use crate::{FlightState, SurfaceCommands};
 use alloc::vec::Vec;
@@ -132,6 +134,8 @@ pub struct FlightRecordFinalization {
     pub terminal_fraction: f64,
     /// Derived terminal score retained with the same immutable flight record.
     pub score: Option<DistanceScore>,
+    /// Original simulation failure at the first unsuccessful interval, if present.
+    pub failure: Option<SessionSimulationFailure>,
 }
 
 /// Interpolated recorded state at a requested fixed-tick time.
@@ -209,6 +213,8 @@ pub enum FlightRecordError {
     InvalidArchive,
     /// A sample uses a different semantic control layout from the initial sample.
     IncompatibleControlLayout,
+    /// The original failure disagrees with the terminal reason or record control layout.
+    IncompatibleFailure,
 }
 
 /// Bounded flight samples with capacity reserved before simulation begins.
@@ -298,6 +304,11 @@ impl FlightRecord {
             || !finalization.terminal_fraction.is_finite()
             || !(0.0..=1.0).contains(&finalization.terminal_fraction)
             || !disposition_matches(finalization.reason, finalization.disposition)
+            || !failure_matches(
+                finalization.failure,
+                finalization.reason,
+                latest.controls.kind(),
+            )
         {
             return Err(FlightRecordError::InvalidArchive);
         }
@@ -505,10 +516,42 @@ impl FlightRecord {
         terminal_fraction: f64,
         score: Option<DistanceScore>,
     ) -> Result<FlightRecordFinalization, FlightRecordError> {
+        self.finalize_record(reason, terminal_tick, terminal_fraction, score, None)
+    }
+
+    /// Finalizes at the last successful sample while preserving the original simulation failure.
+    pub fn finalize_with_failure(
+        &mut self,
+        reason: SessionEndReason,
+        terminal_tick: u64,
+        terminal_fraction: f64,
+        score: Option<DistanceScore>,
+        failure: SessionSimulationFailure,
+    ) -> Result<FlightRecordFinalization, FlightRecordError> {
+        self.finalize_record(
+            reason,
+            terminal_tick,
+            terminal_fraction,
+            score,
+            Some(failure),
+        )
+    }
+
+    fn finalize_record(
+        &mut self,
+        reason: SessionEndReason,
+        terminal_tick: u64,
+        terminal_fraction: f64,
+        score: Option<DistanceScore>,
+        failure: Option<SessionSimulationFailure>,
+    ) -> Result<FlightRecordFinalization, FlightRecordError> {
         if self.finalization.is_some() {
             return Err(FlightRecordError::AlreadyFinalized);
         }
         let latest = self.latest().ok_or(FlightRecordError::NotStarted)?;
+        if !failure_matches(failure, reason, latest.controls.kind()) {
+            return Err(FlightRecordError::IncompatibleFailure);
+        }
         if !terminal_fraction.is_finite()
             || !(0.0..=1.0).contains(&terminal_fraction)
             || latest.tick_index != terminal_tick
@@ -531,6 +574,7 @@ impl FlightRecord {
             terminal_tick,
             terminal_fraction,
             score,
+            failure,
         };
         self.finalization = Some(finalized);
         Ok(finalized)
@@ -740,6 +784,29 @@ impl FlightRecord {
         }
         self.samples.push(sample);
         Ok(())
+    }
+}
+
+fn failure_matches(
+    failure: Option<SessionSimulationFailure>,
+    reason: SessionEndReason,
+    controls: FlightRecordControlKind,
+) -> bool {
+    match failure {
+        None => true,
+        Some(failure) => {
+            failure.end_reason() == reason
+                && matches!(
+                    (failure, controls),
+                    (
+                        SessionSimulationFailure::LegacyThreeAxis(_),
+                        FlightRecordControlKind::LegacyThreeAxis
+                    ) | (
+                        SessionSimulationFailure::TailIncidence(_),
+                        FlightRecordControlKind::TailIncidence
+                    )
+                )
+        }
     }
 }
 
@@ -1703,6 +1770,7 @@ mod tests {
                 terminal_tick: 1,
                 terminal_fraction: 0.0,
                 score: None,
+                failure: None,
             },
         )
         .unwrap()

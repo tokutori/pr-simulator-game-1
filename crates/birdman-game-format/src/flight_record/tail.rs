@@ -172,6 +172,9 @@ impl TailFlightRecordDocument {
         let finalization = record
             .finalization()
             .ok_or(FlightRecordFormatError::RecordUnavailable)?;
+        if finalization.failure.is_some() {
+            return Err(FlightRecordFormatError::IncompatibleTerminalCause);
+        }
         let core_header = record.header();
         let scenario = core_header.scenario;
         let document = Self {
@@ -299,6 +302,7 @@ impl TailFlightRecordDocument {
             terminal_tick: self.finalization.terminal_tick,
             terminal_fraction: self.finalization.terminal_fraction,
             score,
+            failure: None,
         };
         if self.header.personal_best_key.is_some()
             && (finalization.reason != birdman_game_core::SessionEndReason::WaterContact

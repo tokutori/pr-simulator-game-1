@@ -86,6 +86,49 @@ fn document() -> TailFlightRecordDocument {
 }
 
 #[test]
+fn codecs_reject_terminal_causes_until_the_schema_can_preserve_them() {
+    use birdman_game_core::{
+        FlightTickError, SessionEndReason, SessionSimulationFailure, TailFlightTickError,
+    };
+    let settings = DifficultySettings::custom(
+        InformationLevel::Full,
+        AssistanceLevel::Manual,
+        WeatherClass::Calm,
+    );
+    for (record, failure) in [
+        (
+            super::super::tests::completed_record()
+                .to_finalized_core_record()
+                .unwrap(),
+            SessionSimulationFailure::LegacyThreeAxis(FlightTickError::TickOverflow),
+        ),
+        (
+            document().to_finalized_core_record().unwrap(),
+            SessionSimulationFailure::TailIncidence(TailFlightTickError::TickOverflow),
+        ),
+    ] {
+        let mut finalization = record.finalization().unwrap();
+        finalization.reason = SessionEndReason::FatalSimulationError;
+        finalization.disposition = birdman_game_core::FlightRecordDisposition::Failed;
+        finalization.failure = Some(failure);
+        let record = FlightRecord::try_from_finalized_samples(
+            record.header(),
+            record.samples().to_vec(),
+            finalization,
+        )
+        .unwrap();
+        assert_eq!(
+            FlightRecordDocument::from_record(&record, settings),
+            Err(FlightRecordFormatError::IncompatibleTerminalCause)
+        );
+        assert_eq!(
+            TailFlightRecordDocument::from_record(&record, settings, identity()),
+            Err(FlightRecordFormatError::IncompatibleTerminalCause)
+        );
+    }
+}
+
+#[test]
 fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
     let document = document();
     let archive =

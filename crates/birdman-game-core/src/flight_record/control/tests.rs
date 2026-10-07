@@ -294,6 +294,112 @@ fn mismatched_layout_and_duplicate_tail_reports_leave_record_unchanged() {
     ));
 }
 
+#[test]
+fn failure_finalization_preserves_original_stage_site_and_last_valid_sample() {
+    use crate::{
+        AerodynamicEvaluationError, AerodynamicStage, DynamicsError, FlightRecord, HybridError,
+        HybridLimit, HybridSite, HybridSurfaceRole, LoadError, SessionEndReason,
+        SessionSimulationFailure, TailFlightTickError,
+    };
+    let mut record = FlightRecord::try_new(header()).unwrap();
+    let initial = initial(-10.5);
+    record
+        .begin_tail(initial, telemetry(initial.flight_state()))
+        .unwrap();
+    let site = HybridSite::Proxy {
+        surface: HybridSurfaceRole::MainWing,
+        index: 3,
+    };
+    let cause =
+        HybridError::outside(site, HybridLimit::LocalSpeed).with_stage(AerodynamicStage::Second);
+    let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
+        DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
+            cause,
+        ))),
+    ));
+    let previous = record.samples().to_vec();
+    let finalized = record
+        .finalize_with_failure(SessionEndReason::OutOfValidEnvelope, 0, 0.0, None, failure)
+        .unwrap();
+    assert_eq!(finalized.failure, Some(failure));
+    assert_eq!(record.samples(), previous);
+    assert_eq!(record.sample_count(), 1);
+    assert!(record.personal_best_candidate_score().is_none());
+    let restored = FlightRecord::try_from_finalized_samples(header(), previous, finalized).unwrap();
+    assert_eq!(restored.finalization(), Some(finalized));
+}
+
+#[test]
+fn incompatible_failure_reason_layout_and_stamp_leave_record_unfinalized() {
+    use crate::{
+        FlightRecord, FlightRecordError, FlightTickError, SessionEndReason,
+        SessionSimulationFailure, TailFlightTickError,
+    };
+    let mut record = FlightRecord::try_new(header()).unwrap();
+    let initial = initial(-10.5);
+    record
+        .begin_tail(initial, telemetry(initial.flight_state()))
+        .unwrap();
+    let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::TickOverflow);
+    for (reason, tick, cause, expected) in [
+        (
+            SessionEndReason::WaterContact,
+            0,
+            failure,
+            FlightRecordError::IncompatibleFailure,
+        ),
+        (
+            SessionEndReason::OutOfValidEnvelope,
+            0,
+            failure,
+            FlightRecordError::IncompatibleFailure,
+        ),
+        (
+            SessionEndReason::FatalSimulationError,
+            0,
+            SessionSimulationFailure::LegacyThreeAxis(FlightTickError::TickOverflow),
+            FlightRecordError::IncompatibleFailure,
+        ),
+        (
+            SessionEndReason::FatalSimulationError,
+            1,
+            failure,
+            FlightRecordError::FinalizationMismatch,
+        ),
+    ] {
+        assert_eq!(
+            record.finalize_with_failure(reason, tick, 0.0, None, cause),
+            Err(expected)
+        );
+        assert!(record.finalization().is_none());
+        assert_eq!(record.sample_count(), 1);
+    }
+    let finalized = record
+        .finalize_with_failure(
+            SessionEndReason::FatalSimulationError,
+            0,
+            0.0,
+            None,
+            failure,
+        )
+        .unwrap();
+    assert_eq!(finalized.failure, Some(failure));
+    let mut invalid = finalized;
+    invalid.reason = SessionEndReason::OutOfValidEnvelope;
+    assert!(matches!(
+        FlightRecord::try_from_finalized_samples(header(), record.samples().to_vec(), invalid,),
+        Err(FlightRecordError::InvalidArchive)
+    ));
+    let mut invalid = finalized;
+    invalid.failure = Some(SessionSimulationFailure::LegacyThreeAxis(
+        FlightTickError::TickOverflow,
+    ));
+    assert!(matches!(
+        FlightRecord::try_from_finalized_samples(header(), record.samples().to_vec(), invalid,),
+        Err(FlightRecordError::InvalidArchive)
+    ));
+}
+
 fn close(actual: f64, expected: f64) {
     assert!(
         (actual - expected).abs() < 1.0e-15,

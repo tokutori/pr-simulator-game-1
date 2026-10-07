@@ -89,6 +89,10 @@ normalized manual intent、body q/r target、身体Hold/Set、manual/FBW/mixed c
 archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだけに限定し、旧三軸recordを混在させない。
 canonical keyの二系統configuration接続とterminal cause保存、公開WASM/default切替はBPG-042の後続結合範囲である。
 
+coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、causeの分類と終了理由、
+三軸・二系統のcontrol layoutを照合する。最新の成功sampleと一致するstampだけを確定し、
+失敗intervalの部分状態を追加しない。cause未対応のcodecは型付き非互換を返し、原因を欠落させない。
+
 f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
 
 | 項目 | 定義 |
