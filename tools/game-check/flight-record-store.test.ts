@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { IDBCursor as FakeCursor, IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
-import { GameSessionBridge, PersonalBestSelectionBridge, compare_personal_best_json, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { GameSessionBridge, HybridGameSessionBridge, PersonalBestSelectionBridge, compare_personal_best_json, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { createArchivedPersonalBestSelection } from "../../web/src/game/archived-personal-best.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 import {
   FlightRecordRepository,
   IndexedDbFlightRecordPersistence,
@@ -12,6 +14,8 @@ import {
   type StoredFlightRecord,
   type StoredFlightRecordSummary
 } from "../../web/src/game/flight-record-store.js";
+
+const currentPersonalBestIndexRevision = "first-winner-layouts-v1-physics-v3";
 
 class MemoryFlightRecordPersistence implements FlightRecordPersistencePort {
   private readonly records: StoredFlightRecord[] = [];
@@ -188,7 +192,7 @@ describe("FlightRecordRepository", () => {
       );
       const metadataRequest = requestResult(transaction.objectStore("recordMetadata").get(1));
       const personalBestRequest = requestResult(transaction.objectStore("personalBests").getAll());
-      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v3"));
+      const indexStateRequest = requestResult(transaction.objectStore("personalBestIndexState").get(currentPersonalBestIndexRevision));
       await expect(metadataRequest).resolves.toEqual({
         id: 1,
         savedAt: "2026-09-29T00:00:00.000Z"
@@ -196,7 +200,7 @@ describe("FlightRecordRepository", () => {
       await expect(personalBestRequest).resolves.toEqual(personalBestEligible
         ? [{ key: "a".repeat(64), recordId: 1 }]
         : []);
-      await expect(indexStateRequest).resolves.toEqual({ key: "first-winner-physics-v3" });
+      await expect(indexStateRequest).resolves.toEqual({ key: currentPersonalBestIndexRevision });
     } finally {
       database.close();
       await deleteDatabase(factory, databaseName);
@@ -286,6 +290,84 @@ describe("FlightRecordRepository", () => {
 });
 
 describe("Personal Best index repair", () => {
+  it.each(["list", "save"] as const)("repairs a completed legacy index across saved schemas 1–6 through first %s", async (firstOperation) => {
+    const legacy = waterContactRecord();
+    const tail = tailWaterContactRecord();
+    const legacySelection = createArchivedPersonalBestSelection(legacy);
+    const tailSelection = createArchivedPersonalBestSelection(tail);
+    let legacyKey: string;
+    let tailKey: string;
+    try {
+      expect(legacySelection.is_eligible()).toBe(true);
+      expect(tailSelection.is_eligible()).toBe(true);
+      legacyKey = legacySelection.key_hex();
+      tailKey = tailSelection.key_hex();
+      expect(tailKey).not.toBe(legacyKey);
+    } finally {
+      legacySelection.free();
+      tailSelection.free();
+    }
+    const records = [
+      { id: 1, savedAt: "legacy-first", json: legacy },
+      { id: 2, savedAt: "tail-first", json: tail },
+      { id: 3, savedAt: "legacy-tie", json: legacy },
+      { id: 4, savedAt: "tail-tie", json: tail },
+      ...([1, 2, 3, 4] as const).map((version) => ({ id: version + 4,
+        savedAt: `legacy-schema-${String(version)}`, json: legacyArchiveRecord(legacy, version) }))
+    ];
+    const factory = new IDBFactory();
+    const databaseName = `pb-mixed-layout-repair-${firstOperation}`;
+    await seedPersonalBestDatabase(factory, databaseName, 4, records,
+      [{ key: legacyKey, recordId: 3 }, { key: tailKey, recordId: 4 }], false);
+    const database = await openTestDatabase(factory, databaseName);
+    try {
+      const transaction = database.transaction("personalBestIndexState", "readwrite");
+      transaction.objectStore("personalBestIndexState").put({ key: "first-winner-physics-v3" });
+      await new Promise<void>((resolve, reject) => {
+        transaction.oncomplete = () => { resolve(); };
+        transaction.onabort = () => { reject(transaction.error ?? new Error("Legacy index marker seed aborted")); };
+      });
+    } finally {
+      database.close();
+    }
+    const selections: { freeCount: number }[] = [];
+    const createSelection = (json: string): PersonalBestSelectionPort => {
+      const selection = createArchivedPersonalBestSelection(json);
+      const trace = { freeCount: 0 };
+      selections.push(trace);
+      return Object.freeze({ ...selection, free: () => { trace.freeCount += 1; selection.free(); } });
+    };
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(factory, databaseName), undefined, createSelection);
+    try {
+      if (firstOperation === "save") {
+        expect((await repository.saveFrom({ export_flight_record_json: () => tail })).personalBest)
+          .toEqual({ kind: "existing", id: 2, key: tailKey });
+      }
+      const listed = await repository.list();
+      expect(listed.filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([2, 1]);
+      expect(listed).toHaveLength(records.length + (firstOperation === "save" ? 1 : 0));
+      for (const record of records) expect(await repository.load(record.id)).toBe(record.json);
+      const repaired = await readPersonalBestDatabase(factory, databaseName);
+      const repairedRecords = repaired.records;
+      if (repairedRecords === undefined) throw new Error("Repaired records store is missing");
+      expect(repairedRecords.slice(0, records.length)).toEqual(records);
+      expect(repaired.personalBests).toHaveLength(2);
+      expect(repaired.personalBests).toEqual(expect.arrayContaining([{ key: legacyKey, recordId: 1 }, { key: tailKey, recordId: 2 }]));
+      expect(repaired.personalBestIndexState).toEqual(expect.arrayContaining([
+        { key: "first-winner-physics-v3" }, { key: currentPersonalBestIndexRevision }
+      ]));
+      const creations = selections.length;
+      await repository.list();
+      expect(selections).toHaveLength(creations);
+      const saved = await repository.saveFrom({ export_flight_record_json: () => tail });
+      expect(saved.personalBest).toEqual({ kind: "existing", id: 2, key: tailKey });
+      expect(await repository.load(saved.id)).toBe(tail);
+      expect(selections.every(({ freeCount }) => freeCount === 1)).toBe(true);
+    } finally {
+      await deleteDatabase(factory, databaseName);
+    }
+  });
+
   it.each([
     [3, "list", 2, false], [3, "save", 2, false], [3, "list", 3, false], [3, "save", 3, false],
     [4, "list", 2, true], [4, "save", 2, true], [4, "list", 3, true], [4, "save", 3, true],
@@ -323,10 +405,10 @@ describe("Personal Best index repair", () => {
         const transaction = database.transaction(["records", "personalBests", "personalBestIndexState"], "readonly");
         const stored = requestResult(transaction.objectStore("records").getAll());
         const winner = requestResult(transaction.objectStore("personalBests").get(key));
-        const marker = requestResult(transaction.objectStore("personalBestIndexState").get("first-winner-physics-v3"));
+        const marker = requestResult(transaction.objectStore("personalBestIndexState").get(currentPersonalBestIndexRevision));
         expect((await stored).slice(0, records.length)).toEqual(records);
         await expect(winner).resolves.toEqual({ key, recordId: 1 });
-        await expect(marker).resolves.toEqual({ key: "first-winner-physics-v3" });
+        await expect(marker).resolves.toEqual({ key: currentPersonalBestIndexRevision });
       } finally {
         database.close();
       }
@@ -387,7 +469,7 @@ describe("Personal Best index repair", () => {
       expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([currentId]);
       const repaired = await readPersonalBestDatabase(factory, databaseName);
       expect(repaired.personalBests).toEqual([{ key: currentKey, recordId: currentId }]);
-      expect(repaired.personalBestIndexState).toContainEqual({ key: `first-winner-physics-v${String(currentVersion)}` });
+      expect(repaired.personalBestIndexState).toContainEqual({ key: currentPersonalBestIndexRevision });
       for (const record of records) expect(await repository.load(record.id)).toBe(record.json);
       const creations = traced.entries.length;
       await repository.list();
@@ -455,7 +537,7 @@ describe("Personal Best index repair", () => {
         expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
       } else await expect(repository.list()).resolves.toEqual([]);
       const state = await readPersonalBestDatabase(factory, databaseName);
-      expect(state.personalBestIndexState).toEqual([{ key: "first-winner-physics-v3" }]);
+      expect(state.personalBestIndexState).toEqual([{ key: currentPersonalBestIndexRevision }]);
       expect(state.personalBests).toEqual([]);
       const previousCount = traced.entries.length;
       await repository.list();
@@ -483,7 +565,7 @@ describe("Personal Best index repair", () => {
       expect((await repository.saveFrom({ export_flight_record_json: interruptedRecord })).personalBest).toEqual({ kind: "ineligible" });
       const state = await readPersonalBestDatabase(factory, databaseName);
       expect(state.personalBests).toEqual([{ key, recordId: 1 }]);
-      expect(state.personalBestIndexState).toContainEqual({ key: "first-winner-physics-v3" });
+      expect(state.personalBestIndexState).toContainEqual({ key: currentPersonalBestIndexRevision });
     } finally {
       await deleteDatabase(factory, databaseName);
     }
@@ -602,6 +684,40 @@ describe("Personal Best index repair", () => {
 });
 
 const cachedWaterContactRecords = new Map<number, string>();
+
+function tailWaterContactRecord(): string {
+  waterContactRecord();
+  const session = new HybridGameSessionBridge(0, 21, 22);
+  try {
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.advance_countdown();
+    session.launch();
+    const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+      desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+    for (let tick = 0; tick < 4_000 && session.phase_code() === 5; tick += 1) session.advance_tick_json(neutral);
+    expect(session.phase_code()).toBe(7);
+    const json = session.export_flight_record_json();
+    expect(JSON.parse(json) as unknown).toMatchObject({ schema_version: 6,
+      finalization: { reason: "water_contact", disposition: "complete", failure: null } });
+    return json;
+  } finally {
+    session.free();
+  }
+}
+
+function legacyArchiveRecord(json: string, version: 1 | 2 | 3 | 4): string {
+  const record = JSON.parse(json) as { schema_version: number; header: { personal_best_key?: unknown;
+    physics_model_version?: unknown; score_definition_version?: unknown; difficulty: { hud_profile?: unknown } } };
+  record.schema_version = version;
+  delete record.header.personal_best_key;
+  if (version < 4) delete record.header.physics_model_version;
+  if (version < 3) delete record.header.score_definition_version;
+  if (version < 2) delete record.header.difficulty.hud_profile;
+  return JSON.stringify(record);
+}
 
 function waterContactRecord(pitch = 0): string {
   const cached = cachedWaterContactRecords.get(pitch);
@@ -878,7 +994,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             get: (key: string | number) => request(() => name === "records"
               ? records.find((record) => record.id === key)
               : name === "personalBestIndexState"
-                ? personalBestIndexInitialized && key === "first-winner-physics-v3" ? { key } : undefined
+                ? personalBestIndexInitialized && key === currentPersonalBestIndexRevision ? { key } : undefined
                 : personalBests.get(String(key))),
             getAll: () => request(() => name === "records"
               ? [...records]
@@ -886,7 +1002,7 @@ function memoryIndexedDb(initialRecords: readonly StoredFlightRecord[]) {
             put: (value: { readonly key: string; readonly recordId?: number }) => request(() => {
               if (name === "personalBests" && value.recordId !== undefined) {
                 personalBests.set(value.key, { key: value.key, recordId: value.recordId });
-              } else if (name === "personalBestIndexState" && value.key === "first-winner-physics-v3") {
+              } else if (name === "personalBestIndexState" && value.key === currentPersonalBestIndexRevision) {
                 personalBestIndexInitialized = true;
               } else throw new Error(`Unexpected put to ${name}`);
               return value.key;
@@ -997,7 +1113,7 @@ function indexedDbFactoryWithReadResult(storeName: string, result: unknown, pers
       queueMicrotask(() => transaction.onabort?.(new Event("abort")));
     },
     objectStore: (name) => ({
-      get: () => makeRequest(name === "personalBestIndexState" ? { key: "first-winner-physics-v3" } : name === storeName ? result : undefined),
+      get: () => makeRequest(name === "personalBestIndexState" ? { key: currentPersonalBestIndexRevision } : name === storeName ? result : undefined),
       getAll: () => makeRequest(name === "personalBests" ? personalBests : result)
     })
   };

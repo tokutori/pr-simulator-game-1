@@ -14,15 +14,15 @@ coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacity�
 `FlightRecordHeader::try_new`とarchive復元は同じheader条件を用いる。scenario IDとseedの数値範囲は追加で制限せず、catalog解決は呼出し側の責務とする。
 不正headerは構築時に`InvalidHeader`、archive復元時に`InvalidArchive`となる。正当な容量の予約失敗は`AllocationFailed`とし、domain errorと区別する。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
-WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。bulk transfer bufferはfallibleに予約し、確保失敗をadapter errorとして返す。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1〜3からのupgrade、metadata移行、version 4初回一覧時のindex再構築はfake-indexeddbで検証している。実ブラウザー操作は未検証である。再構築対象はschema version 5かつ有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
+WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。WASM bridgeは`flight_record_sample_at`・`flight_record_summary`・bulk sample exportと各packed layoutを公開する。bulk transfer bufferはfallibleに予約し、確保失敗をadapter errorとして返す。Result遷移時、Webは一度のbulk transferからRust由来summaryを表示する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。保存JSONはRustのbounded decoderで検証し、`GameSessionBridge`がRust coreのquery APIへ復元する。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。Analysis graphと共通cursorを実装済みである。IndexedDB version 1〜3からのupgrade、metadata移行、version 4初回一覧時のindex再構築はfake-indexeddbで検証している。実ブラウザー操作は未検証である。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
 WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
 ## Header
 
-外部保存形式は`birdman-game-format::FlightRecordDocument`のJSON schemaを用いる。現行versionは5であり、
-physics model versionを含まないversion 1〜3 recordも読み込み対象とする。version判定とschema検証は
-`birdman-game-format`が担当し、Web保存adapterはschema versionを解釈しない。
+外部保存形式は三軸の`FlightRecordDocument`（schema v1〜5）と二系統の`TailFlightRecordDocument`（schema v6）を用いる。
+physics model versionを含まないversion 1〜3 recordも読み込み対象とする。schema検証は
+`birdman-game-format`が担当する。Web保存repositoryはJSONを保持し、PB factoryはschema versionから対応するRust selectorを選択する。
 physics/model versionはschema versionから独立させる。decoderは16 MiBを超える入力、未知schema version、未知field、壊れたJSONを拒否する。
 `serde_json`は`float_roundtrip`を有効化し、f64 sampleのencode/decodeで値を完全一致させる。
 
@@ -170,7 +170,8 @@ finalizationは一度のみ実行し、その後はimmutableとする。
 初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
 Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。Repositoryとpersistence portにはRust selection factoryを必須で供給する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。
 
-IndexedDB version 4のPB index修復revisionは`first-winner-physics-v3`とする。canonical key v1やrecord schemaの版とは独立であり、physics model versionの更新時に修復revisionも更新する。この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`、`first-winner-v1`、過去physics versionの完了markerがあっても再構築し、各keyの先頭を含む全保存済みrecordをRust selectorへexistingとして登録する。過去physics versionのrecordをPB indexと一覧のPB表示から除外し、現行versionの同点は最初のwinnerを保持する。score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
+IndexedDB version 4のPB index修復revisionは`first-winner-layouts-v1-physics-v3`とする。Rust canonical keyのlayout・適格性契約が変わる場合は修復revisionも更新する。
+この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`、`first-winner-v1`、`first-winner-physics-v3`や過去physics versionの完了markerがあっても再構築し、schema v1〜5/v6を対応するRust selectorで検証する。各layoutの同identity・同canonical keyだけを比較し、同点は最初のwinnerを保持する。過去physics versionや不適格recordはPB indexから除外し、保存snapshotの閲覧を維持する。score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
 
 再構築・PB index・修復markerと、保存時のrecord・metadata追加は同一readwrite transactionで確定する。不適格candidateの保存も修復を先に完了する。失敗時は全変更をrollbackし、生成したselectionを解放する。以後の保存はindex先recordとのみ比較し、一覧取得は再構築を繰り返さない。
 
