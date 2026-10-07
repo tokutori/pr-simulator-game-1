@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js";
@@ -10,18 +11,24 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
-  vi.doUnmock("../../web/src/game/wasm-flight.js");
 });
 
 async function fixture(options: { readonly deferScreenStart?: boolean; readonly failStart?: boolean; readonly failCleanup?: boolean } = {}) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
+  browser.document.documentElement.lang = "ja";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);
   vi.stubGlobal("navigator", browser.navigator);
   vi.stubGlobal("HTMLElement", browser.HTMLElement);
+  vi.stubGlobal("HTMLInputElement", browser.HTMLInputElement);
+  vi.stubGlobal("HTMLSelectElement", browser.HTMLSelectElement);
+  const persistence = new IDBFactory();
+  Object.defineProperty(browser, "indexedDB", { value: persistence });
+  vi.stubGlobal("indexedDB", persistence);
+  vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   const renderer = {
     startLoop: vi.fn<RendererAdapter["startLoop"]>(() => {
       if (options.failStart === true) throw new Error("Injected renderer start failure");
@@ -42,12 +49,9 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-  const session = new wasm.GameSessionBridge(0);
-  const free = vi.spyOn(session, "free");
-  vi.doMock("../../web/src/game/wasm-flight.js", () => ({
-    initializeGameSession: () => Promise.resolve({ session, physicsHz: wasm.physics_hz() }),
-    createPersonalBestSelection: (json: string) => new wasm.PersonalBestSelectionBridge(json)
-  }));
+  const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
+  const { TailAppSessionFacade } = await import("../../web/src/app/session-facade.js");
+  const facadeDispose = vi.spyOn(TailAppSessionFacade.prototype, "dispose");
   const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
   const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
   let releaseInitialization: () => void = () => undefined;
@@ -72,16 +76,17 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     await browser.happyDOM.abort();
   });
   await import("../../web/src/main.js");
-  return { browser, renderer, free, runtimeDispose, pageHide, releaseInitialization,
+  return { browser, renderer, free, facadeDispose, runtimeDispose, pageHide, releaseInitialization,
     initializationPaused: () => initializationPaused,
     scene: () => browser.document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") };
 }
 
-describe("Legacy main startup resource ownership", () => {
+describe("Tail main startup resource ownership", () => {
   it("disposes the runtime and Rust session once when pagehide interrupts deferred Screen start", async () => {
     const trial = await fixture({ deferScreenStart: true });
     await vi.waitFor(() => { expect(trial.initializationPaused()).toBe(true); });
     trial.pageHide(false);
+    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
     expect(trial.free).toHaveBeenCalledTimes(1);
     expect(trial.renderer.dispose).not.toHaveBeenCalled();
     trial.releaseInitialization();
@@ -94,15 +99,17 @@ describe("Legacy main startup resource ownership", () => {
     expect(trial.browser.document.querySelector('button[data-control-id^="game-"]')).toBeNull();
   });
 
-  it("retains ownership until non-BFCache teardown after normal Legacy initialization", async () => {
+  it("retains ownership until non-BFCache teardown after normal Tail initialization", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     expect(trial.renderer.dispose).not.toHaveBeenCalled();
     expect(trial.free).not.toHaveBeenCalled();
+    expect(trial.facadeDispose).not.toHaveBeenCalled();
     trial.pageHide(false);
     await Promise.all(trial.runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
     expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the start failure and frees the Rust session despite renderer cleanup failure", async () => {
@@ -113,5 +120,6 @@ describe("Legacy main startup resource ownership", () => {
     expect(trial.browser.document.body.textContent).toContain("Injected renderer cleanup failure");
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
     expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
   });
 });
