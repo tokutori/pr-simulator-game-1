@@ -1,4 +1,4 @@
-use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
+use crate::aerodynamics_contract::AeroError;
 use crate::dynamics::{AircraftModel, DynamicsError, LoadError};
 use crate::flight_control::{
     BodyRateFeedbackConfig, ControlMode, body_rate_feedback_commands, mix_surface_commands,
@@ -1166,11 +1166,7 @@ fn is_outside_valid_envelope(error: FlightTickError) -> bool {
     else {
         return false;
     };
-    match error {
-        AerodynamicEvaluationError::StaticPolar { cause }
-        | AerodynamicEvaluationError::Element { cause, .. }
-        | AerodynamicEvaluationError::Aggregate { cause } => cause == AeroError::OutsideEnvelope,
-    }
+    error.cause() == AeroError::OutsideEnvelope
 }
 
 #[cfg(test)]

@@ -1062,6 +1062,119 @@ fn fixed_actuator_deflections_reach_all_runge_kutta_stages() {
 }
 
 #[test]
+fn inertia_rejects_positive_definite_but_unrealizable_mass_distributions() {
+    for matrix in [
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 3.0]],
+        [[2.0, 0.0, 1.0], [0.0, 1.0, 0.0], [1.0, 0.0, 2.0]],
+        [[2.0, 1.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+        [[2.0, -0.75, -0.75], [-0.75, 2.0, 0.75], [-0.75, 0.75, 2.0]],
+    ] {
+        assert_eq!(
+            InertiaTensor::try_new(matrix),
+            Err(MathError::NonPhysicalInertiaTensor),
+            "matrix {matrix:?}"
+        );
+    }
+}
+
+#[test]
+fn inertia_accepts_triangle_equality_and_exactly_represented_rotations() {
+    for matrix in [
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]],
+        [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 1.0]],
+        [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[1.5, -0.5, 0.0], [-0.5, 1.5, 0.0], [0.0, 0.0, 1.0]],
+        [[1.5, 0.0, 0.5], [0.0, 1.0, 0.0], [0.5, 0.0, 1.5]],
+        [[1.0, 0.0, 0.0], [0.0, 1.5, 0.5], [0.0, 0.5, 1.5]],
+    ] {
+        let tensor = InertiaTensor::try_new(matrix).expect("realizable planar mass distribution");
+        assert_eq!(tensor.matrix(), matrix);
+        assert!(AircraftModel::try_new(4.0, tensor, 0.0, 0.0, -0.5, 0.5, 1.0, 2.0).is_ok());
+    }
+}
+
+#[test]
+fn inertia_distinguishes_adjacent_values_at_diagonal_and_rotated_boundaries() {
+    assert!(InertiaTensor::diagonal(1.0, 1.0, 2.0_f64.next_down()).is_ok());
+    assert_eq!(
+        InertiaTensor::diagonal(1.0, 1.0, 2.0_f64.next_up()),
+        Err(MathError::NonPhysicalInertiaTensor)
+    );
+    for coupling in [0.5_f64.next_down(), 0.5, 0.5_f64.next_up()] {
+        let matrix = [[1.5, coupling, 0.0], [coupling, 1.5, 0.0], [0.0, 0.0, 1.0]];
+        if coupling <= 0.5 {
+            assert!(InertiaTensor::try_new(matrix).is_ok());
+        } else {
+            assert_eq!(
+                InertiaTensor::try_new(matrix),
+                Err(MathError::NonPhysicalInertiaTensor)
+            );
+        }
+    }
+    assert_eq!(
+        InertiaTensor::diagonal(1.0, 0.1, 1.1),
+        Err(MathError::NonPhysicalInertiaTensor)
+    );
+}
+
+#[test]
+fn inertia_classification_is_stable_across_the_binary64_exponent_range() {
+    for exponent in [-1074, -1022, -900, -500, 0, 500, 900, 1022] {
+        let scale = libm::scalbn(1.0, exponent);
+        assert!(InertiaTensor::diagonal(scale, scale, 2.0 * scale).is_ok());
+        assert_eq!(
+            InertiaTensor::diagonal(scale, scale, 3.0 * scale),
+            Err(MathError::NonPhysicalInertiaTensor)
+        );
+        let rotated = [
+            [3.0 * scale, scale, 0.0],
+            [scale, 3.0 * scale, 0.0],
+            [0.0, 0.0, 2.0 * scale],
+        ];
+        assert!(InertiaTensor::try_new(rotated).is_ok());
+    }
+    assert!(InertiaTensor::diagonal(f64::MAX, f64::MAX, f64::MAX).is_ok());
+    let smallest = f64::from_bits(1);
+    assert!(InertiaTensor::diagonal(smallest, smallest, smallest).is_ok());
+    assert!(InertiaTensor::diagonal(f64::MAX, smallest, f64::MAX).is_ok());
+    assert_eq!(
+        InertiaTensor::diagonal(f64::MAX / 4.0, f64::MAX / 4.0, f64::MAX),
+        Err(MathError::NonPhysicalInertiaTensor)
+    );
+}
+
+#[test]
+fn inertia_retains_finite_symmetric_and_strict_positive_definite_validation() {
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            InertiaTensor::diagonal(invalid, 1.0, 1.0),
+            Err(MathError::NonFinite)
+        );
+    }
+    assert_eq!(
+        InertiaTensor::try_new([
+            [2.0, 0.5, 0.0],
+            [0.5_f64.next_up(), 2.0, 0.0],
+            [0.0, 0.0, 2.0]
+        ]),
+        Err(MathError::AsymmetricTensor)
+    );
+    for matrix in [
+        [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 2.0]],
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 2.0], [0.0, 2.0, 1.0]],
+    ] {
+        assert_eq!(
+            InertiaTensor::try_new(matrix),
+            Err(MathError::NonPositiveDefiniteTensor)
+        );
+    }
+    let signed_zero = [[1.0, -0.0, 0.0], [-0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    let tensor = InertiaTensor::try_new(signed_zero).unwrap();
+    assert_eq!(tensor.matrix()[0][1].to_bits(), (-0.0_f64).to_bits());
+}
+
+#[test]
 fn invalid_values_return_typed_errors_without_changing_input() {
     assert_eq!(
         UnitQuaternion::try_new(2.0, 0.0, 0.0, 0.0),

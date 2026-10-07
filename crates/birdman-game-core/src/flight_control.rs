@@ -77,7 +77,7 @@ pub fn body_rate_feedback_commands(
     SurfaceCommands::try_new(commands[0], commands[1], commands[2])
 }
 
-fn saturated_rate_command(
+pub(crate) fn saturated_rate_command(
     gain_seconds: f64,
     limit_rad: f64,
     target_rate: f64,
@@ -172,7 +172,7 @@ pub enum ControlMode {
 }
 
 impl ControlMode {
-    fn authority(self) -> f64 {
+    pub(crate) fn authority(self) -> f64 {
         match self {
             Self::Manual => 0.0,
             Self::Shared(authority) => authority.value(),

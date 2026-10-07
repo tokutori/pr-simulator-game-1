@@ -27,6 +27,9 @@ Gridは原点、N/E/D各軸の正の間隔、各軸2以上の点数、NED速度�
 配列順はNが最速、次いでE、Dとし、indexは `((d * count_e) + e) * count_n + n` とする。
 三線形補間、閉区間の境界を採用する。範囲外、非有限値、overflow、不正な点数はエラーとする。
 閉区間はNED座標の `origin .. origin + spacing * (count - 1)` で判定する。
+`WindField::grid` は各軸の上端が有限かつ原点より大きいことを構築時に検証する。
+overflowまたは丸めによる区間の退化は `WindError::InvalidGridDomain` とする。
+外部formatもcoreの同じ検証を使用し、原因を `EnvironmentFormatError::Wind` に保持する。
 区間内の位置をindexへ換算した際の上端丸め誤差を補正し、1 ULPでも区間外の位置は拒否する。
 暗黙の外挿・clampは行わない。全機の評価点を含む飛行領域をofflineで確保する。
 
@@ -51,6 +54,18 @@ multi-point modelは要素間の速度差によるmomentを表現するが、連
 時間依存gustやstochastic turbulenceは後続拡張とし、明示的simulation timeと状態のAPI設計を先行する。
 
 ## Scenario
+
+### Hybridのcurrent-reference差分
+
+BPG-039の`HybridAerodynamicLoad`は各RK4 stageのOと全proxy world位置で、同じ定常`WindField`をsampleする。
+各proxyにはbodyの$\omega\times r_i$と、NED wind差をbodyへ逆回転した項を適用する。
+全機staticはOの風だけを使用し、proxyは現在のalpha・Vの一様流referenceとの差だけを返す。
+風場の循環・gradientに対する独立forceや加速度を追加しない。式と閉境界は[`aerodynamics.md`](aerodynamics.md)に従う。
+
+`FlightScenario::try_new_with_aerodynamic_provider`では風を別引数で指定しない。
+選択したproviderが所有・借用する一つのfieldを、荷重・CG telemetry・位置queryの全てに使う。
+V=0でも全proxyのsampleを省略せず、局所回転流・差動windと全点静止を区別する。
+範囲外gridや算術故障は元の`WindError`、proxy/surface、RK stageを保持し、失敗tickをcommitしない。
 
 Weather分類は `difficulty.md` のCalm / Mild / Typical / Challenging / NearLimitを正本とし、
 Customは利用者によるscenario選択を表す。具体的なscenario ID・versionと分類を区別する。

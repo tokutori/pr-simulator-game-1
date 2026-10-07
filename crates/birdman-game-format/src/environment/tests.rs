@@ -104,14 +104,84 @@ fn grid_uses_n_fast_ned_velocities_and_closed_bounds_without_clamping() {
 }
 
 #[test]
-fn format_accepts_decimal_grid_upper_corner_as_representative_position() {
+fn core_and_format_share_decimal_grid_boundaries() {
     let mut document = fixture();
     document.wind_grid.origin_ned_m = [0.1; 3];
     document.wind_grid.spacing_ned_m = [0.1; 3];
     document.wind_grid.counts_ned = [4; 3];
-    document.wind_grid.velocities_ned_mps = vec![[1.0, 2.0, 3.0]; 64];
+    document.wind_grid.velocities_ned_mps = (0..64)
+        .map(|index| {
+            [
+                (index % 4) as f64,
+                ((index / 4) % 4) as f64,
+                (index / 16) as f64,
+            ]
+        })
+        .collect();
     document.wind_grid.representative_position_ned_m = [0.1 + 0.1 * 3.0; 3];
     assert_eq!(document.validate(), Ok(()));
+    let samples = document
+        .wind_grid
+        .velocities_ned_mps
+        .iter()
+        .map(|&value| vector(value).unwrap())
+        .collect::<Vec<_>>();
+    let direct = WindField::grid(
+        point(document.wind_grid.origin_ned_m).unwrap(),
+        vector(document.wind_grid.spacing_ned_m).unwrap(),
+        [4; 3],
+        &samples,
+    )
+    .unwrap();
+    let owned = document.wind_grid.build().unwrap();
+    let formatted = owned.as_field().unwrap();
+    let end = document.wind_grid.representative_position_ned_m;
+    for field in [direct, formatted] {
+        assert_eq!(
+            field.velocity_at(point(end).unwrap()),
+            Ok(vector([3.0; 3]).unwrap())
+        );
+        assert_eq!(
+            field.velocity_at(point([0.1; 3]).unwrap()),
+            Ok(vector([0.0; 3]).unwrap())
+        );
+        for axis in 0..3 {
+            let mut outside = end;
+            outside[axis] = f64::from_bits(end[axis].to_bits() + 1);
+            assert_eq!(
+                field.velocity_at(point(outside).unwrap()),
+                Err(WindError::OutsideGrid)
+            );
+        }
+    }
+}
+
+#[test]
+fn core_and_format_reject_nonrepresentable_closed_domains_on_each_axis() {
+    let samples = [vector([0.0; 3]).unwrap(); 8];
+    for axis in 0..3 {
+        for (axis_origin, axis_spacing) in [(1.0e16, 1.0), (1.0e308, 1.0e308)] {
+            let mut grid = fixture().wind_grid;
+            grid.origin_ned_m = [0.0; 3];
+            grid.spacing_ned_m = [1.0; 3];
+            grid.counts_ned = [2; 3];
+            grid.velocities_ned_mps = vec![[0.0; 3]; 8];
+            grid.origin_ned_m[axis] = axis_origin;
+            grid.spacing_ned_m[axis] = axis_spacing;
+            grid.representative_position_ned_m = grid.origin_ned_m;
+            let direct = WindField::grid(
+                point(grid.origin_ned_m).unwrap(),
+                vector(grid.spacing_ned_m).unwrap(),
+                [2; 3],
+                &samples,
+            );
+            assert_eq!(direct, Err(WindError::InvalidGridDomain));
+            assert_eq!(
+                grid.build().err(),
+                Some(EnvironmentFormatError::Wind(WindError::InvalidGridDomain))
+            );
+        }
+    }
 }
 
 #[test]
@@ -146,13 +216,13 @@ fn invalid_grid_geometry_and_sample_counts_preserve_error_causes() {
     document.wind_grid.spacing_ned_m[0] = f64::MAX;
     assert_eq!(
         document.validate(),
-        Err(EnvironmentFormatError::InvalidWindPosition)
+        Err(EnvironmentFormatError::Wind(WindError::InvalidGridDomain))
     );
     document = fixture();
     document.wind_grid.origin_ned_m[0] = 1e100;
     assert_eq!(
         document.validate(),
-        Err(EnvironmentFormatError::Wind(WindError::InvalidGridSpacing))
+        Err(EnvironmentFormatError::Wind(WindError::InvalidGridDomain))
     );
 }
 
