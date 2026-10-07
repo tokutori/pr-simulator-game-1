@@ -16,7 +16,7 @@ import { FlightController } from "../../web/src/game/flight-controller.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel } from "../../web/src/app/app-state.js";
+import type { AppModel, GameSessionOperation } from "../../web/src/app/app-state.js";
 import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
@@ -303,7 +303,7 @@ describe("generated WebAssembly browser binding", () => {
         }).model;
         return createGameViewModel(model, snapshot).scene;
       };
-      const requestOperation = (controlId: string, expectedOperation: string) => {
+      const requestOperation = (controlId: string, expectedOperation: GameSessionOperation) => {
         const requested = updateApp(model, {
           type: "ui-action",
           action: { type: "activate", controlId }
@@ -354,14 +354,22 @@ describe("generated WebAssembly browser binding", () => {
         ["game-setup-mode-shared", "set-control-shared"],
         ["game-setup-mode-automatic", "set-control-automatic"],
         ["game-setup-mode-manual", "set-control-manual"],
-        ["game-setup-preset", "cycle-difficulty-preset"],
-        ["game-setup-information", "cycle-information-level"],
-        ["game-setup-assistance", "cycle-assistance-level"],
-        ["game-setup-weather", "cycle-weather-class"]
+        ["game-setup-select-preset-0", { kind: "set-difficulty-option", axis: "preset", code: 0 }],
+        ["game-setup-select-information-1", { kind: "set-difficulty-option", axis: "information", code: 1 }],
+        ["game-setup-select-assistance-1", { kind: "set-difficulty-option", axis: "assistance", code: 1 }],
+        ["game-setup-select-weather-2", { kind: "set-difficulty-option", axis: "weather", code: 2 }]
       ] as const) {
+        if (typeof operation !== "string") {
+          const control = createGameViewModel(model, null).panels.flatMap((panel) => panel.controls).find((entry) => entry.id === controlId);
+          expect(control).toMatchObject({ kind: "button", enabled: true, presentation: { kind: "choice", selected: false } });
+        }
         const configured = requestOperation(controlId, operation);
         completeOperation(configured.requestId);
         expect(projectedScene()).toBe("FlightSetup");
+        if (typeof operation !== "string") {
+          const control = createGameViewModel(model, null).panels.flatMap((panel) => panel.controls).find((entry) => entry.id === controlId);
+          expect(control).toMatchObject({ presentation: { kind: "choice", selected: true } });
+        }
       }
       session.prepare();
       session.fail_briefing(0);
