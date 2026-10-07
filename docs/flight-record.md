@@ -87,11 +87,14 @@ normalized manual intent、body q/r target、身体Hold/Set、manual/FBW/mixed c
 未知schema、未知field、余剰roll軸、破損値は型付きerrorで拒否する。旧recordのidentityと保存値は保持する。
 新hybrid再積分の互換性はsnapshot閲覧と独立に検査し、旧三軸またはmodel/controller/scenario/physicsの不一致を拒否する。
 archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだけに限定し、旧三軸recordを混在させない。
-canonical keyの二系統configuration接続とterminal cause保存、公開WASM/default切替はBPG-042の後続結合範囲である。
+canonical keyの二系統configuration接続と公開WASM/default切替はBPG-042の後続結合範囲である。
 
 coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、causeの分類と終了理由、
 三軸・二系統のcontrol layoutを照合する。最新の成功sampleと一致するstampだけを確定し、
 失敗intervalの部分状態を追加しない。cause未対応のcodecは型付き非互換を返し、原因を欠落させない。
+v6 finalizationはtyped failureを明示し、元のcontrol/contact/dynamics/load原因と
+Hybridのstage/site/limit/causeを個別に保存する。OutOfValidEnvelopeには元causeを必須とし、
+原因と終了理由の不一致・未知tag・余剰fieldを拒否する。保存queryは最後の成功sampleを利用する。
 
 f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
 

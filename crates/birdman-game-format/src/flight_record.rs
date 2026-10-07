@@ -13,10 +13,16 @@ use serde::{Deserialize, Serialize};
 
 mod tail;
 pub use tail::{
-    FlightRecordArchiveDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
-    TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailFlightRecordControlsDocument, TailFlightRecordDocument,
-    TailFlightRecordInputDocument, TailFlightRecordSampleDocument, TailIncidenceDocument,
-    TailPilotPositionCommandDocument, compare_archive_personal_best_records,
+    ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
+    AerodynamicRoleDocument, AerodynamicStageDocument, ContactFailureDocument,
+    DynamicsFailureDocument, FlightRecordArchiveDocument, FlightRecordStateDocument,
+    FlightRecordTailIdentityDocument, HybridFailureDocument, HybridFlowDocument,
+    HybridLimitDocument, HybridSiteDocument, HybridSurfaceDocument, LoadFailureDocument,
+    MathFailureDocument, TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailControlFailureDocument,
+    TailFlightRecordControlsDocument, TailFlightRecordDocument,
+    TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
+    TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
+    TailTickFailureDocument, WindFailureDocument, compare_archive_personal_best_records,
 };
 
 /// Current external flight-record schema version.

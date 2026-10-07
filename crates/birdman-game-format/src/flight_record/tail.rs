@@ -1,7 +1,7 @@
 use super::{
     FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
-    FlightRecordFinalizationDocument, FlightRecordFormatError, FlightRecordHeaderDocument,
-    FlightRecordInformationDocument, FlightRecordTelemetryDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
+    FlightRecordFormatError, FlightRecordHeaderDocument, FlightRecordInformationDocument,
+    FlightRecordTelemetryDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
 };
 use crate::DifficultySettings;
 use alloc::{string::String, vec::Vec};
@@ -13,6 +13,40 @@ use birdman_game_core::{
     TailPilotPositionIntent, TailRateTarget, UnitQuaternion, compare_personal_best,
 };
 use serde::{Deserialize, Serialize};
+
+mod failure;
+pub use failure::{
+    ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
+    AerodynamicRoleDocument, AerodynamicStageDocument, ContactFailureDocument,
+    DynamicsFailureDocument, HybridFailureDocument, HybridFlowDocument, HybridLimitDocument,
+    HybridSiteDocument, HybridSurfaceDocument, LoadFailureDocument, MathFailureDocument,
+    TailControlFailureDocument, TailTickFailureDocument, WindFailureDocument,
+};
+
+/// Schema-six terminal metadata with the original typed simulation cause.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TailFlightRecordFinalizationDocument {
+    /// Domain termination reason.
+    pub reason: FlightRecordEndReasonDocument,
+    /// Complete, interrupted or failed classification.
+    pub disposition: FlightRecordDispositionDocument,
+    /// Integer tick containing the last valid sample.
+    pub terminal_tick: u64,
+    /// Fraction matching that last valid sample.
+    pub terminal_fraction: f64,
+    /// Stored course/cross-track/net score when available.
+    pub score_m: Option<[f64; 3]>,
+    /// Original failed interval's cause, explicitly null for a non-simulation termination.
+    #[serde(deserialize_with = "deserialize_terminal_failure")]
+    pub failure: Option<TailTickFailureDocument>,
+}
+
+fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<TailTickFailureDocument>, Decoder::Error> {
+    Option::<TailTickFailureDocument>::deserialize(decoder)
+}
 
 /// Archive schema with named two-tail controls, distinct from legacy schemas 1 through 5.
 pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 6;
@@ -150,7 +184,7 @@ pub struct TailFlightRecordDocument {
     /// Chronological initial/successful-tick/optional terminal samples.
     pub samples: Vec<TailFlightRecordSampleDocument>,
     /// Immutable exact terminal time, disposition and score.
-    pub finalization: FlightRecordFinalizationDocument,
+    pub finalization: TailFlightRecordFinalizationDocument,
 }
 
 /// Version-specific archive interpretation, preserving all legacy saved-snapshot meanings.
@@ -172,9 +206,17 @@ impl TailFlightRecordDocument {
         let finalization = record
             .finalization()
             .ok_or(FlightRecordFormatError::RecordUnavailable)?;
-        if finalization.failure.is_some() {
-            return Err(FlightRecordFormatError::IncompatibleTerminalCause);
-        }
+        let failure = finalization
+            .failure
+            .map(|failure| match failure {
+                birdman_game_core::SessionSimulationFailure::TailIncidence(cause) => {
+                    TailTickFailureDocument::from_core(cause)
+                }
+                birdman_game_core::SessionSimulationFailure::LegacyThreeAxis(_) => {
+                    Err(FlightRecordFormatError::IncompatibleTerminalCause)
+                }
+            })
+            .transpose()?;
         let core_header = record.header();
         let scenario = core_header.scenario;
         let document = Self {
@@ -200,7 +242,7 @@ impl TailFlightRecordDocument {
                 .iter()
                 .map(TailFlightRecordSampleDocument::from_core)
                 .collect::<Result<Vec<_>, _>>()?,
-            finalization: FlightRecordFinalizationDocument {
+            finalization: TailFlightRecordFinalizationDocument {
                 reason: finalization.reason.into(),
                 disposition: finalization.disposition.into(),
                 terminal_tick: finalization.terminal_tick,
@@ -212,6 +254,7 @@ impl TailFlightRecordDocument {
                         score.net_horizontal_m(),
                     ]
                 }),
+                failure,
             },
         };
         document.validate()?;
@@ -302,8 +345,21 @@ impl TailFlightRecordDocument {
             terminal_tick: self.finalization.terminal_tick,
             terminal_fraction: self.finalization.terminal_fraction,
             score,
-            failure: None,
+            failure: self
+                .finalization
+                .failure
+                .map(|cause| {
+                    cause
+                        .to_core()
+                        .map(birdman_game_core::SessionSimulationFailure::TailIncidence)
+                })
+                .transpose()?,
         };
+        if finalization.reason == birdman_game_core::SessionEndReason::OutOfValidEnvelope
+            && finalization.failure.is_none()
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
         if self.header.personal_best_key.is_some()
             && (finalization.reason != birdman_game_core::SessionEndReason::WaterContact
                 || finalization.disposition != birdman_game_core::FlightRecordDisposition::Complete

@@ -75,18 +75,19 @@ fn document() -> TailFlightRecordDocument {
         header: source.header,
         control_identity: identity(),
         samples: vec![initial, terminal],
-        finalization: FlightRecordFinalizationDocument {
+        finalization: TailFlightRecordFinalizationDocument {
             reason: FlightRecordEndReasonDocument::WaterContact,
             disposition: FlightRecordDispositionDocument::Complete,
             terminal_tick: 0,
             terminal_fraction: 0.5,
             score_m: Some([100.0, 0.0, 100.0]),
+            failure: None,
         },
     }
 }
 
 #[test]
-fn codecs_reject_terminal_causes_until_the_schema_can_preserve_them() {
+fn legacy_codec_rejects_terminal_causes_and_tail_codec_preserves_them() {
     use birdman_game_core::{
         FlightTickError, SessionEndReason, SessionSimulationFailure, TailFlightTickError,
     };
@@ -121,11 +122,122 @@ fn codecs_reject_terminal_causes_until_the_schema_can_preserve_them() {
             FlightRecordDocument::from_record(&record, settings),
             Err(FlightRecordFormatError::IncompatibleTerminalCause)
         );
-        assert_eq!(
-            TailFlightRecordDocument::from_record(&record, settings, identity()),
-            Err(FlightRecordFormatError::IncompatibleTerminalCause)
-        );
+        match failure {
+            SessionSimulationFailure::LegacyThreeAxis(_) => assert_eq!(
+                TailFlightRecordDocument::from_record(&record, settings, identity()),
+                Err(FlightRecordFormatError::IncompatibleTerminalCause)
+            ),
+            SessionSimulationFailure::TailIncidence(_) => {
+                let document =
+                    TailFlightRecordDocument::from_record(&record, settings, identity()).unwrap();
+                let restored =
+                    FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap())
+                        .unwrap()
+                        .to_finalized_core_record()
+                        .unwrap();
+                assert_eq!(restored.finalization(), record.finalization());
+                assert_eq!(restored.samples(), record.samples());
+            }
+        }
     }
+}
+
+#[test]
+fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
+    use birdman_game_core::{
+        AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError,
+        FlightRecordDisposition, HybridError, HybridLimit, HybridSite, HybridSurfaceRole,
+        LoadError, SessionSimulationFailure, TailFlightTickError, WindError,
+    };
+    for (cause, limit) in [
+        (AeroError::OutsideEnvelope, Some(HybridLimit::LocalSpeed)),
+        (AeroError::Wind(WindError::OutsideGrid), None),
+        (AeroError::Wind(WindError::NonFinite), None),
+        (AeroError::NonFinite, None),
+    ] {
+        let source = document().to_finalized_core_record().unwrap();
+        let hybrid = HybridError::try_from_recorded(
+            HybridSite::Proxy {
+                surface: HybridSurfaceRole::HorizontalTail,
+                index: 1,
+            },
+            cause,
+            limit,
+            Some(AerodynamicStage::Second),
+        )
+        .unwrap();
+        let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
+            DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
+                hybrid,
+            ))),
+        ));
+        let mut finalization = source.finalization().unwrap();
+        finalization.reason = failure.end_reason();
+        finalization.disposition = FlightRecordDisposition::Failed;
+        finalization.failure = Some(failure);
+        let record = FlightRecord::try_from_finalized_samples(
+            source.header(),
+            source.samples().to_vec(),
+            finalization,
+        )
+        .unwrap();
+        let document = TailFlightRecordDocument::from_record(
+            &record,
+            DifficultySettings::custom(
+                InformationLevel::Full,
+                AssistanceLevel::Manual,
+                WeatherClass::Calm,
+            ),
+            identity(),
+        )
+        .unwrap();
+        let restored = FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap())
+            .unwrap()
+            .to_finalized_core_record()
+            .unwrap();
+        assert_eq!(restored.finalization(), record.finalization());
+        assert_eq!(restored.samples(), record.samples());
+        assert_eq!(
+            restored.sample_at_seconds(0.005),
+            record.sample_at_seconds(0.005)
+        );
+        assert_eq!(restored.summary(), record.summary());
+        assert!(restored.personal_best_candidate_score().is_none());
+        assert!(document.personal_best_candidate_score().unwrap().is_none());
+    }
+}
+
+#[test]
+fn v6_requires_explicit_failure_field_and_consistent_reason() {
+    let mut json = serde_json::to_value(document()).unwrap();
+    json["finalization"]
+        .as_object_mut()
+        .unwrap()
+        .remove("failure");
+    assert_eq!(
+        FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&json).unwrap()),
+        Err(FlightRecordFormatError::InvalidJson)
+    );
+    let mut invalid = document();
+    invalid.finalization.failure = Some(TailTickFailureDocument::TickOverflow);
+    assert_eq!(
+        invalid.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid.finalization.reason = FlightRecordEndReasonDocument::OutOfValidEnvelope;
+    invalid.finalization.disposition = FlightRecordDispositionDocument::Failed;
+    assert_eq!(
+        invalid.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid.finalization.failure = None;
+    assert_eq!(
+        invalid.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    invalid.finalization.failure = Some(TailTickFailureDocument::TickOverflow);
+    invalid.finalization.reason = FlightRecordEndReasonDocument::FatalSimulationError;
+    assert!(invalid.validate().is_ok());
 }
 
 #[test]

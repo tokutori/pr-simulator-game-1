@@ -203,6 +203,24 @@ pub struct HybridError {
 }
 
 impl HybridError {
+    /// Restores typed archive diagnostics without evaluating or changing the saved cause.
+    pub fn try_from_recorded(
+        site: HybridSite,
+        cause: AeroError,
+        limit: Option<HybridLimit>,
+        stage: Option<AerodynamicStage>,
+    ) -> Result<Self, AeroError> {
+        if limit.is_some() && cause != AeroError::OutsideEnvelope {
+            return Err(AeroError::InvalidEnvelope);
+        }
+        Ok(Self {
+            site,
+            cause,
+            limit,
+            stage,
+        })
+    }
+
     pub(crate) const fn new(site: HybridSite, cause: AeroError) -> Self {
         Self {
             site,

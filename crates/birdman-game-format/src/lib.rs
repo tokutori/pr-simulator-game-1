@@ -17,16 +17,22 @@ pub use environment::{
 };
 
 pub use flight_record::{
-    FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordArchiveDocument, FlightRecordAssistanceDocument,
-    FlightRecordDifficultyDocument, FlightRecordDispositionDocument, FlightRecordDocument,
-    FlightRecordEndReasonDocument, FlightRecordFinalizationDocument, FlightRecordFormatError,
-    FlightRecordHeaderDocument, FlightRecordHudProfileDocument, FlightRecordInformationDocument,
-    FlightRecordInputDocument, FlightRecordPresetDocument, FlightRecordSampleDocument,
-    FlightRecordStateDocument, FlightRecordTailIdentityDocument, FlightRecordTelemetryDocument,
-    FlightRecordWeatherDocument, MAX_FLIGHT_RECORD_JSON_BYTES, TAIL_FLIGHT_RECORD_SCHEMA_VERSION,
-    TailFlightRecordControlsDocument, TailFlightRecordDocument, TailFlightRecordInputDocument,
+    ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
+    AerodynamicRoleDocument, AerodynamicStageDocument, ContactFailureDocument,
+    DynamicsFailureDocument, FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordArchiveDocument,
+    FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
+    FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
+    FlightRecordFinalizationDocument, FlightRecordFormatError, FlightRecordHeaderDocument,
+    FlightRecordHudProfileDocument, FlightRecordInformationDocument, FlightRecordInputDocument,
+    FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordStateDocument,
+    FlightRecordTailIdentityDocument, FlightRecordTelemetryDocument, FlightRecordWeatherDocument,
+    HybridFailureDocument, HybridFlowDocument, HybridLimitDocument, HybridSiteDocument,
+    HybridSurfaceDocument, LoadFailureDocument, MAX_FLIGHT_RECORD_JSON_BYTES, MathFailureDocument,
+    TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailControlFailureDocument,
+    TailFlightRecordControlsDocument, TailFlightRecordDocument,
+    TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    compare_archive_personal_best_records,
+    TailTickFailureDocument, WindFailureDocument, compare_archive_personal_best_records,
 };
 pub use personal_best::{
     PersonalBestContentHashes, PersonalBestSelection, canonical_personal_best_key,
