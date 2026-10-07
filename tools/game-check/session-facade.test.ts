@@ -26,6 +26,109 @@ function advance(facade: AppSessionFacade): void {
 }
 
 describe("layout-discriminated application session facade", () => {
+  it("derives Title and independent Attract projections while preserving player selections and query generations", async () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const liveSnapshot = vi.spyOn(bridge, "snapshot_json");
+    try {
+      expect(facade.readTitleProjection()).toEqual({ kind: "idle", phaseCode: 0 });
+      facade.executeOperation("open-setup");
+      facade.executeOperation({ kind: "set-difficulty-option", axis: "information", code: 0 });
+      facade.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 3 });
+      const selectedEnvironment = facade.readEnvironmentJson();
+      facade.executeOperation("return-to-title");
+      const titleToken = facade.captureQueryToken();
+      facade.executeOperation("enter-attract");
+      expect(facade.acceptQuery(titleToken, "title").kind).toBe("stale");
+      const title = facade.readTitleProjection();
+      if (title.kind !== "attract") throw new Error("Expected a Rust Attract projection");
+      expect(title).toMatchObject({ phaseCode: 10, context: { phase: "attract", controlLayout: "tail_incidence",
+        difficulty: { information: "minimal", assistance: "strong", weather: "calm" } }, clock: { kind: "playing", timeSeconds: 0 } });
+      const environment = JSON.parse(facade.readEnvironmentJson()) as { projection: { source: string; identity: unknown } };
+      const demoScenario = JSON.parse(bridge.playback_context_json()) as { scenario: unknown };
+      expect(environment.projection.source).toBe("attract");
+      expect(environment.projection.identity).toEqual(demoScenario.scenario);
+      expect(() => facade.readSnapshot()).toThrow();
+      expect(() => facade.exportRecordJson()).toThrow();
+      expect(() => facade.readReplayContext()).toThrow(RangeError);
+      expect(() => facade.seekReplay(0.01)).toThrow(RangeError);
+      expect(facade.readPlaybackClock()).toEqual(title.clock);
+      liveSnapshot.mockClear();
+      const observed = facade.captureQueryToken();
+      const sample = facade.queryRecordSample(0.005);
+      const queued = Promise.resolve(facade.queryRecordDisplay(0.005));
+      expect(sample.controls.layout).toBe("tail_incidence");
+      expect(facade.readAnalysisSamples().at(-1)).toMatchObject({ tickIndex: title.context.finalization.terminalTick,
+        fraction: title.context.finalization.terminalFraction });
+      expect(facade.readPlaybackClock()).toEqual(title.clock);
+      expect(liveSnapshot).not.toHaveBeenCalled();
+      facade.executeOperation("leave-attract");
+      expect(facade.readTitleProjection()).toEqual({ kind: "idle", phaseCode: 0 });
+      expect(facade.acceptQuery(observed, await queued).kind).toBe("stale");
+      facade.executeOperation("open-setup");
+      expect(bridge.information_level_code()).toBe(0);
+      expect(bridge.weather_class_code()).toBe(3);
+      expect(bridge.control_mode_code()).toBe(0);
+      expect(facade.readEnvironmentJson()).toBe(selectedEnvironment);
+      facade.executeOperation("return-to-title");
+      facade.executeOperation("enter-attract");
+      expect(facade.readTitleProjection()).toEqual(title);
+      expect(facade.queryRecordSample(0.005)).toEqual(sample);
+      expect(facade.acceptQuery(observed, sample).kind).toBe("stale");
+    } finally {
+      facade.dispose();
+    }
+  });
+
+  it("delegates Attract playback pause, rate, seek, wrap and restart to the Rust clock", () => {
+    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    try {
+      facade.executeOperation("enter-attract");
+      const context = facade.readAttractContext();
+      const duration = (context.finalization.terminalTick + context.finalization.terminalFraction) / physics_hz();
+      const token = facade.captureQueryToken();
+      expect(facade.setPlaybackPlaying(false)).toMatchObject({ timeSeconds: 0, kind: "paused" });
+      expect(facade.acceptQuery(token, context).kind).toBe("stale");
+      expect(facade.setPlaybackRate(2)).toMatchObject({ rateCode: 2, kind: "paused" });
+      expect(facade.seekPlayback(duration * 0.5).timeSeconds).toBeCloseTo(duration * 0.5, 12);
+      expect(facade.setPlaybackPlaying(true).kind).toBe("playing");
+      expect(facade.advancePlayback(duration * 0.5).timeSeconds).toBeCloseTo(duration * 0.5, 12);
+      expect(facade.seekPlayback(duration)).toMatchObject({ timeSeconds: duration, kind: "paused" });
+      expect(facade.setPlaybackPlaying(true)).toMatchObject({ timeSeconds: 0, kind: "playing" });
+      const failed = facade.captureQueryToken();
+      expect(() => facade.advancePlayback(-1)).toThrow();
+      expect(facade.acceptQuery(failed, context).kind).toBe("stale");
+      expect(facade.readPlaybackClock()).toMatchObject({ timeSeconds: 0, kind: "playing" });
+    } finally {
+      facade.dispose();
+    }
+  });
+
+  it("rejects invalid Attract transitions and named contexts that contradict the Rust phase", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      facade.executeOperation("open-setup");
+      const selected = facade.readSnapshot();
+      expect(() => facade.executeOperation("enter-attract")).toThrow();
+      expect(facade.readSnapshot()).toEqual(selected);
+      expect(() => facade.readTitleProjection()).toThrow();
+      facade.executeOperation("return-to-title");
+      facade.executeOperation("enter-attract");
+      const attract = bridge.playback_context_json();
+      const mismatched = JSON.parse(attract) as { phase: string };
+      mismatched.phase = "replay";
+      const context = vi.spyOn(bridge, "playback_context_json").mockReturnValue(JSON.stringify(mismatched));
+      expect(() => facade.readPlaybackContext()).toThrow("disagrees with the Rust phase");
+      context.mockRestore();
+      facade.executeOperation("leave-attract");
+      vi.spyOn(bridge, "playback_context_json").mockReturnValue(attract);
+      expect(() => facade.readPlaybackContext()).toThrow("disagrees with the Rust phase");
+    } finally {
+      facade.dispose();
+    }
+  });
+
   it("rejects a second owner of the same Rust session, including a disposed resource", () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());

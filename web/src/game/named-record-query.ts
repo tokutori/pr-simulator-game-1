@@ -44,21 +44,24 @@ export type RecordedDifficulty = RecordedDifficultyAxes & (
   | Readonly<{ information: "full" | "standard" | "minimal" | "realistic"; hudProfile: null }>
   | Readonly<{ information: "custom"; hudProfile: RecordedHudProfile }>
 );
-interface ReplayEnvelope {
+interface PlaybackEnvelope {
   readonly schemaVersion: 2;
-  readonly phase: "replay";
   readonly scenario: TailScenarioIdentity;
   readonly difficulty: RecordedDifficulty;
 }
-export type NamedReplayContext = ReplayEnvelope & (
+export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay" }> & (
   | Readonly<{ controlLayout: "legacy_three_axis"; controlIdentity: null; finalization: LegacyTerminalFinalization }>
   | Readonly<{ controlLayout: "tail_incidence"; controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>
 );
-export interface NamedReplayClock {
+export type NamedAttractContext = PlaybackEnvelope & Readonly<{ phase: "attract"; controlLayout: "tail_incidence";
+  controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
+export type NamedPlaybackContext = NamedReplayContext | NamedAttractContext;
+export interface NamedPlaybackClock {
   readonly timeSeconds: number;
   readonly rateCode: 0 | 1 | 2;
   readonly kind: "paused" | "playing";
 }
+export type NamedReplayClock = NamedPlaybackClock;
 
 export function tailResultRecordContext(snapshot: TailSessionSnapshot): RecordQueryContext {
   if (snapshot.frame.kind !== "result") throw new RangeError("Recorded Result queries require a terminal Rust snapshot");
@@ -66,18 +69,32 @@ export function tailResultRecordContext(snapshot: TailSessionSnapshot): RecordQu
 }
 
 export function parseNamedReplayContext(json: string): NamedReplayContext {
+  const context = parseNamedPlaybackContext(json);
+  if (context.phase !== "replay") throw new RangeError("Named Replay requires a Replay context");
+  return context;
+}
+
+export function parseNamedAttractContext(json: string): NamedAttractContext {
+  const context = parseNamedPlaybackContext(json);
+  if (context.phase !== "attract") throw new RangeError("Named Attract requires an Attract context");
+  return context;
+}
+
+export function parseNamedPlaybackContext(json: string): NamedPlaybackContext {
   const document = boundaryObject(boundedJson(json, 16_384), ["schema_version", "phase", "scenario", "control_layout", "control_identity", "difficulty", "finalization"]);
-  if (document.schema_version !== 2 || document.phase !== "replay") throw new RangeError("Unsupported named Replay context");
+  if (document.schema_version !== 2) throw new RangeError("Unsupported named playback context schema");
+  const phase = boundaryTag(document.phase, ["replay", "attract"]);
   const layout = boundaryTag(document.control_layout, ["legacy_three_axis", "tail_incidence"]);
   const finalization = boundaryObject(document.finalization, ["layout", "value"]);
-  if (finalization.layout !== layout) throw new RangeError("Replay finalization and physical control layout disagree");
-  const envelope: ReplayEnvelope = { schemaVersion: 2, phase: "replay", scenario: decodeTailScenarioIdentity(document.scenario),
+  if (finalization.layout !== layout) throw new RangeError("Playback finalization and physical control layout disagree");
+  const envelope: PlaybackEnvelope = { schemaVersion: 2, scenario: decodeTailScenarioIdentity(document.scenario),
     difficulty: decodeRecordedDifficulty(document.difficulty) };
   if (layout === "legacy_three_axis") {
+    if (phase === "attract") throw new RangeError("Named Attract requires the Rust two-tail demo layout");
     if (document.control_identity !== null) throw new RangeError("Legacy Replay cannot declare a two-tail controller identity");
-    return Object.freeze({ ...envelope, controlLayout: layout, controlIdentity: null, finalization: decodeLegacyFinalization(finalization.value) });
+    return Object.freeze({ ...envelope, phase, controlLayout: layout, controlIdentity: null, finalization: decodeLegacyFinalization(finalization.value) });
   }
-  return Object.freeze({ ...envelope, controlLayout: layout, controlIdentity: decodeTailControlIdentity(document.control_identity),
+  return Object.freeze({ ...envelope, phase, controlLayout: layout, controlIdentity: decodeTailControlIdentity(document.control_identity),
     finalization: decodeTailTerminalFinalization(finalization.value) });
 }
 
@@ -109,12 +126,16 @@ export function parseNamedAnalysisSamples(json: string, physicsHz: number, conte
 }
 
 export function parseNamedReplayClock(values: ArrayLike<number>, physicsHz: number, context: NamedReplayContext): NamedReplayClock {
-  if (values.length !== 3) throw new RangeError("Named Replay clock requires exactly three values");
+  return parseNamedPlaybackClock(values, physicsHz, context);
+}
+
+export function parseNamedPlaybackClock(values: ArrayLike<number>, physicsHz: number, context: NamedPlaybackContext): NamedPlaybackClock {
+  if (values.length !== 3) throw new RangeError("Named playback clock requires exactly three values");
   const duration = terminalTime(physicsHz, context);
   const timeSeconds = boundaryNumber(values[0], 0, duration);
   const rateCode = boundaryInteger(values[1], 0, 2) as 0 | 1 | 2;
   const playing = boundaryInteger(values[2], 0, 1);
-  if (timeSeconds === duration && playing === 1) throw new RangeError("Terminal Replay cursor must be paused");
+  if (timeSeconds === duration && playing === 1) throw new RangeError("Terminal playback cursor must be paused");
   return Object.freeze({ timeSeconds, rateCode, kind: playing === 0 ? "paused" : "playing" });
 }
 

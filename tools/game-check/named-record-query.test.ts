@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { parseNamedAnalysisSamples, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
+import { parseNamedAnalysisSamples, parseNamedAttractContext, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
   tailResultRecordContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 
@@ -49,6 +49,65 @@ function legacyRecord(): Record<string, unknown> {
 }
 
 describe("named saved-record query boundary", () => {
+  it("decodes the independent Rust Attract record and clock without a live snapshot", () => {
+    const session = new HybridGameSessionBridge(0, 41, 42);
+    try {
+      session.enter_attract();
+      const context = parseNamedAttractContext(session.playback_context_json());
+      expect(parseNamedPlaybackContext(session.playback_context_json())).toEqual(context);
+      expect(context).toMatchObject({ phase: "attract", controlLayout: "tail_incidence", scenario: { catalogVersion: 2, environmentVersion: 1 },
+        difficulty: { information: "minimal", assistance: "strong", weather: "calm" } });
+      expect(context.controlIdentity.aircraftConfigurationId.length).toBeGreaterThan(0);
+      expect(() => session.snapshot_json()).toThrow();
+      expect(() => session.export_flight_record_json()).toThrow();
+      const samples = parseNamedAnalysisSamples(session.flight_analysis_samples_json(), physics_hz(), context);
+      const terminal = samples.at(-1);
+      if (terminal === undefined) throw new Error("Expected the Rust demo terminal sample");
+      expect(terminal).toMatchObject({ tickIndex: context.finalization.terminalTick, fraction: context.finalization.terminalFraction,
+        controls: { layout: "tail_incidence" } });
+      expect(parseNamedRecordSample(session.flight_record_sample_at_seconds(terminal.timeSeconds), physics_hz(), context)).toEqual(terminal);
+      expect(parseNamedPlaybackClock(session.playback_clock_state(), physics_hz(), context)).toEqual({ timeSeconds: 0, rateCode: 1, kind: "playing" });
+      const wrapped = parseNamedPlaybackClock(session.advance_playback(terminal.timeSeconds * 1.25), physics_hz(), context);
+      expect(wrapped.timeSeconds).toBeCloseTo(terminal.timeSeconds * 0.25, 12);
+      expect(wrapped.kind).toBe("playing");
+      expect(() => parseNamedReplayContext(session.playback_context_json())).toThrow(RangeError);
+    } finally {
+      session.free();
+    }
+  });
+
+  it("rejects malformed Attract phase, layout, identity, finalization and clock boundaries", () => {
+    const session = new HybridGameSessionBridge(0, 41, 42);
+    try {
+      session.enter_attract();
+      const original = session.playback_context_json();
+      const context = parseNamedAttractContext(original);
+      const mutations: readonly ((document: Record<string, unknown>) => void)[] = [
+        (document) => { document.schema_version = 1; }, (document) => { document.phase = "result"; },
+        (document) => { document.control_identity = null; },
+        (document) => { document.control_layout = "legacy_three_axis"; document.control_identity = null;
+          nested(document, "finalization").layout = "legacy_three_axis"; },
+        (document) => { nested(document, "finalization").layout = "legacy_three_axis"; },
+        (document) => { nested(document, "scenario").environment_version = 0; },
+        (document) => { nested(nested(document, "finalization"), "value").failure = { unknown_cause: 0 }; }
+      ];
+      for (const mutate of mutations) {
+        const document = jsonObject(original);
+        mutate(document);
+        expect(() => parseNamedPlaybackContext(JSON.stringify(document))).toThrow(RangeError);
+      }
+      const duration = (context.finalization.terminalTick + context.finalization.terminalFraction) / physics_hz();
+      expect(() => parseNamedPlaybackClock([duration, 1, 1], physics_hz(), context)).toThrow(RangeError);
+      expect(() => parseNamedPlaybackClock([0, 1, 2], physics_hz(), context)).toThrow(RangeError);
+      const replayDocument = jsonObject(original);
+      replayDocument.phase = "replay";
+      expect(() => parseNamedAttractContext(JSON.stringify(replayDocument))).toThrow(RangeError);
+      expect(parseNamedReplayContext(JSON.stringify(replayDocument)).phase).toBe("replay");
+    } finally {
+      session.free();
+    }
+  });
+
   it("shares tail Result, Analysis and Replay snapshots without a legacy roll slot or cursor side effect", () => {
     const session = tailResult();
     try {

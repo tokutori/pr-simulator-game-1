@@ -153,11 +153,14 @@ reset・snapshot同期・描画の失敗時は入力とclockを停止し、再�
 `LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
 facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
 非同期queryは観測開始時のopaque owner/generation tokenを保持し、Retry・設定変更・archive開閉・cursor変更・free後の結果を拒否する。
-scenario/seedが同一でもresource世代が異なる結果は受理しない。Attractと新Analysis集計入口の接続は別の目的単位で扱う。
+scenario/seedが同一でもresource世代が異なる結果は受理しない。新Analysis集計入口の接続は別の目的単位で扱う。
+Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
+Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
+enter/leave・再生操作はresource世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
 共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
 旧live ABIと保存queryは不足理由を持つ`unavailable`とし、保存cursorの距離を再計算・補填しない。
 
-`named-record-query`はschema 2の保存query・Analysis batch・Replay contextをimmutableな型へ変換する。
+`named-record-query`はschema 2の保存query・Analysis batch・Replay/Attract contextをimmutableな型へ変換する。
 保存v1〜5の三軸とv6の二系統尾翼はcontrolsの直和型で保持し、tail snapshotへroll制御値を補填しない。
 同sessionのRust terminal projectionとphysics frequencyを使用し、layout・stamp・初期/終端・時系列・clockの整合を検査する。
 queryは保存snapshotとRust-owned Replay clockを参照し、再simulation・物理/score/controllerの再評価を行わない。

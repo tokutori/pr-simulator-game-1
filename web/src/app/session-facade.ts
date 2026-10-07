@@ -8,8 +8,8 @@ import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSam
 import type { FlightAnalysisData, FlightAnalysisSample, FlightRecordQueryPort } from "../game/flight-record-query.js";
 import { parseFlightSnapshot } from "../game/flight-snapshot.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
-import { parseNamedAnalysisSamples, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext, tailResultRecordContext } from "../game/named-record-query.js";
-import type { NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
+import { parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
+import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
 import type { TailSessionPort } from "../game/tail-flight-controller.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
 import { parseTailSessionSnapshot } from "../game/tail-session-codec.js";
@@ -39,11 +39,11 @@ const ownedSessionResources = new WeakSet<SessionResourcePort>();
 export type LegacyAppSessionPort = SessionResourcePort & GameSessionOperationPort & FlightSessionPort & FlightRecordQueryPort & {
   launch(): ArrayLike<number>;
 };
-type PendingTailOperation = "enter-attract" | "leave-attract" | "cycle-difficulty-preset" | "cycle-information-level"
+type PendingTailOperation = "cycle-difficulty-preset" | "cycle-information-level"
   | "cycle-assistance-level" | "cycle-weather-class";
 export type TailAppSessionOperation = Exclude<GameSessionOperation, PendingTailOperation>;
 export type TailAppSessionPort = SessionResourcePort & TailSessionPort
-  & Omit<GameSessionOperationPort, "abort" | "enter_attract" | "leave_attract" | "cycle_difficulty_preset"
+  & Omit<GameSessionOperationPort, "abort" | "cycle_difficulty_preset"
     | "cycle_information_level" | "cycle_assistance_level" | "cycle_weather_class"> & {
     abort(): string;
     launch(): string;
@@ -52,6 +52,9 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     flight_record_sample_at_seconds(seconds: number): string;
     playback_clock_state(): ArrayLike<number>;
     seek_playback(seconds: number): ArrayLike<number>;
+    set_playback_rate_code(code: number): ArrayLike<number>;
+    set_playback_playing(playing: boolean): ArrayLike<number>;
+    advance_playback(elapsedSeconds: number): ArrayLike<number>;
   };
 type CompletedOperation = Readonly<{ kind: "completed" }> | Readonly<{ kind: "countdown-started" }>;
 export type LegacyAppOperationResult = CompletedOperation | Readonly<{ kind: "aborted"; terminalSnapshot: FlightSnapshot }>;
@@ -63,6 +66,8 @@ export interface SessionLifecycleProjection {
   readonly countdownRemaining: number;
   readonly canResume: boolean;
 }
+export type TailTitleProjection = Readonly<{ kind: "idle"; phaseCode: 0 }>
+  | Readonly<{ kind: "attract"; phaseCode: 10; context: NamedAttractContext; clock: NamedPlaybackClock }>;
 
 abstract class SessionResourceOwner {
   private readonly owner = Symbol("session owner");
@@ -198,7 +203,34 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   readReplayContext(): NamedReplayContext {
-    return this.observe(() => parseNamedReplayContext(this.port.playback_context_json()));
+    const context = this.readPlaybackContext();
+    if (context.phase !== "replay") throw new RangeError("Replay projection requires the Rust Replay phase");
+    return context;
+  }
+
+  readAttractContext(): NamedAttractContext {
+    const context = this.readPlaybackContext();
+    if (context.phase !== "attract") throw new RangeError("Attract projection requires the Rust Attract phase");
+    return context;
+  }
+
+  readPlaybackContext(): NamedPlaybackContext {
+    return this.observe(() => {
+      const phaseCode = this.readLifecycle().phaseCode;
+      const context = parseNamedPlaybackContext(this.port.playback_context_json());
+      if (phaseCode !== (context.phase === "replay" ? 9 : 10)) throw new RangeError("Named playback context disagrees with the Rust phase");
+      return context;
+    });
+  }
+
+  readTitleProjection(): TailTitleProjection {
+    return this.observe(() => {
+      const phaseCode = this.readLifecycle().phaseCode;
+      if (phaseCode === 0) return Object.freeze({ kind: "idle", phaseCode });
+      const context = this.readAttractContext();
+      return Object.freeze({ kind: "attract", phaseCode: 10, context,
+        clock: parseNamedPlaybackClock(this.port.playback_clock_state(), this.physicsHz, context) });
+    });
   }
 
   readAnalysisSamples(): readonly NamedRecordSample[] {
@@ -218,15 +250,46 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   readReplayClock(): NamedReplayClock {
-    return this.observe(() => parseNamedReplayClock(this.port.playback_clock_state(), this.physicsHz, this.readReplayContext()));
+    return this.observe(() => parseNamedPlaybackClock(this.port.playback_clock_state(), this.physicsHz, this.readReplayContext()));
   }
 
   seekReplay(seconds: number): NamedReplayClock {
-    return this.change(() => parseNamedReplayClock(this.port.seek_playback(seconds), this.physicsHz, this.readReplayContext()));
+    return this.change(() => {
+      const context = this.readReplayContext();
+      return parseNamedPlaybackClock(this.port.seek_playback(seconds), this.physicsHz, context);
+    });
+  }
+
+  readPlaybackClock(): NamedPlaybackClock {
+    return this.observe(() => parseNamedPlaybackClock(this.port.playback_clock_state(), this.physicsHz, this.readPlaybackContext()));
+  }
+
+  seekPlayback(seconds: number): NamedPlaybackClock {
+    return this.changePlaybackClock(() => this.port.seek_playback(seconds));
+  }
+
+  setPlaybackRate(code: 0 | 1 | 2): NamedPlaybackClock {
+    return this.changePlaybackClock(() => this.port.set_playback_rate_code(code));
+  }
+
+  setPlaybackPlaying(playing: boolean): NamedPlaybackClock {
+    return this.changePlaybackClock(() => this.port.set_playback_playing(playing));
+  }
+
+  advancePlayback(elapsedSeconds: number): NamedPlaybackClock {
+    return this.changePlaybackClock(() => this.port.advance_playback(elapsedSeconds));
+  }
+
+  private changePlaybackClock(operation: () => ArrayLike<number>): NamedPlaybackClock {
+    return this.change(() => {
+      const context = this.readPlaybackContext();
+      return parseNamedPlaybackClock(operation(), this.physicsHz, context);
+    });
   }
 
   private recordContext(): RecordQueryContext {
-    return this.readLifecycle().phaseCode === 9 ? this.readReplayContext() : tailResultRecordContext(this.readSnapshot());
+    const phase = this.readLifecycle().phaseCode;
+    return phase === 9 || phase === 10 ? this.readPlaybackContext() : tailResultRecordContext(this.readSnapshot());
   }
 }
 
@@ -266,6 +329,8 @@ function executeTailOperation(port: TailAppSessionPort, operation: TailAppSessio
     case "retry-briefing": port.retry_briefing(); port.mark_briefing_ready(); break;
     case "enter-replay": port.enter_replay(); break;
     case "leave-replay": port.leave_replay(); break;
+    case "enter-attract": port.enter_attract(); break;
+    case "leave-attract": port.leave_attract(); break;
     default: return unknownOperation(operation);
   }
   return Object.freeze({ kind: "completed" });
