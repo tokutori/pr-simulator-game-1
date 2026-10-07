@@ -58,6 +58,7 @@ describe("tail-aware shared Flight HUD", () => {
       ]);
       expect(model.telemetry).toContain("距離 unavailable");
       expect(model.controlsDescription).toContain("nose-up/down intent");
+      expect(model.controlsDescription).toContain("←/→ left/right intent");
       expect(model.controlsDescription).toContain("pilot Hold");
       expect(model.controlsDescription).not.toContain("A/D roll");
       expect(model.pilotPositionRatio).toBeNull();

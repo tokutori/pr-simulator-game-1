@@ -295,7 +295,7 @@ function degrees(radians: number): string {
 
 function controlsDescription(snapshot: FlightDisplaySnapshot): string {
   return snapshot.controls.layout === "tail_incidence"
-    ? "↑/↓ nose-up/down intent · ←/→ right/left intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set"
+    ? "↑/↓ nose-up/down intent · ←/→ left/right intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set"
     : "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
 }
 
