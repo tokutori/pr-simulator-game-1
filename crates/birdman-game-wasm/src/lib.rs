@@ -20,9 +20,10 @@ use wasm_bindgen::{JsValue, prelude::*};
 mod environment;
 mod environment_snapshot;
 mod hybrid_bridge;
+mod hybrid_record;
 mod hybrid_session;
 
-pub use hybrid_bridge::HybridGameSessionBridge;
+pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 
 mod personal_best_fingerprints {

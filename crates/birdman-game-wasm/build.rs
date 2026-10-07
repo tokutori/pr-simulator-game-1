@@ -17,6 +17,9 @@ fn main() {
         workspace_dir.join("crates/birdman-game-wasm/src/environment_snapshot.rs");
     let environment_asset = workspace_dir.join("assets/biwa-typical-july-environment-v6.json");
     let synthetic_source = core_source.join("synthetic_flight.rs");
+    let hybrid_source = workspace_dir.join("crates/birdman-game-wasm/src/hybrid_session.rs");
+    let hybrid_aircraft_source = core_source.join("hybrid_mock.rs");
+    let hybrid_trim_source = core_source.join("hybrid_mock/trim.rs");
     let dynamics_source = core_source.join("dynamics.rs");
     let aerodynamics_source = core_source.join("aerodynamics.rs");
     let wind_source = core_source.join("wind_field.rs");
@@ -27,6 +30,9 @@ fn main() {
         synthetic_source.clone(),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
+        hybrid_source.clone(),
+        hybrid_aircraft_source,
+        hybrid_trim_source,
     ];
     let environment_files = vec![
         wasm_source.clone(),
@@ -35,11 +41,13 @@ fn main() {
         synthetic_source,
         aerodynamics_source,
         wind_source,
+        environment_asset.clone(),
     ];
     let scenario_files = vec![
         wasm_source,
         runtime_environment_source,
         environment_snapshot_source,
+        hybrid_source,
     ];
 
     println!("cargo:rerun-if-changed={}", environment_asset.display());

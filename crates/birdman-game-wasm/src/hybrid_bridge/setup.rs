@@ -85,27 +85,30 @@ impl HybridGameSessionBridge {
 
     /// Returns the existing preset code, including 4=Custom.
     pub fn difficulty_preset_code(&self) -> u32 {
-        crate::preset_code(self.difficulty.preset_label())
+        self.archived.as_ref().map_or_else(
+            || crate::preset_code(self.difficulty.preset_label()),
+            |metadata| metadata.preset_code(),
+        )
     }
 
     /// Returns the existing Information code.
     pub fn information_level_code(&self) -> u32 {
-        crate::information_code(self.difficulty.information())
+        crate::information_code(self.display_difficulty().information())
     }
 
     /// Returns the existing Assistance code.
     pub fn assistance_level_code(&self) -> u32 {
-        crate::assistance_code(self.difficulty.assistance())
+        crate::assistance_code(self.display_difficulty().assistance())
     }
 
     /// Returns the existing Weather code.
     pub fn weather_class_code(&self) -> u32 {
-        crate::weather_code(self.difficulty.weather())
+        crate::weather_code(self.display_difficulty().weather())
     }
 
     /// Returns six Rust-derived HUD cue visibility codes in the existing stable order.
     pub fn information_profile_codes(&self) -> Vec<u32> {
-        let profile = self.difficulty.hud_profile();
+        let profile = self.display_difficulty().hud_profile();
         vec![
             u32::from(profile.telemetry()),
             u32::from(profile.attitude()),
@@ -158,6 +161,7 @@ impl HybridGameSessionBridge {
             .return_to_title()
             .map_err(crate::game_session_error)?;
         self.prepared = None;
+        self.archived = None;
         Ok(())
     }
 
@@ -167,6 +171,7 @@ impl HybridGameSessionBridge {
             .cancel_briefing()
             .map_err(crate::game_session_error)?;
         self.prepared = None;
+        self.archived = None;
         Ok(())
     }
 
@@ -257,6 +262,19 @@ impl HybridGameSessionBridge {
                 let identity = crate::hybrid_session::identity_for_selection(selection);
                 crate::environment_snapshot::for_identity(
                     EnvironmentSource::Selected,
+                    identity.into(),
+                )?
+            }
+            SessionPhase::Replay => {
+                let identity = self.session.configuration_identity().ok_or(
+                    crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
+                )?;
+                crate::environment_snapshot::for_identity(
+                    if self.archived.is_some() {
+                        EnvironmentSource::Archive
+                    } else {
+                        EnvironmentSource::Record
+                    },
                     identity.into(),
                 )?
             }

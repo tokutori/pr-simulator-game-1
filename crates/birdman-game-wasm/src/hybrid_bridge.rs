@@ -20,7 +20,10 @@ use crate::{
 const SCHEMA_VERSION: u32 = 2;
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
+mod record;
 mod setup;
+
+pub use record::TailPersonalBestSelectionBridge;
 
 struct PreparedMetadata {
     record_identity: FlightRecordTailIdentityDocument,
@@ -192,6 +195,7 @@ enum BoundaryError {
     Preparation(HybridSessionPreparationError),
     Session(GameSessionError),
     Control(TailControlError),
+    Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
 }
@@ -202,6 +206,7 @@ impl BoundaryError {
             Self::Preparation(error) => format!("hybrid preparation failed: {error:?}"),
             Self::Session(error) => format!("hybrid session operation failed: {error:?}"),
             Self::Control(error) => format!("hybrid input failed: {error:?}"),
+            Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
             error => format!("hybrid boundary rejected: {error:?}"),
@@ -218,6 +223,7 @@ pub struct HybridGameSessionBridge {
     maximum_flight_ticks: u64,
     seed: u64,
     prepared: Option<PreparedMetadata>,
+    archived: Option<record::ArchiveMetadata>,
 }
 
 #[wasm_bindgen]
@@ -238,6 +244,7 @@ impl HybridGameSessionBridge {
             .open_setup()
             .map_err(crate::game_session_error)?;
         self.prepared = None;
+        self.archived = None;
         Ok(())
     }
 
@@ -327,9 +334,9 @@ impl HybridGameSessionBridge {
         phase_code(self.session.snapshot().phase())
     }
 
-    /// Returns the constructor's selected Manual, Shared or Automatic mode code.
+    /// Returns the displayed selection or archived Manual, Shared or Automatic mode code.
     pub fn control_mode_code(&self) -> u32 {
-        match self.difficulty.assistance() {
+        match self.display_difficulty().assistance() {
             birdman_game_format::AssistanceLevel::Manual => 0,
             birdman_game_format::AssistanceLevel::Assisted
             | birdman_game_format::AssistanceLevel::Light => 1,
@@ -363,6 +370,7 @@ impl HybridGameSessionBridge {
             maximum_flight_ticks,
             seed,
             prepared: None,
+            archived: None,
         }
     }
 

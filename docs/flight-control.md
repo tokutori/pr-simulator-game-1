@@ -110,6 +110,13 @@ Setupの候補は別environment projectionの`selected`で示し、準備失敗�
 record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。旧三軸feedback profileを生成しない。
 `control_profile_json()`はsealed controller ID/versionとpitch/yawのrate上限・feedback gain・slewを供給する。
 device adapterは型付き上限へnormalized demandを写像し、TSに物理定数を定義しない。explicit q/r入力は同一ABIを維持する。
+Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
+queryのschema 2は保存physics/telemetryと`controls.layout`による`legacy_three_axis`/`tail_incidence`の排他値を返す。
+Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。
+`playback_context_json()`はnamed phase `replay`、保存scenario/control identity、difficulty、layout別finalization/causeを返す。
+live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/queryを使用する。保存v1–5を二系統へ読み替えない。
+`export_flight_record_json()`は同じsealed metadataからschema 6とcanonical PB keyを生成する。archiveはsnapshot閲覧へ限定する。
+`TailPersonalBestSelectionBridge`は既存Rust比較を使用し、旧layoutやmodel/controller/key不一致を比較対象から除外する。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
