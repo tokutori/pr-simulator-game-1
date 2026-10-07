@@ -137,7 +137,7 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
     return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frameTag, state, telemetry }) });
   }
   if (phase !== 7) throw new RangeError("Terminal frame requires Result phase");
-  const finalization = decodeFinalization(frame.finalization);
+  const finalization = decodeTailTerminalFinalization(frame.finalization);
   if (finalization.terminalTick !== state.tick || finalization.terminalFraction !== state.fraction) {
     throw new RangeError("Terminal state and finalization must share one exact stamp");
   }
@@ -151,17 +151,25 @@ function boundaryObjectWithKind(value: unknown): "menu" | "flight" | "result" {
 
 function decodeIdentity(scenarioValue: unknown, controlsValue: unknown): TailSessionIdentity {
   if (scenarioValue === null && controlsValue === null) return Object.freeze({ kind: "unprepared" });
-  const scenario = boundaryObject(scenarioValue, ["catalog_version", "scenario_id", "scenario_version", "aircraft_model_version",
+  return Object.freeze({ kind: "prepared", scenario: decodeTailScenarioIdentity(scenarioValue), controls: decodeTailControlIdentity(controlsValue) });
+}
+
+export function decodeTailScenarioIdentity(value: unknown): TailScenarioIdentity {
+  const scenario = boundaryObject(value, ["catalog_version", "scenario_id", "scenario_version", "aircraft_model_version",
     "environment_version", "controller_profile_version", "seed_low", "seed_high"]);
-  const controls = boundaryObject(controlsValue, ["aircraft_configuration_id", "controller_profile_id"]);
   const version = (value: unknown) => boundaryInteger(value, 1, 0xffff_ffff);
-  return Object.freeze({ kind: "prepared", scenario: Object.freeze({
+  return Object.freeze({
     catalogVersion: version(scenario.catalog_version), scenarioId: boundaryInteger(scenario.scenario_id, 0, 0xffff_ffff),
     scenarioVersion: version(scenario.scenario_version), aircraftModelVersion: version(scenario.aircraft_model_version),
     environmentVersion: version(scenario.environment_version), controllerProfileVersion: version(scenario.controller_profile_version),
     seedLow: boundaryInteger(scenario.seed_low, 0, 0xffff_ffff), seedHigh: boundaryInteger(scenario.seed_high, 0, 0xffff_ffff)
-  }), controls: Object.freeze({ aircraftConfigurationId: identityName(controls.aircraft_configuration_id),
-    controllerProfileId: identityName(controls.controller_profile_id) }) });
+  });
+}
+
+export function decodeTailControlIdentity(value: unknown): TailControlIdentity {
+  const controls = boundaryObject(value, ["aircraft_configuration_id", "controller_profile_id"]);
+  return Object.freeze({ aircraftConfigurationId: identityName(controls.aircraft_configuration_id),
+    controllerProfileId: identityName(controls.controller_profile_id) });
 }
 
 function identityName(value: unknown): string {
@@ -184,15 +192,17 @@ function decodeState(value: unknown, physicsHz: number): TailFlightState {
   if (Math.abs(flightTimeSeconds - (tick + fraction) / physicsHz) > 1e-10) throw new RangeError("Tail flight time disagrees with its stamp");
   const attitude = boundaryTuple(state.attitude_body_to_ned, 4) as readonly [number, number, number, number];
   if (Math.abs(Math.hypot(...attitude) - 1) > 1e-8) throw new RangeError("Tail flight attitude must be a unit quaternion");
-  const incidence = boundaryObject(state.physical_incidence, ["horizontal_tail_rad", "vertical_tail_rad"]);
   return Object.freeze({ tick, fraction, flightTimeSeconds,
     datumPositionNedMeters: vector3(state.datum_position_ned_m), datumVelocityNedMetersPerSecond: vector3(state.datum_velocity_ned_mps),
     attitudeBodyToNed: attitude, angularRateBodyRadiansPerSecond: vector3(state.angular_rate_body_rad_s),
     pilotPositionMeters: boundaryNumber(state.pilot_position_m), pilotVelocityMetersPerSecond: boundaryNumber(state.pilot_velocity_mps),
-    pilotPositionTargetMeters: boundaryNumber(state.pilot_position_target_m), physicalIncidence: Object.freeze({
-      horizontalTailRadians: boundaryNumber(incidence.horizontal_tail_rad, -0.2, 0.2),
-      verticalTailRadians: boundaryNumber(incidence.vertical_tail_rad, -0.2, 0.2)
-    }) });
+    pilotPositionTargetMeters: boundaryNumber(state.pilot_position_target_m), physicalIncidence: decodeTailPhysicalIncidence(state.physical_incidence) });
+}
+
+export function decodeTailPhysicalIncidence(value: unknown): TailFlightState["physicalIncidence"] {
+  const incidence = boundaryObject(value, ["horizontal_tail_rad", "vertical_tail_rad"]);
+  return Object.freeze({ horizontalTailRadians: boundaryNumber(incidence.horizontal_tail_rad, -0.2, 0.2),
+    verticalTailRadians: boundaryNumber(incidence.vertical_tail_rad, -0.2, 0.2) });
 }
 
 function decodeTelemetry(value: unknown): TailFlightTelemetry {
@@ -206,7 +216,7 @@ function decodeTelemetry(value: unknown): TailFlightTelemetry {
     attitudeEulerRadians: vector3(telemetry.attitude_euler_rad) });
 }
 
-function decodeFinalization(value: unknown): TailTerminalFinalization {
+export function decodeTailTerminalFinalization(value: unknown): TailTerminalFinalization {
   const terminal = boundaryObject(value, ["reason", "disposition", "terminal_tick", "terminal_fraction", "score_m", "failure"]);
   const reason = boundaryTag(terminal.reason, ["water_contact", "time_limit", "manual_abort", "out_of_valid_envelope", "fatal_simulation_error"]);
   const disposition = boundaryTag(terminal.disposition, ["complete", "interrupted", "failed"]);
@@ -217,10 +227,10 @@ function decodeFinalization(value: unknown): TailTerminalFinalization {
     throw new RangeError("Tail finalization reason, disposition or cause is contradictory");
   }
   return Object.freeze({ reason, disposition, terminalTick: boundaryInteger(terminal.terminal_tick),
-    terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1), scoreMeters: terminal.score_m === null ? null : decodeScore(terminal.score_m), failure });
+    terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1), scoreMeters: terminal.score_m === null ? null : decodeRecordedDistanceScore(terminal.score_m), failure });
 }
 
-function decodeScore(value: unknown): Vector3 {
+export function decodeRecordedDistanceScore(value: unknown): Vector3 {
   const score = vector3(value);
   const expectedNet = boundaryNumber(Math.hypot(score[0], score[1]), 0);
   if (score[2] < 0 || Math.abs(expectedNet - score[2]) > 1e-9 * Math.max(1, expectedNet)) {
