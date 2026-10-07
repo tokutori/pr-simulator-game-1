@@ -69,7 +69,7 @@ enum PlaybackFinalization {
 }
 
 #[derive(Serialize)]
-struct PlaybackContext<'identity> {
+pub(super) struct PlaybackContext<'identity> {
     schema_version: u32,
     phase: &'static str,
     scenario: EnvironmentIdentity,
@@ -257,6 +257,17 @@ impl HybridGameSessionBridge {
         if !matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
+        serde_json::to_string(&self.record_context()?).map_err(BoundaryError::Json)
+    }
+
+    pub(super) fn record_context(&self) -> Result<PlaybackContext<'_>, BoundaryError> {
+        let phase = self.session.snapshot().phase();
+        let phase_name = match phase {
+            SessionPhase::Result => "result",
+            SessionPhase::Replay => "replay",
+            SessionPhase::Attract => "attract",
+            _ => return Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
+        };
         let record = self
             .session
             .playback_record()
@@ -311,20 +322,15 @@ impl HybridGameSessionBridge {
                 )
             }
         };
-        serde_json::to_string(&PlaybackContext {
+        Ok(PlaybackContext {
             schema_version: SCHEMA_VERSION,
-            phase: if phase == SessionPhase::Attract {
-                "attract"
-            } else {
-                "replay"
-            },
+            phase: phase_name,
             scenario: record.header().scenario.into(),
             control_layout,
             control_identity,
             difficulty,
             finalization,
         })
-        .map_err(BoundaryError::Json)
     }
 
     fn clock_internal(&self) -> Result<Vec<f64>, BoundaryError> {

@@ -21,6 +21,7 @@ use crate::{
 const SCHEMA_VERSION: u32 = 2;
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
+mod analysis;
 mod attract;
 mod record;
 mod setup;
@@ -227,6 +228,10 @@ enum BoundaryError {
     Control(TailControlError),
     PilotPosition(DynamicsError),
     Progress(DistanceScoreError),
+    InvalidWindGrid,
+    Environment(crate::environment_snapshot::EnvironmentSnapshotError),
+    Coordinate(birdman_game_core::MathError),
+    Wind(birdman_game_core::WindError),
     Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
@@ -242,6 +247,9 @@ impl BoundaryError {
                 format!("hybrid pilot target projection failed: {error:?}")
             }
             Self::Progress(error) => format!("hybrid flight progress failed: {error:?}"),
+            Self::Environment(error) => format!("hybrid environment query failed: {error:?}"),
+            Self::Coordinate(error) => format!("hybrid wind coordinate failed: {error:?}"),
+            Self::Wind(error) => format!("hybrid wind query failed: {error:?}"),
             Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),

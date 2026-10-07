@@ -127,6 +127,10 @@ live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/
 `enter_attract()`はTitleから独立した有界demo recordを一度生成・保持し、再入時は同recordのclockだけを初期化する。
 demoは登録Calm環境・Automatic制御の架空hybridモデルを使用し、playerのdifficulty・seed・recordへ書き込まない。
 Attractの描画・分析は保存queryを使用し、live snapshot・player record exportを拒否する。`leave_attract()`はTitleへ戻る。
+`flight_record_summary_json()`はResult/Replay/Attractの同recordからRust集計・physics Hz・保存contextを返す。
+最大迎角と確定scoreは理由付き`available`/`unavailable`へ写像し、cursor進行値へ置換しない。
+`flight_wind_grid_json(north_min_m, east_min_m, altitude_m, spacing_m)`は登録済み環境を5×5点でqueryする。
+未知identityと登録領域外は理由付き`unavailable`とし、部分gridや無風への代替値を生成しない。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
