@@ -265,7 +265,7 @@ export function createGameViewModel(
       : briefingControls(model, phaseCode, environment);
     const isTechnical = (control: UiControl): boolean => control.id === "game-briefing-technical" || control.id === "game-briefing-technical-content";
     const entries: UiControl[] = [...flowControls.filter((control) => !isTechnical(control)), ...buttons, ...flowControls.filter(isTechnical)];
-    if (model.status !== "" && model.pendingGameRequestId !== null) entries.push(status("game-preparation-feedback", "処理", model.status));
+    if (model.status !== "" && phaseCode !== 8) entries.push(status("game-preparation-feedback", "通知", model.status));
     entries.forEach((entry, index) => controls.push(Object.freeze({
       ...entry, rect: normalizedRect(0.04, 0.02 + index * 0.94 / entries.length, 0.92, 0.90 / entries.length)
     })));

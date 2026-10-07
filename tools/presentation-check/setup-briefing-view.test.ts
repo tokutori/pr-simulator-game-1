@@ -92,6 +92,69 @@ describe("Flight Setup and Briefing presentation", () => {
     }
   });
 
+  it.each([
+    [1, "game-setup-select-weather-1", 1],
+    [3, "game-briefing-start", 4],
+    [4, "game-countdown-cancel", 1]
+  ] as const)("retains operation feedback after pending is cleared in phase %i", (phaseCode, controlId, successPhaseCode) => {
+    const model = preparationModel(phaseCode);
+    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId } });
+    const requestId = requested.model.pendingGameRequestId;
+    if (requestId === null) throw new Error("Missing operation request");
+    for (const message of ["条件を確認する必要がある。", "Operation completed", ""]) {
+      for (const includeProjection of [false, true]) {
+        const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message,
+          ...(includeProjection ? { currentSession: { phaseCode, controlModeCode: model.controlModeCode,
+            difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3,
+            snapshot: null, canResume: false } } : {}) });
+        expect(failed.model.pendingGameRequestId).toBeNull();
+        expect(failed.model.gameSession.phaseCode).toBe(phaseCode);
+        for (const mode of ["screen", "phone-vr", "webxr"] as const) {
+          const failedView = createGameViewModel({ ...failed.model, presentation: { type: "ready", mode } }, null);
+          const feedback = failedView.panels[0]?.controls.find((control) => control.id === "game-preparation-feedback");
+          if (message === "") expect(feedback).toBeUndefined();
+          else {
+            expect(feedback).toMatchObject({ kind: "status", label: "通知", value: message });
+            expect(failedView.panels[0]?.controls.map((control) => control.id)).not.toContain("game-state");
+          }
+        }
+        const retry = updateApp(failed.model, { type: "ui-action", action: { type: "activate", controlId } });
+        const retryId = retry.model.pendingGameRequestId;
+        if (retryId === null) throw new Error("Missing retry request");
+        const completed = updateApp(retry.model, { type: "game-operation-completed", requestId: retryId,
+          phaseCode: successPhaseCode, controlModeCode: model.controlModeCode, difficulty: model.difficulty,
+          configurationMetadata: model.configurationMetadata, countdownRemaining: 3, snapshot: null });
+        expect(completed.model.status).toBe("");
+        expect(createGameViewModel(completed.model, null).panels[0]?.controls.map((control) => control.id))
+          .not.toContain("game-preparation-feedback");
+      }
+    }
+  });
+
+  it("preserves current feedback when an old operation failure arrives", () => {
+    const model = preparationModel(3);
+    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-start" } });
+    const requestId = requested.model.pendingGameRequestId;
+    if (requestId === null) throw new Error("Missing operation request");
+    const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message: "開始操作を受理できない。" }).model;
+    const stale = updateApp(failed, { type: "game-operation-failed", requestId: requestId - 1, message: "古い失敗" });
+    expect(stale.model).toBe(failed);
+    expect(statusValue(createGameViewModel(stale.model, null), "game-preparation-feedback")).toBe("開始操作を受理できない。");
+  });
+
+  it("displays failed Briefing feedback once in its preparation result", () => {
+    const model = preparationModel(8);
+    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-retry" } });
+    const requestId = requested.model.pendingGameRequestId;
+    if (requestId === null) throw new Error("Missing operation request");
+    const message = "準備に必要な条件を取得できない。";
+    const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message });
+    const view = createGameViewModel(failed.model, null);
+    expect(statusValue(view, "game-briefing-readiness")).toBe(message);
+    expect(view.panels.flatMap((panel) => panel.controls).filter((control) => control.kind === "status" && control.value === message)).toHaveLength(1);
+    expect(view.panels[0]?.controls.map((control) => control.id)).not.toContain("game-preparation-feedback");
+  });
+
   it("disables every Setup interaction while a Rust operation is pending", () => {
     const base = preparationModel(1);
     const model = { ...base, pendingGameRequestId: 1, difficulty: { ...base.difficulty, informationCode: 4 } };
