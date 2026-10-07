@@ -50,6 +50,34 @@ sample間の内点はその区間の終端sampleに保存された保持値を�
 
 ## エラーと検証
 
+BPG-040の専用二系統境界は`TailPilotIntent`、`TailRateTarget`、`TailControlProfile`とする。
+manual nose-up/right intentは各[-1,1]で、水平・垂直尾翼のphysical incidenceへ各-0.2 rad倍で写像する。
+body q/r targetは各±0.2 rad/sである。`tail_rate_feedback_incidence`は
+gain×(observed-target)を各±0.2 radで飽和する。observed roll rateを操作へ使用しない。
+software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airframe/polar parameterから分離する。
+`advance_tail_control`は既存ControlModeのauthority混合、physical saturation、slewを純粋に評価し、
+混合targetと次区間の保持incidenceを返す。pilot位置指令はこのmixerの対象外である。
+既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
+新mock機体とWASM・input・record・既定モデル切替は後続単位で実施する。
+
+`TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
+`TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
+新flightの保持targetはtrimで初期化する。中立inputはtrimへ写像し、input欠損・機器切断の`Hold`は直前targetを維持する。
+この位置commandはControlMode・舵authorityから独立する。物理travel・速度・加速度制約は既存pilot policyが検証する。
+
+`TailFlightTickState`はbody/pilot state、二系統incidence、保持pilot target、整数tickの単一正本である。
+`advance_tail_flight_tick`は直前成功stateのq/rから制御を一度だけ評価し、更新incidenceを全RK4 stageへ保持する。
+Hybrid専用load adapterはphysical incidenceを直接評価する。旧roll枠・legacy actuator stateへ写像しない。
+pilot target policy・moving mass・積分器・contact検索/slerpは既存処理を共有する。
+`advance_tail_flight_tick_with_contact`は着水時にfractional terminal sampleだけを返す。
+fraction 0では直前incidence/target、正fractionでは新incidence/targetを保持し、body/pilot stateは同時刻へ補間する。
+制御・pilot policy・荷重stage・contactの失敗時は部分stateをcommitしない。
+`advance_tail_flight_tick_with_contact_report`は同一評価の`TailControlCommands`と入力を成功outcomeへ付属させる。
+normalized manual intent、body q/r target、manual/FBW/mixed incidence targetを型とaccessorで区別する。
+physical incidenceと保持pilot targetはoutcomeのstate/sampleを参照し、record側で制御を再計算しない。
+fraction 0のreportは未適用の新controlを保持せず、正fractionと整数tickはその区間の適用controlを返す。
+新mock機体と公開WASM/input/record/default切替はBPG-041/042の後続範囲である。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 

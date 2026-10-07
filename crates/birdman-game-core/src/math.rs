@@ -62,6 +62,8 @@ pub enum MathError {
     AsymmetricTensor,
     /// A tensor is not positive definite.
     NonPositiveDefiniteTensor,
+    /// A tensor cannot represent a nonnegative mass distribution.
+    NonPhysicalInertiaTensor,
 }
 
 impl<F: Frame> Vector3<F> {
@@ -369,7 +371,9 @@ impl UnitQuaternion {
     }
 }
 
-/// A finite, symmetric, positive-definite inertia tensor about a fixed point.
+/// A finite, symmetric, positive-definite, physically realizable inertia tensor.
+///
+/// Principal moments satisfy the inclusive triangle inequalities about a fixed point.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InertiaTensor {
     matrix: [[f64; 3]; 3],
@@ -377,6 +381,9 @@ pub struct InertiaTensor {
 
 impl InertiaTensor {
     /// Creates an inertia tensor from a symmetric matrix in kg m².
+    ///
+    /// Minor signs are exact for the supplied finite binary64 components. Equality
+    /// in the principal-moment triangle inequalities is accepted without tolerance.
     pub fn try_new(matrix: [[f64; 3]; 3]) -> Result<Self, MathError> {
         if matrix.iter().flatten().any(|value| !value.is_finite()) {
             return Err(MathError::NonFinite);
@@ -387,18 +394,35 @@ impl InertiaTensor {
         {
             return Err(MathError::AsymmetricTensor);
         }
-        let leading_minor_2 = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
-        let determinant = matrix[0][0]
-            * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
-            - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
-            + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+        let exact_matrix = matrix.map(|row| row.map(ExactInertiaEntry::single));
         if matrix[0][0] <= 0.0
-            || leading_minor_2 <= 0.0
-            || determinant <= 0.0
-            || !leading_minor_2.is_finite()
-            || !determinant.is_finite()
+            || exact_inertia_pair_sign(&exact_matrix, 0, 1) != core::cmp::Ordering::Greater
+            || exact_inertia_determinant_sign(&exact_matrix) != core::cmp::Ordering::Greater
         {
             return Err(MathError::NonPositiveDefiniteTensor);
+        }
+        let second_moment = core::array::from_fn(|row| {
+            core::array::from_fn(|column| {
+                if row == column {
+                    ExactInertiaEntry::sum([
+                        matrix[(row + 1) % 3][(row + 1) % 3],
+                        matrix[(row + 2) % 3][(row + 2) % 3],
+                        -matrix[row][row],
+                    ])
+                } else {
+                    ExactInertiaEntry::negative_double(matrix[row][column])
+                }
+            })
+        });
+        if (0..3).any(|axis| exact_inertia_entry_sign(second_moment[axis][axis]).is_lt())
+            || [(0, 1), (0, 2), (1, 2)]
+                .into_iter()
+                .any(|(first_axis, second_axis)| {
+                    exact_inertia_pair_sign(&second_moment, first_axis, second_axis).is_lt()
+                })
+            || exact_inertia_determinant_sign(&second_moment).is_lt()
+        {
+            return Err(MathError::NonPhysicalInertiaTensor);
         }
         Ok(Self { matrix })
     }
@@ -426,6 +450,191 @@ impl InertiaTensor {
                 + self.matrix[2][2] * vector[2],
         ]
     }
+}
+
+#[derive(Clone, Copy)]
+struct ExactInertiaTerm {
+    mantissa: u64,
+    shift: usize,
+    negative: bool,
+}
+
+impl ExactInertiaTerm {
+    fn from_finite(value: f64) -> Self {
+        let bits = value.to_bits();
+        let exponent = usize::try_from((bits >> 52) & 0x7ff).expect("f64 exponent fits usize");
+        Self {
+            mantissa: (bits & ((1_u64 << 52) - 1)) | if exponent == 0 { 0 } else { 1_u64 << 52 },
+            shift: exponent.saturating_sub(1),
+            negative: bits >> 63 != 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExactInertiaEntry {
+    terms: [ExactInertiaTerm; 3],
+    count: usize,
+}
+
+impl ExactInertiaEntry {
+    const UNIT: Self = Self {
+        terms: [ExactInertiaTerm {
+            mantissa: 1,
+            shift: 1074,
+            negative: false,
+        }; 3],
+        count: 1,
+    };
+
+    fn single(value: f64) -> Self {
+        Self {
+            terms: [ExactInertiaTerm::from_finite(value); 3],
+            count: 1,
+        }
+    }
+
+    fn sum(values: [f64; 3]) -> Self {
+        Self {
+            terms: values.map(ExactInertiaTerm::from_finite),
+            count: 3,
+        }
+    }
+
+    fn negative_double(value: f64) -> Self {
+        let mut entry = Self::single(-value);
+        entry.terms[0].shift += 1;
+        entry
+    }
+}
+
+struct ExactInertiaMinor {
+    positive: [u64; 100],
+    negative: [u64; 100],
+}
+
+impl ExactInertiaMinor {
+    fn new() -> Self {
+        Self {
+            positive: [0; 100],
+            negative: [0; 100],
+        }
+    }
+
+    fn add_product(
+        &mut self,
+        first: ExactInertiaEntry,
+        second: ExactInertiaEntry,
+        third: ExactInertiaEntry,
+        negated: bool,
+    ) {
+        for first_term in first.terms.into_iter().take(first.count) {
+            for second_term in second.terms.into_iter().take(second.count) {
+                for third_term in third.terms.into_iter().take(third.count) {
+                    if first_term.mantissa == 0
+                        || second_term.mantissa == 0
+                        || third_term.mantissa == 0
+                    {
+                        continue;
+                    }
+                    let first_product =
+                        u128::from(first_term.mantissa) * u128::from(second_term.mantissa);
+                    let low_product =
+                        u128::from(first_product as u64) * u128::from(third_term.mantissa);
+                    let high_product = (first_product >> 64) * u128::from(third_term.mantissa)
+                        + (low_product >> 64);
+                    let limbs = [
+                        low_product as u64,
+                        high_product as u64,
+                        (high_product >> 64) as u64,
+                    ];
+                    let bit_offset = first_term.shift + second_term.shift + third_term.shift;
+                    let destination = if first_term.negative
+                        ^ second_term.negative
+                        ^ third_term.negative
+                        ^ negated
+                    {
+                        &mut self.negative
+                    } else {
+                        &mut self.positive
+                    };
+                    for (limb_index, limb) in limbs.into_iter().enumerate() {
+                        let offset = bit_offset + limb_index * 64;
+                        let shift = offset % 64;
+                        Self::add_word(destination, offset / 64, limb << shift);
+                        if shift != 0 {
+                            Self::add_word(destination, offset / 64 + 1, limb >> (64 - shift));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn add_word(destination: &mut [u64; 100], mut index: usize, mut word: u64) {
+        while word != 0 {
+            let (sum, carry) = destination[index].overflowing_add(word);
+            destination[index] = sum;
+            word = u64::from(carry);
+            index += 1;
+        }
+    }
+
+    fn sign(&self) -> core::cmp::Ordering {
+        self.positive.iter().rev().cmp(self.negative.iter().rev())
+    }
+}
+
+fn exact_inertia_entry_sign(entry: ExactInertiaEntry) -> core::cmp::Ordering {
+    let mut minor = ExactInertiaMinor::new();
+    minor.add_product(
+        entry,
+        ExactInertiaEntry::UNIT,
+        ExactInertiaEntry::UNIT,
+        false,
+    );
+    minor.sign()
+}
+
+fn exact_inertia_pair_sign(
+    matrix: &[[ExactInertiaEntry; 3]; 3],
+    first_axis: usize,
+    second_axis: usize,
+) -> core::cmp::Ordering {
+    let mut minor = ExactInertiaMinor::new();
+    minor.add_product(
+        matrix[first_axis][first_axis],
+        matrix[second_axis][second_axis],
+        ExactInertiaEntry::UNIT,
+        false,
+    );
+    minor.add_product(
+        matrix[first_axis][second_axis],
+        matrix[second_axis][first_axis],
+        ExactInertiaEntry::UNIT,
+        true,
+    );
+    minor.sign()
+}
+
+fn exact_inertia_determinant_sign(matrix: &[[ExactInertiaEntry; 3]; 3]) -> core::cmp::Ordering {
+    let mut minor = ExactInertiaMinor::new();
+    for (columns, negated) in [
+        ([0, 1, 2], false),
+        ([1, 2, 0], false),
+        ([2, 0, 1], false),
+        ([2, 1, 0], true),
+        ([1, 0, 2], true),
+        ([0, 2, 1], true),
+    ] {
+        minor.add_product(
+            matrix[0][columns[0]],
+            matrix[1][columns[1]],
+            matrix[2][columns[2]],
+            negated,
+        );
+    }
+    minor.sign()
 }
 
 fn rotate(quaternion: [f64; 4], vector: [f64; 3]) -> [f64; 3] {

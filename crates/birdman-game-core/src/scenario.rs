@@ -1,8 +1,13 @@
-use crate::aerodynamics::{AerodynamicModel, WindFieldAerodynamicLoad};
+use crate::aerodynamics::{AerodynamicLoadProvider, AerodynamicModel, WindFieldAerodynamicLoad};
 use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
 use crate::contact::{ContactError, WaterContactGeometry};
-use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
-use crate::flight_control::{ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode};
+use crate::dynamics::{
+    AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, LoadError, Wrench,
+    total_momentum,
+};
+use crate::flight_control::{
+    ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode, SurfaceDeflections,
+};
 use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector, UnitQuaternion};
 use crate::scoring::CourseAxis;
 use crate::simulation::{
@@ -133,6 +138,101 @@ pub struct FlightScenarioDefinition<'a> {
     pub course_axis: CourseAxis,
 }
 
+/// Validated provider-independent launch, tick, and contact parameters.
+///
+/// The three-axis actuator configuration belongs to the generic tick boundary.
+/// It does not establish three-axis aerodynamic authority for a selected provider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlightScenarioParameters<'a> {
+    aircraft: AircraftModel,
+    initial_state: FlightTickState,
+    actuator_limits: [ActuatorConfig; 3],
+    gravity: crate::dynamics::Gravity,
+    contact_geometry: WaterContactGeometry<'a>,
+    course_axis: CourseAxis,
+}
+
+impl<'a> FlightScenarioParameters<'a> {
+    /// Validates launch, initial actuator state, and contact geometry exactly once.
+    pub fn try_new(
+        aircraft: AircraftModel,
+        launch: CompositeCgLaunchConditions,
+        actuator_limits: [ActuatorConfig; 3],
+        initial_actuator_state: ActuatorState,
+        gravity: crate::dynamics::Gravity,
+        contact_points_body: &'a [BodyPoint],
+        course_axis: CourseAxis,
+    ) -> Result<Self, FlightScenarioError> {
+        let initial_flight = flight_state_from_composite_cg_launch(&aircraft, launch)
+            .map_err(FlightScenarioError::Launch)?;
+        let initial_state = FlightTickState::try_new(
+            &aircraft,
+            actuator_limits,
+            0,
+            initial_flight,
+            initial_actuator_state,
+        )
+        .map_err(FlightScenarioError::InitialState)?;
+        let contact_geometry = WaterContactGeometry::try_new(contact_points_body)
+            .map_err(FlightScenarioError::Contact)?;
+        Ok(Self {
+            aircraft,
+            initial_state,
+            actuator_limits,
+            gravity,
+            contact_geometry,
+            course_axis,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The roughly 2.8 KiB legacy owned load must share an allocation-free Copy enum with borrowed providers"
+)]
+enum ScenarioAerodynamicLoads<'a> {
+    OwnedElement(WindFieldAerodynamicLoad<'a>),
+    Selected(AerodynamicLoadProvider<'a>),
+}
+
+impl ScenarioAerodynamicLoads<'_> {
+    fn wind_velocity_at(
+        &self,
+        position_ned: NedPoint,
+    ) -> Result<NedVector, crate::wind_field::WindError> {
+        match self {
+            Self::OwnedElement(load) => load.wind_velocity_at(position_ned),
+            Self::Selected(load) => load.wind_velocity_at(position_ned),
+        }
+    }
+}
+
+impl ExternalLoadProvider for ScenarioAerodynamicLoads<'_> {
+    fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
+        match self {
+            Self::OwnedElement(load) => load.evaluate(model, state),
+            Self::Selected(load) => load.evaluate(model, state),
+        }
+    }
+
+    fn evaluate_with_surface_deflections(
+        &self,
+        model: &AircraftModel,
+        state: &FlightState,
+        deflections: SurfaceDeflections,
+    ) -> Result<Wrench, LoadError> {
+        match self {
+            Self::OwnedElement(load) => {
+                load.evaluate_with_surface_deflections(model, state, deflections)
+            }
+            Self::Selected(load) => {
+                load.evaluate_with_surface_deflections(model, state, deflections)
+            }
+        }
+    }
+}
+
 /// Core-derived telemetry at the composite center of mass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightTelemetry {
@@ -172,7 +272,7 @@ pub enum FlightTelemetryError {
 pub enum FlightScenarioError {
     /// The aerodynamic provider rejected density or environment input.
     Aerodynamic(AeroError),
-    /// The configured actuator travel exceeds an element's aerodynamic domain.
+    /// The selected provider rejects configured travel or initial controls.
     ControlEnvelope(AerodynamicEvaluationError),
     /// Launch inputs could not be converted to a valid flight state.
     Launch(DynamicsError),
@@ -189,7 +289,7 @@ pub struct FlightScenario<'a> {
     initial_state: FlightTickState,
     actuator_limits: [ActuatorConfig; 3],
     gravity: crate::dynamics::Gravity,
-    loads: WindFieldAerodynamicLoad<'a>,
+    loads: ScenarioAerodynamicLoads<'a>,
     contact_geometry: WaterContactGeometry<'a>,
     course_axis: CourseAxis,
 }
@@ -207,28 +307,59 @@ impl<'a> FlightScenario<'a> {
             definition.wind_field,
         )
         .map_err(FlightScenarioError::Aerodynamic)?;
-        let initial_flight =
-            flight_state_from_composite_cg_launch(&definition.aircraft, definition.launch)
-                .map_err(FlightScenarioError::Launch)?;
-        let initial_state = FlightTickState::try_new(
-            &definition.aircraft,
+        let parameters = FlightScenarioParameters::try_new(
+            definition.aircraft,
+            definition.launch,
             definition.actuator_limits,
-            0,
-            initial_flight,
             definition.initial_actuator_state,
-        )
-        .map_err(FlightScenarioError::InitialState)?;
-        let contact_geometry = WaterContactGeometry::try_new(definition.contact_points_body)
-            .map_err(FlightScenarioError::Contact)?;
-        Ok(Self {
-            aircraft: definition.aircraft,
-            initial_state,
-            actuator_limits: definition.actuator_limits,
-            gravity: definition.gravity,
+            definition.gravity,
+            definition.contact_points_body,
+            definition.course_axis,
+        )?;
+        Ok(Self::from_parameters(
+            parameters,
+            ScenarioAerodynamicLoads::OwnedElement(loads),
+        ))
+    }
+
+    /// Selects one borrowed aerodynamic provider at the generic tick boundary.
+    ///
+    /// ElementOnly validates all three actuator travels. StaticPolar requires
+    /// neutral initial controls and rejects every later nonneutral evaluation.
+    /// Hybrid requires both tails, zero initial roll, and pitch/yaw travel at
+    /// most 0.2 rad. Its generic roll travel is not an aerodynamic authority:
+    /// any later nonzero roll is a typed UnsupportedControl failure. Pitch/yaw
+    /// map explicitly to physical tail incidence, not legacy command semantics.
+    /// No provider promises that all dynamic states stay inside its envelope.
+    pub fn try_new_with_aerodynamic_provider(
+        parameters: FlightScenarioParameters<'a>,
+        provider: AerodynamicLoadProvider<'a>,
+    ) -> Result<Self, FlightScenarioError> {
+        provider
+            .validate_scenario_control_boundary(
+                parameters.actuator_limits,
+                parameters.initial_state.actuator_state(),
+            )
+            .map_err(FlightScenarioError::ControlEnvelope)?;
+        Ok(Self::from_parameters(
+            parameters,
+            ScenarioAerodynamicLoads::Selected(provider),
+        ))
+    }
+
+    fn from_parameters(
+        parameters: FlightScenarioParameters<'a>,
+        loads: ScenarioAerodynamicLoads<'a>,
+    ) -> Self {
+        Self {
+            aircraft: parameters.aircraft,
+            initial_state: parameters.initial_state,
+            actuator_limits: parameters.actuator_limits,
+            gravity: parameters.gravity,
             loads,
-            contact_geometry,
-            course_axis: definition.course_axis,
-        })
+            contact_geometry: parameters.contact_geometry,
+            course_axis: parameters.course_axis,
+        }
     }
 
     /// Returns the validated tick-zero state.
@@ -556,6 +687,83 @@ mod tests {
                 AeroError::InvalidAirDensity
             ))
         );
+    }
+
+    #[test]
+    fn legacy_constructor_preserves_control_density_and_common_validation_order() {
+        let mut definition = scenario_definition(0.0, &[]);
+        definition.aerodynamics = aerodynamics_with_control_domain(crate::ControlEnvelope::NEUTRAL);
+        assert!(matches!(
+            FlightScenario::try_new(definition),
+            Err(FlightScenarioError::ControlEnvelope(_))
+        ));
+        assert_eq!(
+            FlightScenario::try_new(scenario_definition(0.0, &[])).unwrap_err(),
+            FlightScenarioError::Aerodynamic(AeroError::InvalidAirDensity)
+        );
+        assert_eq!(
+            super::FlightScenarioParameters::try_new(
+                aircraft(),
+                scenario_definition(1.225, &[]).launch,
+                [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
+                ActuatorState::neutral(),
+                Gravity::try_new(9.80665).unwrap(),
+                &[],
+                CourseAxis::try_new(1.0, 0.0).unwrap(),
+            )
+            .unwrap_err(),
+            FlightScenarioError::Contact(ContactError::EmptyGeometry)
+        );
+    }
+
+    #[test]
+    fn selected_element_provider_retains_all_axis_full_travel_and_wind_contract() {
+        let contacts = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+        let definition = scenario_definition(1.225, &contacts);
+        let parameters = super::FlightScenarioParameters::try_new(
+            definition.aircraft,
+            definition.launch,
+            definition.actuator_limits,
+            definition.initial_actuator_state,
+            definition.gravity,
+            definition.contact_points_body,
+            definition.course_axis,
+        )
+        .unwrap();
+        let wind = WindField::uniform(NedVector::try_new(2.0, 0.0, 0.0).unwrap());
+        let load = crate::WindFieldAerodynamicLoad::try_new(aerodynamics(), 1.225, wind).unwrap();
+        let scenario = FlightScenario::try_new_with_aerodynamic_provider(
+            parameters,
+            crate::AerodynamicLoadProvider::ElementOnly(&load),
+        )
+        .unwrap();
+        assert_eq!(
+            scenario.wind_velocity_at(NedPoint::origin()),
+            wind.velocity_at(NedPoint::origin())
+        );
+        for axis in 0..3 {
+            let mut maximum = [0.35; 3];
+            maximum[axis] = 0.349;
+            let load = crate::WindFieldAerodynamicLoad::try_new(
+                aerodynamics_with_control_domain(
+                    crate::ControlEnvelope::try_new([-0.35; 3], maximum).unwrap(),
+                ),
+                1.225,
+                wind,
+            )
+            .unwrap();
+            assert_eq!(
+                FlightScenario::try_new_with_aerodynamic_provider(
+                    parameters,
+                    crate::AerodynamicLoadProvider::ElementOnly(&load)
+                )
+                .unwrap_err(),
+                FlightScenarioError::ControlEnvelope(crate::AerodynamicEvaluationError::Element {
+                    role: AerodynamicRole::LeftWing,
+                    cause: AeroError::IncompatibleControlEnvelope
+                })
+            );
+        }
     }
 
     #[test]

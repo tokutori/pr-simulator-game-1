@@ -86,19 +86,60 @@ XCP由来のmomentを追加しない。$P$の点速度や風でstatic表を再�
 
 `StaticPolarLoad`は全機staticだけを返し、errorを`AerodynamicEvaluationError::StaticPolar`として保持する。
 静的providerはneutral以外の既存三系統操舵を`UnsupportedControl`で拒否する。
-`AerodynamicLoadProvider`は借用した`ElementOnly`または`StaticPolar`を排他的に選択する。
+`AerodynamicLoadProvider`は借用した`ElementOnly`、`StaticPolar`、`Hybrid`を排他的に選択する。
 全機staticと旧5要素の全荷重を加算する経路は持たない。
 
 このstatic部品はalphaが未定義のゼロ流・純横方向流を`UndefinedFlowAngle`で拒否する。
-hybridのゼロ速度特例はBPG-039で全proxy actual流と構成・state・controlを検証して実装する。
+hybridのゼロ速度特例はBPG-039で全proxy actual流と構成・state・controlを検証する。
 datumだけを見た荷重0の早期returnを追加しない。小さな正の前進流は有限な角度を持ち、動圧と荷重は0へ近づく。
-BPG-039で局所normal-forceのcurrent-reference差分とstage単位の小擾乱適用範囲を追加する。
+BPG-039の局所normal-force差分とstage単位の小擾乱適用範囲は次節に定める。
 局所drag・固有Cm、独立rate derivative・操舵torque、wake・動的失速・Re依存・地面効果は追加しない。
 水面接触は既存の幾何判定で扱い、地面近傍の空力精度は保証しない。
 
 BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で公開用架空mockを定義・検証する。
 公開アプリの既定hybrid切替はBPG-042 / [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)で、
 二系統入力の公開型・model/controller identity・record versionの更新と同時に行う。
+
+### BPG-041の独立mock定義
+
+`HybridMockDefinition`は公開可能な架空値だけを所有し、既存constructorで全geometry・strip・anchor・
+全機polarを検証する。構築・借用viewはheapとI/Oを使用しない。既定の`SyntheticPlayableFlight`と
+公開WASM・recordはこの定義へ切り替えない。定義の構築、trim荷重・moving pilot連成残差、
+動的応答・controller・公開経路の検証を区別する。
+
+| 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
+|---|---|---|---|
+| 主翼 | 18 / 18 / 1 | 左右各8 | root=O、$z=-|y|\tan5^\circ$、left $R_x(+5^\circ)$、right $R_x(-5^\circ)$ |
+| 水平尾翼 | 2.5 / 3.4 / 2.5/3.4 | 8 | $(-1.8,y,0.1)$、body frame |
+| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-1.8,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
+
+作用点は各矩形stripのmidpointである。主翼の実面積weightは投影weightを$\cos5^\circ$で除した値とする。
+面全体の$AR=b^2/S$から$a=2\pi/(1+2/AR)$を求める。anchorはbody alpha=0・正の前進流で
+各frameへ変換した幾何alphaを保持し、主翼CL=0.70、水平尾翼CL=-0.225、垂直尾翼CL=0とする。
+
+全機表のalpha節点は`[-0.12,-0.06,0,0.06,0.12]` rad、主翼CLは`[0.10,0.36,0.70,1.00,1.18]`である。
+各節点でIssueのCL・CDi・Cm生成式を一度評価し、CDv=0.03、CY=Cl=Cn=0を保存する。
+実行時は7列を個別にPWL補間し、二乗や尾翼moment生成式を再評価しない。
+全機参照はS=18 m²・b=18 m・c=1 m・P=O・`WindAtBetaZero`であり、neutralではproxy静荷重を再加算しない。
+理想e=1、profile drag、主翼固有Cm=-0.02はsoftware仮定であり、実機性能・矩形実翼の効率を表さない。
+
+質量はairframe24 kg・pilot70 kg、datum慣性はdiag(900,1000,980) kg m²である。
+pilotのy=z=0、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を維持する。
+`bpg041-rectangular-hybrid-mock`と、dihedral=0の`bpg041-zero-dihedral-oracle`は独立identityであり、
+各configuration内のmodel versionは1とする。oracleは同じ投影形状と節点表を使用する。
+
+`HybridMockTrim`は無風・rho=1.225 kg/m³・g=9.80665 m/s²・V=9.7 m/sで、
+生成済PWL列から力の大きさを釣り合わせ、$\gamma=\operatorname{atan2}(-C_D,C_L)$、
+$\theta=\alpha+\gamma$を求める。upright解を持つalpha `[0,0.06]` radを二分し、
+datum荷重と$r_{OG}=(70/94)(x_p,0,0)$から$M_G=0$を満たすpilot位置を求める。
+参照解はalpha≈0.0390014274433、gamma≈-0.0503294807294、theta≈-0.0113280532861 rad、
+pilot x≈-0.00982742971072 mである。実hybrid荷重の力・Gまわりmomentと、既存のmoving pilot
+RK4更新を検査する。trimの存在は無制御安定性・飛距離の保証と分離する。
+
+launchは指定された会場の合成重心位置・方位を使用し、yawとtrim pitchを合成する。
+trimのground velocityを既存CG→datum変換へ渡し、風を暗黙加算せず、platform傾斜をpitchへ混入しない。
+pilot速度は0とし、既存`TailPilotPositionMapping`のneutralとHoldはtrim位置を保持する。
+これらのAPIは独立構築用であり、公開default・record/controller versionの切替はBPG-042で行う。
 
 ### 根拠と来歴
 
@@ -113,6 +154,131 @@ T1/T2/T4のwind axesを参照する根拠であり、`WindAtBetaZero`の選択�
 [著者の解析上の制限](https://flow5.tech/xflr5/docs/Part%20IV:%20Limitations.pdf)に示される
 LLT/VLM、粘性・剥離・抗力評価の制約を、実機妥当性の検証と区別する。
 本実装のPWL補間・kinematic continuation・provider構成は今回の設計判断である。
+
+## Current-reference hybrid（BPG-039）
+
+`HybridModel`は一つの全機static polarと、重複しない主翼・水平尾翼・垂直尾翼の
+`HybridSurface`を借用する。面を独立評価する解析fixtureでは一部の面だけを構成できる。
+対応する尾翼を欠く非zero incidenceは`UnsupportedControl`となる。
+`HybridAerodynamicLoad`は正の密度と一つの定常風場を保持し、構築・評価にheapとI/Oを要しない。
+
+### 面形状・frame・anchor
+
+`HybridSection`はbody FRDのquarter-chord点と非負chordを持つ。zero-chord tipを許可し、
+全区間の面積は正とする。投影span座標は主翼・水平尾翼でbody y、垂直尾翼でbody zであり、
+厳密な昇順とする。隣接sectionのchordとquarter-chord点を線形補間する。
+投影幅$\Delta u$とy-z面内の実幅$\Delta s$を区別する。sweepのx成分は作用点へ反映し、
+span面積へ加えない。実面積は片面のplanform面積であり、上下両面のwetted areaではない。
+
+```math
+S_{projected}=\sum_j\Delta u_j\frac{c_j+c_{j+1}}2,\qquad
+S_{surface}=\sum_j\Delta s_j\frac{c_j+c_{j+1}}2
+```
+
+```math
+\int_j c(u)^2du=\frac{\Delta u_j}3(c_j^2+c_jc_{j+1}+c_{j+1}^2),\qquad
+MAC_{projected}=\frac{\int c(u)^2du}{S_{projected}},\qquad
+AR_s=\frac{b_s^2}{S_{projected,s}}
+```
+
+surface MACは同じ積分の$\Delta u$を$\Delta s$へ置き換える。slopeには面全体の投影ARを使い、
+strip幅のARを使わない。主翼が存在する場合、全機polarの$S,b,c$を主翼の投影面積・全幅・MACと照合する。
+`HybridProxy`は一つの直線section区間内を覆い、正の実面積weightと面積重心のquarter-chord作用点$r_i^B$を持つ。
+区間の隙間・重複・別geometryへの流用を拒否し、weight和を面積と照合する。
+`MirrorSpan`はsection・proxy・anchor・frameの反射対称性を要求する。
+構造照合の相対許容差$10^{-10}$は幾何検査だけに用い、flow境界を緩和しない。
+
+local→bodyの正規直交frame $Q_i$はlocal spanをsectionのy-z方向へ整合させ、twist・dihedralを含む。
+固定normalは$n_i^B=Q_i(0,0,1)$である。既に投影したspanへdihedralのcosを再び乗じない。
+`HybridAnchor`は有限の$C_{L,anchor,i}$と幾何迎角$\alpha_{anchor,geom,i}$を持つ。
+anchorと有限翼slopeに含まれる誘導効果へXFLRのAiを再適用しない。
+proxy作用点は全機staticの固定moment参照点$P$と独立である。
+
+### 現在の流れとの差分
+
+各RK stageでdatumの現在の$V,\alpha$からreferenceを作る。
+referenceのbeta・rate・局所wind差・tail incidenceは0とする。固定の元解析迎角・速度へ戻さない。
+datum対気速度のbody y成分が厳密に0なら$v_{ref}^B=v_O^B$をそのまま使用し、
+三角関数の再構成誤差や微小残差のclampを追加しない。
+
+```math
+v_{ref}^B=V(\cos\alpha,0,\sin\alpha),\qquad
+p_i^N=p_O^N+R_{NB}r_i^B,\qquad
+v_i^B=v_O^B+\omega^B\times r_i^B-R_{NB}^{T}(W_i^N-W_O^N)
+```
+
+actual/referenceのlocal速度は$Q_i^T v_i^B$、$Q_i^T v_{ref}^B$であり、
+幾何迎角はforward/downからatan2で得る。理想有限翼の小擾乱slopeを次式で固定する。
+これは今回の近似であり、機体ごとの同定値ではない。小さい正ARにも正のslopeを保持する同値式で評価する。
+
+```math
+a_s=\frac{2\pi}{1+2/AR_s},\qquad
+C_{L,i}=C_{L,anchor,i}+a_s(\alpha_{geom,i}-\alpha_{anchor,geom,i}+\delta_i),\qquad
+q_i=\frac12\rho\lVert v_i^B\rVert^2,\qquad q_{ref}=\frac12\rho V^2
+```
+
+`TailIncidence`はphysical effective incidenceの$\delta_e,\delta_r$だけを保持し、主翼の$\delta_i$は0とする。
+旧操縦intentやbody-axis正指令と同じ符号を仮定しない。後方の水平尾翼で正$\delta_e$は負pitch momentを生む。
+垂直尾翼はlocal spanがbody +z、normalがbody -yのframeを使用すると、正$\delta_r$で正body側力・負yaw momentとなる。
+同じframeで正betaは負側力・正yawの復元moment、正yaw rateは負yawの減衰momentを生む。
+
+```math
+\Delta F_i^B=-S_i\{q_i C_{L,i}(actual,\delta_i)-q_{ref}C_{L,i}(reference,0)\}n_i^B
+```
+
+```math
+F_O^B=F_{static}^B+\sum_i\Delta F_i^B,\qquad
+M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
+```
+
+全機staticを一度評価し、固定normalの差分とその外積だけを追加する。
+旧5要素の全荷重、proxy drag・固有Cm、独立rate derivative、操舵momentを加算しない。
+controlで力方向を回転せず、全機staticの風向基底変化を二重計上しない。
+増分の符号を保ち、非負clamp・fallback・人工dragを導入しない。
+
+### 閉境界・零速・失敗
+
+次の小擾乱範囲はsoftware上の方針であり、実機の測定限界を意味しない。
+
+| 条件 | 受理範囲 |
+|---|---|
+| static alpha | polarの両端を含む閉区間 |
+| global beta、$\delta_e,\delta_r$ | それぞれ絶対値$\le0.2$ rad |
+| 全proxyのlocal alpha差 | $|\alpha_{actual}-\alpha_{reference}|\le0.2$ rad |
+| control込みlocal差 | $|\alpha_{actual}-\alpha_{reference}+\delta_i|\le0.2$ rad |
+| local span angle、actual/reference両方 | $|\operatorname{atan2}(v,\sqrt{u^2+w^2})|\le0.2$ rad |
+| 全proxy actual速度norm | $0.8V\le\lVert v_i^B\rVert\le1.2V$ |
+| local forward、actual/reference両方 | 厳密に正 |
+
+密度・参照量・係数・stateの有限性・正値・姿勢等の既存条件も維持する。
+速度比を$V$で除算せず、minimum airspeedやruntime reduced-rateの$1/V$を追加しない。
+小さい正速度でも全境界を検査し、動圧のunderflowと角度未定義を区別する。
+$V=0$では構成・state・controlを検証した後、全proxyの風とactual流を走査する。
+Oと全proxyのactual速度が全て0の場合だけ空力0とする。局所回転流・差動windが存在すれば
+`UndefinedReference`の範囲外となり、後続点のwind failureも検査する。
+
+`AerodynamicEvaluationError::Hybrid`は元の`AeroError`、`HybridSite`、適用範囲の`HybridLimit`を保持する。
+siteはDatum・StaticPolar・Surface・surface内Proxy index・TailIncidence・Aggregateを区別する。
+RK4境界は`AerodynamicStage`のFirst〜Fourthを付与し、旧ElementOnly・StaticPolarのerrorを変更しない。
+任意stageで失敗したtickは非commitとなる。非有限計算・wind failure・unsupported controlは
+`OutsideEnvelope`へまとめず、元のfatal causeを維持する。
+
+### Scenarioの互換入口
+
+`FlightScenarioParameters`はprovider独立のlaunch、tick-zero actuator/state、contactを一度だけ検証する。
+`FlightScenario::try_new_with_aerodynamic_provider`は同parametersと一つのborrowed providerを受け取り、
+荷重・telemetry・任意位置のwind queryにそのproviderの同じ風場を使用する。
+旧`try_new`はcontrol全travel、density、launch、初期tick、contactの検査順を保持する。
+
+ElementOnlyは全5要素・全3軸のtravel整合性を検査する。StaticPolarは初期neutralを要求し、
+後続の非neutral評価も`UnsupportedControl`で拒否する。Hybridは両尾翼を要求し、初期roll非0を拒否し、
+pitch/yawの全travelが各0.2 rad以内であることを検査する。
+既存generic tickのroll travelはhybridの空力authorityを保証しない。
+境界adapterはpitch/yawをphysical tail incidenceへ明示的に写像し、後続roll非0を型付き拒否する。
+flow・control込みの動的範囲は各stageで検査し、設定の整合性だけで有効な飛行を保証しない。
+
+この入口はgeneric tickとのcore互換境界である。新playableの二系統actuator・authority・q/r FBWはBPG-040、
+公開default・WASM/TypeScript・terminal・identity・record versionはBPG-042へ保持する。
 
 ## 要素と局所流
 

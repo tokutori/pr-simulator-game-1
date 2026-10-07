@@ -13,6 +13,7 @@ mod dynamics;
 mod flight_control;
 mod flight_record;
 mod game_session;
+mod hybrid_mock;
 mod math;
 mod personal_best;
 mod replay_clock;
@@ -21,17 +22,24 @@ mod scoring;
 mod session_contract;
 mod simulation;
 mod synthetic_flight;
+mod tail_control;
+mod tail_simulation;
 mod wind_field;
 
 pub use aerodynamics::{
     AeroCoefficients, AerodynamicElement, AerodynamicEvaluation, AerodynamicLoadProvider,
     AerodynamicModel, AerodynamicWrench, CoefficientLaw, ControlCoefficientDerivatives,
     ControlEnvelope, ElementEnvelope, ElementOrientation, ElementReference, ElementalFlow,
-    FlowAngles, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarEvaluation, StaticPolarLoad, StaticPolarMetadata, StaticPolarRow,
-    UniformAerodynamicLoad, UniformAir, WindFieldAerodynamicLoad,
+    FlowAngles, HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy,
+    HybridSection, HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, PolarAnalysisMethod,
+    PolarMomentAxes, StaticPolar, StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad,
+    StaticPolarMetadata, StaticPolarRow, TailIncidence, UniformAerodynamicLoad, UniformAir,
+    WindFieldAerodynamicLoad,
 };
-pub use aerodynamics_contract::{AeroError, AerodynamicEvaluationError, AerodynamicRole};
+pub use aerodynamics_contract::{
+    AeroError, AerodynamicEvaluationError, AerodynamicRole, AerodynamicStage, HybridError,
+    HybridFlowKind, HybridLimit, HybridSite, HybridSurfaceRole,
+};
 pub use contact::{
     ContactError, InterpolatedFlightState, WaterContactGeometry, WaterContactSample,
     detect_water_contact,
@@ -51,9 +59,13 @@ pub use game_session::{
     PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
+pub use hybrid_mock::{
+    HybridMockConfiguration, HybridMockDefinition, HybridMockError, HybridMockTrim,
+};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
-    FlightTelemetry, FlightTelemetryError, flight_state_from_composite_cg_launch,
+    FlightScenarioParameters, FlightTelemetry, FlightTelemetryError,
+    flight_state_from_composite_cg_launch,
 };
 pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
@@ -67,6 +79,17 @@ pub use simulation::{
     advance_flight_tick_with_contact, run_feedback_flight, run_flight,
 };
 pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
+pub use tail_control::{
+    TailControlCommands, TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    advance_tail_control, tail_rate_feedback_incidence,
+};
+pub use tail_simulation::{
+    TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactSample,
+    advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    advance_tail_flight_tick_with_contact_report,
+};
 pub use wind_field::{WindError, WindField};
 
 pub use dynamics::{

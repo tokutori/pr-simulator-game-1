@@ -1,4 +1,4 @@
-use crate::aerodynamics_contract::AerodynamicEvaluationError;
+use crate::aerodynamics_contract::{AerodynamicEvaluationError, AerodynamicStage};
 use crate::flight_control::SurfaceDeflections;
 use crate::math::{
     BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
@@ -50,6 +50,9 @@ pub struct AircraftModel {
 
 impl AircraftModel {
     /// Creates a validated model with airframe inertia about fixed datum O.
+    ///
+    /// The supplied tensor already guarantees positive definiteness and physical
+    /// principal-moment triangle inequalities through [`InertiaTensor`].
     #[allow(clippy::too_many_arguments)]
     pub fn try_new(
         airframe_mass_kg: f64,
@@ -886,6 +889,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         gravity,
         loads,
         surface_deflections,
+        AerodynamicStage::First,
     )?;
     let second_state = offset_state(state, &first, pilot_acceleration, timestep_seconds * 0.5)?;
     validate_state(model, &second_state)?;
@@ -896,6 +900,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         gravity,
         loads,
         surface_deflections,
+        AerodynamicStage::Second,
     )?;
     let third_state = offset_state(state, &second, pilot_acceleration, timestep_seconds * 0.5)?;
     validate_state(model, &third_state)?;
@@ -906,6 +911,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         gravity,
         loads,
         surface_deflections,
+        AerodynamicStage::Third,
     )?;
     let fourth_state = offset_state(state, &third, pilot_acceleration, timestep_seconds)?;
     validate_state(model, &fourth_state)?;
@@ -916,6 +922,7 @@ pub fn advance_with_surface_deflections<P: ExternalLoadProvider>(
         gravity,
         loads,
         surface_deflections,
+        AerodynamicStage::Fourth,
     )?;
 
     let initial = state.components();
@@ -985,10 +992,20 @@ fn derivative<P: ExternalLoadProvider>(
     gravity: Gravity,
     loads: &P,
     surface_deflections: SurfaceDeflections,
+    stage: AerodynamicStage,
 ) -> Result<StateDerivative, DynamicsError> {
     let wrench = loads
         .evaluate_with_surface_deflections(model, state, surface_deflections)
-        .map_err(DynamicsError::Load)?;
+        .map_err(|error| {
+            DynamicsError::Load(match error {
+                LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)) => {
+                    LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
+                        error.with_stage(stage),
+                    ))
+                }
+                error => error,
+            })
+        })?;
     let (linear_momentum, angular_momentum) = body_momenta(model, state)?;
     let [roll_rate, pitch_rate, yaw_rate] = state.angular_velocity_body.components();
     let angular_rate = [roll_rate, pitch_rate, yaw_rate];

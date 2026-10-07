@@ -79,8 +79,8 @@ BPG-007ではplayable synthetic flightのkeyboard/gamepad入力からWASM tick�
 | provider・error | 排他的選択で既存element-onlyの結果を保持。未対応の非neutral操舵を拒否。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
 | 借用・no_std | row借用のcompile-fail doctest、coreの`wasm32v1-none` build、外部allocation probeで構築・評価・RK stepのallocationを計測 |
 
-static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例はBPG-039で検証する。
-neutral増分0、局所流の微係数、mock trim、公開終端・旧record扱いはBPG-039〜043の試験とする。
+static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例は次節で検証する。
+mock trim、公開終端・旧record扱いはBPG-041〜043の試験とする。
 単体polarの合格を、実機精度・wake・失速・Re依存・地面効果の検証として扱わない。
 公開mockはBPG-041で定義・検証し、既定切替はBPG-042の公開型・identity・記録version更新と同時に行う。
 旧BPG-007の距離・時間は既存fixtureの履歴・回帰条件として扱い、新hybridの空力調整targetにしない。
@@ -89,7 +89,60 @@ neutral増分0、局所流の微係数、mock trim、公開終端・旧record扱
 repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
 polar・provider・モデル構築のallocation 0、static評価10,000回と既存RK4 step 10,000回のallocation 0を確認した。
 測定は非ゼロ流、P offset、空間wind gradient、moving pilotを含むdebug buildで行った。
-coreのunsafe禁止と依存は維持し、計測用allocatorをrepoのsourceやruntimeへ追加しない。
+coreのunsafe禁止と依存は維持し、計測用allocatorをcoreやproduct runtimeへ追加しない。
+
+### BPG-039 current-reference hybrid
+
+`aerodynamics::hybrid::tests`は公開可能な架空geometry・polarだけを使用する。
+`python tools/allocation-check/main.py`はnative debug build専用の独立計測harnessを実行する。
+この永続probeは上記BPG-038のrepo外計測原本と区別し、core・Cargo依存・product runtimeを変更しない。
+架空の3surface・空間wind gradient・非zero rateとmoving pilotを構築し、warmup・assert・printを窓外に置く。
+Systemへ転送するtest専用allocatorのalloc・alloc_zeroed・reallocを個別に計数し、校正で各1回を検出する。
+provider評価・RK4・実tickの成功とGlobalBetaによる型付き範囲外を各10,000回計測し、各割当数0を要求する。
+範囲外ではdatum site・元cause・直接評価のstageなしとRK4/tickのFirst stage・tick非commitを検査する。
+入力・出力にblack_boxを用い、最適化による評価除去を抑制する。測定は実行したnative debug環境に限定し、
+全最適化設定・全端末・実時間性能の証明とは扱わない。
+[GlobalAllocの最適化・再入条件](https://doc.rust-lang.org/core/alloc/trait.GlobalAlloc.html)と
+[black_boxのbest-effort条件](https://doc.rust-lang.org/std/hint/fn.black_box.html)に従い、
+allocator内ではI/O・lock・panicを使わず、計数のassertを通常の安全なassertとして窓外で行う。
+2026-10-06、Windows / Rust 1.97.0で校正と上記6窓の各10,000回が成功し、割当3種すべて0を確認した。
+旧BPG-038原本の再実行、新Hybridの構築時実測、他の環境・最適化設定の合格をこの結果に含めない。
+次の微係数はproxy増分だけを正規化し、staticの力基底変化と分離する。
+flat rectangular、no-twist、alpha=0、neutralを基準とし、tailのz offset等は個別oracleの条件に固定する。
+
+```math
+\widehat p=\frac{pb}{2V},\quad\widehat q=\frac{qc}{2V},\quad\widehat r=\frac{rb}{2V},\qquad
+C_{l_{\widehat p}}=-\frac{a_W}6,\qquad
+C_{m_{\widehat q}}=-2a_T\frac{S_t}{S}\left(\frac{l_t}{c}\right)^2
+```
+
+```math
+C_{Y_\beta}=-a_F\frac{S_f}{S},\qquad
+C_{n_\beta}=a_F\frac{S_f}{S}\frac{l_f}{b},\qquad
+C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
+```
+
+$l_t,l_f$はdatumから後方への正armとする。beta差分ではVを一定に保つ。
+finite rateの動圧差を含むため、複数central-difference幅で小擾乱極限への収束を検査する。
+矩形主翼の等幅N strip midpointには$-a_W(1-1/N^2)/6$を独立期待値とし、
+strip数の増加による連続翼$-a_W/6$へのquadrature収束を別に確認する。
+
+| ケース | 独立比較対象・受入条件 |
+|---|---|
+| geometry・anchor | 線形chordの厳密c²積分、面積重心quarter-chord、投影/実面積・MAC、全体AR、zero-chord tip、coverage・左右対称性・別geometry拒否 |
+| slope数値 | AR=2で$\pi$、AR=4で$4\pi/3$、大ARで$2\pi$、受理可能な微小正ARで$\pi AR$の解析極限と切替点 |
+| current reference | 複数knot/内部alphaと複数V、極小正速度でneutral増分0・static一致。許容差は動圧等の演算scaleに対応させる |
+| 微係数・符号 | 上記p/q/rとfin betaの独立極限、正tail incidenceの負pitch/yaw、左右対称上昇流のroll相殺、片翼grid gust解析力/moment、tip-up dihedralのbeta復元 |
+| frame・風 | 非zero姿勢でworld機体速度とwindの同量加算による全static・increment・totalの不変性 |
+| 閉境界 | global beta、tail incidence、raw/control込みalpha差、actual/reference span角、速度0.8V/1.2Vは境界を包含し直外を拒否。actual/reference forwardは厳密に正 |
+| 零速・fatal | 全点静止だけ0、O静止+回転流/差動windはUndefinedReference、後続wind errorも検査。微小正速度、算術overflow、非有限wind、密度errorの元causeを区別 |
+| RK/tick原子性 | actual providerを通す全4 stageでheld controlを観測し、各stageへenvelope/fatal/wind failureを注入。元cause/site/limit・失敗stageを保持し、actuator/pilot/tickの直前stateが不変 |
+| Scenario互換 | 同providerのwind正本をtelemetryとloadで使用。Hybrid初期roll・欠落tail・tail travel直外を拒否し、runtime rollも非commit。Static neutral-only、旧Element全3軸travel/検査順を保持 |
+
+ここで検証する対象はcore geometry/provider/Scenarioとload→dynamics/tick境界である。
+新playableのauthority・slew・FBW、公開terminal/Result/record/schema/default、実ブラウザー/HMD・実機精度は別gateである。
+fmt、warning拒否Clippy、workspace test/rustdoc、native/no_std/WASM/WASIとWeb verifyはPRでexact sourceごとに結果を記録する。
+ソフトウェアoracleの合格をwake・失速・Re依存・完全なエネルギー散逸や実機性能の証明として扱わない。
 
 ### 空力舵角domainの検証（#209）
 
