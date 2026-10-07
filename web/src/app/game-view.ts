@@ -7,7 +7,8 @@ import type { EnvironmentBriefingProjection } from "../game/environment-briefing
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { analysisScenarioId, projectAnalysisView, projectAnalysisCursor } from "../game/flight-analysis-view.js";
 import type { FlightAnalysisInput, AnalysisViewData, AnalysisViewSample } from "../game/flight-analysis-view.js";
-import { venueMapForScenario } from "../game/biwa-venue-map.js";
+import { NO_VENUE_MAP, venueMapForScenario } from "../game/biwa-venue-map.js";
+import type { VenueMapProjection } from "../game/biwa-venue-map.js";
 import { NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "../presentation/head-hud-view.js";
 import type {
@@ -23,7 +24,8 @@ export function createGameViewModel(
   snapshot: FlightSnapshotInput | null,
   analysisInput: FlightAnalysisInput | null = model.flightAnalysis,
   headHudView: HeadHudView = NO_HEAD_HUD_VIEW,
-  environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING
+  environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING,
+  venue: VenueMapProjection = NO_VENUE_MAP
 ): UiViewModel {
   const analysis = analysisInput === null ? null : projectAnalysisView(analysisInput);
   const cursorSample = model.analysisCursorSample === null ? null : projectAnalysisCursor(model.analysisCursorSample, analysisInput);
@@ -152,7 +154,8 @@ export function createGameViewModel(
         model.analysisChart,
         cursorSample,
         scenarioId,
-        normalizedRect(0.04, 0.105, 0.92, 0.49)
+        normalizedRect(0.04, 0.105, 0.92, 0.49),
+        venue
       ));
     }
     controls.push(
@@ -174,7 +177,8 @@ export function createGameViewModel(
       model.analysisChart,
       cursorSample,
       scenarioId,
-      normalizedRect(0.04, 0.12, 0.92, 0.59)
+      normalizedRect(0.04, 0.12, 0.92, 0.59),
+      venue
     ));
     else controls.push(Object.freeze({
       ...status("game-replay-analysis-loading", "Analysis", "FlightRecordを取得している"),
@@ -408,11 +412,13 @@ function createAnalysisChart(
   chart: AppModel["analysisChart"],
   cursorSample: AnalysisViewSample | null,
   scenarioId: number | null,
-  rect = normalizedRect(0.08, 0.22, 0.84, 0.30)
+  rect = normalizedRect(0.08, 0.22, 0.84, 0.30),
+  registeredVenue: VenueMapProjection = NO_VENUE_MAP
 ): UiChart {
   const samples = analysis.samples;
   if (chart === "map") {
-    const venue = scenarioId === null ? null : venueMapForScenario(scenarioId);
+    const venue = analysis.origin.kind === "named_record" ? registeredVenue.kind === "available" ? registeredVenue.value : null
+      : scenarioId === null ? null : venueMapForScenario(scenarioId);
     const north = samples.map((sample) => sample.northMeters);
     const east = samples.map((sample) => sample.eastMeters);
     const centerNorth = (Math.min(...north) + Math.max(...north)) / 2;
