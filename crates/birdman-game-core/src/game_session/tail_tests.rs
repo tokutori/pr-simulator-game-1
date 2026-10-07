@@ -242,6 +242,7 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
     );
     let record = session.flight_record().unwrap();
     assert_eq!(record.samples(), retained.as_slice());
+    assert_eq!(record.finalization().unwrap().failure, result.failure);
     assert_eq!(
         record.finalization().unwrap().terminal_tick,
         previous.tick_index()

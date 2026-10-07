@@ -1381,11 +1381,17 @@ impl<'a> GameSession<'a> {
                 (sample.interval_start_tick(), sample.fraction())
             }
         };
-        self.record
+        let record = self
+            .record
             .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .finalize(reason, tick_index, fraction, score)
-            .map_err(GameSessionError::Record)?;
+            .ok_or(GameSessionError::InvalidTransition)?;
+        match failure {
+            Some(failure) => {
+                record.finalize_with_failure(reason, tick_index, fraction, score, failure)
+            }
+            None => record.finalize(reason, tick_index, fraction, score),
+        }
+        .map_err(GameSessionError::Record)?;
         self.result = Some(SessionResult {
             reason,
             state,

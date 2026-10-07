@@ -87,6 +87,7 @@ hybrid tickの成功reportをFlightRecordへ渡し、記録・telemetryの成功
 失敗stageのstate・incidence・pilot target・inputを公開せず、直前成功stateをResult/recordへ確定する。
 Resultは元のtick errorを保持する。空力envelopeと有限windのOutsideGridはOutOfValidEnvelope、
 非有限値・算術・policy等の失敗はFatalSimulationErrorとして区別する。
+FlightRecordのfinalizationにも同じ型付きerrorを保存し、失敗tickのsampleを追加しない。
 旧三軸snapshot ABIはtail payloadを型付きerrorで拒否し、余剰rollを生成しない。
 新既定モデル・新ABI・record schemaの公開切替はBPG-042の同一PRで結合する。
 
