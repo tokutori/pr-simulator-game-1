@@ -1,11 +1,10 @@
 import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
 import { decodeRecordedDistanceScore, decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
 import type { TailControlIdentity, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
+import type { PhysicalFlightControls } from "../render/contracts/flight-controls.js";
 
 type Vector3 = readonly [number, number, number];
-export type RecordedPhysicalControls =
-  | Readonly<{ layout: "legacy_three_axis"; rollRadians: number; pitchRadians: number; yawRadians: number }>
-  | Readonly<{ layout: "tail_incidence"; physicalIncidence: Readonly<{ horizontalTailRadians: number; verticalTailRadians: number }> }>;
+export type RecordedPhysicalControls = PhysicalFlightControls;
 export interface NamedRecordState {
   readonly datumPositionNedMeters: Vector3;
   readonly datumVelocityNedMetersPerSecond: Vector3;

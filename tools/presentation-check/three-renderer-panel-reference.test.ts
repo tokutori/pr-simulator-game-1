@@ -433,6 +433,17 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
   });
 
+  it("accepts legacy controls and explicitly rejects unsupported tail geometry without a legacy substitution", () => {
+    const base = { datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
+      pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+    bundle.renderer.setFlightPose({ ...base, controls: { layout: "legacy_three_axis", rollRadians: 0.1, pitchRadians: 0.02, yawRadians: -0.03 } });
+    expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
+    driver.draws.length = 0;
+    bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } } });
+    expect(() => { bundle.renderer.render(frame({})); }).toThrow("Two-tail visual geometry is not supported");
+    expect(driver.draws).toHaveLength(0);
+  });
+
   it("preserves Pilot/Cockpit and external Replay transforms without an additional Title basis", () => {
     const flight: FlightRenderPose = {
       datumPositionNed: { north: 100, east: 25, down: -8 },

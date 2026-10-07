@@ -528,10 +528,12 @@ export function createThreeRenderer(
           ? titlePresentationPose
           : flightRelativePose(flightPose, currentTrackingMountPose());
       headHudSurface?.update(frame.headHud, worldFromTracking);
+      const controls = flightPose?.controls;
+      if (controls?.layout === "tail_incidence") throw new Error("Two-tail visual geometry is not supported by this airframe adapter");
       airframe.setVisualState(
         flightPose?.airspeedMetersPerSecond ?? null,
-        flightPose?.actuatorDeflectionRadians?.pitch ?? 0,
-        flightPose?.actuatorDeflectionRadians?.yaw ?? 0
+        controls?.pitchRadians ?? 0,
+        controls?.yawRadians ?? 0
       );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;

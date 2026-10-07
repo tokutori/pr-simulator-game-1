@@ -55,6 +55,12 @@ composition rootだけが具体adapterのfactoryをimportし、返却値は共�
 
 共有ベクトル・quaternion・matrixの要素順、単位、referenceは契約で固定する。
 検証済みのreadonlyな数値型と識別子を用い、engine型への型aliasやanyで境界を迂回しない。
+`PhysicalFlightControls`は旧三軸deflectionとphysical tail incidence二値を排他的に表す。
+`FlightDisplaySnapshot`は旧33値、live tail Flight/Result、保存legacy/tail queryから純粋に導出する。
+body rate・保持されたpilot target・合成CG・telemetry・flow angle等の取得可否は`available/value`と`unavailable/reason`の直和型で明示する。
+旧nullable ABIはprojection入口で正規化し、score・cause・終端stampはRust出力を保持する。
+Replayのcursor stampとrecord finalizationを区別し、保存controlsを新モデルの入力として再解釈しない。
+`FlightRenderPose.controls`も同じlayoutを保持する。adapterの未対応layoutは明示的に拒否し、他layoutへの変換を行わない。
 巨大なSceneを毎frame直列化せず、world/asset作成とtick/frame更新を分離する。
 GPU resource handleはadapter内部に保持し、上位ではasset IDを使用する。
 dispose・resize・world load・frame描画・capability取得の所有者と失敗時状態を定義する。

@@ -5,6 +5,7 @@ import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
+import type { PhysicalFlightControls } from "./flight-controls.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -55,7 +56,7 @@ export interface FlightRenderPose {
   readonly simulationTimeSeconds?: number;
   /** Render-only wing flex proxy; does not affect the simulated aerodynamic model. */
   readonly airspeedMetersPerSecond?: number | null;
-  readonly actuatorDeflectionRadians?: Readonly<{ pitch: number; yaw: number }>;
+  readonly controls?: PhysicalFlightControls;
   /** Instantaneous scenario wind in NED, kept separate from the stable visual wave state. */
   readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }

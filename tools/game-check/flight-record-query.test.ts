@@ -271,7 +271,7 @@ describe("queryFlightRecordRenderPoseAt", () => {
       initialPilotPositionMeters: -0.1,
       simulationTimeSeconds: 1.25,
       airspeedMetersPerSecond: 10,
-      actuatorDeflectionRadians: { pitch: 0.12, yaw: -0.08 },
+      controls: { layout: "legacy_three_axis", rollRadians: 0, pitchRadians: 0.12, yawRadians: -0.08 },
       windVelocityNedMetersPerSecond: { north: 0, east: 0 }
     });
   });

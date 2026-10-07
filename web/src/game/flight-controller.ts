@@ -1,6 +1,7 @@
 import { FixedTickClock } from "./fixed-tick-clock.js";
 import type { FlightSnapshot } from "./flight-snapshot.js";
 import { parseFlightSnapshot } from "./flight-snapshot.js";
+import { projectFlightRenderPose, projectLegacyFlightSnapshot } from "./flight-display-snapshot.js";
 import type { PilotIntent } from "./keyboard-intent.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
 
@@ -140,16 +141,7 @@ export class FlightController {
   }
 
   private applySnapshot(snapshot: FlightSnapshot, initialPilotPositionMeters = this.initialPilotPositionMeters, hud: FlightHudPort = this.hud): void {
-    const pose: FlightRenderPose = Object.freeze({
-      datumPositionNed: snapshot.positionNed,
-      attitudeBodyToNed: snapshot.attitudeBodyToNed,
-      pilotPositionMeters: snapshot.pilotPositionMeters,
-      initialPilotPositionMeters,
-      simulationTimeSeconds: snapshot.flightTimeSeconds,
-      airspeedMetersPerSecond: snapshot.telemetry?.airspeedMetersPerSecond ?? null,
-      actuatorDeflectionRadians: snapshot.actuatorDeflectionRadians,
-      windVelocityNedMetersPerSecond: snapshot.telemetry?.windVelocityNedMetersPerSecond ?? null
-    });
+    const pose = projectFlightRenderPose(projectLegacyFlightSnapshot(snapshot), initialPilotPositionMeters);
     this.renderer.setFlightPose(pose);
     hud.render(snapshot);
   }
