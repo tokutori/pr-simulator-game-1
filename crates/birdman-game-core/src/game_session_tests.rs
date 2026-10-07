@@ -506,6 +506,9 @@ fn synthetic_flight_reaches_contact_result_without_skipping_terminal_state() {
             let terminal_tick = match result.state {
                 SessionTerminalState::WaterContact(sample) => sample.interval_start_tick(),
                 SessionTerminalState::Tick(state) => state.tick_index(),
+                SessionTerminalState::TailWaterContact(_) | SessionTerminalState::TailTick(_) => {
+                    panic!("legacy fixture must retain its original control layout");
+                }
             };
             assert_eq!(last.tick_index, terminal_tick);
             assert_eq!(

@@ -609,7 +609,7 @@ impl GameSessionBridge {
     pub fn launch(&mut self) -> Result<Vec<f64>, JsValue> {
         let state = self.session.launch().map_err(game_session_error)?;
         let telemetry = self.session.telemetry().ok().flatten();
-        self.snapshot = packed_session_snapshot(state, telemetry);
+        self.snapshot = packed_session_snapshot(state, telemetry).map_err(game_session_error)?;
         Ok(self.snapshot.to_vec())
     }
 
@@ -646,11 +646,13 @@ impl GameSessionBridge {
         )) {
             Ok(state) => {
                 let telemetry = self.session.telemetry().ok().flatten();
-                self.snapshot = packed_session_snapshot(state, telemetry);
+                self.snapshot =
+                    packed_session_snapshot(state, telemetry).map_err(game_session_error)?;
             }
             Err(_) if self.session.snapshot().phase() == SessionPhase::Result => {
                 let telemetry = self.session.telemetry().ok().flatten();
-                self.snapshot = packed_session_snapshot(self.session.snapshot(), telemetry);
+                self.snapshot = packed_session_snapshot(self.session.snapshot(), telemetry)
+                    .map_err(game_session_error)?;
                 return Ok(self.snapshot.to_vec());
             }
             Err(error) => return Err(game_session_error(error)),
@@ -686,7 +688,7 @@ impl GameSessionBridge {
     pub fn abort(&mut self) -> Result<Vec<f64>, JsValue> {
         let state = self.session.abort_flight().map_err(game_session_error)?;
         let telemetry = self.session.telemetry().ok().flatten();
-        self.snapshot = packed_session_snapshot(state, telemetry);
+        self.snapshot = packed_session_snapshot(state, telemetry).map_err(game_session_error)?;
         Ok(self.snapshot.to_vec())
     }
 
@@ -1757,7 +1759,7 @@ fn phase_code(phase: SessionPhase) -> u32 {
 fn packed_session_snapshot(
     snapshot: SessionSnapshot,
     telemetry: Option<birdman_game_core::FlightTelemetry>,
-) -> [f64; SNAPSHOT_LENGTH] {
+) -> Result<[f64; SNAPSHOT_LENGTH], birdman_game_core::GameSessionError> {
     let packed = match snapshot {
         SessionSnapshot::Result(result) => {
             let mut packed = match result.state {
@@ -1781,6 +1783,9 @@ fn packed_session_snapshot(
                 SessionTerminalState::Tick(state) => {
                     snapshot_from_tick(state, end_reason_code(result.reason), 0.0, 0.0, -1.0)
                 }
+                SessionTerminalState::TailTick(_) | SessionTerminalState::TailWaterContact(_) => {
+                    return Err(birdman_game_core::GameSessionError::InvalidControlLayout);
+                }
             };
             if let Some(score) = result.score {
                 packed[17] = score.course_parallel_m();
@@ -1792,6 +1797,9 @@ fn packed_session_snapshot(
         | SessionSnapshot::FlightPaused { state, .. } => {
             snapshot_from_tick(state, 0, 0.0, 0.0, -1.0)
         }
+        SessionSnapshot::TailFlightRunning { .. } | SessionSnapshot::TailFlightPaused { .. } => {
+            return Err(birdman_game_core::GameSessionError::InvalidControlLayout);
+        }
         SessionSnapshot::Title
         | SessionSnapshot::FlightSetup
         | SessionSnapshot::BriefingPreparing { .. }
@@ -1801,7 +1809,7 @@ fn packed_session_snapshot(
         | SessionSnapshot::Replay { .. }
         | SessionSnapshot::Attract { .. } => [0.0; SNAPSHOT_LENGTH],
     };
-    append_telemetry(packed, telemetry)
+    Ok(append_telemetry(packed, telemetry))
 }
 
 fn append_telemetry(
@@ -1854,6 +1862,47 @@ mod tests {
 
     const _: [(); 1_632_408] =
         [(); core::mem::size_of::<f64>() * RECORD_SAMPLE_LENGTH * MAX_FLIGHT_RECORD_SAMPLES];
+
+    #[test]
+    fn legacy_snapshot_layout_rejects_hybrid_state_without_fabricating_roll() {
+        let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
+        let (aircraft, scenario, _, _) = fixture.into_parts();
+        let state = birdman_game_core::TailFlightTickState::try_new(
+            &aircraft,
+            0,
+            scenario.initial_state().flight_state(),
+            birdman_game_core::TailIncidence::neutral(),
+            PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
+        )
+        .unwrap();
+        let identity = birdman_game_core::SessionScenarioIdentity {
+            catalog_version: 1,
+            scenario_id: 1,
+            scenario_version: 1,
+            aircraft_model_version: 1,
+            environment_version: 1,
+            controller_profile_version: 1,
+            seed: 0,
+        };
+        for snapshot in [
+            birdman_game_core::SessionSnapshot::TailFlightRunning {
+                scenario: identity,
+                state,
+            },
+            birdman_game_core::SessionSnapshot::Result(birdman_game_core::SessionResult {
+                reason: birdman_game_core::SessionEndReason::ManualAbort,
+                state: birdman_game_core::SessionTerminalState::TailTick(state),
+                score: None,
+                scenario: identity,
+                failure: None,
+            }),
+        ] {
+            assert_eq!(
+                super::packed_session_snapshot(snapshot, None),
+                Err(birdman_game_core::GameSessionError::InvalidControlLayout)
+            );
+        }
+    }
 
     #[test]
     fn environment_snapshot_uses_selection_sealed_and_attract_sources_without_mutation() {

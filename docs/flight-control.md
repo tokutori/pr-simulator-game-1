@@ -82,6 +82,14 @@ telemetry式とdistance scoreは旧scenarioと共有する。`run`はTimeLimit/W
 失敗時は直前成功の二系統stateと元のcause/stageを返し、そのtickをcommitしない。
 新mock機体の公開WASM/input/record/default切替はBPG-042の後続範囲である。
 
+GameSessionは既存lifecycleを共有し、scenarioと同型のactive stateをlegacy/tailの排他的engineへ保持する。
+hybrid tickの成功reportをFlightRecordへ渡し、記録・telemetryの成功後に整数tickを公開する。
+失敗stageのstate・incidence・pilot target・inputを公開せず、直前成功stateをResult/recordへ確定する。
+Resultは元のtick errorを保持する。空力envelopeと有限windのOutsideGridはOutOfValidEnvelope、
+非有限値・算術・policy等の失敗はFatalSimulationErrorとして区別する。
+旧三軸snapshot ABIはtail payloadを型付きerrorで拒否し、余剰rollを生成しない。
+新既定モデル・新ABI・record schemaの公開切替はBPG-042の同一PRで結合する。
+
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
 

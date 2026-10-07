@@ -59,8 +59,8 @@ pub use flight_record::{
 };
 pub use game_session::{
     BriefingFailure, GameSession, GameSessionConfiguration, GameSessionError, PauseReason,
-    PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
-    SessionTerminalState,
+    PauseReasons, SessionFlightState, SessionPhase, SessionReplaySource, SessionResult,
+    SessionSnapshot, SessionTerminalState,
 };
 pub use hybrid_mock::{
     HybridMockConfiguration, HybridMockDefinition, HybridMockError, HybridMockTrim,
@@ -74,7 +74,7 @@ pub use scoring::{
     COURSE_DISTANCE_SCORE_VERSION, CourseAxis, DistanceScore, DistanceScoreError,
     course_distance_score,
 };
-pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
+pub use session_contract::{SessionEndReason, SessionScenarioIdentity, SessionSimulationFailure};
 pub use simulation::{
     FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
     FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,

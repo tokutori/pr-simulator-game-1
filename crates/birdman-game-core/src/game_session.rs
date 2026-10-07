@@ -1,5 +1,4 @@
-use crate::aerodynamics_contract::AeroError;
-use crate::dynamics::{AircraftModel, DynamicsError, LoadError};
+use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::{
     BodyRateFeedbackConfig, ControlMode, body_rate_feedback_commands, mix_surface_commands,
 };
@@ -10,14 +9,64 @@ use crate::flight_record::{
 use crate::replay_clock::{ReplayClock, ReplayClockError};
 use crate::scenario::{FlightScenario, FlightTelemetry, FlightTelemetryError};
 use crate::scoring::{DistanceScore, DistanceScoreError, course_distance_score};
-use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
+use crate::session_contract::{
+    SessionEndReason, SessionScenarioIdentity, SessionSimulationFailure,
+};
 use crate::simulation::{FlightFeedbackInput, FlightTickError, FlightTickOutcome, FlightTickState};
+use crate::tail_scenario::TailFlightScenario;
+use crate::tail_simulation::{
+    TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState,
+    TailWaterContactSample,
+};
+use crate::wind_field::WindError;
+
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the legacy scenario already owns fixed-size aircraft data; keep either engine inline without adding heap ownership"
+)]
+enum SessionEngine<'a> {
+    LegacyThreeAxis {
+        scenario: FlightScenario<'a>,
+        feedback: BodyRateFeedbackConfig,
+        state: Option<FlightTickState>,
+    },
+    TailIncidence {
+        scenario: TailFlightScenario<'a>,
+        state: Option<TailFlightTickState>,
+    },
+}
+
+/// One complete active state, with its original exclusive control layout.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SessionFlightState {
+    /// Legacy three-axis fixture state.
+    LegacyThreeAxis(FlightTickState),
+    /// Two physical tail incidences and independent retained pilot target.
+    TailIncidence(TailFlightTickState),
+}
+
+impl SessionFlightState {
+    /// Returns the body and moving-pilot state without translating actuator layouts.
+    pub const fn flight_state(self) -> FlightState {
+        match self {
+            Self::LegacyThreeAxis(state) => state.flight_state(),
+            Self::TailIncidence(state) => state.flight_state(),
+        }
+    }
+
+    /// Returns the last complete integer tick.
+    pub const fn tick_index(self) -> u64 {
+        match self {
+            Self::LegacyThreeAxis(state) => state.tick_index(),
+            Self::TailIncidence(state) => state.tick_index(),
+        }
+    }
+}
 
 /// Physical configuration sealed when a flight enters preparation.
 pub struct GameSessionConfiguration<'a> {
-    scenario: FlightScenario<'a>,
+    engine: SessionEngine<'a>,
     control_mode: ControlMode,
-    feedback: BodyRateFeedbackConfig,
     maximum_flight_ticks: u64,
     identity: SessionScenarioIdentity,
 }
@@ -31,21 +80,33 @@ impl<'a> GameSessionConfiguration<'a> {
         maximum_flight_ticks: u64,
         identity: SessionScenarioIdentity,
     ) -> Result<Self, GameSessionError> {
-        if maximum_flight_ticks == 0 || maximum_flight_ticks > MAX_FLIGHT_RECORD_TICKS as u64 {
-            return Err(GameSessionError::InvalidFlightTickLimit);
-        }
-        if identity.catalog_version == 0
-            || identity.scenario_version == 0
-            || identity.aircraft_model_version == 0
-            || identity.environment_version == 0
-            || identity.controller_profile_version == 0
-        {
-            return Err(GameSessionError::InvalidModelVersion);
-        }
+        validate_configuration_identity(maximum_flight_ticks, identity)?;
         Ok(Self {
-            scenario,
+            engine: SessionEngine::LegacyThreeAxis {
+                scenario,
+                feedback,
+                state: None,
+            },
             control_mode,
-            feedback,
+            maximum_flight_ticks,
+            identity,
+        })
+    }
+
+    /// Seals a borrowed hybrid scenario without constructing a legacy actuator state.
+    pub fn try_new_tail(
+        scenario: TailFlightScenario<'a>,
+        control_mode: ControlMode,
+        maximum_flight_ticks: u64,
+        identity: SessionScenarioIdentity,
+    ) -> Result<Self, GameSessionError> {
+        validate_configuration_identity(maximum_flight_ticks, identity)?;
+        Ok(Self {
+            engine: SessionEngine::TailIncidence {
+                scenario,
+                state: None,
+            },
+            control_mode,
             maximum_flight_ticks,
             identity,
         })
@@ -53,13 +114,103 @@ impl<'a> GameSessionConfiguration<'a> {
 
     /// Returns the validated aircraft used to construct pilot-position inputs.
     pub const fn aircraft(&self) -> AircraftModel {
-        self.scenario.aircraft()
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { scenario, .. } => scenario.aircraft(),
+            SessionEngine::TailIncidence { scenario, .. } => scenario.aircraft(),
+        }
     }
 
     /// Returns the deterministic scenario identity retained by the session.
     pub const fn identity(&self) -> SessionScenarioIdentity {
         self.identity
     }
+
+    fn state(&self) -> Option<SessionFlightState> {
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { state, .. } => {
+                state.map(SessionFlightState::LegacyThreeAxis)
+            }
+            SessionEngine::TailIncidence { state, .. } => {
+                state.map(SessionFlightState::TailIncidence)
+            }
+        }
+    }
+
+    fn initial_state(&self) -> SessionFlightState {
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { scenario, .. } => {
+                SessionFlightState::LegacyThreeAxis(scenario.initial_state())
+            }
+            SessionEngine::TailIncidence { scenario, .. } => {
+                SessionFlightState::TailIncidence(scenario.initial_state())
+            }
+        }
+    }
+
+    fn clear_state(&mut self) {
+        match &mut self.engine {
+            SessionEngine::LegacyThreeAxis { state, .. } => *state = None,
+            SessionEngine::TailIncidence { state, .. } => *state = None,
+        }
+    }
+
+    fn set_state(&mut self, next: SessionFlightState) -> Result<(), GameSessionError> {
+        match (&mut self.engine, next) {
+            (
+                SessionEngine::LegacyThreeAxis { state, .. },
+                SessionFlightState::LegacyThreeAxis(next),
+            ) => {
+                *state = Some(next);
+            }
+            (
+                SessionEngine::TailIncidence { state, .. },
+                SessionFlightState::TailIncidence(next),
+            ) => {
+                *state = Some(next);
+            }
+            _ => return Err(GameSessionError::InvalidControlLayout),
+        }
+        Ok(())
+    }
+
+    fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { scenario, .. } => scenario.telemetry(state),
+            SessionEngine::TailIncidence { scenario, .. } => scenario.telemetry(state),
+        }
+    }
+
+    fn wind_velocity_at(&self, position: crate::NedPoint) -> Result<crate::NedVector, WindError> {
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { scenario, .. } => scenario.wind_velocity_at(position),
+            SessionEngine::TailIncidence { scenario, .. } => scenario.wind_velocity_at(position),
+        }
+    }
+
+    fn course_axis(&self) -> crate::CourseAxis {
+        match &self.engine {
+            SessionEngine::LegacyThreeAxis { scenario, .. } => scenario.course_axis(),
+            SessionEngine::TailIncidence { scenario, .. } => scenario.course_axis(),
+        }
+    }
+}
+
+fn validate_configuration_identity(
+    maximum_flight_ticks: u64,
+    identity: SessionScenarioIdentity,
+) -> Result<(), GameSessionError> {
+    if maximum_flight_ticks == 0 || maximum_flight_ticks > MAX_FLIGHT_RECORD_TICKS as u64 {
+        return Err(GameSessionError::InvalidFlightTickLimit);
+    }
+    if identity.catalog_version == 0
+        || identity.scenario_version == 0
+        || identity.aircraft_model_version == 0
+        || identity.environment_version == 0
+        || identity.controller_profile_version == 0
+    {
+        return Err(GameSessionError::InvalidModelVersion);
+    }
+    Ok(())
 }
 
 /// High-level lifecycle of one game session.
@@ -175,6 +326,22 @@ pub enum SessionTerminalState {
     WaterContact(crate::WaterContactSample),
     /// Last complete integer-tick state for non-contact endings.
     Tick(FlightTickState),
+    /// Fractional hybrid state with exactly two physical tail incidences.
+    TailWaterContact(TailWaterContactSample),
+    /// Last complete hybrid state for non-contact endings.
+    TailTick(TailFlightTickState),
+}
+
+impl SessionTerminalState {
+    /// Returns one body and moving-pilot state at the retained terminal time.
+    pub const fn flight_state(self) -> FlightState {
+        match self {
+            Self::WaterContact(sample) => sample.state().flight_state(),
+            Self::Tick(state) => state.flight_state(),
+            Self::TailWaterContact(sample) => sample.flight_state(),
+            Self::TailTick(state) => state.flight_state(),
+        }
+    }
 }
 
 /// Immutable result metadata owned by the game session.
@@ -188,6 +355,8 @@ pub struct SessionResult {
     pub score: Option<DistanceScore>,
     /// Scenario catalog identity and seed used by the flight.
     pub scenario: SessionScenarioIdentity,
+    /// Original failed tick, absent for successful contact, limit, or manual endings.
+    pub failure: Option<SessionSimulationFailure>,
 }
 
 /// Exclusive replay source selected by the session.
@@ -246,6 +415,22 @@ pub enum SessionSnapshot {
         /// Active reasons that prevent resuming.
         reasons: PauseReasons,
     },
+    /// Hybrid physics advances from one complete two-incidence state.
+    TailFlightRunning {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Latest complete hybrid physics state.
+        state: TailFlightTickState,
+    },
+    /// Hybrid physics remains frozen under the shared pause and resume rules.
+    TailFlightPaused {
+        /// Sealed scenario identity.
+        scenario: SessionScenarioIdentity,
+        /// Latest complete hybrid physics state.
+        state: TailFlightTickState,
+        /// Active reasons that prevent resuming.
+        reasons: PauseReasons,
+    },
     /// The active flight has one immutable result.
     Result(SessionResult),
     /// A finalized record is being inspected without advancing physics.
@@ -274,8 +459,12 @@ impl SessionSnapshot {
             Self::Countdown {
                 remaining_ticks, ..
             } => SessionPhase::Countdown { remaining_ticks },
-            Self::FlightRunning { .. } => SessionPhase::FlightRunning,
-            Self::FlightPaused { reasons, .. } => SessionPhase::FlightPaused { reasons },
+            Self::FlightRunning { .. } | Self::TailFlightRunning { .. } => {
+                SessionPhase::FlightRunning
+            }
+            Self::FlightPaused { reasons, .. } | Self::TailFlightPaused { reasons, .. } => {
+                SessionPhase::FlightPaused { reasons }
+            }
             Self::Result(_) => SessionPhase::Result,
             Self::Replay { .. } => SessionPhase::Replay,
             Self::Attract { .. } => SessionPhase::Attract,
@@ -286,6 +475,16 @@ impl SessionSnapshot {
     pub const fn flight_state(self) -> Option<FlightTickState> {
         match self {
             Self::FlightRunning { state, .. } | Self::FlightPaused { state, .. } => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Returns a hybrid state only while its session is running or paused.
+    pub const fn tail_flight_state(self) -> Option<TailFlightTickState> {
+        match self {
+            Self::TailFlightRunning { state, .. } | Self::TailFlightPaused { state, .. } => {
+                Some(state)
+            }
             _ => None,
         }
     }
@@ -304,6 +503,8 @@ impl SessionSnapshot {
 pub enum GameSessionError {
     /// An intent is not permitted in the current phase.
     InvalidTransition,
+    /// Input or an adapter requested a different physical control layout.
+    InvalidControlLayout,
     /// Countdown must contain at least one UI tick.
     InvalidCountdown,
     /// A flight requires a positive explicit maximum tick count.
@@ -316,6 +517,8 @@ pub enum GameSessionError {
     PauseConditionsRemain,
     /// The next physical tick failed; the session has finalized the last valid state.
     Tick(FlightTickError),
+    /// The next hybrid tick failed; the last successful state and original cause are retained.
+    TailTick(TailFlightTickError),
     /// A terminal distance score could not be computed.
     Score(DistanceScoreError),
     /// The record could not retain a valid sample or terminal event.
@@ -332,7 +535,6 @@ pub enum GameSessionError {
 pub struct GameSession<'a> {
     phase: SessionPhase,
     configuration: Option<GameSessionConfiguration<'a>>,
-    flight_state: Option<FlightTickState>,
     result: Option<SessionResult>,
     record: Option<FlightRecord>,
     attract_record: Option<FlightRecord>,
@@ -345,7 +547,6 @@ impl<'a> GameSession<'a> {
         Self {
             phase: SessionPhase::Title,
             configuration: None,
-            flight_state: None,
             result: None,
             record: None,
             attract_record: None,
@@ -372,14 +573,27 @@ impl<'a> GameSession<'a> {
                 scenario: self.required_configuration().identity(),
                 remaining_ticks,
             },
-            SessionPhase::FlightRunning => SessionSnapshot::FlightRunning {
-                scenario: self.required_configuration().identity(),
-                state: self.required_flight_state(),
+            SessionPhase::FlightRunning => match self.required_flight_state() {
+                SessionFlightState::LegacyThreeAxis(state) => SessionSnapshot::FlightRunning {
+                    scenario: self.required_configuration().identity(),
+                    state,
+                },
+                SessionFlightState::TailIncidence(state) => SessionSnapshot::TailFlightRunning {
+                    scenario: self.required_configuration().identity(),
+                    state,
+                },
             },
-            SessionPhase::FlightPaused { reasons } => SessionSnapshot::FlightPaused {
-                scenario: self.required_configuration().identity(),
-                state: self.required_flight_state(),
-                reasons,
+            SessionPhase::FlightPaused { reasons } => match self.required_flight_state() {
+                SessionFlightState::LegacyThreeAxis(state) => SessionSnapshot::FlightPaused {
+                    scenario: self.required_configuration().identity(),
+                    state,
+                    reasons,
+                },
+                SessionFlightState::TailIncidence(state) => SessionSnapshot::TailFlightPaused {
+                    scenario: self.required_configuration().identity(),
+                    state,
+                    reasons,
+                },
             },
             SessionPhase::Result => {
                 SessionSnapshot::Result(self.result.expect("result phase must retain a result"))
@@ -426,9 +640,17 @@ impl<'a> GameSession<'a> {
             .expect("configured phase must retain its sealed configuration")
     }
 
-    fn required_flight_state(&self) -> FlightTickState {
-        self.flight_state
+    fn required_flight_state(&self) -> SessionFlightState {
+        self.required_configuration()
+            .state()
             .expect("active flight phase must retain its last valid state")
+    }
+
+    fn set_flight_state(&mut self, state: SessionFlightState) -> Result<(), GameSessionError> {
+        self.configuration
+            .as_mut()
+            .ok_or(GameSessionError::InvalidTransition)?
+            .set_state(state)
     }
 
     /// Returns the sealed configuration identity while its briefing, flight, or result is retained.
@@ -513,7 +735,6 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configuration = None;
-        self.flight_state = None;
         self.result = None;
         self.phase = SessionPhase::Title;
         self.record
@@ -539,7 +760,6 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configuration = None;
-        self.flight_state = None;
         self.result = None;
         self.record = Some(record);
         self.phase = SessionPhase::Replay;
@@ -655,7 +875,7 @@ impl<'a> GameSession<'a> {
     ) -> Result<Option<crate::math::NedVector>, crate::wind_field::WindError> {
         self.configuration
             .as_ref()
-            .map(|configuration| configuration.scenario.wind_velocity_at(position_ned))
+            .map(|configuration| configuration.wind_velocity_at(position_ned))
             .transpose()
     }
 
@@ -665,14 +885,11 @@ impl<'a> GameSession<'a> {
             return Ok(None);
         };
         let state = match self.result {
-            Some(result) => match result.state {
-                SessionTerminalState::WaterContact(sample) => Some(sample.state().flight_state()),
-                SessionTerminalState::Tick(state) => Some(state.flight_state()),
-            },
-            None => self.flight_state.map(FlightTickState::flight_state),
+            Some(result) => Some(result.state.flight_state()),
+            None => configuration.state().map(SessionFlightState::flight_state),
         };
         state
-            .map(|state| configuration.scenario.telemetry(state))
+            .map(|state| configuration.telemetry(state))
             .transpose()
     }
 
@@ -690,7 +907,6 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configuration = None;
-        self.flight_state = None;
         self.result = None;
         self.record = None;
         self.phase = SessionPhase::FlightSetup;
@@ -703,7 +919,6 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configuration = None;
-        self.flight_state = None;
         self.result = None;
         self.record = None;
         self.phase = SessionPhase::Title;
@@ -738,7 +953,6 @@ impl<'a> GameSession<'a> {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configuration = None;
-        self.flight_state = None;
         self.result = None;
         self.record = None;
         self.phase = SessionPhase::FlightSetup;
@@ -815,17 +1029,20 @@ impl<'a> GameSession<'a> {
             .configuration
             .as_ref()
             .ok_or(GameSessionError::InvalidTransition)?;
-        let initial = configuration.scenario.initial_state();
+        let initial = configuration.initial_state();
         let telemetry = configuration
-            .scenario
             .telemetry(initial.flight_state())
             .map_err(GameSessionError::Telemetry)?;
-        self.record
+        let record = self
+            .record
             .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .begin(initial, telemetry)
-            .map_err(GameSessionError::Record)?;
-        self.flight_state = Some(initial);
+            .ok_or(GameSessionError::InvalidTransition)?;
+        match initial {
+            SessionFlightState::LegacyThreeAxis(state) => record.begin(state, telemetry),
+            SessionFlightState::TailIncidence(state) => record.begin_tail(state, telemetry),
+        }
+        .map_err(GameSessionError::Record)?;
+        self.set_flight_state(initial)?;
         self.phase = SessionPhase::FlightRunning;
         Ok(self.snapshot())
     }
@@ -889,28 +1106,39 @@ impl<'a> GameSession<'a> {
             .configuration
             .as_ref()
             .ok_or(GameSessionError::InvalidTransition)?;
-        let previous = self
-            .flight_state
-            .ok_or(GameSessionError::InvalidTransition)?;
-        let outcome = configuration.scenario.advance_feedback_tick_with_contact(
+        let SessionEngine::LegacyThreeAxis {
+            scenario,
+            feedback,
+            state,
+        } = &configuration.engine
+        else {
+            return Err(GameSessionError::InvalidControlLayout);
+        };
+        let previous = state.ok_or(GameSessionError::InvalidTransition)?;
+        let maximum_ticks = configuration.maximum_flight_ticks;
+        let outcome = scenario.advance_feedback_tick_with_contact(
             previous,
             configuration.control_mode,
-            configuration.feedback,
+            *feedback,
             input,
         );
-        let recorded_input = match record_input(configuration, previous, input) {
-            Ok(recorded_input) => recorded_input,
-            Err(error) => {
-                self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
-                return Err(GameSessionError::Tick(error));
-            }
-        };
+        let recorded_input =
+            match record_input(*feedback, configuration.control_mode, previous, input) {
+                Ok(recorded_input) => recorded_input,
+                Err(error) => {
+                    self.finalize_failed_tick(SessionSimulationFailure::LegacyThreeAxis(error))?;
+                    return Err(GameSessionError::Tick(error));
+                }
+            };
         match outcome {
             Ok(FlightTickOutcome::Advanced(next)) => {
-                let telemetry = match configuration.scenario.telemetry(next.flight_state()) {
+                let telemetry = match scenario.telemetry(next.flight_state()) {
                     Ok(telemetry) => telemetry,
                     Err(error) => {
-                        self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
+                        self.finalize_tick(
+                            SessionEndReason::FatalSimulationError,
+                            SessionFlightState::LegacyThreeAxis(previous),
+                        )?;
                         return Err(GameSessionError::Telemetry(error));
                     }
                 };
@@ -919,25 +1147,98 @@ impl<'a> GameSession<'a> {
                     .as_mut()
                     .ok_or(GameSessionError::InvalidTransition)?;
                 if let Err(error) = record.append_tick(next, recorded_input, telemetry) {
-                    self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
+                    self.finalize_tick(
+                        SessionEndReason::FatalSimulationError,
+                        SessionFlightState::LegacyThreeAxis(previous),
+                    )?;
                     return Err(GameSessionError::Record(error));
                 }
-                self.flight_state = Some(next);
-                if next.tick_index() >= configuration.maximum_flight_ticks {
-                    self.finalize_tick(SessionEndReason::TimeLimit, next)?;
+                self.set_flight_state(SessionFlightState::LegacyThreeAxis(next))?;
+                if next.tick_index() >= maximum_ticks {
+                    self.finalize_tick(
+                        SessionEndReason::TimeLimit,
+                        SessionFlightState::LegacyThreeAxis(next),
+                    )?;
                 }
             }
             Ok(FlightTickOutcome::WaterContact(sample)) => {
                 self.finalize_contact(sample, recorded_input)?;
             }
             Err(error) => {
-                let reason = if is_outside_valid_envelope(error) {
-                    SessionEndReason::OutOfValidEnvelope
-                } else {
-                    SessionEndReason::FatalSimulationError
-                };
-                let _ = self.finalize_tick(reason, previous);
+                self.finalize_failed_tick(SessionSimulationFailure::LegacyThreeAxis(error))?;
                 return Err(GameSessionError::Tick(error));
+            }
+        }
+        Ok(self.snapshot())
+    }
+
+    /// Advances one hybrid interval and retains its once-evaluated controls atomically.
+    pub fn advance_tail_flight_tick(
+        &mut self,
+        input: TailFlightTickInput,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        if self.phase != SessionPhase::FlightRunning {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        let configuration = self.required_configuration();
+        let SessionEngine::TailIncidence { scenario, state } = &configuration.engine else {
+            return Err(GameSessionError::InvalidControlLayout);
+        };
+        let previous = state.ok_or(GameSessionError::InvalidTransition)?;
+        let maximum_ticks = configuration.maximum_flight_ticks;
+        let report = match scenario.advance_tick_with_contact_report(
+            previous,
+            configuration.control_mode,
+            input,
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                self.finalize_failed_tick(SessionSimulationFailure::TailIncidence(error))?;
+                return Err(GameSessionError::TailTick(error));
+            }
+        };
+        let physical_state = match report.outcome() {
+            TailFlightTickOutcome::Advanced(state) => state.flight_state(),
+            TailFlightTickOutcome::WaterContact(sample) => sample.flight_state(),
+        };
+        let telemetry = match scenario.telemetry(physical_state) {
+            Ok(telemetry) => telemetry,
+            Err(error) => {
+                self.finalize_tick(
+                    SessionEndReason::FatalSimulationError,
+                    SessionFlightState::TailIncidence(previous),
+                )?;
+                return Err(GameSessionError::Telemetry(error));
+            }
+        };
+        if let Err(error) = self
+            .record
+            .as_mut()
+            .ok_or(GameSessionError::InvalidTransition)?
+            .append_tail_report(report, telemetry)
+        {
+            self.finalize_tick(
+                SessionEndReason::FatalSimulationError,
+                SessionFlightState::TailIncidence(previous),
+            )?;
+            return Err(GameSessionError::Record(error));
+        }
+        match report.outcome() {
+            TailFlightTickOutcome::Advanced(next) => {
+                self.set_flight_state(SessionFlightState::TailIncidence(next))?;
+                if next.tick_index() >= maximum_ticks {
+                    self.finalize_tick(
+                        SessionEndReason::TimeLimit,
+                        SessionFlightState::TailIncidence(next),
+                    )?;
+                }
+            }
+            TailFlightTickOutcome::WaterContact(sample) => {
+                self.finalize_terminal(
+                    SessionEndReason::WaterContact,
+                    SessionTerminalState::TailWaterContact(sample),
+                    None,
+                )?;
             }
         }
         Ok(self.snapshot())
@@ -951,9 +1252,7 @@ impl<'a> GameSession<'a> {
         ) {
             return Err(GameSessionError::InvalidTransition);
         }
-        let state = self
-            .flight_state
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let state = self.required_flight_state();
         self.finalize_tick(SessionEndReason::ManualAbort, state)?;
         Ok(self.snapshot())
     }
@@ -973,13 +1272,13 @@ impl<'a> GameSession<'a> {
         }
         let configuration = self
             .configuration
-            .as_ref()
+            .as_mut()
             .ok_or(GameSessionError::InvalidTransition)?;
         let header =
             FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
                 .map_err(GameSessionError::Record)?;
         let record = create_record(header).map_err(GameSessionError::Record)?;
-        self.flight_state = None;
+        configuration.clear_state();
         self.result = None;
         self.record = Some(record);
         self.phase = SessionPhase::BriefingReady;
@@ -996,15 +1295,10 @@ impl<'a> GameSession<'a> {
             .as_ref()
             .ok_or(GameSessionError::InvalidTransition)?;
         let terminal_state = sample.state();
-        let telemetry = match configuration
-            .scenario
-            .telemetry(terminal_state.flight_state())
-        {
+        let telemetry = match configuration.telemetry(terminal_state.flight_state()) {
             Ok(telemetry) => telemetry,
             Err(error) => {
-                let previous = self
-                    .flight_state
-                    .ok_or(GameSessionError::InvalidTransition)?;
+                let previous = self.required_flight_state();
                 self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
                 return Err(GameSessionError::Telemetry(error));
             }
@@ -1022,136 +1316,106 @@ impl<'a> GameSession<'a> {
                 telemetry,
             );
         if let Err(error) = append_result {
-            let previous = self
-                .flight_state
-                .ok_or(GameSessionError::InvalidTransition)?;
+            let previous = self.required_flight_state();
             self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
             return Err(GameSessionError::Record(error));
         }
-        let start = configuration
-            .scenario
-            .initial_state()
-            .flight_state()
-            .datum_position_ned();
-        let terminal = sample.state().flight_state().datum_position_ned();
-        let score =
-            match course_distance_score(start, terminal, configuration.scenario.course_axis()) {
-                Ok(score) => Some(score),
-                Err(error) => {
-                    self.record
-                        .as_mut()
-                        .ok_or(GameSessionError::InvalidTransition)?
-                        .finalize(
-                            SessionEndReason::FatalSimulationError,
-                            sample.interval_start_tick(),
-                            sample.fraction(),
-                            None,
-                        )
-                        .map_err(GameSessionError::Record)?;
-                    self.result = Some(SessionResult {
-                        reason: SessionEndReason::FatalSimulationError,
-                        state: SessionTerminalState::WaterContact(sample),
-                        score: None,
-                        scenario: configuration.identity,
-                    });
-                    self.phase = SessionPhase::Result;
-                    return Err(GameSessionError::Score(error));
-                }
-            };
-        self.record
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .finalize(
-                SessionEndReason::WaterContact,
-                sample.interval_start_tick(),
-                sample.fraction(),
-                score,
-            )
-            .map_err(GameSessionError::Record)?;
-        self.result = Some(SessionResult {
-            reason: SessionEndReason::WaterContact,
-            state: SessionTerminalState::WaterContact(sample),
-            score,
-            scenario: configuration.identity,
-        });
-        self.phase = SessionPhase::Result;
-        Ok(())
+        self.finalize_terminal(
+            SessionEndReason::WaterContact,
+            SessionTerminalState::WaterContact(sample),
+            None,
+        )
     }
 
     fn finalize_tick(
         &mut self,
         reason: SessionEndReason,
-        state: FlightTickState,
+        state: SessionFlightState,
+    ) -> Result<(), GameSessionError> {
+        let terminal = match state {
+            SessionFlightState::LegacyThreeAxis(state) => SessionTerminalState::Tick(state),
+            SessionFlightState::TailIncidence(state) => SessionTerminalState::TailTick(state),
+        };
+        self.finalize_terminal(reason, terminal, None)
+    }
+
+    fn finalize_failed_tick(
+        &mut self,
+        failure: SessionSimulationFailure,
+    ) -> Result<(), GameSessionError> {
+        let terminal = match self.required_flight_state() {
+            SessionFlightState::LegacyThreeAxis(state) => SessionTerminalState::Tick(state),
+            SessionFlightState::TailIncidence(state) => SessionTerminalState::TailTick(state),
+        };
+        self.finalize_terminal(failure.end_reason(), terminal, Some(failure))
+    }
+
+    fn finalize_terminal(
+        &mut self,
+        reason: SessionEndReason,
+        state: SessionTerminalState,
+        failure: Option<SessionSimulationFailure>,
     ) -> Result<(), GameSessionError> {
         let configuration = self
             .configuration
             .as_ref()
             .ok_or(GameSessionError::InvalidTransition)?;
         let start = configuration
-            .scenario
             .initial_state()
             .flight_state()
             .datum_position_ned();
         let terminal = state.flight_state().datum_position_ned();
-        let (reason, score) =
-            match course_distance_score(start, terminal, configuration.scenario.course_axis()) {
-                Ok(score) => (reason, Some(score)),
-                Err(error) => {
-                    self.record
-                        .as_mut()
-                        .ok_or(GameSessionError::InvalidTransition)?
-                        .finalize(
-                            SessionEndReason::FatalSimulationError,
-                            state.tick_index(),
-                            0.0,
-                            None,
-                        )
-                        .map_err(GameSessionError::Record)?;
-                    self.result = Some(SessionResult {
-                        reason: SessionEndReason::FatalSimulationError,
-                        state: SessionTerminalState::Tick(state),
-                        score: None,
-                        scenario: configuration.identity,
-                    });
-                    self.flight_state = Some(state);
-                    self.phase = SessionPhase::Result;
-                    return Err(GameSessionError::Score(error));
-                }
-            };
+        let score_result = course_distance_score(start, terminal, configuration.course_axis());
+        let (reason, score) = match score_result {
+            Ok(score) => (reason, Some(score)),
+            Err(_) if failure.is_some() => (reason, None),
+            Err(_) => (SessionEndReason::FatalSimulationError, None),
+        };
+        let (tick_index, fraction) = match state {
+            SessionTerminalState::Tick(state) => (state.tick_index(), 0.0),
+            SessionTerminalState::TailTick(state) => (state.tick_index(), 0.0),
+            SessionTerminalState::WaterContact(sample) => {
+                (sample.interval_start_tick(), sample.fraction())
+            }
+            SessionTerminalState::TailWaterContact(sample) => {
+                (sample.interval_start_tick(), sample.fraction())
+            }
+        };
         self.record
             .as_mut()
             .ok_or(GameSessionError::InvalidTransition)?
-            .finalize(reason, state.tick_index(), 0.0, score)
+            .finalize(reason, tick_index, fraction, score)
             .map_err(GameSessionError::Record)?;
         self.result = Some(SessionResult {
             reason,
-            state: SessionTerminalState::Tick(state),
+            state,
             score,
             scenario: configuration.identity,
+            failure,
         });
-        self.flight_state = Some(state);
         self.phase = SessionPhase::Result;
-        Ok(())
+        if failure.is_some() {
+            Ok(())
+        } else {
+            score_result.map(|_| ()).map_err(GameSessionError::Score)
+        }
     }
 }
 
 fn record_input(
-    configuration: &GameSessionConfiguration<'_>,
+    feedback: BodyRateFeedbackConfig,
+    mode: ControlMode,
     previous: FlightTickState,
     input: FlightFeedbackInput,
 ) -> Result<FlightRecordInput, FlightTickError> {
     let fbw = body_rate_feedback_commands(
-        configuration.feedback,
+        feedback,
         input.target_angular_rate_body(),
         previous.flight_state().angular_velocity_body(),
     )
     .map_err(FlightTickError::Actuator)?;
-    let mixed = mix_surface_commands(
-        configuration.control_mode,
-        input.pilot_surface_commands(),
-        fbw,
-    )
-    .map_err(FlightTickError::Actuator)?;
+    let mixed = mix_surface_commands(mode, input.pilot_surface_commands(), fbw)
+        .map_err(FlightTickError::Actuator)?;
     Ok(FlightRecordInput::new(input, fbw, mixed))
 }
 
@@ -1161,14 +1425,10 @@ impl Default for GameSession<'_> {
     }
 }
 
-fn is_outside_valid_envelope(error: FlightTickError) -> bool {
-    let FlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(error))) = error
-    else {
-        return false;
-    };
-    error.cause() == AeroError::OutsideEnvelope
-}
-
 #[cfg(test)]
 #[path = "game_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "game_session/tail_tests.rs"]
+mod tail_tests;
