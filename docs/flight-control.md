@@ -136,6 +136,10 @@ Webの`tail-session-codec`はschema 2と`tail_incidence`を検査し、phaseとf
 physical incidenceは水平・垂直尾翼の二値、body角速度はroll/pitch/yawの三値として保持する。
 terminalのfraction・stamp・typed causeとRust由来identityを保存し、旧33値decoderへroll制御値を補填しない。
 このcodecの追加は公開factory・既定モデルを変更しない。
+二系統device adapterはArrowUp/Downをnose-up/down、ArrowRight/Leftをright/left turn、J/Lをnormalized身体指令に対応付ける。
+Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キーボード解放はHold、Gamepadの身体軸はSetとする。
+身体の物理target・FBW出力・gain・slewはRustに保持し、Webは呼出し側から受け取ったexplicit q/r demandを変更せず渡す。
+旧三軸keyboard/Gamepad adapterと公開factoryの接続は維持する。
 
 非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
 途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
