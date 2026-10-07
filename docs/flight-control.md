@@ -150,6 +150,10 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
 この接続はheadless検証用の独立入口であり、公開factory・既定モデル・app mainの切替を含まない。
+`LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
+facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
+非同期queryは観測開始時のopaque owner/generation tokenを保持し、Retry・設定変更・archive開閉・cursor変更・free後の結果を拒否する。
+scenario/seedが同一でもresource世代が異なる結果は受理しない。Attractと新Analysis集計入口の接続は別の目的単位で扱う。
 共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
 旧live ABIと保存queryは不足理由を持つ`unavailable`とし、保存cursorの距離を再計算・補填しない。
 
