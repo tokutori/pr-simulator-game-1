@@ -488,19 +488,19 @@ function readReplayClockState(values: ArrayLike<number>): ReplayClockState {
 }
 
 async function initializePresentation(requestId: number): Promise<void> {
-  let rendererAdapter: RendererAdapter | null = null;
+  let presentationOwner:
+    | { readonly kind: "uncreated" }
+    | { readonly kind: "renderer"; readonly renderer: RendererAdapter }
+    | { readonly kind: "runtime"; readonly runtime: PresentationRuntime } = { kind: "uncreated" };
   try {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
-    rendererAdapter = bundle.renderer;
+    presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeGameSession();
-    if (isPageHidden()) {
-      initializedSession.session.free();
-      bundle.renderer.dispose();
-      return;
-    }
-    gameSession = initializedSession.session;
+    const session = initializedSession.session;
+    gameSession = session;
+    if (isPageHidden()) throw new Error("Page became hidden during initialization");
     physicsHz = initializedSession.physicsHz;
     flightRenderer = bundle.renderer;
     const screenBackend = new ScreenPresentationBackend(currentViewport);
@@ -533,33 +533,17 @@ async function initializePresentation(requestId: number): Promise<void> {
           });
         }
     );
+    presentationOwner = { kind: "runtime", runtime: presentation };
     runtime = presentation;
     const started = await presentation.start("screen");
-    if (!started.ok) {
-      const status = `Renderer initialization failed: ${runtimeErrorMessage(started)}`;
-      await presentation.dispose();
-      gameSession.free();
-      gameSession = null;
-      rendererAdapter = null;
-      flightRenderer = null;
-      if (runtime === presentation) runtime = null;
-      dispatch({ type: "presentation-initialization-failed", requestId, message: status });
-      return;
-    }
-    if (isPageHidden()) {
-      await presentation.dispose();
-      gameSession.free();
-      gameSession = null;
-      rendererAdapter = null;
-      flightRenderer = null;
-      if (runtime === presentation) runtime = null;
-      return;
-    }
+    if (!started.ok) throw new Error(`Renderer initialization failed: ${runtimeErrorMessage(started)}`);
+    if (isPageHidden()) throw new Error("Page became hidden during initialization");
     window.addEventListener("resize", onResize);
     const [webXrAvailability, phoneVrAvailability] = await Promise.all([
       webXrBackend.checkAvailability(),
       phoneVrBackend.checkAvailability()
     ]);
+    if (isPageHidden() || gameSession !== session) throw new Error("Page became hidden during initialization");
     dispatch({
       type: "presentation-initialized",
       requestId,
@@ -570,32 +554,47 @@ async function initializePresentation(requestId: number): Promise<void> {
     });
     dispatch({
       type: "game-session-synced",
-      phaseCode: gameSession.phase_code(),
-      controlModeCode: gameSession.control_mode_code(),
-      difficulty: readDifficulty(gameSession),
-      configurationMetadata: readConfigurationMetadata(gameSession),
-      countdownRemaining: gameSession.countdown_remaining(),
-      canResume: gameSession.can_resume(),
+      phaseCode: session.phase_code(),
+      controlModeCode: session.control_mode_code(),
+      difficulty: readDifficulty(session),
+      configurationMetadata: readConfigurationMetadata(session),
+      countdownRemaining: session.countdown_remaining(),
+      canResume: session.can_resume(),
       snapshot: null
     });
   } catch (error) {
     window.removeEventListener("resize", onResize);
-    const presentation = runtime;
+    const ownedPresentation = presentationOwner;
+    const controller = flightController;
+    const session = gameSession;
     runtime = null;
-    if (presentation !== null) {
-      await presentation.dispose();
-    } else {
-      rendererAdapter?.dispose();
-    }
-    flightController?.dispose();
     flightController = null;
-    gameSession?.free();
     gameSession = null;
     flightRenderer = null;
+    const cleanupFailures: string[] = [];
+    const cleanups = [
+      { name: "presentation", run: async () => {
+        switch (ownedPresentation.kind) {
+          case "uncreated": return;
+          case "renderer": ownedPresentation.renderer.dispose(); return;
+          case "runtime": {
+            const result = await ownedPresentation.runtime.dispose();
+            if (!result.ok) throw new Error(runtimeErrorMessage(result));
+          }
+        }
+      } },
+      { name: "controller", run: () => controller?.dispose() },
+      { name: "session", run: () => { if (controller === null) session?.free(); } }
+    ];
+    for (const cleanup of cleanups) {
+      try { await cleanup.run(); }
+      catch (cleanupError: unknown) { cleanupFailures.push(`${cleanup.name}: ${errorMessage(cleanupError)}`); }
+    }
+    const cleanupMessage = cleanupFailures.length === 0 ? "" : `; cleanup failed: ${cleanupFailures.join("; ")}`;
     dispatch({
       type: "presentation-initialization-failed",
       requestId,
-      message: `3D rendering unavailable; Screen UI remains active: ${errorMessage(error)}`
+      message: `3D rendering unavailable; Screen UI remains active: ${errorMessage(error)}${cleanupMessage}`
     });
   }
 }

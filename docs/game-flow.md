@@ -38,7 +38,7 @@ GameSession内のRust unionとし、必要なbrowser assetが未取得の場合�
 
 FlightSetupの表示値はRust format境界の設定projectionであり、TypeScriptに独立した設定正本を作らない。各編集eventをRustへ送り、Briefingでpreset・三軸・versioned scenario/controller catalogを解決する。Information metadataはformat境界に保持し、coreには渡さない。coreのGameSessionは物理configurationとscenario/controller version identityをsealする。
 WindField、波・空・雲、launch条件、asset hashを確定する。
-Countdown開始時にconfigurationをsealし、launchまで物理・controller・actuatorの時刻を固定する。
+Briefing開始時に解決済みconfigurationをsealし、Countdownでは維持する。launchまで物理・controller・actuatorの時刻を固定する。
 Countdown中は操縦入力を取得・積分せず、launch時に初期snapshotで入力境界を初期化する。
 keyboardの保留押下はlaunch時に破棄し、発進後の新規押下を操縦入力として採用する。
 gamepadは新規flightとPauseからの復帰時に中立確認を要求する。

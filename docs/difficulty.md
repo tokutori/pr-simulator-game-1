@@ -110,7 +110,7 @@ preset選択で三軸を更新し、任意の軸を手動変更した時点でCu
 
 主要8 Scene、overlay、停止・Retry契約は `game-flow.md` に従う。
 Flight Setupではpresetと三軸の具体値を同時に確認できる。
-Countdown開始時に解決済みconfigurationを固定する。初期版では飛行中の三軸変更を許可しない。
+Briefing開始時に解決済みconfigurationを固定し、Countdownでは維持する。初期版では飛行中の三軸変更を許可しない。
 backend切替やpause/resumeは独立した表示・session操作として扱う。
 Resultには距離・時間とInformation、Assistanceの実値、scenario名と代表気象条件を保存する。
 
