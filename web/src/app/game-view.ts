@@ -732,7 +732,7 @@ function actionButton(id: string, label: string, emphasis: "primary" | "secondar
 function choiceButtons(axis: "preset" | "information" | "assistance" | "weather", selectedCode: number): UiButton[] {
   const count = axis === "preset" || axis === "assistance" ? 4 : 5;
   const groupLabel = axis === "preset" ? "プリセット" : axis === "information" ? "表示情報" : axis === "assistance" ? "操縦支援" : "気象条件";
-  return Array.from({ length: count }, (_, code) => Object.freeze({
+  return Array.from({ length: count }, (_candidateSlot, code) => Object.freeze({
     ...button(`game-setup-select-${axis}-${String(code)}`, axis === "preset" ? presetLabel(code) : axis === "information"
       ? informationLabel(code) : axis === "assistance" ? assistanceLabel(code) : weatherLabel(code), true),
     presentation: Object.freeze({

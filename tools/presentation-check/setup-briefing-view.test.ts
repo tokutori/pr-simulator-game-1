@@ -39,7 +39,7 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
   const lines = request.value.split("\n").flatMap((paragraph, paragraphIndex) => {
     const characters = Array.from(paragraph);
     const chunks = characters.length === 0 ? [""] : Array.from({ length: Math.ceil(characters.length / columns) },
-      (_, index) => characters.slice(index * columns, (index + 1) * columns).join(""));
+      (_textChunkSlot, index) => characters.slice(index * columns, (index + 1) * columns).join(""));
     return chunks.map((value) => ({ value, paragraphIndex, advanceMeters: Array.from(value).length * characterWidth,
       leftMeters: 0, rightMeters: Array.from(value).length * characterWidth,
       ascentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.65,
