@@ -81,9 +81,20 @@ impl NativeSession {
         )
     }
 
+    pub(crate) fn can_resume(&self) -> bool {
+        self.frame_available
+            && matches!(
+                self.game.snapshot().phase(),
+                SessionPhase::FlightPaused { reasons }
+                    if !reasons.contains(PauseReason::TrackingSuspended)
+            )
+    }
+
     pub(crate) fn action(&mut self, action: MenuAction) -> Result<(), String> {
-        if action == MenuAction::Resume && !self.frame_available {
-            return Err("非アクティブ状態または処理遅延の解消後に再開する".into());
+        if action == MenuAction::Resume && !self.can_resume() {
+            return Err(
+                "一時停止中の非アクティブ状態・処理遅延・追跡停止の解消後に再開する".into(),
+            );
         }
         let result = match action {
             MenuAction::Start => self.game.open_setup(),
@@ -442,6 +453,7 @@ mod tests {
                 session.game.snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ));
+            assert!(!session.can_resume());
             assert!(session.toggle_pause().is_err());
             assert!(session.action(MenuAction::Resume).is_err());
             session.tick(FlightInput::default());
@@ -451,6 +463,7 @@ mod tests {
                 session.game.snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ));
+            assert!(session.can_resume());
             session.action(MenuAction::Resume).unwrap();
             session.tick(FlightInput::default());
             assert_eq!(
@@ -462,6 +475,94 @@ mod tests {
                     .tick_index(),
                 before.tick_index() + 1
             );
+        }
+    }
+
+    #[test]
+    fn resume_admission_is_atomic_for_every_pause_reason_set() {
+        for reason_mask in 0_u8..16 {
+            for frame_available in [false, true] {
+                let mut session = NativeSession::default();
+                for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                    session.action(action).unwrap();
+                }
+                for _step in 0..3 {
+                    session.countdown(1.0);
+                }
+                session.game.pause(PauseReason::Manual).unwrap();
+                session
+                    .game
+                    .clear_pause_reason(PauseReason::Manual)
+                    .unwrap();
+                for (bit, reason) in [
+                    (1, PauseReason::Manual),
+                    (2, PauseReason::DocumentHidden),
+                    (4, PauseReason::TrackingSuspended),
+                    (8, PauseReason::ProcessingDelay),
+                ] {
+                    if reason_mask & bit != 0 {
+                        session.game.pause(reason).unwrap();
+                    }
+                }
+                session.frame_available = frame_available;
+                let before = session.game.snapshot();
+                let sample_count = session.game.flight_record().unwrap().sample_count();
+                let expected = frame_available && reason_mask & 4 == 0;
+                assert_eq!(session.can_resume(), expected);
+                let resumed = session.action(MenuAction::Resume);
+                assert_eq!(resumed.is_ok(), expected);
+                if expected {
+                    assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+                    assert_eq!(
+                        session.game.snapshot().tail_flight_state(),
+                        before.tail_flight_state()
+                    );
+                } else {
+                    assert_eq!(session.game.snapshot(), before);
+                }
+                assert_eq!(
+                    session.game.flight_record().unwrap().sample_count(),
+                    sample_count
+                );
+            }
+        }
+        let session = NativeSession::default();
+        assert!(!session.can_resume());
+    }
+
+    #[test]
+    fn selected_control_mode_cannot_change_during_flight_or_result() {
+        for selected in [
+            MenuAction::Manual,
+            MenuAction::Shared,
+            MenuAction::Automatic,
+        ] {
+            let mut session = NativeSession::default();
+            session.action(MenuAction::Start).unwrap();
+            session.action(selected).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+            let mode = session.control_mode;
+            let header = session.game.flight_record().unwrap().header();
+            for terminal in [false, true] {
+                if terminal {
+                    session.action(MenuAction::Abort).unwrap();
+                }
+                let before = session.game.snapshot();
+                for changed in [
+                    MenuAction::Manual,
+                    MenuAction::Shared,
+                    MenuAction::Automatic,
+                ] {
+                    assert!(session.action(changed).is_err());
+                    assert_eq!(session.control_mode, mode);
+                    assert_eq!(session.game.snapshot(), before);
+                    assert_eq!(session.game.flight_record().unwrap().header(), header);
+                }
+            }
         }
     }
 

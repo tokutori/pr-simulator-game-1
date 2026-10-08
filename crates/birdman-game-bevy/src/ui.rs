@@ -11,8 +11,12 @@ use bevy::{
     prelude::*,
 };
 use birdman_game_core::{
-    ControlMode, SessionEndReason, SessionPhase, SessionSimulationFailure, SessionSnapshot,
+    ControlMode, FlightRecordFinalization, FlightRecordHeader, PauseReason, PauseReasons,
+    SessionEndReason, SessionPhase, SessionSimulationFailure, SessionSnapshot,
 };
+
+const FLIGHT_CONTROL_GUIDE: &str =
+    "操縦: ↑/↓ 機首上げ/下げ · ←/→ 左/右旋回\n重心移動: J/L（解放時保持） · 視点: C / 右ドラッグ";
 
 #[derive(Clone, Copy)]
 enum UiAction {
@@ -25,6 +29,7 @@ enum ButtonEmphasis {
     Primary,
     Secondary,
     Choice { selected: bool },
+    Disabled,
 }
 
 #[derive(Component)]
@@ -41,6 +46,7 @@ pub(crate) enum UiText {
 }
 #[derive(Component)]
 pub(crate) enum UiPanel {
+    SessionContent,
     PreparationSteps,
     AssistanceChoices,
     FlightHud,
@@ -66,12 +72,14 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<TechnicalDisclosure>();
     commands
         .spawn((
+            UiPanel::SessionContent,
             Node {
                 position_type: PositionType::Absolute,
                 top: px(12),
                 left: px(16),
                 width: percent(72),
-                max_height: vh(75),
+                max_height: vh(65),
+                overflow: Overflow::scroll_y(),
                 flex_direction: FlexDirection::Column,
                 row_gap: px(8),
                 padding: UiRect::all(px(8)),
@@ -219,8 +227,9 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                         TextColor(Color::WHITE),
                     ));
                 })
-                .observe(scroll_technical_details);
-        });
+                .observe(scroll_content);
+        })
+        .observe(scroll_content);
     commands
         .spawn((
             UiPanel::FlightHud,
@@ -324,6 +333,11 @@ pub(crate) fn button_actions(
         if *interaction != Interaction::Pressed {
             continue;
         }
+        if let UiAction::Session(action) = button.0
+            && !action_available(&session, action)
+        {
+            continue;
+        }
         focus.set(entity, FocusCause::Pressed);
         match button.0 {
             UiAction::TechnicalDetails => disclosure.toggle(),
@@ -359,6 +373,11 @@ fn visible_action(phase: SessionPhase, action: MenuAction) -> bool {
         ),
         MenuAction::Exit => true,
     }
+}
+
+fn action_available(session: &NativeSession, action: MenuAction) -> bool {
+    visible_action(session.game.snapshot().phase(), action)
+        && (action != MenuAction::Resume || session.can_resume())
 }
 
 fn preparation_progress(phase: SessionPhase) -> Option<&'static str> {
@@ -466,6 +485,11 @@ fn button_colors(emphasis: ButtonEmphasis, interaction: Interaction) -> (Color, 
             Color::srgb(0.15, 0.32, 0.46),
             Color::srgb(0.65, 0.75, 0.9),
         ),
+        ButtonEmphasis::Disabled => (
+            Color::srgb(0.12, 0.14, 0.17),
+            Color::srgb(0.12, 0.14, 0.17),
+            Color::srgb(0.3, 0.34, 0.4),
+        ),
     };
     (
         if interaction == Interaction::None {
@@ -484,11 +508,54 @@ fn format_countdown(remaining_seconds: u32) -> String {
 }
 
 fn visible_hud(phase: SessionPhase, details_open: bool) -> bool {
-    !details_open
-        && matches!(
-            phase,
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-        )
+    !details_open && phase == SessionPhase::FlightRunning
+}
+
+fn format_pause_summary(reasons: PauseReasons, can_resume: bool) -> String {
+    let mut labels = String::new();
+    for (reason, label) in [
+        (PauseReason::Manual, "手動操作"),
+        (PauseReason::DocumentHidden, "アプリの非アクティブ化"),
+        (PauseReason::TrackingSuspended, "頭部追跡の停止"),
+        (PauseReason::ProcessingDelay, "描画処理の遅延"),
+    ] {
+        if reasons.contains(reason) {
+            if !labels.is_empty() {
+                labels.push_str(" / ");
+            }
+            labels.push_str(label);
+        }
+    }
+    if labels.is_empty() {
+        labels.push_str("停止理由は解消済み");
+    }
+    let availability = if can_resume {
+        "飛行状態を保持中。「飛行を再開」または P / Esc で再開できる。"
+    } else {
+        "停止条件の解消を待っている。現在は再開できない。"
+    };
+    format!("一時停止 — {labels}\n{availability}\n{FLIGHT_CONTROL_GUIDE}")
+}
+
+fn format_briefing(mode: ControlMode) -> String {
+    format!(
+        "飛行条件の確認 — Typical / 架空の機体\n選択した操縦支援: {}\n{FLIGHT_CONTROL_GUIDE}\n尾翼２軸を操作する。独立したRoll入力はない。\n準備完了。3秒のカウントダウンで発進する。\nモデルの適用範囲外では飛行を終了する。",
+        control_mode_label(mode),
+    )
+}
+
+fn format_result_context(
+    mode: ControlMode,
+    header: FlightRecordHeader,
+    finalization: FlightRecordFinalization,
+) -> String {
+    let time_seconds = (finalization.terminal_tick as f64 + finalization.terminal_fraction)
+        / f64::from(header.physics_hz);
+    format!(
+        "選択した操縦支援: {}\ncontroller v{} / 確定時刻: {time_seconds:.2}\u{00a0}s",
+        control_mode_label(mode),
+        header.scenario.controller_profile_version,
+    )
 }
 
 fn format_result_summary(
@@ -531,8 +598,8 @@ fn format_technical_details(
     details
 }
 
-fn scroll_technical_details(
-    on_scroll: On<Pointer<Scroll>>,
+fn scroll_content(
+    mut on_scroll: On<Pointer<Scroll>>,
     mut panels: Query<(&mut ScrollPosition, &ComputedNode), With<UiPanel>>,
 ) {
     if let Ok((mut position, node)) = panels.get_mut(on_scroll.entity) {
@@ -541,7 +608,11 @@ fn scroll_technical_details(
             MouseScrollUnit::Pixel => on_scroll.y,
         };
         let range = (node.content_size.y - node.size.y).max(0.0) * node.inverse_scale_factor;
-        position.y = (position.y - delta).clamp(0.0, range);
+        let next = (position.y - delta).clamp(0.0, range);
+        if next != position.y {
+            position.y = next;
+            on_scroll.propagate(false);
+        }
     }
 }
 
@@ -605,15 +676,19 @@ pub(crate) fn update_ui(
         } else {
             Display::None
         };
-        let (background_color, border_color) = button_colors(
-            button_emphasis(phase, button.0, session.control_mode),
-            *interaction,
-        );
+        let emphasis = match button.0 {
+            UiAction::Session(action) if !action_available(&session, action) => {
+                ButtonEmphasis::Disabled
+            }
+            _ => button_emphasis(phase, button.0, session.control_mode),
+        };
+        let (background_color, border_color) = button_colors(emphasis, *interaction);
         *background = BackgroundColor(background_color);
         *border = BorderColor::all(border_color);
     }
     for (panel, mut node, mut position) in &mut panels {
         let visible = match panel {
+            UiPanel::SessionContent => true,
             UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
             UiPanel::AssistanceChoices => phase == SessionPhase::FlightSetup,
             UiPanel::FlightHud => visible_hud(phase, details_open),
@@ -636,11 +711,7 @@ pub(crate) fn update_ui(
     let mut title = match snapshot {
         SessionSnapshot::Title => "Birdman native Screen\n架空の機体モデルで飛行を試す。\n「飛行を設定」から操縦支援を選び、飛行条件を確認する。".into(),
         SessionSnapshot::FlightSetup => "飛行条件の設定\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援を選び、飛行準備へ進む。".into(),
-        SessionSnapshot::BriefingReady { .. } => format!(
-            "飛行条件の確認\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援: {}\n{}\n操縦: ↑/↓ 機首上げ/下げ、←/→ 左/右旋回\n尾翼2軸を操作する。独立したRoll入力はない。\n重心移動: J/L、解放時は位置保持\n架空の検証用機体。モデルの適用範囲を超えると飛行計算を終了する。\n発進準備完了。3秒のカウントダウンで発進する。",
-            control_mode_label(session.control_mode),
-            control_mode_description(session.control_mode),
-        ),
+        SessionSnapshot::BriefingReady { .. } => format_briefing(session.control_mode),
         SessionSnapshot::Countdown {
             remaining_ticks, ..
         } => format_countdown(remaining_ticks),
@@ -649,13 +720,26 @@ pub(crate) fn update_ui(
             if camera.chase { "Chase" } else { "Pilot" }
         ),
         SessionSnapshot::TailFlightPaused { reasons, .. } => {
-            format!("Paused — {reasons:?}\n明示的な再開までphysics停止中")
+            format_pause_summary(reasons, session.can_resume())
         }
-        SessionSnapshot::Result(result) => format_result_summary(
-            result.reason,
-            result.score.map(|score| score.course_parallel_m()),
-            result.failure,
-        ),
+        SessionSnapshot::Result(result) => {
+            let mut summary = format_result_summary(
+                result.reason,
+                result.score.map(|score| score.course_parallel_m()),
+                result.failure,
+            );
+            if let Some(record) = session.game.flight_record()
+                && let Some(finalization) = record.finalization()
+            {
+                summary.push('\n');
+                summary.push_str(&format_result_context(
+                    session.control_mode,
+                    record.header(),
+                    finalization,
+                ));
+            }
+            summary
+        }
         _ => format!("{:?}", phase),
     };
     if session.notice.is_some() {
@@ -1019,6 +1103,167 @@ mod tests {
     }
 
     #[test]
+    fn paused_resume_appearance_and_click_follow_the_same_admission() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _step in 0..3 {
+            session.countdown(1.0);
+        }
+        session.observe_frame(true, true);
+        let before = session.game.snapshot();
+        let sample_count = session.game.flight_record().unwrap().sample_count();
+        assert!(!action_available(&session, MenuAction::Resume));
+        let mut app = App::new();
+        app.insert_resource(session)
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .init_resource::<InputFocus>()
+            .add_message::<AppExit>()
+            .add_systems(Update, (button_actions, update_ui).chain());
+        let resume = app
+            .world_mut()
+            .spawn((
+                Button,
+                MenuButton(UiAction::Session(MenuAction::Resume)),
+                BackgroundColor::default(),
+                BorderColor::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(resume).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<BackgroundColor>(resume).unwrap().0,
+            button_colors(ButtonEmphasis::Disabled, Interaction::None).0
+        );
+        app.world_mut()
+            .entity_mut(resume)
+            .insert(Interaction::Pressed);
+        app.update();
+        let blocked = app.world().resource::<NativeSession>();
+        assert_eq!(blocked.game.snapshot(), before);
+        assert_eq!(
+            blocked.game.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+        assert!(blocked.notice.is_none());
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .observe_frame(true, false);
+        app.world_mut().entity_mut(resume).insert(Interaction::None);
+        app.update();
+        assert!(action_available(
+            app.world().resource::<NativeSession>(),
+            MenuAction::Resume
+        ));
+        assert_eq!(
+            app.world().get::<BackgroundColor>(resume).unwrap().0,
+            button_colors(ButtonEmphasis::Primary, Interaction::None).0
+        );
+        app.world_mut()
+            .entity_mut(resume)
+            .insert(Interaction::Pressed);
+        app.update();
+        let resumed = app.world().resource::<NativeSession>();
+        assert_eq!(resumed.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(
+            resumed.game.snapshot().tail_flight_state(),
+            before.tail_flight_state()
+        );
+        assert_eq!(
+            resumed.game.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+    }
+
+    #[test]
+    fn pause_summary_explains_all_reasons_and_reuses_basic_controls() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _step in 0..3 {
+            session.countdown(1.0);
+        }
+        for reason in [
+            PauseReason::Manual,
+            PauseReason::DocumentHidden,
+            PauseReason::TrackingSuspended,
+            PauseReason::ProcessingDelay,
+        ] {
+            session.game.pause(reason).unwrap();
+        }
+        let SessionPhase::FlightPaused { reasons } = session.game.snapshot().phase() else {
+            panic!("expected paused flight");
+        };
+        let summary = format_pause_summary(reasons, session.can_resume());
+        for label in ["手動操作", "非アクティブ化", "頭部追跡", "処理の遅延"] {
+            assert!(summary.contains(label));
+        }
+        assert!(summary.contains("現在は再開できない"));
+        assert!(summary.contains(FLIGHT_CONTROL_GUIDE));
+        assert!(!summary.contains("PauseReasons"));
+        assert!(format_pause_summary(reasons, true).contains("P / Esc"));
+    }
+
+    #[test]
+    fn briefing_is_compact_and_content_has_a_scrollable_height_limit() {
+        for mode in [
+            ControlMode::Manual,
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            ControlMode::Automatic,
+        ] {
+            let briefing = format_briefing(mode);
+            assert!(briefing.lines().count() <= 7);
+            assert!(briefing.contains(FLIGHT_CONTROL_GUIDE));
+            assert!(briefing.contains("独立したRoll入力はない"));
+            assert!(briefing.contains("3秒のカウントダウン"));
+        }
+        let mut app = App::new();
+        app.insert_resource(NativeFont(Handle::default()))
+            .add_systems(Startup, setup_ui);
+        app.update();
+        let mut panels = app.world_mut().query::<(&UiPanel, &Node)>();
+        let (_, content) = panels
+            .iter(app.world())
+            .find(|(panel, _node)| matches!(panel, UiPanel::SessionContent))
+            .unwrap();
+        assert_eq!(content.max_height, vh(65));
+        assert_eq!(content.overflow, Overflow::scroll_y());
+        assert_eq!(content.top, px(12));
+    }
+
+    #[test]
+    fn result_context_uses_record_controller_version_and_fractional_terminal_time() {
+        let mut session = NativeSession::default();
+        session.action(MenuAction::Start).unwrap();
+        session.action(MenuAction::Shared).unwrap();
+        session.action(MenuAction::Prepare).unwrap();
+        session.action(MenuAction::Launch).unwrap();
+        for _step in 0..3 {
+            session.countdown(1.0);
+        }
+        session.action(MenuAction::Abort).unwrap();
+        let record = session.game.flight_record().unwrap();
+        let header = record.header();
+        let mut finalization = record.finalization().unwrap();
+        finalization.terminal_tick = 83;
+        finalization.terminal_fraction = 0.25;
+        let context = format_result_context(session.control_mode, header, finalization);
+        assert_eq!(context.lines().count(), 2);
+        assert!(context.contains("選択した操縦支援: 共有支援（FBW 50%）"));
+        assert!(context.contains(&format!(
+            "controller v{}",
+            header.scenario.controller_profile_version
+        )));
+        assert!(context.contains("確定時刻: 0.83\u{00a0}s"));
+    }
+
+    #[test]
     fn result_summary_is_short_and_technical_details_preserve_the_typed_failure() {
         let error = HybridError::try_from_recorded(
             HybridSite::Proxy {
@@ -1076,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn flight_hud_is_exclusive_to_running_and_paused_while_result_retains_world_state() {
+    fn flight_hud_is_exclusive_to_running_while_pause_and_result_retain_world_state() {
         let mut session = NativeSession::default();
         assert!(!visible_hud(session.game.snapshot().phase(), false));
         for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
@@ -1093,7 +1338,7 @@ mod tests {
             session.game.snapshot().phase(),
             SessionPhase::FlightPaused { .. }
         ));
-        assert!(visible_hud(session.game.snapshot().phase(), false));
+        assert!(!visible_hud(session.game.snapshot().phase(), false));
         let retained = session.physical_state();
         session.action(MenuAction::Abort).unwrap();
         assert_eq!(session.game.snapshot().phase(), SessionPhase::Result);
@@ -1186,7 +1431,7 @@ mod tests {
         assert!(!app.world().resource::<TechnicalDisclosure>().is_expanded());
         assert_eq!(
             app.world().get::<Node>(hud_panel).unwrap().display,
-            Display::Flex
+            Display::None
         );
         assert_eq!(
             app.world().get::<Node>(details_panel).unwrap().display,
