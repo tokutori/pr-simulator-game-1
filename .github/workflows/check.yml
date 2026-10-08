@@ -2,7 +2,7 @@ name: Check
 
 on:
   push:
-    branches: [main, 'feat/**', 'fix/**', 'chore/**']
+    branches: [main, bevy, 'feat/**', 'fix/**', 'chore/**']
   pull_request:
   workflow_dispatch:
 
@@ -34,6 +34,9 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Build Bevy native Screen executable (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build -p birdman-game-bevy --locked
       - name: Measure native hybrid hot-path allocations
         run: python tools/allocation-check/main.py
       - name: Verify offline environment source extraction
