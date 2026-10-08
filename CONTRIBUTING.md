@@ -20,6 +20,12 @@ CIはコード・設計文書・assetを検査する。Issue本文や依存関�
 commitは目的別のConventional Commitsとする。検査未実施の機能を完了として扱わない。
 通常の開発ではmainへの変更をPR経由で管理する。
 
+## 公開と統合の分離
+
+mainへのpushは検査を実行し、GitHub Pagesを自動公開しない。
+公開は明示的な公開指示を受けた後、`Check`の`workflow_dispatch`をmainに対して実行し、`deploy_pages`を有効にする。
+Ubuntu・Windowsの検査成功後に、同じrunで生成したartifactだけを公開する。
+
 ## Fast-forward優先
 
 GitHubの通常mergeボタンは `--no-ff` 相当である。Rebase and mergeはSHAを変更するため、
