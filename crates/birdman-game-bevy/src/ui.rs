@@ -1,23 +1,56 @@
 use super::{
     CameraMode, NativeFont,
+    diagnostics::{failure_summary, result_reason_label},
     native_session::{MenuAction, NativeSession},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
+    input::mouse::MouseScrollUnit,
     input_focus::{FocusCause, InputFocus},
     prelude::*,
 };
-use birdman_game_core::{ControlMode, SessionPhase, SessionSnapshot};
+use birdman_game_core::{
+    ControlMode, SessionEndReason, SessionPhase, SessionSimulationFailure, SessionSnapshot,
+};
+
+#[derive(Clone, Copy)]
+enum UiAction {
+    Session(MenuAction),
+    TechnicalDetails,
+}
 
 #[derive(Component)]
-pub(crate) struct MenuButton(MenuAction);
+pub(crate) struct MenuButton(UiAction);
 #[derive(Component)]
-pub(crate) struct SessionText;
+pub(crate) enum UiText {
+    Session,
+    Hud,
+    TechnicalDetails,
+    TechnicalButton,
+}
 #[derive(Component)]
-pub(crate) struct HudText;
+pub(crate) enum UiPanel {
+    FlightHud,
+    TechnicalDetails,
+}
+#[derive(Resource, Default)]
+pub(crate) struct TechnicalDisclosure {
+    expanded: bool,
+}
+
+impl TechnicalDisclosure {
+    pub(crate) fn toggle(&mut self) {
+        self.expanded = !self.expanded;
+    }
+
+    pub(crate) fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+}
 
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
+    commands.init_resource::<TechnicalDisclosure>();
     commands
         .spawn((
             Node {
@@ -25,14 +58,24 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 top: px(12),
                 left: px(16),
                 width: percent(72),
+                max_height: vh(75),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(8),
+                padding: UiRect::all(px(8)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.82)),
         ))
         .with_children(|parent| {
             parent.spawn((
-                SessionText,
+                UiText::Session,
                 Text::new("Birdman native Screen"),
+                Node {
+                    width: percent(100),
+                    min_width: px(0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
                 TextFont {
                     font: font.0.clone().into(),
                     font_size: FontSize::Px(22.0),
@@ -40,10 +83,73 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 },
                 TextColor(Color::WHITE),
             ));
+            parent
+                .spawn((
+                    Button,
+                    MenuButton(UiAction::TechnicalDetails),
+                    Node {
+                        display: Display::None,
+                        align_self: AlignSelf::Start,
+                        flex_shrink: 0.0,
+                        padding: UiRect::axes(px(12), px(8)),
+                        border: UiRect::all(px(1)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
+                    BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        UiText::TechnicalButton,
+                        Text::new("技術情報を開く"),
+                        TextFont {
+                            font: font.0.clone().into(),
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            parent
+                .spawn((
+                    UiPanel::TechnicalDetails,
+                    Node {
+                        display: Display::None,
+                        width: percent(100),
+                        height: vh(30),
+                        max_height: px(240),
+                        min_height: px(0),
+                        overflow: Overflow::scroll_y(),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.01, 0.02, 0.04, 0.9)),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        UiText::TechnicalDetails,
+                        Text::new(""),
+                        Node {
+                            width: percent(100),
+                            min_width: px(0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        TextLayout::linebreak(LineBreak::AnyCharacter),
+                        TextFont {
+                            font: font.0.clone().into(),
+                            font_size: FontSize::Px(16.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                })
+                .observe(scroll_technical_details);
         });
     commands
         .spawn((
+            UiPanel::FlightHud,
             Node {
+                display: Display::None,
                 position_type: PositionType::Absolute,
                 top: px(135),
                 left: px(16),
@@ -55,7 +161,7 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
         ))
         .with_children(|parent| {
             parent.spawn((
-                HudText,
+                UiText::Hud,
                 Text::new(""),
                 Node {
                     width: percent(100),
@@ -100,7 +206,7 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 parent
                     .spawn((
                         Button,
-                        MenuButton(action),
+                        MenuButton(UiAction::Session(action)),
                         Node {
                             padding: UiRect::axes(px(16), px(10)),
                             border: UiRect::all(px(1)),
@@ -132,6 +238,7 @@ pub(crate) fn button_actions(
     mut session: ResMut<NativeSession>,
     mut exit: MessageWriter<AppExit>,
     mut focus: ResMut<InputFocus>,
+    mut disclosure: ResMut<TechnicalDisclosure>,
 ) {
     for (entity, interaction, button, mut color) in &mut buttons {
         *color = BackgroundColor(if *interaction == Interaction::None {
@@ -143,10 +250,16 @@ pub(crate) fn button_actions(
             continue;
         }
         focus.set(entity, FocusCause::Pressed);
-        if button.0 == MenuAction::Exit {
-            exit.write(AppExit::Success);
-        } else if let Err(error) = session.action(button.0) {
-            session.notice = Some(error);
+        match button.0 {
+            UiAction::TechnicalDetails => disclosure.toggle(),
+            UiAction::Session(MenuAction::Exit) => {
+                exit.write(AppExit::Success);
+            }
+            UiAction::Session(action) => {
+                if let Err(error) = session.action(action) {
+                    session.notice = Some(error);
+                }
+            }
         }
     }
 }
@@ -173,6 +286,68 @@ fn visible_action(phase: SessionPhase, action: MenuAction) -> bool {
     }
 }
 
+fn visible_hud(phase: SessionPhase, details_open: bool) -> bool {
+    !details_open
+        && matches!(
+            phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        )
+}
+
+fn format_result_summary(
+    reason: SessionEndReason,
+    distance_m: Option<f64>,
+    failure: Option<SessionSimulationFailure>,
+) -> String {
+    let distance =
+        distance_m.map_or_else(|| "取得不能".into(), |value| format!("{value:.2}\u{00a0}m"));
+    let mut summary = format!(
+        "飛行結果 — {}\n確定距離: {distance}",
+        result_reason_label(reason)
+    );
+    let explanation = failure_summary(failure);
+    if !explanation.is_empty() {
+        summary.push_str(&format!("\n{explanation}"));
+    }
+    summary.push_str("\n最後の有効状態を表示する。");
+    summary
+}
+
+fn format_technical_details(
+    reason: Option<SessionEndReason>,
+    failure: Option<SessionSimulationFailure>,
+    notice: Option<&str>,
+) -> String {
+    let mut details = String::new();
+    if let Some(reason) = reason {
+        details.push_str(&format!("終了理由: {reason:?}"));
+    }
+    if let Some(failure) = failure {
+        details.push_str(&format!("\n失敗したtickの診断:\n{failure:#?}"));
+    }
+    if let Some(notice) = notice {
+        if !details.is_empty() {
+            details.push('\n');
+        }
+        details.push_str(&format!("通知詳細:\n{notice}"));
+    }
+    details
+}
+
+fn scroll_technical_details(
+    on_scroll: On<Pointer<Scroll>>,
+    mut panels: Query<(&mut ScrollPosition, &ComputedNode), With<UiPanel>>,
+) {
+    if let Ok((mut position, node)) = panels.get_mut(on_scroll.entity) {
+        let delta = match on_scroll.unit {
+            MouseScrollUnit::Line => on_scroll.y * 20.0,
+            MouseScrollUnit::Pixel => on_scroll.y,
+        };
+        let range = (node.content_size.y - node.size.y).max(0.0) * node.inverse_scale_factor;
+        position.y = (position.y - delta).clamp(0.0, range);
+    }
+}
+
 fn format_quantity(label: &str, value: f64, decimal_places: usize, unit: &str) -> String {
     let unit = unit.replace('/', "/\u{2060}");
     format!("{label}: {value:.decimal_places$}\u{00a0}{unit}")
@@ -194,18 +369,53 @@ fn format_three_axis_quantity(
 pub(crate) fn update_ui(
     session: Res<NativeSession>,
     camera: Res<CameraMode>,
+    mut disclosure: ResMut<TechnicalDisclosure>,
+    mut previous_phase: Local<Option<SessionPhase>>,
     mut buttons: Query<(&MenuButton, &mut Node)>,
-    mut text: Query<&mut Text, With<SessionText>>,
-    mut hud: Query<&mut Text, (With<HudText>, Without<SessionText>)>,
+    mut panels: Query<(&UiPanel, &mut Node, &mut ScrollPosition), Without<MenuButton>>,
+    mut text: Query<(&UiText, &mut Text)>,
 ) {
     let snapshot = session.game.snapshot();
     let phase = snapshot.phase();
+    let phase_changed = *previous_phase != Some(phase);
+    if phase_changed {
+        disclosure.expanded = false;
+        *previous_phase = Some(phase);
+    }
+    let result = match snapshot {
+        SessionSnapshot::Result(result) => Some(result),
+        _ => None,
+    };
+    let details = format_technical_details(
+        result.map(|result| result.reason),
+        result.and_then(|result| result.failure),
+        session.notice.as_deref(),
+    );
+    let details_open = disclosure.is_expanded() && !details.is_empty();
     for (button, mut node) in &mut buttons {
-        node.display = if visible_action(phase, button.0) {
+        let visible = match button.0 {
+            UiAction::Session(action) => visible_action(phase, action),
+            UiAction::TechnicalDetails => !details.is_empty(),
+        };
+        node.display = if visible {
             Display::Flex
         } else {
             Display::None
         };
+    }
+    for (panel, mut node, mut position) in &mut panels {
+        let visible = match panel {
+            UiPanel::FlightHud => visible_hud(phase, details_open),
+            UiPanel::TechnicalDetails => details_open,
+        };
+        node.display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if phase_changed {
+            position.y = 0.0;
+        }
     }
     let mode = match session.control_mode {
         ControlMode::Manual => "Manual",
@@ -230,25 +440,20 @@ pub(crate) fn update_ui(
         SessionSnapshot::TailFlightPaused { reasons, .. } => {
             format!("Paused — {reasons:?}\n明示的な再開までphysics停止中")
         }
-        SessionSnapshot::Result(result) => format!(
-            "Result — {:?}\n最後の有効状態を表示する。原因: {:?}\n確定距離: {}",
+        SessionSnapshot::Result(result) => format_result_summary(
             result.reason,
+            result.score.map(|score| score.course_parallel_m()),
             result.failure,
-            result.score.map_or_else(
-                || "取得不能".into(),
-                |score| format!("{:.2} m", score.course_parallel_m())
-            )
         ),
         _ => format!("{:?}", phase),
     };
-    if let Some(notice) = &session.notice {
-        title.push_str(&format!("\n{notice}"));
-    }
-    for mut value in &mut text {
-        value.0.clone_from(&title);
+    if session.notice.is_some() {
+        title.push_str("\n通知がある。技術情報で詳細を確認できる。");
     }
     let mut readout = String::new();
-    if let Some(state) = session.physical_state() {
+    if visible_hud(phase, details_open)
+        && let Some(state) = session.physical_state()
+    {
         let rates = state.angular_velocity_body().components();
         readout = [
             format_three_axis_quantity("body rates p/q/r", rates, 3, "rad/s"),
@@ -293,14 +498,243 @@ pub(crate) fn update_ui(
             _ => {}
         }
     }
-    for mut value in &mut hud {
-        value.0.clone_from(&readout);
+    for (kind, mut value) in &mut text {
+        match kind {
+            UiText::Session => value.0.clone_from(&title),
+            UiText::Hud => value.0.clone_from(&readout),
+            UiText::TechnicalDetails => value.0.clone_from(&details),
+            UiText::TechnicalButton => {
+                value.0 = match (visible_hud(phase, false), details_open) {
+                    (true, true) => "技術情報を閉じて計器に戻る",
+                    (true, false) => "技術情報を開く（計器を隠す）",
+                    (false, true) => "技術情報を閉じる",
+                    (false, false) => "技術情報を開く",
+                }
+                .into();
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use birdman_game_core::{
+        AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError, HybridError,
+        HybridLimit, HybridSite, HybridSurfaceRole, LoadError, TailFlightTickError,
+    };
+
+    #[test]
+    fn result_summary_is_short_and_technical_details_preserve_the_typed_failure() {
+        let error = HybridError::try_from_recorded(
+            HybridSite::Proxy {
+                surface: HybridSurfaceRole::HorizontalTail,
+                index: 0,
+            },
+            AeroError::OutsideEnvelope,
+            Some(HybridLimit::ControlledAlphaDifference),
+            Some(AerodynamicStage::First),
+        )
+        .unwrap();
+        let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
+            DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
+                error,
+            ))),
+        ));
+        let summary = format_result_summary(failure.end_reason(), Some(123.456), Some(failure));
+        assert!(summary.contains("水平尾翼の局所迎角差と取付角"));
+        assert!(summary.contains("確定距離: 123.46\u{00a0}m"));
+        assert_eq!(summary.lines().count(), 4);
+        for technical_token in [
+            "Some(",
+            "TailIncidence",
+            "ControlledAlphaDifference",
+            "OutOfValidEnvelope",
+        ] {
+            assert!(!summary.contains(technical_token));
+        }
+        let details = format_technical_details(Some(failure.end_reason()), Some(failure), None);
+        assert!(details.contains(&format!("{failure:#?}")));
+        assert!(details.contains("HorizontalTail"));
+        assert!(details.contains("ControlledAlphaDifference"));
+        assert!(details.contains("First"));
+    }
+
+    #[test]
+    fn technical_details_keep_new_operation_notices_independent_of_result_failures() {
+        let notice = "操作に失敗した: InvalidTransition { from: Result, action: Retry }";
+        let details = format_technical_details(
+            Some(SessionEndReason::OutOfValidEnvelope),
+            None,
+            Some(notice),
+        );
+        assert!(details.contains("OutOfValidEnvelope"));
+        assert!(details.contains(notice));
+        assert!(format_technical_details(None, None, None).is_empty());
+        assert_eq!(
+            format_technical_details(None, None, Some(notice)),
+            format!("通知詳細:\n{notice}")
+        );
+        let summary = format_result_summary(SessionEndReason::ManualAbort, None, None);
+        assert!(summary.contains("操作により飛行を終了した"));
+        assert!(summary.contains("確定距離: 取得不能"));
+        assert!(!summary.contains("None"));
+    }
+
+    #[test]
+    fn flight_hud_is_exclusive_to_running_and_paused_while_result_retains_world_state() {
+        let mut session = NativeSession::default();
+        assert!(!visible_hud(session.game.snapshot().phase(), false));
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+            assert!(!visible_hud(session.game.snapshot().phase(), false));
+        }
+        for _ in 0..3 {
+            session.countdown(1.0);
+        }
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert!(visible_hud(session.game.snapshot().phase(), false));
+        session.action(MenuAction::Pause).unwrap();
+        assert!(matches!(
+            session.game.snapshot().phase(),
+            SessionPhase::FlightPaused { .. }
+        ));
+        assert!(visible_hud(session.game.snapshot().phase(), false));
+        let retained = session.physical_state();
+        session.action(MenuAction::Abort).unwrap();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::Result);
+        assert!(!visible_hud(session.game.snapshot().phase(), false));
+        assert_eq!(session.physical_state(), retained);
+        assert!(retained.is_some());
+    }
+
+    #[test]
+    fn details_toggle_is_presentation_only_and_resets_on_phase_changes() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _ in 0..3 {
+            session.countdown(1.0);
+        }
+        session.notice = Some("操作に失敗した: InvalidTransition".into());
+        let snapshot = session.game.snapshot();
+        let mut app = App::new();
+        app.insert_resource(session)
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .init_resource::<InputFocus>()
+            .add_message::<AppExit>()
+            .add_systems(Update, (button_actions, update_ui).chain());
+        let hud_panel = app
+            .world_mut()
+            .spawn((UiPanel::FlightHud, Node::default()))
+            .id();
+        let details_panel = app
+            .world_mut()
+            .spawn((UiPanel::TechnicalDetails, Node::default()))
+            .id();
+        let button = app
+            .world_mut()
+            .spawn((
+                Button,
+                MenuButton(UiAction::TechnicalDetails),
+                BackgroundColor::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(hud_panel).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<Node>(details_panel).unwrap().display,
+            Display::None
+        );
+        for expected_open in [true, false, true] {
+            app.world_mut().entity_mut(button).insert(Interaction::None);
+            app.update();
+            app.world_mut()
+                .entity_mut(button)
+                .insert(Interaction::Pressed);
+            app.update();
+            assert_eq!(
+                app.world().resource::<TechnicalDisclosure>().is_expanded(),
+                expected_open
+            );
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                snapshot
+            );
+            assert_eq!(
+                app.world().get::<Node>(hud_panel).unwrap().display,
+                if expected_open {
+                    Display::None
+                } else {
+                    Display::Flex
+                }
+            );
+            assert_eq!(
+                app.world().get::<Node>(details_panel).unwrap().display,
+                if expected_open {
+                    Display::Flex
+                } else {
+                    Display::None
+                }
+            );
+        }
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Pause)
+            .unwrap();
+        app.update();
+        assert!(!app.world().resource::<TechnicalDisclosure>().is_expanded());
+        assert_eq!(
+            app.world().get::<Node>(hud_panel).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<Node>(details_panel).unwrap().display,
+            Display::None
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Abort)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(hud_panel).unwrap().display,
+            Display::None
+        );
+        app.world_mut().entity_mut(button).insert(Interaction::None);
+        app.update();
+        app.world_mut()
+            .entity_mut(button)
+            .insert(Interaction::Pressed);
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(details_panel).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<Node>(hud_panel).unwrap().display,
+            Display::None
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Retry)
+            .unwrap();
+        app.update();
+        assert!(!app.world().resource::<TechnicalDisclosure>().is_expanded());
+        assert_eq!(
+            app.world().get::<Node>(details_panel).unwrap().display,
+            Display::None
+        );
+        assert_eq!(
+            app.world().get::<Node>(hud_panel).unwrap().display,
+            Display::None
+        );
+    }
 
     #[test]
     fn quantity_preserves_sign_precision_and_expanding_digits_with_its_unit() {

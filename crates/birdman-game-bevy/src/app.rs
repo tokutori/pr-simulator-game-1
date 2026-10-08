@@ -1,5 +1,7 @@
 #![doc = "Native Screen presentation using the existing authoritative Rust game session."]
 
+#[path = "diagnostics.rs"]
+mod diagnostics;
 #[path = "native_session.rs"]
 mod native_session;
 #[path = "projection.rs"]

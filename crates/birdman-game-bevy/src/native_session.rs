@@ -207,6 +207,15 @@ impl NativeSession {
             .core_input()
             .and_then(|input| self.game.advance_tail_flight_tick(input));
         if let Err(error) = result {
+            if self
+                .game
+                .snapshot()
+                .result()
+                .is_some_and(|terminal| terminal.failure.is_some())
+            {
+                self.notice = None;
+                return;
+            }
             self.notice = Some(format!("最後の有効状態を保持した: {error:?}"));
             if self.game.snapshot().phase() == SessionPhase::FlightRunning
                 && let Err(pause_error) = self.game.pause(PauseReason::ProcessingDelay)
@@ -258,6 +267,111 @@ impl FlightInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_native_input_sequences_keep_terminal_record_and_retry_consistent() {
+        for (mode_action, mode_name) in [
+            (MenuAction::Manual, "Manual"),
+            (MenuAction::Shared, "Shared 50%"),
+            (MenuAction::Automatic, "Automatic"),
+        ] {
+            for nose_up in [0.0, 1.0, -1.0] {
+                let mut session = NativeSession::default();
+                session.action(MenuAction::Start).unwrap();
+                session.action(mode_action).unwrap();
+                session.action(MenuAction::Prepare).unwrap();
+                let sealed_identity = session.game.configuration_identity().unwrap();
+                assert_eq!(sealed_identity.seed, DEFAULT_SESSION_SEED);
+                session.action(MenuAction::Launch).unwrap();
+                for _step in 0..3 {
+                    session.countdown(1.0);
+                }
+                let initial_state = session.game.snapshot().tail_flight_state().unwrap();
+                let mut last_successful_state = initial_state;
+                let input = FlightInput {
+                    nose_up,
+                    turn_right: 0.0,
+                    pilot: None,
+                };
+                for _attempt in 0..DEFAULT_MAXIMUM_FLIGHT_TICKS {
+                    session.tick(input);
+                    if session.game.snapshot().phase() == SessionPhase::Result {
+                        break;
+                    }
+                    last_successful_state = session.game.snapshot().tail_flight_state().unwrap();
+                }
+                let terminal = session.game.snapshot();
+                let result = terminal
+                    .result()
+                    .expect("bounded native input sequence must finalize within its tick limit");
+                let record = session.game.flight_record().unwrap();
+                let header = record.header();
+                let finalization = record.finalization().unwrap();
+                let last_sample = *record.samples().last().unwrap();
+                let sample_count = record.sample_count();
+                println!(
+                    "mode={mode_name} intent=({nose_up},0,Hold) reason={:?} terminal_tick={} distance_m={:?} failure={:?}",
+                    result.reason,
+                    finalization.terminal_tick,
+                    result.score.map(|score| score.course_parallel_m()),
+                    result.failure,
+                );
+                assert_eq!(header.scenario, sealed_identity);
+                assert_eq!(result.scenario, sealed_identity);
+                assert_eq!(header.maximum_flight_ticks, DEFAULT_MAXIMUM_FLIGHT_TICKS);
+                assert_eq!(finalization.reason, result.reason);
+                assert_eq!(finalization.failure, result.failure);
+                assert_eq!(finalization.score, result.score);
+                assert_eq!(last_sample.flight_state, result.state.flight_state());
+                assert_eq!(last_sample.tick_index, finalization.terminal_tick);
+                assert_eq!(last_sample.fraction, finalization.terminal_fraction);
+                assert!(finalization.terminal_tick <= DEFAULT_MAXIMUM_FLIGHT_TICKS);
+                let display = session.display_state().unwrap();
+                assert_eq!(display.state, last_sample.flight_state);
+                assert_eq!(
+                    display.tick,
+                    finalization.terminal_tick as f64 + finalization.terminal_fraction
+                );
+                assert_eq!(
+                    last_sample.controls.actuators(),
+                    birdman_game_core::FlightRecordActuators::TailIncidence(display.incidence)
+                );
+                if let Some(target) = last_sample.controls.pilot_position_target_m() {
+                    assert_eq!(target, display.held_target_m);
+                }
+                if let Some(failure) = result.failure {
+                    assert_eq!(result.reason, failure.end_reason());
+                    assert_eq!(
+                        result.state,
+                        SessionTerminalState::TailTick(last_successful_state)
+                    );
+                    assert!(session.notice.is_none());
+                }
+                session.tick(input);
+                assert_eq!(session.game.snapshot(), terminal);
+                let retained_record = session.game.flight_record().unwrap();
+                assert_eq!(retained_record.sample_count(), sample_count);
+                assert_eq!(retained_record.finalization(), Some(finalization));
+                assert_eq!(retained_record.samples().last(), Some(&last_sample));
+                session.action(MenuAction::Retry).unwrap();
+                assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+                assert_eq!(session.game.configuration_identity(), Some(sealed_identity));
+                let retry_record = session.game.flight_record().unwrap();
+                assert_eq!(retry_record.header(), header);
+                assert_eq!(retry_record.sample_count(), 0);
+                assert!(retry_record.finalization().is_none());
+                assert!(session.notice.is_none());
+                session.action(MenuAction::Launch).unwrap();
+                for _step in 0..3 {
+                    session.countdown(1.0);
+                }
+                assert_eq!(
+                    session.game.snapshot().tail_flight_state(),
+                    Some(initial_state)
+                );
+            }
+        }
+    }
 
     #[test]
     fn native_loop_keeps_rust_phase_pause_terminal_and_retry() {

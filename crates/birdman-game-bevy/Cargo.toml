@@ -19,7 +19,7 @@ bevy = { version = "=0.19.1", default-features = false, features = [
   "std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log",
   "bevy_window", "bevy_winit", "bevy_camera", "bevy_color", "bevy_image",
   "bevy_mesh", "bevy_shader", "bevy_material", "bevy_light", "bevy_render",
-  "bevy_core_pipeline", "bevy_pbr", "bevy_text", "bevy_ui", "bevy_ui_render", "bevy_input_focus", "png"
+  "bevy_core_pipeline", "bevy_pbr", "bevy_text", "bevy_ui", "bevy_ui_render", "bevy_input_focus", "ui_picking", "png"
 ] }
 
 [lints]
