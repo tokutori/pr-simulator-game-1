@@ -60,6 +60,33 @@ software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airf
 既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
 新mockのWASM・input・record・既定モデルはBPG-042のアプリ統合で同じ二系統契約へ接続する。
 
+### 局所迎角差と尾翼角の合成範囲保護
+
+[#262](https://github.com/tokutori/pr-simulator-game-1/issues/262)の保護は二系統の共通Rust tickへ配置し、
+Manual・Shared・Automaticへ同じ規則を適用する。独立した尾翼角飽和は局所迎角差との合計を保証しないため、
+既存hybrid荷重が定義する各proxyの`ControlledAlphaDifference`を参照する。
+
+```math
+I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
+```
+
+初めに従来のauthority・slewで生成した保持incidenceを、同じ固定tickの全RK4 stageと公開stateで検査する。
+公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。
+成功した状態はそのまま採用する。尾翼の合成角制限が失敗した場合は、現在stateの許容区間と
+actuatorの`previous ± maximum_slew × PHYSICS_DT_SECONDS`の可到達区間を交差する。
+各軸の投影要求・前tick incidenceの投影値・中央・下限・上限による最大25組を追加検査し、最初の成功結果だけを公開する。
+controller、pilot目標、pilot加速度は一度だけ導出し、候補間で変更しない。
+候補ごとにincidenceを全stageへ保持し、時間刻み、物理式、空力係数、適用範囲を変更しない。
+
+これは有限候補による一tickの検査である。連続区間の網羅、将来の継続安全、失速保護、姿勢・迎角の保持を保証しない。
+`StaticAlpha`、局所速度、風の領域外など、尾翼合成角から独立した失敗は元の型付きerrorを保持する。
+候補が得られない場合は名目指令の元cause/site/stageで終了し、最後の有効stateとrecordを維持する。
+endpointの直接評価はstageを`None`とし、第四stageと混同しない。
+
+要求intent・manual/feedback/mixed targetは従来のcontrol reportへ保存する。
+保護後の実incidenceはphysical sampleへ保存する。controller profile version 2でこの動作を識別し、
+version 1の記録の読取り・snapshot Replayを維持する。Personal Bestの比較keyはcontroller versionを含む。
+
 `TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
 `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
 新flightの保持targetはtrimで初期化する。中立inputはtrimへ写像し、input欠損・機器切断の`Hold`は直前targetを維持する。
@@ -94,7 +121,7 @@ WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを�
 既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
 trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
 model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。
-アプリ既定は`bpg041-rectangular-hybrid-mock`/version 1と`bpg040-tail-rate-feedback`/version 1である。
+アプリ既定は`bpg041-rectangular-hybrid-mock`/version 1と`bpg040-tail-rate-feedback`/version 2である。
 旧JS factoryはlegacy三軸の明示的な互換入口として保持する。
 
 明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、

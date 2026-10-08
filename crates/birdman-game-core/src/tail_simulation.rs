@@ -1,10 +1,11 @@
 use crate::PHYSICS_DT_SECONDS;
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
-use crate::aerodynamics_contract::AerodynamicEvaluationError;
+use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError, HybridLimit};
 use crate::contact::{ContactError, WaterContactGeometry, detect_flight_state_water_contact};
 use crate::dynamics::{
     AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, Gravity, LoadError,
-    PilotPositionTarget, Wrench, advance, pilot_target_acceleration, total_momentum,
+    PilotAcceleration, PilotPositionTarget, Wrench, advance, pilot_target_acceleration,
+    total_momentum,
 };
 use crate::flight_control::ControlMode;
 use crate::tail_control::{
@@ -263,9 +264,155 @@ impl ExternalLoadProvider for HeldTailLoad<'_, '_> {
     }
 }
 
+struct TailTrialOutcome {
+    flight_state: FlightState,
+    contact: Option<TailWaterContactSample>,
+}
+
+struct TailEvaluatedTick {
+    next: TailFlightTickState,
+    controls: TailAppliedControls,
+    contact: Option<TailWaterContactSample>,
+}
+
+struct TailTickTrial<'provider, 'environment, 'geometry> {
+    aircraft: &'provider AircraftModel,
+    previous: TailFlightTickState,
+    tick_index: u64,
+    pilot_position_target: PilotPositionTarget,
+    pilot_acceleration: PilotAcceleration,
+    gravity: Gravity,
+    loads: &'provider HybridAerodynamicLoad<'environment>,
+    geometry: Option<WaterContactGeometry<'geometry>>,
+}
+
+impl TailTickTrial<'_, '_, '_> {
+    fn evaluate(&self, incidence: TailIncidence) -> Result<TailTrialOutcome, TailFlightTickError> {
+        let held_load = HeldTailLoad {
+            loads: self.loads,
+            incidence,
+        };
+        let state = advance(
+            self.aircraft,
+            &self.previous.flight_state,
+            self.pilot_acceleration,
+            self.gravity,
+            &held_load,
+            PHYSICS_DT_SECONDS,
+        )
+        .map_err(TailFlightTickError::Dynamics)?;
+        let contact = if let Some(geometry) = self.geometry {
+            detect_flight_state_water_contact(
+                self.aircraft,
+                self.previous.tick_index,
+                self.previous.flight_state,
+                self.tick_index,
+                state,
+                geometry,
+            )
+            .map_err(TailFlightTickError::Contact)?
+            .map(|sample| {
+                let (held_incidence, pilot_position_target) = if sample.fraction == 0.0 {
+                    (self.previous.incidence, self.previous.pilot_position_target)
+                } else {
+                    (incidence, self.pilot_position_target)
+                };
+                TailWaterContactSample {
+                    interval_start_tick: sample.interval_start_tick,
+                    fraction: sample.fraction,
+                    contact_point_index: sample.contact_point_index,
+                    flight_state: sample.flight_state,
+                    incidence: held_incidence,
+                    pilot_position_target,
+                }
+            })
+        } else {
+            None
+        };
+        let (published_state, published_incidence) = contact.map_or((state, incidence), |sample| {
+            (sample.flight_state, sample.incidence)
+        });
+        self.loads
+            .evaluate_hybrid(&published_state, published_incidence)
+            .map_err(|error| {
+                TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+                    AerodynamicEvaluationError::Hybrid(error),
+                )))
+            })?;
+        Ok(TailTrialOutcome {
+            flight_state: state,
+            contact,
+        })
+    }
+
+    fn protected_incidence(
+        &self,
+        requested: TailIncidence,
+        maximum_step: f64,
+    ) -> Result<(TailTrialOutcome, TailIncidence), TailFlightTickError> {
+        let original_error = match self.evaluate(requested) {
+            Ok(state) => return Ok((state, requested)),
+            Err(error) if controlled_tail_failure(error) => error,
+            Err(error) => return Err(error),
+        };
+        let Ok(intervals) = self
+            .loads
+            .tail_incidence_intervals(&self.previous.flight_state)
+        else {
+            return Err(original_error);
+        };
+        let previous_values = [
+            self.previous.incidence.elevator_rad(),
+            self.previous.incidence.rudder_rad(),
+        ];
+        let requested_values = [requested.elevator_rad(), requested.rudder_rad()];
+        let mut candidates = [[0.0; 5]; 2];
+        for axis in 0..2 {
+            let lower = intervals[axis][0].max(previous_values[axis] - maximum_step);
+            let upper = intervals[axis][1].min(previous_values[axis] + maximum_step);
+            if lower > upper {
+                return Err(original_error);
+            }
+            candidates[axis] = [
+                requested_values[axis].clamp(lower, upper),
+                previous_values[axis].clamp(lower, upper),
+                lower + 0.5 * (upper - lower),
+                lower,
+                upper,
+            ];
+        }
+        for elevator in candidates[0] {
+            for rudder in candidates[1] {
+                let Ok(incidence) = TailIncidence::try_new(elevator, rudder) else {
+                    continue;
+                };
+                if incidence == requested {
+                    continue;
+                }
+                if let Ok(state) = self.evaluate(incidence) {
+                    return Ok((state, incidence));
+                }
+            }
+        }
+        Err(original_error)
+    }
+}
+
+fn controlled_tail_failure(error: TailFlightTickError) -> bool {
+    matches!(
+        error,
+        TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error))))
+            if error.cause() == AeroError::OutsideEnvelope
+                && error.limit() == Some(HybridLimit::ControlledAlphaDifference)
+    )
+}
+
 /// Advances one 100 Hz tick with feedback from the previous successful body state only.
 ///
-/// Updated incidence is captured once and held through all four Hybrid RK4 load stages.
+/// Requested controls are evaluated once. The accepted incidence is held through all four
+/// Hybrid RK4 load stages and checked at the weighted endpoint. Direct controlled-tail
+/// angle failures trigger at most 25 additional trials within current-flow and slew bounds.
+/// An unsuccessful finite search retains the original error, without proving infeasibility.
 /// The pilot target is independent of surface authority. Every input state remains unchanged
 /// if control, pilot policy or an aerodynamic stage fails.
 pub fn advance_tail_flight_tick(
@@ -275,7 +422,8 @@ pub fn advance_tail_flight_tick(
     input: TailFlightTickInput,
     loads: &HybridAerodynamicLoad<'_>,
 ) -> Result<TailFlightTickState, TailFlightTickError> {
-    evaluate_tail_flight_tick(aircraft, previous, config, input, loads).map(|(state, _)| state)
+    evaluate_tail_flight_tick(aircraft, previous, config, input, loads, None)
+        .map(|evaluation| evaluation.next)
 }
 
 fn evaluate_tail_flight_tick(
@@ -284,7 +432,8 @@ fn evaluate_tail_flight_tick(
     config: TailFlightTickConfig,
     input: TailFlightTickInput,
     loads: &HybridAerodynamicLoad<'_>,
-) -> Result<(TailFlightTickState, TailAppliedControls), TailFlightTickError> {
+    geometry: Option<WaterContactGeometry<'_>>,
+) -> Result<TailEvaluatedTick, TailFlightTickError> {
     let tick_index = previous
         .tick_index
         .checked_add(1)
@@ -314,29 +463,33 @@ fn evaluate_tail_flight_tick(
         PHYSICS_DT_SECONDS,
     )
     .map_err(TailFlightTickError::Dynamics)?;
-    let incidence = control.incidence();
-    let held_load = HeldTailLoad { loads, incidence };
-    let flight_state = advance(
+    let trial = TailTickTrial {
         aircraft,
-        &previous.flight_state,
+        previous,
+        tick_index,
+        pilot_position_target,
         pilot_acceleration,
-        config.gravity,
-        &held_load,
-        PHYSICS_DT_SECONDS,
-    )
-    .map_err(TailFlightTickError::Dynamics)?;
-    Ok((
-        TailFlightTickState {
+        gravity: config.gravity,
+        loads,
+        geometry,
+    };
+    let (outcome, incidence) = trial.protected_incidence(
+        control.incidence(),
+        config.profile.maximum_slew_rad_per_second() * PHYSICS_DT_SECONDS,
+    )?;
+    Ok(TailEvaluatedTick {
+        next: TailFlightTickState {
             tick_index,
-            flight_state,
+            flight_state: outcome.flight_state,
             incidence,
             pilot_position_target,
         },
-        TailAppliedControls {
+        controls: TailAppliedControls {
             input,
             commands: control.commands(),
         },
-    ))
+        contact: outcome.contact,
+    })
 }
 
 /// Applies the same shared contact geometry and slerp as the legacy tick without legacy axes.
@@ -356,6 +509,8 @@ pub fn advance_tail_flight_tick_with_contact(
 ///
 /// No report escapes a failed tick. Contact at fraction zero retains the preceding state and
 /// discards newly evaluated controls because that interval elapsed no simulation time.
+/// Every trial checks all RK stages and the published terminal state, rather than rejecting
+/// a valid fractional contact solely because its unpublished weighted endpoint is invalid.
 pub fn advance_tail_flight_tick_with_contact_report(
     aircraft: &AircraftModel,
     previous: TailFlightTickState,
@@ -364,36 +519,15 @@ pub fn advance_tail_flight_tick_with_contact_report(
     loads: &HybridAerodynamicLoad<'_>,
     geometry: WaterContactGeometry<'_>,
 ) -> Result<TailFlightTickReport, TailFlightTickError> {
-    let (next, controls) = evaluate_tail_flight_tick(aircraft, previous, config, input, loads)?;
-    let contact = detect_flight_state_water_contact(
-        aircraft,
-        previous.tick_index,
-        previous.flight_state,
-        next.tick_index,
-        next.flight_state,
-        geometry,
-    )
-    .map_err(TailFlightTickError::Contact)?;
-    let result = match contact {
-        None => TailReportedOutcome::Advanced(next, controls),
-        Some(sample) => {
-            let held = if sample.fraction == 0.0 {
-                previous
-            } else {
-                next
-            };
-            let contact = TailWaterContactSample {
-                interval_start_tick: sample.interval_start_tick,
-                fraction: sample.fraction,
-                contact_point_index: sample.contact_point_index,
-                flight_state: sample.flight_state,
-                incidence: held.incidence,
-                pilot_position_target: held.pilot_position_target,
-            };
-            if sample.fraction == 0.0 {
+    let evaluation =
+        evaluate_tail_flight_tick(aircraft, previous, config, input, loads, Some(geometry))?;
+    let result = match evaluation.contact {
+        None => TailReportedOutcome::Advanced(evaluation.next, evaluation.controls),
+        Some(contact) => {
+            if contact.fraction == 0.0 {
                 TailReportedOutcome::ContactAtStart(contact)
             } else {
-                TailReportedOutcome::ContactWithinInterval(contact, controls)
+                TailReportedOutcome::ContactWithinInterval(contact, evaluation.controls)
             }
         }
     };
@@ -402,3 +536,5 @@ pub fn advance_tail_flight_tick_with_contact_report(
 
 #[cfg(test)]
 mod numerical_tests;
+#[cfg(test)]
+mod protection_tests;

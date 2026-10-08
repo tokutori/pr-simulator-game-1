@@ -181,7 +181,7 @@ pub(crate) fn for_identity(
         || (identity.scenario_version == 2
             && identity.catalog_version == 2
             && identity.aircraft_model_version == 1
-            && identity.controller_profile_version == 1);
+            && matches!(identity.controller_profile_version, 1 | 2));
     let registered = registered_version
         && matches!(
             identity.aircraft_model_version,
@@ -439,12 +439,24 @@ mod tests {
                 current_snapshot["projection"]["metadata"],
                 previous_snapshot["projection"]["metadata"]
             );
+            let mut protected = current;
+            protected.controller_profile_version = 2;
+            let protected_snapshot = query(protected);
+            assert_eq!(protected_snapshot["projection"]["kind"], "available");
+            assert_eq!(
+                protected_snapshot["projection"]["identity"]["controller_profile_version"],
+                2
+            );
+            assert_eq!(
+                protected_snapshot["projection"]["metadata"],
+                current_snapshot["projection"]["metadata"]
+            );
             for component in 0..4 {
                 let mut unknown = current;
                 match component {
                     0 => unknown.catalog_version = 1,
                     1 => unknown.aircraft_model_version = 2,
-                    2 => unknown.controller_profile_version = 2,
+                    2 => unknown.controller_profile_version = 3,
                     3 => unknown.scenario_version = 3,
                     _ => unreachable!(),
                 }
