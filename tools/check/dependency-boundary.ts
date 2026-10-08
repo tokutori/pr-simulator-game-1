@@ -1,13 +1,31 @@
 import { record, nonEmpty } from "../shared/validation.js";
 
 export const HOST_NUMERICAL_TEST_TARGET = 'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))';
+export const NATIVE_SCREEN_TARGET = 'cfg(target_os = "windows")';
 
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
   ["birdman-game-cli", ["birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
-  ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "wasm-bindgen"]]
+  ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "birdman-game-session", "serde", "serde_json", "sha2", "wasm-bindgen"]],
+  ["birdman-game-session", ["birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2"]],
+  ["birdman-game-bevy", ["birdman-game-core", "birdman-game-format", "birdman-game-session", "bevy", "serde", "serde_json"]]
 ]);
+
+const excludedNativeFeatures = new Set([
+  "default", "default_platform", "3d", "ui", "audio", "bevy_audio",
+  "bevy_gilrs", "web", "webgl2", "webgpu"
+]);
+
+function isNativeEngineDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-bevy"
+    && dependency.kind === null
+    && dependency.target === NATIVE_SCREEN_TARGET
+    && dependency.req === "=0.19.1"
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
+}
 
 function isHostNumericalTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-core"
@@ -35,6 +53,9 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
     for (const value of pkg.dependencies) {
       const dependency = record(value);
       const dependencyName = nonEmpty(dependency.name);
+      if (dependencyName === "bevy" && !isNativeEngineDependency(name, dependency)) {
+        throw new Error(`Forbidden native engine dependency in ${name}`);
+      }
       if (!permitted.includes(dependencyName) && !isHostNumericalTestDependency(name, dependency)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);
       }

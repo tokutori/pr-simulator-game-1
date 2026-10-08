@@ -103,6 +103,15 @@ grid範囲外を黙って補正しない。失敗時は直前の有効状態を�
 Webは有効recordがあれば終了理由付きResultへ遷移し、boot等の初期化失敗は所属Scene内のfailed状態で扱う。
 再試行・復帰の選択肢を提示し、表示言語はcoreから分離する。
 
+## Bevy native Screen確認用adapter
+
+`birdman-game-bevy`は既存core/formatとWeb非依存の共有session準備を利用するnative adapterである。
+Bevyの入力・GPU・window・Transformはadapter内部に限定し、物理・GameSession・score・記録の正本はRust coreに保持する。
+nativeのbuild・起動・操作にNode.js、TypeScript、browser、WASM実行環境を要求しない。
+今回の対象はWindows 11のScreenであり、既存Webの全Scene/VR契約は維持する。
+native固有のPilot/Chase操作はpresentation状態とし、physics・configuration・記録を変更しない。
+実装範囲と確認手順は[Bevy native Screen](bevy-native-screen.md)に記載する。
+
 ## 全機polarとhybridへの移行
 
 BPG-038の`StaticPolar`はborrowed row・離散設定ID・解析方式・model version、
