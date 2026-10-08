@@ -40,8 +40,11 @@ Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有
 
 ## 最初に確認する操作
 
-起動→開始→Flight操作→Pilot/Chase切替→一時停止・復帰→終了→Result→Retryを確認する。
-画面下部のボタンで開始、操縦方式選択、飛行準備、発進、終了、再試行を実行する。
+起動→飛行を設定→操縦支援を選択→飛行準備へ進む→発進カウントダウンを開始→Flight→Result→同じ条件で再試行を確認する。
+設定・確認・発進の進行表示を設け、設定選択、主要操作、戻る操作を区別する。
+設定の操縦支援はManual・Shared 50%・Automaticの3択であり、確認画面では選択値と操作方法を表示する。
+カウントダウンを取り消すと確認画面へ戻り、確認画面から設定変更もできる。
+既定のTypical環境を維持し、nativeで未提供の気象選択を表示しない。
 
 | 入力 | 操作 |
 |---|---|
@@ -54,6 +57,16 @@ Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有
 | F12 | カレントディレクトリへnative screenshotを保存 |
 
 独立したroll入力は現行二系統モデルに追加しない。操作機器を解放した後のpilot目標保持も既存coreの契約を使用する。
+
+Resultは終了理由、確定距離、短い原因説明を表示し、入れ子の内部診断は「技術情報」に格納する。
+Flight HUDは飛行中に限定する。一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
+本文と下部操作を同じcolumnに配置する。本文は最大65vhと残余高の範囲へ収め、操作領域を保持する。
+ボタンは明示幅と最低高48pxを持ち、狭いwindowでは折り返す。本文と技術情報はwheelでスクロールできる。
+Resultでは選択した操縦支援、記録由来のcontroller version、確定した飛行時刻も確認できる。
+通常の概要と元のtyped causeを保持した技術情報を分離し、UIの折畳み操作から物理状態を変更しない。
+
+尾翼の合成角制限に対しては[共通Rustの入力保護](flight-control.md#局所迎角差と尾翼角の合成範囲保護)を適用する。
+既存body-rate FBWとこの保護は異なる責務である。現在の保護は完全な迎角・失速・姿勢保護を提供しない。
 
 ## Assetとフォント
 
@@ -97,9 +110,13 @@ OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS�
 
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
 通常のsession操作とlogical inputを使って開始・飛行・Pilot/Chase・一時停止/再開・終了・Result・Retryを確認する。
-Title/Pilot/Chase/Resultの画像を書き込み、保存完了後に成功を返す。途中のwindow終了とtimeoutは失敗になる。
+Title/設定/確認/Countdown/Pilot/Chase/一時停止/Resultの画像を書き込み、保存完了後に成功を返す。
+再試行では全nose-up入力による実フライトの終端と技術情報も撮影し、元cause・score・recordの一致を確認する。
+WaterContact/TimeLimitの正常終了も受理する。診断表示のために通常入力の失敗を必須としない。
+途中のwindow終了とtimeoutは失敗になる。
 水面/PBR shaderのロードと実pipelineのcompile完了を5連続frame確認してから撮影する。
-shader/assetの確定エラーは原因を保持して返す。timeoutはGPU初期化後の最初のUpdateから60秒とする。
+撮影frameのUI layout後に、ボタンlabelのglyph・寸法・包含、viewport内の配置、本文と下部操作の非重複を検査する。
+shader/assetの確定エラーは原因を保持して返す。timeoutはGPU初期化後の最初のUpdateから90秒とする。
 検査中はnativeウィンドウをアクティブに維持する。通常のfocus・処理遅延による停止契約も適用される。
 撮影処理によるProcessingDelayだけの停止は、正常なfocused frameと描画準備の回復後に検査操作として明示的に再開する。
 通常モードの安全停止・再開条件は変更しない。
@@ -164,6 +181,22 @@ shader・asset・日本語分割の確定エラーは0件であり、旧release�
 継続修正のhead `7c469bc3`の[CI run 37764364175](https://github.com/tokutori/pr-simulator-game-1/actions/runs/37764364175)も、
 Ubuntu・Windowsの全検査stepが成功した。Pagesの設定・artifact upload・deployはskipである。
 実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。ユーザー受入とmainへの取込みは別の条件として保持する。
+
+### 設定・結果・入力保護の継続修正
+
+2026-10-09、設定・確認・発進の画面役割、操縦支援の直接選択、主要操作と戻る操作を整理した。
+Resultの概要と技術情報を分離し、一時停止の理由と再開可否を同じcore条件から表示する。
+実画像で検出した操作labelの0幅collapseを修正し、本文とnavigationの共通column、明示幅button、折返しを検査する。
+native 45試験、共有Rust関連試験、Web 1,416試験とWASM/Vite buildが成功した。
+Windows 11 / AMD Radeon 860M / Vulkanのdebug版で、800×600と1280×720の全10画面のGPU検査が成功した。
+rootと独立readonly reviewerが800×600の画像を確認し、rootは1280×720の設定・確認・Pilot・技術情報も確認した。
+保存先は`target/bevy-ux-fixed-800x600/`と`target/bevy-ux-fixed-1280x720-retry/`である。
+1280×720の初回はfocus喪失により失敗し、通常の安全停止を維持して再実行した。
+今回のsourceに対するrelease再buildと実キー・クリック・wheel・DPIの受入は未実施である。以前のrelease検査と区別する。
+
+共通Rust tickへ尾翼合成角の有限候補保護を追加し、controller version 2を記録する。
+既定環境で全nose-upを継続すると、独立した`StaticAlpha`制約により1.60秒・11.48mで終了する。
+この入力系列は完全な迎角・失速保護の未達事項を示す。ユーザーの117.91mの入力列との同一再現を主張しない。
 
 検査基準は次の通りであり、共有crateを追加した場合はその関連testも実行する。
 
