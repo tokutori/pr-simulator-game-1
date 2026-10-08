@@ -14,7 +14,7 @@ coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacity�
 `FlightRecordHeader::try_new`とarchive復元は同じheader条件を用いる。scenario IDとseedの数値範囲は追加で制限せず、catalog解決は呼出し側の責務とする。
 不正headerは構築時に`InvalidHeader`、archive復元時に`InvalidArchive`となる。正当な容量の予約失敗は`AllocationFailed`とし、domain errorと区別する。
 `birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
-WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。既定の`HybridGameSessionBridge`はnamed sample・Summary・風queryと、保存v1〜5/v6の復元を同じcore recordへ接続する。旧`GameSessionBridge`のpacked queryはlegacy互換入口として保持する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。Analysis datasetは同recordのcontextを照合して取得し、通常のReplay clock更新ではcursorだけをqueryする。毎frameの全record変換・Summary再集計を行わない。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。IndexedDB version 1〜3からのupgrade、metadata移行、version 4のindex revisionによる再構築はfake-indexeddbで検証する。実ブラウザー操作は未検証である。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
+WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。既定の`HybridGameSessionBridge`はnamed sample・Summary・風queryと、保存v1〜5/v6の復元を同じcore recordへ接続する。旧`GameSessionBridge`のpacked queryはlegacy互換入口として保持する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。Analysis datasetは同recordのcontextを照合して取得し、通常のReplay clock更新ではcursorだけをqueryする。毎frameの全record変換・Summary再集計を行わない。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。IndexedDB version 1〜3からのupgrade、metadata移行、version 4のindex revisionによる再構築はfake-indexeddbで検証する。限定Screen受入では保存・一覧・schema 5 archiveのReplay、CSV1と元JSON全文一致を確認した。条件は[検証契約](verification.md)に記載する。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
 WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。
 recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
 
@@ -211,7 +211,7 @@ graph cursorと再生位置は同じrecord時刻を参照する。
 
 BPG-021の現行実装はRustのResult/Replay phase往復、記録時刻scrub、Result Analysis cursor同期、
 Rust補間sampleからのrender pose適用、連続playback clock、pause、0.5×/1×/2×速度選択、ScreenでのPilot/Chase選択までを含む。
-Replay rigごとの実ブラウザー/GPU・VR表示と操作は未検証であり、Scene受入完了条件として残す。
+`1093d4cb`の限定Screen受入でReplay・Analysis操作を確認した。全Replay rigの網羅、VR・実端末の表示と操作はScene受入の残条件として保持する。
 
 ## 検証
 

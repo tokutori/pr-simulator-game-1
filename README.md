@@ -28,7 +28,7 @@ Rust `GameSession`はTitle・Setup・Briefing・Countdown・Flight・Result・Re
 
 新規flightはJSON record schema 6へ保存する。保存v1〜5は元の三軸snapshotとして閲覧し、v6の二系統と排他的に扱う。旧recordを新mockで再積分しない。Result・Analysis・Replayは同じ保存record、元causeと終端stampを参照し、再生clockと集計値をRustが所有する。WebはIndexedDB保存、layout別Personal Best selector、水平map・高度/速度graph・共通cursor・理由付き風queryを接続する。未知保存環境へ現在の環境・地図を流用しない。
 
-Screen・WebXR・Phone VRは共通ModelからUIを導出し、同じsession ownerを使用する。VRのHead HUDとMenu anchorを分離する。実ブラウザー/GPU・実HMD・スマートフォンによる全gameplay loopの受入は未検証である。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、ゲーム機能の開発をblockしない。
+Screen・WebXR・Phone VRは共通ModelからUIを導出し、同じsession ownerを使用する。VRのHead HUDとMenu anchorを分離する。`1093d4cb`では実Chromium/WebGL上のScreen操作・保存・Replayを確認した。Phone VRは合成sensorによるStereo Title/Menu/Setup/Briefingまでを確認し、Flight Head・実センサー・実HMDは未検証である。条件と範囲は[検証契約](docs/verification.md)に記載する。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、ゲーム機能の開発をblockしない。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
 ## 飛行ログの出力
@@ -65,7 +65,7 @@ npm run dev
 
 Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。型・自動試験・buildの合格と、実ブラウザー上のWebGL操作・全gameplay loop・実機の受入を区別する。
 
-`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。現段階は試験公開とし、BPG-013の配布条件と実ブラウザー受入は未完了のまま追跡する。
+`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。現段階は試験公開とし、BPG-013の配布条件とVR・実端末の未完了受入を追跡する。
 
 ## 設計資料
 

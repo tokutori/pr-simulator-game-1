@@ -42,7 +42,13 @@ browser Typical環境、旧`verify-flight`、距離目標、長時間安定性�
 単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
 Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、混在archive/PB routingを対象とする。
 CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
-実ブラウザー/GPU・実端末の受入は未検証であり、新mockの飛距離・長時間安定性・実機性能を実証済みと扱わない。
+2026-10-08、`1093d4cb`（PR #235）をChromium 148・Playwright 1.60・AMD Radeon 860MのWebGLで確認した。
+ScreenのBoot→Setup→Briefing→Flight keyboard→Pause/Resume→Result→CSV2/JSON6→Analysis→Replay→Retryが成功した。
+Analysisは3chart×3viewport、ReplayのJSON全文一致、旧schema 5 archiveのCSV1と元JSON全文一致を確認した。
+自然終端の観測は12.33 sの`OutOfValidEnvelope`であり、WaterContact・旧飛距離条件の検査と分離する。
+Phone VRは合成sensor境界とStereo Title/Menu/Setup/Briefingまでを確認した。
+Flight Head・実センサー・実スマートフォン・実HMDは未検証であり、[#15](https://github.com/tokutori/pr-simulator-game-1/issues/15)・[#16](https://github.com/tokutori/pr-simulator-game-1/issues/16)・[#161](https://github.com/tokutori/pr-simulator-game-1/issues/161)の受入を保持する。
+新mockの全mode安定性・長時間安定性・実機性能は、この限定受入の範囲に含めない。
 
 ### BPG-043 hybrid量別step-halving
 
@@ -100,7 +106,25 @@ $\epsilon$はf64 epsilonとする。4096は400 Hz系列の200 step・RK4 stage�
 静止pilotや解析的な保持加速度の系列で、収縮の次数を実証したと扱わない。
 許容差を観測結果へ事後fitせず、超過は試験条件・支配誤差の調査対象とする。
 この単位の検査結果は実行時のcommit・toolchain・環境とともに報告する。
-Jacobian/eigen・小摂動時系列・event精度・wind・適用限界近傍の比較はFの後続単位である。
+Jacobian/eigen・小摂動は[局所離散線形化](hybrid-numerical-validation.md)、event精度は[contact検証](contact-numerical-validation.md)、
+wind・適用限界近傍は[風とdomain検証](hybrid-wind-domain-validation.md)に条件と量別上限を記載する。
+
+### BPG-043の契約対応
+
+[#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)の9.1–9.4を次の8群で追跡する。
+許容差・演算条件は各契約文書と試験定数を正本とし、以下のnative検査はWindows/Rust 1.97.0である。
+CIは各PRのexact headで判定する。windの最終CI確認待ちを検査成功へ含めない。
+
+| 指示・契約群 | 既存試験群と条件 | PR・commit | 結果・範囲 |
+|---|---|---|---|
+| 9.1 A/B/D 静的契約 | `polar::tests`のconstructor/PWL/axis/reference、`hybrid::tests`と`hybrid_mock::tests`のgeometry/neutral oracle | [#222](https://github.com/tokutori/pr-simulator-game-1/pull/222)、[#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#228](https://github.com/tokutori/pr-simulator-game-1/pull/228) | merge済み。演算scaleの許容差と独立oracleを使用する |
+| 9.2 B 動的増分 | `hybrid::tests`の微係数・差分幅・strip収束、gust/dihedral/fin/rate/control符号、Galilean invariance | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226) / `1cb9b8f` | merge済み。staticとproxy増分の二重計上を検査する |
+| 9.3 D/E trim・決定性 | `hybrid_mock::trim::tests`の独立参照と実wrench/core釣合い、`verify-hybrid-flight all`の固定入力二度実行 | [#228](https://github.com/tokutori/pr-simulator-game-1/pull/228) / `8cf2829`、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | angle/x差≤1e-7、力/moment残差≤1e-5。同identity/tick入力を照合し、架空fixtureに限定する |
+| 9.3 F 刻み・量別精度 | `tail_simulation::numerical_tests`のphysics-only/連成、3mode、Neutral/SmoothChanged/SlewReversal | [#249](https://github.com/tokutori/pr-simulator-game-1/pull/249) / `cfab952` | core273＋doc4、両OS CI成功。量別予算・丸めfloor・slew例外を分離する |
+| 9.3 F 局所応答 | `hybrid_linearization`のcentral Jacobian/固有値・小摂動、零風・静止pilot・接触前0.5 s | [#250](https://github.com/tokutori/pr-simulator-game-1/pull/250) / `9f87046` | 2試験/checker24、両OS CI成功。Manual/Automaticとも局所growingが3個残る |
+| 9.3 F event | `contact::tests::numerical`のballistic解析endpointと実RK4、4phase×100/200/400 Hz | [#251](https://github.com/tokutori/pr-simulator-game-1/pull/251) / `e406801` | 2試験・両OS CI成功。O(dt²)補間上限と積分丸めを分離し、hybrid着水へ転用しない |
+| 9.3–9.4 F 風・domain | `numerical_tests::wind_tests`の一様風/shear/上限近傍、全mode量別gate・境界外原子性 | `945ed389` | 固定・独立review済み、最終CI確認待ち。全風領域・長時間安定性は対象外 |
+| 9.4 B/C/E 範囲外・公開 | `hybrid::tests::envelope`の全stage/零速、`tail_control::tests`/`tail_tick`、`session-facade`/`named-record`/`main-tail-integration` | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#227](https://github.com/tokutori/pr-simulator-game-1/pull/227)、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | software・上記限定Screen受入成功。旧archiveを保存layoutで閲覧し、VR・実端末の未検証範囲を保持する |
 
 ### BPG-002 core検証
 

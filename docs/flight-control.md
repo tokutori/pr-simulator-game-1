@@ -191,7 +191,8 @@ Web側で物理・集計・scoreを再評価せず、確定Summaryと保存curso
 
 検証ではManual/Automaticの端点、Sharedの各axis混合、飽和、rate limit、境界値、拒否された入力後の
 入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
-閉ループ減衰で検証する。閉ループcontrollerの安定性・通常操縦での飛行成立性は、
-合成係数を使った100 Hz/200 Hzのstep-halving連成試験で数値収束を確認する。
-この試験は、実機の安定性・通常操縦の成立性を保証しない。aircraft-specific controllerと
+閉ループ減衰で検証する。数値積分と離散controlの刻み依存は、[量別step-halving](verification.md)で
+physics-onlyと連成の100/200/400 Hz比較へ分離する。局所増大・減衰は[離散線形化](hybrid-numerical-validation.md)で
+Jacobian/固有値と小摂動時系列を照合する。Manual/Automaticとも局所増大が残り、
+全modeの安定性・通常操縦の成立性・実機の安定性は未確認である。aircraft-specific controllerと
 aerodynamic derivativesのfidelity検証はBPG-035でM6完了後に扱い、M3〜M6をblockしない。
