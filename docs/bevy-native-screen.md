@@ -31,6 +31,11 @@ Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有
 終了理由が適用範囲外の場合も元のcauseと最後の有効状態を保持する。
 旧三軸モデルへ切り替えず、モデルの変更や飛距離tuningを行わない。
 
+発進方位は[#255](https://github.com/tokutori/pr-simulator-game-1/issues/255)の修正として北西315°へ統一する。
+比較元にはplatform315°と初期heading・距離評価軸0°の不整合があった。
+共有`assets/biwa-launch-venue.json`からRustの初期姿勢・course axis、Web/Bevyのplatform配置を導出する。
+風はworld NEDを維持し、カメラまたは景観だけを回転する補正は行わない。
+
 ## 最初に確認する操作
 
 起動→開始→Flight操作→Pilot/Chase切替→一時停止・復帰→終了→Result→Retryを確認する。
@@ -53,6 +58,11 @@ Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有
 登録済みの湖岸・地形・会場・環境JSONを再利用する。機体は現行表示の寸法に基づくprocedural meshで表示する。
 出典・加工・利用条件は`assets/manifest.toml`を正本とする。native起動前にTypeScriptでassetを生成する手順は不要である。
 日本語表示はWindowsにインストールされたMeiryoをローカルで読み取る。フォントファイルをrepositoryやbinaryへ同梱しない。
+日本語の単語分割にはICU辞書を使用する。Bevy 0.19.1が利用するParley 0.9.0へ公式の`complex-scripts`選択処理を限定backportし、
+Windows native依存だけで有効化する。出典と変更範囲は`vendor/parley/BACKPORT.md`に記録する。
+Parley 0.9.0にはICU4X 2.3の`BidiClass::to_icu4c_value`に関する既存の非推奨警告が1件残る。
+これは分割モデル欠損と別の上流API変更であり、[ICU4X #6067](https://github.com/unicode-org/icu4x/issues/6067)を参照する。
+警告の抑制や依存versionの後退は行わない。
 利用と再配布の境界は[Microsoftのfont FAQ](https://learn.microsoft.com/en-us/typography/fonts/font-faq)に従う。
 未導入環境では起動時に明示的なエラーを返し、利用許諾を持つフォントを`--font`で指定する。
 
@@ -61,11 +71,39 @@ Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
-描画の具体的な簡略化は、実装と実起動の確認後に追記する。
+水面は二つの空間周波数によるnormalとFresnel・太陽反射、空はprocedural gradientを使用する。
+Gerstnerのgeometry変位・高品質な反射・遠方波のfilteringは未移植であり、水平線付近にmoireが残る。
+機体は簡易mesh、HUDは数値主体である。一部の単位表示に折返しがあり、ADI等の詳細計器は未移植である。
+
+## GPU接続の検査
+
+```sh
+cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
+```
+
+このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
+通常のsession操作とlogical inputを使って開始・飛行・Pilot/Chase・一時停止/再開・終了・Result・Retryを確認する。
+Title/Pilot/Chase/Resultの画像を書き込み、保存完了後に成功を返す。途中のwindow終了とtimeoutは失敗になる。
+水面/PBR shaderのロードと実pipelineのcompile完了を5連続frame確認してから撮影する。
+shader/assetの確定エラーは原因を保持して返す。timeoutはGPU初期化後の最初のUpdateから60秒とする。
+検査中はnativeウィンドウをアクティブに維持する。通常のfocus・処理遅延による停止契約も適用される。
+撮影処理によるProcessingDelayだけの停止は、正常なfocused frameと描画準備の回復後に検査操作として明示的に再開する。
+通常モードの安全停止・再開条件は変更しない。
+scripted logical inputの検査は、実キーボード・マウスによる操作の受入と区別する。
 
 ## 検証状態
 
-現時点は実装中である。build・実描画・操作の検証を実施済みとして扱わない。
+Windows 11 / AMD Radeon 860MのVulkanでnativeウィンドウの起動を確認した。
+ユーザーの実機試験でも描画を確認したが、日本語分割モデル欠損のログと表示の問題が報告されている。
+辞書constructorへの修正と、LUTを要求しない`Tonemapping::Reinhard`の明示を適用した。
+修正後のGPU検査は日本語分割・shader/assetの確定エラーなしで成功した。
+水面/PBR pipelineの準備を確認後、Title・Pilot・Chase・Resultの4枚を保存し、画像上で水面・地形・機体を確認した。
+scripted logical inputで開始・飛行入力・視点切替・一時停止/再開・ManualAbort・Result・同条件Retryを検査した。
+撮影負荷によるProcessingDelayを2回検出し、安全停止の回復後に検査操作として再開した。
+画像は`target/bevy-gpu-verification-ready/`に保存する。実キーボード・マウス操作の受入はユーザー確認待ちである。
+今回のGPU検査はdebug buildであり、release buildでの実描画確認は区別して記録する。
+修正前HEAD `259f1477`はUbuntu/WindowsのCI、共有層76件、native check/Clippyに合格した。
+この結果は修正後の実描画受入と区別する。
 検査基準は次の通りであり、共有crateを追加した場合はその関連testも実行する。
 
 ```sh

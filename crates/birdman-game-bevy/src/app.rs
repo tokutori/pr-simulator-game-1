@@ -6,6 +6,8 @@ mod native_session;
 mod projection;
 #[path = "ui.rs"]
 mod ui;
+#[path = "verification.rs"]
+mod verification;
 #[path = "water.rs"]
 mod water;
 #[path = "world.rs"]
@@ -38,6 +40,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut font_path =
         PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into()))
             .join("Fonts/meiryo.ttc");
+    let mut verification_directory = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--font" => {
@@ -46,9 +49,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                     .ok_or("--font requires a local font path")?
                     .into()
             }
+            "--verify" => {
+                verification_directory = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--verify requires an output directory")?,
+                ));
+            }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot"
+                    "birdman-game-bevy [--font PATH] [--verify DIR]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。"
                 );
                 return Ok(());
             }
@@ -61,6 +71,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             font_path.display()
         )
     })?;
+    if verification_directory.is_some() {
+        verification::verify_text_layout(&font_bytes)?;
+    }
     let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
     if !assets_path.join("native_water.wgsl").is_file() {
         return Err("水面shader assetがない".into());
@@ -104,8 +117,24 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 ui::update_ui,
             )
                 .chain(),
-        )
-        .run();
+        );
+    let mut verification_completion = None;
+    if let Some(directory) = verification_directory {
+        let (verification, completion) =
+            verification::Verification::try_new(directory, app.world().resource::<AssetServer>())?;
+        verification_completion = Some(completion);
+        app.insert_resource(verification)
+            .add_plugins(verification::VerificationRenderPlugin)
+            .add_systems(PreUpdate, verification::supply_input.after(read_input))
+            .add_systems(Update, verification::advance.after(ui::update_ui));
+    }
+    let exit = app.run();
+    if let Some(completion) = verification_completion {
+        completion.ensure_completed()?;
+    }
+    if exit.is_error() {
+        return Err("Native app exited with an error".into());
+    }
     Ok(())
 }
 
