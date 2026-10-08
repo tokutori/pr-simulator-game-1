@@ -16,6 +16,23 @@ const POLAR_KNOTS: [(f64, f64); 5] = [
     (0.06, 1.00),
     (0.12, 1.18),
 ];
+const PLAYABLE_POLAR_KNOTS: [(f64, f64); 9] = [
+    (-0.18, -0.20),
+    (-0.15, -0.05),
+    (-0.12, 0.10),
+    (-0.06, 0.36),
+    (0.0, 0.70),
+    (0.06, 1.00),
+    (0.12, 1.18),
+    (0.15, 1.24),
+    (0.18, 1.26),
+];
+const PLAYABLE_PITCH_STIFFNESS_PER_RAD: f64 = 2.0;
+const PLAYABLE_PITCH_REFERENCE_ALPHA_RAD: f64 = 0.04;
+const PLAYABLE_DRAG_ONSET_RAD: f64 = 0.06;
+const PLAYABLE_DRAG_RISE_PER_RAD_SQUARED: f64 = 1.5;
+const VERSION_ONE_TAIL_ARM_M: f64 = 1.8;
+const PLAYABLE_TAIL_ARM_M: f64 = 3.6;
 const WING_AREA_M2: f64 = 18.0;
 const WING_SPAN_M: f64 = 18.0;
 const TAIL_AREA_M2: f64 = 2.5;
@@ -28,6 +45,8 @@ const FIN_SPAN_M: f64 = 0.7;
 pub enum HybridMockConfiguration {
     /// Rectangular main wing with five-degree dihedral and no twist.
     Standard,
+    #[doc = "Version-two playable software polar with an extended horizontal-tail arm."]
+    Playable,
     /// Identical projected geometry and static polar with zero wing dihedral.
     ZeroDihedralOracle,
 }
@@ -37,19 +56,23 @@ impl HybridMockConfiguration {
     pub const fn configuration_id(self) -> &'static str {
         match self {
             Self::Standard => "bpg041-rectangular-hybrid-mock",
+            Self::Playable => "bpg041-playable-hybrid-mock",
             Self::ZeroDihedralOracle => "bpg041-zero-dihedral-oracle",
         }
     }
 
     /// Version within the configuration identity, independent of the old element-only model.
     pub const fn model_version(self) -> u32 {
-        1
+        match self {
+            Self::Playable => 2,
+            Self::Standard | Self::ZeroDihedralOracle => 1,
+        }
     }
 
     /// Returns the main wing's dihedral angle in radians.
     pub fn wing_dihedral_rad(self) -> f64 {
         match self {
-            Self::Standard => 5.0 * core::f64::consts::PI / 180.0,
+            Self::Standard | Self::Playable => 5.0 * core::f64::consts::PI / 180.0,
             Self::ZeroDihedralOracle => 0.0,
         }
     }
@@ -85,7 +108,22 @@ pub struct HybridMockDefinition {
     wing_proxies: [HybridProxy; 16],
     tail_proxies: [HybridProxy; 8],
     fin_proxies: [HybridProxy; 4],
-    rows: [StaticPolarRow; 5],
+    rows: HybridMockPolarRows,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum HybridMockPolarRows {
+    VersionOne([StaticPolarRow; 5]),
+    Playable([StaticPolarRow; 9]),
+}
+
+impl HybridMockPolarRows {
+    fn as_slice(&self) -> &[StaticPolarRow] {
+        match self {
+            Self::VersionOne(rows) => rows,
+            Self::Playable(rows) => rows,
+        }
+    }
 }
 
 impl HybridMockDefinition {
@@ -98,9 +136,14 @@ impl HybridMockDefinition {
             section([0.0, 0.0, 0.0], 1.0)?,
             section([0.0, 9.0, wing_tip_down], 1.0)?,
         ];
+        let tail_arm_m = if configuration == HybridMockConfiguration::Playable {
+            PLAYABLE_TAIL_ARM_M
+        } else {
+            VERSION_ONE_TAIL_ARM_M
+        };
         let tail_sections = [
-            section([-1.8, -1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
-            section([-1.8, 1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
+            section([-tail_arm_m, -1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
+            section([-tail_arm_m, 1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
         ];
         let fin_sections = [
             section([-1.8, 0.0, -0.45], FIN_AREA_M2 / FIN_SPAN_M)?,
@@ -116,10 +159,24 @@ impl HybridMockDefinition {
         let wing_proxies = partition(wing, [-9.0, 9.0], [left_frame, right_frame])?;
         let tail_proxies = partition(tail, [-1.7, 1.7], [tail_frame; 2])?;
         let fin_proxies = partition(fin, [-0.45, 0.25], [fin_frame; 2])?;
-        let mut rows = [polar_row(POLAR_KNOTS[0], tail.lift_slope_per_rad())?; 5];
-        for (row, knot) in rows.iter_mut().zip(POLAR_KNOTS) {
-            *row = polar_row(knot, tail.lift_slope_per_rad())?;
-        }
+        let rows = if configuration == HybridMockConfiguration::Playable {
+            let mut rows =
+                [playable_polar_row(PLAYABLE_POLAR_KNOTS[0], tail.lift_slope_per_rad())?; 9];
+            for (row, knot) in rows.iter_mut().zip(PLAYABLE_POLAR_KNOTS) {
+                *row = playable_polar_row(knot, tail.lift_slope_per_rad())?;
+            }
+            HybridMockPolarRows::Playable(rows)
+        } else {
+            let mut rows = [polar_row(
+                POLAR_KNOTS[0],
+                tail.lift_slope_per_rad(),
+                VERSION_ONE_TAIL_ARM_M,
+            )?; 5];
+            for (row, knot) in rows.iter_mut().zip(POLAR_KNOTS) {
+                *row = polar_row(knot, tail.lift_slope_per_rad(), VERSION_ONE_TAIL_ARM_M)?;
+            }
+            HybridMockPolarRows::VersionOne(rows)
+        };
         let aircraft = AircraftModel::try_new(
             24.0,
             InertiaTensor::diagonal(900.0, 1000.0, 980.0).map_err(HybridMockError::Math)?,
@@ -147,7 +204,7 @@ impl HybridMockDefinition {
         Ok(definition)
     }
 
-    /// Returns the distinct standard or oracle identity.
+    /// Returns the selected versioned fictional configuration identity.
     pub const fn configuration(&self) -> HybridMockConfiguration {
         self.configuration
     }
@@ -160,7 +217,7 @@ impl HybridMockDefinition {
     /// Borrows the precomputed complete-aircraft table, referenced to datum O.
     pub fn polar(&self) -> Result<StaticPolar<'_>, HybridMockError> {
         StaticPolar::try_new(
-            &self.rows,
+            self.rows.as_slice(),
             ElementReference::try_new(WING_AREA_M2, WING_SPAN_M, 1.0)
                 .map_err(HybridMockError::Aerodynamics)?,
             BodyPoint::origin(),
@@ -272,7 +329,11 @@ fn partition<const COUNT: usize>(
     Ok(proxies)
 }
 
-fn polar_row(knot: (f64, f64), tail_slope: f64) -> Result<StaticPolarRow, HybridMockError> {
+fn polar_row(
+    knot: (f64, f64),
+    tail_slope: f64,
+    tail_arm_m: f64,
+) -> Result<StaticPolarRow, HybridMockError> {
     let (alpha, wing_lift) = knot;
     let wing_aspect_ratio = WING_SPAN_M * WING_SPAN_M / WING_AREA_M2;
     let tail_aspect_ratio = TAIL_SPAN_M * TAIL_SPAN_M / TAIL_AREA_M2;
@@ -284,11 +345,38 @@ fn polar_row(knot: (f64, f64), tail_slope: f64) -> Result<StaticPolarRow, Hybrid
     let (sine, cosine) = libm::sincos(alpha);
     let tail_force_x = TAIL_AREA_M2 * (-tail_induced_drag * cosine + tail_lift * sine);
     let tail_force_z = TAIL_AREA_M2 * (-tail_induced_drag * sine - tail_lift * cosine);
-    let pitch_moment = -0.02 + (0.1 * tail_force_x + 1.8 * tail_force_z) / WING_AREA_M2;
+    let pitch_moment = -0.02 + (0.1 * tail_force_x + tail_arm_m * tail_force_z) / WING_AREA_M2;
     StaticPolarRow::try_new(
         alpha,
         StaticPolarCoefficients::try_new(lift, induced_drag, 0.03, 0.0, 0.0, pitch_moment, 0.0)
             .map_err(HybridMockError::Aerodynamics)?,
+    )
+    .map_err(HybridMockError::Aerodynamics)
+}
+
+fn playable_polar_row(
+    knot: (f64, f64),
+    tail_slope: f64,
+) -> Result<StaticPolarRow, HybridMockError> {
+    let original = polar_row(knot, tail_slope, PLAYABLE_TAIL_ARM_M)?.coefficients();
+    let alpha = knot.0;
+    let drag_offset = (alpha.abs() - PLAYABLE_DRAG_ONSET_RAD).max(0.0);
+    let profile_drag =
+        original.profile_drag() + PLAYABLE_DRAG_RISE_PER_RAD_SQUARED * drag_offset * drag_offset;
+    let pitch_moment = original.pitch_moment()
+        - PLAYABLE_PITCH_STIFFNESS_PER_RAD * (alpha - PLAYABLE_PITCH_REFERENCE_ALPHA_RAD);
+    StaticPolarRow::try_new(
+        alpha,
+        StaticPolarCoefficients::try_new(
+            original.lift(),
+            original.induced_drag(),
+            profile_drag,
+            original.side_force(),
+            original.roll_moment(),
+            pitch_moment,
+            original.yaw_moment(),
+        )
+        .map_err(HybridMockError::Aerodynamics)?,
     )
     .map_err(HybridMockError::Aerodynamics)
 }

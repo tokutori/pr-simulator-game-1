@@ -37,7 +37,33 @@ fn pwl_trim_matches_the_independent_issue_reference_for_both_identities() {
 
 #[test]
 fn actual_hybrid_wrench_and_coupled_core_preserve_steady_glide_balance() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    assert_steady_glide_balance(HybridMockConfiguration::Standard);
+}
+
+#[test]
+fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or_mapping_limits() {
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
+    near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
+    assert!((-0.4..0.4).contains(&trim.pilot_position_m()));
+    let mapping = trim.pilot_mapping().unwrap();
+    assert_eq!(mapping.trim_target().position_m(), trim.pilot_position_m());
+    for (intent, expected) in [(-1.0, -0.4), (1.0, 0.4)] {
+        let target = mapping
+            .resolve(
+                &definition.aircraft(),
+                mapping.trim_target(),
+                TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(intent).unwrap()),
+            )
+            .unwrap();
+        assert_eq!(target.position_m(), expected);
+    }
+    assert_steady_glide_balance(HybridMockConfiguration::Playable);
+}
+
+fn assert_steady_glide_balance(configuration: HybridMockConfiguration) {
+    let definition = HybridMockDefinition::try_new(configuration).unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let state = trim

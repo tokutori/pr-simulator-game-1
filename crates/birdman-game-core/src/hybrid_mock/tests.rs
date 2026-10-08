@@ -230,6 +230,7 @@ fn uniform_neutral_loads_use_only_the_static_table_for_both_complete_definitions
     for configuration in [
         HybridMockConfiguration::Standard,
         HybridMockConfiguration::ZeroDihedralOracle,
+        HybridMockConfiguration::Playable,
     ] {
         let definition = HybridMockDefinition::try_new(configuration).unwrap();
         let surfaces = definition.surfaces().unwrap();
@@ -264,6 +265,119 @@ fn uniform_neutral_loads_use_only_the_static_table_for_both_complete_definitions
             assert_eq!(evaluation.total_wrench(), evaluation.static_wrench());
         }
     }
+}
+
+#[test]
+fn playable_polar_has_versioned_closed_domain_and_consistent_synthetic_coefficients() {
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let polar = definition.polar().unwrap();
+    assert_eq!(
+        polar.metadata().configuration_id(),
+        "bpg041-playable-hybrid-mock"
+    );
+    assert_eq!(polar.metadata().model_version(), 2);
+    assert_eq!(
+        polar.metadata().analysis_method(),
+        PolarAnalysisMethod::SoftwareFixture
+    );
+    assert_eq!(polar.alpha_interval_rad(), [-0.18, 0.18]);
+    let expected_knots = [
+        (-0.18, -0.20),
+        (-0.15, -0.05),
+        (-0.12, 0.10),
+        (-0.06, 0.36),
+        (0.0, 0.70),
+        (0.06, 1.00),
+        (0.12, 1.18),
+        (0.15, 1.24),
+        (0.18, 1.26),
+    ];
+    assert_eq!(polar.rows().len(), expected_knots.len());
+    for (row, (alpha, wing_lift)) in polar.rows().iter().zip(expected_knots) {
+        assert_eq!(row.alpha_rad(), alpha);
+        let coefficients = row.coefficients();
+        let tail_lift = -0.225 + 4.386_088_294_142_271 * alpha;
+        let tail_drag = tail_lift * tail_lift / (core::f64::consts::PI * 4.624);
+        let (sine, cosine) = libm::sincos(alpha);
+        let tail_forward_force = 2.5 * (-tail_drag * cosine + tail_lift * sine);
+        let tail_down_force = 2.5 * (-tail_drag * sine - tail_lift * cosine);
+        near(coefficients.lift(), wing_lift + 2.5 / 18.0 * tail_lift);
+        near(
+            coefficients.induced_drag(),
+            wing_lift * wing_lift / (core::f64::consts::PI * 18.0) + 2.5 / 18.0 * tail_drag,
+        );
+        let drag_offset = (alpha.abs() - 0.06).max(0.0);
+        near(
+            coefficients.profile_drag(),
+            0.03 + 1.5 * drag_offset * drag_offset,
+        );
+        near(
+            coefficients.pitch_moment(),
+            -0.02 + (0.1 * tail_forward_force + 3.6 * tail_down_force) / 18.0
+                - 2.0 * (alpha - 0.04),
+        );
+        assert_eq!(coefficients.side_force(), 0.0);
+        assert_eq!(coefficients.roll_moment(), 0.0);
+        assert_eq!(coefficients.yaw_moment(), 0.0);
+        assert_eq!(polar.coefficients_at(alpha).unwrap(), coefficients);
+    }
+    for alpha in [-0.180_000_001, 0.180_000_001] {
+        assert_eq!(
+            polar.coefficients_at(alpha),
+            Err(AeroError::OutsideEnvelope)
+        );
+    }
+    for rows in polar.rows().windows(2) {
+        let alpha = (rows[0].alpha_rad() + rows[1].alpha_rad()) * 0.5;
+        let coefficients = polar.coefficients_at(alpha).unwrap();
+        let lower = rows[0].coefficients();
+        let upper = rows[1].coefficients();
+        near(coefficients.lift(), 0.5 * lower.lift() + 0.5 * upper.lift());
+        near(
+            coefficients.induced_drag(),
+            0.5 * lower.induced_drag() + 0.5 * upper.induced_drag(),
+        );
+        near(
+            coefficients.profile_drag(),
+            0.5 * lower.profile_drag() + 0.5 * upper.profile_drag(),
+        );
+        near(
+            coefficients.pitch_moment(),
+            0.5 * lower.pitch_moment() + 0.5 * upper.pitch_moment(),
+        );
+    }
+}
+
+#[test]
+fn playable_geometry_changes_only_horizontal_tail_arm_and_preserves_version_one_data() {
+    let standard = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let playable = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let original_surfaces = standard.surfaces().unwrap();
+    let playable_surfaces = playable.surfaces().unwrap();
+    assert_eq!(standard.aircraft(), playable.aircraft());
+    assert_eq!(original_surfaces[0], playable_surfaces[0]);
+    assert_eq!(original_surfaces[2], playable_surfaces[2]);
+    for (original, updated) in original_surfaces[1]
+        .proxies()
+        .iter()
+        .zip(playable_surfaces[1].proxies())
+    {
+        let original_point = original.point().components();
+        let updated_point = updated.point().components();
+        assert!((original_point[0] + 1.8).abs() <= 4.0 * f64::EPSILON * 1.8);
+        assert!((updated_point[0] + 3.6).abs() <= 4.0 * f64::EPSILON * 3.6);
+        assert_eq!(original_point[1..], updated_point[1..]);
+        assert_eq!(original.projected_area_m2(), updated.projected_area_m2());
+        assert_eq!(original.area_m2(), updated.area_m2());
+        assert_eq!(original.orientation(), updated.orientation());
+        assert_eq!(original.anchor(), updated.anchor());
+    }
+    assert_eq!(standard.polar().unwrap().rows().len(), 5);
+    assert_eq!(
+        standard.polar().unwrap().alpha_interval_rad(),
+        [-0.12, 0.12]
+    );
+    assert_eq!(standard.polar().unwrap().metadata().model_version(), 1);
 }
 
 #[test]
