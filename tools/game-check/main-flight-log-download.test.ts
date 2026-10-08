@@ -18,6 +18,7 @@ async function fixture(archive = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
+  Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);
   vi.stubGlobal("navigator", browser.navigator);
@@ -33,7 +34,7 @@ async function fixture(archive = false) {
   const revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
   const click = vi.spyOn(browser.HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   const renderer = {
-    startLoop: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
+    startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
