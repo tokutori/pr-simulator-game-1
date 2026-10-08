@@ -57,6 +57,143 @@ fn tail_document(json: &str) -> TailFlightRecordDocument {
 }
 
 #[test]
+fn current_log_exports_share_result_replay_state_without_changing_saved_queries() {
+    let mut bridge = complete();
+    let result = bridge.snapshot_internal().unwrap();
+    let original = bridge.export_record_internal().unwrap();
+    assert_eq!(
+        bridge.export_current_flight_record_json().unwrap(),
+        original
+    );
+    let csv = bridge.export_flight_log_csv().unwrap();
+    assert_eq!(
+        csv.as_bytes(),
+        FlightRecordArchiveDocument::decode_json(original.as_bytes())
+            .unwrap()
+            .encode_csv()
+            .unwrap()
+    );
+    assert!(
+        csv.lines()
+            .nth(1)
+            .unwrap()
+            .starts_with("2,6,tail_incidence,")
+    );
+    assert_eq!(bridge.snapshot_internal().unwrap(), result);
+    bridge.enter_replay().unwrap();
+    bridge.seek_playback(0.005).unwrap();
+    bridge.set_playback_rate_code(0).unwrap();
+    bridge.set_playback_playing(true).unwrap();
+    bridge.advance_playback(0.01).unwrap();
+    let clock = bridge.clock_internal().unwrap();
+    let context = bridge.playback_context_internal().unwrap();
+    let sample = bridge.flight_record_sample_at_seconds(0.015).unwrap();
+    let record_count = bridge.session.flight_record().unwrap().sample_count();
+    assert_eq!(bridge.export_current_record_internal().unwrap(), original);
+    assert_eq!(bridge.export_csv_internal().unwrap(), csv);
+    assert_eq!(bridge.clock_internal().unwrap(), clock);
+    assert_eq!(bridge.playback_context_internal().unwrap(), context);
+    assert_eq!(
+        bridge.flight_record_sample_at_seconds(0.015).unwrap(),
+        sample
+    );
+    assert_eq!(
+        bridge.session.flight_record().unwrap().sample_count(),
+        record_count
+    );
+    bridge.leave_replay().unwrap();
+    assert_eq!(bridge.snapshot_internal().unwrap(), result);
+}
+
+#[test]
+fn imported_tail_log_keeps_exact_original_text_unknown_identity_and_failed_open_source() {
+    let source = complete();
+    let mut document = tail_document(&source.export_record_internal().unwrap());
+    document.header.environment_version = 99;
+    document.header.physics_model_version = Some(1);
+    document.control_identity.aircraft_configuration_id = "=unknown,\"saved\"".into();
+    document.control_identity.controller_profile_id = "@original-controller".into();
+    let raw = format!("\n{}\n ", serde_json::to_string_pretty(&document).unwrap());
+    let expected_csv = FlightRecordArchiveDocument::Tail(document.clone())
+        .encode_csv()
+        .unwrap();
+    let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Automatic, 2, 19);
+    bridge.open_archive_internal(&raw).unwrap();
+    bridge.seek_playback(0.005).unwrap();
+    let clock = bridge.clock_internal().unwrap();
+    let context = bridge.playback_context_internal().unwrap();
+    assert_eq!(bridge.export_current_record_internal().unwrap(), raw);
+    assert_eq!(
+        bridge.export_csv_internal().unwrap().as_bytes(),
+        expected_csv
+    );
+    assert!(bridge.export_record_internal().is_err());
+    for invalid in ["{", "{}", r#"{"schema_version":7}"#] {
+        assert!(bridge.open_archive_internal(invalid).is_err());
+        assert_eq!(bridge.export_current_record_internal().unwrap(), raw);
+        assert_eq!(
+            bridge.export_csv_internal().unwrap().as_bytes(),
+            expected_csv
+        );
+        assert_eq!(bridge.clock_internal().unwrap(), clock);
+        assert_eq!(bridge.playback_context_internal().unwrap(), context);
+    }
+    let mut changed = document;
+    changed.samples[1].state.pilot_position_m += 0.01;
+    let changed_raw = format!(" {} ", serde_json::to_string_pretty(&changed).unwrap());
+    assert!(bridge.open_archive_internal(&changed_raw).is_err());
+    assert_eq!(bridge.export_current_record_internal().unwrap(), raw);
+    assert_eq!(
+        bridge.export_csv_internal().unwrap().as_bytes(),
+        expected_csv
+    );
+    bridge.leave_replay().unwrap();
+    bridge.open_archive_internal(&changed_raw).unwrap();
+    assert_eq!(
+        bridge.export_current_record_internal().unwrap(),
+        changed_raw
+    );
+    assert_ne!(
+        bridge.export_csv_internal().unwrap().as_bytes(),
+        expected_csv
+    );
+    bridge.leave_replay().unwrap();
+    assert!(bridge.archived.is_none());
+    assert!(bridge.export_current_record_internal().is_err());
+    assert!(bridge.export_csv_internal().is_err());
+}
+
+#[test]
+fn log_exports_reject_nonrecord_scenes_and_attract_without_changing_the_owner() {
+    fn rejects(bridge: &HybridGameSessionBridge) {
+        let snapshot = bridge.session.snapshot();
+        let clock = bridge.session.playback_clock();
+        assert!(bridge.export_current_record_internal().is_err());
+        assert!(bridge.export_csv_internal().is_err());
+        assert_eq!(bridge.session.snapshot(), snapshot);
+        assert_eq!(bridge.session.playback_clock(), clock);
+    }
+    let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 7);
+    rejects(&bridge);
+    bridge.open_setup().unwrap();
+    rejects(&bridge);
+    bridge.prepare_internal().unwrap();
+    rejects(&bridge);
+    bridge.mark_briefing_ready().unwrap();
+    rejects(&bridge);
+    bridge.start_countdown(1).unwrap();
+    rejects(&bridge);
+    bridge.advance_countdown().unwrap();
+    bridge.launch().unwrap();
+    rejects(&bridge);
+    bridge.pause(0).unwrap();
+    rejects(&bridge);
+    let mut demo = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 7);
+    demo.enter_attract().unwrap();
+    rejects(&demo);
+}
+
+#[test]
 fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     let mut bridge = complete();
     let before = bridge.snapshot_internal().unwrap();
@@ -152,9 +289,26 @@ fn all_legacy_archive_versions_preserve_three_axis_controls_and_selection_on_clo
         }
         let mut bridge = HybridGameSessionBridge::new(0, 19, 0).unwrap();
         let selection = bridge.difficulty;
-        bridge
-            .open_archived_flight_record(&saved.to_string())
-            .unwrap();
+        let original_json = format!("\n{}\n ", serde_json::to_string_pretty(&saved).unwrap());
+        bridge.open_archive_internal(&original_json).unwrap();
+        assert_eq!(
+            bridge.export_current_record_internal().unwrap(),
+            original_json
+        );
+        let csv = bridge.export_csv_internal().unwrap();
+        assert!(
+            csv.lines()
+                .nth(1)
+                .unwrap()
+                .starts_with(&format!("1,{version},legacy_three_axis,"))
+        );
+        assert_eq!(
+            csv.as_bytes(),
+            FlightRecordArchiveDocument::decode_json(original_json.as_bytes())
+                .unwrap()
+                .encode_csv()
+                .unwrap()
+        );
         assert!(bridge.is_archived_replay());
         let context: Value =
             serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap();
@@ -279,6 +433,13 @@ fn archived_failure_context_preserves_the_original_cause_and_last_saved_state() 
     let json = String::from_utf8(document.encode_json().unwrap()).unwrap();
     let mut bridge = HybridGameSessionBridge::new(0, 0, 0).unwrap();
     bridge.open_archived_flight_record(&json).unwrap();
+    assert_eq!(bridge.export_current_record_internal().unwrap(), json);
+    assert_eq!(
+        bridge.export_csv_internal().unwrap().as_bytes(),
+        FlightRecordArchiveDocument::Tail(document.clone())
+            .encode_csv()
+            .unwrap()
+    );
     let context: Value = serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap();
     assert_eq!(
         context["finalization"]["value"],

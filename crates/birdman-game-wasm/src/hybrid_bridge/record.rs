@@ -9,10 +9,12 @@ pub(super) enum ArchiveMetadata {
     Legacy {
         difficulty: FlightRecordDifficultyDocument,
         finalization: FlightRecordFinalizationDocument,
+        original_json: String,
     },
     Tail {
         difficulty: FlightRecordDifficultyDocument,
         control_identity: FlightRecordTailIdentityDocument,
+        original_json: String,
     },
 }
 
@@ -85,6 +87,17 @@ impl HybridGameSessionBridge {
     pub fn export_flight_record_json(&self) -> Result<String, JsValue> {
         self.export_record_internal()
             .map_err(BoundaryError::into_js)
+    }
+
+    /// Exports the current Result or Replay record, preserving imported JSON verbatim.
+    pub fn export_current_flight_record_json(&self) -> Result<String, JsValue> {
+        self.export_current_record_internal()
+            .map_err(BoundaryError::into_js)
+    }
+
+    /// Exports all saved numeric samples with layout-specific controls and estimated accelerations.
+    pub fn export_flight_log_csv(&self) -> Result<String, JsValue> {
+        self.export_csv_internal().map_err(BoundaryError::into_js)
     }
 
     /// Returns all saved analysis samples through the shared schema-two physical-control query.
@@ -173,6 +186,29 @@ impl HybridGameSessionBridge {
 }
 
 impl HybridGameSessionBridge {
+    fn export_current_record_internal(&self) -> Result<String, BoundaryError> {
+        match self.session.snapshot().phase() {
+            SessionPhase::Result => self.export_record_internal(),
+            SessionPhase::Replay => match &self.archived {
+                Some(
+                    ArchiveMetadata::Legacy { original_json, .. }
+                    | ArchiveMetadata::Tail { original_json, .. },
+                ) => Ok(original_json.clone()),
+                None => self.export_record_internal(),
+            },
+            _ => Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
+        }
+    }
+
+    fn export_csv_internal(&self) -> Result<String, BoundaryError> {
+        let json = self.export_current_record_internal()?;
+        let document = FlightRecordArchiveDocument::decode_json(json.as_bytes())
+            .map_err(BoundaryError::Format)?;
+        let bytes = document.encode_csv().map_err(BoundaryError::Format)?;
+        String::from_utf8(bytes)
+            .map_err(|_| BoundaryError::Format(FlightRecordFormatError::EncodingFailed))
+    }
+
     pub(super) fn display_difficulty(&self) -> DifficultySettings {
         if self.session.snapshot().phase() == SessionPhase::Attract {
             return self
@@ -232,6 +268,7 @@ impl HybridGameSessionBridge {
         let metadata = match &document {
             FlightRecordArchiveDocument::Legacy(record) => ArchiveMetadata::Legacy {
                 difficulty: record.header.difficulty,
+                original_json: json.to_owned(),
                 finalization: record.finalization.clone().ok_or(BoundaryError::Format(
                     FlightRecordFormatError::InvalidRecord,
                 ))?,
@@ -239,6 +276,7 @@ impl HybridGameSessionBridge {
             FlightRecordArchiveDocument::Tail(record) => ArchiveMetadata::Tail {
                 difficulty: record.header.difficulty,
                 control_identity: record.control_identity.clone(),
+                original_json: json.to_owned(),
             },
         };
         let record = document
@@ -290,6 +328,7 @@ impl HybridGameSessionBridge {
                 Some(ArchiveMetadata::Tail {
                     difficulty,
                     control_identity,
+                    ..
                 }) => (
                     PlaybackLayout::TailIncidence,
                     Some(control_identity),
