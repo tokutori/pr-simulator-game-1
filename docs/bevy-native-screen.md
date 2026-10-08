@@ -21,7 +21,7 @@ cargo run -p birdman-game-bevy --release --locked
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
 [公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従うWindowsのnative build環境とGPU driverが必要である。
 Node.js、npm、TypeScript、ブラウザ、WASM runtimeはnative版の起動条件に含めない。
-初回や依存更新後のrelease buildは最適化・LTOに時間を要する。今回のbuildは26分17秒で完了した。
+初回やRust改修後のrelease buildは最適化・LTOに時間を要する。初回buildは26分17秒、継続修正の再buildは26分07秒で完了した。
 build完了後の同じ起動コマンドでは、生成済みbinaryを再利用する。
 
 ## モデルと状態の正本
@@ -147,7 +147,23 @@ Windows 11 / AMD Radeon 860M / Vulkanのdebug版で、1280×720、800×600、192
 水面だけの先行比較では、既存release binaryが読み込む新shaderで同じtick 25の720p画像を比較し、遠方の強いmoire低減と近景波保持を確認した。
 異なるviewportの撮影tickは一致しないため、飛行結果やshaderの定量比較には使用しない。
 ProcessingDelayは通常の安全停止を保持し、回復後に検査操作として明示再開した。shader・assetの確定エラーは0件である。
-最新HUD・入力修正を含むrelease版のGPU再検査、実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。
+最新HUD・入力修正を含むrelease版も、同じWindows 11 / AMD Radeon 860M / Vulkanで次の検査に合格した。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-visual-fixes-release
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-visual-fixes-release-small --verify-size 800x600
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-visual-fixes-release-1080p --verify-size 1920x1080
+```
+
+1280×720・800×600・1920×1080の各検査はexit 0で完了し、Title/Pilot/Chase/Resultを保存した。
+rootと独立したreviewerが最新版releaseの1280×720全画像を確認し、単位・数値・前方視界・CTA、機体・地形・水面の保持を確認した。
+800×600のPilot/Resultもrootが確認した。各Pilotはtick 25である。異なるviewportのshader・終端scoreの定量一致は評価しない。
+shader・asset・日本語分割の確定エラーは0件であり、旧releaseの結果を新実装の合格へ流用していない。
+再build完了後の指定cargo runは既存binaryを再利用し、Cargoの起動確認は1.56秒で完了した。
+
+継続修正のhead `7c469bc3`の[CI run 37764364175](https://github.com/tokutori/pr-simulator-game-1/actions/runs/37764364175)も、
+Ubuntu・Windowsの全検査stepが成功した。Pagesの設定・artifact upload・deployはskipである。
+実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。ユーザー受入とmainへの取込みは別の条件として保持する。
 
 検査基準は次の通りであり、共有crateを追加した場合はその関連testも実行する。
 
