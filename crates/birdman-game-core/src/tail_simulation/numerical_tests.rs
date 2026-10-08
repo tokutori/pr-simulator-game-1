@@ -4,6 +4,8 @@ use crate::{
     HybridModel, NedPoint, NedVector, TailPilotPositionIntent, UnitQuaternion, WindField,
 };
 
+mod wind_tests;
+
 const OBSERVATION_INTERVALS: usize = 50;
 const QUANTITY_NAMES: [&str; 7] = [
     "datum position [m]",
@@ -22,7 +24,14 @@ type Trajectory = [TailFlightTickState; OBSERVATION_INTERVALS + 1];
 
 struct IntegrationResult {
     trajectory: Trajectory,
+    observation_intervals: usize,
     slew_steps: usize,
+}
+
+impl IntegrationResult {
+    fn samples(&self) -> &[TailFlightTickState] {
+        &self.trajectory[..=self.observation_intervals]
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,20 +102,46 @@ impl InputCase {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TestProfile {
+    input_case: InputCase,
+    observation_intervals: usize,
+    datum_alpha_interval: [f64; 2],
+}
+
+impl TestProfile {
+    fn baseline(input_case: InputCase) -> Self {
+        Self {
+            input_case,
+            observation_intervals: OBSERVATION_INTERVALS,
+            datum_alpha_interval: [0.0, 0.06],
+        }
+    }
+}
+
 struct InEnvelopeLoad<'provider, 'environment> {
     held: HeldTailLoad<'provider, 'environment>,
+    datum_alpha_interval: [f64; 2],
 }
 
 impl ExternalLoadProvider for InEnvelopeLoad<'_, '_> {
     fn evaluate(&self, aircraft: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         assert!(state.datum_position_ned().components()[2] < -40.0);
+        let datum_wind = self
+            .held
+            .loads
+            .wind_velocity_at(state.datum_position_ned())
+            .unwrap();
         let body_velocity = state
             .attitude_body_to_ned()
-            .ned_to_body(state.datum_velocity_ned())
+            .ned_to_body(state.datum_velocity_ned().minus(datum_wind).unwrap())
             .unwrap()
             .components();
         let alpha = libm::atan2(body_velocity[2], body_velocity[0]);
-        assert!(alpha > 0.0 && alpha < 0.06, "PWL knot crossing: {alpha}");
+        assert!(
+            alpha > self.datum_alpha_interval[0] && alpha < self.datum_alpha_interval[1],
+            "datum-relative alpha left the selected PWL segment: {alpha}"
+        );
         self.held.evaluate(aircraft, state)
     }
 }
@@ -153,12 +188,13 @@ fn integrate(
     aircraft: &AircraftModel,
     initial: TailFlightTickState,
     config: TailFlightTickConfig,
-    input_case: InputCase,
+    profile: TestProfile,
     cadence: Cadence,
     subdivision: usize,
     loads: &HybridAerodynamicLoad<'_>,
 ) -> IntegrationResult {
     assert!([1, 2, 4].contains(&subdivision));
+    assert!((1..=OBSERVATION_INTERVALS).contains(&profile.observation_intervals));
     let control_steps = cadence.control_steps(subdivision);
     let physics_steps = cadence.physics_steps(subdivision);
     let control_dt = PHYSICS_DT_SECONDS / control_steps as f64;
@@ -166,8 +202,8 @@ fn integrate(
     let mut trajectory = [initial; OBSERVATION_INTERVALS + 1];
     let mut slew_steps = 0;
     let mut previous = initial;
-    for observation_index in 0..OBSERVATION_INTERVALS {
-        let input = input_case.sample(observation_index);
+    for observation_index in 0..profile.observation_intervals {
+        let input = profile.input_case.sample(observation_index);
         for _control_step in 0..control_steps {
             let control = advance_tail_control(
                 previous.incidence,
@@ -182,7 +218,10 @@ fn integrate(
             if control.incidence() != control.mixed_target() {
                 slew_steps += 1;
             }
-            if matches!(input_case, InputCase::Neutral | InputCase::SmoothChanged) {
+            if matches!(
+                profile.input_case,
+                InputCase::Neutral | InputCase::SmoothChanged
+            ) {
                 assert_eq!(control.incidence(), control.mixed_target());
             }
             let pilot_position_target = config
@@ -203,6 +242,7 @@ fn integrate(
             let incidence = control.incidence();
             let checked_load = InEnvelopeLoad {
                 held: HeldTailLoad { loads, incidence },
+                datum_alpha_interval: profile.datum_alpha_interval,
             };
             let mut flight_state = previous.flight_state;
             for _physics_step in 0..physics_steps {
@@ -230,6 +270,7 @@ fn integrate(
     }
     IntegrationResult {
         trajectory,
+        observation_intervals: profile.observation_intervals,
         slew_steps,
     }
 }
@@ -295,7 +336,8 @@ fn quantity_errors(left: TailFlightTickState, right: TailFlightTickState) -> [f6
     ]
 }
 
-fn trajectory_errors(left: &Trajectory, right: &Trajectory) -> [f64; 7] {
+fn trajectory_errors(left: &[TailFlightTickState], right: &[TailFlightTickState]) -> [f64; 7] {
+    assert_eq!(left.len(), right.len());
     let mut maximum = [0.0_f64; 7];
     for (left_state, right_state) in left.iter().zip(right) {
         let differences = quantity_errors(*left_state, *right_state);
@@ -305,6 +347,71 @@ fn trajectory_errors(left: &Trajectory, right: &Trajectory) -> [f64; 7] {
         }
     }
     maximum
+}
+
+fn verify_step_halving(
+    aircraft: &AircraftModel,
+    initial: TailFlightTickState,
+    config: TailFlightTickConfig,
+    profile: TestProfile,
+    cadence: Cadence,
+    loads: &HybridAerodynamicLoad<'_>,
+) {
+    let coarse = integrate(aircraft, initial, config, profile, cadence, 1, loads);
+    let middle = integrate(aircraft, initial, config, profile, cadence, 2, loads);
+    let fine = integrate(aircraft, initial, config, profile, cadence, 4, loads);
+    let mut production = initial;
+    for (observation_index, state) in coarse.samples().iter().enumerate().skip(1) {
+        production = advance_tail_flight_tick(
+            aircraft,
+            production,
+            config,
+            profile.input_case.sample(observation_index - 1),
+            loads,
+        )
+        .unwrap();
+        assert_eq!(*state, production);
+    }
+    if matches!(
+        (cadence, config.mode, profile.input_case),
+        (
+            Cadence::Coupled,
+            ControlMode::Manual,
+            InputCase::SlewReversal
+        )
+    ) {
+        assert_eq!(coarse.slew_steps, 0);
+        assert_eq!(middle.slew_steps, 0);
+        assert!(fine.slew_steps > 0);
+    }
+    let coarse_difference = trajectory_errors(coarse.samples(), middle.samples());
+    let fine_difference = trajectory_errors(middle.samples(), fine.samples());
+    let reference_difference = trajectory_errors(coarse.samples(), fine.samples());
+    for quantity in 0..QUANTITY_NAMES.len() {
+        let floor = 4096.0 * f64::EPSILON * ROUNDING_SCALES[quantity];
+        let budget = cadence.budget()[quantity];
+        assert!(
+            reference_difference[quantity] <= budget,
+            "{cadence:?}/{:?}/{profile:?}: {} 100/400 difference={} budget={budget}",
+            config.mode,
+            QUANTITY_NAMES[quantity],
+            reference_difference[quantity],
+        );
+        if !matches!(
+            (cadence, profile.input_case),
+            (Cadence::Coupled, InputCase::SlewReversal)
+        ) {
+            assert!(
+                fine_difference[quantity]
+                    <= cadence.contraction_limit() * coarse_difference[quantity] + floor,
+                "{cadence:?}/{:?}/{profile:?}: {} step differences={} / {}, floor={floor}",
+                config.mode,
+                QUANTITY_NAMES[quantity],
+                coarse_difference[quantity],
+                fine_difference[quantity],
+            );
+        }
+    }
 }
 
 fn check_step_halving(cadence: Cadence) {
@@ -335,59 +442,14 @@ fn check_step_halving(cadence: Cadence) {
             InputCase::SmoothChanged,
             InputCase::SlewReversal,
         ] {
-            let coarse = integrate(&aircraft, initial, config, input_case, cadence, 1, &loads);
-            let middle = integrate(&aircraft, initial, config, input_case, cadence, 2, &loads);
-            let fine = integrate(&aircraft, initial, config, input_case, cadence, 4, &loads);
-            let mut production = initial;
-            for (observation_index, state) in coarse.trajectory.iter().enumerate().skip(1) {
-                production = advance_tail_flight_tick(
-                    &aircraft,
-                    production,
-                    config,
-                    input_case.sample(observation_index - 1),
-                    &loads,
-                )
-                .unwrap();
-                assert_eq!(*state, production);
-            }
-            if matches!(
-                (cadence, mode, input_case),
-                (
-                    Cadence::Coupled,
-                    ControlMode::Manual,
-                    InputCase::SlewReversal
-                )
-            ) {
-                assert_eq!(coarse.slew_steps, 0);
-                assert_eq!(middle.slew_steps, 0);
-                assert!(fine.slew_steps > 0);
-            }
-            let coarse_difference = trajectory_errors(&coarse.trajectory, &middle.trajectory);
-            let fine_difference = trajectory_errors(&middle.trajectory, &fine.trajectory);
-            let reference_difference = trajectory_errors(&coarse.trajectory, &fine.trajectory);
-            for quantity in 0..QUANTITY_NAMES.len() {
-                let floor = 4096.0 * f64::EPSILON * ROUNDING_SCALES[quantity];
-                let budget = cadence.budget()[quantity];
-                assert!(
-                    reference_difference[quantity] <= budget,
-                    "{cadence:?}/{mode:?}/{input_case:?}: {} 100/400 difference={} budget={budget}",
-                    QUANTITY_NAMES[quantity],
-                    reference_difference[quantity],
-                );
-                if !matches!(
-                    (cadence, input_case),
-                    (Cadence::Coupled, InputCase::SlewReversal)
-                ) {
-                    assert!(
-                        fine_difference[quantity]
-                            <= cadence.contraction_limit() * coarse_difference[quantity] + floor,
-                        "{cadence:?}/{mode:?}/{input_case:?}: {} step differences={} / {}, floor={floor}",
-                        QUANTITY_NAMES[quantity],
-                        coarse_difference[quantity],
-                        fine_difference[quantity],
-                    );
-                }
-            }
+            verify_step_halving(
+                &aircraft,
+                initial,
+                config,
+                TestProfile::baseline(input_case),
+                cadence,
+                &loads,
+            );
         }
     }
 }
