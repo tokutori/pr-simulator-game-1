@@ -306,6 +306,30 @@ export function createGameViewModel(
       bottom = y - 0.01 * scale;
     });
   }
+  if (phaseCode === 7 || phaseCode === 9) {
+    for (let index = 0; index < controls.length; index += 1) {
+      const control = controls[index];
+      if (control !== undefined) controls[index] = Object.freeze({
+        ...control,
+        rect: normalizedRect(control.rect.x, control.rect.y * 0.81, control.rect.width, control.rect.height * 0.81)
+      });
+    }
+    const enabled = model.presentation.type === "ready" && model.pendingGameRequestId === null
+      && model.flightLogDownload.kind !== "pending";
+    const notification = model.flightLogDownload.kind === "requested" || model.flightLogDownload.kind === "failed"
+      ? model.flightLogDownload.message : "";
+    controls.push(
+      Object.freeze({ ...button("game-flight-log-csv", "飛行ログ CSV", enabled), rect: normalizedRect(0.04, 0.83, 0.44, 0.065) }),
+      Object.freeze({ ...button("game-flight-log-json", "元記録 JSON", enabled), rect: normalizedRect(0.52, 0.83, 0.44, 0.065) }),
+      Object.freeze({
+        ...status("game-flight-log-notice", "ログ出力", [
+          "CSVの加速度は保存標本からのfinite-difference推定値である。JSONは元のFlightRecordである。",
+          notification
+        ].filter(Boolean).join("\n")),
+        rect: normalizedRect(0.04, 0.91, 0.92, 0.085)
+      })
+    );
+  }
   const renderedControls = model.pendingGameRequestId === null
     ? controls
     : controls.map((control) => control.kind === "button" || control.kind === "range"

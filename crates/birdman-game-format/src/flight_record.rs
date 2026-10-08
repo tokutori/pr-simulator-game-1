@@ -11,6 +11,8 @@ use birdman_game_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod csv;
+
 /// Current external flight-record schema version.
 pub const FLIGHT_RECORD_SCHEMA_VERSION: u32 = 5;
 const LEGACY_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 1;
@@ -505,6 +507,11 @@ impl FlightRecordDocument {
         Ok(encoded)
     }
 
+    /// Exports every saved sample, metadata and explicitly estimated accelerations as UTF-8 CSV.
+    pub fn encode_csv(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
+        csv::encode(self)
+    }
+
     /// Restores a finalized immutable core record for analysis and snapshot playback.
     pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
         self.validate()?;
@@ -937,6 +944,7 @@ mod tests {
         PersonalBestContentHashes, PersonalBestSelection, ResolvedConfiguration, ScenarioSelection,
         WeatherClass, canonical_personal_best_key, compare_personal_best_records,
     };
+    use alloc::{string::String, string::ToString, vec::Vec};
     use birdman_game_core::{
         BodyRateFeedbackConfig, BodyVector, ControlMode, CourseAxis, FlightFeedbackInput,
         GameSession, GameSessionConfiguration, PilotPositionTarget, SessionPhase,
@@ -1013,6 +1021,269 @@ mod tests {
         finalization.terminal_tick = 5;
         finalization.terminal_fraction = 0.0;
         assert!(document.validate().is_err());
+    }
+
+    fn csv_rows(document: &FlightRecordDocument) -> Vec<Vec<String>> {
+        String::from_utf8(document.encode_csv().unwrap())
+            .unwrap()
+            .lines()
+            .map(|line| line.split(',').map(String::from).collect())
+            .collect()
+    }
+
+    fn csv_field<'row>(header: &[String], row: &'row [String], name: &str) -> &'row str {
+        &row[header.iter().position(|column| column == name).unwrap()]
+    }
+
+    #[test]
+    fn csv_exports_all_saved_rows_and_optional_values_for_every_schema() {
+        for version in 1..=super::FLIGHT_RECORD_SCHEMA_VERSION {
+            let mut document = keyless_record_for_schema(version);
+            document.samples[0].telemetry.angle_of_attack_rad = None;
+            document.samples[0].telemetry.sideslip_angle_rad = None;
+            let before = document.encode_json().unwrap();
+            let rows = csv_rows(&document);
+            assert_eq!(rows.len(), document.samples.len() + 1);
+            let header = &rows[0];
+            for (row, sample) in rows[1..].iter().zip(&document.samples) {
+                assert_eq!(row.len(), header.len());
+                assert_eq!(
+                    csv_field(header, row, "record_schema_version"),
+                    version.to_string()
+                );
+                assert_eq!(
+                    csv_field(header, row, "seed_u64"),
+                    document.header.seed.to_string()
+                );
+                assert_eq!(
+                    csv_field(header, row, "datum_velocity_ned_n_mps")
+                        .parse::<f64>()
+                        .unwrap(),
+                    sample.datum_velocity_ned_mps[0]
+                );
+                assert_eq!(
+                    csv_field(header, row, "attitude_body_to_ned_w")
+                        .parse::<f64>()
+                        .unwrap(),
+                    sample.attitude_body_to_ned[0]
+                );
+                assert_eq!(
+                    csv_field(header, row, "wind_at_cg_ned_e_mps")
+                        .parse::<f64>()
+                        .unwrap(),
+                    sample.wind_at_cg_ned_mps[1]
+                );
+                assert_eq!(
+                    csv_field(header, row, "composite_cg_position_ned_d_m")
+                        .parse::<f64>()
+                        .unwrap(),
+                    sample.telemetry.composite_cg_position_ned_m[2]
+                );
+                assert_eq!(csv_field(header, row, "terminal_reason"), "manual_abort");
+                assert_eq!(
+                    csv_field(header, row, "terminal_score_available"),
+                    document
+                        .finalization
+                        .as_ref()
+                        .unwrap()
+                        .score_m
+                        .is_some()
+                        .to_string()
+                );
+            }
+            assert_eq!(csv_field(header, &rows[1], "input_available"), "false");
+            assert_eq!(
+                csv_field(header, &rows[1], "pilot_surface_command_roll_rad"),
+                ""
+            );
+            assert_eq!(csv_field(header, &rows[1], "angle_of_attack_rad"), "");
+            assert_eq!(csv_field(header, &rows[1], "sideslip_angle_rad"), "");
+            assert_eq!(csv_field(header, &rows[2], "input_available"), "true");
+            let input = document.samples[1].input_from_previous.as_ref().unwrap();
+            assert_eq!(
+                csv_field(header, &rows[2], "mixed_surface_command_pitch_rad")
+                    .parse::<f64>()
+                    .unwrap(),
+                input.mixed_surface_commands_rad[1]
+            );
+            assert_eq!(document.encode_json().unwrap(), before);
+        }
+    }
+
+    fn polynomial_velocity_record() -> FlightRecordDocument {
+        let mut document = completed_record();
+        let mut terminal = document.samples[1].clone();
+        terminal.tick_index = 1;
+        terminal.fraction = 0.25;
+        document.samples.push(terminal);
+        for sample in &mut document.samples {
+            let seconds = (sample.tick_index as f64 + sample.fraction) / 100.0;
+            let velocity = seconds * seconds + 3.0 * seconds + 1.0;
+            sample.datum_velocity_ned_mps = [velocity, -velocity, 2.0 * velocity];
+            sample.angular_velocity_body_rad_s = [velocity, -velocity, 2.0 * velocity];
+            sample.pilot_velocity_mps = velocity;
+        }
+        let finalization = document.finalization.as_mut().unwrap();
+        finalization.terminal_tick = 1;
+        finalization.terminal_fraction = 0.25;
+        document
+    }
+
+    #[test]
+    fn csv_estimates_nonuniform_velocities_with_explicit_endpoint_provenance() {
+        let document = polynomial_velocity_record();
+        let rows = csv_rows(&document);
+        let header = &rows[0];
+        for (row, expected, method) in [
+            (&rows[1], 3.01, "one_sided_two_point"),
+            (&rows[2], 3.02, "nonuniform_three_point"),
+            (&rows[3], 3.0225, "one_sided_two_point"),
+        ] {
+            assert_eq!(
+                csv_field(header, row, "acceleration_estimate_status"),
+                "available"
+            );
+            assert_eq!(
+                csv_field(header, row, "acceleration_estimate_method"),
+                method
+            );
+            for (column, multiplier) in [
+                ("estimated_datum_acceleration_ned_n_mps2", 1.0),
+                ("estimated_datum_acceleration_ned_e_mps2", -1.0),
+                ("estimated_datum_acceleration_ned_d_mps2", 2.0),
+                ("estimated_angular_acceleration_body_q_rad_s2", -1.0),
+                (
+                    "estimated_pilot_acceleration_relative_body_forward_mps2",
+                    1.0,
+                ),
+            ] {
+                let actual = csv_field(header, row, column).parse::<f64>().unwrap();
+                assert!((actual - expected * multiplier).abs() < 1.0e-10);
+            }
+        }
+        assert_eq!(
+            csv_field(header, &rows[2], "acceleration_stencil_end_s"),
+            "0.0125"
+        );
+        assert_eq!(csv_field(header, &rows[3], "fraction"), "0.25");
+        assert_eq!(csv_field(header, &rows[3], "terminal_time_s"), "0.0125");
+    }
+
+    #[test]
+    fn csv_angular_estimates_use_saved_body_rates_independent_of_quaternion_sign() {
+        let mut document = polynomial_velocity_record();
+        let before = csv_rows(&document);
+        document.samples[1].attitude_body_to_ned =
+            document.samples[1].attitude_body_to_ned.map(|value| -value);
+        document.samples[0].telemetry.attitude_euler_rad[2] = core::f64::consts::PI;
+        document.samples[1].telemetry.attitude_euler_rad[2] = -core::f64::consts::PI;
+        let after = csv_rows(&document);
+        for (original, changed) in before[1..].iter().zip(&after[1..]) {
+            assert_eq!(
+                csv_field(
+                    &before[0],
+                    original,
+                    "estimated_angular_acceleration_body_q_rad_s2"
+                ),
+                csv_field(
+                    &after[0],
+                    changed,
+                    "estimated_angular_acceleration_body_q_rad_s2"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn csv_marks_undefined_and_nonrepresentable_estimates_without_nonfinite_output() {
+        let mut document = completed_record();
+        document.samples.truncate(1);
+        let finalization = document.finalization.as_mut().unwrap();
+        finalization.terminal_tick = 0;
+        let rows = csv_rows(&document);
+        assert_eq!(
+            csv_field(&rows[0], &rows[1], "acceleration_estimate_status"),
+            "insufficient_samples"
+        );
+        assert_eq!(
+            csv_field(
+                &rows[0],
+                &rows[1],
+                "estimated_datum_acceleration_ned_n_mps2"
+            ),
+            ""
+        );
+        let mut document = polynomial_velocity_record();
+        document.samples[2].fraction = 1.0e-100;
+        document.finalization.as_mut().unwrap().terminal_fraction = 1.0e-100;
+        let rows = csv_rows(&document);
+        assert_eq!(
+            csv_field(&rows[0], &rows[2], "acceleration_estimate_status"),
+            "invalid_interval"
+        );
+        assert_eq!(
+            csv_field(&rows[0], &rows[3], "acceleration_estimate_status"),
+            "invalid_interval"
+        );
+        assert_eq!(
+            csv_field(&rows[0], &rows[3], "fraction"),
+            "0.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+        );
+        let mut document = completed_record();
+        document.samples[0].datum_velocity_ned_mps[0] = -f64::MAX;
+        document.samples[1].datum_velocity_ned_mps[0] = f64::MAX;
+        let rows = csv_rows(&document);
+        assert_eq!(
+            csv_field(&rows[0], &rows[1], "acceleration_estimate_status"),
+            "non_finite_estimate"
+        );
+        assert_eq!(
+            csv_field(
+                &rows[0],
+                &rows[2],
+                "estimated_datum_acceleration_ned_n_mps2"
+            ),
+            ""
+        );
+        assert!(
+            rows.iter()
+                .flatten()
+                .all(|value| value != "NaN" && value != "inf" && value != "-inf")
+        );
+    }
+
+    #[test]
+    fn csv_preserves_terminal_score_and_requires_a_valid_finalized_record() {
+        let document = water_contact_record();
+        let rows = csv_rows(&document);
+        let terminal = document.finalization.as_ref().unwrap();
+        let last = rows.last().unwrap();
+        assert_eq!(
+            csv_field(&rows[0], last, "terminal_reason"),
+            "water_contact"
+        );
+        assert_eq!(
+            csv_field(&rows[0], last, "terminal_course_parallel_m")
+                .parse::<f64>()
+                .unwrap(),
+            terminal.score_m.unwrap()[0]
+        );
+        assert_eq!(
+            csv_field(&rows[0], last, "terminal_fraction")
+                .parse::<f64>()
+                .unwrap(),
+            terminal.terminal_fraction
+        );
+        let mut unfinished = document.clone();
+        unfinished.samples.pop();
+        unfinished.finalization = None;
+        assert_eq!(
+            unfinished.encode_csv(),
+            Err(super::FlightRecordFormatError::RecordUnavailable)
+        );
+        let mut invalid = document;
+        invalid.samples[0].datum_velocity_ned_mps[0] = f64::NAN;
+        assert!(invalid.encode_csv().is_err());
     }
 
     fn completed_record() -> FlightRecordDocument {

@@ -110,7 +110,21 @@ export type AppMenuScrollState =
   | Extract<MenuScrollState, { kind: "closed" }>
   | (Extract<MenuScrollState, { kind: "active" }> & { readonly focus: MenuFocusState });
 
+export interface FlightLogSource {
+  readonly phaseCode: 7 | 9;
+  readonly revision: number;
+}
+
+export type FlightLogDownloadState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "pending"; readonly requestId: number; readonly source: FlightLogSource; readonly format: "csv" | "json" }
+  | { readonly kind: "requested"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string };
+
 export interface AppModel {
+  readonly flightLogDownload: FlightLogDownloadState;
+  readonly nextFlightLogDownloadRequestId: number;
+  readonly flightRecordSourceRevision: number;
   readonly status: string;
   readonly webXrAvailable: boolean;
   readonly phoneVrAvailable: boolean;
@@ -191,6 +205,8 @@ export interface GameSessionProjection {
 }
 
 export type AppMessage =
+  | { readonly type: "flight-log-download-requested"; readonly requestId: number; readonly source: FlightLogSource }
+  | { readonly type: "flight-log-download-failed"; readonly requestId: number; readonly source: FlightLogSource; readonly message: string }
   | { readonly type: "initialize" }
   | {
       readonly type: "presentation-initialized";
@@ -283,6 +299,7 @@ export type AppMessage =
     };
 
 export type AppEffect =
+  | { readonly type: "download-flight-log"; readonly requestId: number; readonly source: FlightLogSource; readonly format: "csv" | "json" }
   | { readonly type: "initialize-presentation"; readonly requestId: number }
   | { readonly type: "request-permission"; readonly mode: "webxr" | "phone-vr"; readonly requestId: number }
   | { readonly type: "switch-backend"; readonly mode: PresentationMode; readonly requestId: number }
@@ -373,6 +390,9 @@ export function gameSessionState(
 
 export function createInitialAppModel(): AppModel {
   return Object.freeze({
+    flightLogDownload: Object.freeze({ kind: "idle" }),
+    nextFlightLogDownloadRequestId: 1,
+    flightRecordSourceRevision: 0,
     status: "Screen renderer is initializing",
     webXrAvailable: false,
     phoneVrAvailable: false,
@@ -453,6 +473,16 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "flight-log-download-requested":
+      if (!isCurrentFlightLogDownload(model, message.requestId, message.source)) return transition(model);
+      return transition(withModel(model, {
+        flightLogDownload: { kind: "requested", message: "飛行ログのダウンロードを要求した。保存の可否はブラウザーの設定に従う。" }
+      }));
+    case "flight-log-download-failed":
+      if (!isCurrentFlightLogDownload(model, message.requestId, message.source)) return transition(model);
+      return transition(withModel(model, {
+        flightLogDownload: { kind: "failed", message: `飛行ログのダウンロード要求に失敗した: ${message.message}` }
+      }));
     case "page-restored":
       return transition(model);
     case "page-suspended": {
@@ -879,6 +909,18 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && (action.controlId === "game-flight-log-csv" || action.controlId === "game-flight-log-json")) {
+    const phaseCode = gameSessionPhaseCode(model.gameSession);
+    if ((phaseCode !== 7 && phaseCode !== 9) || model.pendingGameRequestId !== null
+        || model.presentation.type !== "ready" || model.flightLogDownload.kind === "pending") return transition(model);
+    const requestId = model.nextFlightLogDownloadRequestId;
+    const source: FlightLogSource = Object.freeze({ phaseCode, revision: model.flightRecordSourceRevision });
+    const format = action.controlId === "game-flight-log-csv" ? "csv" : "json";
+    return transition(withModel(model, {
+      flightLogDownload: Object.freeze({ kind: "pending", requestId, source, format }),
+      nextFlightLogDownloadRequestId: requestId + 1
+    }), [{ type: "download-flight-log", requestId, source, format }]);
+  }
   if (action.type === "activate" && action.controlId === "game-flight-resume"
       && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
     return transition(model);
@@ -1232,7 +1274,23 @@ function labelForMode(mode: PresentationMode): string {
 }
 
 function withModel(model: AppModel, changes: Partial<AppModel>): AppModel {
-  return Object.freeze({ ...model, ...changes });
+  const sourceChanged = changes.gameSession !== undefined && changes.gameSession.phaseCode !== model.gameSession.phaseCode
+    || changes.pendingGameRequestId !== undefined && changes.pendingGameRequestId !== null && changes.pendingGameRequestId !== model.pendingGameRequestId;
+  const unavailable = changes.presentation?.type === "hidden" || changes.presentation?.type === "cached";
+  return Object.freeze({
+    ...model,
+    ...changes,
+    ...(sourceChanged ? { flightRecordSourceRevision: model.flightRecordSourceRevision + 1 } : {}),
+    ...(sourceChanged || unavailable ? { flightLogDownload: Object.freeze({ kind: "idle" as const }) } : {})
+  });
+}
+
+export function isCurrentFlightLogDownload(model: AppModel, requestId: number, source: FlightLogSource): boolean {
+  return model.flightLogDownload.kind === "pending" && model.flightLogDownload.requestId === requestId
+    && model.flightLogDownload.source.phaseCode === source.phaseCode
+    && model.flightLogDownload.source.revision === source.revision
+    && model.flightRecordSourceRevision === source.revision && model.gameSession.phaseCode === source.phaseCode
+    && model.pendingGameRequestId === null && model.presentation.type === "ready";
 }
 
 function fullHudProfile(): HudProfileUiState {

@@ -28,6 +28,15 @@ BPG-006のCLIは決定性検証用`SyntheticFlight`を使い、全control mode�
 FlightRecordの永続record読出しUI、追加Replay rig、Attract、実環境データ、公開受入検証は後続BPGで実装する。Replayには連続再生・速度選択とScreen上のPilot/Chase切替がある。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、M3〜M6の開発をblockしない。ゲーム進行・記録・解析queryはRust coreの責務、DOM・WebXR・Phone VR・browser表示状態はTypeScript側の責務である。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
+## 飛行ログの出力
+
+Resultおよび保存記録のReplay/Analysisには「飛行ログ CSV」「元記録 JSON」を用意する。
+CSVはRustが全保存標本の数値と単位・欠損理由を出力し、加速度は保存された速度からのfinite-difference推定値として区別する。
+保存していない空力荷重などを補完しない。推定値には差分方式・標本時刻・availabilityを併記する。
+JSONは選択中の元FlightRecordを出力する。保存記録のschemaとmetadataを維持し、表示cursorによる切り出しや再simulationは行わない。
+ScreenとVRは共通の操作を使用する。ブラウザーのdownload要求が制限される場合はScreenのボタンから再操作する。
+通知はdownload要求の発行を示し、端末への保存完了を保証しない。成功要求のobject URLは60秒の猶予後、または非復帰page teardownで解放する。保持上限は8件である。失敗した要求のURLは即時解放する。
+
 ## 開発環境
 
 Rust 1.97.0、Node.js 24.14.1以上の24系、npmを使用する。
