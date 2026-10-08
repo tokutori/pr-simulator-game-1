@@ -19,6 +19,15 @@ import type {
 } from "./app-state.js";
 import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 
+const DEFAULT_STATUS_RECT = normalizedRect(0.08, 0.84, 0.84, 0.075);
+const RESULT_ANALYSIS_LAYOUT = Object.freeze({
+  chart: normalizedRect(0.04, 0.105, 0.92, 0.40),
+  cursor: normalizedRect(0.04, 0.52, 0.92, 0.045),
+  cursorValues: normalizedRect(0.04, 0.57, 0.92, 0.065),
+  configuration: normalizedRect(0.04, 0.645, 0.92, 0.065),
+  notification: normalizedRect(0.04, 0.72, 0.92, 0.085)
+});
+
 export function createGameViewModel(
   model: AppModel,
   snapshot: FlightSnapshotInput | null,
@@ -67,7 +76,8 @@ export function createGameViewModel(
   const vrFlightPanel = (phaseCode === 5 || phaseCode === 6) && (activeMode === "webxr" || activeMode === "phone-vr");
   const controls: UiControl[] = [1, 2, 3, 4, 8].includes(phaseCode) || phaseCode === 5 || phaseCode === 9 || phaseCode === 10 || vrFlightPanel
     ? []
-    : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, countdownRemaining, canResume))];
+    : [status("game-state", "状態", model.status || descriptionForPhase(phaseCode, countdownRemaining, canResume),
+      phaseCode === 7 && model.resultTab === "analysis" ? RESULT_ANALYSIS_LAYOUT.notification : DEFAULT_STATUS_RECT)];
   const flightButtons = buttons.filter((entry) => entry.id === "game-flight-pause" || entry.id === "game-flight-resume" || entry.id === "game-flight-abort" || entry.id === "game-paused-abort");
   if (stopped) {
     const retained = model.flightExecution.snapshot;
@@ -127,7 +137,7 @@ export function createGameViewModel(
     );
     controls.push(Object.freeze({
       ...status("game-result-configuration", "保存条件 / 風", analysisConfigurationSummary(analysis, model.configurationMetadata)),
-      rect: normalizedRect(0.04, 0.735, 0.92, 0.065)
+      rect: RESULT_ANALYSIS_LAYOUT.configuration
     }));
     if (analysis !== null) controls.push(Object.freeze({
       kind: "range",
@@ -138,23 +148,23 @@ export function createGameViewModel(
       maximum: Math.max(analysis.summary.durationSeconds, 0.01),
       step: 0.01,
       enabled: true,
-      rect: normalizedRect(0.04, 0.61, 0.92, 0.045)
+      rect: RESULT_ANALYSIS_LAYOUT.cursor
     }));
     if (cursorSample !== null) {
       controls.push(Object.freeze({
         ...status("game-analysis-cursor-values", "At cursor", cursorReadout(cursorSample)),
-        rect: normalizedRect(0.04, 0.66, 0.92, 0.065)
+        rect: RESULT_ANALYSIS_LAYOUT.cursorValues
       }));
     }
     if (analysis === null) {
-      controls.push(Object.freeze({ ...status("game-analysis-loading", "Analysis", "FlightRecordを取得している"), rect: normalizedRect(0.08, 0.105, 0.84, 0.49) }));
+      controls.push(Object.freeze({ ...status("game-analysis-loading", "Analysis", "FlightRecordを取得している"), rect: RESULT_ANALYSIS_LAYOUT.chart }));
     } else {
       controls.push(createAnalysisChart(
         analysis,
         model.analysisChart,
         cursorSample,
         scenarioId,
-        normalizedRect(0.04, 0.105, 0.92, 0.49),
+        RESULT_ANALYSIS_LAYOUT.chart,
         venue
       ));
     }
@@ -952,8 +962,8 @@ function replayCameraLabel(mode: AppModel["replayCameraMode"]): string {
   return mode.charAt(0).toUpperCase() + mode.slice(1);
 }
 
-function status(id: string, label: string, value: string): UiStatus {
-  return Object.freeze({ kind: "status", id, label, value, enabled: false, rect: normalizedRect(0.08, 0.84, 0.84, 0.075) });
+function status(id: string, label: string, value: string, rect = DEFAULT_STATUS_RECT): UiStatus {
+  return Object.freeze({ kind: "status", id, label, value, enabled: false, rect });
 }
 
 function sceneForPhase(phaseCode: number): UiViewModel["scene"] {

@@ -354,7 +354,7 @@ describe("Game scene view model", () => {
     ]));
     const chartControl = controls.find((control) => control.kind === "chart");
     if (chartControl?.kind !== "chart") throw new Error("Analysis chart is missing");
-    expect(chartControl.rect).toMatchObject({ x: 0.04, y: 0.105 * 0.81, width: 0.92, height: 0.49 * 0.81 });
+    expect(chartControl.rect).toMatchObject({ x: 0.04, y: 0.105 * 0.81, width: 0.92, height: 0.40 * 0.81 });
     for (const id of ["game-analysis-map", "game-analysis-altitude", "game-analysis-speed"] as const) {
       const selector = controls.find((control) => control.id === id);
       expect(selector?.rect.y).toBe(0.025 * 0.81);
@@ -365,6 +365,31 @@ describe("Game scene view model", () => {
       expect(action.rect.y).toBeGreaterThanOrEqual(0.82 * 0.81);
       expect(action.rect.y).toBeLessThan(1);
       expect(action.rect.y + action.rect.height).toBeLessThanOrEqual(0.98 * 0.81);
+    }
+    for (const mode of ["screen", "phone-vr", "webxr"] as const) {
+      for (const message of ["FlightRecord 3を保存した。Personal Bestを更新した。", "記録取得に失敗した。\n元原因: static_polar / outside_envelope / static_alpha / second"]) {
+        const notificationView = createGameViewModel(Object.freeze({ ...model, status: message,
+          presentation: Object.freeze({ type: "ready" as const, mode }) }), null);
+        validateUiViewModel(notificationView);
+        const panel = notificationView.panels[0];
+        if (panel === undefined) throw new Error("Result Analysis panel is missing");
+        expect(panel.anchor).toBe("menu");
+        const notification = panel.controls.find((control) => control.id === "game-state");
+        if (notification?.kind !== "status") throw new Error("Result Analysis notification is missing");
+        expect(notification.value).toBe(message);
+        expect(notification.rect).toEqual({ x: 0.04, y: 0.72 * 0.81, width: 0.92, height: 0.085 * 0.81 });
+        for (const control of panel.controls.filter((entry) => entry.id !== notification.id)) {
+          const overlap = notification.rect.x < control.rect.x + control.rect.width
+            && control.rect.x < notification.rect.x + notification.rect.width
+            && notification.rect.y < control.rect.y + control.rect.height
+            && control.rect.y < notification.rect.y + notification.rect.height;
+          expect(overlap, `${analysisChart}/${mode}/${control.id}`).toBe(false);
+        }
+        for (const id of ["game-result-open-summary", "game-result-replay", "game-result-retry", "game-result-setup", "game-result-title",
+          "game-analysis-cursor", "game-analysis-cursor-values", "game-result-configuration", "game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]) {
+          expect(panel.controls.some((control) => control.id === id), id).toBe(true);
+        }
+      }
     }
     if (cursorValues?.kind !== "status") throw new Error("Analysis cursor status is missing");
     expect(cursorValues.value).toContain("t 1.00 s · N 8.0 m · E 6.0 m · h 8.0 m");

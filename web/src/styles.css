@@ -454,6 +454,11 @@ body {
   white-space: pre-line;
 }
 
+.screen-ui-panel[data-layout="normalized"] .screen-ui-status {
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .screen-ui-chart {
   box-sizing: border-box;
   display: flex;

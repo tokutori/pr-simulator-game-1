@@ -157,6 +157,7 @@ export class ScreenUiAdapter {
     for (const control of panel.controls) {
       const element = this.createControl(documentRef, control);
       if (usesNormalizedLayout) applyNormalizedRect(element, control.rect);
+      if (usesNormalizedLayout && control.kind === "status") element.tabIndex = 0;
       if (control.kind === "button" && control.presentation?.kind === "choice" && !usesNormalizedLayout) {
         if (choiceGroup === null || previousChoiceGroup !== control.presentation.group) {
           const fieldset = documentRef.createElement("fieldset");
