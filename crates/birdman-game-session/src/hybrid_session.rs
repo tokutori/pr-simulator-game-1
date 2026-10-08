@@ -5,8 +5,8 @@ use birdman_game_core::{
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
     HybridAerodynamicLoad, HybridError, HybridMockConfiguration, HybridMockDefinition,
     HybridMockError, HybridMockTrim, HybridModel, HybridSurface, MathError, NedPoint, NedVector,
-    SessionScenarioIdentity, TailControlProfile, TailFlightScenario, TailFlightScenarioError,
-    TailFlightScenarioParameters, TailIncidence, WindField,
+    SessionScenarioIdentity, TailAngleOfAttackGuard, TailControlProfile, TailFlightScenario,
+    TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence, WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
@@ -21,9 +21,9 @@ use crate::{
 };
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
-const CONTROLLER_PROFILE_VERSION: u32 = 2;
-const CATALOG_VERSION: u32 = 2;
-const SCENARIO_VERSION: u32 = 2;
+const CONTROLLER_PROFILE_VERSION: u32 = 3;
+const CATALOG_VERSION: u32 = 3;
+const SCENARIO_VERSION: u32 = 3;
 const SCENARIOS: [ScenarioCatalogEntry; 5] = [
     entry(1, WeatherClass::Calm),
     entry(2, WeatherClass::Mild),
@@ -96,7 +96,7 @@ impl HybridSessionPreparation {
         Self::try_new_for_weather(control_mode, maximum_flight_ticks, seed, DEFAULT_WEATHER)
     }
 
-    /// Resolves Weather against catalog two and uses the matching registered wind provider.
+    /// Resolves Weather against catalog three and uses the matching registered wind provider.
     pub fn try_new_for_weather(
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
@@ -179,8 +179,12 @@ impl HybridSessionPreparation {
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;
+        let angle_guard =
+            TailAngleOfAttackGuard::try_new([-0.09, 0.09], trim.alpha_rad(), 1.0, 1.6)
+                .map_err(HybridSessionPreparationError::Control)?;
         let controller_profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-            .map_err(HybridSessionPreparationError::Control)?;
+            .map_err(HybridSessionPreparationError::Control)?
+            .with_angle_of_attack_guard(angle_guard);
         let scenario = TailFlightScenario::try_new(parameters, load, controller_profile)
             .map_err(HybridSessionPreparationError::Scenario)?;
         let identity = identity_for_selection(selection);
@@ -203,7 +207,7 @@ impl HybridSessionPreparation {
         })
     }
 
-    /// Selects registered catalog-two identities without constructing a flight state.
+    /// Selects registered catalog-three identities without constructing a flight state.
     pub fn select_scenario(
         weather: WeatherClass,
         seed: u64,
@@ -238,7 +242,7 @@ const fn entry(version: u32, weather: WeatherClass) -> ScenarioCatalogEntry {
     ScenarioCatalogEntry {
         scenario_id: version,
         scenario_version: SCENARIO_VERSION,
-        aircraft_model_version: HybridMockConfiguration::Standard.model_version(),
+        aircraft_model_version: HybridMockConfiguration::Playable.model_version(),
         environment_version: version,
         weather,
     }
@@ -259,7 +263,7 @@ pub fn identity_for_selection(selection: ScenarioSelection) -> SessionScenarioId
 
 fn cached_definition() -> Result<&'static HybridMockDefinition, HybridSessionPreparationError> {
     HYBRID_DEFINITION
-        .get_or_init(|| HybridMockDefinition::try_new(HybridMockConfiguration::Standard))
+        .get_or_init(|| HybridMockDefinition::try_new(HybridMockConfiguration::Playable))
         .as_ref()
         .map_err(|error| HybridSessionPreparationError::Mock(*error))
 }

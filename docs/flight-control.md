@@ -121,7 +121,8 @@ WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを�
 既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
 trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
 model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。
-アプリ既定は`bpg041-rectangular-hybrid-mock`/version 1と`bpg040-tail-rate-feedback`/version 2である。
+アプリ既定は`bpg041-playable-hybrid-mock`/version 2と`bpg040-tail-rate-feedback`/version 3である。
+modelのPWL列・geometry・trimと、全modeのsoft alpha/身体target保護は[playableモデル契約](playable-hybrid-model.md)に従う。
 旧JS factoryはlegacy三軸の明示的な互換入口として保持する。
 
 明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、
@@ -130,7 +131,7 @@ model/controllerの文字列identityはRust定義からrecordへ渡し、UI側�
 snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
 terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
 旧factory・33値ABIはlegacy互換入口として保持する。既定アプリのReplay/Attractは同じbridgeのnamed保存queryを使用する。
-hybridのSetupは既存`DifficultySettings`とcatalog 2を使用する。Calm/Mild/Challenging/NearLimitは
+hybridのSetupは既存`DifficultySettings`とcatalog 3を使用する。Calm/Mild/Challenging/NearLimitは
 登録済みuniform provider 1/2/4/5、Typicalはoffline asset 6のgridを使用し、環境metadataと物理のproviderを一致させる。
 Informationは表示だけに作用し、Assistanceは既存Strong/Assisted/Light/Manualをauthority 1/0.5/0.2/0へ解決する。
 Briefing開始後は選択を固定し、18値のconfiguration metadataとmodel/controller identityをRustから供給する。
@@ -142,7 +143,8 @@ device adapterは型付き上限へnormalized demandを写像し、TSに物理�
 live stateの`pilot_position_target_normalized`は、同じsealed mappingで現在のheld physical targetを逆写像した値である。
 trimを0、両端を±1とし、trimと端点が一致する場合は同じphysical targetを0へ正規化する。
 初期化・Resume・入力機器の再取得はこの値を参照し、現在のphysical positionや初期positionから目標を推定しない。
-`Hold`は直前目標を保持する。旧保存queryへnormalized targetを追加せず、記録値とlive入力状態を区別する。
+`Hold`は直前effective targetを保持した名目要求であり、controller 3のalpha保護は危険側biasをさらにtrim側へ絞り得る。
+元Hold/Set要求とresolved effective targetを区別する。旧保存queryへnormalized targetを追加せず、記録値とlive入力状態を区別する。
 Flight/Pausedの`frame.progress_m`は`course_parallel_m`・`cross_track_m`・`net_horizontal_m`をRustから供給する。
 sealed initial datumと最新成功datumの変位へdistance score v1の幾何計算を適用し、CG移動・累積経路長と区別する。
 進行値は未確定の診断値であり、Resultは同時刻の既存`finalization.score_m`を保持する。保存queryへcursor scoreを追加しない。
@@ -178,7 +180,7 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
 発進原点・発進台寸法・方位は`assets/biwa-launch-venue.json`をRust session、Web、nativeで共用する。
-hybrid scenario version 2は北から時計回り315°を初期headingとcourse axisへ適用する。
+hybrid scenario version 2/3は北から時計回り315°を初期headingとcourse axisへ適用する。
 NEDの環境風は回転せず、同じCG地点の風をtrimの空気相対速度へ一度加算する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
 既定アプリはこの二系統port/controllerを使用し、入力・HUD・Resultへ同じsnapshotを渡す。
@@ -223,6 +225,6 @@ Web側で物理・集計・scoreを再評価せず、確定Summaryと保存curso
 入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
 閉ループ減衰で検証する。数値積分と離散controlの刻み依存は、[量別step-halving](verification.md)で
 physics-onlyと連成の100/200/400 Hz比較へ分離する。局所増大・減衰は[離散線形化](hybrid-numerical-validation.md)で
-Jacobian/固有値と小摂動時系列を照合する。Manual/Automaticとも局所増大が残り、
-全modeの安定性・通常操縦の成立性・実機の安定性は未確認である。aircraft-specific controllerと
+Jacobian/固有値と小摂動時系列を照合する。VersionOneのManual/Automaticには局所増大が残る。
+新Playableの明示的な入力列の受入はその基準と分離し、全状態・任意入力や実機の安定性を保証しない。aircraft-specific controllerと
 aerodynamic derivativesのfidelity検証はBPG-035でM6完了後に扱い、M3〜M6をblockしない。

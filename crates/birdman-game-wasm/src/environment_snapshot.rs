@@ -181,7 +181,11 @@ pub(crate) fn for_identity(
         || (identity.scenario_version == 2
             && identity.catalog_version == 2
             && identity.aircraft_model_version == 1
-            && matches!(identity.controller_profile_version, 1 | 2));
+            && matches!(identity.controller_profile_version, 1 | 2))
+        || (identity.scenario_version == 3
+            && identity.catalog_version == 3
+            && identity.aircraft_model_version == 2
+            && matches!(identity.controller_profile_version, 2 | 3));
     let registered = registered_version
         && matches!(
             identity.aircraft_model_version,
@@ -192,6 +196,11 @@ pub(crate) fn for_identity(
         && match identity.catalog_version {
             1 => (1..=5).contains(&identity.scenario_id),
             2 => matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6),
+            3 => {
+                identity.scenario_version == 3
+                    && identity.aircraft_model_version == 2
+                    && matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6)
+            }
             _ => false,
         };
     if !registered {
@@ -320,6 +329,48 @@ mod tests {
     fn query(identity: EnvironmentIdentity) -> Value {
         let json = serde_json::to_vec(&identity).unwrap();
         serde_json::from_str(&for_identity_json(&json).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn playable_model_two_controller_three_preserves_registered_environment_and_old_model_one_archives()
+     {
+        for version in [1, 2, 4, 5, 6] {
+            let mut previous = identity(version);
+            previous.catalog_version = 2;
+            previous.scenario_version = 2;
+            previous.controller_profile_version = 2;
+            let mut current = previous;
+            current.catalog_version = 3;
+            current.scenario_version = 3;
+            current.aircraft_model_version = 2;
+            current.controller_profile_version = 3;
+            let old_snapshot = query(previous);
+            let snapshot = query(current);
+            assert_eq!(old_snapshot["projection"]["kind"], "available");
+            assert_eq!(snapshot["projection"]["kind"], "available");
+            assert_eq!(
+                snapshot["projection"]["metadata"],
+                old_snapshot["projection"]["metadata"]
+            );
+            let mut unguarded = current;
+            unguarded.controller_profile_version = 2;
+            assert_eq!(query(unguarded)["projection"]["kind"], "available");
+            for component in 0..4 {
+                let mut unknown = current;
+                match component {
+                    0 => unknown.catalog_version = 2,
+                    1 => unknown.scenario_version = 2,
+                    2 => unknown.aircraft_model_version = 1,
+                    3 => unknown.controller_profile_version = 1,
+                    _ => unreachable!(),
+                }
+                assert_eq!(query(unknown)["projection"]["kind"], "unavailable");
+            }
+            let mut removed = current;
+            removed.scenario_id = 3;
+            removed.environment_version = 3;
+            assert_eq!(query(removed)["projection"]["kind"], "unavailable");
+        }
     }
 
     #[test]

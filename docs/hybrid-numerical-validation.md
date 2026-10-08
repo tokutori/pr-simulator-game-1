@@ -8,6 +8,8 @@ BPG-043（[#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)）�
 ## 基準と状態座標
 
 `HybridMockDefinition::try_new(Standard)`と`HybridMockTrim::try_new`から基準を構築する。
+この基準はVersionOne/model 1であり、新公開既定のPlayable/model 2・controller 3へ置き換えない。
+新モデルの入力列と保護の受入は[playableモデル契約](playable-hybrid-model.md)へ分離する。
 密度は1.225 kg/m³、重力は9.80665 m/s²、対気速度は9.7 m/s、風は一様な0 NED vectorである。
 headingは0、初期複合CGのNED位置は(0, 0, -100) mとする。trim値と右辺を試験へ転記しない。
 

@@ -19,7 +19,7 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     assert_eq!(bridge.phase_code(), 10);
     assert_eq!(projected["phase"], "attract");
     assert_eq!(projected["control_layout"], "tail_incidence");
-    assert_eq!(projected["scenario"]["catalog_version"], 2);
+    assert_eq!(projected["scenario"]["catalog_version"], 3);
     assert_eq!(projected["scenario"]["scenario_id"], 1);
     assert_eq!(projected["scenario"]["environment_version"], 1);
     assert_eq!(projected["scenario"]["seed_low"], DEMO_SEED);

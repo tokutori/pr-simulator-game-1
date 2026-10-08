@@ -100,7 +100,7 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 公開アプリの既定hybrid切替はBPG-042 / [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)で、
 二系統入力の公開型・model/controller identity・record versionの更新と同時に行う。
 
-### BPG-041の独立mock定義
+### BPG-041のVersionOne独立mock定義
 
 `HybridMockDefinition`は公開可能な架空値だけを所有し、既存constructorで全geometry・strip・anchor・
 全機polarを検証する。構築・借用viewはheapとI/Oを使用しない。既定の`SyntheticPlayableFlight`と
@@ -127,6 +127,8 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 pilotのy=z=0、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を維持する。
 `bpg041-rectangular-hybrid-mock`と、dihedral=0の`bpg041-zero-dihedral-oracle`は独立identityであり、
 各configuration内のmodel versionは1とする。oracleは同じ投影形状と節点表を使用する。
+新公開既定のPlayable/version 2は[合成playableモデル契約](playable-hybrid-model.md)へ分離する。
+旧5節点・geometry・oracleは独立したVersionOneの回帰基準として保持する。
 
 `HybridMockTrim`は無風・rho=1.225 kg/m³・g=9.80665 m/s²・V=9.7 m/sで、
 生成済PWL列から力の大きさを釣り合わせ、$\gamma=\operatorname{atan2}(-C_D,C_L)$、

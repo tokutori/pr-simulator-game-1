@@ -196,8 +196,14 @@ fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default()
 
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
-    assert_eq!(initial["scenario"]["catalog_version"], 2);
-    assert_eq!(initial["scenario"]["scenario_version"], 2);
+    assert_eq!(initial["scenario"]["catalog_version"], 3);
+    assert_eq!(initial["scenario"]["scenario_version"], 3);
+    assert_eq!(initial["scenario"]["aircraft_model_version"], 2);
+    assert_eq!(initial["scenario"]["controller_profile_version"], 3);
+    assert_eq!(
+        initial["control_identity"]["aircraft_configuration_id"],
+        "bpg041-playable-hybrid-mock"
+    );
     assert_eq!(initial["scenario"]["environment_version"], 6);
     assert_eq!(initial["scenario"]["seed_low"], u32::MAX);
     assert_eq!(initial["scenario"]["seed_high"], u32::MAX);
@@ -442,14 +448,14 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
         assert_eq!(selected["projection"]["source"], "selected");
         assert_eq!(selected["projection"]["kind"], "available");
-        assert_eq!(selected["projection"]["identity"]["catalog_version"], 2);
+        assert_eq!(selected["projection"]["identity"]["catalog_version"], 3);
         assert_eq!(selected["projection"]["identity"]["scenario_id"], version);
         bridge.prepare_internal().unwrap();
         let metadata = bridge.configuration_metadata().unwrap();
         assert_eq!(metadata.len(), 18);
         assert_eq!(metadata[3], weather_code);
         assert_eq!(metadata[5], version);
-        assert_eq!(metadata[6], 2);
+        assert_eq!(metadata[6], 3);
         assert_eq!(metadata[8], version);
         assert_eq!(metadata[10], 19);
         let sealed: Value =
@@ -661,7 +667,7 @@ fn north_launch_archive_keeps_saved_state_and_identity_without_reintegration() {
 
     let mut current = launch(ControlMode::Manual, 2);
     let current_identity = current.session.configuration_identity().unwrap();
-    assert_eq!(current_identity.scenario_version, 2);
+    assert_eq!(current_identity.scenario_version, 3);
     current.abort().unwrap();
     let mut document: TailFlightRecordDocument =
         serde_json::from_str(&current.export_record_internal().unwrap()).unwrap();
@@ -676,10 +682,18 @@ fn north_launch_archive_keeps_saved_state_and_identity_without_reintegration() {
     saved.datum_velocity_ned_mps =
         core::array::from_fn(|index| air_velocity[index] + saved.wind_at_cg_ned_mps[index]);
     saved.attitude_body_to_ned = old_air.attitude_body_to_ned().components();
+    saved.pilot_position_m = old_air.pilot_position_m();
+    saved.pilot_velocity_mps = old_air.pilot_velocity_mps();
     saved.telemetry.attitude_euler_rad[2] = 0.0;
     saved.telemetry.groundspeed_mps =
         saved.datum_velocity_ned_mps[0].hypot(saved.datum_velocity_ned_mps[1]);
+    document.header.catalog_version = 2;
     document.header.scenario_version = 1;
+    document.header.aircraft_model_version = 1;
+    document.header.controller_profile_version = 1;
+    document.control_identity.aircraft_configuration_id = HybridMockConfiguration::Standard
+        .configuration_id()
+        .to_owned();
     let archive = FlightRecordArchiveDocument::Tail(document.clone());
     let expected_record = archive.to_finalized_core_record().unwrap();
     assert_eq!(
@@ -714,5 +728,13 @@ fn north_launch_archive_keeps_saved_state_and_identity_without_reintegration() {
         serde_json::from_str(&viewer.environment_snapshot_json().unwrap()).unwrap();
     assert_eq!(environment["projection"]["kind"], "available");
     assert_eq!(environment["projection"]["identity"]["scenario_version"], 1);
+    assert_eq!(
+        environment["projection"]["identity"]["aircraft_model_version"],
+        1
+    );
+    assert_eq!(
+        environment["projection"]["identity"]["controller_profile_version"],
+        1
+    );
     assert_eq!(viewer.session.snapshot(), before);
 }

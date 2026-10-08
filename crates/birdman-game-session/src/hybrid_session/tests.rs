@@ -1,7 +1,8 @@
 use super::*;
 use birdman_game_core::{
-    FlightRecordControls, GameSession, SessionPhase, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailRateTarget,
+    FbwAuthority, FlightRecordControls, GameSession, SessionEndReason, SessionPhase,
+    TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailRateTarget,
 };
 use birdman_game_format::{
     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument, WeatherClass,
@@ -38,7 +39,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
             .into_parts();
     assert_eq!(
         control_identity.aircraft_configuration_id,
-        HybridMockConfiguration::Standard.configuration_id()
+        HybridMockConfiguration::Playable.configuration_id()
     );
     assert_eq!(
         control_identity.controller_profile_id,
@@ -46,9 +47,9 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
-    assert_eq!(identity.scenario_version, 2);
+    assert_eq!(identity.scenario_version, 3);
     assert_eq!(identity.environment_version, 6);
-    assert_eq!(identity.aircraft_model_version, 1);
+    assert_eq!(identity.aircraft_model_version, 2);
     assert_eq!(
         identity.controller_profile_version,
         CONTROLLER_PROFILE_VERSION
@@ -264,8 +265,202 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
             assert_eq!(
                 session.configuration_identity().unwrap().scenario_version,
-                2
+                3
             );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum PlayabilitySequence {
+    Neutral,
+    SmallNoseUp,
+    SmallNoseDown,
+    ShortFullNoseUp,
+    PilotForward,
+    PilotBackward,
+    FullNoseUp,
+    FullNoseDown,
+    PilotForwardEndpoint,
+    PilotBackwardEndpoint,
+    OneSecondNoseUp,
+}
+
+impl PlayabilitySequence {
+    fn input(self, tick: u64) -> TailFlightTickInput {
+        let pitch = match self {
+            Self::SmallNoseUp => 0.05,
+            Self::SmallNoseDown => -0.05,
+            Self::FullNoseUp => 1.0,
+            Self::FullNoseDown => -1.0,
+            Self::ShortFullNoseUp if (100..110).contains(&tick) => 1.0,
+            Self::OneSecondNoseUp if (100..200).contains(&tick) => 1.0,
+            _ => 0.0,
+        };
+        let position = match self {
+            Self::PilotForward | Self::PilotBackward if (100..110).contains(&tick) => {
+                let sign = if matches!(self, Self::PilotForward) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                TailPilotPositionCommand::Set(
+                    TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
+                )
+            }
+            Self::PilotForwardEndpoint | Self::PilotBackwardEndpoint
+                if (100..200).contains(&tick) =>
+            {
+                let sign = if matches!(self, Self::PilotForwardEndpoint) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                TailPilotPositionCommand::Set(
+                    TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
+                )
+            }
+            _ => TailPilotPositionCommand::Hold,
+        };
+        TailFlightTickInput::new(
+            TailPilotIntent::try_new(pitch, 0.0).unwrap(),
+            TailRateTarget::try_new(pitch * TailRateTarget::limits_rad_per_second()[0], 0.0)
+                .unwrap(),
+            position,
+        )
+    }
+}
+
+#[test]
+fn playable_normal_input_sequences_remain_inside_all_load_boundaries_until_natural_termination() {
+    for sequence in [
+        PlayabilitySequence::Neutral,
+        PlayabilitySequence::SmallNoseUp,
+        PlayabilitySequence::SmallNoseDown,
+        PlayabilitySequence::ShortFullNoseUp,
+        PlayabilitySequence::PilotForward,
+        PlayabilitySequence::PilotBackward,
+    ] {
+        assert_playable_sequence(sequence);
+    }
+}
+
+#[test]
+fn playable_held_pitch_pulse_and_pilot_endpoint_requests_use_guarded_physics_and_preserved_record_inputs()
+ {
+    for sequence in [
+        PlayabilitySequence::FullNoseUp,
+        PlayabilitySequence::FullNoseDown,
+        PlayabilitySequence::PilotForwardEndpoint,
+        PlayabilitySequence::PilotBackwardEndpoint,
+        PlayabilitySequence::OneSecondNoseUp,
+    ] {
+        assert_playable_sequence(sequence);
+    }
+}
+
+fn assert_playable_sequence(sequence: PlayabilitySequence) {
+    let definition = cached_definition().unwrap();
+    let surfaces = cached_surfaces().unwrap();
+    let wind = bundled_environment().unwrap().wind_field().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
+        HybridMockTrim::AIR_DENSITY_KG_M3,
+        wind,
+    )
+    .unwrap();
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        let preparation = HybridSessionPreparation::try_new_for_weather(
+            mode,
+            DEFAULT_MAXIMUM_FLIGHT_TICKS,
+            DEFAULT_SESSION_SEED,
+            DEFAULT_WEATHER,
+        )
+        .unwrap();
+        let guard = preparation
+            .controller_profile()
+            .angle_of_attack_guard()
+            .unwrap();
+        assert_eq!(guard.alpha_interval_rad(), [-0.09, 0.09]);
+        assert_eq!(
+            guard.trim_alpha_rad(),
+            HybridMockTrim::try_new(definition).unwrap().alpha_rad()
+        );
+        let mut session = launch(preparation.into_parts().0);
+        for tick in 1..=DEFAULT_MAXIMUM_FLIGHT_TICKS {
+            assert!(
+                session
+                    .advance_tail_flight_tick(sequence.input(tick))
+                    .is_ok(),
+                "{mode:?} {sequence:?} tick={tick} {:?}",
+                session.snapshot().result()
+            );
+            if session.snapshot().phase() == SessionPhase::Result {
+                break;
+            }
+        }
+        let snapshot = session.snapshot();
+        let result = snapshot.result().unwrap();
+        assert!(
+            matches!(
+                result.reason,
+                SessionEndReason::WaterContact | SessionEndReason::TimeLimit
+            ),
+            "{mode:?} {sequence:?}: {result:?}"
+        );
+        assert_eq!(result.failure, None);
+        let record = session.flight_record().unwrap();
+        assert_eq!(record.finalization().unwrap().reason, result.reason);
+        assert_eq!(record.finalization().unwrap().failure, result.failure);
+        assert_eq!(
+            record.samples().last().unwrap().flight_state,
+            result.state.flight_state()
+        );
+        for sample in record.samples() {
+            let FlightRecordControls::TailIncidence {
+                incidence,
+                input_from_previous,
+            } = sample.controls
+            else {
+                panic!("expected the public two-tail record layout");
+            };
+            loads
+                .evaluate_hybrid(&sample.flight_state, incidence)
+                .unwrap();
+            let relative = sample
+                .flight_state
+                .datum_velocity_ned()
+                .minus(
+                    wind.velocity_at(sample.flight_state.datum_position_ned())
+                        .unwrap(),
+                )
+                .unwrap();
+            let velocity = sample
+                .flight_state
+                .attitude_body_to_ned()
+                .ned_to_body(relative)
+                .unwrap()
+                .components();
+            let alpha = velocity[2].atan2(velocity[0]);
+            assert!((-0.18..=0.18).contains(&alpha));
+            if let Some(input) = input_from_previous {
+                let input_tick = sample.tick_index + u64::from(sample.fraction > 0.0);
+                let expected = sequence.input(input_tick);
+                assert_eq!(input.manual_intent(), expected.manual_intent());
+                assert_eq!(input.desired_body_rate(), expected.desired_body_rate());
+                assert_eq!(
+                    input.pilot_position_command(),
+                    expected.pilot_position_command()
+                );
+                assert_eq!(
+                    input.manual_incidence_target(),
+                    expected.manual_intent().incidence().unwrap()
+                );
+            }
         }
     }
 }
