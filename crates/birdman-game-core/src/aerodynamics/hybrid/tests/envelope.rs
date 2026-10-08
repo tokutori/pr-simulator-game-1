@@ -72,6 +72,283 @@ fn every_local_angle_limit_has_independent_inclusive_and_outside_cases() {
 }
 
 #[test]
+fn tail_incidence_interval_intersection_keeps_closed_signed_boundaries() {
+    for (difference, expected) in [
+        (-0.2, [0.0, 0.2]),
+        (-0.1, [-0.1, 0.2]),
+        (0.0, [-0.2, 0.2]),
+        (0.1, [-0.2, 0.1]),
+        (0.2, [-0.2, 0.0]),
+    ] {
+        let mut interval = [-0.2, 0.2];
+        intersect_tail_incidence_interval(&mut interval, difference);
+        assert_eq!(interval, expected);
+    }
+    let mut interval = [-0.2, 0.2];
+    intersect_tail_incidence_interval(&mut interval, -0.2);
+    intersect_tail_incidence_interval(&mut interval, 0.2);
+    assert_eq!(interval, [0.0, 0.0]);
+}
+
+#[test]
+fn neutral_and_zero_flow_tail_intervals_keep_physical_and_missing_axis_bounds() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    for speed in [0.0, 10.0] {
+        let current = state([speed, 0.0, 0.0], [0.0; 3]);
+        assert_eq!(
+            load.tail_incidence_intervals(&current).unwrap(),
+            [[-0.2, 0.2]; 2]
+        );
+        for elevator in [-0.2, 0.2] {
+            for rudder in [-0.2, 0.2] {
+                assert!(
+                    load.evaluate_hybrid(
+                        &current,
+                        TailIncidence::try_new(elevator, rudder).unwrap()
+                    )
+                    .is_ok()
+                );
+            }
+        }
+    }
+    for surface_index in [0, 1, 2] {
+        let load = HybridAerodynamicLoad::try_new(
+            HybridModel::try_new(fixture.polar(), &surfaces[surface_index..=surface_index])
+                .unwrap(),
+            1.2,
+            WindField::uniform(NedVector::zero()),
+        )
+        .unwrap();
+        let mut expected = [[0.0; 2]; 2];
+        if surface_index != 0 {
+            expected[surface_index - 1] = [-0.2, 0.2];
+        }
+        assert_eq!(
+            load.tail_incidence_intervals(&state([10.0, 0.0, 0.0], [0.0; 3]))
+                .unwrap(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn both_tail_axes_intersect_every_rate_driven_proxy_for_both_signs() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    for pitch_sign in [-1.0, 1.0] {
+        for yaw_sign in [-1.0, 1.0] {
+            let pitch_rate = pitch_sign * 0.25;
+            let yaw_rate = yaw_sign * 0.3;
+            let current = state([10.0, 0.0, 0.0], [0.0, pitch_rate, yaw_rate]);
+            let actual = load.tail_incidence_intervals(&current).unwrap();
+            let mut expected = [[-0.2_f64, 0.2]; 2];
+            for (axis, proxies) in fixture.proxies[1..].iter().enumerate() {
+                for proxy in proxies {
+                    let [point_x, point_y, point_z] = proxy.point().components();
+                    let forward = 10.0 + pitch_rate * point_z - yaw_rate * point_y;
+                    let local_down = if axis == 0 {
+                        -pitch_rate * point_x
+                    } else {
+                        -yaw_rate * point_x
+                    };
+                    let difference = libm::atan2(local_down, forward);
+                    expected[axis][0] = expected[axis][0].max(-0.2 - difference);
+                    expected[axis][1] = expected[axis][1].min(0.2 - difference);
+                }
+            }
+            for axis in [0, 1] {
+                for bound in [0, 1] {
+                    near(actual[axis][bound], expected[axis][bound], 2.0e-15);
+                }
+                assert!(actual[axis][0] <= 0.0 && actual[axis][1] >= 0.0);
+            }
+            assert!(if pitch_sign > 0.0 {
+                actual[0][1] < 0.2 && actual[0][0] == -0.2
+            } else {
+                actual[0][0] > -0.2 && actual[0][1] == 0.2
+            });
+            assert!(if yaw_sign > 0.0 {
+                actual[1][1] < 0.2 && actual[1][0] == -0.2
+            } else {
+                actual[1][0] > -0.2 && actual[1][1] == 0.2
+            });
+        }
+    }
+}
+
+#[test]
+fn spatial_wind_proxies_constrain_both_ends_of_both_tail_intervals() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let model = HybridModel::try_new(fixture.polar(), &surfaces).unwrap();
+    let current = state([10.0, 0.0, 0.0], [0.0; 3]);
+    for sign in [-1.0, 1.0] {
+        let wind = WindField::linear_gradient(
+            NedPoint::origin(),
+            NedVector::zero(),
+            [[0.0; 3], [0.0, 0.0, sign * 0.5], [0.0, sign * 0.5, 0.0]],
+        )
+        .unwrap();
+        let load = HybridAerodynamicLoad::try_new(model, 1.2, wind).unwrap();
+        let intervals = load.tail_incidence_intervals(&current).unwrap();
+        for (axis, difference) in [libm::atan2(0.25, 10.0), libm::atan2(0.125, 10.0)]
+            .into_iter()
+            .enumerate()
+        {
+            near(intervals[axis][0], -0.2 + difference, 2.0e-15);
+            near(intervals[axis][1], 0.2 - difference, 2.0e-15);
+        }
+        for elevator in [intervals[0][0] + 1.0e-12, intervals[0][1] - 1.0e-12] {
+            for rudder in [intervals[1][0] + 1.0e-12, intervals[1][1] - 1.0e-12] {
+                assert!(
+                    load.evaluate_hybrid(
+                        &current,
+                        TailIncidence::try_new(elevator, rudder).unwrap()
+                    )
+                    .is_ok()
+                );
+            }
+        }
+        for axis in [0, 1] {
+            let mut candidate = [0.0; 2];
+            candidate[axis] = intervals[axis][1] + 1.0e-8;
+            let error = load
+                .evaluate_hybrid(
+                    &current,
+                    TailIncidence::try_new(candidate[0], candidate[1]).unwrap(),
+                )
+                .unwrap_err();
+            assert_eq!(error.cause(), AeroError::OutsideEnvelope);
+            assert_eq!(error.limit(), Some(HybridLimit::ControlledAlphaDifference));
+            assert_eq!(
+                error.site(),
+                HybridSite::Proxy {
+                    surface: if axis == 0 {
+                        HybridSurfaceRole::HorizontalTail
+                    } else {
+                        HybridSurfaceRole::VerticalTail
+                    },
+                    index: if (axis == 0) == (sign > 0.0) { 0 } else { 1 },
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn tail_intervals_use_current_air_velocity_and_beta_free_reference() {
+    let fixture = Fixture::new(2);
+    let surfaces = fixture.surfaces();
+    let model = HybridModel::try_new(fixture.polar(), &surfaces).unwrap();
+    let attitude = UnitQuaternion::try_new(libm::cos(0.2), 0.0, 0.0, libm::sin(0.2)).unwrap();
+    for beta in [-0.1, 0.1] {
+        for wind in [NedVector::zero(), ned([2.0, -1.0, 0.5])] {
+            let ground_velocity = attitude
+                .body_to_ned(vector([
+                    10.0 * libm::cos(beta),
+                    10.0 * libm::sin(beta),
+                    0.0,
+                ]))
+                .unwrap()
+                .plus(wind)
+                .unwrap();
+            let current = FlightState::try_new(
+                NedPoint::origin(),
+                ground_velocity,
+                attitude,
+                BodyVector::zero(),
+                0.0,
+                0.0,
+            )
+            .unwrap();
+            let load =
+                HybridAerodynamicLoad::try_new(model, 1.2, WindField::uniform(wind)).unwrap();
+            let intervals = load.tail_incidence_intervals(&current).unwrap();
+            assert_eq!(intervals[0], [-0.2, 0.2]);
+            near(intervals[1][0], (-0.2_f64).max(-0.2 + beta), 2.0e-15);
+            near(intervals[1][1], 0.2_f64.min(0.2 + beta), 2.0e-15);
+        }
+    }
+}
+
+#[test]
+fn tail_interval_scan_preserves_independent_envelope_and_wind_errors() {
+    let fixture = Fixture::new(4);
+    let surfaces = fixture.surfaces();
+    let model = HybridModel::try_new(fixture.polar(), &surfaces).unwrap();
+    let load =
+        HybridAerodynamicLoad::try_new(model, 1.2, WindField::uniform(NedVector::zero())).unwrap();
+    for sign in [-1.0, 1.0] {
+        let alpha = sign * 0.150000001;
+        let beta = sign * 0.200000001;
+        let local_difference = state([10.0, 0.0, 0.0], [0.0, sign, 0.0]);
+        assert_eq!(
+            load.tail_incidence_intervals(&local_difference)
+                .unwrap_err()
+                .limit(),
+            Some(HybridLimit::LocalAlphaDifference)
+        );
+        for current in [
+            state(
+                [10.0 * libm::cos(alpha), 0.0, 10.0 * libm::sin(alpha)],
+                [0.0; 3],
+            ),
+            state(
+                [10.0 * libm::cos(beta), 10.0 * libm::sin(beta), 0.0],
+                [0.0; 3],
+            ),
+            local_difference,
+            state([0.0, 10.0, 0.0], [0.0; 3]),
+            state([1.0e200, 0.0, 0.0], [0.0; 3]),
+            state([0.0; 3], [0.01, 0.0, 0.0]),
+        ] {
+            let expected = load
+                .evaluate_hybrid(&current, TailIncidence::neutral())
+                .unwrap_err();
+            assert_eq!(load.tail_incidence_intervals(&current), Err(expected));
+            assert_eq!(expected.stage(), None);
+        }
+    }
+    let samples = [NedVector::zero(); 8];
+    let grid = WindField::grid(
+        NedPoint::try_new(-1.0, -2.0, -1.0).unwrap(),
+        ned([2.0, 4.0, 2.0]),
+        [2, 2, 2],
+        &samples,
+    )
+    .unwrap();
+    let gradient = WindField::linear_gradient(
+        NedPoint::origin(),
+        NedVector::zero(),
+        [[0.0; 3], [0.0; 3], [0.0, f64::MAX, 0.0]],
+    )
+    .unwrap();
+    for wind in [grid, gradient] {
+        let load = HybridAerodynamicLoad::try_new(model, 1.2, wind).unwrap();
+        let current = state([10.0, 0.0, 0.0], [0.0; 3]);
+        let expected = load
+            .evaluate_hybrid(&current, TailIncidence::neutral())
+            .unwrap_err();
+        assert!(matches!(expected.cause(), AeroError::Wind(_)));
+        assert_eq!(load.tail_incidence_intervals(&current), Err(expected));
+        assert_eq!(expected.stage(), None);
+    }
+}
+
+#[test]
 fn speed_ratio_is_closed_without_division_or_minimum_airspeed() {
     let fixture = Fixture::new(2);
     let proxy = fixture.proxies[0][0];

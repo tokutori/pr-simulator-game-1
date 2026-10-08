@@ -231,6 +231,23 @@ impl<'a> HybridAerodynamicLoad<'a> {
         Ok(())
     }
 
+    pub(crate) fn tail_incidence_intervals(
+        &self,
+        state: &FlightState,
+    ) -> Result<[[f64; 2]; 2], HybridError> {
+        let mut intervals = [[0.0; 2]; 2];
+        for surface in self.model.surfaces {
+            let axis = match surface.geometry().role() {
+                HybridSurfaceRole::MainWing => continue,
+                HybridSurfaceRole::HorizontalTail => 0,
+                HybridSurfaceRole::VerticalTail => 1,
+            };
+            intervals[axis] = [-MAXIMUM_ANGLE_RAD, MAXIMUM_ANGLE_RAD];
+        }
+        self.evaluate_hybrid_with_intervals(state, TailIncidence::neutral(), Some(&mut intervals))?;
+        Ok(intervals)
+    }
+
     /// Evaluates static plus current-reference increments using physical tail incidence.
     ///
     /// A zero datum speed succeeds only after all proxy winds/actual velocities
@@ -240,6 +257,15 @@ impl<'a> HybridAerodynamicLoad<'a> {
         &self,
         state: &FlightState,
         incidence: TailIncidence,
+    ) -> Result<HybridEvaluation, HybridError> {
+        self.evaluate_hybrid_with_intervals(state, incidence, None)
+    }
+
+    fn evaluate_hybrid_with_intervals(
+        &self,
+        state: &FlightState,
+        incidence: TailIncidence,
+        mut intervals: Option<&mut [[f64; 2]; 2]>,
     ) -> Result<HybridEvaluation, HybridError> {
         if (incidence.elevator_rad() != 0.0
             && !self
@@ -357,6 +383,24 @@ impl<'a> HybridAerodynamicLoad<'a> {
                     delta,
                 )
                 .map_err(|error| error.at_site(site))?;
+                if let Some(bounds) = intervals.as_deref_mut() {
+                    let axis = match geometry.role() {
+                        HybridSurfaceRole::MainWing => None,
+                        HybridSurfaceRole::HorizontalTail => Some(0),
+                        HybridSurfaceRole::VerticalTail => Some(1),
+                    };
+                    if let Some(axis) = axis {
+                        let actual_alpha = local_alpha(*proxy, actual, HybridFlowKind::Actual)
+                            .map_err(|error| error.at_site(site))?;
+                        let reference_alpha =
+                            local_alpha(*proxy, reference_velocity, HybridFlowKind::Reference)
+                                .map_err(|error| error.at_site(site))?;
+                        intersect_tail_incidence_interval(
+                            &mut bounds[axis],
+                            actual_alpha - reference_alpha,
+                        );
+                    }
+                }
                 force = force
                     .plus(increment.force_body_newtons())
                     .map_err(|cause| HybridError::new(site, map_math_error(cause)))?;
@@ -423,6 +467,11 @@ impl<'a> HybridAerodynamicLoad<'a> {
         };
         evaluate().map_err(|cause| HybridError::new(site, cause))
     }
+}
+
+fn intersect_tail_incidence_interval(interval: &mut [f64; 2], alpha_difference: f64) {
+    interval[0] = interval[0].max(-MAXIMUM_ANGLE_RAD - alpha_difference);
+    interval[1] = interval[1].min(MAXIMUM_ANGLE_RAD - alpha_difference);
 }
 
 impl ExternalLoadProvider for HybridAerodynamicLoad<'_> {
