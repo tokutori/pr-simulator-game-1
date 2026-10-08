@@ -21,6 +21,8 @@ cargo run -p birdman-game-bevy --release --locked
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
 [公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従うWindowsのnative build環境とGPU driverが必要である。
 Node.js、npm、TypeScript、ブラウザ、WASM runtimeはnative版の起動条件に含めない。
+初回や依存更新後のrelease buildは最適化・LTOに時間を要する。今回のbuildは26分17秒で完了した。
+build完了後の同じ起動コマンドでは、生成済みbinaryを再利用する。
 
 ## モデルと状態の正本
 
@@ -101,9 +103,20 @@ Windows 11 / AMD Radeon 860MのVulkanでnativeウィンドウの起動を確認�
 scripted logical inputで開始・飛行入力・視点切替・一時停止/再開・ManualAbort・Result・同条件Retryを検査した。
 撮影負荷によるProcessingDelayを2回検出し、安全停止の回復後に検査操作として再開した。
 画像は`target/bevy-gpu-verification-ready/`に保存する。実キーボード・マウス操作の受入はユーザー確認待ちである。
-今回のGPU検査はdebug buildであり、release buildでの実描画確認は区別して記録する。
-修正前HEAD `259f1477`はUbuntu/WindowsのCI、共有層76件、native check/Clippyに合格した。
-この結果は修正後の実描画受入と区別する。
+同じWindows 11 / AMD Radeon 860MのVulkanでrelease buildと次の実GPU検査も成功した。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-gpu-verification-release
+```
+
+release版のTitle・Pilot・Chase・Result画像は`target/bevy-gpu-verification-release/`に保存する。
+release版でも日本語分割・shader・assetの確定エラーは0件であり、開始・飛行入力・視点切替・一時停止/再開・
+ManualAbort・Result・同条件Retryを検査した。rootと独立したreadonly reviewerが4画像を確認した。
+初回試用を妨げる表示欠陥は確認されていない。遠方水面のmoireとHUD単位の折返しは残る。
+この検査はscripted logical inputによるものであり、実キーボード・マウスの受入と時間的aliasingの評価は未実施である。
+実装HEAD `c75b2cca`はnative check/Clippy・17件のnative test、共有Rust層の関連test、Webの1,416件・
+WASM/Vite production buildに合格した。[CI run 37745038206](https://github.com/tokutori/pr-simulator-game-1/actions/runs/37745038206)も
+Ubuntu・Windowsとも成功した。Pagesはskipである。今回の文書更新は同じ実装HEADの検査結果を記録する。
 検査基準は次の通りであり、共有crateを追加した場合はその関連testも実行する。
 
 ```sh
