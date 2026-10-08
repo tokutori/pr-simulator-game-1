@@ -5,6 +5,7 @@ use super::{
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
+    ecs::hierarchy::ChildSpawnerCommands,
     input::mouse::MouseScrollUnit,
     input_focus::{FocusCause, InputFocus},
     prelude::*,
@@ -19,17 +20,29 @@ enum UiAction {
     TechnicalDetails,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ButtonEmphasis {
+    Primary,
+    Secondary,
+    Choice { selected: bool },
+}
+
 #[derive(Component)]
 pub(crate) struct MenuButton(UiAction);
 #[derive(Component)]
 pub(crate) enum UiText {
+    PreparationSteps,
     Session,
+    AssistanceSelection,
+    Action(MenuAction),
     Hud,
     TechnicalDetails,
     TechnicalButton,
 }
 #[derive(Component)]
 pub(crate) enum UiPanel {
+    PreparationSteps,
+    AssistanceChoices,
     FlightHud,
     TechnicalDetails,
 }
@@ -67,6 +80,20 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
             BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.82)),
         ))
         .with_children(|parent| {
+            parent
+                .spawn((UiPanel::PreparationSteps, Node::default()))
+                .with_children(|steps| {
+                    steps.spawn((
+                        UiText::PreparationSteps,
+                        Text::new(""),
+                        TextFont {
+                            font: font.0.clone().into(),
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.75, 0.86, 1.0)),
+                    ));
+                });
             parent.spawn((
                 UiText::Session,
                 Text::new("Birdman native Screen"),
@@ -83,6 +110,55 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 },
                 TextColor(Color::WHITE),
             ));
+            parent
+                .spawn((
+                    UiPanel::AssistanceChoices,
+                    Node {
+                        display: Display::None,
+                        width: percent(100),
+                        min_width: px(0),
+                        flex_shrink: 0.0,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(8),
+                        ..default()
+                    },
+                ))
+                .with_children(|choices| {
+                    choices.spawn((
+                        UiText::AssistanceSelection,
+                        Text::new(""),
+                        Node {
+                            width: percent(100),
+                            min_width: px(0),
+                            flex_shrink: 0.0,
+                            ..default()
+                        },
+                        TextFont {
+                            font: font.0.clone().into(),
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                    choices
+                        .spawn(Node {
+                            width: percent(100),
+                            min_width: px(0),
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: px(8),
+                            row_gap: px(8),
+                            ..default()
+                        })
+                        .with_children(|buttons| {
+                            for action in [
+                                MenuAction::Manual,
+                                MenuAction::Shared,
+                                MenuAction::Automatic,
+                            ] {
+                                spawn_session_button(buttons, &font, action);
+                            }
+                        });
+                });
             parent
                 .spawn((
                     Button,
@@ -189,63 +265,62 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
             ..default()
         })
         .with_children(|parent| {
-            for (action, label) in [
-                (MenuAction::Start, "開始"),
-                (MenuAction::Manual, "Manual"),
-                (MenuAction::Shared, "Shared 50%"),
-                (MenuAction::Automatic, "Automatic"),
-                (MenuAction::Prepare, "設定を確認"),
-                (MenuAction::Launch, "発進"),
-                (MenuAction::Pause, "一時停止"),
-                (MenuAction::Resume, "再開"),
-                (MenuAction::Abort, "飛行を終了"),
-                (MenuAction::Retry, "Retry"),
-                (MenuAction::Title, "戻る"),
-                (MenuAction::Exit, "アプリを終了"),
+            for action in [
+                MenuAction::Retry,
+                MenuAction::Start,
+                MenuAction::Prepare,
+                MenuAction::Launch,
+                MenuAction::Pause,
+                MenuAction::Resume,
+                MenuAction::Abort,
+                MenuAction::Title,
+                MenuAction::Exit,
             ] {
-                parent
-                    .spawn((
-                        Button,
-                        MenuButton(UiAction::Session(action)),
-                        Node {
-                            padding: UiRect::axes(px(16), px(10)),
-                            border: UiRect::all(px(1)),
-                            ..default()
-                        },
-                        BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
-                        BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
-                    ))
-                    .with_children(|button| {
-                        button.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font: font.0.clone().into(),
-                                font_size: FontSize::Px(20.0),
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
+                spawn_session_button(parent, &font, action);
             }
         });
 }
 
+fn spawn_session_button(parent: &mut ChildSpawnerCommands, font: &NativeFont, action: MenuAction) {
+    parent
+        .spawn((
+            Button,
+            MenuButton(UiAction::Session(action)),
+            Node {
+                padding: UiRect::axes(px(16), px(10)),
+                border: UiRect::all(px(1)),
+                max_width: percent(100),
+                ..default()
+            },
+            BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
+            BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                UiText::Action(action),
+                Text::new(""),
+                Node {
+                    min_width: px(0),
+                    ..default()
+                },
+                TextFont {
+                    font: font.0.clone().into(),
+                    font_size: FontSize::Px(20.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+}
+
 pub(crate) fn button_actions(
-    mut buttons: Query<
-        (Entity, &Interaction, &MenuButton, &mut BackgroundColor),
-        Changed<Interaction>,
-    >,
+    buttons: Query<(Entity, &Interaction, &MenuButton), Changed<Interaction>>,
     mut session: ResMut<NativeSession>,
     mut exit: MessageWriter<AppExit>,
     mut focus: ResMut<InputFocus>,
     mut disclosure: ResMut<TechnicalDisclosure>,
 ) {
-    for (entity, interaction, button, mut color) in &mut buttons {
-        *color = BackgroundColor(if *interaction == Interaction::None {
-            Color::srgb(0.08, 0.16, 0.25)
-        } else {
-            Color::srgb(0.15, 0.32, 0.46)
-        });
+    for (entity, interaction, button) in &buttons {
         if *interaction != Interaction::Pressed {
             continue;
         }
@@ -266,7 +341,7 @@ pub(crate) fn button_actions(
 
 fn visible_action(phase: SessionPhase, action: MenuAction) -> bool {
     match action {
-        MenuAction::Start => phase == SessionPhase::Title,
+        MenuAction::Start => matches!(phase, SessionPhase::Title | SessionPhase::Result),
         MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic | MenuAction::Prepare => {
             phase == SessionPhase::FlightSetup
         }
@@ -284,6 +359,128 @@ fn visible_action(phase: SessionPhase, action: MenuAction) -> bool {
         ),
         MenuAction::Exit => true,
     }
+}
+
+fn preparation_progress(phase: SessionPhase) -> Option<&'static str> {
+    match phase {
+        SessionPhase::FlightSetup => Some("● 設定 ─ ○ 確認 ─ ○ 発進"),
+        SessionPhase::BriefingPreparing
+        | SessionPhase::BriefingReady
+        | SessionPhase::BriefingFailed { .. } => Some("✓ 設定 ─ ● 確認 ─ ○ 発進"),
+        SessionPhase::Countdown { .. } => Some("✓ 設定 ─ ✓ 確認 ─ ● 発進"),
+        _ => None,
+    }
+}
+
+fn control_mode_label(mode: ControlMode) -> String {
+    match mode {
+        ControlMode::Manual => "手動（Manual）".into(),
+        ControlMode::Shared(authority) => {
+            format!("共有支援（FBW {:.0}%）", authority.value() * 100.0)
+        }
+        ControlMode::Automatic => "FBW自動制御（Automatic）".into(),
+    }
+}
+
+fn control_mode_description(mode: ControlMode) -> &'static str {
+    match mode {
+        ControlMode::Manual => "矢印入力を尾翼の取付角指令に反映する。",
+        ControlMode::Shared(_) => "手動の取付角指令とFBWの角速度制御を組み合わせる。",
+        ControlMode::Automatic => "矢印入力の目標角速度に合わせ、FBWが尾翼の取付角を調整する。",
+    }
+}
+
+fn selected_assistance(mode: ControlMode, action: MenuAction) -> bool {
+    match (mode, action) {
+        (ControlMode::Manual, MenuAction::Manual)
+        | (ControlMode::Automatic, MenuAction::Automatic) => true,
+        (ControlMode::Shared(authority), MenuAction::Shared) => authority.value() == 0.5,
+        _ => false,
+    }
+}
+
+fn action_label(phase: SessionPhase, action: MenuAction, mode: ControlMode) -> String {
+    let label = match action {
+        MenuAction::Start if phase == SessionPhase::Result => "条件を変更",
+        MenuAction::Start => "飛行を設定",
+        MenuAction::Manual => "手動",
+        MenuAction::Shared => "共有支援 50%",
+        MenuAction::Automatic => "FBW自動制御",
+        MenuAction::Prepare => "飛行準備へ進む",
+        MenuAction::Launch => "発進カウントダウンを開始",
+        MenuAction::Pause => "一時停止",
+        MenuAction::Resume => "飛行を再開",
+        MenuAction::Abort => "飛行を終了",
+        MenuAction::Retry => "同じ条件で再試行",
+        MenuAction::Title => match phase {
+            SessionPhase::BriefingPreparing
+            | SessionPhase::BriefingReady
+            | SessionPhase::BriefingFailed { .. } => "← 設定へ戻る",
+            SessionPhase::Countdown { .. } => "発進を取り消す",
+            _ => "← タイトルへ",
+        },
+        MenuAction::Exit => "アプリを終了",
+    };
+    if selected_assistance(mode, action) {
+        format!("✓ {label}")
+    } else {
+        label.into()
+    }
+}
+
+fn button_emphasis(phase: SessionPhase, action: UiAction, mode: ControlMode) -> ButtonEmphasis {
+    match action {
+        UiAction::Session(
+            action @ (MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic),
+        ) => ButtonEmphasis::Choice {
+            selected: selected_assistance(mode, action),
+        },
+        UiAction::Session(MenuAction::Start) if phase == SessionPhase::Title => {
+            ButtonEmphasis::Primary
+        }
+        UiAction::Session(
+            MenuAction::Prepare
+            | MenuAction::Launch
+            | MenuAction::Pause
+            | MenuAction::Resume
+            | MenuAction::Retry,
+        ) => ButtonEmphasis::Primary,
+        _ => ButtonEmphasis::Secondary,
+    }
+}
+
+fn button_colors(emphasis: ButtonEmphasis, interaction: Interaction) -> (Color, Color) {
+    let (normal, hovered, border) = match emphasis {
+        ButtonEmphasis::Primary => (
+            Color::srgb(0.1, 0.32, 0.6),
+            Color::srgb(0.15, 0.45, 0.75),
+            Color::srgb(0.6, 0.82, 1.0),
+        ),
+        ButtonEmphasis::Choice { selected: true } => (
+            Color::srgb(0.1, 0.33, 0.22),
+            Color::srgb(0.15, 0.45, 0.3),
+            Color::srgb(0.6, 0.95, 0.75),
+        ),
+        ButtonEmphasis::Choice { selected: false } | ButtonEmphasis::Secondary => (
+            Color::srgb(0.08, 0.16, 0.25),
+            Color::srgb(0.15, 0.32, 0.46),
+            Color::srgb(0.65, 0.75, 0.9),
+        ),
+    };
+    (
+        if interaction == Interaction::None {
+            normal
+        } else {
+            hovered
+        },
+        border,
+    )
+}
+
+fn format_countdown(remaining_seconds: u32) -> String {
+    format!(
+        "発進まで: {remaining_seconds} 秒\nカウントダウン中は物理計算を停止する。\n発進を取り消すと確認画面へ戻る。"
+    )
 }
 
 fn visible_hud(phase: SessionPhase, details_open: bool) -> bool {
@@ -371,7 +568,13 @@ pub(crate) fn update_ui(
     camera: Res<CameraMode>,
     mut disclosure: ResMut<TechnicalDisclosure>,
     mut previous_phase: Local<Option<SessionPhase>>,
-    mut buttons: Query<(&MenuButton, &mut Node)>,
+    mut buttons: Query<(
+        &MenuButton,
+        &Interaction,
+        &mut Node,
+        &mut BackgroundColor,
+        &mut BorderColor,
+    )>,
     mut panels: Query<(&UiPanel, &mut Node, &mut ScrollPosition), Without<MenuButton>>,
     mut text: Query<(&UiText, &mut Text)>,
 ) {
@@ -392,7 +595,7 @@ pub(crate) fn update_ui(
         session.notice.as_deref(),
     );
     let details_open = disclosure.is_expanded() && !details.is_empty();
-    for (button, mut node) in &mut buttons {
+    for (button, interaction, mut node, mut background, mut border) in &mut buttons {
         let visible = match button.0 {
             UiAction::Session(action) => visible_action(phase, action),
             UiAction::TechnicalDetails => !details.is_empty(),
@@ -402,9 +605,17 @@ pub(crate) fn update_ui(
         } else {
             Display::None
         };
+        let (background_color, border_color) = button_colors(
+            button_emphasis(phase, button.0, session.control_mode),
+            *interaction,
+        );
+        *background = BackgroundColor(background_color);
+        *border = BorderColor::all(border_color);
     }
     for (panel, mut node, mut position) in &mut panels {
         let visible = match panel {
+            UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
+            UiPanel::AssistanceChoices => phase == SessionPhase::FlightSetup,
             UiPanel::FlightHud => visible_hud(phase, details_open),
             UiPanel::TechnicalDetails => details_open,
         };
@@ -423,16 +634,16 @@ pub(crate) fn update_ui(
         ControlMode::Automatic => "Automatic",
     };
     let mut title = match snapshot {
-        SessionSnapshot::Title => "Birdman native Screen — 開始を選択する".into(),
-        SessionSnapshot::FlightSetup => format!(
-            "Setup — {mode} / Typical\n矢印↑↓: nose-up/down、←→: left/right、J/L: pilot Hold/Set"
-        ),
+        SessionSnapshot::Title => "Birdman native Screen\n架空の機体モデルで飛行を試す。\n「飛行を設定」から操縦支援を選び、飛行条件を確認する。".into(),
+        SessionSnapshot::FlightSetup => "飛行条件の設定\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援を選び、飛行準備へ進む。".into(),
         SessionSnapshot::BriefingReady { .. } => format!(
-            "Briefing — {mode} / Typical / 架空hybrid mock\n設定はRustで確定済み。発進で3秒Countdownを開始する。"
+            "飛行条件の確認\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援: {}\n{}\n操縦: ↑/↓ 機首上げ/下げ、←/→ 左/右旋回\n尾翼2軸を操作する。独立したRoll入力はない。\n重心移動: J/L、解放時は位置保持\n架空の検証用機体。モデルの適用範囲を超えると飛行計算を終了する。\n発進準備完了。3秒のカウントダウンで発進する。",
+            control_mode_label(session.control_mode),
+            control_mode_description(session.control_mode),
         ),
         SessionSnapshot::Countdown {
             remaining_ticks, ..
-        } => format!("Countdown — {remaining_ticks} / physics停止中"),
+        } => format_countdown(remaining_ticks),
         SessionSnapshot::TailFlightRunning { .. } => format!(
             "Flight — {mode} / {} camera / C: 視点切替、P: 一時停止",
             if camera.chase { "Chase" } else { "Pilot" }
@@ -500,7 +711,20 @@ pub(crate) fn update_ui(
     }
     for (kind, mut value) in &mut text {
         match kind {
+            UiText::PreparationSteps => {
+                value.0 = preparation_progress(phase).unwrap_or_default().into();
+            }
             UiText::Session => value.0.clone_from(&title),
+            UiText::AssistanceSelection => {
+                value.0 = format!(
+                    "操縦支援 — 現在の選択: {}\n{}",
+                    control_mode_label(session.control_mode),
+                    control_mode_description(session.control_mode),
+                );
+            }
+            UiText::Action(action) => {
+                value.0 = action_label(phase, *action, session.control_mode);
+            }
             UiText::Hud => value.0.clone_from(&readout),
             UiText::TechnicalDetails => value.0.clone_from(&details),
             UiText::TechnicalButton => {
@@ -520,9 +744,279 @@ pub(crate) fn update_ui(
 mod tests {
     use super::*;
     use birdman_game_core::{
-        AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError, HybridError,
-        HybridLimit, HybridSite, HybridSurfaceRole, LoadError, TailFlightTickError,
+        AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError, FbwAuthority,
+        HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, TailFlightTickError,
     };
+
+    #[test]
+    fn preflight_labels_and_back_actions_follow_the_real_session_route() {
+        let mut session = NativeSession::default();
+        let label = |phase, action| action_label(phase, action, ControlMode::Manual);
+        assert_eq!(
+            label(session.game.snapshot().phase(), MenuAction::Start),
+            "飛行を設定"
+        );
+        assert_eq!(preparation_progress(session.game.snapshot().phase()), None);
+        session.action(MenuAction::Start).unwrap();
+        assert_eq!(
+            preparation_progress(session.game.snapshot().phase()),
+            Some("● 設定 ─ ○ 確認 ─ ○ 発進")
+        );
+        assert_eq!(
+            label(session.game.snapshot().phase(), MenuAction::Prepare),
+            "飛行準備へ進む"
+        );
+        assert_eq!(
+            label(session.game.snapshot().phase(), MenuAction::Title),
+            "← タイトルへ"
+        );
+        session.action(MenuAction::Prepare).unwrap();
+        assert_eq!(
+            preparation_progress(session.game.snapshot().phase()),
+            Some("✓ 設定 ─ ● 確認 ─ ○ 発進")
+        );
+        assert_eq!(
+            label(session.game.snapshot().phase(), MenuAction::Launch),
+            "発進カウントダウンを開始"
+        );
+        assert_eq!(
+            label(session.game.snapshot().phase(), MenuAction::Title),
+            "← 設定へ戻る"
+        );
+        session.action(MenuAction::Title).unwrap();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightSetup);
+        session.action(MenuAction::Prepare).unwrap();
+        session.action(MenuAction::Launch).unwrap();
+        let countdown_phase = session.game.snapshot().phase();
+        assert_eq!(
+            preparation_progress(countdown_phase),
+            Some("✓ 設定 ─ ✓ 確認 ─ ● 発進")
+        );
+        assert_eq!(label(countdown_phase, MenuAction::Title), "発進を取り消す");
+        assert_eq!(
+            button_emphasis(
+                countdown_phase,
+                UiAction::Session(MenuAction::Title),
+                ControlMode::Manual
+            ),
+            ButtonEmphasis::Secondary
+        );
+        for expected_seconds in [3, 2, 1] {
+            let SessionSnapshot::Countdown {
+                remaining_ticks, ..
+            } = session.game.snapshot()
+            else {
+                panic!("expected the real native countdown");
+            };
+            assert_eq!(remaining_ticks, expected_seconds);
+            let countdown = format_countdown(remaining_ticks);
+            assert!(countdown.contains(&format!("発進まで: {expected_seconds} 秒")));
+            assert!(countdown.contains("確認画面へ戻る"));
+            assert!(!countdown.contains("ticks"));
+            session.countdown(1.0);
+        }
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        session.action(MenuAction::Abort).unwrap();
+        let result_phase = session.game.snapshot().phase();
+        assert_eq!(label(result_phase, MenuAction::Retry), "同じ条件で再試行");
+        assert_eq!(label(result_phase, MenuAction::Start), "条件を変更");
+        assert!(visible_action(result_phase, MenuAction::Start));
+        session.action(MenuAction::Start).unwrap();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightSetup);
+        session.action(MenuAction::Prepare).unwrap();
+        session.action(MenuAction::Launch).unwrap();
+        session.action(MenuAction::Title).unwrap();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+    }
+
+    #[test]
+    fn assistance_selection_and_primary_actions_are_unambiguous() {
+        let choices = [
+            MenuAction::Manual,
+            MenuAction::Shared,
+            MenuAction::Automatic,
+        ];
+        for mode in [
+            ControlMode::Manual,
+            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+            ControlMode::Automatic,
+        ] {
+            assert_eq!(
+                choices
+                    .iter()
+                    .filter(|action| selected_assistance(mode, **action))
+                    .count(),
+                1
+            );
+            assert!(!control_mode_description(mode).is_empty());
+            for action in choices {
+                assert!(visible_action(SessionPhase::FlightSetup, action));
+                assert!(!visible_action(SessionPhase::BriefingReady, action));
+                assert!(!visible_action(SessionPhase::Result, action));
+                assert_eq!(
+                    action_label(SessionPhase::FlightSetup, action, mode).starts_with("✓ "),
+                    selected_assistance(mode, action)
+                );
+                assert_eq!(
+                    button_emphasis(SessionPhase::FlightSetup, UiAction::Session(action), mode),
+                    ButtonEmphasis::Choice {
+                        selected: selected_assistance(mode, action)
+                    }
+                );
+            }
+        }
+        assert_eq!(
+            control_mode_label(ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap())),
+            "共有支援（FBW 50%）"
+        );
+        let navigation = [
+            MenuAction::Start,
+            MenuAction::Prepare,
+            MenuAction::Launch,
+            MenuAction::Pause,
+            MenuAction::Resume,
+            MenuAction::Abort,
+            MenuAction::Retry,
+            MenuAction::Title,
+            MenuAction::Exit,
+        ];
+        for (phase, primary) in [
+            (SessionPhase::Title, MenuAction::Start),
+            (SessionPhase::FlightSetup, MenuAction::Prepare),
+            (SessionPhase::BriefingReady, MenuAction::Launch),
+            (SessionPhase::Result, MenuAction::Retry),
+        ] {
+            let primary_actions: Vec<_> = navigation
+                .into_iter()
+                .filter(|action| {
+                    visible_action(phase, *action)
+                        && button_emphasis(phase, UiAction::Session(*action), ControlMode::Manual)
+                            == ButtonEmphasis::Primary
+                })
+                .collect();
+            assert_eq!(primary_actions, vec![primary]);
+        }
+        assert_ne!(
+            button_colors(ButtonEmphasis::Primary, Interaction::None),
+            button_colors(ButtonEmphasis::Secondary, Interaction::None)
+        );
+    }
+
+    #[test]
+    fn setup_choice_group_updates_from_real_actions_and_hides_during_confirmation() {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .init_resource::<InputFocus>()
+            .add_message::<AppExit>()
+            .add_systems(Update, (button_actions, update_ui).chain());
+        let choices = app
+            .world_mut()
+            .spawn((UiPanel::AssistanceChoices, Node::default()))
+            .id();
+        let steps = app
+            .world_mut()
+            .spawn((UiPanel::PreparationSteps, Node::default()))
+            .id();
+        let selection = app
+            .world_mut()
+            .spawn((UiText::AssistanceSelection, Text::new("")))
+            .id();
+        let automatic_label = app
+            .world_mut()
+            .spawn((UiText::Action(MenuAction::Automatic), Text::new("")))
+            .id();
+        let automatic_button = app
+            .world_mut()
+            .spawn((
+                Button,
+                MenuButton(UiAction::Session(MenuAction::Automatic)),
+                BackgroundColor::default(),
+                BorderColor::default(),
+            ))
+            .id();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(choices).unwrap().display,
+            Display::None
+        );
+        assert_eq!(
+            app.world().get::<Node>(steps).unwrap().display,
+            Display::None
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Start)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(choices).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<Node>(steps).unwrap().display,
+            Display::Flex
+        );
+        assert!(
+            app.world()
+                .get::<Text>(selection)
+                .unwrap()
+                .0
+                .contains("手動（Manual）")
+        );
+        app.world_mut()
+            .entity_mut(automatic_button)
+            .insert(Interaction::Pressed);
+        app.update();
+        assert_eq!(
+            app.world().resource::<NativeSession>().control_mode,
+            ControlMode::Automatic
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase(),
+            SessionPhase::FlightSetup
+        );
+        assert!(
+            app.world()
+                .get::<Text>(selection)
+                .unwrap()
+                .0
+                .contains("FBW自動制御（Automatic）")
+        );
+        assert!(
+            app.world()
+                .get::<Text>(selection)
+                .unwrap()
+                .0
+                .contains("目標角速度")
+        );
+        assert_eq!(
+            app.world().get::<Text>(automatic_label).unwrap().0,
+            "✓ FBW自動制御"
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Prepare)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(choices).unwrap().display,
+            Display::None
+        );
+        assert_eq!(
+            app.world().get::<Node>(steps).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<Node>(automatic_button).unwrap().display,
+            Display::None
+        );
+    }
 
     #[test]
     fn result_summary_is_short_and_technical_details_preserve_the_typed_failure() {
@@ -640,6 +1134,7 @@ mod tests {
                 Button,
                 MenuButton(UiAction::TechnicalDetails),
                 BackgroundColor::default(),
+                BorderColor::default(),
             ))
             .id();
         app.update();
