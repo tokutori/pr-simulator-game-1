@@ -337,6 +337,8 @@ mod tests {
     use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
     use crate::simulation::FlightTickState;
 
+    mod numerical;
+
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
             10.0,
