@@ -6,7 +6,8 @@ use super::{
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    asset::RenderAssetUsages, mesh::Indices, prelude::*, render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages, core_pipeline::tonemapping::Tonemapping, mesh::Indices, prelude::*,
+    render::render_resource::PrimitiveTopology,
 };
 use serde::Deserialize;
 
@@ -349,6 +350,7 @@ pub(crate) fn setup_world(
     commands.spawn((
         WorldProjection::FlightCamera,
         Camera3d::default(),
+        Tonemapping::Reinhard,
         Projection::Perspective(PerspectiveProjection {
             far: 200_000.0,
             fov: 70.0_f32.to_radians(),
