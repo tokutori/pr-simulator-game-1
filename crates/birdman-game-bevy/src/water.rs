@@ -47,3 +47,29 @@ impl WaterMaterial {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registered_water_and_sky_share_environment_without_transparency() {
+        let water = WaterMaterial::registered(false).unwrap();
+        let sky = WaterMaterial::registered(true).unwrap();
+        let environment = bundled_environment().unwrap();
+        let waves = &environment.document().waves;
+        assert_eq!(water.camera_time, Vec4::ZERO);
+        assert_eq!(sky.camera_time, water.camera_time);
+        assert_eq!(sky.sun_cloud, water.sun_cloud);
+        assert_eq!(sky.waves_sky.truncate(), water.waves_sky.truncate());
+        assert_eq!(water.waves_sky.w, 0.0);
+        assert_eq!(sky.waves_sky.w, 1.0);
+        assert_eq!(water.waves_sky.x, waves.wind_velocity_ne_mps[1] as f32);
+        assert_eq!(water.waves_sky.y, -waves.wind_velocity_ne_mps[0] as f32);
+        assert_eq!(water.waves_sky.z, waves.detail_amplitude_scale as f32);
+        assert!(water.sun_cloud.is_finite());
+        assert!((water.sun_cloud.truncate().length() - 1.0).abs() < 1.0e-6);
+        assert!(matches!(water.alpha_mode(), AlphaMode::Opaque));
+        assert!(matches!(sky.alpha_mode(), AlphaMode::Opaque));
+    }
+}
