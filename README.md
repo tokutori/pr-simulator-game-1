@@ -1,7 +1,7 @@
 # 広報用鳥人間シミュレーターゲーム
 
 琵琶湖を舞台とする短時間の無推力滑空ゲーム。
-Rust / WebAssembly による物理計算と TypeScript / Three.js による描画を分離する。
+Rust coreの物理・ゲーム処理を、WebAssembly / Three.jsのWeb版とBevyのWindows native Screen版から利用する。
 
 広報版の設計目標は、松原水泳場付近から湖中央方向への約500 m、数十秒のフライトである。
 keyboard / gamepad、Manual / Shared / Automatic、FBWを備える。設計目標は架空mockの性能保証と区別する。
@@ -24,7 +24,7 @@ physical controlsは水平尾翼・垂直尾翼の二系統であり、姿勢・
 
 BPG-006の旧CLIは決定性検証用`SyntheticFlight`を使い、全control modeの再現可能なflightを実行する。BPG-007の旧browser用`SyntheticPlayableFlight`は、約94 kg・主翼面積18 m²級・約9.7 m/s・無風の初期条件を持つ。neutral入力で約220 m・約23秒、100 msのpilot-position keyboard入力を与えたManual flightで約193 mの飛行を確認した。これらはlegacy fixtureの検証記録であり、新hybrid mockの飛距離・安定性や実機性能を示さない。
 
-Rust `GameSession`はTitle・Setup・Briefing・Countdown・Flight・Result・Replayと独立demo recordのAttractを管理する。SetupでInformation・Assistance・Weatherを選択し、Briefingで準備結果を確認する。二系統のモデルIDは`bpg041-rectangular-hybrid-mock`、controller IDは`bpg040-tail-rate-feedback`であり、各versionは1とする。ID・物理制限・環境・終了理由はRustから供給する。
+Rust `GameSession`はTitle・Setup・Briefing・Countdown・Flight・Result・Replayと独立demo recordのAttractを管理する。SetupでInformation・Assistance・Weatherを選択し、Briefingで準備結果を確認する。新規flightの二系統モデルは`bpg041-playable-hybrid-mock` / version 2、controllerは`bpg040-tail-rate-feedback` / version 3、catalogとscenarioはversion 3とする。旧mockとarchiveは保存identityを保持する。ID・物理制限・環境・終了理由はRustから供給する。合成モデルの定義と限定した操縦受入は[Playable契約](docs/playable-hybrid-model.md)に記載する。
 
 新規flightはJSON record schema 6へ保存する。保存v1〜5は元の三軸snapshotとして閲覧し、v6の二系統と排他的に扱う。旧recordを新mockで再積分しない。Result・Analysis・Replayは同じ保存record、元causeと終端stampを参照し、再生clockと集計値をRustが所有する。WebはIndexedDB保存、layout別Personal Best selector、水平map・高度/速度graph・共通cursor・理由付き風queryを接続する。未知保存環境へ現在の環境・地図を流用しない。
 
@@ -65,7 +65,7 @@ npm run dev
 
 Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認できる。開発時に`npm run dev`・`npm run typecheck`・`npm test`・`npm run build`を実行すると、`wasm-bindgen` bindingを生成する。型・自動試験・buildの合格と、実ブラウザー上のWebGL操作・全gameplay loop・実機の受入を区別する。
 
-`main`へのpush後はGitHub ActionsがUbuntu・Windows双方の検査を通したビルドをGitHub Pagesへ配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。手動実行も`main`から可能である。現段階は試験公開とし、BPG-013の配布条件とVR・実端末の未完了受入を追跡する。
+`main`へのpushはUbuntu・Windows双方の検査を実行する。GitHub Pagesへの公開は、明示的な公開指示を受けた後、mainの`Check`を手動実行して`deploy_pages`を有効にする。同じrunで検査したartifactだけを配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。現段階は試験公開とし、BPG-013の配布条件とVR・実端末の未完了受入を追跡する。
 
 ## 設計資料
 

@@ -5,7 +5,8 @@
 [#254](https://github.com/tokutori/pr-simulator-game-1/issues/254)の確認用実装を`bevy`ブランチで開発する。
 比較基準とbaseは`c5408914015f2f5c2679c033efca41e6b6be8404`に固定する。
 既存Web版は維持し、今回のnative対象はWindows 11のScreenに限定する。
-mainへのmerge、GitHub Pagesの公開切替、releaseは行わない。
+2026-10-09の指示により、モデル・UI・水面修正の検証後にmainへ統合する。
+GitHub Pagesの公開は明示的な手動操作へ分離し、releaseは今回の対象外とする。
 
 ## 起動
 
@@ -31,7 +32,7 @@ build完了後の同じ起動コマンドでは、生成済みbinaryを再利用
 Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有しない。
 固定tickはcoreの`PHYSICS_HZ`を参照し、描画frame・camera・ウィンドウ寸法から分離する。
 終了理由が適用範囲外の場合も元のcauseと最後の有効状態を保持する。
-旧三軸モデルへ切り替えず、モデルの変更や飛距離tuningを行わない。
+旧三軸モデルへ切り替えない。既定モデルの改善は公開可能なsynthetic係数に限定し、実機同定と分離する。
 
 発進方位は[#255](https://github.com/tokutori/pr-simulator-game-1/issues/255)の修正として北西315°へ統一する。
 比較元にはplatform315°と初期heading・距離評価軸0°の不整合があった。
@@ -86,7 +87,8 @@ Parley 0.9.0にはICU4X 2.3の`BidiClass::to_icu4c_value`に関する既存の�
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
-水面は二つの空間周波数によるnormalとFresnel・太陽反射、空はprocedural gradientを使用する。
+水面は八方向の波packet、画素footprintで減衰するnormal、Fresnel・低コントラストの空反射・広い太陽反射を使用する。
+波の位相と方向は同じ環境snapshotとsimulation timeから導出する。空はprocedural gradientを使用する。
 Gerstnerのgeometry変位・高品質な反射は未移植である。遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
@@ -180,7 +182,7 @@ shader・asset・日本語分割の確定エラーは0件であり、旧release�
 
 継続修正のhead `7c469bc3`の[CI run 37764364175](https://github.com/tokutori/pr-simulator-game-1/actions/runs/37764364175)も、
 Ubuntu・Windowsの全検査stepが成功した。Pagesの設定・artifact upload・deployはskipである。
-実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。ユーザー受入とmainへの取込みは別の条件として保持する。
+実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。ユーザーの実操作受入とsoftware検査を区別する。
 
 ### 設定・結果・入力保護の継続修正
 
@@ -212,3 +214,25 @@ cargo run -p birdman-game-bevy --release --locked
 Windows 11 / AMD Radeon 860Mの実起動とGPU validation・shader・asset読込みを確認し、取得可能ならnative screenshotを残す。
 合格・失敗・未実施・未移植を区別し、実操作確認後にIssueへ「確認用実装完了・ユーザー確認待ち」と記録する。
 ユーザーの受入結果を先取りしてIssueをcloseしない。
+
+### 描画FPSと性能目標
+
+WebとBevyは右上に描画FPSを表示する。750 ms窓で集計し、起動直後・長時間中断後は`FPS —`を表示する。
+100 Hzの物理tickとは独立する。Bevyの値は実時間Updateの周期であり、GPU present完了を直接測定する値ではない。
+同じ派生labelのText更新を省略し、表示・入力・Rustの正本は維持する。
+PC Screenの目標は80 FPS相当・12.5 ms/frameである。現在の検査画面は60 Hzであり、80 FPSの実表示受入は未実施である。
+FPSの単体試験、debug版の撮影、以前のrelease検査を、最新版の性能達成として扱わない。
+
+### Playable model 2 / controller 3の確認
+
+2026-10-09、Windows 11 / AMD Radeon 860M / Vulkanで最新debug版を実起動した。
+組込みのlogical input harnessでTitle→Setup→Briefing→Countdown→Pilot/Chase→Pause/Resume→
+ManualAbort Result→Retry→full nose-up flight→WaterContact Result→技術情報→Retryを確認した。
+full nose-up列は25.13 s・169.07 mで着水し、failureはNoneである。
+1280×720の10枚を取得し、水面・地形・機体・FPS・設定/結果の表示を確認した。
+shader compilation、GPU validation、asset読込み、日本語分割の確定エラーは0件である。
+撮影時のProcessingDelayは既存の安全停止で処理し、通常frameへの復帰後に明示Resumeした。
+
+実キーボード・マウス・wheel・DPI、他GPU、VR、最新版releaseでの性能受入は未実施である。
+共有RustのTypical環境39入力列はすべてWaterContactとなった。条件とsoft保護の限界は
+[Playableモデル契約](playable-hybrid-model.md)に記載する。
