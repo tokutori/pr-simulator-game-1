@@ -126,17 +126,24 @@ AoA等の未定義値はOption等で表し、NaNを欠損値として使用し�
 ## 数値ログのdownload
 
 ResultとReplayでは同じ現在recordからCSVと元record JSONを取得する。
-`GameSessionBridge.export_flight_log_csv`と`export_current_flight_record_json`はquery専用であり、
-physics、record、Replay clockを更新しない。Attractと飛行中は取得を拒否する。
+`GameSessionBridge`と`HybridGameSessionBridge`の`export_flight_log_csv`・`export_current_flight_record_json`は
+Result/Replay限定のqueryであり、physics、record、Replay clockを更新しない。
 通常recordのJSONは現行encoder、保存archiveのJSONはopen成功時に保持した検証済み原文を返す。
-保存schema 1〜5、未知環境、欠損metadataを現行機体・環境で再構成しない。
+Legacyの通常recordはschema 5、Tailはschema 6を使用する。保存schema 1〜6、未知環境、欠損metadataを
+現行機体・環境で再構成しない。未保存のsource hashを現在のbuildから補完しない。
 
-CSV export version 1はUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
+Legacy CSV export version 1は従来の三軸舵列を維持し、Tailのversion 2は`control_layout=tail_incidence`と
+水平・垂直尾翼のphysical incidence、nose-up/right-turn intent、$q,r$ target、pilot Hold/Set、
+resolved target、manual/FBW/mixed incidenceを保存値から出力する。尾翼を旧三軸舵へ変換しない。
+両versionはUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
 全保存state、telemetry、区間input、metadataとfinalizationを列へ写し、unitsとNED/body座標を列名へ明記する。
-f64はroundtrip可能な十進文字列、欠損値は空欄とavailabilityで表す。由来textは検証済みenum名に限定する。
+f64はroundtrip可能な十進文字列、欠損値は空欄とavailabilityで表す。難易度・終了理由は検証済みenum名を用いる。
+Tailの任意IDは`aircraft_configuration_id_json`・`controller_profile_id_json`、元failureは
+`terminal_failure_available`・`terminal_failure_json`で保持し、JSON文字列をCSVとしてescapeする。
 `tick_index`と`fraction`を独立して保持し、初期・fractional terminalを含めて標本を間引かない。
 
-加速度は保存値との差を明示した`estimated_*`列である。datumのNED速度、body角速度$p,q,r$、
+両layoutは同じfinite-difference estimatorを使用し、加速度を保存値との差を明示した`estimated_*`列に出力する。
+datumのNED速度、body角速度$p,q,r$、
 body前方軸に対するパイロット相対速度から有限差分を導出する。NED加速度は重力を含む運動学的変化率であり、
 specific force、合成重心加速度、荷重・momentの再評価は行わない。Quaternion/Euler角の差分は使用しない。
 内部標本は不等時間間隔の3点公式、両端は片側2点secantを用い、methodとstencil時刻を保存する。
