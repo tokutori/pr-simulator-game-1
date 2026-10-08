@@ -112,17 +112,14 @@ pub struct HybridMockDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum HybridMockPolarRows {
-    VersionOne([StaticPolarRow; 5]),
-    Playable([StaticPolarRow; 9]),
+struct HybridMockPolarRows {
+    storage: [StaticPolarRow; PLAYABLE_POLAR_KNOTS.len()],
+    row_count: usize,
 }
 
 impl HybridMockPolarRows {
     fn as_slice(&self) -> &[StaticPolarRow] {
-        match self {
-            Self::VersionOne(rows) => rows,
-            Self::Playable(rows) => rows,
-        }
+        &self.storage[..self.row_count]
     }
 }
 
@@ -160,22 +157,28 @@ impl HybridMockDefinition {
         let tail_proxies = partition(tail, [-1.7, 1.7], [tail_frame; 2])?;
         let fin_proxies = partition(fin, [-0.45, 0.25], [fin_frame; 2])?;
         let rows = if configuration == HybridMockConfiguration::Playable {
-            let mut rows =
-                [playable_polar_row(PLAYABLE_POLAR_KNOTS[0], tail.lift_slope_per_rad())?; 9];
+            let mut rows = [playable_polar_row(PLAYABLE_POLAR_KNOTS[0], tail.lift_slope_per_rad())?;
+                PLAYABLE_POLAR_KNOTS.len()];
             for (row, knot) in rows.iter_mut().zip(PLAYABLE_POLAR_KNOTS) {
                 *row = playable_polar_row(knot, tail.lift_slope_per_rad())?;
             }
-            HybridMockPolarRows::Playable(rows)
+            HybridMockPolarRows {
+                storage: rows,
+                row_count: PLAYABLE_POLAR_KNOTS.len(),
+            }
         } else {
             let mut rows = [polar_row(
                 POLAR_KNOTS[0],
                 tail.lift_slope_per_rad(),
                 VERSION_ONE_TAIL_ARM_M,
-            )?; 5];
+            )?; PLAYABLE_POLAR_KNOTS.len()];
             for (row, knot) in rows.iter_mut().zip(POLAR_KNOTS) {
                 *row = polar_row(knot, tail.lift_slope_per_rad(), VERSION_ONE_TAIL_ARM_M)?;
             }
-            HybridMockPolarRows::VersionOne(rows)
+            HybridMockPolarRows {
+                storage: rows,
+                row_count: POLAR_KNOTS.len(),
+            }
         };
         let aircraft = AircraftModel::try_new(
             24.0,
