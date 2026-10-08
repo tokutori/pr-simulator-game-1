@@ -471,29 +471,39 @@ body {
   border-radius: 0.4rem;
   background: #122a31;
   color: #f3f4e8;
+  overflow: auto;
 }
 
 .screen-ui-chart figcaption {
   font-weight: 600;
+  flex-shrink: 0;
+}
+
+.screen-ui-chart-viewport {
+  position: relative;
+  flex: 1 0 10rem;
+  min-width: 14rem;
+  min-height: 10rem;
 }
 
 .screen-ui-chart svg {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  min-height: 0;
-  flex: 1;
-  overflow: visible;
+  height: 100%;
+  overflow: hidden;
 }
 
 .screen-ui-chart-axis {
   fill: #d5e0dc;
-  font: 24px system-ui, sans-serif;
+  font: var(--screen-chart-axis-font, 16px) system-ui, sans-serif;
   text-anchor: middle;
 }
 
 .screen-ui-chart-tick {
   fill: #d5e0dc;
-  font: 16px system-ui, sans-serif;
+  font: var(--screen-chart-tick-font, 14px) system-ui, sans-serif;
   text-anchor: middle;
 }
 
@@ -503,48 +513,47 @@ body {
 
 .screen-ui-chart-marker {
   fill: #f3f4e8;
-  font: 600 20px system-ui, sans-serif;
+  font: 600 var(--screen-chart-tick-font, 14px) system-ui, sans-serif;
   paint-order: stroke;
   stroke: #10242b;
-  stroke-width: 5px;
+  stroke-width: 2px;
   stroke-linejoin: round;
 }
 
 .screen-ui-chart-time-marker {
   fill: #f3f4e8;
-  font: 500 15px system-ui, sans-serif;
+  font: 500 var(--screen-chart-tick-font, 14px) system-ui, sans-serif;
   paint-order: stroke;
   stroke: #10242b;
-  stroke-width: 4px;
+  stroke-width: 2px;
   stroke-linejoin: round;
 }
 
 .screen-ui-chart-reference {
   fill: #f3f4e8;
-  font: 500 16px system-ui, sans-serif;
+  font: 500 var(--screen-chart-tick-font, 14px) system-ui, sans-serif;
   paint-order: stroke;
   stroke: #10242b;
-  stroke-width: 4px;
+  stroke-width: 2px;
   stroke-linejoin: round;
 }
 
 .screen-ui-chart-map-label {
   fill: #f3f4e8;
-  font: 600 18px system-ui, sans-serif;
+  font: 600 var(--screen-chart-tick-font, 14px) system-ui, sans-serif;
   text-anchor: middle;
   paint-order: stroke;
   stroke: #10242b;
-  stroke-width: 4px;
+  stroke-width: 2px;
   stroke-linejoin: round;
 }
 
 .screen-ui-chart-y-axis {
   text-anchor: middle;
-  transform: rotate(-90deg);
-  transform-origin: 16px 230px;
 }
 
 .screen-ui-chart-legend {
+  flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;

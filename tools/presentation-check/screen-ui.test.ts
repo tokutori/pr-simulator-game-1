@@ -232,11 +232,85 @@ describe("screen UI DOM patching", () => {
     expect(required(root, ".screen-ui-mount").hidden).toBe(true);
     expect(root.querySelector("svg")).toBe(svg);
     expect(svg?.isConnected).toBe(true);
-    expect(svg?.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 524 34 V 420");
+    expect(svg?.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 522 26 V 472");
     adapter.render(updated, true);
     expect(root.querySelector(".screen-ui-chart")).toBe(figure);
     expect(root.querySelector("svg")).toBe(svg);
     expect(required(root, ".screen-ui-mount").hidden).toBe(false);
+    await window.happyDOM.abort();
+    Reflect.deleteProperty(globalThis, "window");
+    Reflect.deleteProperty(globalThis, "document");
+  });
+
+  it("patches measured chart pixels once and releases hidden or removed observation targets", async () => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    const observers: TestResizeObserver[] = [];
+    class TestResizeObserver implements ResizeObserver {
+      readonly targets = new Set<Element>();
+      constructor(readonly callback: ResizeObserverCallback) { observers.push(this); }
+      observe(target: Element): void { this.targets.add(target); }
+      unobserve(target: Element): void { this.targets.delete(target); }
+      disconnect(): void { this.targets.clear(); }
+      emit(target: Element, width: number, height: number): void {
+        this.callback([{
+          target,
+          contentRect: { x: 0, y: 0, width, height, top: 0, left: 0, right: width, bottom: height, toJSON: () => ({ width, height }) },
+          borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: []
+        }], this);
+      }
+    }
+    Object.defineProperty(window, "ResizeObserver", { value: TestResizeObserver });
+    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+    const documentRef = window.document as unknown as Document;
+    const root = documentRef.createElement("main");
+    documentRef.body.append(root);
+    const actions: unknown[] = [];
+    const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
+    const fixture = createSceneFixture("Result");
+    const view: UiViewModel = {
+      ...fixture,
+      panels: fixture.panels.map((panel) => ({ ...panel, controls: [
+        ...panel.controls,
+        { kind: "status", id: "long-notice", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: normalizedRect(0.04, 0.72, 0.92, 0.085) },
+        {
+          kind: "chart", id: "measured-chart", label: "Altitude", xAxisLabel: "Time (s)", yAxisLabel: "Altitude (m)",
+          xMinimum: 0, xMaximum: 10, yMinimum: 0, yMaximum: 15, equalAxisScale: false,
+          series: [{ label: "Altitude", color: "#70d6c8", points: [{ x: 0, y: 15 }, { x: 10, y: 0 }] }],
+          vectors: [], markers: [], timeMarkers: [], referenceLines: [], cursorX: 5, cursorPoints: [{ x: 5, y: 7.5 }],
+          enabled: false, rect: normalizedRect(0.04, 0.105, 0.92, 0.49)
+        }
+      ] }))
+    };
+    adapter.render(view);
+    const viewport = required(root, ".screen-ui-chart-viewport");
+    const svg = root.querySelector("svg");
+    const observer = observers[0];
+    if (svg === null || observer === undefined) throw new Error("The measured chart or its observer is missing");
+    const render = vi.spyOn(adapter, "render");
+    observer.emit(viewport, 298, 160);
+    expect(svg.getAttribute("viewBox")).toBe("0 0 298 160");
+    expect(svg.style.getPropertyValue("--screen-chart-tick-font")).toBe("14px");
+    expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 171 26 V 112");
+    expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe("Time (s)");
+    const notice = required(root, "#long-notice");
+    expect(notice.tabIndex).toBe(0);
+    expect(notice.textContent).toBe("通知: 元のfailure原因\n2行目\n3行目\n4行目");
+    expect(root.querySelector("svg")).toBe(svg);
+    expect(render).toHaveBeenCalledTimes(1);
+    observer.emit(viewport, 298, 160);
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(actions).toEqual([]);
+    adapter.render(view, false);
+    expect(observer.targets.size).toBe(0);
+    observer.emit(viewport, 400, 180);
+    expect(svg.getAttribute("viewBox")).toBe("0 0 298 160");
+    adapter.render(view, true);
+    expect(observer.targets.has(viewport)).toBe(true);
+    adapter.render({ ...view, panels: [] });
+    expect(observer.targets.size).toBe(0);
+    observer.emit(viewport, 400, 180);
+    expect(root.querySelector("svg")).toBeNull();
     await window.happyDOM.abort();
     Reflect.deleteProperty(globalThis, "window");
     Reflect.deleteProperty(globalThis, "document");

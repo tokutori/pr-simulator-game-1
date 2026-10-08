@@ -1,6 +1,8 @@
 import { actionForControl } from "./panel-interaction.js";
 import { APP_BUILD_LABEL } from "./build-info.js";
-import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick } from "../render/contracts/ui.js";
+import { chartScaleBarDistance, formatChartTick } from "../render/contracts/ui.js";
+import { chartTextPosition, deriveScreenChartLayout, INITIAL_SCREEN_CHART_VIEWPORT } from "./screen-chart-layout.js";
+import type { ScreenChartViewport } from "./screen-chart-layout.js";
 import type { UiActionDispatcher, UiControl, UiPanel, UiViewModel } from "../render/contracts/ui.js";
 import {
   attributesModule,
@@ -30,6 +32,10 @@ export class ScreenUiAdapter {
   private controls = new Map<string, UiControl>();
   private visible = true;
   private retainedDom: RetainedScreenDom | null = null;
+  private currentViewModel: UiViewModel | null = null;
+  private readonly chartViewports = new Map<string, ScreenChartViewport>();
+  private readonly observedCharts = new Set<Element>();
+  private readonly chartObserver: ResizeObserver | null;
 
   constructor(private readonly root: HTMLElement, private readonly dispatch: UiActionDispatcher) {
     this.mount = root.ownerDocument.createElement("div");
@@ -39,9 +45,12 @@ export class ScreenUiAdapter {
     this.root.addEventListener("click", this.onClick);
     this.root.addEventListener("change", this.onChange);
     this.root.addEventListener("input", this.onInput);
+    const ResizeObserverConstructor = root.ownerDocument.defaultView?.ResizeObserver;
+    this.chartObserver = ResizeObserverConstructor === undefined ? null : new ResizeObserverConstructor(this.onChartResize);
   }
 
   render(viewModel: UiViewModel, visible = true): void {
+    this.currentViewModel = viewModel;
     const documentRef = this.root.ownerDocument;
     if (this.visible && !visible) this.retainDom();
     this.visible = visible;
@@ -72,7 +81,45 @@ export class ScreenUiAdapter {
     }, [keyDomTree(shell)]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
     if (visible) this.restoreDom();
+    this.observeCharts();
   }
+
+  private observeCharts(): void {
+    if (this.chartObserver === null) return;
+    const targets = this.visible ? new Set(this.mount.querySelectorAll(".screen-ui-chart-viewport")) : new Set<Element>();
+    for (const target of this.observedCharts) {
+      if (!targets.has(target)) {
+        this.chartObserver.unobserve(target);
+        this.observedCharts.delete(target);
+      }
+    }
+    for (const target of targets) {
+      if (!this.observedCharts.has(target)) {
+        this.observedCharts.add(target);
+        this.chartObserver.observe(target);
+      }
+    }
+    for (const id of this.chartViewports.keys()) {
+      if (this.controls.get(id)?.kind !== "chart") this.chartViewports.delete(id);
+    }
+  }
+
+  private readonly onChartResize: ResizeObserverCallback = (entries): void => {
+    if (!this.visible || this.currentViewModel === null) return;
+    let changed = false;
+    for (const entry of entries) {
+      if (!this.observedCharts.has(entry.target) || !this.mount.contains(entry.target)) continue;
+      const id = entry.target.getAttribute("data-chart-control-id");
+      const { width, height } = entry.contentRect;
+      if (id === null || this.controls.get(id)?.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
+          || width < 140 || height < 100) continue;
+      const previous = this.chartViewports.get(id);
+      if (previous !== undefined && Math.abs(previous.width - width) < 0.5 && Math.abs(previous.height - height) < 0.5) continue;
+      this.chartViewports.set(id, Object.freeze({ width, height }));
+      changed = true;
+    }
+    if (changed) this.render(this.currentViewModel, this.visible);
+  };
 
   private retainDom(): void {
     const shell = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
@@ -261,11 +308,14 @@ export class ScreenUiAdapter {
     const caption = documentRef.createElement("figcaption");
     caption.textContent = control.label;
     const svg = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", "0 0 1000 520");
+    const layout = deriveScreenChartLayout(this.chartViewports.get(control.id) ?? INITIAL_SCREEN_CHART_VIEWPORT, control.equalAxisScale);
+    svg.setAttribute("viewBox", `0 0 ${String(layout.viewport.width)} ${String(layout.viewport.height)}`);
+    svg.style.setProperty("--screen-chart-tick-font", `${String(layout.tickFontSize)}px`);
+    svg.style.setProperty("--screen-chart-axis-font", `${String(layout.axisFontSize)}px`);
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", `${control.label}; ${control.xAxisLabel}; ${control.yAxisLabel}`);
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    const plot = fitPlotRectToEqualScale(78, 34, 970, 420, control.equalAxisScale);
+    const plot = layout.plot;
     const plotTop = plot.top;
     const plotBottom = plot.bottom;
     const plotWidth = plot.right - plot.left;
@@ -277,7 +327,7 @@ export class ScreenUiAdapter {
       d: `M ${String(plotLeft)} ${String(plotTop)} V ${String(plotBottom)} H ${String(plotRight)}`,
       fill: "none",
       stroke: "#9db8b8",
-      "stroke-width": "3"
+      "stroke-width": "1.5"
     }));
     for (let index = 1; index <= 3; index += 1) {
       const y = plotTop + ((plotBottom - plotTop) * index) / 4;
@@ -288,19 +338,23 @@ export class ScreenUiAdapter {
         "stroke-width": "1"
       }));
     }
-    for (let index = 0; index <= 4; index += 1) {
-      const ratio = index / 4;
+    for (let index = 0; index <= layout.xTickIntervals; index += 1) {
+      const ratio = index / layout.xTickIntervals;
       const x = plotLeft + ratio * plotWidth;
-      const y = plotBottom - ratio * (plotBottom - plotTop);
       const xTick = createSvgElement(documentRef, "text", {
-        x: String(x), y: String(plotBottom + 23), class: "screen-ui-chart-tick"
+        x: String(x), y: String(plotBottom + 20), class: "screen-ui-chart-tick"
       });
       xTick.textContent = formatChartTick(control.xMinimum + ratio * (control.xMaximum - control.xMinimum));
+      svg.append(xTick);
+    }
+    for (let index = 0; index <= layout.yTickIntervals; index += 1) {
+      const ratio = index / layout.yTickIntervals;
+      const y = plotBottom - ratio * (plotBottom - plotTop);
       const yTick = createSvgElement(documentRef, "text", {
         x: String(plotLeft - 10), y: String(y + 5), class: "screen-ui-chart-tick screen-ui-chart-y-tick"
       });
       yTick.textContent = formatChartTick(control.yMinimum + ratio * (control.yMaximum - control.yMinimum));
-      svg.append(xTick, yTick);
+      svg.append(yTick);
     }
     control.referenceLines.forEach((line) => {
       const y = plotY(line.value);
@@ -325,7 +379,7 @@ export class ScreenUiAdapter {
             d: `M ${String(plotX(first.x))} ${String(plotY(first.y))} L ${String(plotX(second.x))} ${String(plotY(second.y))}`,
             fill: "none",
             stroke: color,
-            "stroke-width": "5",
+            "stroke-width": "2.5",
             "stroke-linecap": "round"
           }));
         });
@@ -340,7 +394,7 @@ export class ScreenUiAdapter {
         d: points,
         fill: "none",
         stroke: series.color,
-        "stroke-width": "4",
+        "stroke-width": "2",
         "stroke-linejoin": "round",
         "stroke-linecap": "round"
       }));
@@ -359,16 +413,17 @@ export class ScreenUiAdapter {
       const x = plotX(point.x);
       const y = plotY(point.y);
       svg.append(createSvgElement(documentRef, "circle", {
-        cx: String(x), cy: String(y), r: "8", fill: control.series[index]?.color ?? "#f3f4e8"
+        cx: String(x), cy: String(y), r: "4", fill: control.series[index]?.color ?? "#f3f4e8"
       }));
     });
     control.markers.forEach((marker) => {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
       svg.append(createSvgElement(documentRef, "circle", {
-        cx: String(x), cy: String(y), r: "7", fill: marker.color, stroke: "#10242b", "stroke-width": "2"
+        cx: String(x), cy: String(y), r: "4", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
-      const text = createSvgElement(documentRef, "text", { x: String(x + 10), y: String(y - 8), class: "screen-ui-chart-marker" });
+      const label = chartTextPosition(x + 10, y - 8, marker.label, layout);
+      const text = createSvgElement(documentRef, "text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-marker" });
       text.textContent = marker.label;
       svg.append(text);
     });
@@ -376,9 +431,10 @@ export class ScreenUiAdapter {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
       svg.append(createSvgElement(documentRef, "circle", {
-        cx: String(x), cy: String(y), r: "4", fill: marker.color, stroke: "#10242b", "stroke-width": "2"
+        cx: String(x), cy: String(y), r: "2.5", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
-      const text = createSvgElement(documentRef, "text", { x: String(x + 7), y: String(y + 18), class: "screen-ui-chart-time-marker" });
+      const label = chartTextPosition(x + 7, y + 18, marker.label, layout);
+      const text = createSvgElement(documentRef, "text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-time-marker" });
       text.textContent = marker.label;
       svg.append(text);
     });
@@ -394,7 +450,7 @@ export class ScreenUiAdapter {
         d: `M ${String(startX)} ${String(startY)} L ${String(endX)} ${String(endY)} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle - Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle - Math.PI / 6))} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle + Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle + Math.PI / 6))}`,
         fill: "none",
         stroke: vector.color,
-        "stroke-width": "4",
+        "stroke-width": "2",
         "stroke-linecap": "round"
       }));
     });
@@ -405,7 +461,7 @@ export class ScreenUiAdapter {
       const scaleY = plotBottom - 18;
       svg.append(createSvgElement(documentRef, "path", {
         d: `M ${String(scaleX)} ${String(scaleY)} H ${String(scaleX + scaleWidth)} M ${String(scaleX)} ${String(scaleY - 6)} V ${String(scaleY + 3)} M ${String(scaleX + scaleWidth)} ${String(scaleY - 6)} V ${String(scaleY + 3)}`,
-        fill: "none", stroke: "#f3f4e8", "stroke-width": "3"
+        fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
       }));
       const scaleLabel = createSvgElement(documentRef, "text", { x: String(scaleX + scaleWidth / 2), y: String(scaleY - 8), class: "screen-ui-chart-map-label" });
       scaleLabel.textContent = `${formatChartTick(scaleDistance)} m`;
@@ -415,15 +471,19 @@ export class ScreenUiAdapter {
       const northBottom = northTop + 34;
       svg.append(createSvgElement(documentRef, "path", {
         d: `M ${String(northX)} ${String(northBottom)} V ${String(northTop)} M ${String(northX)} ${String(northTop)} L ${String(northX - 6)} ${String(northTop + 10)} M ${String(northX)} ${String(northTop)} L ${String(northX + 6)} ${String(northTop + 10)}`,
-        fill: "none", stroke: "#f3f4e8", "stroke-width": "3"
+        fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
       }));
       const northLabel = createSvgElement(documentRef, "text", { x: String(northX), y: String(northTop - 6), class: "screen-ui-chart-map-label" });
       northLabel.textContent = "N";
       svg.append(northLabel);
     }
-    const xLabel = createSvgElement(documentRef, "text", { x: String((plotLeft + plotRight) / 2), y: "492", class: "screen-ui-chart-axis" });
+    const xLabel = createSvgElement(documentRef, "text", { x: String((plotLeft + plotRight) / 2), y: String(layout.xAxisY), class: "screen-ui-chart-axis" });
     xLabel.textContent = control.xAxisLabel;
-    const yLabel = createSvgElement(documentRef, "text", { x: "16", y: "230", class: "screen-ui-chart-axis screen-ui-chart-y-axis" });
+    const yLabel = createSvgElement(documentRef, "text", {
+      x: String(layout.yAxisX), y: String(layout.yAxisY),
+      transform: `rotate(-90 ${String(layout.yAxisX)} ${String(layout.yAxisY)})`,
+      class: "screen-ui-chart-axis screen-ui-chart-y-axis"
+    });
     yLabel.textContent = control.yAxisLabel;
     svg.append(xLabel, yLabel);
     const legend = documentRef.createElement("div");
@@ -452,7 +512,11 @@ export class ScreenUiAdapter {
       item.style.setProperty("--chart-series-color", vector.color);
       legend.append(item);
     });
-    figure.append(caption, svg, legend);
+    const viewport = documentRef.createElement("div");
+    viewport.className = "screen-ui-chart-viewport";
+    viewport.dataset.chartControlId = control.id;
+    viewport.append(svg);
+    figure.append(caption, viewport, legend);
     return figure;
   }
 }
