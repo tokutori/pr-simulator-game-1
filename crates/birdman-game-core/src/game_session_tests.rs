@@ -8,6 +8,8 @@ use crate::{
     SyntheticPlayableFlight,
 };
 
+include!("game_session_pause_tests.rs");
+
 fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
     let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
     let (_, scenario, feedback, _) = fixture.into_parts();

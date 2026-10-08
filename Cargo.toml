@@ -26,6 +26,7 @@ sha2 = { version = "=0.11.0", default-features = false }
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_only)'] }
 
 [workspace.lints.clippy]
 all = "deny"

@@ -6,6 +6,8 @@ use crate::flight_record::{
     FlightRecord, FlightRecordError, FlightRecordHeader, FlightRecordInput, FlightRecordQueryError,
     MAX_FLIGHT_RECORD_TICKS,
 };
+use crate::pause_reasons::empty_pause_reasons;
+pub use crate::pause_reasons::{PauseReason, PauseReasons};
 use crate::replay_clock::{ReplayClock, ReplayClockError};
 use crate::scenario::{FlightScenario, FlightTelemetry, FlightTelemetryError};
 use crate::scoring::{DistanceScore, DistanceScoreError, course_distance_score};
@@ -261,63 +263,6 @@ pub enum BriefingFailure {
     ScenarioUnavailable,
     /// The selected configuration failed validation.
     InvalidConfiguration,
-}
-
-/// A cause that prevents a paused flight from resuming.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PauseReason {
-    /// The user requested a pause.
-    Manual,
-    /// The browser document is hidden or inactive.
-    DocumentHidden,
-    /// The presentation backend suspended tracking.
-    TrackingSuspended,
-    /// The frame loop exceeded its permitted processing delay.
-    ProcessingDelay,
-}
-
-/// A compact set of simultaneous pause causes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PauseReasons(u8);
-
-impl PauseReasons {
-    const MANUAL: u8 = 1;
-    const DOCUMENT_HIDDEN: u8 = 2;
-    const TRACKING_SUSPENDED: u8 = 4;
-    const PROCESSING_DELAY: u8 = 8;
-
-    const fn empty() -> Self {
-        Self(0)
-    }
-
-    /// Returns whether the specified cause is active.
-    pub const fn contains(self, reason: PauseReason) -> bool {
-        self.0 & reason.bit() != 0
-    }
-
-    /// Returns whether any pause cause remains active.
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    const fn insert(self, reason: PauseReason) -> Self {
-        Self(self.0 | reason.bit())
-    }
-
-    const fn remove(self, reason: PauseReason) -> Self {
-        Self(self.0 & !reason.bit())
-    }
-}
-
-impl PauseReason {
-    const fn bit(self) -> u8 {
-        match self {
-            Self::Manual => PauseReasons::MANUAL,
-            Self::DocumentHidden => PauseReasons::DOCUMENT_HIDDEN,
-            Self::TrackingSuspended => PauseReasons::TRACKING_SUSPENDED,
-            Self::ProcessingDelay => PauseReasons::PROCESSING_DELAY,
-        }
-    }
 }
 
 /// Terminal state retained by the result view.
@@ -628,9 +573,7 @@ impl<'a> GameSession<'a> {
     /// Returns whether an explicit resume can succeed under the current pause causes.
     pub const fn can_resume(&self) -> bool {
         match self.phase {
-            SessionPhase::FlightPaused { reasons } => {
-                reasons.remove(PauseReason::Manual).is_empty()
-            }
+            SessionPhase::FlightPaused { reasons } => reasons.can_resume_after_manual(),
             _ => false,
         }
     }
@@ -1094,7 +1037,7 @@ impl<'a> GameSession<'a> {
     /// Adds a pause cause while running or already paused.
     pub fn pause(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
         let reasons = match self.phase {
-            SessionPhase::FlightRunning => PauseReasons::empty(),
+            SessionPhase::FlightRunning => empty_pause_reasons(),
             SessionPhase::FlightPaused { reasons } => reasons,
             _ => return Err(GameSessionError::InvalidTransition),
         };
@@ -1120,7 +1063,7 @@ impl<'a> GameSession<'a> {
         let SessionPhase::FlightPaused { reasons } = self.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        let reasons = reasons.remove(PauseReason::Manual);
+        let reasons = reasons.remaining_after_manual();
         if !reasons.is_empty() {
             self.phase = SessionPhase::FlightPaused { reasons };
             return Err(GameSessionError::PauseConditionsRemain);

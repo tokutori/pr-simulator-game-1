@@ -15,6 +15,7 @@ mod flight_record;
 mod game_session;
 mod hybrid_mock;
 mod math;
+mod pause_reasons;
 mod personal_best;
 mod replay_clock;
 mod scenario;
