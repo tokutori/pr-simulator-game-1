@@ -1,6 +1,10 @@
 [workspace]
 members = ["crates/*"]
+exclude = ["vendor/parley"]
 resolver = "3"
+
+[patch.crates-io]
+parley = { path = "vendor/parley" }
 
 [workspace.package]
 version = "0.1.0"

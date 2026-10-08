@@ -17,6 +17,17 @@ const excludedNativeFeatures = new Set([
   "bevy_gilrs", "web", "webgl2", "webgpu"
 ]);
 
+export function assertNativeTextPatch(workspace: unknown): void {
+  const manifest = record(workspace);
+  const patch = record(record(manifest.patch)["crates-io"]);
+  const replacement = record(patch.parley);
+  const excluded = record(manifest.workspace).exclude;
+  if (replacement.path !== "vendor/parley" || Object.keys(replacement).length !== 1
+    || !Array.isArray(excluded) || !excluded.includes("vendor/parley")) {
+    throw new Error("Invalid native text segmentation backport");
+  }
+}
+
 function isNativeEngineDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
     && dependency.kind === null
@@ -25,6 +36,23 @@ function isNativeEngineDependency(crate: string, dependency: Record<string, unkn
     && dependency.uses_default_features === false
     && Array.isArray(dependency.features)
     && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
+}
+
+function isNativeTextDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-bevy"
+    && dependency.kind === null
+    && dependency.target === NATIVE_SCREEN_TARGET
+    && dependency.req === "=0.9.0"
+    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
+    && dependency.registry === null
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 2
+    && dependency.features.includes("std")
+    && dependency.features.includes("complex-scripts");
 }
 
 function isHostNumericalTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
@@ -56,7 +84,9 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       if (dependencyName === "bevy" && !isNativeEngineDependency(name, dependency)) {
         throw new Error(`Forbidden native engine dependency in ${name}`);
       }
-      if (!permitted.includes(dependencyName) && !isHostNumericalTestDependency(name, dependency)) {
+      if (!permitted.includes(dependencyName)
+        && !isNativeTextDependency(name, dependency)
+        && !isHostNumericalTestDependency(name, dependency)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);
       }
     }

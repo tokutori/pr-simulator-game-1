@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { parse } from "smol-toml";
 import { checkAssets } from "../asset-check/index.js";
 import { assertRenderImportBoundary } from "../presentation-check/render-boundary.js";
 import { record } from "../shared/validation.js";
-import { assertDependencyBoundary } from "./dependency-boundary.js";
+import { assertDependencyBoundary, assertNativeTextPatch } from "./dependency-boundary.js";
 
 const count = await checkAssets(process.cwd());
+assertNativeTextPatch(parse(await readFile("Cargo.toml", "utf8")));
 
 const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { encoding: "utf8" })) as unknown);
 if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata");

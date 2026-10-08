@@ -4,3 +4,4 @@
 /web/pkg/
 /.local/
 *.tsbuildinfo
+/vendor/parley/Cargo.lock

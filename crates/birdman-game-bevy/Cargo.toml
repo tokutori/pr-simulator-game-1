@@ -14,6 +14,7 @@ birdman-game-session = { path = "../birdman-game-session" }
 [target.'cfg(target_os = "windows")'.dependencies]
 serde.workspace = true
 serde_json.workspace = true
+parley = { version = "=0.9.0", default-features = false, features = ["std", "complex-scripts"] }
 bevy = { version = "=0.19.1", default-features = false, features = [
   "std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log",
   "bevy_window", "bevy_winit", "bevy_camera", "bevy_color", "bevy_image",
