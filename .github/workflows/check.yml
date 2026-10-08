@@ -68,10 +68,20 @@ jobs:
         with:
           path: web/dist
 
+  pause-reasons-proof:
+    name: PauseReasons proof (Windows)
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Verify shared PauseReasons source and designated rejection
+        shell: pwsh
+        run: ./tools/verus/check-pause-reasons.ps1
+
   deploy:
     name: Deploy GitHub Pages
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.deploy_pages
-    needs: verify
+    needs: [verify, pause-reasons-proof]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

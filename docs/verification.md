@@ -13,6 +13,7 @@
 - dependency boundary、asset manifest、出典・license・hash、Viteのasset取込経路、Markdown数式区切りの検査
 
 CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
+PauseReasonsの共有sourceを検証する独立Windows jobと正・負検証の固定ツール、TCB、未証明範囲は[形式検証契約](formal-verification.md)に記載する。
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
 BPG-007では旧playable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`と旧browser用`SyntheticPlayableFlight`は分離する。legacy playable fixtureは無風・neutral入力で200–300 mを15–35秒で飛行するRust core受入試験を持つ。WASM browser integrationはManual modeで100 msのpilot-position keyboard入力後に180–230 mで着水することも検証する。これらの距離・時間・係数は旧fixtureだけへ適用し、新hybrid mockの合否基準や実機性能に使用しない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
