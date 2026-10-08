@@ -1,6 +1,7 @@
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     native_session::{FlightInput, MenuAction, NativeSession},
+    ui::{MenuButton, UiPanel},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
@@ -255,16 +256,25 @@ pub(crate) fn verify_text_layout(bytes: &[u8]) -> Result<(), String> {
 enum VerificationStage {
     Title,
     Start,
+    Setup,
     Prepare,
+    Briefing,
     Launch,
+    CountdownCapture,
     Countdown,
     Pilot,
     Chase,
     Pause,
+    PausedCapture,
     Resume,
     Abort,
     Result,
     Retry,
+    InputTrialLaunch,
+    InputTrialCountdown,
+    InputTrialFlight,
+    InputTrialResult,
+    InputTrialDetails,
     Finished,
 }
 
@@ -274,6 +284,7 @@ pub(crate) struct Verification {
     stage: VerificationStage,
     started: Option<Instant>,
     stage_started: Instant,
+    countdown_started: Option<Instant>,
     scene_shaders: [Handle<Shader>; 2],
     readiness: RenderReadiness,
     processing_delay_reported: bool,
@@ -283,6 +294,7 @@ pub(crate) struct Verification {
     paused_state: Option<TailFlightTickState>,
     terminal: Option<SessionResult>,
     terminal_sample_count: usize,
+    input_trial: bool,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
 }
@@ -309,6 +321,7 @@ impl Verification {
                 stage: VerificationStage::Title,
                 started: None,
                 stage_started: Instant::now(),
+                countdown_started: None,
                 scene_shaders: [asset_server.load("native_water.wgsl"), material_shader],
                 readiness: RenderReadiness::default(),
                 processing_delay_reported: false,
@@ -318,6 +331,7 @@ impl Verification {
                 paused_state: None,
                 terminal: None,
                 terminal_sample_count: 0,
+                input_trial: false,
                 failure: None,
                 completion: Some(sender),
             },
@@ -372,15 +386,119 @@ impl Verification {
 }
 
 pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<FlightInput>) {
-    *input = if verification.stage == VerificationStage::Pilot {
-        FlightInput {
+    *input = match verification.stage {
+        VerificationStage::Pilot => FlightInput {
             nose_up: 0.1,
             turn_right: 0.1,
             pilot: Some(0.25),
-        }
-    } else {
-        FlightInput::default()
+        },
+        VerificationStage::InputTrialFlight => FlightInput {
+            nose_up: 1.0,
+            ..default()
+        },
+        _ => FlightInput::default(),
     };
+}
+
+pub(crate) fn verify_ui_layout(
+    mut verification: ResMut<Verification>,
+    buttons: Query<(&ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
+    labels: Query<(
+        &Text,
+        &ComputedNode,
+        &bevy::text::TextLayoutInfo,
+        &UiGlobalTransform,
+    )>,
+    panels: Query<(&UiPanel, &ComputedNode, &UiGlobalTransform)>,
+    windows: Query<&Window>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !verification.capture_pending || verification.failure.is_some() {
+        return;
+    }
+    let result = (|| {
+        let window = windows.iter().next().ok_or("UI viewport is unavailable")?;
+        let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
+        let mut visible_buttons = 0;
+        for (button, transform, children) in &buttons {
+            if button.is_empty() {
+                continue;
+            }
+            visible_buttons += 1;
+            let bounds = Rect::from_center_size(transform.translation, button.size());
+            if !contains_layout(viewport, bounds) {
+                return Err(format!("Button is outside the viewport: {bounds:?}"));
+            }
+            let mut visible_labels = 0;
+            for child in children.iter() {
+                let Ok((text, node, layout, transform)) = labels.get(child) else {
+                    continue;
+                };
+                if text.0.trim().is_empty()
+                    || node.is_empty()
+                    || layout.glyphs.is_empty()
+                    || !layout.size.is_finite()
+                    || layout.size.min_element() <= 0.0
+                {
+                    return Err(format!(
+                        "Button label collapsed or has no glyphs: {:?}",
+                        text.0
+                    ));
+                }
+                let label_bounds = Rect::from_center_size(transform.translation, node.size());
+                if !contains_layout(bounds, label_bounds)
+                    || layout.size.x > node.size().x + 2.0
+                    || layout.size.y > node.size().y + 2.0
+                {
+                    return Err(format!(
+                        "Button label exceeds its allocated bounds: {:?}",
+                        text.0
+                    ));
+                }
+                visible_labels += 1;
+            }
+            if visible_labels == 0 {
+                return Err("Visible button has no text label".into());
+            }
+        }
+        if visible_buttons == 0 {
+            return Err("Captured scene has no visible navigation buttons".into());
+        }
+        let mut content = None;
+        let mut navigation = None;
+        for (panel, node, transform) in &panels {
+            if node.is_empty() {
+                continue;
+            }
+            let bounds = Rect::from_center_size(transform.translation, node.size());
+            match panel {
+                UiPanel::SessionContent => content = Some(bounds),
+                UiPanel::Navigation => navigation = Some(bounds),
+                _ => {}
+            }
+        }
+        let content = content.ok_or("Captured scene has no session content panel")?;
+        let navigation = navigation.ok_or("Captured scene has no navigation panel")?;
+        if content.intersect(navigation).height() > 2.0
+            && content.intersect(navigation).width() > 2.0
+        {
+            return Err("Session content overlaps navigation buttons".into());
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        error!("Native UI verification: {error}");
+        verification.complete(Err(error.clone()));
+        verification.failure = Some(error);
+        exit.write(AppExit::error());
+    }
+}
+
+fn contains_layout(outer: Rect, inner: Rect) -> bool {
+    inner.min.x >= outer.min.x - 2.0
+        && inner.min.y >= outer.min.y - 2.0
+        && inner.max.x <= outer.max.x + 2.0
+        && inner.max.y <= outer.max.y + 2.0
 }
 
 pub(crate) fn advance(
@@ -438,7 +556,7 @@ fn advance_step(
             now
         }
     };
-    if started.elapsed() > Duration::from_secs(60) {
+    if started.elapsed() > Duration::from_secs(90) {
         return Err(format!(
             "Verification timeout in {:?}: {:?}",
             verification.stage, verification.readiness
@@ -464,12 +582,26 @@ fn advance_step(
             verification.capture_pending = false;
             let next = match verification.stage {
                 VerificationStage::Title => VerificationStage::Start,
+                VerificationStage::Setup => VerificationStage::Prepare,
+                VerificationStage::Briefing => VerificationStage::Launch,
+                VerificationStage::CountdownCapture => VerificationStage::Countdown,
                 VerificationStage::Pilot => {
                     camera.chase = true;
                     VerificationStage::Chase
                 }
                 VerificationStage::Chase => VerificationStage::Pause,
+                VerificationStage::PausedCapture => VerificationStage::Resume,
                 VerificationStage::Result => VerificationStage::Retry,
+                VerificationStage::InputTrialResult => {
+                    commands.queue(|world: &mut World| {
+                        let mut disclosure = world.resource_mut::<super::ui::TechnicalDisclosure>();
+                        if !disclosure.is_expanded() {
+                            disclosure.toggle();
+                        }
+                    });
+                    VerificationStage::InputTrialDetails
+                }
+                VerificationStage::InputTrialDetails => VerificationStage::Retry,
                 _ => return Err("Unexpected screenshot stage".into()),
             };
             verification.next(next);
@@ -484,6 +616,7 @@ fn advance_step(
                 | VerificationStage::Chase
                 | VerificationStage::Pause
                 | VerificationStage::Abort
+                | VerificationStage::InputTrialFlight
         )
     {
         if !processing_delay_only(reasons) {
@@ -521,12 +654,24 @@ fn advance_step(
         VerificationStage::Start => {
             session.action(MenuAction::Start)?;
             require_phase(session.game.snapshot().phase(), SessionPhase::FlightSetup)?;
-            verification.next(VerificationStage::Prepare);
+            verification.next(VerificationStage::Setup);
+        }
+        VerificationStage::Setup => {
+            require_phase(phase, SessionPhase::FlightSetup)?;
+            if verification.readiness.can_capture() {
+                verification.capture(commands, "01a-flight-setup.png");
+            }
         }
         VerificationStage::Prepare => {
             session.action(MenuAction::Prepare)?;
             require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
-            verification.next(VerificationStage::Launch);
+            verification.next(VerificationStage::Briefing);
+        }
+        VerificationStage::Briefing => {
+            require_phase(phase, SessionPhase::BriefingReady)?;
+            if verification.readiness.can_capture() {
+                verification.capture(commands, "01b-briefing.png");
+            }
         }
         VerificationStage::Launch => {
             session.action(MenuAction::Launch)?;
@@ -534,12 +679,25 @@ fn advance_step(
                 session.game.snapshot().phase(),
                 SessionPhase::Countdown { remaining_ticks: 3 },
             )?;
-            verification.next(VerificationStage::Countdown);
+            verification.countdown_started = Some(Instant::now());
+            verification.next(VerificationStage::CountdownCapture);
+        }
+        VerificationStage::CountdownCapture => {
+            if !matches!(phase, SessionPhase::Countdown { .. }) {
+                return Err("Countdown ended before its UI capture".into());
+            }
+            if verification.readiness.can_capture() {
+                verification.capture(commands, "01c-countdown.png");
+            }
         }
         VerificationStage::Countdown => match session.game.snapshot() {
             SessionSnapshot::Countdown { .. } => {}
             SessionSnapshot::TailFlightRunning { state, .. } => {
-                if verification.stage_started.elapsed() < Duration::from_millis(2800)
+                if verification
+                    .countdown_started
+                    .ok_or("Missing countdown start observation")?
+                    .elapsed()
+                    < Duration::from_millis(2800)
                     || state.tick_index() != 0
                 {
                     return Err(
@@ -596,7 +754,19 @@ fn advance_step(
             ) {
                 return Err("Pause did not reach core paused phase".into());
             }
-            verification.next(VerificationStage::Resume);
+            verification.next(VerificationStage::PausedCapture);
+        }
+        VerificationStage::PausedCapture => {
+            if !matches!(phase, SessionPhase::FlightPaused { .. })
+                || session.game.snapshot().tail_flight_state() != verification.paused_state
+            {
+                return Err("Paused view did not retain the core state".into());
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                verification.capture(commands, "03a-paused.png");
+            }
         }
         VerificationStage::Resume => {
             if session.game.snapshot().tail_flight_state() != verification.paused_state {
@@ -668,13 +838,94 @@ fn advance_step(
                         .terminal
                         .is_some_and(|terminal| terminal.scenario == scenario) =>
                 {
-                    verification.next(VerificationStage::Finished);
+                    if verification.input_trial {
+                        verification.next(VerificationStage::Finished);
+                    } else {
+                        verification.input_trial = true;
+                        verification.next(VerificationStage::InputTrialLaunch);
+                    }
                 }
                 snapshot => {
                     return Err(format!(
                         "Retry did not preserve sealed scenario: {snapshot:?}"
                     ));
                 }
+            }
+        }
+        VerificationStage::InputTrialLaunch => {
+            session.action(MenuAction::Launch)?;
+            verification.countdown_started = Some(Instant::now());
+            verification.next(VerificationStage::InputTrialCountdown);
+        }
+        VerificationStage::InputTrialCountdown => match session.game.snapshot() {
+            SessionSnapshot::Countdown { .. } => {}
+            SessionSnapshot::TailFlightRunning { state, .. } => {
+                if state.tick_index() != 0
+                    || verification
+                        .countdown_started
+                        .ok_or("Missing input-trial countdown start")?
+                        .elapsed()
+                        < Duration::from_millis(2800)
+                {
+                    return Err("Input-trial countdown did not precede physics".into());
+                }
+                verification.next(VerificationStage::InputTrialFlight);
+            }
+            snapshot => return Err(format!("Input-trial countdown ended with {snapshot:?}")),
+        },
+        VerificationStage::InputTrialFlight => match session.game.snapshot() {
+            SessionSnapshot::TailFlightRunning { .. } => {}
+            SessionSnapshot::Result(terminal) => {
+                let record = session
+                    .game
+                    .flight_record()
+                    .ok_or("Input-trial record is missing")?;
+                let finalization = record
+                    .finalization()
+                    .ok_or("Input-trial record finalization is missing")?;
+                let last = record
+                    .samples()
+                    .last()
+                    .ok_or("Input-trial record is empty")?;
+                if finalization.reason != terminal.reason
+                    || finalization.failure != terminal.failure
+                    || finalization.score != terminal.score
+                    || last.flight_state != terminal.state.flight_state()
+                    || session.notice.is_some()
+                {
+                    return Err(
+                        "Input-trial Result did not preserve its original cause and record".into(),
+                    );
+                }
+                println!(
+                    "Result from scripted full nose-up: reason={:?}, tick={}, score={:?}, failure={:?}",
+                    terminal.reason, last.tick_index, terminal.score, terminal.failure
+                );
+                verification.terminal = Some(terminal);
+                verification.terminal_sample_count = record.sample_count();
+                verification.next(VerificationStage::InputTrialResult);
+            }
+            snapshot => return Err(format!("Input-trial flight ended with {snapshot:?}")),
+        },
+        VerificationStage::InputTrialResult | VerificationStage::InputTrialDetails => {
+            if session.game.snapshot().result() != verification.terminal
+                || session
+                    .game
+                    .flight_record()
+                    .map(|record| record.sample_count())
+                    != Some(verification.terminal_sample_count)
+            {
+                return Err("Input-trial Result or record advanced after terminal".into());
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                let filename = if verification.stage == VerificationStage::InputTrialResult {
+                    "05-result-input.png"
+                } else {
+                    "06-result-technical.png"
+                };
+                verification.capture(commands, filename);
             }
         }
         VerificationStage::Finished => {}
@@ -704,9 +955,32 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::{
-        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion, shader_is_pending,
+        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion, contains_layout,
+        shader_is_pending,
     };
+    use bevy::prelude::{Rect, Vec2};
     use bevy::shader::ShaderCacheError;
+
+    #[test]
+    fn button_bounds_allow_rounding_but_reject_clipped_labels() {
+        let button = Rect::from_corners(Vec2::ZERO, Vec2::new(200.0, 48.0));
+        assert!(contains_layout(
+            button,
+            Rect::from_corners(Vec2::new(16.0, 10.0), Vec2::new(184.0, 38.0),)
+        ));
+        assert!(contains_layout(
+            button,
+            Rect::from_corners(Vec2::new(-1.0, -1.0), Vec2::new(201.0, 49.0),)
+        ));
+        assert!(!contains_layout(
+            button,
+            Rect::from_corners(Vec2::new(16.0, 10.0), Vec2::new(204.0, 38.0),)
+        ));
+        assert!(!contains_layout(
+            button,
+            Rect::from_corners(Vec2::new(16.0, 10.0), Vec2::new(184.0, 52.0),)
+        ));
+    }
 
     #[test]
     fn empty_or_partial_render_cache_cannot_capture() {

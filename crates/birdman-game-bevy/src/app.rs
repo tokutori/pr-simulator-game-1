@@ -139,7 +139,11 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         app.insert_resource(verification)
             .add_plugins(verification::VerificationRenderPlugin)
             .add_systems(PreUpdate, verification::supply_input.after(read_input))
-            .add_systems(Update, verification::advance.after(ui::update_ui));
+            .add_systems(Update, verification::advance.after(ui::update_ui))
+            .add_systems(
+                PostUpdate,
+                verification::verify_ui_layout.after(bevy::ui::UiSystems::PostLayout),
+            );
     }
     let exit = app.run();
     if let Some(completion) = verification_completion {
