@@ -2,6 +2,392 @@ use super::*;
 use crate::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
 use alloc::vec;
 
+fn tail_csv_rows(document: &TailFlightRecordDocument) -> Vec<Vec<String>> {
+    let encoded = FlightRecordArchiveDocument::Tail(document.clone())
+        .encode_csv()
+        .unwrap();
+    String::from_utf8(encoded)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut cells = Vec::new();
+            let mut cell = String::new();
+            let mut quoted = false;
+            let mut characters = line.chars().peekable();
+            while let Some(character) = characters.next() {
+                match character {
+                    '"' if quoted && characters.peek() == Some(&'"') => {
+                        characters.next();
+                        cell.push('"');
+                    }
+                    '"' => quoted = !quoted,
+                    ',' if !quoted => cells.push(core::mem::take(&mut cell)),
+                    _ => cell.push(character),
+                }
+            }
+            assert!(!quoted);
+            cells.push(cell);
+            cells
+        })
+        .collect()
+}
+
+fn csv_value<'row>(rows: &'row [Vec<String>], index: usize, name: &str) -> &'row str {
+    let column = rows[0].iter().position(|column| column == name).unwrap();
+    &rows[index][column]
+}
+
+#[test]
+fn tail_csv_preserves_saved_states_and_exclusive_two_tail_controls() {
+    let mut document = document();
+    document.samples[0].state.telemetry.angle_of_attack_rad = None;
+    document.samples[0].state.telemetry.sideslip_angle_rad = None;
+    document.samples[0].state.angular_velocity_body_rad_s[0] = -0.0;
+    document.header.personal_best_key = Some([0xab; 32]);
+    let original = document.encode_json().unwrap();
+    let rows = tail_csv_rows(&document);
+    assert_eq!(rows.len(), document.samples.len() + 1);
+    assert_eq!(rows[0].len(), 98);
+    assert!(rows.iter().all(|row| row.len() == rows[0].len()));
+    assert!(
+        !rows[0]
+            .iter()
+            .any(|column| column.contains("actuator_")
+                || column == "target_angular_rate_body_p_rad_s")
+    );
+    assert_eq!(csv_value(&rows, 1, "log_export_version"), "2");
+    assert_eq!(csv_value(&rows, 1, "record_schema_version"), "6");
+    assert_eq!(csv_value(&rows, 1, "control_layout"), "tail_incidence");
+    assert_eq!(
+        csv_value(&rows, 1, "personal_best_key_hex"),
+        "ab".repeat(32)
+    );
+    assert_eq!(csv_value(&rows, 1, "input_available"), "false");
+    assert_eq!(csv_value(&rows, 1, "pilot_position_command_kind"), "");
+    assert_eq!(csv_value(&rows, 1, "angle_of_attack_rad"), "");
+    assert_eq!(csv_value(&rows, 1, "sideslip_angle_rad"), "");
+    assert_eq!(
+        csv_value(&rows, 1, "angular_velocity_body_p_rad_s")
+            .parse::<f64>()
+            .unwrap()
+            .to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    for (index, sample) in document.samples.iter().enumerate() {
+        let state = &sample.state;
+        let groups: &[(&[&str], &[f64])] = &[
+            (
+                &[
+                    "datum_position_ned_n_m",
+                    "datum_position_ned_e_m",
+                    "datum_position_ned_d_m",
+                ],
+                &state.datum_position_ned_m,
+            ),
+            (
+                &[
+                    "datum_velocity_ned_n_mps",
+                    "datum_velocity_ned_e_mps",
+                    "datum_velocity_ned_d_mps",
+                ],
+                &state.datum_velocity_ned_mps,
+            ),
+            (
+                &[
+                    "attitude_body_to_ned_w",
+                    "attitude_body_to_ned_x",
+                    "attitude_body_to_ned_y",
+                    "attitude_body_to_ned_z",
+                ],
+                &state.attitude_body_to_ned,
+            ),
+            (
+                &[
+                    "angular_velocity_body_p_rad_s",
+                    "angular_velocity_body_q_rad_s",
+                    "angular_velocity_body_r_rad_s",
+                ],
+                &state.angular_velocity_body_rad_s,
+            ),
+            (
+                &[
+                    "wind_at_cg_ned_n_mps",
+                    "wind_at_cg_ned_e_mps",
+                    "wind_at_cg_ned_d_mps",
+                ],
+                &state.wind_at_cg_ned_mps,
+            ),
+            (
+                &[
+                    "composite_cg_position_ned_n_m",
+                    "composite_cg_position_ned_e_m",
+                    "composite_cg_position_ned_d_m",
+                ],
+                &state.telemetry.composite_cg_position_ned_m,
+            ),
+            (
+                &[
+                    "attitude_roll_rad",
+                    "attitude_pitch_rad",
+                    "attitude_heading_rad",
+                ],
+                &state.telemetry.attitude_euler_rad,
+            ),
+        ];
+        for (columns, values) in groups {
+            for (column, value) in columns.iter().zip(values.iter()) {
+                assert_eq!(
+                    csv_value(&rows, index + 1, column)
+                        .parse::<f64>()
+                        .unwrap()
+                        .to_bits(),
+                    value.to_bits()
+                );
+            }
+        }
+    }
+    for (column, value) in [
+        ("physical_horizontal_tail_incidence_rad", 0.008),
+        ("physical_vertical_tail_incidence_rad", -0.018),
+        ("pilot_intent_nose_up_normalized", 0.5),
+        ("pilot_intent_turn_right_normalized", -0.25),
+        ("target_angular_rate_body_q_rad_s", 0.15),
+        ("target_angular_rate_body_r_rad_s", -0.1),
+        ("pilot_position_command_normalized", 0.2),
+        ("resolved_pilot_position_target_body_forward_m", 0.072),
+        ("manual_horizontal_tail_incidence_target_rad", -0.1),
+        ("manual_vertical_tail_incidence_target_rad", 0.05),
+        ("fbw_horizontal_tail_incidence_target_rad", -0.01),
+        ("fbw_vertical_tail_incidence_target_rad", 0.0),
+        ("mixed_horizontal_tail_incidence_target_rad", -0.055),
+        ("mixed_vertical_tail_incidence_target_rad", 0.025),
+    ] {
+        assert_eq!(csv_value(&rows, 2, column).parse::<f64>().unwrap(), value);
+    }
+    assert_eq!(csv_value(&rows, 2, "pilot_position_command_kind"), "set");
+    assert_eq!(csv_value(&rows, 2, "terminal_fraction"), "0.5");
+    assert_eq!(csv_value(&rows, 2, "terminal_time_s"), "0.005");
+    assert_eq!(csv_value(&rows, 2, "terminal_failure_available"), "false");
+    assert_eq!(document.encode_json().unwrap(), original);
+    let TailFlightRecordControlsDocument::TailIncidence {
+        input_from_previous,
+        ..
+    } = &mut document.samples[1].controls;
+    input_from_previous.as_mut().unwrap().pilot_position_command =
+        TailPilotPositionCommandDocument::Hold {};
+    let held = tail_csv_rows(&document);
+    assert_eq!(csv_value(&held, 2, "pilot_position_command_kind"), "hold");
+    assert_eq!(csv_value(&held, 2, "pilot_position_command_normalized"), "");
+    assert_eq!(
+        csv_value(&held, 2, "resolved_pilot_position_target_body_forward_m"),
+        "0.072"
+    );
+}
+
+#[test]
+fn tail_csv_preserves_original_identity_and_full_failure_as_safe_json_cells() {
+    let mut document = document();
+    document.control_identity.aircraft_configuration_id = "=SUM(1,2)\"mock\"".into();
+    document.control_identity.controller_profile_id = "@control,+profile".into();
+    let original_cause = serde_json::json!({"dynamics":{"load":{"aerodynamic":{"hybrid":{
+        "site":{"proxy":{"surface":"horizontal_tail","index":1}},
+        "cause":"outside_envelope","limit":"local_speed","stage":"second"
+    }}}}});
+    document.finalization.failure = Some(serde_json::from_value(original_cause.clone()).unwrap());
+    document.finalization.reason = FlightRecordEndReasonDocument::OutOfValidEnvelope;
+    document.finalization.disposition = FlightRecordDispositionDocument::Failed;
+    document.finalization.score_m = None;
+    let rows = tail_csv_rows(&document);
+    for index in 1..rows.len() {
+        for (column, original) in [
+            (
+                "aircraft_configuration_id_json",
+                &document.control_identity.aircraft_configuration_id,
+            ),
+            (
+                "controller_profile_id_json",
+                &document.control_identity.controller_profile_id,
+            ),
+        ] {
+            let cell = csv_value(&rows, index, column);
+            assert!(cell.starts_with('"'));
+            assert_eq!(serde_json::from_str::<String>(cell).unwrap(), *original);
+        }
+        assert_eq!(
+            csv_value(&rows, index, "terminal_failure_available"),
+            "true"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(csv_value(
+                &rows,
+                index,
+                "terminal_failure_json"
+            ))
+            .unwrap(),
+            original_cause
+        );
+        assert_eq!(csv_value(&rows, index, "terminal_score_available"), "false");
+        assert_eq!(csv_value(&rows, index, "terminal_course_parallel_m"), "");
+    }
+    document
+        .control_identity
+        .aircraft_configuration_id
+        .push('\n');
+    assert!(
+        FlightRecordArchiveDocument::Tail(document)
+            .encode_csv()
+            .is_err()
+    );
+}
+
+fn polynomial_tail_document() -> TailFlightRecordDocument {
+    let mut document = document();
+    let mut middle = document.samples[1].clone();
+    middle.tick_index = 1;
+    middle.fraction = 0.0;
+    let mut terminal = middle.clone();
+    terminal.fraction = 0.25;
+    document.samples = vec![document.samples[0].clone(), middle, terminal];
+    document.finalization.terminal_tick = 1;
+    document.finalization.terminal_fraction = 0.25;
+    for sample in &mut document.samples {
+        let time =
+            (sample.tick_index as f64 + sample.fraction) / f64::from(document.header.physics_hz);
+        let velocity = 2.0 + 3.0 * time + time * time;
+        sample.state.datum_velocity_ned_mps = [velocity, velocity * 2.0, velocity * 3.0];
+        sample.state.angular_velocity_body_rad_s = [velocity * 4.0, velocity * 5.0, velocity * 6.0];
+        sample.state.pilot_velocity_mps = velocity * 7.0;
+    }
+    document
+}
+
+#[test]
+fn tail_csv_uses_the_shared_nonuniform_estimator_without_reinterpreting_saved_orientation() {
+    let mut document = polynomial_tail_document();
+    let rows = tail_csv_rows(&document);
+    let columns = [
+        "estimated_datum_acceleration_ned_n_mps2",
+        "estimated_datum_acceleration_ned_e_mps2",
+        "estimated_datum_acceleration_ned_d_mps2",
+        "estimated_angular_acceleration_body_p_rad_s2",
+        "estimated_angular_acceleration_body_q_rad_s2",
+        "estimated_angular_acceleration_body_r_rad_s2",
+        "estimated_pilot_acceleration_relative_body_forward_mps2",
+    ];
+    for (index, expected, method) in [
+        (1, 3.01, "one_sided_two_point"),
+        (2, 3.02, "nonuniform_three_point"),
+        (3, 3.0225, "one_sided_two_point"),
+    ] {
+        assert_eq!(
+            csv_value(&rows, index, "acceleration_estimate_status"),
+            "available"
+        );
+        assert_eq!(
+            csv_value(&rows, index, "acceleration_estimate_method"),
+            method
+        );
+        for (axis, column) in columns.iter().enumerate() {
+            let actual = csv_value(&rows, index, column).parse::<f64>().unwrap();
+            assert!((actual - expected * (axis + 1) as f64).abs() < 1e-10);
+        }
+    }
+    document.samples[1].state.attitude_body_to_ned = [-1.0, 0.0, 0.0, 0.0];
+    let flipped = tail_csv_rows(&document);
+    assert_eq!(csv_value(&flipped, 2, "attitude_body_to_ned_w"), "-1");
+    for index in 1..rows.len() {
+        for column in columns {
+            assert_eq!(
+                csv_value(&flipped, index, column),
+                csv_value(&rows, index, column)
+            );
+        }
+    }
+}
+
+#[test]
+fn tail_csv_keeps_fractional_stamps_when_acceleration_is_unrepresentable() {
+    let mut single = document();
+    single.samples.truncate(1);
+    single.finalization.terminal_fraction = 0.0;
+    assert_eq!(
+        csv_value(&tail_csv_rows(&single), 1, "acceleration_estimate_status"),
+        "insufficient_samples"
+    );
+    let mut rounded = polynomial_tail_document();
+    rounded.samples[2].fraction = f64::from_bits(1);
+    rounded.finalization.terminal_fraction = f64::from_bits(1);
+    let rows = tail_csv_rows(&rounded);
+    assert_eq!(csv_value(&rows, 3, "tick_index"), "1");
+    assert_eq!(
+        csv_value(&rows, 3, "fraction")
+            .parse::<f64>()
+            .unwrap()
+            .to_bits(),
+        1
+    );
+    assert_eq!(
+        csv_value(&rows, 2, "acceleration_estimate_status"),
+        "invalid_interval"
+    );
+    assert_eq!(
+        csv_value(&rows, 3, "acceleration_estimate_status"),
+        "invalid_interval"
+    );
+    let mut overflow = document();
+    overflow.samples[0].state.datum_velocity_ned_mps[0] = -f64::MAX;
+    overflow.samples[1].state.datum_velocity_ned_mps[0] = f64::MAX;
+    let rows = tail_csv_rows(&overflow);
+    assert_eq!(
+        csv_value(&rows, 1, "acceleration_estimate_status"),
+        "non_finite_estimate"
+    );
+    assert_eq!(
+        csv_value(&rows, 1, "estimated_datum_acceleration_ned_n_mps2"),
+        ""
+    );
+    let mut invalid = document();
+    invalid.samples[1].state.datum_velocity_ned_mps[0] = f64::NAN;
+    assert!(
+        FlightRecordArchiveDocument::Tail(invalid)
+            .encode_csv()
+            .is_err()
+    );
+}
+
+#[test]
+fn archive_csv_dispatch_preserves_every_legacy_version_without_new_tail_columns() {
+    for version in 1..=5 {
+        let mut document = super::super::tests::completed_record();
+        document.schema_version = version;
+        if version < 3 {
+            document.header.score_definition_version = None;
+        }
+        if version < 4 {
+            document.header.physics_model_version = None;
+        }
+        if version < 5 {
+            document.header.personal_best_key = None;
+        }
+        let original = document.encode_csv().unwrap();
+        let archive = FlightRecordArchiveDocument::Legacy(document);
+        assert_eq!(archive.encode_csv().unwrap(), original);
+        let csv = String::from_utf8(original).unwrap();
+        assert!(
+            csv.lines()
+                .nth(1)
+                .unwrap()
+                .starts_with(&alloc::format!("1,{version},legacy_three_axis,"))
+        );
+        assert!(
+            !csv.lines()
+                .next()
+                .unwrap()
+                .contains("physical_horizontal_tail_incidence_rad")
+        );
+    }
+}
+
 fn identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
         aircraft_configuration_id: "bpg041-rectangular-hybrid-mock".into(),

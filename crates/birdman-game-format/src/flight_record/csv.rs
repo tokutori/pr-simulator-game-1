@@ -1,7 +1,7 @@
 use super::{FlightRecordDocument, FlightRecordFormatError, FlightRecordSampleDocument};
 use alloc::{format, string::String, string::ToString, vec, vec::Vec};
 
-const COLUMNS: &[&str] = &[
+pub(super) const COLUMNS: &[&str] = &[
     "log_export_version",
     "record_schema_version",
     "control_layout",
@@ -109,6 +109,12 @@ enum AccelerationEstimate {
     Unavailable(&'static str),
 }
 
+pub(super) struct MotionSample {
+    pub(super) tick_index: u64,
+    pub(super) fraction: f64,
+    pub(super) velocities: [f64; 7],
+}
+
 pub(super) fn encode(document: &FlightRecordDocument) -> Result<Vec<u8>, FlightRecordFormatError> {
     document.validate()?;
     let finalization = document
@@ -213,26 +219,13 @@ pub(super) fn encode(document: &FlightRecordDocument) -> Result<Vec<u8>, FlightR
             row.extend(core::iter::repeat_n(String::new(), 13));
         }
         row.extend(terminal.iter().cloned());
-        match estimate(&document.samples, index, header.physics_hz) {
-            AccelerationEstimate::Available {
-                values,
-                start_s,
-                end_s,
-                method,
-            } => {
-                row.extend([
-                    "available".to_string(),
-                    method.to_string(),
-                    start_s.to_string(),
-                    end_s.to_string(),
-                ]);
-                numbers(&mut row, values);
-            }
-            AccelerationEstimate::Unavailable(reason) => {
-                row.extend([reason.to_string(), "unavailable".to_string()]);
-                row.extend(core::iter::repeat_n(String::new(), 9));
-            }
-        }
+        append_estimate(
+            &mut row,
+            &document.samples,
+            index,
+            header.physics_hz,
+            legacy_motion,
+        );
         if row.len() != COLUMNS.len() {
             return Err(FlightRecordFormatError::EncodingFailed);
         }
@@ -241,22 +234,51 @@ pub(super) fn encode(document: &FlightRecordDocument) -> Result<Vec<u8>, FlightR
     Ok(output.into_bytes())
 }
 
-fn enum_name(value: &impl serde::Serialize) -> Result<String, FlightRecordFormatError> {
+pub(super) fn append_estimate<Sample>(
+    row: &mut Vec<String>,
+    samples: &[Sample],
+    index: usize,
+    physics_hz: u32,
+    motion: impl Fn(&Sample) -> MotionSample,
+) {
+    match estimate(samples, index, physics_hz, motion) {
+        AccelerationEstimate::Available {
+            values,
+            start_s,
+            end_s,
+            method,
+        } => {
+            row.extend([
+                "available".to_string(),
+                method.to_string(),
+                start_s.to_string(),
+                end_s.to_string(),
+            ]);
+            numbers(row, values);
+        }
+        AccelerationEstimate::Unavailable(reason) => {
+            row.extend([reason.to_string(), "unavailable".to_string()]);
+            row.extend(core::iter::repeat_n(String::new(), 9));
+        }
+    }
+}
+
+pub(super) fn enum_name(value: &impl serde::Serialize) -> Result<String, FlightRecordFormatError> {
     match serde_json::to_value(value).map_err(|_| FlightRecordFormatError::EncodingFailed)? {
         serde_json::Value::String(name) => Ok(name),
         _ => Err(FlightRecordFormatError::EncodingFailed),
     }
 }
 
-fn optional_number(value: Option<impl ToString>) -> String {
+pub(super) fn optional_number(value: Option<impl ToString>) -> String {
     value.map_or_else(String::new, |number| number.to_string())
 }
 
-fn numbers<const COUNT: usize>(row: &mut Vec<String>, values: [f64; COUNT]) {
+pub(super) fn numbers<const COUNT: usize>(row: &mut Vec<String>, values: [f64; COUNT]) {
     row.extend(values.map(|value| value.to_string()));
 }
 
-fn write_row<'value>(output: &mut String, values: impl Iterator<Item = &'value str>) {
+pub(super) fn write_row<'value>(output: &mut String, values: impl Iterator<Item = &'value str>) {
     for (index, value) in values.enumerate() {
         if index > 0 {
             output.push(',');
@@ -276,33 +298,38 @@ fn time_s(sample: &FlightRecordSampleDocument, physics_hz: u32) -> f64 {
     (sample.tick_index as f64 + sample.fraction) / f64::from(physics_hz)
 }
 
-fn interval_s(
-    start: &FlightRecordSampleDocument,
-    end: &FlightRecordSampleDocument,
-    physics_hz: u32,
-) -> f64 {
+fn interval_s(start: &MotionSample, end: &MotionSample, physics_hz: u32) -> f64 {
     ((end.tick_index - start.tick_index) as f64 + end.fraction - start.fraction)
         / f64::from(physics_hz)
 }
 
-fn velocity_values(sample: &FlightRecordSampleDocument) -> [f64; 7] {
+fn legacy_motion(sample: &FlightRecordSampleDocument) -> MotionSample {
     let [north, east, down] = sample.datum_velocity_ned_mps;
     let [roll, pitch, yaw] = sample.angular_velocity_body_rad_s;
-    [
-        north,
-        east,
-        down,
-        roll,
-        pitch,
-        yaw,
-        sample.pilot_velocity_mps,
-    ]
+    MotionSample {
+        tick_index: sample.tick_index,
+        fraction: sample.fraction,
+        velocities: [
+            north,
+            east,
+            down,
+            roll,
+            pitch,
+            yaw,
+            sample.pilot_velocity_mps,
+        ],
+    }
 }
 
-fn estimate(
-    samples: &[FlightRecordSampleDocument],
+fn motion_time_s(sample: &MotionSample, physics_hz: u32) -> f64 {
+    (sample.tick_index as f64 + sample.fraction) / f64::from(physics_hz)
+}
+
+fn estimate<Sample>(
+    samples: &[Sample],
     index: usize,
     physics_hz: u32,
+    motion: impl Fn(&Sample) -> MotionSample,
 ) -> AccelerationEstimate {
     if samples.len() < 2 {
         return AccelerationEstimate::Unavailable("insufficient_samples");
@@ -310,30 +337,33 @@ fn estimate(
     let interior = index > 0 && index + 1 < samples.len();
     let start_index = if index == 0 { 0 } else { index - 1 };
     let end_index = if interior { index + 1 } else { start_index + 1 };
-    let start = &samples[start_index];
-    let end = &samples[end_index];
-    let span = interval_s(start, end, physics_hz);
-    if !span.is_finite() || span <= 0.0 || time_s(end, physics_hz) <= time_s(start, physics_hz) {
+    let start = motion(&samples[start_index]);
+    let end = motion(&samples[end_index]);
+    let span = interval_s(&start, &end, physics_hz);
+    if !span.is_finite()
+        || span <= 0.0
+        || motion_time_s(&end, physics_hz) <= motion_time_s(&start, physics_hz)
+    {
         return AccelerationEstimate::Unavailable("invalid_interval");
     }
-    let start_values = velocity_values(start);
-    let end_values = velocity_values(end);
+    let start_values = start.velocities;
+    let end_values = end.velocities;
     let mut values: [f64; 7] =
         core::array::from_fn(|axis| (end_values[axis] - start_values[axis]) / span);
     if interior {
-        let current = &samples[index];
-        let before = interval_s(start, current, physics_hz);
-        let after = interval_s(current, end, physics_hz);
+        let current = motion(&samples[index]);
+        let before = interval_s(&start, &current, physics_hz);
+        let after = interval_s(&current, &end, physics_hz);
         if !before.is_finite()
             || !after.is_finite()
             || before <= 0.0
             || after <= 0.0
-            || time_s(current, physics_hz) <= time_s(start, physics_hz)
-            || time_s(end, physics_hz) <= time_s(current, physics_hz)
+            || motion_time_s(&current, physics_hz) <= motion_time_s(&start, physics_hz)
+            || motion_time_s(&end, physics_hz) <= motion_time_s(&current, physics_hz)
         {
             return AccelerationEstimate::Unavailable("invalid_interval");
         }
-        let current_values = velocity_values(current);
+        let current_values = current.velocities;
         values = core::array::from_fn(|axis| {
             (after / span) * ((current_values[axis] - start_values[axis]) / before)
                 + (before / span) * ((end_values[axis] - current_values[axis]) / after)
@@ -344,8 +374,8 @@ fn estimate(
     }
     AccelerationEstimate::Available {
         values,
-        start_s: time_s(start, physics_hz),
-        end_s: time_s(end, physics_hz),
+        start_s: motion_time_s(&start, physics_hz),
+        end_s: motion_time_s(&end, physics_hz),
         method: if interior {
             "nonuniform_three_point"
         } else {

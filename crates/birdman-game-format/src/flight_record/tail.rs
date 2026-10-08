@@ -14,6 +14,7 @@ use birdman_game_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod csv;
 mod failure;
 pub use failure::{
     ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
@@ -434,6 +435,14 @@ impl TailFlightRecordDocument {
 }
 
 impl FlightRecordArchiveDocument {
+    /// Exports saved legacy or tail samples with the layout-specific CSV contract.
+    pub fn encode_csv(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
+        match self {
+            Self::Legacy(document) => document.encode_csv(),
+            Self::Tail(document) => csv::encode(document),
+        }
+    }
+
     /// Uses the exact version-specific decoder without reinterpreting legacy field meanings.
     pub fn decode_json(input: &[u8]) -> Result<Self, FlightRecordFormatError> {
         if input.len() > MAX_FLIGHT_RECORD_JSON_BYTES {
