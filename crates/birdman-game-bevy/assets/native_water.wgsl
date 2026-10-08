@@ -13,21 +13,35 @@ fn sky_color(direction: vec3<f32>) -> vec3<f32> {
     return color + vec3<f32>(1.0, 0.84, 0.58) * pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0);
 }
 
+fn wave_visibility(phase_footprint: f32) -> f32 {
+    return 1.0 - smoothstep(1.0, 3.1415927, phase_footprint);
+}
+
 @fragment
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let view = normalize(camera_time.xyz - mesh.world_position.xyz);
-    if waves_sky.w > 0.5 { return vec4<f32>(sky_color(-view), 1.0); }
     let position = mesh.world_position.xz;
     let drift = waves_sky.xy * camera_time.w * 0.08;
     let coarse = position + drift;
     let fine = position - drift * 0.7;
-    let slope_x = (cos(dot(coarse, vec2<f32>(0.7, 0.25))) * 0.10 + cos(dot(fine, vec2<f32>(3.5, -1.9))) * 0.018) * waves_sky.z;
-    let slope_z = (cos(dot(coarse, vec2<f32>(0.35, 0.8))) * 0.10 + cos(dot(fine, vec2<f32>(-2.1, 4.3))) * 0.018) * waves_sky.z;
+    let coarse_x_phase = dot(coarse, vec2<f32>(0.7, 0.25));
+    let coarse_z_phase = dot(coarse, vec2<f32>(0.35, 0.8));
+    let fine_x_phase = dot(fine, vec2<f32>(3.5, -1.9));
+    let fine_z_phase = dot(fine, vec2<f32>(-2.1, 4.3));
+    let ripple_phase = dot(fine, vec2<f32>(5.0, 3.0));
+    let coarse_x_visibility = wave_visibility(fwidth(coarse_x_phase));
+    let coarse_z_visibility = wave_visibility(fwidth(coarse_z_phase));
+    let fine_x_visibility = wave_visibility(fwidth(fine_x_phase));
+    let fine_z_visibility = wave_visibility(fwidth(fine_z_phase));
+    let ripple_visibility = wave_visibility(fwidth(ripple_phase));
+    if waves_sky.w > 0.5 { return vec4<f32>(sky_color(-view), 1.0); }
+    let slope_x = (cos(coarse_x_phase) * 0.10 * coarse_x_visibility + cos(fine_x_phase) * 0.018 * fine_x_visibility) * waves_sky.z;
+    let slope_z = (cos(coarse_z_phase) * 0.10 * coarse_z_visibility + cos(fine_z_phase) * 0.018 * fine_z_visibility) * waves_sky.z;
     let normal = normalize(vec3<f32>(-slope_x, 1.0, -slope_z));
     let reflection = reflect(-view, normal);
     let fresnel = 0.035 + 0.965 * pow(1.0 - max(dot(view, normal), 0.0), 5.0);
     let deep = vec3<f32>(0.025, 0.13, 0.16);
-    let ripple = 0.025 * sin(dot(fine, vec2<f32>(5.0, 3.0)));
+    let ripple = 0.025 * sin(ripple_phase) * ripple_visibility;
     let sun = pow(max(dot(reflection, sun_cloud.xyz), 0.0), 250.0);
     return vec4<f32>(mix(deep + ripple, sky_color(reflection), fresnel) + vec3<f32>(1.0, 0.86, 0.58) * sun, 1.0);
 }
