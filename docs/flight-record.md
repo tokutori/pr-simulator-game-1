@@ -81,9 +81,8 @@ f64の物理値を保存する。圧縮・量子化は後続format versionで誤
 | angular_velocity_body_rad_s | body角速度 |
 | wind_at_cg_ned_mps | 同じ位置・時刻の重心風sample |
 | actuator_state | 初期sample `(0, 0)` は初期舵角、後続sampleはそのsampleへ進めた区間の保持舵角 |
-| pilot_motion_state | パイロットの実前後位置・相対速度・相対加速度 |
-| combined_cg_offset_body_m | datum $O$ から導出した合成重心offset |
-| optional element diagnostics | 要素ID、局所風・対気速度・荷重等 |
+| pilot_motion_state | パイロットの実前後位置・相対速度 |
+| additional diagnostics | 合成重心offset・要素別荷重・実加速度等は現行schemaに保存しない |
 
 入力列にはtickごとの機器非依存な舵指令、身体目標位置、FBW舵出力、混合後舵commandを保存し、
 actuator stateと実身体位置を区別する。keyboardの押下やgamepadの生軸値を再現用入力の正本としない。
@@ -91,6 +90,27 @@ actuator stateと実身体位置を区別する。keyboardの押下やgamepadの
 重心風sampleはgrid範囲等を検証して保存し、取得不能をゼロ風へ置換しない。
 AoA等の未定義値はOption等で表し、NaNを欠損値として使用しない。
 追加diagnosticはschemaで有無を明示し、初期基本recordだけでmap・高度・速度とPilot再生が成立する構成とする。
+
+## 数値ログのdownload
+
+ResultとReplayでは同じ現在recordからCSVと元record JSONを取得する。
+`GameSessionBridge.export_flight_log_csv`と`export_current_flight_record_json`はquery専用であり、
+physics、record、Replay clockを更新しない。Attractと飛行中は取得を拒否する。
+通常recordのJSONは現行encoder、保存archiveのJSONはopen成功時に保持した検証済み原文を返す。
+保存schema 1〜5、未知環境、欠損metadataを現行機体・環境で再構成しない。
+
+CSV export version 1はUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
+全保存state、telemetry、区間input、metadataとfinalizationを列へ写し、unitsとNED/body座標を列名へ明記する。
+f64はroundtrip可能な十進文字列、欠損値は空欄とavailabilityで表す。由来textは検証済みenum名に限定する。
+`tick_index`と`fraction`を独立して保持し、初期・fractional terminalを含めて標本を間引かない。
+
+加速度は保存値との差を明示した`estimated_*`列である。datumのNED速度、body角速度$p,q,r$、
+body前方軸に対するパイロット相対速度から有限差分を導出する。NED加速度は重力を含む運動学的変化率であり、
+specific force、合成重心加速度、荷重・momentの再評価は行わない。Quaternion/Euler角の差分は使用しない。
+内部標本は不等時間間隔の3点公式、両端は片側2点secantを用い、methodとstencil時刻を保存する。
+単一標本は`insufficient_samples`、非正・丸めで識別不能な時間間隔は`invalid_interval`、
+推定値のoverflowは`non_finite_estimate`として空欄にする。終端の極小fractionをNaNや無限大へ置換しない。
+TypeScriptは返されたtextをBlob/download adapterへ渡し、数値や推定値を再計算しない。
 
 ## Derived telemetryと集計
 

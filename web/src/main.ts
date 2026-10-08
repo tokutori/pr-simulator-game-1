@@ -1,5 +1,6 @@
 import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
+import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
@@ -7,7 +8,7 @@ import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./gam
 import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { executeGameSessionOperation } from "./app/game-session-operation.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -36,6 +37,7 @@ import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { syntheticLakeVisualCondition } from "./game/synthetic-lake-condition.js";
 import { createPersonalBestSelection, initializeGameSession } from "./game/wasm-flight.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
+import { readFlightLog } from "./game/flight-log-export.js";
 import {
   loadFlightAnalysis,
   queryFlightRecordRenderPoseAt,
@@ -89,15 +91,30 @@ const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
 });
+const flightLogDownload = new BrowserFlightLogDownload(document);
 
 function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
-  synchronizeMenuScroll();
-  if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
-  renderModel();
-  for (const effect of transition.effects) runEffect(effect);
+  runCommittedSideEffects([
+    () => {
+      synchronizeMenuScroll();
+      if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
+      renderModel();
+    },
+    ...transition.effects.map((effect) => () => { runEffect(effect); })
+  ]);
+}
+
+function runCommittedSideEffects(actions: readonly (() => void)[]): void {
+  const failures: unknown[] = [];
+  for (const action of actions) {
+    try { action(); }
+    catch (error: unknown) { failures.push(error); }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, failures.map(errorMessage).join("; "), { cause: failures[0] });
 }
 
 function renderModel(): void {
@@ -208,6 +225,25 @@ for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fon
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "download-flight-log": {
+      const session = gameSession;
+      if (!isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
+      try {
+        if (session === null || session.phase_code() !== effect.source.phaseCode) throw new Error("有効なRust FlightRecordを取得できない");
+        const text = readFlightLog(session, effect.format);
+        if (gameSession !== session || !isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
+        flightLogDownload.download({
+          text,
+          format: effect.format,
+          filename: `flight-log-${effect.source.phaseCode === 7 ? "result" : "replay"}-${String(effect.requestId)}.${effect.format}`
+        });
+      } catch (error: unknown) {
+        if (gameSession === session) dispatch({ type: "flight-log-download-failed", requestId: effect.requestId, source: effect.source, message: errorMessage(error) });
+        return;
+      }
+      if (gameSession === session) dispatch({ type: "flight-log-download-requested", requestId: effect.requestId, source: effect.source });
+      return;
+    }
     case "suspend-page-flight":
       suspendPageFlightState();
       return;
@@ -886,6 +922,7 @@ function onResize(): void {
 }
 
 function onPageHide(): void {
+  flightLogDownload.dispose();
   window.removeEventListener("resize", onResize);
   document.removeEventListener("visibilitychange", onVisibilityChange);
   if (flightController !== null) flightController.dispose();
