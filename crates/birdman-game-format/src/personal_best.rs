@@ -23,7 +23,7 @@ pub struct TailPersonalBestConfiguration<'a> {
     pub identity: &'a FlightRecordTailIdentityDocument,
     /// Authority mode used by the session.
     pub control_mode: ControlMode,
-    /// Once-resolved two-axis feedback and software slew profile.
+    /// Once-resolved two-axis feedback, software slew and optional datum-alpha guard.
     pub controller_profile: TailControlProfile,
 }
 
@@ -174,6 +174,7 @@ pub fn canonical_tail_personal_best_key(
             .controller_profile
             .maximum_slew_rad_per_second(),
     );
+    hash_tail_alpha_guard(&mut hasher, configuration.controller_profile);
     for component in course_axis.components() {
         hash_f64(&mut hasher, component);
     }
@@ -422,6 +423,19 @@ fn hash_initial_sample(hasher: &mut Sha256, sample: &crate::FlightRecordSampleDo
     }
 }
 
+fn hash_tail_alpha_guard(hasher: &mut Sha256, profile: TailControlProfile) {
+    if let Some(guard) = profile.angle_of_attack_guard() {
+        hasher.update(b"birdman-game/tail-alpha-guard/v1\0");
+        for value in guard.alpha_interval_rad().into_iter().chain([
+            guard.trim_alpha_rad(),
+            guard.preview_seconds(),
+            guard.pitch_gain_seconds(),
+        ]) {
+            hash_f64(hasher, value);
+        }
+    }
+}
+
 fn hash_controller_mode(hasher: &mut Sha256, mode: ControlMode) {
     match mode {
         ControlMode::Manual => hasher.update([0]),
@@ -484,4 +498,23 @@ fn hash_u64(hasher: &mut Sha256, value: u64) {
 fn hash_f64(hasher: &mut Sha256, value: f64) {
     let canonical_bits = if value == 0.0 { 0 } else { value.to_bits() };
     hash_u64(hasher, canonical_bits);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Digest, Sha256, TailControlProfile, hash_tail_alpha_guard};
+
+    #[test]
+    fn unguarded_tail_profile_preserves_existing_hash_stream() {
+        let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+        let mut previous = Sha256::new();
+        previous.update(b"existing-two-tail-conditions");
+        let mut extended = previous.clone();
+        hash_tail_alpha_guard(&mut extended, profile);
+        previous.update(b"existing-course-and-content");
+        extended.update(b"existing-course-and-content");
+        let previous_digest: [u8; 32] = previous.finalize().into();
+        let extended_digest: [u8; 32] = extended.finalize().into();
+        assert_eq!(extended_digest, previous_digest);
+    }
 }

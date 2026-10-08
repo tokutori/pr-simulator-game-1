@@ -1074,6 +1074,52 @@ fn tail_canonical_key_tracks_two_axis_profile_content_and_initial_snapshot() {
 }
 
 #[test]
+fn tail_canonical_key_distinguishes_guard_presence_and_every_policy_value() {
+    use birdman_game_core::{ControlMode, TailAngleOfAttackGuard, TailControlProfile};
+    let source = document();
+    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let hashes = crate::PersonalBestContentHashes {
+        scenario: [1; 32],
+        aircraft: [2; 32],
+        environment: [3; 32],
+        physics_build: [4; 32],
+    };
+    let unguarded = tail_key(&source, profile, ControlMode::Manual, hashes)
+        .unwrap()
+        .unwrap();
+    let guarded_profile = profile.with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    );
+    let guarded = tail_key(&source, guarded_profile, ControlMode::Manual, hashes)
+        .unwrap()
+        .unwrap();
+    assert_ne!(guarded, unguarded);
+    assert_eq!(
+        tail_key(&source, guarded_profile, ControlMode::Manual, hashes).unwrap(),
+        Some(guarded)
+    );
+    for (interval, trim, preview, gain) in [
+        ([-0.08, 0.09], 0.04, 1.0, 1.6),
+        ([-0.09, 0.10], 0.04, 1.0, 1.6),
+        ([-0.09, 0.09], 0.03, 1.0, 1.6),
+        ([-0.09, 0.09], 0.04, 0.9, 1.6),
+        ([-0.09, 0.09], 0.04, 1.0, 1.5),
+    ] {
+        let changed = profile.with_angle_of_attack_guard(
+            TailAngleOfAttackGuard::try_new(interval, trim, preview, gain).unwrap(),
+        );
+        assert_ne!(
+            tail_key(&source, changed, ControlMode::Manual, hashes).unwrap(),
+            Some(guarded)
+        );
+        assert_ne!(
+            tail_key(&source, changed, ControlMode::Manual, hashes).unwrap(),
+            Some(unguarded)
+        );
+    }
+}
+
+#[test]
 fn tail_key_ignores_preset_name_and_selected_key_and_selection_excludes_legacy() {
     use birdman_game_core::{ControlMode, TailControlProfile};
     let mut source = document();
