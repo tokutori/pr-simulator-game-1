@@ -41,6 +41,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into()))
             .join("Fonts/meiryo.ttc");
     let mut verification_directory = None;
+    let mut verification_size = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--font" => {
@@ -56,14 +57,24 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--verify requires an output directory")?,
                 ));
             }
+            "--verify-size" => {
+                verification_size = Some(parse_verification_size(
+                    &arguments
+                        .next()
+                        .ok_or("--verify-size requires WIDTHxHEIGHT")?,
+                )?);
+            }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--verify DIR]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。"
+                    "birdman-game-bevy [--font PATH] [--verify DIR [--verify-size WIDTHxHEIGHT]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。"
                 );
                 return Ok(());
             }
             _ => return Err(format!("Unknown argument: {argument}").into()),
         }
+    }
+    if verification_size.is_some() && verification_directory.is_none() {
+        return Err("--verify-size requires --verify DIR".into());
     }
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
@@ -84,7 +95,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "Birdman native Screen — Bevy".into(),
-                    resolution: (1280, 720).into(),
+                    resolution: verification_size.unwrap_or((1280, 720)).into(),
                     ..default()
                 }),
                 ..default()
@@ -136,6 +147,19 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("Native app exited with an error".into());
     }
     Ok(())
+}
+
+fn parse_verification_size(value: &str) -> Result<(u32, u32), &'static str> {
+    let (width, height) = value
+        .split_once('x')
+        .ok_or("--verify-size requires WIDTHxHEIGHT")?;
+    match (
+        width.parse::<std::num::NonZeroU32>(),
+        height.parse::<std::num::NonZeroU32>(),
+    ) {
+        (Ok(width), Ok(height)) => Ok((width.get(), height.get())),
+        _ => Err("--verify-size dimensions must be positive u32 integers"),
+    }
 }
 
 fn register_input(app: &mut App) {
@@ -252,6 +276,29 @@ mod tests {
         keyboard::{Key, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion},
     };
+
+    #[test]
+    fn verification_size_accepts_explicit_positive_dimensions() {
+        assert_eq!(parse_verification_size("800x600"), Ok((800, 600)));
+        assert_eq!(parse_verification_size("1920x1080"), Ok((1920, 1080)));
+    }
+
+    #[test]
+    fn verification_size_rejects_missing_zero_and_non_integer_dimensions() {
+        for value in [
+            "800",
+            "800x",
+            "x600",
+            "0x600",
+            "800x0",
+            "-800x600",
+            "800.5x600",
+            "800x600x1",
+            "4294967296x600",
+        ] {
+            assert!(parse_verification_size(value).is_err(), "{value}");
+        }
+    }
 
     fn input_app() -> (App, Entity) {
         let mut app = App::new();
