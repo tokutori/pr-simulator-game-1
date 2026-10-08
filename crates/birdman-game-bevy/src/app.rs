@@ -18,8 +18,8 @@ use bevy::{
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
 };
-use birdman_game_core::{PHYSICS_HZ, PauseReason, SessionPhase};
-use native_session::{FlightInput, MenuAction, NativeSession};
+use birdman_game_core::{PHYSICS_HZ, SessionPhase};
+use native_session::{FlightInput, NativeSession};
 use std::{error::Error, path::PathBuf};
 
 const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(150);
@@ -133,34 +133,15 @@ fn read_input(
         time,
     } = ports;
     let focused = windows.iter().all(|window| window.focused);
-    if !focused && session.game.snapshot().phase() == SessionPhase::FlightRunning {
-        if let Err(error) = session.game.pause(PauseReason::DocumentHidden) {
-            session.notice = Some(format!("非アクティブ停止: {error:?}"));
-        }
-    }
-    if time.delta() > MAX_FRAME_DELTA
-        && session.game.snapshot().phase() == SessionPhase::FlightRunning
-    {
-        if let Err(error) = session.game.pause(PauseReason::ProcessingDelay) {
-            session.notice = Some(format!("処理遅延停止: {error:?}"));
-        }
-    }
+    session.observe_frame(focused, time.delta() > MAX_FRAME_DELTA);
     if keys.just_pressed(KeyCode::KeyC) {
         camera.chase = !camera.chase;
         camera.look = Vec2::ZERO;
     }
-    if keys.just_pressed(KeyCode::KeyP) || keys.just_pressed(KeyCode::Escape) {
-        let action = if matches!(
-            session.game.snapshot().phase(),
-            SessionPhase::FlightPaused { .. }
-        ) {
-            MenuAction::Resume
-        } else {
-            MenuAction::Pause
-        };
-        if let Err(error) = session.action(action) {
-            session.notice = Some(error);
-        }
+    if (keys.just_pressed(KeyCode::KeyP) || keys.just_pressed(KeyCode::Escape))
+        && let Err(error) = session.toggle_pause()
+    {
+        session.notice = Some(error);
     }
     if keys.just_pressed(KeyCode::F12) {
         let filename = format!(

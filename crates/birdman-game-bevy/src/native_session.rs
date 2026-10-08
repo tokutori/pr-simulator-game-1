@@ -17,6 +17,7 @@ pub(crate) struct NativeSession {
     pub(crate) notice: Option<String>,
     pub(crate) initial_pilot_position_m: f64,
     pub(crate) countdown_elapsed: f64,
+    frame_available: bool,
 }
 
 impl Default for NativeSession {
@@ -27,6 +28,7 @@ impl Default for NativeSession {
             notice: None,
             initial_pilot_position_m: 0.0,
             countdown_elapsed: 0.0,
+            frame_available: true,
         }
     }
 }
@@ -48,7 +50,41 @@ pub(crate) enum MenuAction {
 }
 
 impl NativeSession {
+    pub(crate) fn observe_frame(&mut self, focused: bool, processing_delayed: bool) {
+        self.frame_available = focused && !processing_delayed;
+        if !matches!(
+            self.game.snapshot().phase(),
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        ) {
+            return;
+        }
+        for (blocked, reason) in [
+            (!focused, PauseReason::DocumentHidden),
+            (processing_delayed, PauseReason::ProcessingDelay),
+        ] {
+            if blocked && let Err(error) = self.game.pause(reason) {
+                self.notice = Some(format!("停止理由を同期できない: {error:?}"));
+            }
+        }
+    }
+
+    pub(crate) fn toggle_pause(&mut self) -> Result<(), String> {
+        self.action(
+            if matches!(
+                self.game.snapshot().phase(),
+                SessionPhase::FlightPaused { .. }
+            ) {
+                MenuAction::Resume
+            } else {
+                MenuAction::Pause
+            },
+        )
+    }
+
     pub(crate) fn action(&mut self, action: MenuAction) -> Result<(), String> {
+        if action == MenuAction::Resume && !self.frame_available {
+            return Err("非アクティブ状態または処理遅延の解消後に再開する".into());
+        }
         let result = match action {
             MenuAction::Start => self.game.open_setup(),
             MenuAction::Prepare => {
@@ -76,10 +112,7 @@ impl NativeSession {
                 .and_then(|()| self.game.clear_pause_reason(PauseReason::ProcessingDelay))
                 .and_then(|()| self.game.resume()),
             MenuAction::Abort => self.game.abort_flight().map(|_| ()),
-            MenuAction::Retry => self
-                .game
-                .retry()
-                .and_then(|()| self.game.mark_briefing_ready()),
+            MenuAction::Retry => self.game.retry(),
             MenuAction::Title => match self.game.snapshot().phase() {
                 SessionPhase::BriefingReady
                 | SessionPhase::BriefingPreparing
@@ -167,7 +200,7 @@ impl NativeSession {
     }
 
     pub(crate) fn tick(&mut self, intent: FlightInput) {
-        if self.game.snapshot().phase() != SessionPhase::FlightRunning {
+        if self.game.snapshot().phase() != SessionPhase::FlightRunning || !self.frame_available {
             return;
         }
         let result = intent
@@ -175,10 +208,10 @@ impl NativeSession {
             .and_then(|input| self.game.advance_tail_flight_tick(input));
         if let Err(error) = result {
             self.notice = Some(format!("最後の有効状態を保持した: {error:?}"));
-            if self.game.snapshot().phase() == SessionPhase::FlightRunning {
-                if let Err(pause_error) = self.game.pause(PauseReason::ProcessingDelay) {
-                    self.notice = Some(format!("{error:?}; 停止処理: {pause_error:?}"));
-                }
+            if self.game.snapshot().phase() == SessionPhase::FlightRunning
+                && let Err(pause_error) = self.game.pause(PauseReason::ProcessingDelay)
+            {
+                self.notice = Some(format!("{error:?}; 停止処理: {pause_error:?}"));
             }
         }
     }
@@ -275,6 +308,47 @@ mod tests {
             session.game.snapshot(),
             SessionSnapshot::BriefingReady { .. }
         ));
+        assert_eq!(session.game.configuration_identity(), Some(result.scenario));
+        assert!(session.notice.is_none());
+    }
+
+    #[test]
+    fn unresolved_frame_conditions_reject_keyboard_and_menu_resume_without_ticks() {
+        for (focused, processing_delayed) in [(true, true), (false, false), (false, true)] {
+            let mut session = NativeSession::default();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+            let before = session.game.snapshot().tail_flight_state().unwrap();
+            session.observe_frame(focused, processing_delayed);
+            assert!(matches!(
+                session.game.snapshot().phase(),
+                SessionPhase::FlightPaused { .. }
+            ));
+            assert!(session.toggle_pause().is_err());
+            assert!(session.action(MenuAction::Resume).is_err());
+            session.tick(FlightInput::default());
+            assert_eq!(session.game.snapshot().tail_flight_state(), Some(before));
+            session.observe_frame(true, false);
+            assert!(matches!(
+                session.game.snapshot().phase(),
+                SessionPhase::FlightPaused { .. }
+            ));
+            session.action(MenuAction::Resume).unwrap();
+            session.tick(FlightInput::default());
+            assert_eq!(
+                session
+                    .game
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap()
+                    .tick_index(),
+                before.tick_index() + 1
+            );
+        }
     }
 
     #[test]
