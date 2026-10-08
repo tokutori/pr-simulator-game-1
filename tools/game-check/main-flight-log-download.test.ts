@@ -11,10 +11,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
-  vi.doUnmock("../../web/src/game/wasm-flight.js");
+  vi.doUnmock("../../web/src/app/session-factory.js");
 });
 
-async function fixture(archive = false) {
+async function fixture(archive: false | "tail" | "legacy" = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
@@ -22,6 +22,9 @@ async function fixture(archive = false) {
   vi.stubGlobal("document", browser.document);
   vi.stubGlobal("navigator", browser.navigator);
   vi.stubGlobal("HTMLElement", browser.HTMLElement);
+  vi.stubGlobal("HTMLInputElement", browser.HTMLInputElement);
+  vi.stubGlobal("HTMLSelectElement", browser.HTMLSelectElement);
+  Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("indexedDB", indexedDB);
   vi.stubGlobal("IDBKeyRange", IDBKeyRange);
   const blobs: Blob[] = [];
@@ -33,7 +36,7 @@ async function fixture(archive = false) {
   const revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
   const click = vi.spyOn(browser.HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   const renderer = {
-    startLoop: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
+    startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
@@ -43,29 +46,46 @@ async function fixture(archive = false) {
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-  const session = new wasm.GameSessionBridge(0);
+  const session = new wasm.HybridGameSessionBridge(0, 0x55aa, 0x5f98);
   session.open_setup();
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
   session.advance_countdown();
   session.launch();
-  session.advance_tick(0, 0, 0, 0);
+  const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
+  session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+    desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
   session.abort();
-  const original = ` \n${session.export_flight_record_json()}\n `;
+  let original = ` \n${session.export_flight_record_json()}\n `;
+  if (archive === "legacy") {
+    const legacy = new wasm.GameSessionBridge(0);
+    try {
+      legacy.open_setup();
+      legacy.prepare();
+      legacy.mark_briefing_ready();
+      legacy.start_countdown(1);
+      legacy.advance_countdown();
+      legacy.launch();
+      legacy.advance_tick(0, 0, 0, 0);
+      legacy.abort();
+      original = ` \n${legacy.export_flight_record_json()}\n `;
+    } finally { legacy.free(); }
+  }
   if (archive) {
     session.return_to_title();
     session.open_archived_flight_record(original);
   }
-  vi.doMock("../../web/src/game/wasm-flight.js", () => ({
-    initializeGameSession: () => Promise.resolve({ session, physicsHz: wasm.physics_hz() }),
-    createPersonalBestSelection: (json: string) => new wasm.PersonalBestSelectionBridge(json)
-  }));
-  const pageHide = (persisted: boolean): void => {
-    const event = new browser.Event("pagehide");
+  const { TailAppSessionFacade } = await import("../../web/src/app/session-facade.js");
+  const facade = new TailAppSessionFacade(session, wasm.physics_hz());
+  const free = vi.spyOn(session, "free");
+  vi.doMock("../../web/src/app/session-factory.js", () => ({ initializeAppSession: () => Promise.resolve(facade) }));
+  const pageEvent = (type: "pagehide" | "pageshow", persisted: boolean): void => {
+    const event = new browser.Event(type);
     Object.defineProperty(event, "persisted", { value: persisted });
     browser.dispatchEvent(event);
   };
+  const pageHide = (persisted: boolean): void => { pageEvent("pagehide", persisted); };
   teardowns.push(async () => {
     pageHide(false);
     await browser.happyDOM.abort();
@@ -77,10 +97,11 @@ async function fixture(archive = false) {
     if (!(element instanceof browser.HTMLButtonElement)) throw new Error(`Required button ${id} is unavailable`);
     return element as unknown as HTMLButtonElement;
   };
-  return { browser, renderer, session, original, blobs, createUrl, revokeUrl, click, button, pageHide };
+  return { browser, renderer, session, facade, original, blobs, createUrl, revokeUrl, click, button, pageHide, free,
+    pageRestore: () => { pageEvent("pageshow", true); } };
 }
 
-describe("actual Legacy main and generated WASM flight log download", () => {
+describe("actual Tail main, facade and generated WASM flight log download", () => {
   it("downloads Rust CSV and JSON for Result without changing the record or phase", async () => {
     const trial = await fixture();
     const before = trial.session.export_current_flight_record_json();
@@ -99,12 +120,18 @@ describe("actual Legacy main and generated WASM flight log download", () => {
     expect(trial.revokeUrl).not.toHaveBeenCalled();
     trial.button("game-result-open-analysis").click();
     expect(trial.button("game-flight-log-csv").disabled).toBe(false);
+    trial.pageHide(true);
+    expect(trial.free).not.toHaveBeenCalled();
+    expect(trial.revokeUrl).not.toHaveBeenCalled();
+    trial.pageRestore();
+    await vi.waitFor(() => { expect(trial.button("game-flight-log-json").disabled).toBe(false); });
     trial.pageHide(false);
     expect(trial.revokeUrl.mock.calls).toEqual([["blob:flight-log-1"], ["blob:flight-log-2"]]);
+    expect(trial.free).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves the selected archive original JSON and playback clock during Analysis export", async () => {
-    const trial = await fixture(true);
+  it.each(["tail", "legacy"] as const)("preserves the selected %s archive original JSON and playback clock during Analysis export", async (layout) => {
+    const trial = await fixture(layout);
     trial.button("game-replay-view-mode").click();
     trial.button("game-replay-view-mode").click();
     const clock = trial.session.playback_clock_state();

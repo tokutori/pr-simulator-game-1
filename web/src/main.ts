@@ -46,7 +46,6 @@ import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
 import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
-import { readFlightLog } from "./game/flight-log-export.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
@@ -240,9 +239,11 @@ function runEffect(effect: AppEffect): void {
       const session = gameSession;
       if (!isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
       try {
-        if (session === null || session.phase_code() !== effect.source.phaseCode) throw new Error("有効なRust FlightRecordを取得できない");
-        const text = readFlightLog(session, effect.format);
+        if (session === null || session.readLifecycle().phaseCode !== effect.source.phaseCode) throw new Error("有効なRust FlightRecordを取得できない");
+        const token = session.captureQueryToken();
+        const text = session.readFlightLog(effect.format);
         if (gameSession !== session || !isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
+        if (session.acceptQuery(token, text).kind === "stale") throw new Error("Rust FlightRecordの取得対象が変更された");
         flightLogDownload.download({
           text,
           format: effect.format,

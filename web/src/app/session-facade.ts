@@ -6,6 +6,8 @@ import { projectTailGameSession } from "./session-snapshot.js";
 import { executeGameSessionOperation } from "./game-session-operation.js";
 import type { GameSessionOperationPort } from "./game-session-operation.js";
 import type { FlightSessionPort } from "../game/flight-controller.js";
+import { readFlightLog } from "../game/flight-log-export.js";
+import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
 import { projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
@@ -45,7 +47,7 @@ interface AnalysisObservationProof {
 export interface ObservedNamedAnalysisDataset extends NamedAnalysisDataset {
   readonly [analysisObservation]: AnalysisObservationProof;
 }
-export interface SessionResourcePort extends SessionSelectionPort {
+export interface SessionResourcePort extends SessionSelectionPort, FlightLogExportPort {
   phase_code(): number;
   control_mode_code(): number;
   countdown_remaining(): number;
@@ -155,6 +157,19 @@ abstract class SessionResourceOwner {
 
   exportRecordJson(): string {
     return this.observe(() => this.resource.export_flight_record_json());
+  }
+
+  readFlightLog(format: FlightLogFormat): string {
+    return this.observe(() => {
+      const token = this.captureQueryToken();
+      const phase = this.readLifecycle().phaseCode;
+      if (phase !== 7 && phase !== 9) throw new RangeError("Flight log export requires the Rust Result or Replay phase");
+      const text = readFlightLog(this.resource, format);
+      if (this.readLifecycle().phaseCode !== phase || this.acceptQuery(token, text).kind === "stale") {
+        throw new Error("Flight log record source changed during observation");
+      }
+      return text;
+    });
   }
 
   openArchive(json: string): void {

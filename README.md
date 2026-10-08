@@ -37,6 +37,7 @@ Resultおよび保存記録のReplay/Analysisには「飛行ログ CSV」「元�
 CSVはRustが全保存標本の数値と単位・欠損理由を出力し、加速度は保存された速度からのfinite-difference推定値として区別する。
 保存していない空力荷重などを補完しない。推定値には差分方式・標本時刻・availabilityを併記する。
 JSONは選択中の元FlightRecordを出力する。保存記録のschemaとmetadataを維持し、表示cursorによる切り出しや再simulationは行わない。
+Tailの現在記録はschema 6を使用し、CSV export version 2はphysical tail incidenceと由来付き推定加速度を出力する。保存済みschema 1–5および6のJSONは検証済み原文を維持する。未保存のsource hashを現在のbuildから補完しない。
 ScreenとVRは共通の操作を使用する。ブラウザーのdownload要求が制限される場合はScreenのボタンから再操作する。
 通知はdownload要求の発行を示し、端末への保存完了を保証しない。成功要求のobject URLは60秒の猶予後、または非復帰page teardownで解放する。保持上限は8件である。失敗した要求のURLは即時解放する。
 
