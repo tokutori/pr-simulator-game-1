@@ -181,9 +181,14 @@ pub struct GameSessionBridge {
     feedback: birdman_game_core::BodyRateFeedbackConfig,
     difficulty: DifficultySettings,
     demo_difficulty: DifficultySettings,
-    archived_preset_code: Option<u32>,
+    archived_record: Option<ArchivedFlightRecord>,
     resolved_configuration: Option<ResolvedConfiguration>,
     snapshot: [f64; SNAPSHOT_LENGTH],
+}
+
+struct ArchivedFlightRecord {
+    preset_code: u32,
+    original_json: String,
 }
 
 #[wasm_bindgen]
@@ -210,7 +215,7 @@ impl GameSessionBridge {
             feedback,
             difficulty,
             demo_difficulty: demo.difficulty,
-            archived_preset_code: None,
+            archived_record: None,
             resolved_configuration: None,
             snapshot: [0.0; SNAPSHOT_LENGTH],
         })
@@ -220,7 +225,7 @@ impl GameSessionBridge {
     pub fn open_setup(&mut self) -> Result<(), JsValue> {
         self.session.open_setup().map_err(game_session_error)?;
         self.resolved_configuration = None;
-        self.archived_preset_code = None;
+        self.archived_record = None;
         Ok(())
     }
 
@@ -360,9 +365,9 @@ impl GameSessionBridge {
     /// Returns preset code: 0=Beginner, 1=Standard, 2=Expert, 3=Realistic, 4=Custom.
     pub fn difficulty_preset_code(&self) -> u32 {
         if self.session.snapshot().phase() == SessionPhase::Replay
-            && let Some(code) = self.archived_preset_code
+            && let Some(archive) = &self.archived_record
         {
-            return code;
+            return archive.preset_code;
         }
         preset_code(self.difficulty.preset_label())
     }
@@ -513,21 +518,24 @@ impl GameSessionBridge {
             .open_archived_replay(record)
             .map_err(game_session_error)?;
         self.difficulty = settings;
-        self.archived_preset_code = Some(preset_code);
+        self.archived_record = Some(ArchivedFlightRecord {
+            preset_code,
+            original_json: json.to_owned(),
+        });
         self.resolved_configuration = None;
         Ok(())
     }
 
     /// Returns whether the current Replay phase displays a persisted archive.
     pub fn is_archived_replay(&self) -> bool {
-        self.session.snapshot().phase() == SessionPhase::Replay
-            && self.archived_preset_code.is_some()
+        self.session.snapshot().phase() == SessionPhase::Replay && self.archived_record.is_some()
     }
 
     /// Returns from FlightSetup or Result to Title.
     pub fn return_to_title(&mut self) -> Result<(), JsValue> {
         self.session.return_to_title().map_err(game_session_error)?;
         self.resolved_configuration = None;
+        self.archived_record = None;
         Ok(())
     }
 
@@ -749,7 +757,7 @@ impl GameSessionBridge {
     pub fn leave_replay(&mut self) -> Result<(), JsValue> {
         self.session.leave_replay().map_err(game_session_error)?;
         if self.session.snapshot().phase() == SessionPhase::Title {
-            self.archived_preset_code = None;
+            self.archived_record = None;
         }
         Ok(())
     }
@@ -1020,9 +1028,43 @@ impl GameSessionBridge {
     pub fn flight_record_sample_layout() -> String {
         flight_record_sample_layout()
     }
+
+    /// Exports every saved sample and explicitly estimated accelerations from Result or Replay.
+    pub fn export_flight_log_csv(&self) -> Result<String, JsValue> {
+        let json = self.export_current_flight_record_json()?;
+        let document = FlightRecordDocument::decode_json(json.as_bytes())
+            .map_err(flight_record_format_error)?;
+        let bytes = document.encode_csv().map_err(flight_record_format_error)?;
+        String::from_utf8(bytes)
+            .map_err(|_| JsValue::from_str("flight log CSV encoding was not UTF-8"))
+    }
+
+    /// Exports the selected Result or Replay record, preserving archived JSON verbatim.
+    pub fn export_current_flight_record_json(&self) -> Result<String, JsValue> {
+        match self
+            .flight_log_archive()
+            .map_err(flight_record_format_error)?
+        {
+            Some(json) => Ok(json.to_owned()),
+            None => self.export_flight_record_json(),
+        }
+    }
 }
 
 impl GameSessionBridge {
+    fn flight_log_archive(
+        &self,
+    ) -> Result<Option<&str>, birdman_game_format::FlightRecordFormatError> {
+        match self.session.snapshot().phase() {
+            SessionPhase::Result => Ok(None),
+            SessionPhase::Replay => Ok(self
+                .archived_record
+                .as_ref()
+                .map(|archive| archive.original_json.as_str())),
+            _ => Err(birdman_game_format::FlightRecordFormatError::RecordUnavailable),
+        }
+    }
+
     fn resolve_selected_configuration(&self) -> Result<ResolvedConfiguration, JsValue> {
         let catalog =
             ScenarioCatalog::try_new(1, &WEATHER_SCENARIO_ENTRIES).map_err(configuration_error)?;
@@ -2161,6 +2203,114 @@ mod tests {
             flight_record_sample_layout().split(',').count(),
             RECORD_SAMPLE_LENGTH
         );
+    }
+
+    fn short_export_session() -> GameSessionBridge {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        bridge.open_setup().unwrap();
+        bridge.prepare().unwrap();
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        bridge.advance_tick(0.0, 0.0, 0.0, 0.0).unwrap();
+        bridge.abort().unwrap();
+        bridge
+    }
+
+    #[test]
+    fn flight_log_exports_share_current_record_without_clock_or_snapshot_updates() {
+        let mut bridge = short_export_session();
+        let original = bridge.export_flight_record_json().unwrap();
+        let snapshot = bridge.snapshot();
+        let count = bridge.flight_record_sample_count();
+        assert_eq!(
+            bridge.export_current_flight_record_json().unwrap(),
+            original
+        );
+        let csv = bridge.export_flight_log_csv().unwrap();
+        assert_eq!(csv.lines().count(), count as usize + 1);
+        assert!(csv.starts_with("log_export_version,record_schema_version,control_layout,"));
+        assert!(csv.contains("estimated_angular_acceleration_body_q_rad_s2"));
+        assert_eq!(bridge.snapshot(), snapshot);
+        bridge.enter_replay().unwrap();
+        bridge.seek_playback(0.005).unwrap();
+        let clock = bridge.playback_clock_state().unwrap();
+        let snapshot = bridge.snapshot();
+        assert_eq!(
+            bridge.export_current_flight_record_json().unwrap(),
+            original
+        );
+        assert_eq!(bridge.export_flight_log_csv().unwrap(), csv);
+        assert_eq!(bridge.playback_clock_state().unwrap(), clock);
+        assert_eq!(bridge.snapshot(), snapshot);
+        bridge.leave_replay().unwrap();
+        assert_eq!(
+            bridge.export_current_flight_record_json().unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn archived_flight_log_preserves_original_json_versions_and_lifecycle() {
+        let source = short_export_session().export_flight_record_json().unwrap();
+        let source =
+            birdman_game_format::FlightRecordDocument::decode_json(source.as_bytes()).unwrap();
+        for version in 1..=5 {
+            let mut document = source.clone();
+            document.schema_version = version;
+            document.header.personal_best_key = None;
+            if version < 3 {
+                document.header.score_definition_version = None;
+            }
+            if version < 4 {
+                document.header.physics_model_version = None;
+            }
+            let original = format!(" \n{}\n ", serde_json::to_string_pretty(&document).unwrap());
+            let mut bridge = GameSessionBridge::new(0).unwrap();
+            bridge.open_archived_flight_record(&original).unwrap();
+            assert_eq!(
+                bridge.export_current_flight_record_json().unwrap(),
+                original
+            );
+            assert!(bridge.resolved_configuration.is_none());
+            let csv = String::from_utf8(document.encode_csv().unwrap()).unwrap();
+            assert_eq!(bridge.export_flight_log_csv().unwrap(), csv);
+            bridge.seek_playback(0.005).unwrap();
+            bridge.set_playback_rate_code(2).unwrap();
+            bridge.set_playback_playing(true).unwrap();
+            let clock = bridge.playback_clock_state().unwrap();
+            assert_eq!(
+                bridge.export_current_flight_record_json().unwrap(),
+                original
+            );
+            assert_eq!(bridge.export_flight_log_csv().unwrap(), csv);
+            assert_eq!(bridge.playback_clock_state().unwrap(), clock);
+            bridge.leave_replay().unwrap();
+            assert_eq!(bridge.phase_code(), 0);
+            assert!(bridge.archived_record.is_none());
+            assert!(bridge.flight_log_archive().is_err());
+        }
+    }
+
+    #[test]
+    fn flight_log_source_guard_rejects_nonresult_nonreplay_phases() {
+        let mut bridge = GameSessionBridge::new(0).unwrap();
+        assert!(bridge.flight_log_archive().is_err());
+        bridge.enter_attract().unwrap();
+        assert!(bridge.flight_log_archive().is_err());
+        bridge.leave_attract().unwrap();
+        bridge.open_setup().unwrap();
+        assert!(bridge.flight_log_archive().is_err());
+        bridge.prepare().unwrap();
+        assert!(bridge.flight_log_archive().is_err());
+        bridge.mark_briefing_ready().unwrap();
+        bridge.start_countdown(1).unwrap();
+        bridge.advance_countdown().unwrap();
+        bridge.launch().unwrap();
+        assert!(bridge.flight_log_archive().is_err());
+        bridge.pause(0).unwrap();
+        assert!(bridge.flight_log_archive().is_err());
     }
 
     #[test]
