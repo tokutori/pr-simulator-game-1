@@ -2,9 +2,164 @@ use super::*;
 use crate::{
     AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridMockConfiguration,
     HybridMockDefinition, HybridModel, HybridSite, HybridSurfaceRole, NedPoint, NedVector,
-    TailPilotPositionIntent, UnitQuaternion, WindError, WindField,
+    TailAngleOfAttackGuard, TailPilotPositionIntent, UnitQuaternion, WindError, WindField,
+    advance_tail_control,
 };
 use core::cell::Cell;
+
+#[test]
+fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_hold_set_reports() {
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        1.225,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let aircraft = definition.aircraft();
+    let alpha: f64 = 0.08;
+    let previous = state(
+        &aircraft,
+        [10.0 * libm::cos(alpha), 0.0, 10.0 * libm::sin(alpha)],
+        [0.0; 3],
+        TailIncidence::neutral(),
+        -50.0,
+    );
+    let before = previous;
+    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
+        .unwrap()
+        .with_angle_of_attack_guard(
+            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+        );
+    let points = [BodyPoint::origin()];
+    let geometry = WaterContactGeometry::try_new(&points).unwrap();
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        let config = TailFlightTickConfig::new(
+            mode,
+            profile,
+            TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap(),
+            Gravity::try_new(0.0).unwrap(),
+        );
+        let set = TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(-0.5).unwrap()),
+        );
+        let report = advance_tail_flight_tick_with_contact_report(
+            &aircraft, previous, config, set, &loads, geometry,
+        )
+        .unwrap();
+        let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
+            panic!("expected airborne pilot protection");
+        };
+        assert!((next.pilot_position_target().position_m() + 0.08).abs() < 1.0e-14);
+        assert!(
+            next.flight_state().pilot_position_m() < previous.flight_state().pilot_position_m()
+        );
+        assert!(next.flight_state().pilot_position_m() > next.pilot_position_target().position_m());
+        assert_eq!(report.applied_controls().unwrap().input(), set);
+        assert_eq!(
+            report.applied_controls().unwrap().commands(),
+            commands(previous, config, set).commands()
+        );
+        let hold = TailFlightTickInput::new(
+            set.manual_intent(),
+            set.desired_body_rate(),
+            TailPilotPositionCommand::Hold,
+        );
+        let held_report = advance_tail_flight_tick_with_contact_report(
+            &aircraft, next, config, hold, &loads, geometry,
+        )
+        .unwrap();
+        let TailFlightTickOutcome::Advanced(held) = held_report.outcome() else {
+            panic!("expected airborne held-target protection");
+        };
+        assert_eq!(
+            held_report
+                .applied_controls()
+                .unwrap()
+                .input()
+                .pilot_position_command(),
+            TailPilotPositionCommand::Hold
+        );
+        assert!(
+            held.pilot_position_target().position_m() >= next.pilot_position_target().position_m()
+        );
+        let safe = TailFlightTickInput::new(
+            set.manual_intent(),
+            set.desired_body_rate(),
+            TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(1.0).unwrap()),
+        );
+        assert_eq!(
+            advance_tail_flight_tick(&aircraft, previous, config, safe, &loads)
+                .unwrap()
+                .pilot_position_target()
+                .position_m(),
+            0.4
+        );
+    }
+    assert_eq!(previous, before);
+}
+
+#[test]
+fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_failure() {
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let model = HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap();
+    let aircraft = definition.aircraft();
+    let previous = state(
+        &aircraft,
+        [0.0; 3],
+        [0.0; 3],
+        TailIncidence::neutral(),
+        -50.0,
+    );
+    let original_config = config(&aircraft, ControlMode::Manual, 1.0);
+    let guarded_config = TailFlightTickConfig::new(
+        original_config.mode,
+        original_config.profile.with_angle_of_attack_guard(
+            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+        ),
+        original_config.pilot_mapping,
+        original_config.gravity,
+    );
+    let input = input_holding_incidence(TailIncidence::neutral());
+    let uniform =
+        HybridAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
+            .unwrap();
+    assert_eq!(
+        datum_alpha_for_guard(previous.flight_state(), &uniform),
+        None
+    );
+    assert_eq!(
+        advance_tail_flight_tick(&aircraft, previous, guarded_config, input, &uniform),
+        advance_tail_flight_tick(&aircraft, previous, original_config, input, &uniform)
+    );
+    let velocities = [NedVector::zero(); 8];
+    let wind = WindField::grid(
+        NedPoint::origin(),
+        NedVector::try_new(1.0, 1.0, 1.0).unwrap(),
+        [2; 3],
+        &velocities,
+    )
+    .unwrap();
+    let loads = HybridAerodynamicLoad::try_new(model, 1.225, wind).unwrap();
+    let original =
+        advance_tail_flight_tick(&aircraft, previous, original_config, input, &loads).unwrap_err();
+    assert_eq!(
+        advance_tail_flight_tick(&aircraft, previous, guarded_config, input, &loads),
+        Err(original)
+    );
+    let cause = hybrid_error(original);
+    assert_eq!(cause.site(), HybridSite::Datum);
+    assert_eq!(cause.cause(), AeroError::Wind(WindError::OutsideGrid));
+    assert_eq!(cause.stage(), Some(AerodynamicStage::First));
+}
 
 fn state(
     aircraft: &AircraftModel,

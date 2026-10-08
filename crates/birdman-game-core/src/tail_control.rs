@@ -95,12 +95,135 @@ impl TailRateTarget {
     }
 }
 
-/// Software-only q/r feedback gains and shared tail slew bound, separate from airframe data.
+/// Synthetic datum-alpha preview policy for constraining elevator and pilot-position targets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TailAngleOfAttackGuard {
+    alpha_interval_rad: [f64; 2],
+    trim_alpha_rad: f64,
+    preview_seconds: f64,
+    pitch_gain_seconds: f64,
+}
+
+impl TailAngleOfAttackGuard {
+    /// Validates an inner alpha band, interior trim alpha, positive preview and recovery gain.
+    pub fn try_new(
+        alpha_interval_rad: [f64; 2],
+        trim_alpha_rad: f64,
+        preview_seconds: f64,
+        pitch_gain_seconds: f64,
+    ) -> Result<Self, ActuatorError> {
+        if !alpha_interval_rad
+            .into_iter()
+            .chain([trim_alpha_rad, preview_seconds, pitch_gain_seconds])
+            .all(f64::is_finite)
+        {
+            return Err(ActuatorError::NonFinite);
+        }
+        if alpha_interval_rad[0] >= alpha_interval_rad[1]
+            || alpha_interval_rad[0] <= -INCIDENCE_LIMIT_RAD
+            || alpha_interval_rad[1] >= INCIDENCE_LIMIT_RAD
+            || trim_alpha_rad <= alpha_interval_rad[0]
+            || trim_alpha_rad >= alpha_interval_rad[1]
+            || preview_seconds <= 0.0
+            || pitch_gain_seconds <= 0.0
+        {
+            return Err(ActuatorError::InvalidLimit);
+        }
+        Ok(Self {
+            alpha_interval_rad,
+            trim_alpha_rad,
+            preview_seconds,
+            pitch_gain_seconds,
+        })
+    }
+
+    /// Returns the software operating alpha band in radians, not the polar domain.
+    pub const fn alpha_interval_rad(self) -> [f64; 2] {
+        self.alpha_interval_rad
+    }
+
+    /// Returns the initial trim datum alpha used to distinguish opposing pilot-position biases.
+    pub const fn trim_alpha_rad(self) -> f64 {
+        self.trim_alpha_rad
+    }
+
+    /// Returns the body-rate preview horizon in seconds.
+    pub const fn preview_seconds(self) -> f64 {
+        self.preview_seconds
+    }
+
+    /// Returns the observed-minus-allowed-q recovery gain in seconds.
+    pub const fn pitch_gain_seconds(self) -> f64 {
+        self.pitch_gain_seconds
+    }
+
+    fn project_target(
+        self,
+        requested: TailIncidence,
+        datum_alpha_rad: f64,
+        observed_pitch_rad_per_second: f64,
+    ) -> Result<TailIncidence, HybridError> {
+        let lower_rate = (self.alpha_interval_rad[0] - datum_alpha_rad) / self.preview_seconds;
+        let upper_rate = (self.alpha_interval_rad[1] - datum_alpha_rad) / self.preview_seconds;
+        let lower_elevator = saturated_rate_command(
+            self.pitch_gain_seconds,
+            INCIDENCE_LIMIT_RAD,
+            observed_pitch_rad_per_second,
+            upper_rate,
+        );
+        let upper_elevator = saturated_rate_command(
+            self.pitch_gain_seconds,
+            INCIDENCE_LIMIT_RAD,
+            observed_pitch_rad_per_second,
+            lower_rate,
+        );
+        TailIncidence::try_new(
+            requested
+                .elevator_rad()
+                .clamp(lower_elevator, upper_elevator),
+            requested.rudder_rad(),
+        )
+    }
+
+    pub(crate) fn project_pilot_position(
+        self,
+        requested_position_m: f64,
+        trim_position_m: f64,
+        datum_alpha_rad: f64,
+        observed_pitch_rad_per_second: f64,
+    ) -> f64 {
+        let retained_fraction = if requested_position_m < trim_position_m {
+            let risk_alpha =
+                datum_alpha_rad + self.preview_seconds * observed_pitch_rad_per_second.max(0.0);
+            let onset_alpha = 0.5 * self.trim_alpha_rad + 0.5 * self.alpha_interval_rad[1];
+            ((self.alpha_interval_rad[1] - risk_alpha) / (self.alpha_interval_rad[1] - onset_alpha))
+                .clamp(0.0, 1.0)
+        } else if requested_position_m > trim_position_m {
+            let risk_alpha =
+                datum_alpha_rad + self.preview_seconds * observed_pitch_rad_per_second.min(0.0);
+            let onset_alpha = 0.5 * self.alpha_interval_rad[0] + 0.5 * self.trim_alpha_rad;
+            ((risk_alpha - self.alpha_interval_rad[0]) / (onset_alpha - self.alpha_interval_rad[0]))
+                .clamp(0.0, 1.0)
+        } else {
+            return requested_position_m;
+        };
+        if retained_fraction == 1.0 {
+            requested_position_m
+        } else if retained_fraction == 0.0 {
+            trim_position_m
+        } else {
+            trim_position_m * (1.0 - retained_fraction) + requested_position_m * retained_fraction
+        }
+    }
+}
+
+/// Software-only q/r feedback, optional alpha guard and tail slew, separate from airframe data.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailControlProfile {
     pitch_gain_seconds: f64,
     yaw_gain_seconds: f64,
     actuator: ActuatorConfig,
+    angle_of_attack_guard: Option<TailAngleOfAttackGuard>,
 }
 
 impl TailControlProfile {
@@ -120,6 +243,7 @@ impl TailControlProfile {
             pitch_gain_seconds,
             yaw_gain_seconds,
             actuator: ActuatorConfig::try_new(INCIDENCE_LIMIT_RAD, maximum_slew_rad_per_second)?,
+            angle_of_attack_guard: None,
         })
     }
 
@@ -131,6 +255,17 @@ impl TailControlProfile {
     /// Returns the software effective-incidence slew limit in rad/s.
     pub const fn maximum_slew_rad_per_second(self) -> f64 {
         self.actuator.maximum_rate_rad_per_second()
+    }
+
+    /// Enables a datum-alpha target projection in the sealed flight-tick pipeline.
+    pub const fn with_angle_of_attack_guard(mut self, guard: TailAngleOfAttackGuard) -> Self {
+        self.angle_of_attack_guard = Some(guard);
+        self
+    }
+
+    /// Returns the optional datum-alpha target policy; the original constructor disables it.
+    pub const fn angle_of_attack_guard(self) -> Option<TailAngleOfAttackGuard> {
+        self.angle_of_attack_guard
     }
 }
 
@@ -206,7 +341,9 @@ impl TailControlUpdate {
     }
 }
 
-/// Mixes manual/FBW incidence, saturates, then applies software slew atomically.
+/// Mixes manual/FBW incidence, saturates, then applies software slew without flow context.
+///
+/// The optional datum-alpha guard is applied by the sealed flight-tick pipeline.
 pub fn advance_tail_control(
     previous: TailIncidence,
     profile: TailControlProfile,
@@ -215,6 +352,32 @@ pub fn advance_tail_control(
     target: TailRateTarget,
     observed_body_rate: BodyVector,
     timestep_seconds: f64,
+) -> Result<TailControlUpdate, TailControlError> {
+    advance_tail_control_at_alpha(
+        previous,
+        profile,
+        mode,
+        pilot,
+        target,
+        observed_body_rate,
+        timestep_seconds,
+        None,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The sealed tick supplies datum alpha in addition to the existing control inputs"
+)]
+pub(crate) fn advance_tail_control_at_alpha(
+    previous: TailIncidence,
+    profile: TailControlProfile,
+    mode: ControlMode,
+    pilot: TailPilotIntent,
+    target: TailRateTarget,
+    observed_body_rate: BodyVector,
+    timestep_seconds: f64,
+    datum_alpha_rad: Option<f64>,
 ) -> Result<TailControlUpdate, TailControlError> {
     if !timestep_seconds.is_finite() || timestep_seconds <= 0.0 {
         return Err(TailControlError::Actuator(ActuatorError::InvalidTimeStep));
@@ -238,6 +401,14 @@ pub fn advance_tail_control(
         blend(manual.rudder_rad(), feedback.rudder_rad()),
     )
     .map_err(TailControlError::Incidence)?;
+    let projected_target =
+        if let Some((guard, alpha)) = profile.angle_of_attack_guard.zip(datum_alpha_rad) {
+            guard
+                .project_target(mixed_target, alpha, observed_body_rate.components()[1])
+                .map_err(TailControlError::Incidence)?
+        } else {
+            mixed_target
+        };
     let maximum_step = profile.maximum_slew_rad_per_second() * timestep_seconds;
     let advance = |current: f64, target: f64| {
         let difference = target - current;
@@ -248,8 +419,8 @@ pub fn advance_tail_control(
         }
     };
     let incidence = TailIncidence::try_new(
-        advance(previous.elevator_rad(), mixed_target.elevator_rad()),
-        advance(previous.rudder_rad(), mixed_target.rudder_rad()),
+        advance(previous.elevator_rad(), projected_target.elevator_rad()),
+        advance(previous.rudder_rad(), projected_target.rudder_rad()),
     )
     .map_err(TailControlError::Incidence)?;
     Ok(TailControlUpdate {

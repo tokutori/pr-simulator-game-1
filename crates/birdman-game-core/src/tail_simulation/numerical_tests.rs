@@ -2,6 +2,7 @@ use super::*;
 use crate::{
     BodyVector, FbwAuthority, HybridMockConfiguration, HybridMockDefinition, HybridMockTrim,
     HybridModel, NedPoint, NedVector, TailPilotPositionIntent, UnitQuaternion, WindField,
+    advance_tail_control,
 };
 
 mod wind_tests;

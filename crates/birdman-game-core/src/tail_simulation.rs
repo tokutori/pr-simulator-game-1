@@ -10,7 +10,8 @@ use crate::dynamics::{
 use crate::flight_control::ControlMode;
 use crate::tail_control::{
     TailControlCommands, TailControlError, TailControlProfile, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionMapping, TailRateTarget, advance_tail_control,
+    TailPilotPositionCommand, TailPilotPositionMapping, TailRateTarget,
+    advance_tail_control_at_alpha,
 };
 
 /// One immutable integer-tick state with exactly two held physical tail incidences.
@@ -438,7 +439,12 @@ fn evaluate_tail_flight_tick(
         .tick_index
         .checked_add(1)
         .ok_or(TailFlightTickError::TickOverflow)?;
-    let control = advance_tail_control(
+    let datum_alpha_rad = if config.profile.angle_of_attack_guard().is_some() {
+        datum_alpha_for_guard(previous.flight_state, loads)
+    } else {
+        None
+    };
+    let control = advance_tail_control_at_alpha(
         previous.incidence,
         config.profile,
         config.mode,
@@ -446,9 +452,10 @@ fn evaluate_tail_flight_tick(
         input.desired_rate,
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        datum_alpha_rad,
     )
     .map_err(TailFlightTickError::Control)?;
-    let pilot_position_target = config
+    let requested_pilot_position_target = config
         .pilot_mapping
         .resolve(
             aircraft,
@@ -456,6 +463,21 @@ fn evaluate_tail_flight_tick(
             input.pilot_position,
         )
         .map_err(TailFlightTickError::Dynamics)?;
+    let pilot_position_target =
+        if let Some((guard, alpha)) = config.profile.angle_of_attack_guard().zip(datum_alpha_rad) {
+            PilotPositionTarget::try_new(
+                aircraft,
+                guard.project_pilot_position(
+                    requested_pilot_position_target.position_m(),
+                    config.pilot_mapping.trim_target().position_m(),
+                    alpha,
+                    previous.flight_state.angular_velocity_body().components()[1],
+                ),
+            )
+            .map_err(TailFlightTickError::Dynamics)?
+        } else {
+            requested_pilot_position_target
+        };
     let pilot_acceleration = pilot_target_acceleration(
         aircraft,
         &previous.flight_state,
@@ -490,6 +512,21 @@ fn evaluate_tail_flight_tick(
         },
         contact: outcome.contact,
     })
+}
+
+fn datum_alpha_for_guard(state: FlightState, loads: &HybridAerodynamicLoad<'_>) -> Option<f64> {
+    let wind = loads.wind_velocity_at(state.datum_position_ned()).ok()?;
+    let velocity = state
+        .datum_velocity_ned()
+        .minus(wind)
+        .and_then(|relative| state.attitude_body_to_ned().ned_to_body(relative))
+        .ok()?;
+    let [forward, _, down] = velocity.components();
+    if forward == 0.0 && down == 0.0 {
+        None
+    } else {
+        Some(libm::atan2(down, forward))
+    }
 }
 
 /// Applies the same shared contact geometry and slerp as the legacy tick without legacy axes.

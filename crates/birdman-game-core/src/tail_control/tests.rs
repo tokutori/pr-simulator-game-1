@@ -5,6 +5,189 @@ fn profile() -> TailControlProfile {
     TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap()
 }
 
+fn guarded_profile() -> TailControlProfile {
+    profile().with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    )
+}
+
+#[test]
+fn alpha_guard_validates_finite_inner_band_trim_preview_and_gain() {
+    assert_eq!(profile().angle_of_attack_guard(), None);
+    let guard = guarded_profile().angle_of_attack_guard().unwrap();
+    assert_eq!(guard.alpha_interval_rad(), [-0.09, 0.09]);
+    assert_eq!(guard.trim_alpha_rad(), 0.04);
+    assert_eq!(guard.preview_seconds(), 1.0);
+    assert_eq!(guard.pitch_gain_seconds(), 1.6);
+    for (interval, trim, preview, gain) in [
+        ([0.09, -0.09], 0.04, 1.0, 1.6),
+        ([-0.09, -0.09], 0.04, 1.0, 1.6),
+        ([-0.2, 0.09], 0.04, 1.0, 1.6),
+        ([-0.09, 0.2], 0.04, 1.0, 1.6),
+        ([-0.09, 0.09], -0.09, 1.0, 1.6),
+        ([-0.09, 0.09], 0.09, 1.0, 1.6),
+        ([-0.09, 0.09], 0.04, 0.0, 1.6),
+        ([-0.09, 0.09], 0.04, 1.0, 0.0),
+    ] {
+        assert_eq!(
+            TailAngleOfAttackGuard::try_new(interval, trim, preview, gain),
+            Err(ActuatorError::InvalidLimit)
+        );
+    }
+    for nonfinite in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for (interval, trim, preview, gain) in [
+            ([nonfinite, 0.09], 0.04, 1.0, 1.6),
+            ([-0.09, nonfinite], 0.04, 1.0, 1.6),
+            ([-0.09, 0.09], nonfinite, 1.0, 1.6),
+            ([-0.09, 0.09], 0.04, nonfinite, 1.6),
+            ([-0.09, 0.09], 0.04, 1.0, nonfinite),
+        ] {
+            assert_eq!(
+                TailAngleOfAttackGuard::try_new(interval, trim, preview, gain),
+                Err(ActuatorError::NonFinite)
+            );
+        }
+    }
+}
+
+#[test]
+fn alpha_guard_projects_both_pitch_signs_in_every_mode_without_changing_requests_yaw_or_slew() {
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        for sign in [-1.0, 1.0] {
+            let previous = TailIncidence::try_new(0.0, 0.03).unwrap();
+            let pilot = TailPilotIntent::try_new(sign, 0.6).unwrap();
+            let desired = target(sign * 0.2, 0.12);
+            let rate = observed(0.0, sign * 0.15, 0.0);
+            let nominal =
+                advance_tail_control(previous, profile(), mode, pilot, desired, rate, 0.01)
+                    .unwrap();
+            let guarded = advance_tail_control_at_alpha(
+                previous,
+                guarded_profile(),
+                mode,
+                pilot,
+                desired,
+                rate,
+                0.01,
+                Some(sign * 0.08),
+            )
+            .unwrap();
+            assert_eq!(guarded.commands(), nominal.commands());
+            assert_eq!(guarded.mixed_target(), nominal.mixed_target());
+            assert_eq!(guarded.incidence().elevator_rad(), sign * 0.01);
+            assert_eq!(
+                guarded.incidence().rudder_rad(),
+                nominal.incidence().rudder_rad()
+            );
+            assert!((guarded.incidence().elevator_rad() - previous.elevator_rad()).abs() <= 0.01);
+        }
+    }
+}
+
+#[test]
+fn alpha_guard_keeps_disabled_undefined_and_unrestricted_controls_identical() {
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        let pilot = TailPilotIntent::try_new(0.05, -0.6).unwrap();
+        let desired = target(0.01, -0.12);
+        let nominal = advance_tail_control(
+            TailIncidence::neutral(),
+            profile(),
+            mode,
+            pilot,
+            desired,
+            BodyVector::zero(),
+            0.01,
+        )
+        .unwrap();
+        for (selected, alpha) in [
+            (profile(), Some(0.19)),
+            (guarded_profile(), None),
+            (guarded_profile(), Some(0.04)),
+        ] {
+            assert_eq!(
+                advance_tail_control_at_alpha(
+                    TailIncidence::neutral(),
+                    selected,
+                    mode,
+                    pilot,
+                    desired,
+                    BodyVector::zero(),
+                    0.01,
+                    alpha
+                )
+                .unwrap(),
+                nominal
+            );
+        }
+    }
+    for sign in [-1.0, 1.0] {
+        let update = advance_tail_control_at_alpha(
+            TailIncidence::neutral(),
+            guarded_profile(),
+            ControlMode::Manual,
+            TailPilotIntent::try_new(sign, 0.0).unwrap(),
+            target(sign * 0.2, 0.0),
+            BodyVector::zero(),
+            0.01,
+            Some(sign * 0.09),
+        )
+        .unwrap();
+        assert_eq!(update.incidence().elevator_rad(), 0.0);
+    }
+}
+
+#[test]
+fn pilot_guard_continuously_reduces_only_the_trim_relative_dangerous_bias() {
+    let guard = guarded_profile().angle_of_attack_guard().unwrap();
+    let trim_position = 0.02;
+    assert_eq!(
+        guard.project_pilot_position(-0.4, trim_position, 0.04, 0.0),
+        -0.4
+    );
+    assert_eq!(
+        guard.project_pilot_position(0.4, trim_position, 0.04, 0.0),
+        0.4
+    );
+    for risk in [0.0775, 0.04] {
+        let pitch_rate = if risk == 0.04 { 0.0375 } else { 0.0 };
+        assert!(
+            (guard.project_pilot_position(-0.4, trim_position, risk, pitch_rate) + 0.19).abs()
+                < 1.0e-14
+        );
+        assert_eq!(
+            guard.project_pilot_position(0.4, trim_position, risk, pitch_rate),
+            0.4
+        );
+    }
+    assert!(
+        (guard.project_pilot_position(0.4, trim_position, -0.0575, 0.0) - 0.21).abs() < 1.0e-14
+    );
+    assert_eq!(
+        guard.project_pilot_position(-0.4, trim_position, -0.0575, 0.0),
+        -0.4
+    );
+    assert_eq!(
+        guard.project_pilot_position(-0.4, trim_position, 0.09, -0.1),
+        trim_position
+    );
+    assert_eq!(
+        guard.project_pilot_position(0.4, trim_position, -0.09, 0.1),
+        trim_position
+    );
+    assert_eq!(
+        guard.project_pilot_position(trim_position, trim_position, 0.18, 0.2),
+        trim_position
+    );
+}
+
 fn target(pitch: f64, yaw: f64) -> TailRateTarget {
     TailRateTarget::try_new(pitch, yaw).unwrap()
 }

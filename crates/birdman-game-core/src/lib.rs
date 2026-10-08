@@ -83,9 +83,9 @@ pub use simulation::{
 };
 pub use synthetic_flight::{SyntheticFlight, SyntheticFlightError, SyntheticPlayableFlight};
 pub use tail_control::{
-    TailControlCommands, TailControlError, TailControlProfile, TailControlUpdate, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
-    advance_tail_control, tail_rate_feedback_incidence,
+    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlProfile,
+    TailControlUpdate, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailPilotPositionMapping, TailRateTarget, advance_tail_control, tail_rate_feedback_incidence,
 };
 pub use tail_scenario::{
     TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,
