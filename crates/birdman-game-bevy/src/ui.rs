@@ -6,7 +6,7 @@ use super::{
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    ecs::hierarchy::ChildSpawnerCommands,
+    ecs::{hierarchy::ChildSpawnerCommands, system::SystemParam},
     input::mouse::MouseScrollUnit,
     input_focus::{FocusCause, InputFocus},
     prelude::*,
@@ -61,6 +61,32 @@ struct UiLayoutRoot;
 #[derive(Resource, Default)]
 pub(crate) struct TechnicalDisclosure {
     expanded: bool,
+}
+
+#[derive(SystemParam)]
+pub(crate) struct UiViewQueries<'w, 's> {
+    buttons: Query<
+        'w,
+        's,
+        (
+            &'static MenuButton,
+            &'static Interaction,
+            &'static mut Node,
+            &'static mut BackgroundColor,
+            &'static mut BorderColor,
+        ),
+    >,
+    panels: Query<
+        'w,
+        's,
+        (
+            &'static UiPanel,
+            &'static mut Node,
+            &'static mut ScrollPosition,
+        ),
+        Without<MenuButton>,
+    >,
+    text: Query<'w, 's, (&'static UiText, &'static mut Text)>,
 }
 
 impl TechnicalDisclosure {
@@ -709,15 +735,7 @@ pub(crate) fn update_ui(
     camera: Res<CameraMode>,
     mut disclosure: ResMut<TechnicalDisclosure>,
     mut previous_phase: Local<Option<SessionPhase>>,
-    mut buttons: Query<(
-        &MenuButton,
-        &Interaction,
-        &mut Node,
-        &mut BackgroundColor,
-        &mut BorderColor,
-    )>,
-    mut panels: Query<(&UiPanel, &mut Node, &mut ScrollPosition), Without<MenuButton>>,
-    mut text: Query<(&UiText, &mut Text)>,
+    mut view: UiViewQueries,
     frame_rate: Option<Res<FrameRate>>,
 ) {
     let snapshot = session.game.snapshot();
@@ -737,7 +755,7 @@ pub(crate) fn update_ui(
         session.notice.as_deref(),
     );
     let details_open = disclosure.is_expanded() && !details.is_empty();
-    for (button, interaction, mut node, mut background, mut border) in &mut buttons {
+    for (button, interaction, mut node, mut background, mut border) in &mut view.buttons {
         let visible = match button.0 {
             UiAction::Session(action) => visible_action(phase, action),
             UiAction::TechnicalDetails => !details.is_empty(),
@@ -757,7 +775,7 @@ pub(crate) fn update_ui(
         *background = BackgroundColor(background_color);
         *border = BorderColor::all(border_color);
     }
-    for (panel, mut node, mut position) in &mut panels {
+    for (panel, mut node, mut position) in &mut view.panels {
         let visible = match panel {
             UiPanel::SessionContent | UiPanel::Navigation => true,
             UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
@@ -864,7 +882,7 @@ pub(crate) fn update_ui(
             _ => {}
         }
     }
-    for (kind, mut value) in &mut text {
+    for (kind, mut value) in &mut view.text {
         let label: Cow<'_, str> = match kind {
             UiText::PreparationSteps => {
                 Cow::Borrowed(preparation_progress(phase).unwrap_or_default())
