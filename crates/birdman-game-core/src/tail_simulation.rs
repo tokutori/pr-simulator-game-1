@@ -399,3 +399,6 @@ pub fn advance_tail_flight_tick_with_contact_report(
     };
     Ok(TailFlightTickReport { result })
 }
+
+#[cfg(test)]
+mod numerical_tests;

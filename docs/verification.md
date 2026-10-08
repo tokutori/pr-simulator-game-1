@@ -44,6 +44,64 @@ Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境�
 CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
 実ブラウザー/GPU・実端末の受入は未検証であり、新mockの飛距離・長時間安定性・実機性能を実証済みと扱わない。
 
+### BPG-043 hybrid量別step-halving
+
+`tail_simulation::numerical_tests`はStandard架空mockの同一初期条件・入力列を、
+100/200/400 Hzのtest-only driverで比較する。製品tick・機体値・公開APIは100 Hzのまま維持する。
+既存のtrim参照値・決定性・解析解試験は再実装しない。
+
+- 演算はf64、無風、密度1.225 kg/m³、重力9.80665 m/s²、初速9.7 m/sとする。
+  seed・乱数・browser clockは使用しない。Standard trimの合成CG高度50 mから開始し、
+  body rateだけを$(p,q,r)=(0.02,-0.04,0.03)$ rad/sへ変更する。
+  controllerはq/r gain各0.2 s・slew 1 rad/s、modeはManual/Shared(0.5)/Automaticを別に検査する。
+  初期incidenceは各modeの初期rateに対応するcommandへ事前設定し、開始時のslew過渡を分離する。
+- 比較区間は0.5 s、観測は共通100 Hzの51標本とする。Neutral/SmoothChanged/SlewReversalを別に検査する。
+  変更列は0.10–0.20 sにmanual intent$(0.01,0.005)$・q/r demand$(0.01,-0.005)$ rad/s、
+  0.20–0.30 sに両者の符号反転、それ以外は0とする。0.30 sに身体targetへnormalized Set(0.2)を送信し、
+  それ以外はHoldを使用する。すべてのdriverが同じ100 Hzの物理時刻入力を保持する。
+  SmoothChangedだけは0.20–0.21 sにneutralを挟む。Neutral/SmoothChangedでは全control stepの
+  updated incidenceとmixed targetが一致することを検査し、slew非作動を確認する。
+  SlewReversalは元の直接反転を保持する。Manualの4 mrad反転は400 Hzのslew上限2.5 mradを超えるため、
+  100/200 Hzでは非作動・400 Hzでは作動することも検査する。
+- **physics-only**はFBW観測・authority・incidence更新・pilot policyを100 Hzに固定する。
+  各0.01 s区間で一度解決したincidence・pilot加速度を、1/2/4個のRK4区間へ同じ値で保持する。
+  **連成**は同じ入力を保持したまま、control・actuator・pilot policyも100/200/400 Hzへ変更する。
+  両者の結果・許容差を個別に判定する。100 Hz driverの全標本は既存製品tickと完全一致させる。
+- 全RK4 load評価に既存hybrid validatorを適用し、datum alphaがPWLの開区間$(0,0.06)$ radにあり、
+  datum down座標が−40 mより小さいことも検査する。この高度は半径10 m以内のmock geometryを
+  静水面から分離する。接触前の区間だけを比較し、範囲外の外挿・contact time/scoreの生成は行わない。
+
+誤差は共通観測時刻での各量の成分別最大絶対差を取り、さらに区間内の最大値を判定する。
+姿勢は最短quaternion符号を選び、差・和のchord長から$4\operatorname{atan2}(\|q_1-q_2\|,\|q_1+q_2\|)$を使用する。
+異なる単位を一つのmaxへ混在させず、同一姿勢・逆符号・$10^{-10}$ radの小回転を独立に検査する。
+
+以下は実行前に定める量別誤差予算であり、100/400 Hz差のCI gateである。
+400 Hzは同じ方程式の細分参照であり、厳密解に対する絶対誤差上限・実機精度の証明とは区別する。
+step-halvingで得る100/200 Hz差と200/400 Hz差の収縮も同時に要求する。
+連成SlewReversalは刻み別のslew過渡が異なるため、固定収縮率の対象から分離し、量別予算・域内・製品一致を保持する。
+physics-onlyはすべての入力系列で100 Hzのslew評価を保持し、元の収縮条件を適用する。
+滑らかな固定保持RK4の理論収縮率1/16に対してphysics-onlyは1/8を上限とする。
+連成の区間保持・離散feedbackはRK4四次の対象から分離し、一次の理論率1/2に対して3/4を上限とする。
+PWL knot・policy切替・飽和を跨ぐ一般条件へ、この収縮率を適用しない。
+
+| 量 | physics-only予算 | 連成予算 | 丸めscale |
+|---|---:|---:|---:|
+| datum位置 [m] | $10^{-6}$ | $10^{-3}$ | 50 |
+| datum速度 [m/s] | $10^{-6}$ | $10^{-3}$ | 10 |
+| 姿勢距離 [rad] | $10^{-7}$ | $10^{-4}$ | 1 |
+| body rate [rad/s] | $10^{-6}$ | $10^{-3}$ | 0.1 |
+| pilot位置 [m] | $10^{-10}$ | $10^{-10}$ | 0.1 |
+| pilot速度 [m/s] | $10^{-10}$ | $10^{-10}$ | 0.3 |
+| physical incidence [rad] | $10^{-7}$ | $5\times10^{-4}$ | 0.01 |
+
+収縮判定は$D_{200,400}\le cD_{100,200}+4096\epsilon s$とし、$s$は表の量別scale、
+$\epsilon$はf64 epsilonとする。4096は400 Hz系列の200 step・RK4 stage等の累積丸めへの
+事前余裕であり、厳密な丸め誤差上限とは区別する。床以下の量は刻み差の検出限界だけを示す。
+静止pilotや解析的な保持加速度の系列で、収縮の次数を実証したと扱わない。
+許容差を観測結果へ事後fitせず、超過は試験条件・支配誤差の調査対象とする。
+この単位の検査結果は実行時のcommit・toolchain・環境とともに報告する。
+Jacobian/eigen・小摂動時系列・event精度・wind・適用限界近傍の比較はFの後続単位である。
+
 ### BPG-002 core検証
 
 `birdman-game-core`のunit testsは解析解または運動量不変量を期待値に使用する。
