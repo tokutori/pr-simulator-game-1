@@ -110,3 +110,25 @@ cargo test -p birdman-game-core --test hybrid_linearization --locked -- --nocapt
 両modeに局所的な増大が残る。Automaticを安定化済みとは扱わない。
 ここで照合したものは零風・stationary pilot・接触前0.5 sの局所離散mapである。
 native/WASM一致、非線形大擾乱、長時間安定性、実browser/GPU/実機はこの観測の範囲に含まれない。
+
+## 表示条件の物理不変回帰
+
+`tools/game-check/tail-display-invariants.test.ts`は同じ生成WASM実装の公開既定Playable/model 2・controller 3を使う。
+VersionOneの上記Jacobian・固有値・刻み幅精度と、新Playableの入力列成立率の受入を置き換えない。
+Manual/Shared/Automaticごとにmodel・Typical環境・seed・初期stateを固定し、Information 5種と
+Screen/合成WebXR/合成Phone VR、30/60/120 FPSの135条件を比較する。
+実`TailFlightController`と`PresentationRuntime`を通し、空間backendとrendererは型付きmockである。
+
+入力は100 Hzの区間開始時の直前成功tick番号で定義し、tick 20–39にnose-up/right intent `(0.03, -0.02)`、
+tick 40–59に逆符号、tick 60にpilot normalized Set(0.05)、それ以外はneutral/Holdを与える。
+全条件を100tick・1秒で同じManualAbortへ確定する。render frame時刻を入力の時刻へ転用しない。
+初期identity/state、全成功tickのstate・physical incidence・telemetry、実入力列、終端state、
+保存sample全文とnamed query列・finalization、最終render poseを同modeの基準と直接比較する。
+同一生成WASM内の同じ演算列には数値許容差を追加せず、差を検出する。
+Information/difficultyとPB metadataを物理列から分離し、ManualAbortではPB keyがないことも確認する。
+適格なWaterContactのInformation別PB key生成は、この回帰の対象外である。
+
+Windows 11・Node.js 24.14.1・Vitest 5.0.2で135条件が成功した。検査基底は
+`f3f39e5006cd082cdb3e49d6fa786d540126ab36`であり、追加した回帰sourceと同基底の生成WASMを使用した。
+tools typecheckと対象eslintも成功した。CIと全Web検査はPRで別途確認する。
+native/WASM間のbitwise一致、自然着水、長時間安定性、実browser/GPU・実XR・実端末受入を示さない。

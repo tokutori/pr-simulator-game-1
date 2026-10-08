@@ -114,7 +114,7 @@ wind・適用限界近傍は[風とdomain検証](hybrid-wind-domain-validation.m
 
 [#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)の9.1–9.4を次の8群で追跡する。
 許容差・演算条件は各契約文書と試験定数を正本とし、以下のnative検査はWindows/Rust 1.97.0である。
-CIは各PRのexact headで判定する。windの最終CI確認待ちを検査成功へ含めない。
+CIは各PRのexact headで判定する。風・domain検査はPR #253で統合し、同sourceを含むPR #269のUbuntu・Windows検査も成功した。
 
 | 指示・契約群 | 既存試験群と条件 | PR・commit | 結果・範囲 |
 |---|---|---|---|
@@ -124,8 +124,14 @@ CIは各PRのexact headで判定する。windの最終CI確認待ちを検査成
 | 9.3 F 刻み・量別精度 | `tail_simulation::numerical_tests`のphysics-only/連成、3mode、Neutral/SmoothChanged/SlewReversal | [#249](https://github.com/tokutori/pr-simulator-game-1/pull/249) / `cfab952` | core273＋doc4、両OS CI成功。量別予算・丸めfloor・slew例外を分離する |
 | 9.3 F 局所応答 | `hybrid_linearization`のcentral Jacobian/固有値・小摂動、零風・静止pilot・接触前0.5 s | [#250](https://github.com/tokutori/pr-simulator-game-1/pull/250) / `9f87046` | 2試験/checker24、両OS CI成功。Manual/Automaticとも局所growingが3個残る |
 | 9.3 F event | `contact::tests::numerical`のballistic解析endpointと実RK4、4phase×100/200/400 Hz | [#251](https://github.com/tokutori/pr-simulator-game-1/pull/251) / `e406801` | 2試験・両OS CI成功。O(dt²)補間上限と積分丸めを分離し、hybrid着水へ転用しない |
-| 9.3–9.4 F 風・domain | `numerical_tests::wind_tests`の一様風/shear/上限近傍、全mode量別gate・境界外原子性 | `945ed389` | 固定・独立review済み、最終CI確認待ち。全風領域・長時間安定性は対象外 |
+| 9.3–9.4 F 風・domain | `numerical_tests::wind_tests`の一様風/shear/上限近傍、全mode量別gate・境界外原子性 | [#253](https://github.com/tokutori/pr-simulator-game-1/pull/253) / `945ed389`、[#269](https://github.com/tokutori/pr-simulator-game-1/pull/269) / `f3f39e5` | merge済み・両OS検査成功。全風領域・長時間安定性は対象外 |
 | 9.4 B/C/E 範囲外・公開 | `hybrid::tests::envelope`の全stage/零速、`tail_control::tests`/`tail_tick`、`session-facade`/`named-record`/`main-tail-integration` | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#227](https://github.com/tokutori/pr-simulator-game-1/pull/227)、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | software・上記限定Screen受入成功。旧archiveを保存layoutで閲覧し、VR・実端末の未検証範囲を保持する |
+
+表示条件の物理不変は`tail-display-invariants.test.ts`で追加検査する。既存FPS回帰のtick数に加え、
+同一生成WASM・同mode・同じ物理時刻入力・100tick ManualAbortについて、Information 5種、
+3backendと30/60/120 FPS間の全成功state/controls/telemetry・保存sample・finalizationを直接比較する。
+difficulty/PB metadataは物理列から分離する。条件と境界は[局所離散線形化の関連回帰](hybrid-numerical-validation.md)に記載する。
+Windows 11の対象typecheck・eslintと135条件が成功した。合成空間backendの結果は実XR受入と区別する。
 
 ### BPG-002 core検証
 
