@@ -9,6 +9,10 @@ use bevy::{
     asset::RenderAssetUsages, core_pipeline::tonemapping::Tonemapping, mesh::Indices, prelude::*,
     render::render_resource::PrimitiveTopology,
 };
+use birdman_game_core::{
+    HybridMockConfiguration, HybridMockDefinition, HybridSection, HybridSurfaceGeometry,
+    HybridSurfaceRole,
+};
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
 
@@ -208,6 +212,46 @@ fn platform_transform(platform: &LaunchPlatform, thickness: f32) -> Transform {
         .with_rotation(rotation)
 }
 
+struct TailSurfaceProjection {
+    transform: Transform,
+    vertices: [[f32; 3]; 4],
+}
+
+fn project_tail_surface(
+    geometry: HybridSurfaceGeometry<'_>,
+) -> Result<TailSurfaceProjection, &'static str> {
+    if geometry.role() == HybridSurfaceRole::MainWing {
+        return Err("尾翼表示には尾翼geometryが必要");
+    }
+    let [first, last] = geometry.sections() else {
+        return Err("登録尾翼表示には2つのsectionが必要");
+    };
+    let first_point = first.quarter_chord().components();
+    let last_point = last.quarter_chord().components();
+    let center = [
+        (first_point[0] + last_point[0]) / 2.0,
+        (first_point[1] + last_point[1]) / 2.0,
+        (first_point[2] + last_point[2]) / 2.0,
+    ];
+    let vertex = |section: HybridSection, chord_fraction: f64| {
+        let point = section.quarter_chord().components();
+        [
+            (point[1] - center[1]) as f32,
+            (center[2] - point[2]) as f32,
+            (center[0] - point[0] + chord_fraction * section.chord_m()) as f32,
+        ]
+    };
+    Ok(TailSurfaceProjection {
+        transform: Transform::from_xyz(center[1] as f32, -center[2] as f32, -center[0] as f32),
+        vertices: [
+            vertex(*first, -0.25),
+            vertex(*last, -0.25),
+            vertex(*last, 0.75),
+            vertex(*first, 0.75),
+        ],
+    })
+}
+
 pub(crate) fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -294,6 +338,19 @@ pub(crate) fn setup_world(
         ..default()
     });
     let frame = materials.add(Color::srgb(0.13, 0.15, 0.18));
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable)
+        .expect("登録機体geometryが不正");
+    let surfaces = definition.surfaces().expect("登録surface geometryが不正");
+    let tail_projection = |role| {
+        let geometry = surfaces
+            .iter()
+            .find(|surface| surface.geometry().role() == role)
+            .expect("登録尾翼geometryがない")
+            .geometry();
+        project_tail_surface(geometry).expect("登録尾翼表示geometryが不正")
+    };
+    let horizontal_tail = tail_projection(HybridSurfaceRole::HorizontalTail);
+    let vertical_tail = tail_projection(HybridSurfaceRole::VerticalTail);
     commands
         .spawn((
             WorldProjection::Aircraft,
@@ -333,39 +390,27 @@ pub(crate) fn setup_world(
                     Transform::IDENTITY,
                 ));
             }
-            let tail_chord = 2.5 / 3.4;
             parent
                 .spawn((
                     WorldProjection::HorizontalTail,
-                    Transform::from_xyz(0.0, -0.1, 1.8),
+                    horizontal_tail.transform,
                     Visibility::Visible,
                 ))
                 .with_children(|tail| {
                     tail.spawn((
-                        Mesh3d(meshes.add(rectangular_surface([
-                            [-1.7, 0.0, -tail_chord / 4.0],
-                            [1.7, 0.0, -tail_chord / 4.0],
-                            [1.7, 0.0, tail_chord * 0.75],
-                            [-1.7, 0.0, tail_chord * 0.75],
-                        ]))),
+                        Mesh3d(meshes.add(rectangular_surface(horizontal_tail.vertices))),
                         MeshMaterial3d(white.clone()),
                     ));
                 });
-            let fin_chord = 0.5 / 0.7;
             parent
                 .spawn((
                     WorldProjection::VerticalTail,
-                    Transform::from_xyz(0.0, 0.1, 1.8),
+                    vertical_tail.transform,
                     Visibility::Visible,
                 ))
                 .with_children(|tail| {
                     tail.spawn((
-                        Mesh3d(meshes.add(rectangular_surface([
-                            [0.0, -0.35, -fin_chord / 4.0],
-                            [0.0, 0.35, -fin_chord / 4.0],
-                            [0.0, 0.35, fin_chord * 0.75],
-                            [0.0, -0.35, fin_chord * 0.75],
-                        ]))),
+                        Mesh3d(meshes.add(rectangular_surface(vertical_tail.vertices))),
                         MeshMaterial3d(white),
                     ));
                 });
@@ -448,6 +493,63 @@ pub(crate) fn project_world(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_tail_presentation_selects_the_shared_default_model_identity() {
+        let preparation = birdman_game_session::HybridSessionPreparation::try_default().unwrap();
+        let (configuration, record_identity) = preparation.into_parts();
+        assert_eq!(
+            configuration.identity().aircraft_model_version,
+            HybridMockConfiguration::Playable.model_version()
+        );
+        assert_eq!(
+            record_identity.aircraft_configuration_id,
+            HybridMockConfiguration::Playable.configuration_id()
+        );
+    }
+
+    #[test]
+    fn tail_surface_projection_uses_versioned_core_geometry_without_changing_incidence() {
+        for (configuration, horizontal_arm) in [
+            (HybridMockConfiguration::Standard, 1.8),
+            (HybridMockConfiguration::ZeroDihedralOracle, 1.8),
+            (HybridMockConfiguration::Playable, 3.6),
+        ] {
+            let definition = HybridMockDefinition::try_new(configuration).unwrap();
+            for surface in definition.surfaces().unwrap() {
+                let geometry = surface.geometry();
+                if geometry.role() == HybridSurfaceRole::MainWing {
+                    assert!(project_tail_surface(geometry).is_err());
+                    continue;
+                }
+                let projected = project_tail_surface(geometry).unwrap();
+                let expected = match geometry.role() {
+                    HybridSurfaceRole::HorizontalTail => Vec3::new(0.0, -0.1, horizontal_arm),
+                    HybridSurfaceRole::VerticalTail => Vec3::new(0.0, 0.1, 1.8),
+                    HybridSurfaceRole::MainWing => unreachable!(),
+                };
+                assert!(projected.transform.translation.distance(expected) < 1.0e-6);
+                assert_eq!(projected.transform.rotation, Quat::IDENTITY);
+                for (section_index, leading_index, trailing_index) in [(0, 0, 3), (1, 1, 2)] {
+                    let section = geometry.sections()[section_index];
+                    let point = section.quarter_chord().components();
+                    for (vertex_index, chord_fraction) in
+                        [(leading_index, -0.25), (trailing_index, 0.75)]
+                    {
+                        let expected = Vec3::new(
+                            point[1] as f32,
+                            -point[2] as f32,
+                            (-point[0] + chord_fraction * section.chord_m()) as f32,
+                        );
+                        let actual = projected
+                            .transform
+                            .transform_point(Vec3::from_array(projected.vertices[vertex_index]));
+                        assert!(actual.distance(expected) < 1.0e-6);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn launch_platform_front_lip_and_slope_match_the_shared_ned_venue() {
         let platform = launch_venue().unwrap().platform;

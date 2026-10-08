@@ -26,7 +26,8 @@ export interface NamedRecordSample {
 export type LegacyTerminalFinalization = Omit<TailTerminalFinalization, "failure">;
 export type RecordQueryContext =
   | Readonly<{ controlLayout: "legacy_three_axis"; finalization: LegacyTerminalFinalization }>
-  | Readonly<{ controlLayout: "tail_incidence"; finalization: TailTerminalFinalization }>;
+  | Readonly<{ controlLayout: "tail_incidence"; scenario: TailScenarioIdentity;
+      controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 interface RecordedDifficultyAxes {
   readonly preset: "beginner" | "standard" | "expert" | "realistic" | "custom";
   readonly assistance: "strong" | "assisted" | "light" | "manual";
@@ -67,8 +68,9 @@ export interface NamedPlaybackClock {
 export type NamedReplayClock = NamedPlaybackClock;
 
 export function tailResultRecordContext(snapshot: TailSessionSnapshot): RecordQueryContext {
-  if (snapshot.frame.kind !== "result") throw new RangeError("Recorded Result queries require a terminal Rust snapshot");
-  return Object.freeze({ controlLayout: "tail_incidence", finalization: snapshot.frame.finalization });
+  if (snapshot.frame.kind !== "result" || snapshot.identity.kind !== "prepared") throw new RangeError("Recorded Result queries require a terminal Rust snapshot");
+  return Object.freeze({ controlLayout: "tail_incidence", scenario: snapshot.identity.scenario,
+    controlIdentity: snapshot.identity.controls, finalization: snapshot.frame.finalization });
 }
 
 export function parseNamedReplayContext(json: string): NamedReplayContext {

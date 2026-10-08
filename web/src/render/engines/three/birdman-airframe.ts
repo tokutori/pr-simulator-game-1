@@ -17,7 +17,7 @@ import {
   UnsignedByteType,
   Vector3
 } from "three";
-import type { PhysicalFlightControls } from "../../contracts/flight-controls.js";
+import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
 
 // tokutori_2026 three-view reference: measured tip-to-tip span is 20,863 mm.
 const HALF_SPAN_METERS = 20.863 / 2;
@@ -190,12 +190,18 @@ function universityMark(onVisualReady?: () => void): CanvasTexture | null {
 
 export interface BirdmanAirframe {
   readonly root: Group;
-  setVisualState(airspeedMetersPerSecond: number | null, controls: AirframeVisualControls): void;
+  setVisualState(airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void;
   dispose(): void;
 }
 
 export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout: "absent" }>;
 export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const);
+
+function registeredHorizontalTailArmMeters(kind: string, armMeters: number): number {
+  if ((kind === "bpg041_version_one" && armMeters === 1.8) ||
+      (kind === "bpg041_playable_version_two" && armMeters === 3.6)) return armMeters;
+  throw new RangeError("Tail presentation requires registered aircraft geometry");
+}
 
 /** Visual cantilever approximation; these assumptions do not enter flight physics. */
 export function wingDeflectionMeters(spanMeters: number, airspeedMetersPerSecond: number): number {
@@ -734,10 +740,16 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   root.add(verticalIncidence);
 
   let currentSpeed = Number.NaN;
-  const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls): void => {
+  const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
     if (controls.layout === "tail_incidence" &&
         (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
       throw new RangeError("Physical tail incidence must be finite");
+    }
+    let horizontalTailArmMeters = 1.8;
+    if (controls.layout === "tail_incidence") {
+      if (tailGeometry?.kind !== "available") throw new RangeError("Tail presentation requires registered aircraft geometry");
+      const geometry = tailGeometry.value;
+      horizontalTailArmMeters = registeredHorizontalTailArmMeters(geometry.kind, geometry.horizontalTailArmMeters);
     }
     const speed = airspeedMetersPerSecond ?? REFERENCE_AIRSPEED_METERS_PER_SECOND;
     if (!Number.isFinite(currentSpeed) || Math.abs(speed - currentSpeed) > 0.03) {
@@ -770,6 +782,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       }
     }
     tail.visible = controls.layout !== "tail_incidence";
+    horizontalIncidence.position.z = horizontalTailArmMeters;
     horizontalIncidence.visible = controls.layout === "tail_incidence";
     verticalIncidence.visible = controls.layout === "tail_incidence";
     switch (controls.layout) {

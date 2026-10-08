@@ -73,7 +73,9 @@ volumetric raymarchは初期版の対象外である。
 
 ## 二系統尾翼の表示
 
-`tail_incidence`の両尾翼はBPG-041の公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-1.8,y,0.1)` m、垂直尾翼は面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDからThree.jsへの変換後の回転は水平`+X`、垂直`−Y`である。
+`tail_incidence`の両尾翼はversion付きの公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-arm,y,0.1)` mの矩形surfaceである。`bpg041-rectangular-hybrid-mock`と`bpg041-zero-dihedral-oracle`のmodel version 1はarm 1.8 m、`bpg041-playable-hybrid-mock`のmodel version 2はarm 3.6 mとする。垂直尾翼は各version共通で面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDから表示座標への変換後の回転は水平`+X`、垂直`−Y`である。
+
+Webはliveのsealed snapshot identity、Result/Analysis/Replay/Attractは当該record contextのconfiguration IDとmodel versionからengine非依存の`TailPresentationGeometryAvailability`を導出する。未登録の組合せは`unavailable`として保持し、adapterは尾翼表示を拒否する。現在の既定モデルで旧recordのgeometryを置換しない。Bevyの既定機体表示は共有session準備と同じPlayableのcore `HybridMockDefinition`のsectionからanchorと矩形頂点を導出する。描画契約の寸法はengine adapterの投影だけへ使用し、physics state、record、係数、contact geometryを変更しない。
 
 `legacy_three_axis`は従来の外観・hinge・符号を保持し、layout切替時には両表示系の回転をresetする。二系統尾翼の値を旧pitch/yaw actuatorへ変換しない。主翼・コックピット・構造材は既存のrender-only外観を共有する。これらの寸法とたわみはBPG-041の力学geometryを表す情報には使用しない。表示は実機CADや全機geometryの再現性を保証しない。
 
@@ -82,7 +84,7 @@ volumetric raymarchは初期版の対象外である。
 Auto / Low / Medium / High / Ultra / Customを用意する計画である。
 項目はresolution scale、terrain LOD、water、reflection、shadow、cloud、particles、post-processing。
 Autoは起動時benchmarkと実行時frame-time percentileを用い、hysteresisとcooldownを設ける。
-p95が18.5 msを超えた場合の低下、12.5 ms未満での上昇は初期候補値とし、計測後に確定する。
+PCの80 FPS目標ではp95が12.5 msを超えた場合の低下、9.5 ms未満での上昇を初期候補値とし、計測後に確定する。PhoneとXRは各presentationのframe budgetを基準に閾値を定める。Autoは計画段階であり、この閾値による適応画質や性能目標の達成は未検証である。
 適応画質は水面反射を無効化せず、速度・姿勢の判読に必要な波面と反射の最低品質を維持する。縮退時はresolution scale、shadow、cloud、terrain、particles、post-processing、水面の高周波detailの順を基準とする。反射解像度・更新頻度は最低品質を下回らない範囲で調整する。
 手動画質とAutoを区別し、Customを無断で上書きしない。
 WebとBevyのPC Screenは安定した80 FPS相当、12.5 ms/frameを目標とする。スマートフォンは60 FPS、XRはruntimeのrefresh rateに対応するframe budgetを使用する。

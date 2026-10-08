@@ -442,14 +442,21 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightPose({ ...base, controls: { layout: "legacy_three_axis", rollRadians: 0.1, pitchRadians: 0.02, yawRadians: -0.03 } });
     expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
     driver.draws.length = 0;
-    bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } } });
+    bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } },
+      tailGeometry: { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } } });
     expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
     expect(driver.draws).toHaveLength(1);
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.rotation.x).toBeCloseTo(0.02);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.rotation.y).toBeCloseTo(0.03);
+    expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.position.z).toBe(3.6);
+    expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.position.z).toBe(1.8);
     expect(driver.scene?.getObjectByName("legacy-tail-assembly")?.visible).toBe(false);
     expect(driver.scene?.getObjectByName("elevator")?.rotation.x).toBe(0);
     expect(driver.scene?.getObjectByName("rudder")?.rotation.y).toBe(0);
+    bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } },
+      tailGeometry: { kind: "available", value: { kind: "bpg041_version_one", horizontalTailArmMeters: 1.8 } } });
+    bundle.renderer.render(frame({}));
+    expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.position.z).toBe(1.8);
     bundle.renderer.setFlightPose(base);
     bundle.renderer.render(frame({}));
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.visible).toBe(false);

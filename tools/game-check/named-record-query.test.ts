@@ -55,7 +55,9 @@ describe("named saved-record query boundary", () => {
       session.enter_attract();
       const context = parseNamedAttractContext(session.playback_context_json());
       expect(parseNamedPlaybackContext(session.playback_context_json())).toEqual(context);
-      expect(context).toMatchObject({ phase: "attract", controlLayout: "tail_incidence", scenario: { catalogVersion: 2, environmentVersion: 1 },
+      expect(context).toMatchObject({ phase: "attract", controlLayout: "tail_incidence",
+        scenario: { catalogVersion: 3, scenarioVersion: 3, aircraftModelVersion: 2, controllerProfileVersion: 3, environmentVersion: 1 },
+        controlIdentity: { aircraftConfigurationId: "bpg041-playable-hybrid-mock" },
         difficulty: { information: "minimal", assistance: "strong", weather: "calm" } });
       expect(context.controlIdentity.aircraftConfigurationId.length).toBeGreaterThan(0);
       expect(() => session.snapshot_json()).toThrow();
@@ -113,6 +115,9 @@ describe("named saved-record query boundary", () => {
     try {
       const result = parseTailSessionSnapshot(session.snapshot_json());
       const context = tailResultRecordContext(result);
+      if (context.controlLayout !== "tail_incidence" || result.identity.kind !== "prepared") throw new Error("Expected sealed tail Result identity");
+      expect(context.scenario).toBe(result.identity.scenario);
+      expect(context.controlIdentity).toBe(result.identity.controls);
       const analysis = parseNamedAnalysisSamples(session.flight_analysis_samples_json(), physics_hz(), context);
       expect(analysis.map((sample) => sample.timeSeconds)).toEqual([0, 0.01, 0.02]);
       expect(analysis.at(-1)?.controls).toMatchObject({ layout: "tail_incidence" });
@@ -124,6 +129,8 @@ describe("named saved-record query boundary", () => {
       const replay = parseNamedReplayContext(session.playback_context_json());
       expect(replay.controlLayout).toBe("tail_incidence");
       expect(replay.finalization).toEqual(context.finalization);
+      expect(replay.scenario).toEqual(context.scenario);
+      expect(replay.controlIdentity).toEqual(context.controlIdentity);
       const clock = parseNamedReplayClock(session.seek_playback(0.005), physics_hz(), replay);
       expect(clock).toEqual({ timeSeconds: 0.005, rateCode: 1, kind: "paused" });
       const sample = parseNamedRecordSample(session.flight_record_sample_at_seconds(clock.timeSeconds), physics_hz(), replay);

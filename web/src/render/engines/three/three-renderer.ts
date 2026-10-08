@@ -531,7 +531,8 @@ export function createThreeRenderer(
       const controls = flightPose?.controls;
       airframe.setVisualState(
         flightPose?.airspeedMetersPerSecond ?? null,
-        controls ?? NO_AIRFRAME_CONTROLS
+        controls ?? NO_AIRFRAME_CONTROLS,
+        flightPose?.tailGeometry
       );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;

@@ -5,7 +5,7 @@ import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
 import type { LakeVisualCondition } from "./lake-water.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
-import type { PhysicalFlightControls } from "./flight-controls.js";
+import type { LegacyPhysicalFlightControls, TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "./flight-controls.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -47,7 +47,7 @@ export type PanelFrame =
   | { readonly kind: "visible"; readonly panel: UiPanel; readonly pose: Pose; readonly cursor: PanelCursor | null }
   | { readonly kind: "unavailable"; readonly reason: PanelUnavailableReason };
 
-export interface FlightRenderPose {
+interface FlightRenderPoseBase {
   readonly datumPositionNed: Readonly<{ north: number; east: number; down: number }>;
   readonly attitudeBodyToNed: Readonly<{ w: number; x: number; y: number; z: number }>;
   readonly pilotPositionMeters: number;
@@ -56,10 +56,14 @@ export interface FlightRenderPose {
   readonly simulationTimeSeconds?: number;
   /** Render-only wing flex proxy; does not affect the simulated aerodynamic model. */
   readonly airspeedMetersPerSecond?: number | null;
-  readonly controls?: PhysicalFlightControls;
   /** Instantaneous scenario wind in NED, kept separate from the stable visual wave state. */
   readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
 }
+
+export type FlightRenderPose = FlightRenderPoseBase & (
+  | Readonly<{ controls?: LegacyPhysicalFlightControls; tailGeometry?: never }>
+  | Readonly<{ controls: TailPhysicalFlightControls; tailGeometry: TailPresentationGeometryAvailability }>
+);
 
 export type FlightCameraMode = "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 
