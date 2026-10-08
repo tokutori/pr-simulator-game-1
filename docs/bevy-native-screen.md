@@ -74,14 +74,26 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
 水面は二つの空間周波数によるnormalとFresnel・太陽反射、空はprocedural gradientを使用する。
-Gerstnerのgeometry変位・高品質な反射・遠方波のfilteringは未移植であり、水平線付近にmoireが残る。
-機体は簡易mesh、HUDは数値主体である。一部の単位表示に折返しがあり、ADI等の詳細計器は未移植である。
+Gerstnerのgeometry変位・高品質な反射は未移植である。遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
+画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
+機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
+数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI等の詳細計器は未移植である。
 
 ## GPU接続の検査
 
 ```sh
 cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 ```
+
+小さいwindowまたは1080pで検査する場合は`--verify-size`を併用する。
+
+```sh
+cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification-small --verify-size 800x600
+cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification-1080p --verify-size 1920x1080
+```
+
+寸法は正の整数で指定し、`--verify`との併用を必須とする。通常起動は1280×720を維持する。
+OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS倍率により異なりうるため、保存ログの実寸も確認する。
 
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
 通常のsession操作とlogical inputを使って開始・飛行・Pilot/Chase・一時停止/再開・終了・Result・Retryを確認する。
@@ -112,11 +124,31 @@ cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-gpu-ve
 release版のTitle・Pilot・Chase・Result画像は`target/bevy-gpu-verification-release/`に保存する。
 release版でも日本語分割・shader・assetの確定エラーは0件であり、開始・飛行入力・視点切替・一時停止/再開・
 ManualAbort・Result・同条件Retryを検査した。rootと独立したreadonly reviewerが4画像を確認した。
-初回試用を妨げる表示欠陥は確認されていない。遠方水面のmoireとHUD単位の折返しは残る。
+初回release画像には遠方水面のmoireとHUD単位の折返しがあった。継続修正の結果は次項に記録する。
 この検査はscripted logical inputによるものであり、実キーボード・マウスの受入と時間的aliasingの評価は未実施である。
 実装HEAD `c75b2cca`はnative check/Clippy・17件のnative test、共有Rust層の関連test、Webの1,416件・
 WASM/Vite production buildに合格した。[CI run 37745038206](https://github.com/tokutori/pr-simulator-game-1/actions/runs/37745038206)も
-Ubuntu・Windowsとも成功した。Pagesはskipである。今回の文書更新は同じ実装HEADの検査結果を記録する。
+Ubuntu・Windowsとも成功した。Pagesはskipである。このCIは初回実装HEADの検査であり、継続修正の検査と区別する。
+
+### 水面・HUD・入力境界の継続修正
+
+2026-10-08、実装HEAD `947dff5`でformat、native check/Clippy、25件のnative test、repository checkが成功した。
+[#259](https://github.com/tokutori/pr-simulator-game-1/issues/259)では入力adapterを`InputSystems`後に登録する。
+実`InputPlugin`とraw keyboard/mouse messageを通す試験で、当frameの押下・解放、Cの一回切替、右dragの反映とmotion解除を確認した。
+これはOSからの物理入力の受入と区別する。GameSession、physics、score、recordの変更は0件である。
+
+Windows 11 / AMD Radeon 860M / Vulkanのdebug版で、1280×720、800×600、1920×1080のGPU検査がexit 0で完了した。
+各寸法でTitle/Pilot/Chase/Resultを保存し、開始・入力・視点切替・一時停止/復帰・ManualAbort・Result・Retryを検査した。
+画像の実寸は指定寸法と一致した。rootと独立したreviewerが1280×720と800×600の全画像を確認し、
+単位分断・文字欠落・中央前方とCTAの重複がないこと、機体・地形・水面が保持されることを確認した。
+1920×1080のPilot/Chaseもrootが確認した。800×600では尾翼行と上部説明がsoft wrapするが、値と操作は到達可能である。
+保存先は`target/bevy-visual-fixes-debug/`、`target/bevy-visual-fixes-800x600/`、`target/bevy-visual-fixes-1080p/`である。
+
+水面だけの先行比較では、既存release binaryが読み込む新shaderで同じtick 25の720p画像を比較し、遠方の強いmoire低減と近景波保持を確認した。
+異なるviewportの撮影tickは一致しないため、飛行結果やshaderの定量比較には使用しない。
+ProcessingDelayは通常の安全停止を保持し、回復後に検査操作として明示再開した。shader・assetの確定エラーは0件である。
+最新HUD・入力修正を含むrelease版のGPU再検査、実キーボード・マウス、Windows表示倍率、時間的aliasing、他GPUは未検証である。
+
 検査基準は次の通りであり、共有crateを追加した場合はその関連testも実行する。
 
 ```sh
