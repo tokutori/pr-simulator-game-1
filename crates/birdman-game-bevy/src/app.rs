@@ -106,7 +106,6 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .add(Font::from_bytes(font_bytes));
     app.insert_resource(NativeFont(font))
         .add_systems(Startup, (world::setup_world, ui::setup_ui))
-        .add_systems(PreUpdate, read_input)
         .add_systems(FixedUpdate, advance_physics)
         .add_systems(
             Update,
@@ -118,6 +117,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             )
                 .chain(),
         );
+    register_input(&mut app);
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {
         let (verification, completion) =
@@ -136,6 +136,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("Native app exited with an error".into());
     }
     Ok(())
+}
+
+fn register_input(app: &mut App) {
+    app.add_systems(PreUpdate, read_input.after(bevy::input::InputSystems));
 }
 
 #[derive(SystemParam)]
@@ -238,4 +242,179 @@ fn advance_physics(
 
 fn advance_presentation(mut session: ResMut<NativeSession>, time: Res<Time>) {
     session.countdown(time.delta_secs_f64());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::input::{
+        ButtonState, InputPlugin,
+        keyboard::{Key, KeyboardInput},
+        mouse::{MouseButtonInput, MouseMotion},
+    };
+
+    fn input_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<FlightInput>()
+            .init_resource::<CameraMode>()
+            .init_resource::<Time<Real>>();
+        register_input(&mut app);
+        app.add_plugins(InputPlugin);
+        let window = app.world_mut().spawn(Window::default()).id();
+        (app, window)
+    }
+
+    fn write_keyboard(
+        app: &mut App,
+        window: Entity,
+        key_code: KeyCode,
+        logical_key: Key,
+        state: ButtonState,
+    ) {
+        assert!(
+            app.world_mut()
+                .write_message(KeyboardInput {
+                    key_code,
+                    logical_key,
+                    state,
+                    text: None,
+                    repeat: false,
+                    window,
+                })
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn raw_keyboard_press_and_release_reach_intent_in_the_same_frame() {
+        let (mut app, window) = input_app();
+        for (keys, direction) in [
+            (
+                [
+                    (KeyCode::ArrowUp, Key::ArrowUp),
+                    (KeyCode::ArrowRight, Key::ArrowRight),
+                    (KeyCode::KeyL, Key::Character("l".into())),
+                ],
+                1.0,
+            ),
+            (
+                [
+                    (KeyCode::ArrowDown, Key::ArrowDown),
+                    (KeyCode::ArrowLeft, Key::ArrowLeft),
+                    (KeyCode::KeyJ, Key::Character("j".into())),
+                ],
+                -1.0,
+            ),
+        ] {
+            for (key_code, logical_key) in &keys {
+                write_keyboard(
+                    &mut app,
+                    window,
+                    *key_code,
+                    logical_key.clone(),
+                    ButtonState::Pressed,
+                );
+            }
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            assert_eq!(intent.nose_up, direction);
+            assert_eq!(intent.turn_right, direction);
+            assert_eq!(intent.pilot, Some(direction));
+            for (key_code, logical_key) in &keys {
+                write_keyboard(
+                    &mut app,
+                    window,
+                    *key_code,
+                    logical_key.clone(),
+                    ButtonState::Released,
+                );
+            }
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            assert_eq!(intent.nose_up, 0.0);
+            assert_eq!(intent.turn_right, 0.0);
+            assert_eq!(intent.pilot, Some(0.0));
+        }
+    }
+
+    #[test]
+    fn raw_camera_key_toggles_once_per_press_in_the_same_frame() {
+        let (mut app, window) = input_app();
+        write_keyboard(
+            &mut app,
+            window,
+            KeyCode::KeyC,
+            Key::Character("c".into()),
+            ButtonState::Pressed,
+        );
+        app.update();
+        assert!(app.world().resource::<CameraMode>().chase);
+        app.update();
+        assert!(app.world().resource::<CameraMode>().chase);
+        write_keyboard(
+            &mut app,
+            window,
+            KeyCode::KeyC,
+            Key::Character("c".into()),
+            ButtonState::Released,
+        );
+        app.update();
+        assert!(app.world().resource::<CameraMode>().chase);
+        write_keyboard(
+            &mut app,
+            window,
+            KeyCode::KeyC,
+            Key::Character("c".into()),
+            ButtonState::Pressed,
+        );
+        app.update();
+        assert!(!app.world().resource::<CameraMode>().chase);
+        app.update();
+        assert!(!app.world().resource::<CameraMode>().chase);
+    }
+
+    #[test]
+    fn raw_mouse_button_and_motion_reach_camera_in_the_same_frame() {
+        let (mut app, window) = input_app();
+        assert!(
+            app.world_mut()
+                .write_message(MouseButtonInput {
+                    button: MouseButton::Right,
+                    state: ButtonState::Pressed,
+                    window,
+                })
+                .is_some()
+        );
+        assert!(
+            app.world_mut()
+                .write_message(MouseMotion {
+                    delta: Vec2::new(10.0, -20.0),
+                })
+                .is_some()
+        );
+        app.update();
+        let expected = Vec2::new(-0.03, 0.06);
+        assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+        app.update();
+        assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+        assert!(
+            app.world_mut()
+                .write_message(MouseButtonInput {
+                    button: MouseButton::Right,
+                    state: ButtonState::Released,
+                    window,
+                })
+                .is_some()
+        );
+        assert!(
+            app.world_mut()
+                .write_message(MouseMotion {
+                    delta: Vec2::new(20.0, -10.0),
+                })
+                .is_some()
+        );
+        app.update();
+        assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+    }
 }
