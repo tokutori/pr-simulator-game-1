@@ -9,5 +9,8 @@ repository.workspace = true
 [dependencies]
 libm.workspace = true
 
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dev-dependencies]
+nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

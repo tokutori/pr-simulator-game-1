@@ -137,6 +137,7 @@ no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計�
 既存stateの並進速度はbody表現、本ゲームはNED表現を採用するため、式を直接転記しない。
 係数と検証ケースはBPG-002以降で適用範囲を再確認する。coreの依存はno_std対応で役割の明確なものに限り、
 crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
+局所線形化のhost検査だけはWindows/Linux/macOS対象のdev依存として固定`nalgebra 0.35.0`のstd featureを使用し、core製品依存・no_std/WASM buildとは分離する。repository checkerはこのcrate/name/kind/target/version/featuresの組合せだけを許可する。
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
 GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。

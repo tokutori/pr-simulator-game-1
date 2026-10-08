@@ -2,28 +2,14 @@ import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { checkAssets } from "../asset-check/index.js";
 import { assertRenderImportBoundary } from "../presentation-check/render-boundary.js";
-import { record, nonEmpty } from "../shared/validation.js";
+import { record } from "../shared/validation.js";
+import { assertDependencyBoundary } from "./dependency-boundary.js";
 
 const count = await checkAssets(process.cwd());
 
 const metadata = record(JSON.parse(execFileSync("cargo", ["metadata", "--format-version", "1", "--no-deps", "--locked"], { encoding: "utf8" })) as unknown);
 if (!Array.isArray(metadata.packages)) throw new Error("Invalid cargo metadata");
-const allowed = new Map<string, readonly string[]>([
-  ["birdman-game-core", ["libm"]],
-  ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
-  ["birdman-game-cli", ["birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
-  ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "wasm-bindgen"]]
-]);
-for (const value of metadata.packages) {
-  const pkg = record(value);
-  const name = nonEmpty(pkg.name);
-  const permitted = allowed.get(name);
-  if (permitted === undefined || !Array.isArray(pkg.dependencies)) throw new Error(`Unexpected crate: ${name}`);
-  for (const value of pkg.dependencies) {
-    const dep = record(value);
-    if (!permitted.includes(nonEmpty(dep.name))) throw new Error(`Forbidden dependency in ${name}: ${String(dep.name)}`);
-  }
-}
+assertDependencyBoundary(metadata.packages);
 const sourcePaths = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], { encoding: "utf8" })
   .split("\0")
   .filter((path) => path.startsWith("web/src/") && /\.[cm]?[jt]sx?$/.test(path));
