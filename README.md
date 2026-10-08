@@ -31,6 +31,15 @@ Rust `GameSession`はTitle・Setup・Briefing・Countdown・Flight・Result・Re
 Screen・WebXR・Phone VRは共通ModelからUIを導出し、同じsession ownerを使用する。VRのHead HUDとMenu anchorを分離する。実ブラウザー/GPU・実HMD・スマートフォンによる全gameplay loopの受入は未検証である。機体固有modelのsource調査・fidelity検証はBPG-035でM6後に行い、ゲーム機能の開発をblockしない。
 各段階の完了条件と依存関係は[実装計画](docs/implementation-plan.md)を参照する。
 
+## 飛行ログの出力
+
+Resultおよび保存記録のReplay/Analysisには「飛行ログ CSV」「元記録 JSON」を用意する。
+CSVはRustが全保存標本の数値と単位・欠損理由を出力し、加速度は保存された速度からのfinite-difference推定値として区別する。
+保存していない空力荷重などを補完しない。推定値には差分方式・標本時刻・availabilityを併記する。
+JSONは選択中の元FlightRecordを出力する。保存記録のschemaとmetadataを維持し、表示cursorによる切り出しや再simulationは行わない。
+ScreenとVRは共通の操作を使用する。ブラウザーのdownload要求が制限される場合はScreenのボタンから再操作する。
+通知はdownload要求の発行を示し、端末への保存完了を保証しない。成功要求のobject URLは60秒の猶予後、または非復帰page teardownで解放する。保持上限は8件である。失敗した要求のURLは即時解放する。
+
 ## 開発環境
 
 Rust 1.97.0、Node.js 24.14.1以上の24系、npmを使用する。

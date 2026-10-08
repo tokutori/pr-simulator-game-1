@@ -1,5 +1,6 @@
 import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
+import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
@@ -10,7 +11,7 @@ import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -45,6 +46,7 @@ import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
 import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
+import { readFlightLog } from "./game/flight-log-export.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
@@ -99,6 +101,7 @@ const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
 });
+const flightLogDownload = new BrowserFlightLogDownload(document);
 
 function dispatch(message: AppMessage): void {
   const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
@@ -233,6 +236,25 @@ for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fon
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "download-flight-log": {
+      const session = gameSession;
+      if (!isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
+      try {
+        if (session === null || session.phase_code() !== effect.source.phaseCode) throw new Error("有効なRust FlightRecordを取得できない");
+        const text = readFlightLog(session, effect.format);
+        if (gameSession !== session || !isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
+        flightLogDownload.download({
+          text,
+          format: effect.format,
+          filename: `flight-log-${effect.source.phaseCode === 7 ? "result" : "replay"}-${String(effect.requestId)}.${effect.format}`
+        });
+      } catch (error: unknown) {
+        if (gameSession === session) dispatch({ type: "flight-log-download-failed", requestId: effect.requestId, source: effect.source, message: errorMessage(error) });
+        return;
+      }
+      if (gameSession === session) dispatch({ type: "flight-log-download-requested", requestId: effect.requestId, source: effect.source });
+      return;
+    }
     case "suspend-page-flight":
       suspendPageFlightState();
       return;
@@ -867,6 +889,7 @@ function onResize(): void {
 }
 
 function onPageHide(): void {
+  flightLogDownload.dispose();
   window.removeEventListener("resize", onResize);
   document.removeEventListener("visibilitychange", onVisibilityChange);
   const controller = flightController;
