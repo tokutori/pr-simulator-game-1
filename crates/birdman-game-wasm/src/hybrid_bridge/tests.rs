@@ -31,6 +31,86 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
+    let seed = birdman_game_session::DEFAULT_SESSION_SEED;
+    let defaults = HybridGameSessionBridge::new(0, seed as u32, (seed >> 32) as u32).unwrap();
+    assert_eq!(
+        defaults.difficulty,
+        birdman_game_session::default_difficulty(birdman_game_session::DEFAULT_CONTROL_MODE)
+    );
+    assert_eq!(
+        defaults.maximum_flight_ticks,
+        birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS
+    );
+    assert_eq!(defaults.seed, seed);
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        for weather in [
+            WeatherClass::Calm,
+            WeatherClass::Mild,
+            WeatherClass::Typical,
+            WeatherClass::Challenging,
+            WeatherClass::NearLimit,
+        ] {
+            let mut bridge = HybridGameSessionBridge::from_mode(mode, MAX_TICKS, seed);
+            bridge.open_setup().unwrap();
+            bridge
+                .select_difficulty(bridge.difficulty.with_weather(weather))
+                .unwrap();
+            bridge.prepare_internal().unwrap();
+            let preparation = birdman_game_session::HybridSessionPreparation::try_new_for_weather(
+                mode, MAX_TICKS, seed, weather,
+            )
+            .unwrap();
+            let (configuration, identity) = preparation.into_parts();
+            assert_eq!(bridge.prepared.as_ref().unwrap().record_identity, identity);
+            let mut native = GameSession::new();
+            native.open_setup().unwrap();
+            native.prepare_flight(configuration).unwrap();
+            bridge.mark_briefing_ready().unwrap();
+            native.mark_briefing_ready().unwrap();
+            bridge.start_countdown(1).unwrap();
+            native.start_countdown(1).unwrap();
+            bridge.advance_countdown().unwrap();
+            native.advance_countdown().unwrap();
+            bridge.launch().unwrap();
+            native.launch().unwrap();
+            assert_eq!(
+                bridge.session.configuration_identity(),
+                native.configuration_identity()
+            );
+            assert_eq!(bridge.session.snapshot(), native.snapshot());
+            assert_eq!(
+                bridge.session.telemetry().unwrap(),
+                native.telemetry().unwrap()
+            );
+            let json = input(json!({"kind":"hold"}));
+            for _tick in 0..10 {
+                bridge.advance_internal(&json).unwrap();
+                native
+                    .advance_tail_flight_tick(InputDocument::decode(&json).unwrap())
+                    .unwrap();
+                assert_eq!(bridge.session.snapshot(), native.snapshot());
+                assert_eq!(
+                    bridge.session.telemetry().unwrap(),
+                    native.telemetry().unwrap()
+                );
+            }
+            bridge.abort().unwrap();
+            native.abort_flight().unwrap();
+            assert_eq!(bridge.session.snapshot(), native.snapshot());
+            let wasm_record = bridge.session.flight_record().unwrap();
+            let native_record = native.flight_record().unwrap();
+            assert_eq!(wasm_record.samples(), native_record.samples());
+            assert_eq!(wasm_record.finalization(), native_record.finalization());
+        }
+    }
+}
+
+#[test]
 fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_queries() {
     for mode in [
         ControlMode::Manual,

@@ -1,23 +1,16 @@
 [package]
-name = "birdman-game-wasm"
+name = "birdman-game-session"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
-birdman-game-session.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-wasm-bindgen.workspace = true
 
-[build-dependencies]
+[dev-dependencies]
 sha2.workspace = true
 
 [lints]

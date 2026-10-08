@@ -407,11 +407,7 @@ impl HybridGameSessionBridge {
     fn from_mode(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
             session: GameSession::new(),
-            difficulty: DifficultySettings::custom(
-                InformationLevel::Full,
-                crate::assistance_from_control_mode(control_mode),
-                WeatherClass::Typical,
-            ),
+            difficulty: birdman_game_session::default_difficulty(control_mode),
             maximum_flight_ticks,
             seed,
             prepared: None,

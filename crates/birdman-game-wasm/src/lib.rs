@@ -30,7 +30,7 @@ mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
 }
 
-const MAX_TICKS: u64 = 4_000;
+const MAX_TICKS: u64 = birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS;
 const SURFACE_COMMAND_LIMIT_RAD: f64 = 0.04;
 const TARGET_RATE_LIMIT_RAD_PER_SECOND: f64 = 0.8;
 const SNAPSHOT_LENGTH: usize = 33;

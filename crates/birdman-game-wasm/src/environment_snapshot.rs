@@ -12,83 +12,8 @@ use crate::{environment::bundled_environment, personal_best_fingerprints};
 
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
-struct LegacyEnvironment {
-    version: u32,
-    name: &'static str,
-    wind_velocity_ned_mps: [f64; 3],
-    waves: WaveStateDocument,
-}
-
-const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
-    LegacyEnvironment {
-        version: 1,
-        name: "Synthetic calm",
-        wind_velocity_ned_mps: [0.0, 0.0, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [0.54, 1.07],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.0,
-            pattern_seed: 0,
-        },
-    },
-    LegacyEnvironment {
-        version: 2,
-        name: "Synthetic mild",
-        wind_velocity_ned_mps: [0.0, 0.25, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [0.0, 1.32],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.10,
-            pattern_seed: 1,
-        },
-    },
-    LegacyEnvironment {
-        version: 3,
-        name: "Synthetic typical",
-        wind_velocity_ned_mps: [-0.25, 0.5, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [-0.35, 1.42],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.20,
-            pattern_seed: 2,
-        },
-    },
-    LegacyEnvironment {
-        version: 4,
-        name: "Synthetic challenging",
-        wind_velocity_ned_mps: [-0.5, 0.75, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [-0.65, 1.54],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.32,
-            pattern_seed: 3,
-        },
-    },
-    LegacyEnvironment {
-        version: 5,
-        name: "Synthetic near-limit",
-        wind_velocity_ned_mps: [-0.75, 1.0, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [-0.93, 1.67],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.45,
-            pattern_seed: 4,
-        },
-    },
-];
-
-pub(crate) fn legacy_winds() -> impl Iterator<Item = [f64; 3]> {
-    LEGACY_ENVIRONMENTS
-        .iter()
-        .map(|environment| environment.wind_velocity_ned_mps)
-}
-
-pub(crate) fn legacy_wind_for_version(version: u32) -> Option<[f64; 3]> {
-    LEGACY_ENVIRONMENTS
-        .iter()
-        .find(|environment| environment.version == version)
-        .map(|environment| environment.wind_velocity_ned_mps)
-}
+use birdman_game_session::{LegacyEnvironment, legacy_environment_for_version};
+pub(crate) use birdman_game_session::{legacy_wind_for_version, legacy_winds};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EnvironmentSnapshotError {
@@ -270,9 +195,7 @@ pub(crate) fn for_identity(
     let metadata = if identity.environment_version == 6 {
         bundled_metadata()?
     } else {
-        let environment = LEGACY_ENVIRONMENTS
-            .iter()
-            .find(|environment| environment.version == identity.environment_version)
+        let environment = legacy_environment_for_version(identity.environment_version)
             .ok_or(EnvironmentSnapshotError::InvalidIdentity)?;
         legacy_metadata(environment)?
     };
