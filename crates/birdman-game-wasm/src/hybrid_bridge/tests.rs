@@ -197,6 +197,7 @@ fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default()
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
     assert_eq!(initial["scenario"]["catalog_version"], 2);
+    assert_eq!(initial["scenario"]["scenario_version"], 2);
     assert_eq!(initial["scenario"]["environment_version"], 6);
     assert_eq!(initial["scenario"]["seed_low"], u32::MAX);
     assert_eq!(initial["scenario"]["seed_high"], u32::MAX);
@@ -448,6 +449,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
         assert_eq!(metadata.len(), 18);
         assert_eq!(metadata[3], weather_code);
         assert_eq!(metadata[5], version);
+        assert_eq!(metadata[6], 2);
         assert_eq!(metadata[8], version);
         assert_eq!(metadata[10], 19);
         let sealed: Value =
@@ -528,10 +530,19 @@ fn existing_presets_and_light_authority_seal_the_same_selected_contract() {
             recorded.controller_profile.maximum_slew_rad_per_second(),
             1.0
         );
-        assert_eq!(
-            bridge.sealed_course_axis().unwrap().components(),
-            [1.0, 0.0]
-        );
+        let expected = birdman_game_session::launch_venue()
+            .unwrap()
+            .platform
+            .horizontal_direction_ned();
+        for (actual, expected) in bridge
+            .sealed_course_axis()
+            .unwrap()
+            .components()
+            .into_iter()
+            .zip(expected)
+        {
+            assert!((actual - expected).abs() < 1.0e-15);
+        }
     }
 }
 
@@ -639,4 +650,69 @@ fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explici
         json!({"pitch":0.2,"yaw":0.2})
     );
     assert_eq!(profile["maximum_slew_rad_s"], 1.0);
+}
+
+#[test]
+fn north_launch_archive_keeps_saved_state_and_identity_without_reintegration() {
+    use birdman_game_core::{
+        HybridMockConfiguration, HybridMockDefinition, HybridMockTrim, NedPoint,
+    };
+    use birdman_game_format::{FlightRecordArchiveDocument, TailFlightRecordDocument};
+
+    let mut current = launch(ControlMode::Manual, 2);
+    let current_identity = current.session.configuration_identity().unwrap();
+    assert_eq!(current_identity.scenario_version, 2);
+    current.abort().unwrap();
+    let mut document: TailFlightRecordDocument =
+        serde_json::from_str(&current.export_record_internal().unwrap()).unwrap();
+    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let old_air = HybridMockTrim::try_new(&definition)
+        .unwrap()
+        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
+        .unwrap();
+    let saved = &mut document.samples[0].state;
+    let air_velocity = old_air.datum_velocity_ned().components();
+    saved.datum_position_ned_m = old_air.datum_position_ned().components();
+    saved.datum_velocity_ned_mps =
+        core::array::from_fn(|index| air_velocity[index] + saved.wind_at_cg_ned_mps[index]);
+    saved.attitude_body_to_ned = old_air.attitude_body_to_ned().components();
+    saved.telemetry.attitude_euler_rad[2] = 0.0;
+    saved.telemetry.groundspeed_mps =
+        saved.datum_velocity_ned_mps[0].hypot(saved.datum_velocity_ned_mps[1]);
+    document.header.scenario_version = 1;
+    let archive = FlightRecordArchiveDocument::Tail(document.clone());
+    let expected_record = archive.to_finalized_core_record().unwrap();
+    assert_eq!(
+        archive.require_tail_reintegration_compatibility(
+            &document.control_identity,
+            current_identity,
+            birdman_game_core::PHYSICS_MODEL_VERSION,
+        ),
+        Err(FlightRecordFormatError::IncompatibleReintegration)
+    );
+    let json = String::from_utf8(archive.encode_json().unwrap()).unwrap();
+    let mut viewer = HybridGameSessionBridge::new(0, 0, 0).unwrap();
+    viewer.open_archived_flight_record(&json).unwrap();
+    let before = viewer.session.snapshot();
+    assert_eq!(viewer.export_current_flight_record_json().unwrap(), json);
+    assert_eq!(
+        viewer.session.flight_record().unwrap().samples(),
+        expected_record.samples()
+    );
+    assert_eq!(
+        viewer.session.flight_record().unwrap().finalization(),
+        expected_record.finalization()
+    );
+    let query: Value =
+        serde_json::from_str(&viewer.flight_record_sample_at_seconds(0.0).unwrap()).unwrap();
+    assert_eq!(
+        query["state"]["datum_velocity_ned_mps"],
+        json!(document.samples[0].state.datum_velocity_ned_mps)
+    );
+    assert_eq!(query["state"]["telemetry"]["attitude_euler_rad"][2], 0.0);
+    let environment: Value =
+        serde_json::from_str(&viewer.environment_snapshot_json().unwrap()).unwrap();
+    assert_eq!(environment["projection"]["kind"], "available");
+    assert_eq!(environment["projection"]["identity"]["scenario_version"], 1);
+    assert_eq!(viewer.session.snapshot(), before);
 }

@@ -1,17 +1,10 @@
-/** The measured launch point is the origin of the local NED flight frame. */
-export const LAUNCH_ORIGIN_WGS84 = Object.freeze({
-  latitudeDegrees: 35.294075,
-  longitudeDegrees: 136.254448
-});
+import launchVenue from "../../../../assets/biwa-launch-venue.json";
+
+/** The supplied launch point is the origin of the local NED flight frame. */
+export const LAUNCH_ORIGIN_WGS84 = Object.freeze(launchVenue.originWgs84);
 
 /** Approximate platform dimensions; the front lip is at the NED origin. */
-export const LAUNCH_PLATFORM = Object.freeze({
-  widthMeters: 12,
-  lengthMeters: 20,
-  frontLipAboveWaterMeters: 10,
-  downwardSlopeDegrees: 3.5,
-  launchBearingDegrees: 315
-});
+export const LAUNCH_PLATFORM = Object.freeze(launchVenue.platform);
 
 const metersPerLatitudeDegree = 111_132;
 const metersPerLongitudeDegree = 111_320 * Math.cos(LAUNCH_ORIGIN_WGS84.latitudeDegrees * Math.PI / 180);

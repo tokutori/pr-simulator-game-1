@@ -46,6 +46,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
+    assert_eq!(identity.scenario_version, 2);
     assert_eq!(identity.environment_version, 6);
     assert_eq!(identity.aircraft_model_version, 1);
     assert_eq!(
@@ -188,5 +189,83 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
         };
         assert_eq!(telemetry.wind_velocity_ned_mps.components(), expected);
         assert!((telemetry.airspeed_mps - HybridMockTrim::AIRSPEED_MPS).abs() < 1.0e-12);
+    }
+}
+
+#[test]
+fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing() {
+    let platform = launch_venue().unwrap().platform;
+    let direction = platform.horizontal_direction_ned();
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(birdman_game_core::FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        for weather in [
+            WeatherClass::Calm,
+            WeatherClass::Mild,
+            WeatherClass::Typical,
+            WeatherClass::Challenging,
+            WeatherClass::NearLimit,
+        ] {
+            let preparation =
+                HybridSessionPreparation::try_new_for_weather(mode, 2, 42, weather).unwrap();
+            let axis = preparation.course_axis();
+            assert!((axis.components()[0] - direction[0]).abs() < 1.0e-15);
+            assert!((axis.components()[1] - direction[1]).abs() < 1.0e-15);
+            let session = launch(preparation.into_parts().0);
+            let state = session
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .flight_state();
+            let telemetry = session.telemetry().unwrap().unwrap();
+            let ground = state.datum_velocity_ned().components();
+            let wind = telemetry.wind_velocity_ned_mps.components();
+            let air = core::array::from_fn::<_, 3, _>(|index| ground[index] - wind[index]);
+            let horizontal_speed = air[0].hypot(air[1]);
+            assert!((air[0] / horizontal_speed - direction[0]).abs() < 1.0e-14);
+            assert!((air[1] / horizontal_speed - direction[1]).abs() < 1.0e-14);
+            assert!(air[0] > 0.0 && air[1] < 0.0);
+            let forward = state
+                .attitude_body_to_ned()
+                .body_to_ned(BodyVector::try_new(1.0, 0.0, 0.0).unwrap())
+                .unwrap()
+                .components();
+            let horizontal_forward = forward[0].hypot(forward[1]);
+            assert!((forward[0] / horizontal_forward - direction[0]).abs() < 1.0e-14);
+            assert!((forward[1] / horizontal_forward - direction[1]).abs() < 1.0e-14);
+            let expected_wind = if weather == WeatherClass::Typical {
+                bundled_environment()
+                    .unwrap()
+                    .wind_field()
+                    .unwrap()
+                    .velocity_at(telemetry.composite_cg_position_ned_m)
+                    .unwrap()
+                    .components()
+            } else {
+                legacy_wind_for_version(
+                    session
+                        .configuration_identity()
+                        .unwrap()
+                        .environment_version,
+                )
+                .unwrap()
+            };
+            assert_eq!(wind, expected_wind);
+            let score = birdman_game_core::course_distance_score(
+                NedPoint::origin(),
+                NedPoint::try_new(direction[0] * 100.0, direction[1] * 100.0, 0.0).unwrap(),
+                axis,
+            )
+            .unwrap();
+            assert!((score.course_parallel_m() - 100.0).abs() < 1.0e-12);
+            assert!(score.cross_track_m().abs() < 1.0e-12);
+            assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
+            assert_eq!(
+                session.configuration_identity().unwrap().scenario_version,
+                2
+            );
+        }
     }
 }

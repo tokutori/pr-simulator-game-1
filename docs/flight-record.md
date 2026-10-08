@@ -45,6 +45,9 @@ Personal Best候補は現行physics model versionとの一致も要求し、過�
 physics model version 1は初期モデル、2は回復可能な身体移動状態を維持する目標制御、
 3はtick内保持値と終端actuatorの一致を表す。versionの更新は保存schemaを変更しない。
 元のphysics実行系が利用できなくても、schemaと必要assetに互換性があればsnapshot再生は可能とする。
+hybrid scenario version 1は従来の北向き発進、version 2は共有発進台の315°方位と一致する初期heading/course axisを識別する。
+保存schema・model/controller/physics versionは変更せず、旧記録のstate・score・cause・原JSONを維持する。
+再積分のscenario identity照合とPB keyのscenario version/source fingerprintにより、異なる発進条件を区別する。
 未知schema、破損、欠落、未対応追加項目の必須性は検証結果として通知する。
 
 ## Samplingと容量

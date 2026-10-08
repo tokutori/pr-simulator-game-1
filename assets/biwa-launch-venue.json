@@ -1,0 +1,13 @@
+{
+  "originWgs84": {
+    "latitudeDegrees": 35.294075,
+    "longitudeDegrees": 136.254448
+  },
+  "platform": {
+    "widthMeters": 12,
+    "lengthMeters": 20,
+    "frontLipAboveWaterMeters": 10,
+    "downwardSlopeDegrees": 3.5,
+    "launchBearingDegrees": 315
+  }
+}

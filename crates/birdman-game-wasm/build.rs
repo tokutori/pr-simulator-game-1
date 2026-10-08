@@ -23,6 +23,8 @@ fn main() {
         workspace_dir.join("crates/birdman-game-session/src/hybrid_session.rs");
     let shared_environment_source =
         workspace_dir.join("crates/birdman-game-session/src/environment.rs");
+    let shared_venue_source = workspace_dir.join("crates/birdman-game-session/src/launch_venue.rs");
+    let shared_venue_asset = workspace_dir.join("assets/biwa-launch-venue.json");
     let hybrid_aircraft_source = core_source.join("hybrid_mock.rs");
     let hybrid_trim_source = core_source.join("hybrid_mock/trim.rs");
     let dynamics_source = core_source.join("dynamics.rs");
@@ -60,6 +62,8 @@ fn main() {
         shared_defaults_source,
         shared_hybrid_source,
         shared_environment_source,
+        shared_venue_source,
+        shared_venue_asset,
     ];
 
     println!("cargo:rerun-if-changed={}", environment_asset.display());

@@ -177,7 +177,12 @@ pub(crate) fn for_identity(
     source: EnvironmentSource,
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
-    let registered = identity.scenario_version == 1
+    let registered_version = identity.scenario_version == 1
+        || (identity.scenario_version == 2
+            && identity.catalog_version == 2
+            && identity.aircraft_model_version == 1
+            && identity.controller_profile_version == 1);
+    let registered = registered_version
         && matches!(
             identity.aircraft_model_version,
             1 | SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION
@@ -408,6 +413,43 @@ mod tests {
                 current_snapshot["projection"]["metadata"],
                 legacy_snapshot["projection"]["metadata"]
             );
+        }
+    }
+
+    #[test]
+    fn northwest_scenario_two_and_saved_scenario_one_share_only_environment_metadata() {
+        for version in [1, 2, 4, 5, 6] {
+            let mut previous = identity(version);
+            previous.catalog_version = 2;
+            previous.controller_profile_version = 1;
+            let mut current = previous;
+            current.scenario_version = 2;
+            let previous_snapshot = query(previous);
+            let current_snapshot = query(current);
+            assert_eq!(current_snapshot["projection"]["kind"], "available");
+            assert_eq!(
+                current_snapshot["projection"]["identity"]["scenario_version"],
+                2
+            );
+            assert_eq!(
+                previous_snapshot["projection"]["identity"]["scenario_version"],
+                1
+            );
+            assert_eq!(
+                current_snapshot["projection"]["metadata"],
+                previous_snapshot["projection"]["metadata"]
+            );
+            for component in 0..4 {
+                let mut unknown = current;
+                match component {
+                    0 => unknown.catalog_version = 1,
+                    1 => unknown.aircraft_model_version = 2,
+                    2 => unknown.controller_profile_version = 2,
+                    3 => unknown.scenario_version = 3,
+                    _ => unreachable!(),
+                }
+                assert_eq!(query(unknown)["projection"]["kind"], "unavailable");
+            }
         }
     }
 

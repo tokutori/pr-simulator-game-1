@@ -9,6 +9,7 @@ use bevy::{
     asset::RenderAssetUsages, core_pipeline::tonemapping::Tonemapping, mesh::Indices, prelude::*,
     render::render_resource::PrimitiveTopology,
 };
+use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
 
 #[derive(Component)]
@@ -192,6 +193,21 @@ fn rectangular_surface(vertices: [[f32; 3]; 4]) -> Mesh {
     mesh
 }
 
+fn platform_transform(platform: &LaunchPlatform, thickness: f32) -> Transform {
+    let [north, east] = platform.horizontal_direction_ned();
+    let slope = platform.downward_slope_degrees.to_radians() as f32;
+    let rotation =
+        Quat::from_rotation_y(-platform.heading_rad() as f32) * Quat::from_rotation_x(-slope);
+    let top_center = Vec3::new(
+        -(east * platform.length_meters / 2.0) as f32,
+        platform.front_lip_above_water_meters as f32
+            + platform.length_meters as f32 * slope.tan() / 2.0,
+        (north * platform.length_meters / 2.0) as f32,
+    );
+    Transform::from_translation(top_center - rotation * Vec3::Y * thickness / 2.0)
+        .with_rotation(rotation)
+}
+
 pub(crate) fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -257,12 +273,19 @@ pub(crate) fn setup_world(
         },
         Transform::from_xyz(800.0, 1000.0, -300.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
-    let platform = materials.add(Color::srgb(0.55, 0.43, 0.25));
+    let platform = launch_venue().expect("登録launch venueが不正").platform;
+    let platform_material = materials.add(Color::srgb(0.55, 0.43, 0.25));
+    let platform_thickness = 0.35;
+    let deck_length =
+        platform.length_meters as f32 / (platform.downward_slope_degrees.to_radians() as f32).cos();
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(12.0, 0.35, 20.0))),
-        MeshMaterial3d(platform),
-        Transform::from_xyz(0.0, 9.825, 8.0)
-            .with_rotation(Quat::from_rotation_y(-315.0_f32.to_radians())),
+        Mesh3d(meshes.add(Cuboid::new(
+            platform.width_meters as f32,
+            platform_thickness,
+            deck_length,
+        ))),
+        MeshMaterial3d(platform_material),
+        platform_transform(&platform, platform_thickness),
     ));
     let white = materials.add(StandardMaterial {
         base_color: Color::srgb(0.87, 0.9, 0.93),
@@ -425,6 +448,33 @@ pub(crate) fn project_world(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn launch_platform_front_lip_and_slope_match_the_shared_ned_venue() {
+        let platform = launch_venue().unwrap().platform;
+        let thickness = 0.35;
+        let slope = platform.downward_slope_degrees.to_radians() as f32;
+        let deck_length = platform.length_meters as f32 / slope.cos();
+        let transform = platform_transform(&platform, thickness);
+        let front = transform.transform_point(Vec3::new(0.0, thickness / 2.0, -deck_length / 2.0));
+        let rear = transform.transform_point(Vec3::new(0.0, thickness / 2.0, deck_length / 2.0));
+        assert!(
+            front.distance(Vec3::new(
+                0.0,
+                platform.front_lip_above_water_meters as f32,
+                0.0,
+            )) < 1.0e-5
+        );
+        let [north, east] = platform.horizontal_direction_ned();
+        assert!(
+            rear.distance(Vec3::new(
+                -(east * platform.length_meters) as f32,
+                platform.front_lip_above_water_meters as f32
+                    + platform.length_meters as f32 * slope.tan(),
+                (north * platform.length_meters) as f32,
+            )) < 1.0e-5
+        );
+    }
+
     #[test]
     fn interpolation_changes_only_render_projection() {
         let history = RenderHistory {

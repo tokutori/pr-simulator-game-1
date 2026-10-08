@@ -1,5 +1,15 @@
 schema_version = 1
 [[assets]]
+path = "assets/biwa-launch-venue.json"
+sha256 = "7c851dcddf28dfd8fffe9ffe18ef835d8c5c2135c419d8f5d191fd8bdab2ba04"
+source = "User-supplied Hikone Matsubara launch origin and approximate platform geometry"
+source_version = "Existing launch-venue contract; shared configuration 2026-10-08"
+license = "MIT (project-authored configuration)"
+license_url = "https://github.com/tokutori/pr-simulator-game-1/blob/main/LICENSE"
+attribution = "User-supplied launch coordinate and approximate dimensions"
+processing = "Unchanged WGS84 origin 35.294075,136.254448; platform width 12 m, length 20 m, front lip 10 m above water, downward slope 3.5 degrees, launch bearing 315 degrees; not surveyed geometry. Rust session preparation and Web rendering read the same static document."
+
+[[assets]]
 path = "assets/biwa-typical-july-environment-v6.json"
 sha256 = "525f746bbfd2e65d0bf22bb8bf91dc6dcac641b9f42cc8254e335d8d70c523b8"
 source = "https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year="

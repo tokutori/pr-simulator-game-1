@@ -5,6 +5,7 @@ use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel,
 
 mod environment;
 mod hybrid_session;
+mod launch_venue;
 
 pub use environment::{
     LegacyEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,
@@ -12,6 +13,9 @@ pub use environment::{
 };
 pub use hybrid_session::{
     HybridSessionPreparation, HybridSessionPreparationError, identity_for_selection,
+};
+pub use launch_venue::{
+    LaunchOriginWgs84, LaunchPlatform, LaunchVenue, LaunchVenueError, launch_venue,
 };
 
 /// Default public flight control mode.

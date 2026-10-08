@@ -150,6 +150,9 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 `BrowserTailPilotInput`は毎tickのRust held targetを使用し、Gamepad再取得時はneutralと身体軸のpickupを確認する。
 身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
+発進原点・発進台寸法・方位は`assets/biwa-launch-venue.json`をRust session、Web、nativeで共用する。
+hybrid scenario version 2は北から時計回り315°を初期headingとcourse axisへ適用する。
+NEDの環境風は回転せず、同じCG地点の風をtrimの空気相対速度へ一度加算する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
 既定アプリはこの二系統port/controllerを使用し、入力・HUD・Resultへ同じsnapshotを渡す。
 `LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。

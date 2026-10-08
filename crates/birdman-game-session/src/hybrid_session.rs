@@ -15,13 +15,15 @@ use birdman_game_format::{
 
 use crate::{
     DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
+    LaunchVenueError,
     environment::{bundled_environment, legacy_wind_for_version},
+    launch_venue,
 };
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
 const CONTROLLER_PROFILE_VERSION: u32 = 1;
 const CATALOG_VERSION: u32 = 2;
-const SCENARIO_VERSION: u32 = 1;
+const SCENARIO_VERSION: u32 = 2;
 const SCENARIOS: [ScenarioCatalogEntry; 5] = [
     entry(1, WeatherClass::Calm),
     entry(2, WeatherClass::Mild),
@@ -37,6 +39,8 @@ static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockE
 /// Typed preparation failures before any hybrid session state or record is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
+    /// The shared launch venue configuration failed validation.
+    Venue(LaunchVenueError),
     /// The requested weather has no matching registered scenario or model identity.
     Configuration(ConfigurationError),
     /// The fictional model or its geometric load view failed validation.
@@ -122,8 +126,11 @@ impl HybridSessionPreparation {
             HybridMockTrim::try_new(definition).map_err(HybridSessionPreparationError::Mock)?;
         let cg_position =
             NedPoint::try_new(0.0, 0.0, -10.5).map_err(HybridSessionPreparationError::Math)?;
+        let platform = launch_venue()
+            .map_err(HybridSessionPreparationError::Venue)?
+            .platform;
         let air_state = trim
-            .initial_state_for_ground_launch(cg_position, 0.0)
+            .initial_state_for_ground_launch(cg_position, platform.heading_rad())
             .map_err(HybridSessionPreparationError::Mock)?;
         let wind_velocity = wind
             .velocity_at(cg_position)
@@ -147,8 +154,9 @@ impl HybridSessionPreparation {
             0.0,
         )
         .map_err(HybridSessionPreparationError::Dynamics)?;
-        let course_axis =
-            CourseAxis::try_new(1.0, 0.0).map_err(HybridSessionPreparationError::Course)?;
+        let [course_north, course_east] = platform.horizontal_direction_ned();
+        let course_axis = CourseAxis::try_new(course_north, course_east)
+            .map_err(HybridSessionPreparationError::Course)?;
         let parameters = TailFlightScenarioParameters::try_new(
             definition.aircraft(),
             launch,
