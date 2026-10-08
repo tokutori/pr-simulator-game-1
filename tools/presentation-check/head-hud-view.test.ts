@@ -38,6 +38,37 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
+  it("reserves a small upper-right FPS card outside the forward clear region without changing physical readouts", () => {
+    const model = createFlightHudModel(snapshot, 0);
+    const before = JSON.stringify(model);
+    const view = createHeadHudView(model, configuredViewer(), "ja", DEFAULT_HEAD_HUD_PROFILE, 72.5);
+    if (view.kind !== "visible") throw new Error("Expected Flight HUD with FPS");
+    expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
+    const fps = view.layer.elements.find((element) => element.id === "head-frame-rate");
+    if (fps === undefined) throw new Error("Missing frame rate card");
+    expect(fps).toMatchObject({ kind: "text", value: "FPS 72.5", label: "" });
+    expect(fps.bounds.left).toBeGreaterThan(0.5);
+    expect(fps.bounds.width).toBeLessThan(0.25);
+    for (const element of view.layer.elements.filter((element) => element !== fps)) {
+      const intersects = fps.bounds.left < element.bounds.left + element.bounds.width && element.bounds.left < fps.bounds.left + fps.bounds.width &&
+        fps.bounds.top < element.bounds.top + element.bounds.height && element.bounds.top < fps.bounds.top + fps.bounds.height;
+      expect(intersects).toBe(false);
+    }
+    expect(JSON.stringify(model)).toBe(before);
+  });
+
+  it("keeps FPS available for VR Menu scenes and during measurement warmup", () => {
+    for (const rate of [null, 90]) {
+      const view = createHeadHudView(null, configuredViewer(), "ja", DEFAULT_HEAD_HUD_PROFILE, rate);
+      if (view.kind !== "visible") throw new Error("Expected standalone head FPS");
+      expect(view.layer.anchor).toBe("head");
+      expect(view.layer.elements).toHaveLength(1);
+      expect(view.layer.elements[0]).toMatchObject({ id: "head-frame-rate", value: rate === null ? "FPS —" : "FPS 90.0" });
+      expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
+    }
+    expect(createHeadHudView(null, configuredViewer(), "ja").kind).toBe("absent");
+  });
+
   it("requires and retains an explicit display locale without changing geometry", () => {
     const model = createFlightHudModel(snapshot, 0);
     const japanese = createHeadHudView(model, configuredViewer(), "ja");

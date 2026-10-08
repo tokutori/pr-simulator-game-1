@@ -85,6 +85,10 @@ Autoは起動時benchmarkと実行時frame-time percentileを用い、hysteresis
 p95が18.5 msを超えた場合の低下、12.5 ms未満での上昇は初期候補値とし、計測後に確定する。
 適応画質は水面反射を無効化せず、速度・姿勢の判読に必要な波面と反射の最低品質を維持する。縮退時はresolution scale、shadow、cloud、terrain、particles、post-processing、水面の高周波detailの順を基準とする。反射解像度・更新頻度は最低品質を下回らない範囲で調整する。
 手動画質とAutoを区別し、Customを無断で上書きしない。
-Desktop/Phoneでは60 FPSを目標とする。XRはruntimeのrefresh rateに対応するframe budgetを使用する。
+WebとBevyのPC Screenは安定した80 FPS相当、12.5 ms/frameを目標とする。スマートフォンは60 FPS、XRはruntimeのrefresh rateに対応するframe budgetを使用する。
+PCの性能受入ではOS/GPU、解像度、DPR、画質、refresh rate、VSync、計測区間を固定し、平均値とframe-time percentileを記録する。
+60 HzのRAF/VSyncで測定した実表示FPSと、80 Hz以上での80 FPS受入を区別する。FPS表示は描画frameの頻度であり、100 Hzのphysics tickを計数しない。
+Webは成功したrender callback、Bevyは実時間のUpdate周期を750 ms窓で集計する。後者はGPUのpresent完了を直接計測する値ではない。
+起動直後と長時間中断後は測定待ちを表示する。静止画、単体試験、debug buildの結果だけで性能目標の達成を判定しない。
 CPU/GPU/転送量のbudget、対象端末、継続時間はBPG-012で数値化する。
 画質変更は物理tickと物理モデルへ影響しない。

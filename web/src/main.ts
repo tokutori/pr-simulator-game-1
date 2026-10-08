@@ -30,6 +30,7 @@ import type { MenuMeasurementCache } from "./presentation/menu-preparation.js";
 import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
 import type { MenuInputGeometry } from "./presentation/menu-interaction.js";
 import { PresentationRuntime } from "./presentation/runtime.js";
+import { ScreenFrameRateDisplay } from "./presentation/frame-rate.js";
 import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.js";
@@ -70,6 +71,7 @@ uiRoot.className = "screen-ui-root";
 const flightHudRoot = document.createElement("section");
 stage.append(canvas, uiRoot, flightHudRoot);
 mount.replaceChildren(stage);
+const frameRateDisplay = new ScreenFrameRateDisplay(stage);
 
 const panelCanvas = document.createElement("canvas");
 panelCanvas.width = 1536;
@@ -129,6 +131,7 @@ function runSideEffects(actions: readonly (() => void)[]): void {
 function renderModel(): void {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const domVisible = screenUiVisible(model.presentation);
+  frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
   const environment = currentRuntimeEnvironment();
   flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
@@ -160,7 +163,8 @@ function renderModel(): void {
 function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const frameModel = model;
   const snapshot = currentFlightSnapshot();
-  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap());
+  frameRateDisplay.render(runtime?.framesPerSecond ?? null, runtime?.currentMode === "screen");
+  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap(), runtime?.framesPerSecond ?? null);
   let headView: HeadHudView = draft.headHud;
   if (headView.kind === "visible") {
     const dimensions = headHudCanvasSize(headView.layer);

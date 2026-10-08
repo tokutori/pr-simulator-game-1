@@ -4,6 +4,7 @@ import { headPlaneFitsViews } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "../render/contracts/viewer-frame.js";
 import type { FlightHudModel } from "./flight-hud-model.js";
 import { FLIGHT_MENU_GEOMETRY } from "../render/contracts/ui.js";
+import { formatFrameRate } from "./frame-rate.js";
 
 export interface HeadHudLayoutProfile {
   readonly distanceMeters: number;
@@ -41,22 +42,24 @@ export const DEFAULT_HEAD_HUD_PROFILE: HeadHudLayoutProfile = Object.freeze({
   foregroundAlpha: 1
 });
 
-export function createHeadHudView(model: FlightHudModel, viewer: ViewerFrame, locale: string, profile: HeadHudLayoutProfile = DEFAULT_HEAD_HUD_PROFILE): HeadHudView {
+export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFrame, locale: string, profile: HeadHudLayoutProfile = DEFAULT_HEAD_HUD_PROFILE,
+  framesPerSecond?: number | null): HeadHudView {
   if (locale.trim() === "") throw new RangeError("Head HUD display locale must be explicit");
   validateProfile(profile);
-  const instruments = instrumentElements(model);
-  const readouts = model.readouts.split("\n").filter((line) => !line.startsWith("PITCH ")).join("\n");
-  const basicText = [readouts, model.telemetry].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
-  const text = [basicText, ...model.supplementaryReadouts].filter((line) => line !== "").join("\n");
+  const instruments = model === null ? [] : instrumentElements(model);
+  const readouts = (model?.readouts ?? "").split("\n").filter((line) => !line.startsWith("PITCH ")).join("\n");
+  const basicText = [readouts, model?.telemetry ?? ""].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
+  const text = [basicText, ...(model?.supplementaryReadouts ?? [])].filter((line) => line !== "").join("\n");
+  const frameRateLabel = framesPerSecond === undefined ? null : formatFrameRate(framesPerSecond);
   const textElements: HeadHudElement[] = [];
-  if (model.warning !== null) textElements.push(Object.freeze({
+  if (model !== null && model.warning !== null) textElements.push(Object.freeze({
     kind: "text", id: "head-warning", label: "WARNING", bounds: unitRect,
     value: model.warning, tone: "warning"
   }));
   if (text !== "") textElements.push(Object.freeze({
-    kind: "text", id: "head-readouts", label: model.status, bounds: unitRect, value: text, tone: "normal"
+    kind: "text", id: "head-readouts", label: model?.status ?? "", bounds: unitRect, value: text, tone: "normal"
   }));
-  if (textElements.length === 0 && instruments.length === 0) return NO_HEAD_HUD_VIEW;
+  if (textElements.length === 0 && instruments.length === 0 && frameRateLabel === null) return NO_HEAD_HUD_VIEW;
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
 
   const distance = profile.distanceMeters;
@@ -100,7 +103,9 @@ export function createHeadHudView(model: FlightHudModel, viewer: ViewerFrame, lo
     const cardWidth = width - 2 * padding;
     if (cardWidth < 8 * textHeightMeters) continue;
     const topHeights = textElements.map((element) => minimumCardHeight(element, cardWidth, textHeightMeters, padding));
-    const textBandHeight = stackedHeight(topHeights, gap);
+    const frameRateHeight = frameRateLabel === null ? 0 : (2 * HEAD_HUD_CARD_PADDING + HEAD_HUD_LINE_HEIGHT) * textHeightMeters;
+    const frameRateOffset = frameRateHeight === 0 ? 0 : frameRateHeight + gap;
+    const textBandHeight = stackedHeight(topHeights, gap) + frameRateOffset;
     if (textBandHeight > topBandHeight) continue;
     for (const columns of [3, 2, 1]) {
       if (instruments.length > 0 && columns > instruments.length) continue;
@@ -115,7 +120,12 @@ export function createHeadHudView(model: FlightHudModel, viewer: ViewerFrame, lo
       );
       if (bottomRows === undefined) continue;
       const elements: HeadHudElement[] = [];
-      let top = padding;
+      if (frameRateLabel !== null) {
+        const frameRateWidth = Math.min(cardWidth, (frameRateLabel.length + 2) * textHeightMeters);
+        elements.push(Object.freeze({ kind: "text", id: "head-frame-rate", label: "", value: frameRateLabel, tone: "normal",
+          bounds: rect((width - padding - frameRateWidth) / width, padding / height, frameRateWidth / width, frameRateHeight / height) }));
+      }
+      let top = padding + frameRateOffset;
       textElements.forEach((element, index) => {
         const cardHeight = topHeights[index] ?? 0;
         elements.push(Object.freeze({ ...element, bounds: rect(padding / width, top / height, cardWidth / width, cardHeight / height) }));

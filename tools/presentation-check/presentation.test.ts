@@ -271,6 +271,37 @@ describe("head-gaze selection", () => {
 });
 
 describe("presentation runtime", () => {
+  it.each(["screen", "phone-vr", "webxr"] as const)("observes one successfully rendered frame per %s callback and resets on backend changes", async (mode) => {
+    const renderer = new FakeRenderer();
+    const active = new Set<PresentationMode>();
+    const callbacks: number[] = [];
+    const backends = ["screen", "phone-vr", "webxr"].map((backend) => new FakeBackend(backend as PresentationMode, active));
+    const runtime = new PresentationRuntime(renderer, backends, () => fixturePresentation(createSceneFixture("Title")),
+      (timestamp) => { callbacks.push(timestamp); });
+    expect(await runtime.start(mode)).toEqual({ ok: true });
+    for (let frame = 0; frame <= 60; frame++) renderer.tick(frame * 1000 / 60);
+    expect(runtime.framesPerSecond).toBeCloseTo(60, 10);
+    expect(renderer.frames).toHaveLength(61);
+    expect(callbacks).toHaveLength(61);
+    expect(await runtime.switchTo(mode === "screen" ? "phone-vr" : "screen")).toEqual({ ok: true });
+    expect(runtime.framesPerSecond).toBeNull();
+    expect(renderer.startCount).toBe(1);
+    await runtime.dispose();
+    expect(runtime.framesPerSecond).toBeNull();
+  });
+
+  it("does not count a renderer failure as a completed frame", async () => {
+    const renderer = new FakeRenderer();
+    const backend = new FakeBackend("screen", new Set());
+    const runtime = new PresentationRuntime(renderer, [backend], () => fixturePresentation(createSceneFixture("Title")));
+    await runtime.start("screen");
+    renderer.tick(0);
+    renderer.render = () => { throw new Error("render failed"); };
+    expect(() => { renderer.tick(750); }).toThrow("render failed");
+    expect(runtime.framesPerSecond).toBeNull();
+    await runtime.dispose();
+  });
+
   it("keeps one engine loop while switching backend and disposes owned resources", async () => {
     const active = new Set<PresentationMode>();
     const renderer = new FakeRenderer();

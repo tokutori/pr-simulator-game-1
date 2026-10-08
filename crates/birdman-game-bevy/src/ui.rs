@@ -1,6 +1,7 @@
 use super::{
     CameraMode, NativeFont,
     diagnostics::{failure_summary, result_reason_label},
+    frame_rate::FrameRate,
     native_session::{MenuAction, NativeSession},
 };
 use bevy::ecs as bevy_ecs;
@@ -14,6 +15,7 @@ use birdman_game_core::{
     ControlMode, FlightRecordFinalization, FlightRecordHeader, PauseReason, PauseReasons,
     SessionEndReason, SessionPhase, SessionSimulationFailure, SessionSnapshot,
 };
+use std::borrow::Cow;
 
 const FLIGHT_CONTROL_GUIDE: &str =
     "操縦: ↑/↓ 機首上げ/下げ · ←/→ 左/右旋回\n重心移動: J/L（解放時保持） · 視点: C / 右ドラッグ";
@@ -43,6 +45,7 @@ pub(crate) enum UiText {
     Hud,
     TechnicalDetails,
     TechnicalButton,
+    FrameRate,
 }
 #[derive(Component)]
 pub(crate) enum UiPanel {
@@ -73,6 +76,19 @@ impl TechnicalDisclosure {
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
     commands.init_resource::<TechnicalDisclosure>();
+    commands.spawn((
+        UiText::FrameRate,
+        Text::new("FPS —"),
+        frame_rate_node(),
+        TextLayout::linebreak(LineBreak::NoWrap),
+        TextFont {
+            font: font.0.clone().into(),
+            font_size: FontSize::Px(16.0),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.75)),
+    ));
     let layout = commands
         .spawn((
             UiLayoutRoot,
@@ -311,6 +327,16 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
         })
         .id();
     commands.entity(layout).add_children(&[content, navigation]);
+}
+
+fn frame_rate_node() -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        top: px(12),
+        right: px(16),
+        padding: UiRect::axes(px(8), px(4)),
+        ..default()
+    }
 }
 
 fn session_button_node(action: MenuAction) -> Node {
@@ -692,6 +718,7 @@ pub(crate) fn update_ui(
     )>,
     mut panels: Query<(&UiPanel, &mut Node, &mut ScrollPosition), Without<MenuButton>>,
     mut text: Query<(&UiText, &mut Text)>,
+    frame_rate: Option<Res<FrameRate>>,
 ) {
     let snapshot = session.game.snapshot();
     let phase = snapshot.phase();
@@ -838,32 +865,37 @@ pub(crate) fn update_ui(
         }
     }
     for (kind, mut value) in &mut text {
-        match kind {
+        let label: Cow<'_, str> = match kind {
             UiText::PreparationSteps => {
-                value.0 = preparation_progress(phase).unwrap_or_default().into();
+                Cow::Borrowed(preparation_progress(phase).unwrap_or_default())
             }
-            UiText::Session => value.0.clone_from(&title),
-            UiText::AssistanceSelection => {
-                value.0 = format!(
-                    "操縦支援 — 現在の選択: {}\n{}",
-                    control_mode_label(session.control_mode),
-                    control_mode_description(session.control_mode),
-                );
-            }
+            UiText::Session => Cow::Borrowed(&title),
+            UiText::AssistanceSelection => Cow::Owned(format!(
+                "操縦支援 — 現在の選択: {}\n{}",
+                control_mode_label(session.control_mode),
+                control_mode_description(session.control_mode),
+            )),
             UiText::Action(action) => {
-                value.0 = action_label(phase, *action, session.control_mode);
+                Cow::Owned(action_label(phase, *action, session.control_mode))
             }
-            UiText::Hud => value.0.clone_from(&readout),
-            UiText::TechnicalDetails => value.0.clone_from(&details),
+            UiText::Hud => Cow::Borrowed(&readout),
+            UiText::TechnicalDetails => Cow::Borrowed(&details),
             UiText::TechnicalButton => {
-                value.0 = match (visible_hud(phase, false), details_open) {
+                Cow::Borrowed(match (visible_hud(phase, false), details_open) {
                     (true, true) => "技術情報を閉じて計器に戻る",
                     (true, false) => "技術情報を開く（計器を隠す）",
                     (false, true) => "技術情報を閉じる",
                     (false, false) => "技術情報を開く",
-                }
-                .into();
+                })
             }
+            UiText::FrameRate => Cow::Owned(
+                frame_rate
+                    .as_ref()
+                    .map_or_else(|| "FPS —".into(), |rate| rate.label()),
+            ),
+        };
+        if value.0.as_str() != label.as_ref() {
+            label.as_ref().clone_into(&mut value.0);
         }
     }
 }
@@ -875,6 +907,112 @@ mod tests {
         AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError, FbwAuthority,
         HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, TailFlightTickError,
     };
+
+    #[test]
+    fn unchanged_derived_labels_preserve_every_text_change_tick() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _ in 0..3 {
+            session.countdown(1.0);
+        }
+        session.notice = Some("操作に失敗した: InvalidTransition".into());
+        let snapshot = session.game.snapshot();
+        let mut app = App::new();
+        app.insert_resource(session)
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .add_systems(Update, update_ui);
+        let entities = [
+            UiText::PreparationSteps,
+            UiText::Session,
+            UiText::AssistanceSelection,
+            UiText::Action(MenuAction::Pause),
+            UiText::Hud,
+            UiText::TechnicalDetails,
+            UiText::TechnicalButton,
+            UiText::FrameRate,
+        ]
+        .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
+        let observe = |app: &App| {
+            entities.map(|entity| {
+                let text = app.world().entity(entity).get_ref::<Text>().unwrap();
+                (text.0.clone(), text.last_changed())
+            })
+        };
+        app.update();
+        let initial = observe(&app);
+        assert!(initial[4].0.contains("body rates p/q/r"));
+        assert!(initial[5].0.contains("InvalidTransition"));
+        assert_eq!(initial[7].0, "FPS —");
+        app.update();
+        assert_eq!(observe(&app), initial);
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn changed_notice_updates_its_labels_once_and_preserves_the_raw_cause() {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .add_systems(Update, update_ui);
+        let entities = [
+            UiText::Session,
+            UiText::TechnicalDetails,
+            UiText::Action(MenuAction::Exit),
+        ]
+        .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
+        let observe = |app: &App| {
+            entities.map(|entity| {
+                let text = app.world().entity(entity).get_ref::<Text>().unwrap();
+                (text.0.clone(), text.last_changed())
+            })
+        };
+        app.update();
+        let initial = observe(&app);
+        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        let notice = "操作に失敗した: InvalidTransition { from: Title, action: Resume }";
+        app.world_mut().resource_mut::<NativeSession>().notice = Some(notice.into());
+        app.update();
+        let updated = observe(&app);
+        assert!(updated[0].0.contains("通知がある。"));
+        assert_eq!(updated[1].0, format!("通知詳細:\n{notice}"));
+        assert_ne!(updated[0].1, initial[0].1);
+        assert_ne!(updated[1].1, initial[1].1);
+        assert_eq!(updated[2], initial[2]);
+        app.update();
+        assert_eq!(observe(&app), updated);
+        app.world_mut().resource_mut::<NativeSession>().notice = None;
+        app.update();
+        let cleared = observe(&app);
+        assert_eq!(cleared[0].0, initial[0].0);
+        assert!(cleared[1].0.is_empty());
+        assert_ne!(cleared[0].1, updated[0].1);
+        assert_ne!(cleared[1].1, updated[1].1);
+        assert_eq!(cleared[2], initial[2]);
+        app.update();
+        assert_eq!(observe(&app), cleared);
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn fps_uses_a_separate_upper_right_anchor_with_intrinsic_text_width() {
+        let node = frame_rate_node();
+        assert_eq!(node.position_type, PositionType::Absolute);
+        assert_eq!(node.top, px(12));
+        assert_eq!(node.right, px(16));
+        assert_eq!(node.left, Val::Auto);
+        assert_eq!(node.width, Val::Auto);
+        assert_eq!(node.min_width, Val::Auto);
+    }
 
     #[test]
     fn preflight_labels_and_back_actions_follow_the_real_session_route() {

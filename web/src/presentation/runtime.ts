@@ -1,6 +1,7 @@
 import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize, PanelUnavailableReason } from "../render/contracts/runtime.js";
 import type { PreparedPresentationView } from "../render/contracts/runtime.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
+import { FrameRateCounter } from "./frame-rate.js";
 
 export class PresentationRuntime {
   private readonly backends: ReadonlyMap<PresentationMode, PresentationBackendAdapter>;
@@ -8,6 +9,7 @@ export class PresentationRuntime {
   private loopStarted = false;
   private disposed = false;
   private queue: Promise<unknown> = Promise.resolve();
+  private readonly frameRate = new FrameRateCounter();
 
   constructor(
     private readonly renderer: RendererAdapter,
@@ -23,6 +25,10 @@ export class PresentationRuntime {
 
   get currentMode(): PresentationMode | null {
     return this.activeBackend?.mode ?? null;
+  }
+
+  get framesPerSecond(): number | null {
+    return this.frameRate.framesPerSecond;
   }
 
   start(mode: PresentationMode): Promise<RuntimeResult> {
@@ -48,6 +54,7 @@ export class PresentationRuntime {
     return this.enqueue(async () => {
       if (this.disposed) return { ok: true };
       this.disposed = true;
+      this.frameRate.reset();
       if (this.loopStarted) this.renderer.stopLoop();
       this.loopStarted = false;
       let stopError: RenderError | null = null;
@@ -78,6 +85,7 @@ export class PresentationRuntime {
       return { ok: false, error: { type: "backend-failed", mode, message: errorMessage(error) } };
     }
     this.activeBackend = backend;
+    this.frameRate.reset();
     if (!this.loopStarted) {
       try {
         this.renderer.startLoop((timestampMs, viewer) => { this.renderFrame(timestampMs, viewer); });
@@ -120,6 +128,7 @@ export class PresentationRuntime {
     try {
       await next.start();
       this.activeBackend = next;
+      this.frameRate.reset();
       return { ok: true };
     } catch (error) {
       const startMessage = errorMessage(error);
@@ -141,6 +150,7 @@ export class PresentationRuntime {
         try {
           await screen.start();
           this.activeBackend = screen;
+          this.frameRate.reset();
           return { ok: false, error: { type: "backend-failed", mode, message: startMessage } };
         } catch (fallbackError) {
           this.activeBackend = null;
@@ -161,6 +171,7 @@ export class PresentationRuntime {
   }
 
   private stopLoop(): void {
+    this.frameRate.reset();
     if (!this.loopStarted) return;
     this.renderer.stopLoop();
     this.loopStarted = false;
@@ -174,6 +185,7 @@ export class PresentationRuntime {
     const prepared = this.viewModel(viewer);
     const frame = backend.currentFrame(timestampMs, prepared.viewModel, viewer, prepared.menu);
     this.renderer.render(frame);
+    this.frameRate.observe(timestampMs);
     if (frame.panel.kind === "unavailable" && frame.panel.reason !== "viewer-unavailable" && backend.mode !== "screen") {
       this.onMenuUnavailable(backend.mode, frame.panel.reason);
     }

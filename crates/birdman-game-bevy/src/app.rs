@@ -2,6 +2,8 @@
 
 #[path = "diagnostics.rs"]
 mod diagnostics;
+#[path = "frame_rate.rs"]
+mod frame_rate;
 #[path = "native_session.rs"]
 mod native_session;
 #[path = "projection.rs"]
@@ -113,6 +115,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .init_resource::<NativeSession>()
     .init_resource::<FlightInput>()
     .init_resource::<CameraMode>();
+    app.init_resource::<frame_rate::FrameRate>();
     let font = app
         .world_mut()
         .resource_mut::<Assets<Font>>()
@@ -123,6 +126,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .add_systems(
             Update,
             (
+                frame_rate::observe_frame,
                 ui::button_actions,
                 advance_presentation,
                 world::project_world,

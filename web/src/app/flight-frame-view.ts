@@ -9,7 +9,7 @@ import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
 import { createFlightDisplayHudModel } from "../presentation/flight-hud-model.js";
 import type { FlightHudModel, InformationLevelCode } from "../presentation/flight-hud-model.js";
-import { createHeadHudView, NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
+import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudView } from "../presentation/head-hud-view.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiViewModel } from "../render/contracts/ui.js";
@@ -26,10 +26,12 @@ export interface FlightFrameViewDraft {
   readonly headHud: HeadHudView;
   readonly environment: EnvironmentBriefingProjection;
   readonly venue: VenueMapProjection;
+  readonly frameRateEnabled: boolean;
 }
 
 export function createFlightFrameViewDraft(model: AppModel, snapshotInput: FlightSnapshotInput | null, viewer: ViewerFrame, locale: string,
-  environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING, venue: VenueMapProjection = NO_VENUE_MAP): FlightFrameViewDraft {
+  environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING, venue: VenueMapProjection = NO_VENUE_MAP,
+  framesPerSecond?: number | null): FlightFrameViewDraft {
   const phase = gameSessionPhaseCode(model.gameSession);
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
@@ -38,10 +40,10 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   const hud = snapshot !== null && (phase === 5 || phase === 6)
     ? createFlightUiHudModel(model, snapshot)
     : null;
-  const headHud = hud !== null && phase === 5 && model.presentation.type === "ready" && model.presentation.mode !== "screen"
-    ? createHeadHudView(hud, viewer, locale)
+  const headHud = model.presentation.type === "ready" && model.presentation.mode !== "screen" && ((hud !== null && phase === 5) || framesPerSecond !== undefined)
+    ? createHeadHudView(phase === 5 ? hud : null, viewer, locale, DEFAULT_HEAD_HUD_PROFILE, framesPerSecond)
     : NO_HEAD_HUD_VIEW;
-  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment, venue });
+  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment, venue, frameRateEnabled: framesPerSecond !== undefined });
 }
 
 export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshotInput): FlightHudModel {
@@ -59,9 +61,10 @@ export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshot
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {
-  return gameSessionPhaseCode(draft.model.gameSession) < 0
+  const view = gameSessionPhaseCode(draft.model.gameSession) < 0
     ? createBootViewModel(draft.model)
     : createGameViewModel(draft.model, draft.snapshot, draft.analysis, headHud, draft.environment, draft.venue);
+  return draft.frameRateEnabled && headHud.kind === "visible" ? Object.freeze({ ...view, headHud: headHud.layer }) : view;
 }
 
 export interface FlightMenuFrameFailure {

@@ -44,6 +44,26 @@ function configuredViewer() {
 }
 
 describe("Immutable same-frame Flight view finalization", () => {
+  it.each(["phone-vr", "webxr"] as const)("uses a noninteractive head FPS readout in all %s scene phases without adding flight telemetry", (mode) => {
+    for (const phase of [0, 1, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      const model = flightModel(mode, phase);
+      const before = JSON.stringify(model);
+      const draft = createFlightFrameViewDraft(model, null, configuredViewer(), "ja", undefined, undefined, 60);
+      if (draft.headHud.kind !== "visible") throw new Error("Missing Head FPS view");
+      const view = finalizeFlightFrameView(draft, draft.headHud);
+      expect(view.headHud).toBe(draft.headHud.layer);
+      if (view.headHud.kind !== "visible") throw new Error("Missing finalized Head FPS layer");
+      expect(view.headHud.elements.some((element) => element.id === "head-frame-rate")).toBe(true);
+      expect(viewExposesAction(view, { type: "activate", controlId: "head-frame-rate" })).toBe(false);
+      expect(() => { validateUiViewModel(view); }).not.toThrow();
+      expect(JSON.stringify(model)).toBe(before);
+    }
+    const model = flightModel("screen", 0);
+    const draft = createFlightFrameViewDraft(model, null, configuredViewer(), "ja", undefined, undefined, 60);
+    expect(draft.headHud.kind).toBe("absent");
+    expect(finalizeFlightFrameView(draft, draft.headHud).headHud.kind).toBe("absent");
+  });
+
   it("recovers invalid Menu geometry only for the same model and presentation", () => {
     const frameModel = flightModel("phone-vr", 6);
     expect(menuFrameFailureRecovery(frameModel, frameModel, "phone-vr", "invalid-view-geometry"))
