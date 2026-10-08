@@ -284,6 +284,8 @@ enum PlayabilitySequence {
     PilotForwardEndpoint,
     PilotBackwardEndpoint,
     OneSecondNoseUp,
+    ContinuousPilotForwardEndpoint,
+    ContinuousPilotBackwardEndpoint,
 }
 
 impl PlayabilitySequence {
@@ -308,10 +310,16 @@ impl PlayabilitySequence {
                     TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
                 )
             }
-            Self::PilotForwardEndpoint | Self::PilotBackwardEndpoint
+            Self::PilotForwardEndpoint
+            | Self::PilotBackwardEndpoint
+            | Self::ContinuousPilotForwardEndpoint
+            | Self::ContinuousPilotBackwardEndpoint
                 if (100..200).contains(&tick) =>
             {
-                let sign = if matches!(self, Self::PilotForwardEndpoint) {
+                let sign = if matches!(
+                    self,
+                    Self::PilotForwardEndpoint | Self::ContinuousPilotForwardEndpoint
+                ) {
                     1.0
                 } else {
                     -1.0
@@ -319,6 +327,16 @@ impl PlayabilitySequence {
                 TailPilotPositionCommand::Set(
                     TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
                 )
+            }
+            Self::ContinuousPilotForwardEndpoint | Self::ContinuousPilotBackwardEndpoint
+                if tick >= 200 =>
+            {
+                let normalized = if matches!(self, Self::ContinuousPilotForwardEndpoint) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(normalized).unwrap())
             }
             _ => TailPilotPositionCommand::Hold,
         };
@@ -462,5 +480,23 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn playable_continuous_pilot_endpoint_requests_survive_repeated_set_after_guard_projection() {
+    for (sequence, normalized) in [
+        (PlayabilitySequence::ContinuousPilotForwardEndpoint, 1.0),
+        (PlayabilitySequence::ContinuousPilotBackwardEndpoint, -1.0),
+    ] {
+        for tick in [199, 200, 201, 400, DEFAULT_MAXIMUM_FLIGHT_TICKS] {
+            assert_eq!(
+                sequence.input(tick).pilot_position_command(),
+                TailPilotPositionCommand::Set(
+                    TailPilotPositionIntent::try_new(normalized).unwrap()
+                )
+            );
+        }
+        assert_playable_sequence(sequence);
     }
 }

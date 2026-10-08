@@ -23,6 +23,8 @@ enum InputSequence {
     PilotForwardEndpoint,
     PilotBackwardEndpoint,
     OneSecondNoseUp,
+    ContinuousPilotForwardEndpoint,
+    ContinuousPilotBackwardEndpoint,
 }
 
 impl InputSequence {
@@ -47,10 +49,16 @@ impl InputSequence {
                     TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
                 )
             }
-            Self::PilotForwardEndpoint | Self::PilotBackwardEndpoint
+            Self::PilotForwardEndpoint
+            | Self::PilotBackwardEndpoint
+            | Self::ContinuousPilotForwardEndpoint
+            | Self::ContinuousPilotBackwardEndpoint
                 if (100..200).contains(&tick) =>
             {
-                let sign = if matches!(self, Self::PilotForwardEndpoint) {
+                let sign = if matches!(
+                    self,
+                    Self::PilotForwardEndpoint | Self::ContinuousPilotForwardEndpoint
+                ) {
                     1.0
                 } else {
                     -1.0
@@ -58,6 +66,16 @@ impl InputSequence {
                 TailPilotPositionCommand::Set(
                     TailPilotPositionIntent::try_new(sign * (tick - 99) as f64 * 0.01).unwrap(),
                 )
+            }
+            Self::ContinuousPilotForwardEndpoint | Self::ContinuousPilotBackwardEndpoint
+                if tick >= 200 =>
+            {
+                let normalized = if matches!(self, Self::ContinuousPilotForwardEndpoint) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(normalized).unwrap())
             }
             _ => TailPilotPositionCommand::Hold,
         };
@@ -134,6 +152,8 @@ fn main() {
             InputSequence::PilotForwardEndpoint,
             InputSequence::PilotBackwardEndpoint,
             InputSequence::OneSecondNoseUp,
+            InputSequence::ContinuousPilotForwardEndpoint,
+            InputSequence::ContinuousPilotBackwardEndpoint,
         ] {
             let (configuration, _) = HybridSessionPreparation::try_new_for_weather(
                 mode,

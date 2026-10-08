@@ -123,7 +123,9 @@ stateと`resolved_pilot_position_target_m`は採用したeffective targetを保�
 通常列はNeutral、小pitch±0.05保持、100..109tickのfull nose-up pulse、pilot normalized±0.1への10tick移動である。
 Manual・Shared(authority 0.5)・Automaticの18列を旧v1と比較し、WaterContact/TimeLimitによる自然終端を要件とする。
 追加列はfull pitch±1保持、pilot±1への100tick移動、1秒full nose-up pulseである。
-これら33列でtyped failureの発生、datum/CG alpha、q、速度、incidence、実身体位置、effective targetを観測する。
+pilot端点は移動後にHoldする列と、200tick以降も毎tick Set(±1)を反復する列を区別する。
+後者はgamepadの連続要求による、clip解除後の元target再適用と振動・早期適用範囲超過を検査する。
+これら39列でtyped failureの発生、datum/CG alpha、q、速度、incidence、実身体位置、effective targetを観測する。
 受入はこの明示列と単体境界のsoftware検査に限定し、任意入力列や全weatherの安全性とは扱わない。
 
 全成功tickは製品経路で全RK4段と公開endpointの荷重検査を通す。
@@ -134,7 +136,7 @@ guard無効時の一致、未定義alpha、First stageの風error、Hold/Set、�
 ### 2026-10-09の実行結果
 
 rootによる`cargo run -p birdman-game-session --example probe_hybrid_playability --locked`の
-`target/hybrid-playability-v3-final.txt`では、上記33列すべてがWaterContact・failureなしで終了した。
+`target/hybrid-playability-v3-continuous.txt`では、連続Set列を含む39列すべてがWaterContact・failureなしで終了した。
 Manualの代表値は次のとおりである。距離は同じ終端時刻のcourse-parallel scoreである。
 
 | 入力列 | 終端時刻 [s] | 距離 [m] | datum alphaの記録範囲 [rad] |
@@ -148,7 +150,10 @@ Manualの代表値は次のとおりである。距離は同じ終端時刻のco
 | pilot後方端点 | 15.484 | 111.219 | [-0.009280, 0.096588] |
 | 1秒full nose-up pulse | 20.880 | 148.139 | [0.007860, 0.102330] |
 
+pilot端点を毎tick連続要求した6列も自然終端となった。Manualの前方要求は13.034 s・108.124 m、
+後方要求は25.194 s・165.737 mである。SharedとAutomaticの対応する4列もWaterContactとなった。
+
 旧v1の同じ小nose-up保持・pilot±0.1はStaticAlphaで終了したが、新candidateでは自然終端を得た。
 前方端点の記録alphaは+0.09 radを超えており、運用帯がsoftであることも観測結果と整合する。
-この結果はTypicalの明示33列に限る。任意入力、全weather、全RK内部stateの運用帯内保持、
+この結果はTypicalの明示39列に限る。任意入力、全weather、全RK内部stateの運用帯内保持、
 全状態の安定性、実機性能、完全な適用範囲保護を証明するものではない。
