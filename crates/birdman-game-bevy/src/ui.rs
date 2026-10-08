@@ -47,11 +47,14 @@ pub(crate) enum UiText {
 #[derive(Component)]
 pub(crate) enum UiPanel {
     SessionContent,
+    Navigation,
     PreparationSteps,
     AssistanceChoices,
     FlightHud,
     TechnicalDetails,
 }
+#[derive(Component)]
+struct UiLayoutRoot;
 #[derive(Resource, Default)]
 pub(crate) struct TechnicalDisclosure {
     expanded: bool,
@@ -70,14 +73,28 @@ impl TechnicalDisclosure {
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
     commands.init_resource::<TechnicalDisclosure>();
-    commands
+    let layout = commands
         .spawn((
-            UiPanel::SessionContent,
+            UiLayoutRoot,
             Node {
                 position_type: PositionType::Absolute,
                 top: px(12),
+                bottom: px(16),
                 left: px(16),
+                right: px(16),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::SpaceBetween,
+                row_gap: px(16),
+                ..default()
+            },
+        ))
+        .id();
+    let content = commands
+        .spawn((
+            UiPanel::SessionContent,
+            Node {
                 width: percent(72),
+                min_height: px(0),
                 max_height: vh(65),
                 overflow: Overflow::scroll_y(),
                 flex_direction: FlexDirection::Column,
@@ -229,7 +246,8 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 })
                 .observe(scroll_content);
         })
-        .observe(scroll_content);
+        .observe(scroll_content)
+        .id();
     commands
         .spawn((
             UiPanel::FlightHud,
@@ -262,17 +280,20 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                 TextColor(Color::WHITE),
             ));
         });
-    commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: px(16),
-            left: px(16),
-            right: px(16),
-            flex_wrap: FlexWrap::Wrap,
-            column_gap: px(8),
-            row_gap: px(8),
-            ..default()
-        })
+    let navigation = commands
+        .spawn((
+            UiPanel::Navigation,
+            Node {
+                width: percent(100),
+                min_width: px(0),
+                flex_shrink: 0.0,
+                align_items: AlignItems::Start,
+                flex_wrap: FlexWrap::Wrap,
+                column_gap: px(8),
+                row_gap: px(8),
+                ..default()
+            },
+        ))
         .with_children(|parent| {
             for action in [
                 MenuAction::Retry,
@@ -287,7 +308,29 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
             ] {
                 spawn_session_button(parent, &font, action);
             }
-        });
+        })
+        .id();
+    commands.entity(layout).add_children(&[content, navigation]);
+}
+
+fn session_button_node(action: MenuAction) -> Node {
+    let width = match action {
+        MenuAction::Launch => 280,
+        MenuAction::Retry => 220,
+        MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic => 200,
+        _ => 180,
+    };
+    Node {
+        width: px(width),
+        min_height: px(48),
+        max_width: percent(100),
+        flex_shrink: 0.0,
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::Center,
+        padding: UiRect::axes(px(16), px(10)),
+        border: UiRect::all(px(1)),
+        ..default()
+    }
 }
 
 fn spawn_session_button(parent: &mut ChildSpawnerCommands, font: &NativeFont, action: MenuAction) {
@@ -295,23 +338,24 @@ fn spawn_session_button(parent: &mut ChildSpawnerCommands, font: &NativeFont, ac
         .spawn((
             Button,
             MenuButton(UiAction::Session(action)),
-            Node {
-                padding: UiRect::axes(px(16), px(10)),
-                border: UiRect::all(px(1)),
-                max_width: percent(100),
-                ..default()
-            },
+            session_button_node(action),
             BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
             BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
         ))
         .with_children(|button| {
             button.spawn((
                 UiText::Action(action),
-                Text::new(""),
+                Text::new(action_label(
+                    SessionPhase::Title,
+                    action,
+                    ControlMode::Manual,
+                )),
                 Node {
-                    min_width: px(0),
+                    width: percent(100),
+                    flex_shrink: 0.0,
                     ..default()
                 },
+                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
                 TextFont {
                     font: font.0.clone().into(),
                     font_size: FontSize::Px(20.0),
@@ -688,7 +732,7 @@ pub(crate) fn update_ui(
     }
     for (panel, mut node, mut position) in &mut panels {
         let visible = match panel {
-            UiPanel::SessionContent => true,
+            UiPanel::SessionContent | UiPanel::Navigation => true,
             UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
             UiPanel::AssistanceChoices => phase == SessionPhase::FlightSetup,
             UiPanel::FlightHud => visible_hud(phase, details_open),
@@ -1234,7 +1278,91 @@ mod tests {
             .unwrap();
         assert_eq!(content.max_height, vh(65));
         assert_eq!(content.overflow, Overflow::scroll_y());
-        assert_eq!(content.top, px(12));
+        assert_eq!(content.min_height, px(0));
+        assert_eq!(content.position_type, PositionType::Relative);
+    }
+
+    #[test]
+    fn session_button_labels_have_definite_width_without_zero_intrinsic_measurement() {
+        let mut app = App::new();
+        app.insert_resource(NativeFont(Handle::default()))
+            .add_systems(Startup, setup_ui);
+        app.update();
+        let mut buttons = app.world_mut().query::<(&MenuButton, &Node, &Children)>();
+        let mut session_count = 0;
+        for (button, node, children) in buttons.iter(app.world()) {
+            let UiAction::Session(action) = button.0 else {
+                continue;
+            };
+            session_count += 1;
+            assert!(matches!(node.width, Val::Px(width) if width >= 180.0));
+            assert_eq!(node.min_height, px(48));
+            assert_eq!(node.flex_shrink, 0.0);
+            assert_eq!(node.max_width, percent(100));
+            assert_eq!(node.justify_content, JustifyContent::Center);
+            let label = children[0];
+            let text = app.world().get::<Text>(label).unwrap();
+            assert_eq!(
+                text.0,
+                action_label(SessionPhase::Title, action, ControlMode::Manual)
+            );
+            assert!(!text.0.is_empty());
+            let label_node = app.world().get::<Node>(label).unwrap();
+            assert_eq!(label_node.width, percent(100));
+            assert_eq!(label_node.min_width, Val::Auto);
+            assert_eq!(label_node.flex_shrink, 0.0);
+            let layout = app.world().get::<TextLayout>(label).unwrap();
+            assert_eq!(layout.linebreak, LineBreak::WordBoundary);
+            assert_eq!(layout.justify, Justify::Center);
+        }
+        assert_eq!(session_count, 12);
+    }
+
+    #[test]
+    fn content_and_navigation_share_bounded_column_with_scrollable_remaining_height() {
+        let mut app = App::new();
+        app.insert_resource(NativeFont(Handle::default()))
+            .add_systems(Startup, setup_ui);
+        app.update();
+        let root = {
+            let mut roots = app
+                .world_mut()
+                .query_filtered::<(Entity, &Node), With<UiLayoutRoot>>();
+            let (entity, node) = roots.single(app.world()).unwrap();
+            assert_eq!(node.position_type, PositionType::Absolute);
+            assert_eq!(node.top, px(12));
+            assert_eq!(node.bottom, px(16));
+            assert_eq!(node.left, px(16));
+            assert_eq!(node.right, px(16));
+            assert_eq!(node.flex_direction, FlexDirection::Column);
+            assert_eq!(node.row_gap, px(16));
+            entity
+        };
+        let mut panels = app.world_mut().query::<(Entity, &UiPanel, &Node)>();
+        let children = app.world().get::<Children>(root).unwrap();
+        let mut bounded_children = 0;
+        for (entity, panel, node) in panels.iter(app.world()) {
+            match panel {
+                UiPanel::SessionContent => {
+                    assert!(children.contains(&entity));
+                    assert_eq!(node.min_height, px(0));
+                    assert_eq!(node.overflow, Overflow::scroll_y());
+                    assert_eq!(node.flex_shrink, 1.0);
+                    bounded_children += 1;
+                }
+                UiPanel::Navigation => {
+                    assert!(children.contains(&entity));
+                    assert_eq!(node.position_type, PositionType::Relative);
+                    assert_eq!(node.width, percent(100));
+                    assert_eq!(node.flex_shrink, 0.0);
+                    assert_eq!(node.flex_wrap, FlexWrap::Wrap);
+                    assert_eq!(node.row_gap, px(8));
+                    bounded_children += 1;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(bounded_children, 2);
     }
 
     #[test]
