@@ -52,6 +52,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(), setLakeVisualCondition: vi.fn(),
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
+    setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
     setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
@@ -257,17 +258,23 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it("opens a legacy saved snapshot through the Tail owner and preserves its explicit three-axis render layout", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.click("game-title-open-record-1");
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(false);
     expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("legacy_three_axis");
     expect(trial.exportRecord).not.toHaveBeenCalled();
     trial.click("game-replay-view-mode");
     trial.click("game-replay-speed-2");
     trial.click("game-replay-return");
     expect(trial.scene()).toBe("Title");
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.click("game-title-start");
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.click("game-setup-start");
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.launch();
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
     expect(trial.free).not.toHaveBeenCalled();
   });

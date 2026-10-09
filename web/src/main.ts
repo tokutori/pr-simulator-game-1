@@ -45,6 +45,7 @@ import { NO_VENUE_MAP, venueMapForEnvironment } from "./game/biwa-venue-map.js";
 import { analysisCursorMatches, isNamedAnalysis, projectAnalysisView } from "./game/flight-analysis-view.js";
 import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
+import { projectRuntimeVenue } from "./game/runtime-venue.js";
 import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
 import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
@@ -136,6 +137,7 @@ function renderModel(): void {
   flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
   flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
     ? environment.value.sky.value.condition : null);
+  flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
   const flightSnapshot = currentFlightSnapshot();
   if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);

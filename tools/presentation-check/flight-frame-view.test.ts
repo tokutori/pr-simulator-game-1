@@ -83,7 +83,7 @@ describe("Immutable same-frame Flight view finalization", () => {
     const renderer: RendererAdapter = {
       startLoop(callback) { evidence.loop = (timestamp) => { callback(timestamp, unavailableViewerFrame("not-stereo")); }; },
       beginViewFrame() {}, stopLoop() { evidence.loop = null; }, render() { evidence.frames++; },
-      setFlightPose() {}, setPreparedFlightPose() {}, setLakeVisualCondition() {}, setLakeSkyCondition() {}, setFlightCameraMode() {}, setCinematicCameraView() {},
+      setFlightPose() {}, setPreparedFlightPose() {}, setLakeVisualCondition() {}, setLakeSkyCondition() {}, setLakeVenueVisible() {}, setFlightCameraMode() {}, setCinematicCameraView() {},
       transformTrackingPose: (value) => value, resize() {}, setStereoPresentation() {}, setSelectRayHandler() {}, dispose() {}
     };
     const packed = new Array<number>(33).fill(0); packed[7] = 1; packed[19] = -1;

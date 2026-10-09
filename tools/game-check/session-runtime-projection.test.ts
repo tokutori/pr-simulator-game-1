@@ -5,6 +5,7 @@ import { createAppSession } from "../../web/src/app/session-factory.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
 import { venueMapForEnvironment } from "../../web/src/game/biwa-venue-map.js";
+import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
@@ -35,6 +36,15 @@ function jsonObject(json: string): Record<string, unknown> {
 
 function nested(parent: Record<string, unknown>, key: string): Record<string, unknown> {
   return parent[key] as Record<string, unknown>;
+}
+
+function sessionVenue(session: TailAppSessionFacade) {
+  const phaseCode = session.readLifecycle().phaseCode;
+  const snapshot = phaseCode >= 1 && phaseCode <= 8 ? session.readSnapshot() : undefined;
+  const identity = phaseCode === 9 || phaseCode === 10 ? session.readPlaybackContext().scenario
+    : snapshot?.identity.kind === "prepared" ? snapshot.identity.scenario : undefined;
+  const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, identity);
+  return { environment, venue: projectRuntimeVenue(environment, phaseCode) };
 }
 
 describe("application runtime session projection", () => {
@@ -79,16 +89,69 @@ describe("application runtime session projection", () => {
       legacy.start_countdown(1); legacy.advance_countdown(); legacy.launch(); legacy.advance_tick(0, 0, 0, 0); legacy.abort();
       session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title");
       session.openArchive(legacy.export_flight_record_json());
+      expect(sessionVenue(session).venue).toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 9, controlLayout: "tail_incidence", display: { value: { kind: "legacy_record" } } });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const queried = queryRuntimeRecordPose(session, dataset, 0.005);
       expect(queried.pose.controls?.layout).toBe("legacy_three_axis");
       expect(queried.display.pilotPositionTargetNormalized.kind).toBe("unavailable");
+      session.executeOperation("leave-replay");
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
+      session.executeOperation("enter-attract");
+      expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "attract" } });
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
     } finally { session.dispose(); legacy.free(); }
   });
 });
 
 describe("registered environment and venue projection", () => {
+  it.each([0, 1])("preserves current weather %s venue through flight, Result, Replay and Retry but hides its imported record", (weather) => {
+    const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    try {
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
+      session.executeOperation("open-setup");
+      session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: weather });
+      const selected = sessionVenue(session);
+      expect(selected.environment).toMatchObject({ kind: "available", value: { source: "selected", localFrame: { kind: "unavailable" } } });
+      expect(selected.venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("prepare");
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("start-flight");
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.advanceCountdown(); session.advanceCountdown(); session.advanceCountdown(); session.launch();
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("pause");
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("abort");
+      expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "sealed" } });
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      const saved = session.exportRecordJson();
+      session.executeOperation("enter-replay");
+      expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "record" } });
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("leave-replay");
+      session.executeOperation("retry");
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
+      session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title");
+      session.openArchive(saved);
+      expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "archive", localFrame: { kind: "unavailable" } } });
+      expect(sessionVenue(session).venue).toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
+      session.executeOperation("leave-replay");
+      expect(session.readLifecycle().phaseCode).toBe(0);
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
+    } finally { session.dispose(); }
+  });
+
+  it("keeps the independent default Attract venue without inventing a recorded origin", () => {
+    const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    try {
+      session.executeOperation("enter-attract");
+      const projected = sessionVenue(session);
+      expect(projected.environment).toMatchObject({ kind: "available", value: { source: "attract", localFrame: { kind: "unavailable" } } });
+      expect(projected.venue).toEqual({ kind: "visible", basis: "shared_launch" });
+    } finally { session.dispose(); }
+  });
+
   it("restricts no-selection to the unprepared Title and rejects surplus availability fields", () => {
     const document = { schema_version: 1, context: { kind: "session", phase_code: 0 }, projection: { kind: "no_selection" } };
     expect(parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 0)).toEqual({ kind: "unavailable", reason: "no_selection" });
@@ -130,6 +193,8 @@ describe("registered environment and venue projection", () => {
         } } } });
         const venue = venueMapForEnvironment(environment);
         expect(venue.kind).toBe(unknown ? "unavailable" : "available");
+        expect(projectRuntimeVenue(environment, 9)).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
+          : { kind: "visible", basis: "recorded_origin" });
         const state = updateApp(createInitialAppModel(), { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
         for (const mode of ["screen", "phone-vr", "webxr"] as const) {
           const view = createGameViewModel({ ...state, presentation: { type: "ready", mode }, flightAnalysis: data, replayViewMode: "analysis" },
@@ -152,6 +217,22 @@ describe("registered environment and venue projection", () => {
       const projection = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 3, snapshot.identity.scenario);
       expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.identity.scenario, localFrame: { kind: "available" } } });
       expect(venueMapForEnvironment(projection)).toMatchObject({ kind: "available", value: { origin: "launch-origin-wgs84-35.294075-136.254448" } });
+    } finally { session.dispose(); }
+  });
+
+  it.each(["origin", "datum", "missing-origin"] as const)("requires the imported record's registered %s", (change) => {
+    const session = prepared();
+    try {
+      launch(session); session.executeOperation("abort"); session.openArchive(session.exportRecordJson());
+      const context = session.readPlaybackContext();
+      const document = jsonObject(session.readEnvironmentJson());
+      const metadata = nested(nested(document, "projection"), "metadata");
+      if (change === "origin") nested(nested(metadata, "local_frame"), "value").longitude_degrees = 137;
+      if (change === "datum") nested(nested(metadata, "local_frame"), "value").water_level_datum = "another datum";
+      if (change === "missing-origin") metadata.local_frame = { kind: "unavailable" };
+      const environment = parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 9, context.scenario);
+      expect(projectRuntimeVenue(environment, 9)).toEqual({ kind: "unavailable", reason: change === "missing-origin" ? "origin_not_recorded" : "unregistered_origin" });
+      expect(projectRuntimeVenue(environment, 7)).toEqual({ kind: "unavailable", reason: "context_mismatch" });
     } finally { session.dispose(); }
   });
 

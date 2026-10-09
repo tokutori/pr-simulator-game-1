@@ -88,6 +88,7 @@ export interface RendererAdapter {
   setPreparedFlightPose(pose: FlightRenderPose | null): void;
   setLakeVisualCondition(condition: LakeVisualCondition): void;
   setLakeSkyCondition(condition: LakeSkyCondition | null): void;
+  setLakeVenueVisible(visible: boolean): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   setCinematicCameraView(view: CinematicCameraView | null): void;
   transformTrackingPose(pose: Pose): Pose;

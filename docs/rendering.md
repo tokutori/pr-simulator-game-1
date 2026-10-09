@@ -40,6 +40,9 @@ Low 4–6、Medium 8–12、High 12–24成分を暫定予算とする。
 
 ## 地形・会場
 
+Webの3D会場表示は、検査済みRust environment projectionのsourceから純粋に導出する。Titleは明示的な会場展示、現行session・そのResult/Replay・独立Attractは共有launch venueの表示座標契約を使用する。Calm/Mildの地理原点未記録状態は保持し、会場展示によって地理原点が記録されたと扱わない。
+imported archiveはfull scenario identityに対応する登録済み環境と、記録されたlocal NED原点・water-level datumが会場assetと一致する場合に限り地形・湖岸・島・発進台を表示する。未知identityまたは原点未記録のarchiveはこれらを非表示とし、水面・機体・記録再生は維持する。archive退出後のTitle展示と現行flightの会場表示を復帰させる。表示切替は既存frame境界で適用し、physicsや保存recordを変更しない。
+
 ## 空間手掛かりの層
 
 遠景の対岸稜線をworld-fixedなhorizon/referenceとして保ち、Pilot視点のpitch・roll判読を支える。機体のnose・wing/cockpit横線はbody-fixedな自己基準とし、外界と同時に視認できる。

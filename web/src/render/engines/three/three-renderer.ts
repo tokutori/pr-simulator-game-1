@@ -330,6 +330,7 @@ export function createThreeRenderer(
   water.receiveShadow = true;
   scene.add(water);
   const venue = createLakeVenue();
+  venue.group.visible = false;
   scene.add(venue.group);
   const reflectionTarget = new WebGLRenderTarget(512, 256, {
     minFilter: LinearFilter,
@@ -421,6 +422,7 @@ export function createThreeRenderer(
     viewport?: ViewportSize;
     lake?: LakeVisualCondition;
     sky?: LakeSkyCondition | null;
+    venueVisible?: boolean;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
   const stageViewInputs = (inputs: PendingViewInputs): void => {
@@ -487,6 +489,7 @@ export function createThreeRenderer(
           if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
           if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
           if ("sky" in pending) rendererAdapter.setLakeSkyCondition(pending.sky ?? null);
+          if (pending.venueVisible !== undefined) rendererAdapter.setLakeVenueVisible(pending.venueVisible);
         }
         frameViewport = width > 0 && height > 0 ? Object.freeze({ x: width, y: height, pixelRatio }) : null;
         framePhase = "physics";
@@ -563,9 +566,6 @@ export function createThreeRenderer(
       water.position.set(flightPose?.datumPositionNed.east ?? 0, 0, -(flightPose?.datumPositionNed.north ?? 0));
       farWater.position.set(flightPose?.datumPositionNed.east ?? 0, 0, -(flightPose?.datumPositionNed.north ?? 0));
       farWaterBackingCenter.set(farWater.position.x, farWater.position.z, 0, 0);
-      // Terrain, shoreline, and islands are part of the shared world in every
-      // scene; only the aircraft pose is absent on the title screen.
-      venue.group.visible = true;
       // Keep the light's orthographic shadow volume around the moving airframe.
       sun.target.position.copy(aircraftRoot.position);
       sun.position.copy(aircraftRoot.position).add(sunOffset);
@@ -766,6 +766,11 @@ export function createThreeRenderer(
       skyTexture.dispose();
       skyTexture = nextTexture;
       activeSkyCondition = nextCondition;
+    },
+    setLakeVenueVisible(visible: boolean) {
+      ensureActive(disposed);
+      if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ venueVisible: visible }); return; }
+      venue.group.visible = visible;
     },
     setFlightCameraMode(mode: FlightCameraMode) {
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ cameraMode: mode }); return; }

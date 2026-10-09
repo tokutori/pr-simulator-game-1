@@ -7,6 +7,7 @@ import { createLakeSkyCondition } from "../render/contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../render/contracts/lake-sky.js";
 
 export interface RuntimeEnvironmentMetadata {
+  readonly source: "selected" | "sealed" | "record" | "archive" | "attract";
   readonly identity: TailScenarioIdentity;
   readonly localFrame: DisplayAvailability<Readonly<{ latitudeDegrees: number; longitudeDegrees: number; waterLevelDatum: string }>, "origin_not_recorded">;
   readonly waves: LakeVisualCondition;
@@ -67,7 +68,7 @@ export function parseRuntimeEnvironmentSnapshot(json: string, phaseCode: number,
       cloudFraction: boundaryNumber(value.cloud_fraction), visibilityMeters: boundaryNumber(value.visibility_m)
     }), cloudBaseMeters: boundaryNumber(value.cloud_base_m, 0) }) });
   }
-  return Object.freeze({ kind: "available", value: Object.freeze({ identity, localFrame, sky, waves: Object.freeze({
+  return Object.freeze({ kind: "available", value: Object.freeze({ source, identity, localFrame, sky, waves: Object.freeze({
     windNorthMetersPerSecond: wind[0] as number, windEastMetersPerSecond: wind[1] as number,
     fetchMeters: boundaryNumber(waves.fetch_m, Number.MIN_VALUE), detailAmplitudeScale: boundaryNumber(waves.detail_amplitude_scale, 0), patternSeed }) }) });
 }

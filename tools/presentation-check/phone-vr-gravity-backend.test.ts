@@ -279,6 +279,7 @@ class RecordingRenderer implements RendererAdapter {
   setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
   setLakeSkyCondition(): void {}
+  setLakeVenueVisible(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
   transformTrackingPose(value: Pose): Pose { return composePose(this.mount, value); }

@@ -1,4 +1,5 @@
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
+import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Vector3, Vector4 } from "three";
@@ -26,6 +27,12 @@ import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
+import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
+
+initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
 interface RecordedDraw {
   readonly camera: Matrix4;
@@ -144,12 +151,76 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightPose(null);
     bundle.renderer.setPreparedFlightPose(null);
     bundle.renderer.setLakeSkyCondition(null);
+    bundle.renderer.setLakeVenueVisible(true);
     bundle.renderer.setFlightCameraMode("pilot");
     bundle.renderer.setCinematicCameraView(null);
     driver.draws.length = 0;
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it.each(["registered-archive", "unknown-archive", "calm-archive", "legacy-archive", "current-calm"] as const)(
+    "applies the actual Rust %s venue projection without hiding water or aircraft", (recordKind) => {
+      const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+      try {
+        session.executeOperation("open-setup");
+        session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: recordKind === "registered-archive" || recordKind === "unknown-archive" ? 2 : 0 });
+        session.executeOperation("prepare"); session.executeOperation("start-flight");
+        session.advanceCountdown(); session.advanceCountdown(); session.advanceCountdown(); session.launch(); session.executeOperation("abort");
+        let saved = session.exportRecordJson();
+        if (recordKind === "unknown-archive") {
+          const document = JSON.parse(saved) as { header: { environment_version: number } };
+          document.header.environment_version = 99;
+          saved = JSON.stringify(document);
+        }
+        if (recordKind === "legacy-archive") {
+          const legacy = new GameSessionBridge(0);
+          try {
+            legacy.open_setup(); legacy.prepare(); legacy.mark_briefing_ready(); legacy.start_countdown(1);
+            legacy.advance_countdown(); legacy.launch(); legacy.advance_tick(0, 0, 0, 0); legacy.abort();
+            saved = legacy.export_flight_record_json();
+          } finally { legacy.free(); }
+        }
+        if (recordKind !== "current-calm") session.openArchive(saved);
+        const phaseCode = session.readLifecycle().phaseCode;
+        const identity = recordKind === "current-calm" ? session.readRecordSummary().context.scenario : session.readPlaybackContext().scenario;
+        const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, identity);
+        bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(environment, phaseCode).kind === "visible");
+        bundle.renderer.render(frame());
+        const scene = driver.scene;
+        const venue = scene?.getObjectByName("lake-biwa-launch-venue");
+        if (scene === null || venue === undefined) throw new Error("Missing registered venue group");
+        expect(venue.children.length).toBeGreaterThan(0);
+        expect(venue.visible).toBe(recordKind === "registered-archive" || recordKind === "current-calm");
+        expect(scene.getObjectByName("aircraft-presentation-root")?.visible).toBe(true);
+        expect(scene.getObjectByName("lake-biwa-distant-water-backing")?.visible).toBe(true);
+        if (recordKind !== "current-calm") {
+          session.executeOperation("leave-replay");
+          const title = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 0);
+          bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title, 0).kind === "visible");
+          bundle.renderer.render(frame());
+          expect(venue.visible).toBe(true);
+        }
+      } finally { session.dispose(); }
+    }
+  );
+
+  it("stages both hidden and visible venue projections at the next view frame", () => {
+    const visible: boolean[] = [];
+    bundle.renderer.startLoop((timestamp) => {
+      bundle.renderer.beginViewFrame();
+      if (timestamp === 1) bundle.renderer.setLakeVenueVisible(false);
+      if (timestamp === 2) bundle.renderer.setLakeVenueVisible(true);
+      bundle.renderer.render(frame({ timestampMs: timestamp }));
+      const venue = driver.scene?.getObjectByName("lake-biwa-launch-venue");
+      if (venue === undefined) throw new Error("Missing registered venue group");
+      visible.push(venue.visible);
+    });
+    try {
+      driver.tick(1, null); driver.tick(2, null); driver.tick(3, null);
+      expect(visible).toEqual([true, false, true]);
+    } finally { bundle.renderer.stopLoop(); }
+  });
 
   it("starts without solar lighting or directional shadows when sky metadata is absent", () => {
     bundle.renderer.render(frame());

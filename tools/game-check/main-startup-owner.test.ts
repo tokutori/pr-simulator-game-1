@@ -34,7 +34,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
       if (options.failStart === true) throw new Error("Injected renderer start failure");
     }),
     beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
-    setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
+    setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => {
