@@ -31,6 +31,8 @@ build完了後の同じ起動コマンドでは、生成済みbinaryを再利用
 共有Rust準備と既存GameSession、力学、空力、制御、接触、score、recordを直接利用する。
 Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有しない。
 固定tickはcoreの`PHYSICS_HZ`を参照し、描画frame・camera・ウィンドウ寸法から分離する。
+Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、simulation時刻を同じfractionで補間する。
+初回は発進状態と最初のtickを使用し、prepared・Pause・Resultは確定sampleを表示する。非Running時に描画履歴を破棄し、Retryへ旧飛行の補間を持ち越さない。
 終了理由が適用範囲外の場合も元のcauseと最後の有効状態を保持する。
 旧三軸モデルへ切り替えない。既定モデルの改善は公開可能なsynthetic係数に限定し、実機同定と分離する。
 

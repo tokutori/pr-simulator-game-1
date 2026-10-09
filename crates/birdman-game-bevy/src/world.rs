@@ -1,6 +1,6 @@
 use super::{
     CameraMode,
-    native_session::NativeSession,
+    native_session::{NativeSession, TailDisplay},
     projection::{aircraft_transform, camera_transform, sunlight_transform},
     water::WaterMaterial,
 };
@@ -16,7 +16,7 @@ use birdman_game_core::{
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
 
-#[derive(Component)]
+#[derive(Component, PartialEq, Eq)]
 pub(crate) enum WorldProjection {
     Aircraft,
     HorizontalTail,
@@ -27,27 +27,71 @@ pub(crate) enum WorldProjection {
 
 #[derive(Resource, Default)]
 pub(crate) struct RenderHistory {
-    previous: Option<Transform>,
-    current: Option<Transform>,
+    samples: Option<RenderSamples>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RenderSample {
+    aircraft: Transform,
+    pilot_position_m: f64,
+    elevator_rad: f64,
+    rudder_rad: f64,
+    simulation_time_seconds: f64,
+}
+
+impl RenderSample {
+    fn from_display(display: &TailDisplay) -> Self {
+        Self {
+            aircraft: aircraft_transform(display.state),
+            pilot_position_m: display.state.pilot_position_m(),
+            elevator_rad: display.incidence.elevator_rad(),
+            rudder_rad: display.incidence.rudder_rad(),
+            simulation_time_seconds: display.tick / f64::from(birdman_game_core::PHYSICS_HZ),
+        }
+    }
+}
+
+struct RenderSamples {
+    previous: RenderSample,
+    current: RenderSample,
 }
 
 impl RenderHistory {
-    pub(crate) fn capture(&mut self, state: birdman_game_core::FlightState) {
-        let projected = aircraft_transform(state);
-        self.previous = self.current.or(Some(projected));
-        self.current = Some(projected);
+    pub(crate) fn capture_interval(&mut self, previous: &TailDisplay, current: &TailDisplay) {
+        self.samples = Some(RenderSamples {
+            previous: RenderSample::from_display(previous),
+            current: RenderSample::from_display(current),
+        });
     }
     pub(crate) fn reset(&mut self) {
-        self.previous = None;
-        self.current = None;
+        self.samples = None;
     }
-    fn interpolated(&self, fraction: f32) -> Option<Transform> {
-        let previous = self.previous?;
-        let current = self.current?;
-        Some(
-            Transform::from_translation(previous.translation.lerp(current.translation, fraction))
-                .with_rotation(previous.rotation.slerp(current.rotation, fraction)),
-        )
+    fn interpolated(&self, fraction: f64) -> Option<RenderSample> {
+        let samples = self.samples.as_ref()?;
+        let previous = samples.previous;
+        let current = samples.current;
+        let interpolate = |previous: f64, current: f64| previous + (current - previous) * fraction;
+        Some(RenderSample {
+            aircraft: Transform::from_translation(
+                previous
+                    .aircraft
+                    .translation
+                    .lerp(current.aircraft.translation, fraction as f32),
+            )
+            .with_rotation(
+                previous
+                    .aircraft
+                    .rotation
+                    .slerp(current.aircraft.rotation, fraction as f32),
+            ),
+            pilot_position_m: interpolate(previous.pilot_position_m, current.pilot_position_m),
+            elevator_rad: interpolate(previous.elevator_rad, current.elevator_rad),
+            rudder_rad: interpolate(previous.rudder_rad, current.rudder_rad),
+            simulation_time_seconds: interpolate(
+                previous.simulation_time_seconds,
+                current.simulation_time_seconds,
+            ),
+        })
     }
 }
 
@@ -435,7 +479,7 @@ pub(crate) fn setup_world(
 pub(crate) fn project_world(
     session: Res<NativeSession>,
     camera: Res<CameraMode>,
-    history: Res<RenderHistory>,
+    mut history: ResMut<RenderHistory>,
     fixed: Res<Time<Fixed>>,
     mut transforms: Query<(&WorldProjection, &mut Transform)>,
     mut water: ResMut<Assets<WaterMaterial>>,
@@ -443,25 +487,30 @@ pub(crate) fn project_world(
     let display = session.display_state();
     let preview = session.prepared_display_state();
     let aircraft_display = display.as_ref().or(preview.as_ref());
-    let projected = aircraft_display.map_or_else(
+    let running = session.game.snapshot().phase() == birdman_game_core::SessionPhase::FlightRunning;
+    if !running {
+        history.reset();
+    }
+    let render_sample = aircraft_display.map(|display| {
+        let exact = RenderSample::from_display(display);
+        if running {
+            history
+                .interpolated(fixed.overstep_fraction_f64())
+                .unwrap_or(exact)
+        } else {
+            exact
+        }
+    });
+    let projected = render_sample.map_or_else(
         || exhibition_aircraft_transform(launch_venue().expect("登録launch venueが不正").platform),
-        |display| {
-            let exact = aircraft_transform(display.state);
-            if session.game.snapshot().phase() == birdman_game_core::SessionPhase::FlightRunning {
-                history
-                    .interpolated(fixed.overstep_fraction())
-                    .unwrap_or(exact)
-            } else {
-                exact
-            }
-        },
+        |sample| sample.aircraft,
     );
-    let projected_camera = display.as_ref().map_or_else(
+    let projected_camera = display.as_ref().and(render_sample).map_or_else(
         || Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
-        |display| {
+        |sample| {
             camera_transform(
-                projected,
-                display.state.pilot_position_m(),
+                sample.aircraft,
+                sample.pilot_position_m,
                 session.initial_pilot_position_m,
                 camera.chase,
                 camera.look,
@@ -474,20 +523,18 @@ pub(crate) fn project_world(
             WorldProjection::FlightCamera => *transform = projected_camera,
             WorldProjection::HorizontalTail => {
                 transform.rotation = Quat::from_rotation_x(
-                    aircraft_display.map_or(0.0, |display| display.incidence.elevator_rad() as f32),
+                    render_sample.map_or(0.0, |sample| sample.elevator_rad as f32),
                 )
             }
             WorldProjection::VerticalTail => {
                 transform.rotation = Quat::from_rotation_y(
-                    -aircraft_display.map_or(0.0, |display| display.incidence.rudder_rad() as f32),
+                    -render_sample.map_or(0.0, |sample| sample.rudder_rad as f32),
                 )
             }
             WorldProjection::SkyDome => transform.translation = projected_camera.translation,
         }
     }
-    let time = display.map_or(0.0, |display| {
-        display.tick as f32 / birdman_game_core::PHYSICS_HZ as f32
-    });
+    let time = render_sample.map_or(0.0, |sample| sample.simulation_time_seconds as f32);
     for (_, material) in water.iter_mut() {
         material.camera_time = projected_camera.translation.extend(time);
     }
@@ -500,8 +547,366 @@ fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
 
 #[cfg(test)]
 mod tests {
-    use super::super::native_session::MenuAction;
+    use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
+
+    fn projection_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<FlightInput>()
+            .init_resource::<RenderHistory>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(
+                birdman_game_core::PHYSICS_HZ,
+            )))
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(FixedUpdate, super::super::advance_physics)
+            .add_systems(Update, project_world);
+        for projection in [
+            WorldProjection::Aircraft,
+            WorldProjection::FlightCamera,
+            WorldProjection::HorizontalTail,
+            WorldProjection::VerticalTail,
+            WorldProjection::SkyDome,
+        ] {
+            app.world_mut().spawn((projection, Transform::default()));
+        }
+        {
+            let mut materials = app.world_mut().resource_mut::<Assets<WaterMaterial>>();
+            materials.add(WaterMaterial::registered(false).unwrap());
+            materials.add(WaterMaterial::registered(true).unwrap());
+        }
+        app
+    }
+
+    fn projected_transform(app: &mut App, projection: WorldProjection) -> Transform {
+        let mut query = app.world_mut().query::<(&WorldProjection, &Transform)>();
+        query
+            .iter(app.world())
+            .find_map(|(kind, transform)| (*kind == projection).then_some(*transform))
+            .unwrap()
+    }
+
+    fn set_render_fraction(app: &mut App, fraction: f64) {
+        let mut fixed = app.world_mut().resource_mut::<Time<Fixed>>();
+        let timestep = fixed.timestep();
+        fixed.discard_overstep(std::time::Duration::MAX);
+        fixed.accumulate_overstep(timestep.mul_f64(fraction));
+    }
+
+    fn assert_sample_projection(app: &mut App, sample: RenderSample, live_camera: bool) {
+        let aircraft = projected_transform(app, WorldProjection::Aircraft);
+        assert!(aircraft.translation.distance(sample.aircraft.translation) < 1.0e-6);
+        assert!((aircraft.rotation.dot(sample.aircraft.rotation).abs() - 1.0).abs() < 1.0e-6);
+        let horizontal = projected_transform(app, WorldProjection::HorizontalTail);
+        let vertical = projected_transform(app, WorldProjection::VerticalTail);
+        assert!(
+            (horizontal
+                .rotation
+                .dot(Quat::from_rotation_x(sample.elevator_rad as f32))
+                .abs()
+                - 1.0)
+                .abs()
+                < 1.0e-6
+        );
+        assert!(
+            (vertical
+                .rotation
+                .dot(Quat::from_rotation_y(-sample.rudder_rad as f32))
+                .abs()
+                - 1.0)
+                .abs()
+                < 1.0e-6
+        );
+        let camera = projected_transform(app, WorldProjection::FlightCamera);
+        let expected_camera = if live_camera {
+            camera_transform(
+                sample.aircraft,
+                sample.pilot_position_m,
+                app.world()
+                    .resource::<NativeSession>()
+                    .initial_pilot_position_m,
+                false,
+                Vec2::ZERO,
+            )
+        } else {
+            Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y)
+        };
+        assert!(camera.translation.distance(expected_camera.translation) < 1.0e-6);
+        assert!((camera.rotation.dot(expected_camera.rotation).abs() - 1.0).abs() < 1.0e-6);
+        assert_eq!(
+            projected_transform(app, WorldProjection::SkyDome).translation,
+            camera.translation
+        );
+        let materials = app.world().resource::<Assets<WaterMaterial>>();
+        assert_eq!(materials.len(), 2);
+        for (_, material) in materials.iter() {
+            assert_eq!(material.camera_time.truncate(), camera.translation);
+            assert_eq!(
+                material.camera_time.w,
+                sample.simulation_time_seconds as f32
+            );
+        }
+    }
+
+    #[test]
+    fn projection_seeds_the_first_interval_and_uses_one_fraction_for_every_render_value() {
+        let mut app = projection_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+        }
+        let initial = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .prepared_display_state()
+                .unwrap(),
+        );
+        app.update();
+        assert_sample_projection(&mut app, initial, false);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Launch)
+            .unwrap();
+        for _step in 0..2 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
+            app.update();
+            assert_sample_projection(&mut app, initial, false);
+        }
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .countdown(1.0);
+        app.update();
+        assert_sample_projection(&mut app, initial, true);
+        *app.world_mut().resource_mut::<FlightInput>() = FlightInput {
+            nose_up: 0.6,
+            turn_right: 0.3,
+            pilot: Some(1.0),
+        };
+        app.world_mut().run_schedule(FixedUpdate);
+        let current = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        let history = app.world().resource::<RenderHistory>();
+        assert_eq!(history.samples.as_ref().unwrap().previous, initial);
+        assert_eq!(history.samples.as_ref().unwrap().current, current);
+        assert!(current.pilot_position_m > initial.pilot_position_m);
+        assert_ne!(current.elevator_rad, initial.elevator_rad);
+        assert_ne!(current.rudder_rad, initial.rudder_rad);
+        let before = app.world().resource::<NativeSession>().game.snapshot();
+        let samples = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        for fraction in [0.0, 0.5, 1.0] {
+            let blend = |previous: f64, next: f64| previous * (1.0 - fraction) + next * fraction;
+            let expected = RenderSample {
+                aircraft: Transform::from_translation(
+                    initial
+                        .aircraft
+                        .translation
+                        .lerp(current.aircraft.translation, fraction as f32),
+                )
+                .with_rotation(
+                    initial
+                        .aircraft
+                        .rotation
+                        .slerp(current.aircraft.rotation, fraction as f32),
+                ),
+                pilot_position_m: blend(initial.pilot_position_m, current.pilot_position_m),
+                elevator_rad: blend(initial.elevator_rad, current.elevator_rad),
+                rudder_rad: blend(initial.rudder_rad, current.rudder_rad),
+                simulation_time_seconds: blend(
+                    initial.simulation_time_seconds,
+                    current.simulation_time_seconds,
+                ),
+            };
+            set_render_fraction(&mut app, fraction);
+            app.update();
+            assert_sample_projection(&mut app, expected, true);
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.game.snapshot(), before);
+            assert_eq!(
+                session.game.flight_record().unwrap().sample_count(),
+                samples
+            );
+        }
+    }
+
+    #[test]
+    fn pause_resume_and_retry_use_exact_samples_without_old_interpolation() {
+        let mut app = projection_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        let initial = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        app.world_mut().run_schedule(FixedUpdate);
+        let current = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Pause)
+            .unwrap();
+        let paused = app.world().resource::<NativeSession>().game.snapshot();
+        for fraction in [0.0, 0.5, 1.0] {
+            set_render_fraction(&mut app, fraction);
+            app.update();
+            assert_sample_projection(&mut app, current, true);
+            assert!(app.world().resource::<RenderHistory>().samples.is_none());
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                paused
+            );
+        }
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Resume)
+            .unwrap();
+        app.update();
+        assert_sample_projection(&mut app, current, true);
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(
+            app.world()
+                .resource::<RenderHistory>()
+                .samples
+                .as_ref()
+                .unwrap()
+                .previous,
+            current
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Abort)
+            .unwrap();
+        let aborted = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        app.update();
+        assert_sample_projection(&mut app, aborted, true);
+        assert!(app.world().resource::<RenderHistory>().samples.is_none());
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Retry)
+            .unwrap();
+        app.update();
+        assert_sample_projection(&mut app, initial, false);
+        assert!(app.world().resource::<RenderHistory>().samples.is_none());
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        app.update();
+        assert_sample_projection(&mut app, initial, true);
+        app.world_mut().run_schedule(FixedUpdate);
+        assert_eq!(
+            app.world()
+                .resource::<RenderHistory>()
+                .samples
+                .as_ref()
+                .unwrap()
+                .previous,
+            initial
+        );
+    }
+
+    #[test]
+    fn fractional_water_contact_projects_the_authoritative_terminal_sample_at_every_fraction() {
+        let mut app = projection_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        for _step in 0..birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS {
+            if app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase()
+                == birdman_game_core::SessionPhase::Result
+            {
+                break;
+            }
+            app.world_mut().run_schedule(FixedUpdate);
+        }
+        let terminal = app.world().resource::<NativeSession>().game.snapshot();
+        let result = terminal.result().unwrap();
+        assert_eq!(
+            result.reason,
+            birdman_game_core::SessionEndReason::WaterContact
+        );
+        let birdman_game_core::SessionTerminalState::TailWaterContact(contact) = result.state
+        else {
+            panic!("Expected fractional water contact");
+        };
+        assert!(contact.fraction() > 0.0 && contact.fraction() < 1.0);
+        let exact = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        assert_eq!(
+            exact.simulation_time_seconds,
+            (contact.interval_start_tick() as f64 + contact.fraction())
+                / f64::from(birdman_game_core::PHYSICS_HZ)
+        );
+        let finalization = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap()
+            .finalization()
+            .unwrap();
+        for fraction in [0.0, 0.5, 1.0] {
+            set_render_fraction(&mut app, fraction);
+            app.update();
+            assert_sample_projection(&mut app, exact, true);
+            assert!(app.world().resource::<RenderHistory>().samples.is_none());
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.game.snapshot(), terminal);
+            assert_eq!(
+                session.game.flight_record().unwrap().finalization(),
+                Some(finalization)
+            );
+        }
+    }
 
     #[test]
     fn world_setup_shares_the_registered_sun_with_water_sky_and_pbr_light() {
@@ -744,13 +1149,38 @@ mod tests {
     #[test]
     fn interpolation_changes_only_render_projection() {
         let history = RenderHistory {
-            previous: Some(Transform::from_xyz(0.0, 0.0, 0.0)),
-            current: Some(Transform::from_xyz(10.0, 0.0, 0.0)),
+            samples: Some(RenderSamples {
+                previous: RenderSample {
+                    aircraft: Transform::from_xyz(0.0, 0.0, 0.0)
+                        .with_rotation(Quat::from_rotation_y(0.2)),
+                    pilot_position_m: -0.2,
+                    elevator_rad: 0.1,
+                    rudder_rad: -0.2,
+                    simulation_time_seconds: 0.04,
+                },
+                current: RenderSample {
+                    aircraft: Transform::from_xyz(10.0, 0.0, 0.0)
+                        .with_rotation(Quat::from_rotation_y(0.6)),
+                    pilot_position_m: 0.2,
+                    elevator_rad: 0.3,
+                    rudder_rad: 0.2,
+                    simulation_time_seconds: 0.05,
+                },
+            }),
         };
-        assert_eq!(
-            history.interpolated(0.5).unwrap().translation,
-            Vec3::new(5.0, 0.0, 0.0)
-        );
+        for fraction in [0.0, 0.5, 1.0] {
+            let sample = history.interpolated(fraction).unwrap();
+            assert_eq!(
+                sample.aircraft.translation,
+                Vec3::new(10.0 * fraction as f32, 0.0, 0.0)
+            );
+            let expected_rotation = Quat::from_rotation_y(0.2 + 0.4 * fraction as f32);
+            assert!((sample.aircraft.rotation.dot(expected_rotation).abs() - 1.0).abs() < 1.0e-6);
+            assert!((sample.pilot_position_m - (-0.2 + 0.4 * fraction)).abs() < 1.0e-12);
+            assert!((sample.elevator_rad - (0.1 + 0.2 * fraction)).abs() < 1.0e-12);
+            assert!((sample.rudder_rad - (-0.2 + 0.4 * fraction)).abs() < 1.0e-12);
+            assert!((sample.simulation_time_seconds - (0.04 + 0.01 * fraction)).abs() < 1.0e-12);
+        }
     }
     #[test]
     fn registered_terrain_and_masks_have_matching_finite_geometry() {
