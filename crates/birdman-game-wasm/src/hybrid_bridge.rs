@@ -1,7 +1,7 @@
 use birdman_game_core::{
     ControlMode, CourseAxis, DistanceScore, DistanceScoreError, DynamicsError, FlightState,
-    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionPhase,
-    SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
+    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionFlightState,
+    SessionPhase, SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
     TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
     TailPilotPositionMapping, TailRateTarget,
 };
@@ -89,6 +89,25 @@ struct SnapshotDocument<'identity> {
     scenario: Option<EnvironmentIdentity>,
     control_identity: Option<&'identity FlightRecordTailIdentityDocument>,
     frame: FrameDocument,
+}
+
+#[derive(Serialize)]
+struct PreparedLaunchDocument<'identity> {
+    schema_version: u32,
+    control_layout: ControlLayout,
+    phase_code: u32,
+    preview: PreparedLaunchFrame<'identity>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PreparedLaunchFrame<'identity> {
+    Unavailable,
+    Prepared {
+        scenario: EnvironmentIdentity,
+        control_identity: &'identity FlightRecordTailIdentityDocument,
+        state: Box<StateDocument>,
+    },
 }
 
 #[derive(Serialize)]
@@ -401,9 +420,49 @@ impl HybridGameSessionBridge {
     pub fn snapshot_json(&self) -> Result<String, JsValue> {
         self.snapshot_internal().map_err(BoundaryError::into_js)
     }
+
+    /// Returns the sealed initial state for presentation before launch, without ticking physics.
+    pub fn prepared_launch_snapshot_json(&self) -> Result<String, JsValue> {
+        self.prepared_launch_internal()
+            .map_err(BoundaryError::into_js)
+    }
 }
 
 impl HybridGameSessionBridge {
+    fn prepared_launch_internal(&self) -> Result<String, BoundaryError> {
+        let preview = match self.session.prepared_launch_state() {
+            Some(SessionFlightState::TailIncidence(state)) => {
+                let prepared = self
+                    .prepared
+                    .as_ref()
+                    .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
+                PreparedLaunchFrame::Prepared {
+                    scenario: self
+                        .session
+                        .configuration_identity()
+                        .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?
+                        .into(),
+                    control_identity: &prepared.record_identity,
+                    state: Box::new(StateDocument::from_tick(
+                        state,
+                        self.required_pilot_mapping()?,
+                    )?),
+                }
+            }
+            Some(SessionFlightState::LegacyThreeAxis(_)) => {
+                return Err(BoundaryError::IncompatibleControlLayout);
+            }
+            None => PreparedLaunchFrame::Unavailable,
+        };
+        serde_json::to_string(&PreparedLaunchDocument {
+            schema_version: SCHEMA_VERSION,
+            control_layout: ControlLayout::TailIncidence,
+            phase_code: self.phase_code(),
+            preview,
+        })
+        .map_err(BoundaryError::Json)
+    }
+
     fn from_mode(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
             session: GameSession::new(),

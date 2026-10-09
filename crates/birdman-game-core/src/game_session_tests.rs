@@ -10,6 +10,60 @@ use crate::{
 
 include!("game_session_pause_tests.rs");
 
+#[test]
+fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state() {
+    let mut session = GameSession::new();
+    assert_eq!(session.prepared_launch_state(), None);
+    session.open_setup().unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+    let configuration = configuration(4);
+    let initial = configuration.initial_state();
+    session.prepare_flight(configuration).unwrap();
+    let preparing = session.snapshot();
+    assert_eq!(session.prepared_launch_state(), Some(initial));
+    assert_eq!(session.snapshot(), preparing);
+    assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+    session
+        .fail_briefing(super::BriefingFailure::AssetUnavailable)
+        .unwrap();
+    assert_eq!(session.prepared_launch_state(), Some(initial));
+    session.retry_briefing().unwrap();
+    session.mark_briefing_ready().unwrap();
+    assert_eq!(session.prepared_launch_state(), Some(initial));
+    session.start_countdown(2).unwrap();
+    for _step in 0..2 {
+        let countdown = session.snapshot();
+        assert_eq!(session.prepared_launch_state(), Some(initial));
+        assert_eq!(session.snapshot(), countdown);
+        assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+        session.advance_countdown().unwrap();
+    }
+    let launched = session.launch().unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+    match (initial, launched) {
+        (
+            super::SessionFlightState::LegacyThreeAxis(initial),
+            SessionSnapshot::FlightRunning { state, .. },
+        ) => assert_eq!(state, initial),
+        _ => panic!("legacy launch must preserve its sealed layout"),
+    }
+    session
+        .advance_flight_tick(neutral_input(&session))
+        .unwrap();
+    session.pause(PauseReason::Manual).unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+    session.abort_flight().unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+    session.enter_replay().unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+    session.leave_replay().unwrap();
+    session.retry().unwrap();
+    assert_eq!(session.prepared_launch_state(), Some(initial));
+    assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+    session.cancel_briefing().unwrap();
+    assert_eq!(session.prepared_launch_state(), None);
+}
+
 fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
     let fixture = SyntheticPlayableFlight::try_new(10.5).unwrap();
     let (_, scenario, feedback, _) = fixture.into_parts();

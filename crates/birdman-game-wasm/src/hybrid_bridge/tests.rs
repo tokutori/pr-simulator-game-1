@@ -31,6 +31,78 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics() {
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
+        ControlMode::Automatic,
+    ] {
+        for weather in [
+            WeatherClass::Calm,
+            WeatherClass::Mild,
+            WeatherClass::Typical,
+            WeatherClass::Challenging,
+            WeatherClass::NearLimit,
+        ] {
+            let mut bridge = HybridGameSessionBridge::from_mode(mode, MAX_TICKS, 0x5eed);
+            let title: Value =
+                serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
+            assert_eq!(title["preview"]["kind"], "unavailable");
+            bridge.open_setup().unwrap();
+            bridge
+                .select_difficulty(bridge.difficulty.with_weather(weather))
+                .unwrap();
+            bridge.prepare_internal().unwrap();
+            let prepared: Value =
+                serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
+            assert_eq!(prepared["phase_code"], 2);
+            assert_eq!(prepared["preview"]["kind"], "prepared");
+            assert_eq!(prepared["preview"]["state"]["tick"], 0);
+            let initial = prepared["preview"]["state"].clone();
+            let before = bridge.session.snapshot();
+            assert_eq!(
+                serde_json::from_str::<Value>(&bridge.prepared_launch_internal().unwrap()).unwrap(),
+                prepared
+            );
+            assert_eq!(bridge.session.snapshot(), before);
+            assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+            bridge.mark_briefing_ready().unwrap();
+            bridge.start_countdown(2).unwrap();
+            for _step in 0..2 {
+                let countdown: Value =
+                    serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
+                assert_eq!(countdown["phase_code"], 4);
+                assert_eq!(countdown["preview"]["state"], initial);
+                assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+                bridge.advance_countdown().unwrap();
+            }
+            bridge.launch().unwrap();
+            assert_eq!(snapshot(&bridge)["frame"]["state"], initial);
+            let live: Value =
+                serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
+            assert_eq!(live["preview"]["kind"], "unavailable");
+            bridge
+                .advance_internal(&input(json!({ "kind": "hold" })))
+                .unwrap();
+            bridge.abort().unwrap();
+            bridge.retry().unwrap();
+            let retry: Value =
+                serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
+            assert_eq!(retry["preview"]["state"], initial);
+            assert_eq!(
+                retry["preview"]["scenario"],
+                prepared["preview"]["scenario"]
+            );
+            assert_eq!(
+                retry["preview"]["control_identity"],
+                prepared["preview"]["control_identity"]
+            );
+            assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+        }
+    }
+}
+
+#[test]
 fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
     let seed = birdman_game_session::DEFAULT_SESSION_SEED;
     let defaults = HybridGameSessionBridge::new(0, seed as u32, (seed >> 32) as u32).unwrap();

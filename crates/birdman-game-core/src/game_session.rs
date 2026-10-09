@@ -578,6 +578,21 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    /// Projects the sealed initial state only while preparation or countdown is active.
+    /// This observation neither launches a flight nor appends a record sample.
+    pub fn prepared_launch_state(&self) -> Option<SessionFlightState> {
+        if !matches!(
+            self.phase,
+            SessionPhase::BriefingPreparing
+                | SessionPhase::BriefingReady
+                | SessionPhase::BriefingFailed { .. }
+                | SessionPhase::Countdown { .. }
+        ) {
+            return None;
+        }
+        Some(self.required_configuration().initial_state())
+    }
+
     fn required_configuration(&self) -> &GameSessionConfiguration<'a> {
         self.configuration
             .as_ref()
