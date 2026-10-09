@@ -2,7 +2,7 @@ use super::{
     CameraMode,
     native_session::{NativeSession, TailDisplay},
     projection::{aircraft_transform, camera_transform, sunlight_transform},
-    water::WaterMaterial,
+    water::{WaterMaterial, far_mesh, near_mesh, patch_center},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
@@ -23,6 +23,7 @@ pub(crate) enum WorldProjection {
     VerticalTail,
     FlightCamera,
     SkyDome,
+    LakeSurface,
 }
 
 #[derive(Resource, Default)]
@@ -340,10 +341,21 @@ pub(crate) fn setup_world(
     let sunlight = sunlight_transform(registered_water.sun_cloud.truncate());
     let mut registered_sky = registered_water.clone();
     registered_sky.waves_sky.w = 1.0;
+    registered_sky.geometry_patch = Vec4::ZERO;
+    let far_surface = water.add(registered_water.far_surface());
+    let near_bounds = registered_water.near_bounds();
     let surface = water.add(registered_water);
     commands.spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(180_000.0, 180_000.0))),
+        WorldProjection::LakeSurface,
+        Mesh3d(meshes.add(near_mesh())),
         MeshMaterial3d(surface),
+        Transform::IDENTITY,
+        near_bounds,
+    ));
+    commands.spawn((
+        WorldProjection::LakeSurface,
+        Mesh3d(meshes.add(far_mesh())),
+        MeshMaterial3d(far_surface),
         Transform::IDENTITY,
     ));
     let mut dome = Sphere::new(90_000.0).mesh().uv(48, 24);
@@ -532,11 +544,15 @@ pub(crate) fn project_world(
                 )
             }
             WorldProjection::SkyDome => transform.translation = projected_camera.translation,
+            WorldProjection::LakeSurface => {
+                let center = patch_center(projected_camera.translation);
+                transform.translation = Vec3::new(center.x, 0.0, center.y);
+            }
         }
     }
     let time = render_sample.map_or(0.0, |sample| sample.simulation_time_seconds as f32);
     for (_, material) in water.iter_mut() {
-        material.camera_time = projected_camera.translation.extend(time);
+        material.project_camera(projected_camera.translation, time);
     }
 }
 
@@ -568,6 +584,7 @@ mod tests {
             WorldProjection::HorizontalTail,
             WorldProjection::VerticalTail,
             WorldProjection::SkyDome,
+            WorldProjection::LakeSurface,
         ] {
             app.world_mut().spawn((projection, Transform::default()));
         }
@@ -646,7 +663,18 @@ mod tests {
                 material.camera_time.w,
                 sample.simulation_time_seconds as f32
             );
+            if material.geometry_patch.w > 0.0 {
+                assert_eq!(
+                    material.geometry_patch.truncate().truncate(),
+                    patch_center(camera.translation)
+                );
+            }
         }
+        let center = patch_center(camera.translation);
+        assert_eq!(
+            projected_transform(app, WorldProjection::LakeSurface).translation,
+            Vec3::new(center.x, 0.0, center.y)
+        );
     }
 
     #[test]
@@ -928,7 +956,7 @@ mod tests {
             material_modes.push(material.waves_sky.w);
         }
         material_modes.sort_by(f32::total_cmp);
-        assert_eq!(material_modes, vec![0.0, 1.0]);
+        assert_eq!(material_modes, vec![0.0, 0.0, 1.0]);
     }
 
     #[test]

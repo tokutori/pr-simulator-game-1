@@ -94,7 +94,10 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
-Gerstnerのgeometry変位・高品質な反射は未移植である。遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
+Gerstnerの水平・鉛直geometry変位を描画専用で追加する。登録済みwave inputsの風・fetch・detail amplitude・pattern seedから固定した4成分を生成し、有限fetch近似とmesh間隔のfilterを適用する。既存の八方向packetは別の細部法線層として保持する。実測波浪の再現性や波浪予報精度は主張しない。
+near meshは64 m四方・256 cells・66,049頂点・131,072 triangleであり、Startup時に一度だけ生成する。4 quadのfar ringで18万m四方を覆い、中央のnear領域を除外して波の谷でfar面が露出することを防ぐ。両者を0.25 m格子へsnapしてcameraの水平移動へ追従させ、位相はworld-spaceで評価する。境界の8 mで水平・鉛直変位を0へ減衰し、減衰の勾配も解析normalへ含める。合計鉛直振幅を0.35 m以下、境界勾配を含めた水平写像の微分変動上限を0.45以下に制限する。これらは描画安全性の上限であり、環境assetや着水面を変更しない。
+vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow生成・prepassは無効とし、平面のdefault prepassとの不一致を回避する。機体の鏡映反射・水面への影など高品質な反射は未移植である。追加のvertex波評価は最大264,196成分/frameであり、80FPS目標の達成は実GPUでの計測を必要とする。
+遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
 数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI等の詳細計器は未移植である。

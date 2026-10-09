@@ -1,8 +1,105 @@
-#import bevy_pbr::forward_io::VertexOutput
+#import bevy_pbr::{
+    forward_io::{Vertex, VertexOutput},
+    mesh_functions,
+    view_transformations::position_world_to_clip,
+}
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> camera_time: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> sun_cloud: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> waves_sky: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> geometry_patch: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(4) var<uniform> geometry_waves: array<vec4<f32>, 4>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(5) var<uniform> geometry_motion: array<vec4<f32>, 4>;
+
+struct SurfaceProjection {
+    offset: vec3<f32>,
+    tangent_x: vec3<f32>,
+    tangent_z: vec3<f32>,
+}
+
+fn patch_fade(coordinate: f32) -> vec2<f32> {
+    let width = geometry_patch.w - geometry_patch.z;
+    let progress = clamp((abs(coordinate) - geometry_patch.z) / width, 0.0, 1.0);
+    let weight = 1.0 - progress * progress * (3.0 - 2.0 * progress);
+    let gradient = -6.0 * progress * (1.0 - progress) * sign(coordinate) / width;
+    return vec2<f32>(weight, gradient);
+}
+
+fn lake_geometry(position: vec2<f32>) -> SurfaceProjection {
+    var surface: SurfaceProjection;
+    surface.offset = vec3<f32>(0.0);
+    surface.tangent_x = vec3<f32>(1.0, 0.0, 0.0);
+    surface.tangent_z = vec3<f32>(0.0, 0.0, 1.0);
+    if geometry_patch.w <= 0.0 { return surface; }
+    let local_position = position - geometry_patch.xy;
+    let fade_x = patch_fade(local_position.x);
+    let fade_z = patch_fade(local_position.y);
+    let fade = fade_x.x * fade_z.x;
+    let fade_gradient = vec2<f32>(fade_x.y * fade_z.x, fade_x.x * fade_z.y);
+    for (var component: u32 = 0u; component < 4u; component += 1u) {
+        let wave = geometry_waves[component];
+        let motion = geometry_motion[component];
+        let phase = wave.z * dot(wave.xy, position) - motion.x * camera_time.w + motion.y;
+        let phase_sine = sin(phase);
+        let phase_cosine = cos(phase);
+        let displacement = wave.w * vec3<f32>(
+            motion.z * wave.x * phase_cosine,
+            phase_sine,
+            motion.z * wave.y * phase_cosine
+        );
+        let phase_derivative = wave.w * vec3<f32>(
+            -motion.z * wave.x * phase_sine,
+            phase_cosine,
+            -motion.z * wave.y * phase_sine
+        );
+        surface.offset += displacement * fade;
+        surface.tangent_x += phase_derivative * (wave.z * wave.x * fade)
+            + displacement * fade_gradient.x;
+        surface.tangent_z += phase_derivative * (wave.z * wave.y * fade)
+            + displacement * fade_gradient.y;
+    }
+    return surface;
+}
+
+@vertex
+fn vertex(vertex: Vertex) -> VertexOutput {
+    var output: VertexOutput;
+    let world_from_local = mesh_functions::get_world_from_local(vertex.instance_index);
+    let base_position = mesh_functions::mesh_position_local_to_world(
+        world_from_local, vec4<f32>(vertex.position, 1.0)
+    );
+    output.world_position = base_position;
+    output.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex.instance_index);
+    if waves_sky.w < 0.5 {
+        let surface = lake_geometry(base_position.xz);
+        output.world_position = vec4<f32>(base_position.xyz + surface.offset, 1.0);
+        output.world_normal = normalize(cross(surface.tangent_z, surface.tangent_x));
+    }
+    output.position = position_world_to_clip(output.world_position.xyz);
+#ifdef VERTEX_UVS_A
+    output.uv = base_position.xz;
+#endif
+#ifdef VERTEX_UVS_B
+    output.uv_b = vertex.uv_b;
+#endif
+#ifdef VERTEX_TANGENTS
+    output.world_tangent = mesh_functions::mesh_tangent_local_to_world(
+        world_from_local, vertex.tangent, vertex.instance_index
+    );
+#endif
+#ifdef VERTEX_COLORS
+    output.color = vertex.color;
+#endif
+#ifdef VERTEX_OUTPUT_INSTANCE_INDEX
+    output.instance_index = vertex.instance_index;
+#endif
+#ifdef VISIBILITY_RANGE_DITHER
+    output.visibility_range_dither = mesh_functions::get_visibility_range_dither_level(
+        vertex.instance_index, world_from_local[3]
+    );
+#endif
+    return output;
+}
 
 fn sky_background(direction: vec3<f32>) -> vec3<f32> {
     let horizon = vec3<f32>(0.68, 0.80, 0.88);
@@ -67,14 +164,20 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
 @fragment
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let view = normalize(camera_time.xyz - mesh.world_position.xyz);
+#ifdef VERTEX_UVS_A
+    let position = mesh.uv;
+#else
     let position = mesh.world_position.xz;
+#endif
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
     if waves_sky.w > 0.5 { return vec4<f32>(sky_color(-view), 1.0); }
     let detail = lake_wave_detail(position, footprint_x, footprint_y);
-    let normal = normalize(vec3<f32>(-detail.x, 1.0, -detail.y));
-    let geometric_normal = vec3<f32>(0.0, 1.0, 0.0);
-    let geometric_ndv = clamp(view.y, 0.0, 1.0);
+    let geometric_normal = normalize(mesh.world_normal);
+    let tangent_x = normalize(vec3<f32>(geometric_normal.y, -geometric_normal.x, 0.0));
+    let tangent_z = cross(tangent_x, geometric_normal);
+    let normal = normalize(geometric_normal - detail.x * tangent_x - detail.y * tangent_z);
+    let geometric_ndv = clamp(dot(view, geometric_normal), 0.0, 1.0);
     let facet_ndv = dot(view, normal);
     let facet_visibility = smoothstep(0.0, 0.18, facet_ndv);
     let reflected = mix(reflect(-view, geometric_normal), reflect(-view, normal), facet_visibility);
