@@ -13,13 +13,14 @@ export type EnvironmentBriefingProjection =
 export const NO_ENVIRONMENT_BRIEFING: EnvironmentBriefingProjection = Object.freeze({ kind: "unavailable" });
 
 export function parseEnvironmentBriefingSnapshot(json: string, phaseCode: number): EnvironmentBriefingProjection {
+  if (!Number.isInteger(phaseCode) || phaseCode < 1 || phaseCode > 8) return NO_ENVIRONMENT_BRIEFING;
   try {
     const snapshot: unknown = JSON.parse(json);
     if (!isRecord(snapshot) || snapshot.schema_version !== 1 || !isRecord(snapshot.context)
         || snapshot.context.kind !== "session" || snapshot.context.phase_code !== phaseCode
         || !isRecord(snapshot.projection)) return NO_ENVIRONMENT_BRIEFING;
     const projection = snapshot.projection;
-    if (projection.kind !== "available" || (projection.source !== "selected" && projection.source !== "sealed")
+    if (projection.kind !== "available" || projection.source !== (phaseCode === 1 ? "selected" : "sealed")
         || !isRecord(projection.metadata)) return NO_ENVIRONMENT_BRIEFING;
     const metadata = projection.metadata;
     const position = finiteVector(metadata.representative_position_ned_m);
