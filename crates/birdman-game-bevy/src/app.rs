@@ -221,7 +221,14 @@ fn read_input(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(filename));
     }
-    if focused && buttons.pressed(MouseButton::Right) {
+    let flight_camera_active = matches!(
+        session.game.snapshot().phase(),
+        SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } | SessionPhase::Result
+    );
+    if !flight_camera_active {
+        camera.look = Vec2::ZERO;
+    }
+    if focused && flight_camera_active && buttons.pressed(MouseButton::Right) {
         camera.look.x -= motion.delta.x * 0.003;
         camera.look.y = (camera.look.y - motion.delta.y * 0.003).clamp(-1.2, 1.2);
     }
@@ -322,6 +329,24 @@ mod tests {
         (app, window)
     }
 
+    fn flight_input_app() -> (App, Entity) {
+        let (mut app, window) = input_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for action in [
+                native_session::MenuAction::Start,
+                native_session::MenuAction::Prepare,
+                native_session::MenuAction::Launch,
+            ] {
+                session.action(action).unwrap();
+            }
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        (app, window)
+    }
+
     fn write_keyboard(
         app: &mut App,
         window: Entity,
@@ -397,7 +422,8 @@ mod tests {
 
     #[test]
     fn raw_camera_key_toggles_once_per_press_in_the_same_frame() {
-        let (mut app, window) = input_app();
+        let (mut app, window) = flight_input_app();
+        app.world_mut().resource_mut::<CameraMode>().look = Vec2::new(0.3, -0.2);
         write_keyboard(
             &mut app,
             window,
@@ -407,6 +433,7 @@ mod tests {
         );
         app.update();
         assert!(app.world().resource::<CameraMode>().chase);
+        assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
         app.update();
         assert!(app.world().resource::<CameraMode>().chase);
         write_keyboard(
@@ -432,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn raw_mouse_button_and_motion_reach_camera_in_the_same_frame() {
+    fn raw_menu_mouse_motion_does_not_offset_the_launch_camera() {
         let (mut app, window) = input_app();
         assert!(
             app.world_mut()
@@ -443,18 +470,196 @@ mod tests {
                 })
                 .is_some()
         );
+        for action in [
+            None,
+            Some(native_session::MenuAction::Start),
+            Some(native_session::MenuAction::Prepare),
+            Some(native_session::MenuAction::Launch),
+        ] {
+            if let Some(action) = action {
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .action(action)
+                    .unwrap();
+            }
+            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            assert!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .display_state()
+                    .is_none()
+            );
+            assert!(
+                app.world_mut()
+                    .write_message(MouseMotion {
+                        delta: Vec2::new(100.0, -200.0),
+                    })
+                    .is_some()
+            );
+            app.update();
+            assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                snapshot
+            );
+        }
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
+        }
+        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        assert_eq!(snapshot.phase(), SessionPhase::FlightRunning);
+        app.update();
+        assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn retry_and_new_flight_clear_previous_camera_look() {
+        for return_action in [
+            native_session::MenuAction::Retry,
+            native_session::MenuAction::Title,
+        ] {
+            let (mut app, window) = flight_input_app();
+            let initial = app.world().resource::<NativeSession>().physical_state();
+            assert!(
+                app.world_mut()
+                    .write_message(MouseButtonInput {
+                        button: MouseButton::Right,
+                        state: ButtonState::Pressed,
+                        window,
+                    })
+                    .is_some()
+            );
+            assert!(
+                app.world_mut()
+                    .write_message(MouseMotion {
+                        delta: Vec2::new(100.0, -200.0),
+                    })
+                    .is_some()
+            );
+            app.update();
+            let previous_look = app.world().resource::<CameraMode>().look;
+            assert!(previous_look.distance(Vec2::ZERO) > 0.1);
+            assert_eq!(
+                app.world().resource::<NativeSession>().physical_state(),
+                initial
+            );
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .action(native_session::MenuAction::Abort)
+                .unwrap();
+            app.update();
+            assert_eq!(app.world().resource::<CameraMode>().look, previous_look);
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .action(return_action)
+                .unwrap();
+            app.update();
+            assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                if return_action == native_session::MenuAction::Title {
+                    session.action(native_session::MenuAction::Start).unwrap();
+                    session.action(native_session::MenuAction::Prepare).unwrap();
+                }
+                session.action(native_session::MenuAction::Launch).unwrap();
+            }
+            app.update();
+            assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
+            for _ in 0..3 {
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .countdown(1.0);
+            }
+            app.update();
+            assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
+            assert_eq!(
+                app.world().resource::<NativeSession>().physical_state(),
+                initial
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::FlightRunning
+            );
+        }
+    }
+
+    #[test]
+    fn raw_mouse_button_and_motion_reach_camera_in_the_same_frame() {
+        let (mut app, window) = flight_input_app();
+        assert!(
+            app.world_mut()
+                .write_message(MouseButtonInput {
+                    button: MouseButton::Right,
+                    state: ButtonState::Pressed,
+                    window,
+                })
+                .is_some()
+        );
+        let mut expected = Vec2::ZERO;
+        for action in [
+            None,
+            Some(native_session::MenuAction::Pause),
+            Some(native_session::MenuAction::Abort),
+        ] {
+            if let Some(action) = action {
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .action(action)
+                    .unwrap();
+            }
+            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            assert!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .display_state()
+                    .is_some()
+            );
+            assert!(
+                app.world_mut()
+                    .write_message(MouseMotion {
+                        delta: Vec2::new(10.0, -20.0),
+                    })
+                    .is_some()
+            );
+            app.update();
+            expected += Vec2::new(-0.03, 0.06);
+            assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                snapshot
+            );
+            app.update();
+            assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+        }
+        app.world_mut()
+            .entity_mut(window)
+            .get_mut::<Window>()
+            .unwrap()
+            .focused = false;
         assert!(
             app.world_mut()
                 .write_message(MouseMotion {
-                    delta: Vec2::new(10.0, -20.0),
+                    delta: Vec2::new(100.0, -200.0),
                 })
                 .is_some()
         );
         app.update();
-        let expected = Vec2::new(-0.03, 0.06);
         assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
-        app.update();
-        assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
+        app.world_mut()
+            .entity_mut(window)
+            .get_mut::<Window>()
+            .unwrap()
+            .focused = true;
         assert!(
             app.world_mut()
                 .write_message(MouseButtonInput {
