@@ -135,6 +135,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       const phaseCode = session.phase_code();
       return {
         phaseCode,
+        ...(phaseCode === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
         controlModeCode: session.control_mode_code(),
         difficulty: {
           presetCode: session.difficulty_preset_code(),
@@ -394,6 +395,7 @@ describe("Screen UI to WebAssembly GameSession transitions", () => {
       session.enter_replay();
       const entered = updateApp(model, {
         type: "game-operation-completed", requestId: replayOperation.requestId, phaseCode: 9, controlModeCode: 0,
+        returnTarget: session.is_archived_replay() ? "title" : "result",
         difficulty: model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
       });
       model = entered.model;

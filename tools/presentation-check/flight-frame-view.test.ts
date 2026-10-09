@@ -30,7 +30,7 @@ function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5): AppModel
   values[24] = -1;
   values[31] = 1;
   if (phase === 7 || phase === 9 || phase === 10) values[16] = 4;
-  const session = gameSessionState(phase, 0, parseFlightSnapshot(values), true);
+  const session = gameSessionState(phase, 0, parseFlightSnapshot(values), true, null, "legacy_three_axis", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Missing session fixture");
   return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: session };
 }

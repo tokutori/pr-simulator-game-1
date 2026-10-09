@@ -122,7 +122,7 @@ describe("single Rust snapshot application projection", () => {
       expect(gameSessionState(10, 0, early, false, null, "legacy_three_axis")).toBeNull();
       expect(gameSessionSnapshot(result ?? { kind: "boot", phaseCode: -1 })).toBe(terminal);
       for (const phase of [9, 10]) {
-        const playback = gameSessionState(phase, 0, early, false, null, "tail_incidence");
+        const playback = gameSessionState(phase, 0, early, false, null, "tail_incidence", phase === 9 ? "result" : undefined);
         expect(playback?.kind).toBe(phase === 9 ? "replay" : "attract");
         if (playback === null) throw new Error("Missing Playback projection");
         expect(gameSessionSnapshot(playback)).toBe(early);
@@ -212,7 +212,7 @@ describe("single Rust snapshot application projection", () => {
       facade.openArchive(legacy.exportRecordJson());
       const saved = facade.queryRecordDisplay(0.005);
       expect(saved.kind).toBe("legacy_record");
-      expect(gameSessionState(9, 0, saved, false, null, "tail_incidence")?.kind).toBe("replay");
+      expect(gameSessionState(9, 0, saved, false, null, "tail_incidence", facade.readReplayReturnTarget())?.kind).toBe("replay");
       expect(gameSessionState(10, 0, saved, false, null, "tail_incidence")).toBeNull();
       expect(gameSessionState(10, 0, saved, false, null, "legacy_three_axis")?.kind).toBe("attract");
       facade.executeOperation("leave-replay");

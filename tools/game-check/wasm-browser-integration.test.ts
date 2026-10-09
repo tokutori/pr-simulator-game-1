@@ -376,6 +376,7 @@ describe("generated WebAssembly browser binding", () => {
         model = updateApp(model, {
           type: "game-session-synced",
           phaseCode,
+          ...(phaseCode === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
           controlModeCode: session.control_mode_code(),
           difficulty: {
             presetCode: session.difficulty_preset_code(),
@@ -419,6 +420,7 @@ describe("generated WebAssembly browser binding", () => {
           type: "game-operation-completed",
           requestId,
           phaseCode,
+          ...(phaseCode === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
           controlModeCode: session.control_mode_code(),
           difficulty: {
             presetCode: session.difficulty_preset_code(),

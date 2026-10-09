@@ -48,6 +48,8 @@ export interface ReplayClockState {
   readonly playing: boolean;
 }
 
+export type ReplayReturnTarget = "title" | "result";
+
 export type ReplayClockCommand =
   | { readonly kind: "synchronize"; readonly seekTimeSeconds: number | null }
   | { readonly kind: "play" }
@@ -90,7 +92,7 @@ export type GameSessionUiState = { readonly kind: "boot"; readonly phaseCode: -1
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
   | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
-  | { readonly kind: "replay"; readonly phaseCode: 9; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
+  | { readonly kind: "replay"; readonly phaseCode: 9; readonly returnTarget: ReplayReturnTarget; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
 ))
   | (Readonly<{ kind: "flight"; phaseCode: 5 }> & LiveSessionProjection<5>)
   | (Readonly<{ kind: "paused-flight"; phaseCode: 6; canResume: boolean; overlay: PauseOverlayState }> & LiveSessionProjection<6>)
@@ -222,13 +224,14 @@ export interface LegacyGameSessionProjection extends SessionSelectionProjection 
   readonly phaseCode: number;
   readonly snapshot: FlightSnapshot | Extract<FlightDisplaySnapshot, { kind: "legacy_live" | "legacy_record" }> | null;
   readonly canResume?: boolean;
+  readonly returnTarget?: ReplayReturnTarget;
 }
 export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
   | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
   | Readonly<{ phaseCode: 5; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<5>, { kind: "tail_flight" }> }> }>
   | Readonly<{ phaseCode: 6; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<6>, { kind: "tail_flight" }> }> }>
   | Readonly<{ phaseCode: 7; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>
-  | Readonly<{ phaseCode: 9; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "legacy_record" | "tail_record" }>> }>
+  | Readonly<{ phaseCode: 9; returnTarget: ReplayReturnTarget; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "legacy_record" | "tail_record" }>> }>
   | Readonly<{ phaseCode: 10; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
 );
 export type GameSessionProjection = LegacyGameSessionProjection | TailGameSessionProjection;
@@ -384,7 +387,8 @@ export function gameSessionState(
   snapshotInput: FlightSnapshotInput | null,
   canResume = false,
   previous: GameSessionUiState | null = null,
-  controlLayout: SessionControlLayout = "legacy_three_axis"
+  controlLayout: SessionControlLayout = "legacy_three_axis",
+  returnTarget?: ReplayReturnTarget
 ): GameSessionUiState | null {
   const snapshot = snapshotInput === null ? null : normalizeFlightSnapshot(snapshotInput);
   const selection = { controlLayout };
@@ -419,8 +423,9 @@ export function gameSessionState(
     }
     case 8: return { ...selection, kind: "briefing-failed", phaseCode: 8 };
     case 9:
+      if (returnTarget !== "title" && returnTarget !== "result") return null;
       return snapshot !== null && !isPlaybackSessionSnapshot(snapshot) ? null
-        : { ...selection, kind: "replay", phaseCode: 9, display: snapshot === null
+        : { ...selection, kind: "replay", phaseCode: 9, returnTarget, display: snapshot === null
           ? Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) : Object.freeze({ kind: "available", value: snapshot }) };
     case 10: {
       const attract = attractSessionProjection(snapshot, controlLayout);
@@ -660,7 +665,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis");
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis", "returnTarget" in message ? message.returnTarget : undefined);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -694,7 +699,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis");
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume ?? false, model.gameSession, message.controlLayout ?? "legacy_three_axis", "returnTarget" in message ? message.returnTarget : undefined);
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,

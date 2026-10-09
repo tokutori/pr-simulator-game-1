@@ -15,7 +15,7 @@ afterEach(() => {
 
 function readyModel(phaseCode: number): AppModel {
   const initial = createInitialAppModel();
-  const gameSession = gameSessionState(phaseCode, 0, null);
+  const gameSession = gameSessionState(phaseCode, 0, null, false, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
   if (gameSession === null) throw new Error("Invalid download fixture phase");
   return { ...initial, presentation: { type: "ready", mode: "screen" }, gameSession };
 }

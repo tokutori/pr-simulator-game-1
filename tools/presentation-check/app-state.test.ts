@@ -158,6 +158,7 @@ describe("Boot application state", () => {
     expect(opening.effects).toEqual([{ type: "open-stored-flight-record", id: 4, requestId: 2 }]);
     const entered = updateApp(opening.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 9, controlModeCode: 0,
+      returnTarget: "title",
       difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
     expect(entered.effects).toEqual([
@@ -797,6 +798,7 @@ describe("Boot application state", () => {
     expect(requested.effects).toEqual([{ type: "game-session-operation", operation: "enter-replay", requestId: 2 }]);
     const entered = updateApp(requested.model, {
       type: "game-operation-completed", requestId: 2, phaseCode: 9, controlModeCode: 0,
+      returnTarget: "result",
       difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
     });
     expect(entered.model.gameSession.phaseCode).toBe(9);
@@ -1465,7 +1467,7 @@ function readyModel(phaseCode = 0): AppModel {
 }
 
 function sessionForTest(phaseCode: number, snapshot: FlightSnapshot | null = null, canResume = false): GameSessionUiState {
-  const session = gameSessionState(phaseCode, 0, snapshot, canResume);
+  const session = gameSessionState(phaseCode, 0, snapshot, canResume, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }
