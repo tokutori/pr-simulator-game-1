@@ -275,9 +275,11 @@ fn advance_physics(
                 }
             }
         });
+    let previous = session.display_state();
     session.tick(input);
-    if let Some(state) = session.physical_state() {
-        history.capture(state);
+    match (previous, session.display_state()) {
+        (Some(previous), Some(current)) => history.capture_interval(&previous, &current),
+        _ => history.reset(),
     }
 }
 
