@@ -123,6 +123,11 @@ describe("registered environment and venue projection", () => {
         session.openArchive(JSON.stringify(saved));
         const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
         const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 9, data.context.scenario);
+        expect(environment.kind).toBe(unknown ? "unavailable" : "available");
+        if (unknown) expect(environment).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
+        else expect(environment).toMatchObject({ kind: "available", value: { sky: { kind: "available", value: {
+          condition: { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 }
+        } } } });
         const venue = venueMapForEnvironment(environment);
         expect(venue.kind).toBe(unknown ? "unavailable" : "available");
         const state = updateApp(createInitialAppModel(), { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;

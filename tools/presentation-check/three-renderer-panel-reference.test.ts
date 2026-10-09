@@ -1,7 +1,7 @@
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Matrix4, Quaternion, Vector3 } from "three";
+import { DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Vector3, Vector4 } from "three";
 import type { Camera, Color, Scene, Vector2 } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
@@ -143,12 +143,114 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setStereoPresentation(null);
     bundle.renderer.setFlightPose(null);
     bundle.renderer.setPreparedFlightPose(null);
+    bundle.renderer.setLakeSkyCondition(null);
     bundle.renderer.setFlightCameraMode("pilot");
     bundle.renderer.setCinematicCameraView(null);
     driver.draws.length = 0;
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it("starts without solar lighting or directional shadows when sky metadata is absent", () => {
+    bundle.renderer.render(frame());
+    const solar = driver.scene?.children.find((object) => object instanceof DirectionalLight);
+    if (!(solar instanceof DirectionalLight)) throw new Error("Missing directional sun");
+    expect(solar.intensity).toBe(0);
+    expect(solar.castShadow).toBe(false);
+  });
+
+  it("connects one sky to background, solar lighting, near/far water and haze without changing wave parameters", () => {
+    const condition = { sunAzimuthDegrees: 90, sunElevationDegrees: 0, cloudFraction: 0, visibilityMeters: 6_000 };
+    bundle.renderer.setLakeSkyCondition(condition);
+    bundle.renderer.render(frame());
+    const scene = driver.scene;
+    if (scene === null || !(scene.background instanceof DataTexture) || !(scene.fog instanceof Fog)) throw new Error("Missing sky scene");
+    const solar = scene.children.find((object) => object instanceof DirectionalLight);
+    if (!(solar instanceof DirectionalLight)) throw new Error("Missing directional sun");
+    const materials: ShaderMaterial[] = [];
+    scene.traverse((object) => {
+      if (object instanceof Mesh && object.material instanceof ShaderMaterial && "uSkyTexture" in object.material.uniforms) materials.push(object.material);
+    });
+    const foreground = materials[0];
+    const backing = materials[1];
+    if (foreground === undefined || backing === undefined) throw new Error("Missing near/far lake shader");
+    const solarDirection = solar.position.clone().sub(solar.target.position).normalize();
+    expect(solarDirection.x).toBeCloseTo(1, 14);
+    expect(solarDirection.y).toBeCloseTo(0, 14);
+    expect(solarDirection.z).toBeCloseTo(0, 14);
+    expect(solar.intensity).toBe(1.45);
+    expect(solar.castShadow).toBe(true);
+    expect(scene.fog.far).toBe(6_000);
+    expect(scene.fog.near).toBe(1_050);
+    for (const material of materials) {
+      expect(material.uniforms.uSkyTexture?.value).toBe(scene.background);
+      const waterSun = vectorUniform(material, "uSunDirection");
+      expect(waterSun.x).toBeCloseTo(1, 14);
+      expect(waterSun.y).toBeCloseTo(0, 14);
+      expect(waterSun.z).toBeCloseTo(0, 14);
+      expect(waterSun.w).toBe(1);
+      expect(vectorUniform(material, "uHazeRange").toArray()).toEqual([1_050, 6_000, 0, 0]);
+    }
+    for (const uniform of ["uSkyTexture", "uSunDirection", "uHazeRange"]) {
+      expect(foreground.uniforms[uniform]).toBe(backing.uniforms[uniform]);
+    }
+    const previous = scene.background;
+    let disposals = 0;
+    previous.addEventListener("dispose", () => { disposals += 1; });
+    const waveAmplitude: unknown = foreground.uniforms.uWaveKAmplitude?.value;
+    const detail: unknown = foreground.uniforms.uDetailNear?.value;
+    bundle.renderer.setLakeSkyCondition({ ...condition });
+    expect(scene.background).toBe(previous);
+    expect(disposals).toBe(0);
+    expect(() => { bundle.renderer.setLakeSkyCondition({ ...condition, visibilityMeters: 0 }); }).toThrow(RangeError);
+    expect(scene.background).toBe(previous);
+    bundle.renderer.setLakeSkyCondition({ ...condition, sunAzimuthDegrees: 0, sunElevationDegrees: 90, visibilityMeters: 8_000 });
+    expect(scene.background).not.toBe(previous);
+    expect(disposals).toBe(1);
+    expect(foreground.uniforms.uWaveKAmplitude?.value).toBe(waveAmplitude);
+    expect(foreground.uniforms.uDetailNear?.value).toBe(detail);
+    expect(solar.position.clone().sub(solar.target.position).normalize().y).toBeCloseTo(1, 14);
+    bundle.renderer.setLakeSkyCondition({ ...condition, sunElevationDegrees: -20 });
+    expect(solar.intensity).toBe(0);
+    expect(solar.castShadow).toBe(false);
+    expect(vectorUniform(foreground, "uSunDirection").w).toBe(0);
+    bundle.renderer.setLakeSkyCondition(null);
+    expect(solar.intensity).toBe(0);
+    expect(solar.castShadow).toBe(false);
+    expect(vectorUniform(foreground, "uSunDirection").w).toBe(0);
+    expect(scene.fog.far).toBe(80_000);
+    expect(scene.fog.near).toBe(14_000);
+    expect(foreground.uniforms.uSkyTexture?.value).toBe(scene.background);
+    bundle.renderer.setLakeSkyCondition(condition);
+    expect(solar.intensity).toBe(1.45);
+    expect(solar.castShadow).toBe(true);
+  });
+
+  it("defers a view-phase sky change and explicit unavailable reset until the next frame", () => {
+    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
+    bundle.renderer.setLakeSkyCondition(condition);
+    bundle.renderer.render(frame());
+    const original = driver.scene?.background;
+    if (!(original instanceof DataTexture)) throw new Error("Missing initial sky texture");
+    const observed: { background: unknown; visibility: number }[] = [];
+    bundle.renderer.startLoop((timestamp) => {
+      bundle.renderer.beginViewFrame();
+      if (timestamp === 1) bundle.renderer.setLakeSkyCondition({ ...condition, visibilityMeters: 10_000 });
+      if (timestamp === 2) bundle.renderer.setLakeSkyCondition(null);
+      bundle.renderer.render(frame({ timestampMs: timestamp }));
+      if (!(driver.scene?.fog instanceof Fog)) throw new Error("Missing scene fog");
+      observed.push({ background: driver.scene.background, visibility: driver.scene.fog.far });
+    });
+    try {
+      driver.tick(1, null);
+      driver.tick(2, null);
+      driver.tick(3, null);
+      expect(observed.map((entry) => entry.visibility)).toEqual([25_000, 10_000, 80_000]);
+      expect(Object.is(observed[0]?.background, original)).toBe(true);
+      expect(Object.is(observed[1]?.background, original)).toBe(false);
+      expect(Object.is(observed[2]?.background, observed[1]?.background)).toBe(false);
+    } finally { bundle.renderer.stopLoop(); }
+  });
 
   it("captures current configured projections matching both actual StereoEffect eyes across resize, optics, and camera cuts", () => {
     let currentViewport = viewport;
@@ -768,6 +870,12 @@ function phonePanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
     id: "phone-eye-button", kind: "button", label: "Phone Eye", enabled: true,
     rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
   }] }] };
+}
+
+function vectorUniform(material: ShaderMaterial, name: string): Vector4 {
+  const value: unknown = material.uniforms[name]?.value;
+  if (!(value instanceof Vector4)) throw new Error(`Missing vector uniform: ${name}`);
+  return value;
 }
 
 function matrixPose(matrix: Matrix4): Pose {

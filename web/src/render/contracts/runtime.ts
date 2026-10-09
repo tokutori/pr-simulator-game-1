@@ -3,6 +3,7 @@ import type { CinematicCameraView } from "./camera.js";
 import type { MenuScrollContext, UiPanel, UiViewModel } from "./ui.js";
 import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
 import type { LakeVisualCondition } from "./lake-water.js";
+import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
 import type { LegacyPhysicalFlightControls, TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "./flight-controls.js";
@@ -86,6 +87,7 @@ export interface RendererAdapter {
   setFlightPose(pose: FlightRenderPose | null): void;
   setPreparedFlightPose(pose: FlightRenderPose | null): void;
   setLakeVisualCondition(condition: LakeVisualCondition): void;
+  setLakeSkyCondition(condition: LakeSkyCondition | null): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   setCinematicCameraView(view: CinematicCameraView | null): void;
   transformTrackingPose(pose: Pose): Pose;

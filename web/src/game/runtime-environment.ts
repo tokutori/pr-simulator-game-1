@@ -3,11 +3,14 @@ import { decodeTailScenarioIdentity } from "./tail-session-codec.js";
 import type { TailScenarioIdentity } from "./tail-session-codec.js";
 import { boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
 import type { LakeVisualCondition } from "../render/contracts/lake-water.js";
+import { createLakeSkyCondition } from "../render/contracts/lake-sky.js";
+import type { LakeSkyCondition } from "../render/contracts/lake-sky.js";
 
 export interface RuntimeEnvironmentMetadata {
   readonly identity: TailScenarioIdentity;
   readonly localFrame: DisplayAvailability<Readonly<{ latitudeDegrees: number; longitudeDegrees: number; waterLevelDatum: string }>, "origin_not_recorded">;
   readonly waves: LakeVisualCondition;
+  readonly sky: DisplayAvailability<Readonly<{ condition: LakeSkyCondition; cloudBaseMeters: number }>, "sky_not_recorded">;
 }
 export type RuntimeEnvironmentProjection = DisplayAvailability<RuntimeEnvironmentMetadata, "no_selection" | "unregistered_environment_identity" | "invalid_snapshot">;
 
@@ -50,7 +53,21 @@ export function parseRuntimeEnvironmentSnapshot(json: string, phaseCode: number,
   const wind = boundaryTuple(waves.wind_velocity_ne_mps, 2);
   const patternSeed = boundaryNumber(waves.pattern_seed, 0, 0xffff_ffff);
   if (!Number.isSafeInteger(patternSeed)) throw new RangeError("Wave pattern seed must be an integer");
-  return Object.freeze({ kind: "available", value: Object.freeze({ identity, localFrame, waves: Object.freeze({
+  const rawSky = object(metadata.sky);
+  let sky: RuntimeEnvironmentMetadata["sky"];
+  if (rawSky.kind === "unavailable") {
+    boundaryObject(rawSky, ["kind"]);
+    sky = Object.freeze({ kind: "unavailable", reason: "sky_not_recorded" });
+  } else {
+    if (rawSky.kind !== "defined") throw new RangeError("Unknown sky availability");
+    boundaryObject(rawSky, ["kind", "value"]);
+    const value = boundaryObject(rawSky.value, ["sun_azimuth_degrees", "sun_elevation_degrees", "cloud_fraction", "cloud_base_m", "visibility_m"]);
+    sky = Object.freeze({ kind: "available", value: Object.freeze({ condition: createLakeSkyCondition({
+      sunAzimuthDegrees: boundaryNumber(value.sun_azimuth_degrees), sunElevationDegrees: boundaryNumber(value.sun_elevation_degrees),
+      cloudFraction: boundaryNumber(value.cloud_fraction), visibilityMeters: boundaryNumber(value.visibility_m)
+    }), cloudBaseMeters: boundaryNumber(value.cloud_base_m, 0) }) });
+  }
+  return Object.freeze({ kind: "available", value: Object.freeze({ identity, localFrame, sky, waves: Object.freeze({
     windNorthMetersPerSecond: wind[0] as number, windEastMetersPerSecond: wind[1] as number,
     fetchMeters: boundaryNumber(waves.fetch_m, Number.MIN_VALUE), detailAmplitudeScale: boundaryNumber(waves.detail_amplitude_scale, 0), patternSeed }) }) });
 }

@@ -134,6 +134,8 @@ function renderModel(): void {
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
   const environment = currentRuntimeEnvironment();
   flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
+  flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
+    ? environment.value.sky.value.condition : null);
   flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
   const flightSnapshot = currentFlightSnapshot();
   if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);

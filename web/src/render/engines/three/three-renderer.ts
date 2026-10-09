@@ -44,6 +44,8 @@ import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "..
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
 import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile, selectLakeWaveComponentsForQuality } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
+import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyCondition } from "../../contracts/lake-sky.js";
+import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
@@ -193,17 +195,19 @@ export function createThreeRenderer(
   renderer.setClearColor(0x9fb0ad, 1);
 
   const scene = new Scene();
-  const skyTexture = createLakeSkyTexture();
+  let activeSkyCondition: LakeSkyCondition | null = null;
+  let skyTexture = createLakeSkyTexture(activeSkyCondition);
   scene.background = skyTexture;
   const lakeFog = new Fog(0x9aafb1, 14_000, 80_000);
   scene.fog = lakeFog;
   const ambient = new AmbientLight(0xdceaf0, 1.15);
   ambient.layers.enable(1);
   scene.add(ambient);
-  const sun = new DirectionalLight(0xffefd8, 1.45);
-  sun.position.set(-20, 35, -18);
+  const sun = new DirectionalLight(0xffefd8, 0);
+  const sunDistanceMeters = Math.hypot(20, 35, 18);
+  sun.position.set(0, sunDistanceMeters, 0);
   sun.layers.enable(1);
-  sun.castShadow = true;
+  sun.castShadow = false;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.camera.left = -28;
   sun.shadow.camera.right = 28;
@@ -216,7 +220,7 @@ export function createThreeRenderer(
   sun.shadow.radius = 5;
   scene.add(sun);
   scene.add(sun.target);
-  const sunOffset = new Vector3(-20, 35, -18);
+  const sunOffset = new Vector3(0, sunDistanceMeters, 0);
 
   const waterQuality = lakeWaterQualityProfile(lakeQuality);
   const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
@@ -243,7 +247,7 @@ export function createThreeRenderer(
       uWaterLight: { value: new Color(0x50636a) },
       uHazeColor: { value: lakeFog.color },
       uHazeRange: { value: new Vector4(lakeFog.near, lakeFog.far, 0, 0) },
-      uSunDirection: { value: new Vector4(-0.42, 0.82, -0.38, 0) },
+      uSunDirection: { value: new Vector4(0, 1, 0, 0) },
       uReflectionTexture: { value: null },
       uReflectionMatrix: { value: new Matrix4() },
       uReflectionEnabled: { value: 0 },
@@ -268,7 +272,10 @@ export function createThreeRenderer(
     waveKAmplitude: lakeUniform(waterMaterial, "uWaveKAmplitude", lakeResources.waveKAmplitude),
     waveOmegaPhase: lakeUniform(waterMaterial, "uWaveOmegaPhase", lakeResources.waveOmegaPhase),
     waveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
-    visualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight)
+    visualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight),
+    skyTexture: lakeUniform(waterMaterial, "uSkyTexture", skyTexture),
+    sunDirection: lakeUniform(waterMaterial, "uSunDirection", new Vector4()),
+    hazeRange: lakeUniform(waterMaterial, "uHazeRange", new Vector4())
   };
   const farWaterGeometry = new PlaneGeometry(160_000, 160_000);
   farWaterGeometry.setAttribute("aGridSpacing", new Float32BufferAttribute([1_200, 1_200, 1_200, 1_200], 1));
@@ -413,6 +420,7 @@ export function createThreeRenderer(
     stereo?: StereoPresentationProfile | null;
     viewport?: ViewportSize;
     lake?: LakeVisualCondition;
+    sky?: LakeSkyCondition | null;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
   const stageViewInputs = (inputs: PendingViewInputs): void => {
@@ -478,6 +486,7 @@ export function createThreeRenderer(
           if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
           if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
           if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
+          if ("sky" in pending) rendererAdapter.setLakeSkyCondition(pending.sky ?? null);
         }
         frameViewport = width > 0 && height > 0 ? Object.freeze({ x: width, y: height, pixelRatio }) : null;
         framePhase = "physics";
@@ -732,6 +741,31 @@ export function createThreeRenderer(
       lakeResources.far.texture.dispose();
       lakeResources = next;
       activeLakeCondition = condition;
+    },
+    setLakeSkyCondition(condition: LakeSkyCondition | null) {
+      ensureActive(disposed);
+      const nextCondition = condition === null ? null : createLakeSkyCondition(condition);
+      if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ sky: nextCondition }); return; }
+      if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyCondition(activeSkyCondition, nextCondition)) return;
+      const nextTexture = createLakeSkyTexture(nextCondition);
+      const direction = nextCondition === null ? null : lakeSkySunDirectionNed(nextCondition);
+      const daylight = nextCondition !== null && nextCondition.sunElevationDegrees >= 0 ? 1 : 0;
+      const north = direction?.north ?? 0;
+      const east = direction?.east ?? 0;
+      const up = direction === null ? 1 : -direction.down;
+      sunOffset.set(east, up, -north).multiplyScalar(sunDistanceMeters);
+      sun.position.copy(sun.target.position).add(sunOffset);
+      sun.intensity = 1.45 * daylight;
+      sun.castShadow = daylight === 1;
+      lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
+      lakeFog.far = nextCondition?.visibilityMeters ?? 80_000;
+      lakeFog.near = lakeFog.far * 0.175;
+      lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
+      scene.background = nextTexture;
+      lakeUniforms.skyTexture.value = nextTexture;
+      skyTexture.dispose();
+      skyTexture = nextTexture;
+      activeSkyCondition = nextCondition;
     },
     setFlightCameraMode(mode: FlightCameraMode) {
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ cameraMode: mode }); return; }
@@ -1329,8 +1363,8 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
   float roughness = clamp(0.23 + uWindSpeed * 0.018 + sqrt(unresolvedVariance) * 0.6, 0.23, 0.62);
   float glitterLobe = pow(sunAlignment, mix(220.0, 45.0, roughness));
   float glitterNoise = 0.35 + 0.65 * clamp(sqrt(microDetail.z) * 3.0, 0.0, 1.0);
-  float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed) * sunVisibility;
-  float diffuse = 0.58 + 0.42 * sunVisibility * max(dot(normal, normalize(uSunDirection.xyz)), 0.0);
+  float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed) * sunVisibility * uSunDirection.w;
+  float diffuse = 0.58 + 0.42 * sunVisibility * max(dot(normal, normalize(uSunDirection.xyz)), 0.0) * uSunDirection.w;
   float sharpCrest = smoothstep(0.42, 0.76, vCompression);
   float crestLight = smoothstep(0.05, 1.05, vCrest) * sharpCrest * mix(0.35, 1.0, patches);
   vec3 base = mix(uWaterDark, uWaterMid, diffuse * 0.72);

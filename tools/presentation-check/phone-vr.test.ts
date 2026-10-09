@@ -767,6 +767,7 @@ class FakeRenderer implements RendererAdapter {
   setFlightPose(): void {}
   setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
+  setLakeSkyCondition(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
   transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose { return pose; }

@@ -51,6 +51,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
     beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(), setLakeVisualCondition: vi.fn(),
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
+    setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
@@ -132,6 +133,35 @@ function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTi
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("uses selected and sealed sky through Retry and Replay while preserving unrecorded archive sky", async () => {
+    const trial = await fixture(false, true);
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toBeNull();
+    trial.click("game-title-start");
+    trial.click("game-setup-select-weather-2");
+    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    trial.click("game-setup-start");
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    trial.click("game-flight-abort");
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    trial.click("game-result-retry");
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    trial.launch();
+    trial.click("game-flight-abort");
+    trial.click("game-result-replay");
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    trial.click("game-replay-return");
+    trial.click("game-result-title");
+    trial.click("game-title-open-record-1");
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toBeNull();
+    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls?.layout).toBe("legacy_three_axis");
+  });
+
   it("projects the sealed aircraft throughout Briefing and Countdown and replaces it with the identical first live pose", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

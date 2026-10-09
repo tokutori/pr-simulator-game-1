@@ -9,6 +9,8 @@ import {
   SRGBColorSpace,
   UnsignedByteType
 } from "three";
+import { createLakeSkyCondition, lakeSkySunDirectionNed } from "../../contracts/lake-sky.js";
+import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 
 function smoothstep(value: number): number {
   const t = Math.max(0, Math.min(1, value));
@@ -45,12 +47,15 @@ interface CumulusPatch {
 }
 
 /** Shared, subdued sky radiance for the background and the lake reflection. */
-export function createLakeSkyTexture(): DataTexture {
+export function createLakeSkyTexture(condition: LakeSkyCondition | null = null): DataTexture {
+  const sky = condition === null ? null : createLakeSkyCondition(condition);
   const width = 1024;
   const height = 512;
   const pixels = new Uint8Array(width * height * 4);
-  const sun = [0.42, 0.82, 0.38] as const;
-  const sunLength = Math.hypot(...sun);
+  const direction = sky === null ? null : lakeSkySunDirectionNed(sky);
+  const sun = direction === null ? [0, 1, 0] as const : [direction.east, -direction.down, -direction.north] as const;
+  const daylight = sky !== null && sky.sunElevationDegrees >= 0 ? 1 : 0;
+  const cloudCount = sky === null ? 0 : Math.round(36 * sky.cloudFraction / 0.35);
   let randomState = 0x4f5a2c91;
   const random = (): number => {
     randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
@@ -59,7 +64,7 @@ export function createLakeSkyTexture(): DataTexture {
   // Fair-weather cumulus have a common flat condensation base and several
   // rounded updraft lobes. Keep individual heaps small and separated.
   const clouds: CumulusPatch[] = [];
-  for (let attempt = 0; attempt < 160 && clouds.length < 36; attempt++) {
+  for (let attempt = 0; attempt < 160 && clouds.length < cloudCount; attempt++) {
     const elevation = 0.04 + Math.pow(random(), 1.6) * 0.32;
     const scale = 0.85 + elevation / 0.36;
     const halfWidthU = (0.007 + random() * 0.008) * scale;
@@ -124,8 +129,8 @@ export function createLakeSkyTexture(): DataTexture {
       const rayX = Math.cos(latitude) * Math.cos(longitude);
       const rayY = Math.sin(latitude);
       const rayZ = Math.cos(latitude) * Math.sin(longitude);
-      const sunAlignment = Math.max(0, (rayX * sun[0] + rayY * sun[1] + rayZ * sun[2]) / sunLength);
-      const sunGlow = Math.pow(sunAlignment, 120) * 14;
+      const sunAlignment = Math.max(0, rayX * sun[0] + rayY * sun[1] + rayZ * sun[2]);
+      const sunGlow = Math.pow(sunAlignment, 120) * 14 * daylight;
       const offset = (row * width + column) * 4;
       const skyR = 177 - 70 * gradient + horizonHaze + sunGlow;
       const skyG = 202 - 38 * gradient + horizonHaze + sunGlow * 0.8;

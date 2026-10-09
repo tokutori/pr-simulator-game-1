@@ -84,6 +84,9 @@ seedは符号なし32 bitの2 wordとして転送し、JavaScript numberへの64
 | Replay | record、またはarchive。現在再生中のrecord header |
 | Attract | attract。独立demoのrecord header |
 
+Briefing用Web projectionはphase 1の`selected`と整数phase 2〜8の`sealed`を受理する。
+一致するphaseでもsourceが異なるmetadataは拒否し、Title・Replay・Attractや非整数phaseへ流用しない。
+
 metadataは名前、hash、local frame、風のquery領域、代表点・高度・coreでsampleした風、
 wave/sky inputs、月統計、provenanceと出典を含む。全格子標本は転送しない。
 local frameとskyは`defined`/`unavailable`の直和型であり、legacyに架空の値を補完しない。
@@ -93,10 +96,19 @@ legacy hashは現在のbuildのsource fingerprintであり、過去recordの実a
 
 `environment_snapshot_for_identity_json` はJSON文字列だけを受理するregistry queryである。
 JSのnull・型不一致、4,096 byte超過、object以外の包絡、JSON/field/range異常、0のversionを分類して拒否する。
-registryはcatalog v1の1〜5とcatalog v2の1/2/4/5/6を完全identityで照合する。
-各組合せのaircraft model v1は旧archiveの環境metadata照会用に保持し、v2を現行playable機体として登録する。
+registryは次の組合せを完全identityで照合する。scenario IDとenvironment versionの一致も要求する。
+
+| catalog | scenario ID | scenario version | aircraft model version | controller profile version |
+|---|---|---|---|---|
+| v1 | 1〜5 | v1 | v1 / v2 | v1〜v4 |
+| v2 | 1 / 2 / 4 / 5 / 6 | v1 | v1 / v2 | v1〜v4 |
+| v2 | 1 / 2 / 4 / 5 / 6 | v2 | v1 | v1 / v2 |
+| v3 | 1 / 2 / 4 / 5 / 6 | v3 | v2 | v2 / v3 |
+
+旧archiveの環境metadata照会用の組合せを保持し、v3を現行hybrid機体の選択catalogとする。
 環境metadataの照会は旧機体を再積分する操作を含まない。
-既知registryの存在は通常選択の公開を意味しない。現行の選択catalogはv1の5scenarioで、aircraft model v2を使用する。
+現行の通常選択はscenario v3、aircraft model v2、controller profile v3を使用する。
+既知registryの存在は、旧機体や旧controllerの通常選択への公開を意味しない。
 未知identityはunavailableを返し、archiveの受入・記録・snapshot replayを維持する。
 
 ## 現在の実装範囲
@@ -107,8 +119,9 @@ version 6のJSONをrepositoryの配布manifestへ登録し、全格子標本と�
 WASM adapterはversion 6のJSONをbundleへ組み込み、session生成前に既存codecで検証する。
 `OnceLock<Result<RuntimeEnvironment, EnvironmentFormatError>>`がimmutableなmetadataと風標本を所有し、
 成功・失敗を一度だけ保持する。風場はこのstorageを借用し、coreにI/Oや所有用allocationを追加しない。
-build時にasset bytesのSHA-256を計算する。runtime環境moduleはsource fingerprint入力にも含める。
-raw asset hashのPersonal Best content keyへの接続は、実環境scenarioを公開する後続単位で行う。
-versioned metadataとstrict registry queryを実装している。現行catalogの実環境への接続、
-描画用metadataの消費と通常入力coverageの受入は後続単位で行う。
-現行browserのsynthetic scenarioはこの追加だけでは変更されない。
+build時にasset bytesのSHA-256を計算する。Personal Bestの環境source fingerprintにも、
+asset bytesとruntime環境moduleを含める。metadataのraw asset hashとsource fingerprintは用途を区別する。
+現行hybrid catalogのTypicalはversion 6の登録済み風格子を使用し、Calm等の他条件は登録済み一様風を使用する。
+Web rendererは定義済みskyの太陽方向・雲量・visibilityを消費し、定義がない場合は太陽を伴わない汎用背景を表示する。
+波・空の描画条件はphysics・固定水面接触・recordの正本を変更しない。
+cloud baseに対応する立体的な雲と高品質な空の描画はM6で扱う。
