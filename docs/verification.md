@@ -289,7 +289,7 @@ scenario構築ではactuatorの全travelがdomainに収まる場合を受理し�
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
 | 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
 | 007 | legacy `SyntheticPlayableFlight`のneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。この距離条件を新hybrid mockへ適用しない。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
-| 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。環境assetの選択activation・描画接続と実ブラウザー受入は別途検証する |
+| 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。登録env6の選択・sky/waves consumer、native太陽方向一致、archiveの会場表示境界と実GPU確認は以下のBPG-008節に範囲を記載する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |
 | 016 | 全SceneのPhone VR UI、同期absolute権限要求・重力較正待ち・relative-only起動失敗・ModelのScreen復帰・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectの初回pitch/roll・非Flight水平復帰・Eye mount・全anchor/gaze・yaw-only recenter・listener例外時の全cleanup。relative重力sourceのbrowser接続と実スマートフォン/GPUは別途受入 |
@@ -309,6 +309,28 @@ scenario構築ではactuatorの全travelがdomainに収まる場合を受理し�
 刻み半減と比較する。BPG-035では通常の入力範囲でのフライト成立率、失敗理由の表示、
 採用値の出典・仮定・適用範囲、操作性を受入条件に含める。M3〜M6のplayable synthetic game受入と
 実機同定・機体固有fidelity検証は別のgateとして扱う。
+
+## BPG-008 登録環境の接続と描画確認
+
+登録env6は彦根の1991–2020年・7月のscalar平均風速と最多風向を独立した観測根拠として保持し、
+湖上外挿・空間勾配・鉛直流・波・空の仮定と分離する。offline生成の欠測・入力hash・方位変換・決定性、
+Rust codec、全N-fast格子標本・閉区間境界、recipe/generator/parserのexact-byte hashをsoftware検査で扱う。
+共有Rustが風格子を所有し、現行hybrid catalogのTypical、WASM metadata、Webの定義済みsky/waves、
+nativeのTypicalへ接続する。metadata欠損は補完せず、cloud baseの立体表現はM6に残す。
+
+- PR #282の`66ffddf4`は必須CI成功・merge済みである。native fmt/Clippy・61 testsとWeb verify（95 files / 1751 tests）が成功した。
+  Windows 11 / AMD Radeon 860M / Vulkanのnativeで開始・操縦・Pilot/Chase・Pause/Resume・Result・Retry、10枚のcaptureとexit 0を確認した。
+  同じheadのproduction WebをChromium 148 / ANGLE D3D11でTitleからFlight・Pause・Result・Retryまで確認し、sky/water/PBRの登録条件一致を検査した。
+- PR #285の`c0f3ddba`はWeb verify（95 files / 1763 tests）が成功した。actual WASMから純粋投影・actual Three groupへ接続し、
+  登録env6・未知env99・原点未記録legacy、current Calm/Mild・Result/Replay/Retry、archive→Title→Attract、frame stagingを検査した。
+  Windows 11 / AMD Radeon 860M / Chromium 148 / ANGLE D3D11のproduction WebGLで、保存一覧→各archiveのReplay→Titleを確認した。
+  登録会場の表示、未知・原点未記録archiveの汎用背景、Title展示の復帰を確認した。必須CI成功・mergeは別の統合gateである。
+
+両headの実描画確認ではsoftware rendererを使用せず、アプリ例外・GPU validation・asset失敗・WebGL context lossの確定エラーはなかった。
+Webの自動favicon要求の404は非配布resourceとして別に記録した。この限定受入は実キーボード・マウス・gamepad、
+スマートフォン・HMD・他GPU、80 FPS性能、M6の高品質描画、実気象・実機fidelityの受入を含まない。
+利用者向けの気象庁出典・加工表示と配布artifactの帰属一覧同期はBPG-013 (#13)の公開gateに残る。
+Pages公開は実施しておらず、必須CI・merge・公開承認やBPG-008の閉了をこれらの検査結果だけで先取りしない。
 
 ## 表示・性能・配布
 

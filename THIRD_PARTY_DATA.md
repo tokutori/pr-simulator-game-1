@@ -55,7 +55,9 @@ EGM96標高から琵琶湖B.S.L.への変換は近似であり、測量・航法
 風速はscalar月平均、風向は最多のfrom-directionであり、観測された平均vectorや湖上3D風場を表さない。
 波のfetch 600 m、鉛直流zero、高度依存・定常性、太陽・雲・視程は明示した仮定／game tuningである。
 気象庁が作成した湖上気象scenario、実測波浪、天文計算結果として扱わない。
-環境version 6はruntime接続前の登録段階であり、Web表示の接続時に利用者向けの出典・加工表示も追加する。
+環境version 6は現行hybrid catalogのTypical、WASM bundle、Webの環境描画、nativeのTypicalへ接続済みである。
+asset・manifestの出典と加工表示を維持し、利用者向けの気象庁出典・加工表示と配布artifactの帰属一覧同期はBPG-013 (#13)の公開gateに残す。
+runtime接続や実GPU確認の成功だけでは、この公開gateを満たしたと扱わない。
 
 ## 登録要件
 

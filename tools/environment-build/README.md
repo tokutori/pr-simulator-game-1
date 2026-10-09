@@ -40,11 +40,19 @@ recipeの各環境成分はassumedまたはgame_tunedへ限定する。
 生成後はRust `EnvironmentDocument::decode_json`で全成分を検証し、成功した場合だけatomic replaceで保存する。
 入力やvalidatorの上書きを拒否する。WindFieldのquery・物理計算をPythonへ移さない。
 
-Typical recipeは新environment version 6を予約する。既存catalogの1～5を再利用しない。
+Typical recipeはenvironment version 6を生成する。既存catalogの1～5を再利用しない。
 格子のdown上端には水面下10 mの評価余裕を設ける。±2 kmの水平coverageは明示した生成範囲であり、
-通常入力・RK4全stageのcoverage受入はruntime接続時に確認する。
+現行Typicalの共有Rust統合検査では、明示した39入力列が全てWaterContact・failureなしで終了した。
+任意入力や全Weatherのcoverage保証とは区別する。条件と結果は[Playableモデル契約](../../docs/playable-hybrid-model.md)を参照する。
+recipe・生成assetに残るruntime接続前のcoverage記述は生成時点の検査境界であり、
+現行検査の結果は上記契約文書に記録する。
 fetch 600 mとsky設定は観測された琵琶湖条件を主張しない。
 
-この工程の追加だけではbrowserのscenarioを変更しない。
-version 6のJSONはrepositoryの配布manifestへ登録済みである。現行Web bundleはまだこのJSONを含めない。
-browser配布・既存catalog接続・PB identityへのasset hash反映・統合受入を後続で行い、BPG-008を完了扱いにしない。
+version 6のJSONは配布manifestと現行hybrid catalogのTypicalへ登録済みである。
+共有Rustが検証済みmetadataと風格子storageを所有し、WASM bundleとnativeのTypicalが同じ登録環境を使用する。
+Personal Bestの環境source fingerprintにもasset bytesを含め、metadataのraw asset hashとは用途を分ける。
+Webの定義済みsky/wavesの接続とnativeの太陽方向一致はPR #282の`66ffddf4`、
+未知・原点未記録archiveの会場表示境界はPR #285の`c0f3ddba`で検査した。
+実GPU確認と未受入の境界は[検証契約](../../docs/verification.md)に記載する。
+PR #285の必須CI成功・mergeとBPG-008の閉了判定は、この検査結果とは別のgateである。
+利用者向けの気象庁出典・加工表示と配布artifactの帰属一覧同期は、BPG-013 (#13)の公開gateに残る。
