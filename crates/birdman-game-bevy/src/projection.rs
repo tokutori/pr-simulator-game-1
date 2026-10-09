@@ -9,6 +9,20 @@ pub(crate) fn ned_to_engine(components: [f64; 3]) -> Vec3 {
     )
 }
 
+pub(crate) fn sky_sun_direction(azimuth_degrees: f64, elevation_degrees: f64) -> Vec3 {
+    let azimuth = azimuth_degrees.to_radians();
+    let elevation = elevation_degrees.to_radians();
+    ned_to_engine([
+        elevation.cos() * azimuth.cos(),
+        elevation.cos() * azimuth.sin(),
+        -elevation.sin(),
+    ])
+}
+
+pub(crate) fn sunlight_transform(sun_direction: Vec3) -> Transform {
+    Transform::IDENTITY.looking_to(-sun_direction, Vec3::Y)
+}
+
 pub(crate) fn attitude_to_engine(attitude: UnitQuaternion) -> Quat {
     let [scalar, forward, right, down] = attitude.components();
     let basis = Quat::from_xyzw(0.5, 0.5, -0.5, 0.5);
@@ -54,6 +68,41 @@ pub(crate) fn camera_transform(
 mod tests {
     use super::*;
     use birdman_game_core::{BodyVector, NedPoint, NedVector};
+
+    #[test]
+    fn solar_azimuth_is_clockwise_from_north_and_elevation_points_up() {
+        for (azimuth, elevation, expected) in [
+            (0.0, 0.0, Vec3::NEG_Z),
+            (90.0, 0.0, Vec3::X),
+            (180.0, 0.0, Vec3::Z),
+            (270.0, 0.0, Vec3::NEG_X),
+            (135.0, 90.0, Vec3::Y),
+            (
+                135.0,
+                55.0,
+                Vec3::new(0.405_579_78, 0.819_152_06, 0.405_579_78),
+            ),
+        ] {
+            let direction = sky_sun_direction(azimuth, elevation);
+            assert!(direction.distance(expected) < 1.0e-6);
+            assert!((direction.length() - 1.0).abs() < 1.0e-6);
+        }
+    }
+
+    #[test]
+    fn directional_light_forward_is_opposite_the_direction_to_the_sun() {
+        for direction in [
+            Vec3::X,
+            Vec3::NEG_Z,
+            Vec3::Y,
+            Vec3::new(0.405_579_78, 0.819_152_06, 0.405_579_78),
+        ] {
+            let light = sunlight_transform(direction);
+            assert!((light.forward().as_vec3() + direction).length() < 1.0e-6);
+            assert_eq!(light.translation, Vec3::ZERO);
+            assert_eq!(light.scale, Vec3::ONE);
+        }
+    }
 
     fn state(attitude: UnitQuaternion, pilot: f64) -> FlightState {
         FlightState::try_new(

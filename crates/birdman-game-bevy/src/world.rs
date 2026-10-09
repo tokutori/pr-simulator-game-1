@@ -1,7 +1,7 @@
 use super::{
     CameraMode,
     native_session::NativeSession,
-    projection::{aircraft_transform, camera_transform},
+    projection::{aircraft_transform, camera_transform, sunlight_transform},
     water::WaterMaterial,
 };
 use bevy::ecs as bevy_ecs;
@@ -292,7 +292,11 @@ pub(crate) fn setup_world(
             Transform::IDENTITY,
         ));
     }
-    let surface = water.add(WaterMaterial::registered(false).expect("登録wavesが不正"));
+    let registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
+    let sunlight = sunlight_transform(registered_water.sun_cloud.truncate());
+    let mut registered_sky = registered_water.clone();
+    registered_sky.waves_sky.w = 1.0;
+    let surface = water.add(registered_water);
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(180_000.0, 180_000.0))),
         MeshMaterial3d(surface),
@@ -307,7 +311,7 @@ pub(crate) fn setup_world(
     commands.spawn((
         WorldProjection::SkyDome,
         Mesh3d(meshes.add(dome)),
-        MeshMaterial3d(water.add(WaterMaterial::registered(true).expect("登録skyが不正"))),
+        MeshMaterial3d(water.add(registered_sky)),
         Transform::IDENTITY,
     ));
     commands.spawn((
@@ -315,7 +319,7 @@ pub(crate) fn setup_world(
             illuminance: 18_000.0,
             ..default()
         },
-        Transform::from_xyz(800.0, 1000.0, -300.0).looking_at(Vec3::ZERO, Vec3::Y),
+        sunlight,
     ));
     let platform = launch_venue().expect("登録launch venueが不正").platform;
     let platform_material = materials.add(Color::srgb(0.55, 0.43, 0.25));
@@ -498,6 +502,29 @@ fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
 mod tests {
     use super::super::native_session::MenuAction;
     use super::*;
+
+    #[test]
+    fn world_setup_shares_the_registered_sun_with_water_sky_and_pbr_light() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let expected = Vec3::new(0.405_579_78, 0.819_152_06, 0.405_579_78);
+        let mut lights = app.world_mut().query::<(&DirectionalLight, &Transform)>();
+        let (light, transform) = lights.single(app.world()).unwrap();
+        assert_eq!(light.illuminance, 18_000.0);
+        assert!((transform.forward().as_vec3() + expected).length() < 1.0e-6);
+        let materials = app.world().resource::<Assets<WaterMaterial>>();
+        let mut material_modes = Vec::new();
+        for (_, material) in materials.iter() {
+            assert!(material.sun_cloud.truncate().distance(expected) < 1.0e-6);
+            material_modes.push(material.waves_sky.w);
+        }
+        material_modes.sort_by(f32::total_cmp);
+        assert_eq!(material_modes, vec![0.0, 1.0]);
+    }
 
     #[test]
     fn prepared_world_projection_preserves_menu_camera_and_continues_into_the_exact_launch() {

@@ -28,13 +28,10 @@ impl WaterMaterial {
         let environment =
             bundled_environment().map_err(|error| format!("環境assetを読めない: {error:?}"))?;
         let document = environment.document();
-        let azimuth = document.sky.sun_azimuth_degrees.to_radians();
-        let elevation = document.sky.sun_elevation_degrees.to_radians();
-        let direction = super::projection::ned_to_engine([
-            elevation.cos() * azimuth.cos(),
-            elevation.cos() * azimuth.sin(),
-            -elevation.sin(),
-        ]);
+        let direction = super::projection::sky_sun_direction(
+            document.sky.sun_azimuth_degrees,
+            document.sky.sun_elevation_degrees,
+        );
         Ok(Self {
             camera_time: Vec4::ZERO,
             sun_cloud: direction.extend(document.sky.cloud_fraction as f32),
@@ -69,6 +66,13 @@ mod tests {
         assert_eq!(water.waves_sky.z, waves.detail_amplitude_scale as f32);
         assert!(water.sun_cloud.is_finite());
         assert!((water.sun_cloud.truncate().length() - 1.0).abs() < 1.0e-6);
+        assert!(
+            water.sun_cloud.truncate().distance(Vec3::new(
+                0.405_579_78,
+                0.819_152_06,
+                0.405_579_78
+            )) < 1.0e-6
+        );
         assert!(matches!(water.alpha_mode(), AlphaMode::Opaque));
         assert!(matches!(sky.alpha_mode(), AlphaMode::Opaque));
     }

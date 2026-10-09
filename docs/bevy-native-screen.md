@@ -2,10 +2,10 @@
 
 ## 対象と比較基準
 
-[#254](https://github.com/tokutori/pr-simulator-game-1/issues/254)の確認用実装を`bevy`ブランチで開発する。
+[#254](https://github.com/tokutori/pr-simulator-game-1/issues/254)の確認用実装を`bevy`ブランチで開発し、検証後にmainへ統合した。
 比較基準とbaseは`c5408914015f2f5c2679c033efca41e6b6be8404`に固定する。
 既存Web版は維持し、今回のnative対象はWindows 11のScreenに限定する。
-2026-10-09の指示により、モデル・UI・水面修正の検証後にmainへ統合する。
+2026-10-09の指示に基づくmain統合後も、ユーザー受入と追加修正の完了を区別する。
 GitHub Pagesの公開は明示的な手動操作へ分離し、releaseは今回の対象外とする。
 
 ## 起動
@@ -13,7 +13,7 @@ GitHub Pagesの公開は明示的な手動操作へ分離し、releaseは今回�
 workspaceのルートで実行する。
 
 Windowsでの開発・確認用ディレクトリは`C:\projects\birdman\tokutori\pr-simulator-game`である。
-このディレクトリを`bevy`ブランチに配置し、追加のworktreeへの移動を起動条件にしない。
+このディレクトリの`bevy`または統合済みmainから起動でき、追加のworktreeへの移動を起動条件にしない。
 
 ```sh
 cargo run -p birdman-game-bevy --release --locked
@@ -89,6 +89,9 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
 水面は八方向の波packet、画素footprintで減衰するnormal、Fresnel・低コントラストの空反射・広い太陽反射を使用する。
 波の位相と方向は同じ環境snapshotとsimulation timeから導出する。空はprocedural gradientを使用する。
+空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
+NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
+方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
 Gerstnerのgeometry変位・高品質な反射は未移植である。遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
