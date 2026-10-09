@@ -49,6 +49,7 @@ import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
 import { createLakeVenue } from "./lake-venue-mesh.js";
+import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -361,6 +362,7 @@ export function createThreeRenderer(
   panelMesh.add(gazeCursor);
 
   const aircraftRoot = new Group();
+  aircraftRoot.name = "aircraft-presentation-root";
   scene.add(aircraftRoot);
   const airframe = createBirdmanAirframe();
   aircraftRoot.add(airframe.root);
@@ -397,6 +399,7 @@ export function createThreeRenderer(
   let activeReferenceSpace: XRReferenceSpace | null = null;
   let selectRayHandler: ((ray: SelectRay) => void) | null = null;
   let flightPose: FlightRenderPose | null = null;
+  let preparedFlightPose: FlightRenderPose | null = null;
   let flightCameraMode: FlightCameraMode = "pilot";
   let fixedCameraView: CinematicCameraView | null = null;
   let framePhase: "idle" | "physics" | "view" = "idle";
@@ -404,6 +407,7 @@ export function createThreeRenderer(
   let renderedTrackingMount: Pose | null = null;
   type PendingViewInputs = Readonly<{
     flightPose?: FlightRenderPose | null;
+    preparedFlightPose?: FlightRenderPose | null;
     cameraMode?: FlightCameraMode;
     cameraView?: CinematicCameraView | null;
     stereo?: StereoPresentationProfile | null;
@@ -468,6 +472,7 @@ export function createThreeRenderer(
         pendingViewInputs = null;
         if (pending !== null) {
           if ("flightPose" in pending) rendererAdapter.setFlightPose(pending.flightPose ?? null);
+          if ("preparedFlightPose" in pending) rendererAdapter.setPreparedFlightPose(pending.preparedFlightPose ?? null);
           if (pending.cameraMode !== undefined) rendererAdapter.setFlightCameraMode(pending.cameraMode);
           if ("cameraView" in pending) rendererAdapter.setCinematicCameraView(pending.cameraView ?? null);
           if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
@@ -515,24 +520,32 @@ export function createThreeRenderer(
       const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting
         ? stereoPresentation === null ? titleCameraPose : titlePhoneCameraPose
         : IDENTITY_POSE;
-      setPose(trackingOrigin, composePose(titlePresentationPose, currentPilotEyePose()));
+      const displayFlightPose = flightPose ?? preparedFlightPose;
+      const exhibitionHeading = LAUNCH_PLATFORM.launchBearingDegrees * Math.PI / 180;
+      const aircraftPose = displayFlightPose === null
+        ? pose(vec3(0, LAUNCH_PLATFORM.frontLipAboveWaterMeters, 0),
+          quaternion(Math.cos(exhibitionHeading / 2), 0, -Math.sin(exhibitionHeading / 2), 0))
+        : flightRelativePose(displayFlightPose, IDENTITY_POSE);
+      setPose(trackingOrigin, flightPose === null
+        ? composePose(inversePose(aircraftPose), titlePresentationPose)
+        : currentPilotEyePose());
       setPose(camera, frame.cameraPose);
       const externalPose = externalCameraPose ?? IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
       updateFixedCameraProjection();
-      setPose(aircraftRoot, flightPose === null ? IDENTITY_POSE : flightRelativePose(flightPose, IDENTITY_POSE));
+      setPose(aircraftRoot, aircraftPose);
       const worldFromTracking = useExternalCamera
         ? externalPose
         : flightPose === null
           ? titlePresentationPose
           : flightRelativePose(flightPose, currentTrackingMountPose());
       headHudSurface?.update(frame.headHud, worldFromTracking);
-      const controls = flightPose?.controls;
+      const controls = displayFlightPose?.controls;
       airframe.setVisualState(
-        flightPose?.airspeedMetersPerSecond ?? null,
+        displayFlightPose?.airspeedMetersPerSecond ?? null,
         controls ?? NO_AIRFRAME_CONTROLS,
-        flightPose?.tailGeometry
+        displayFlightPose?.tailGeometry
       );
       const simulationTimeSeconds = flightPose?.simulationTimeSeconds ?? 0;
       lakeUniforms.time.value = simulationTimeSeconds;
@@ -695,6 +708,11 @@ export function createThreeRenderer(
       }
       flightPose = pose;
       if (pendingViewInputs !== null && "flightPose" in pendingViewInputs) stageViewInputs({ flightPose: pose });
+    },
+    setPreparedFlightPose(pose: FlightRenderPose | null) {
+      ensureActive(disposed);
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ preparedFlightPose: pose }); return; }
+      preparedFlightPose = pose;
     },
     setLakeVisualCondition(condition: LakeVisualCondition) {
       ensureActive(disposed);

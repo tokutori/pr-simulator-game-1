@@ -8,7 +8,7 @@ import type { GameSessionOperationPort } from "./game-session-operation.js";
 import type { FlightSessionPort } from "../game/flight-controller.js";
 import { readFlightLog } from "../game/flight-log-export.js";
 import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
-import { projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
+import { projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
 import { validateAnalysisInput } from "../game/flight-analysis-view.js";
@@ -23,7 +23,7 @@ import { parseNamedRecordSummary, parseNamedWindGrid, sameNamedRecordContext } f
 import type { NamedRecordSummary, NamedWindGrid, NamedWindGridRequest } from "../game/named-record-analysis.js";
 import type { TailSessionPort } from "../game/tail-flight-controller.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
-import { parseTailSessionSnapshot } from "../game/tail-session-codec.js";
+import { parseTailPreparedLaunchSnapshot, parseTailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
 
@@ -71,6 +71,7 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     | "cycle_information_level" | "cycle_assistance_level" | "cycle_weather_class"> & {
     abort(): string;
     launch(): string;
+    prepared_launch_snapshot_json(): string;
     playback_context_json(): string;
     flight_analysis_samples_json(): string;
     flight_record_sample_at_seconds(seconds: number): string;
@@ -259,6 +260,14 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 
   readSnapshot(): TailSessionSnapshot {
     return this.observe(() => parseTailSessionSnapshot(this.port.snapshot_json(), this.physicsHz));
+  }
+
+  readPreparedLaunchPose(): FlightRenderPose | null {
+    return this.observe(() => {
+      const snapshot = parseTailPreparedLaunchSnapshot(this.port.prepared_launch_snapshot_json(), this.physicsHz);
+      if (snapshot.phaseCode !== this.readLifecycle().phaseCode) throw new RangeError("Prepared launch projection disagrees with the Rust phase");
+      return projectPreparedLaunchRenderPose(snapshot);
+    });
   }
 
   readGameSessionProjection(): TailGameSessionProjection {

@@ -87,6 +87,39 @@ export type FlightSnapshotBoundary =
   | Readonly<{ schemaVersion: 1; controlLayout: "legacy_three_axis"; snapshot: FlightSnapshot }>
   | TailSessionSnapshot;
 
+export type TailPreparedLaunchSnapshot =
+  | Readonly<{ kind: "unavailable"; phaseCode: number }>
+  | Readonly<{ kind: "prepared"; phaseCode: 2 | 3 | 4 | 8; identity: PreparedIdentity; state: TailFlightState }>;
+
+export function parseTailPreparedLaunchSnapshot(json: string, physicsHz: number): TailPreparedLaunchSnapshot {
+  if (json.length > 16_384) throw new RangeError("Prepared launch snapshot exceeds its bounded envelope");
+  boundaryNumber(physicsHz, Number.MIN_VALUE);
+  const document = boundaryObject(JSON.parse(json) as unknown, ["schema_version", "control_layout", "phase_code", "preview"]);
+  if (document.schema_version !== TAIL_SESSION_SCHEMA_VERSION || document.control_layout !== "tail_incidence") {
+    throw new RangeError("Unsupported prepared launch schema or control layout");
+  }
+  const phaseCode = boundaryInteger(document.phase_code, 0, 10);
+  const preparedPhase = phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8;
+  if (typeof document.preview !== "object" || document.preview === null || Array.isArray(document.preview)) {
+    throw new RangeError("Missing prepared launch projection");
+  }
+  const kind = boundaryTag((document.preview as Record<string, unknown>).kind, ["prepared", "unavailable"]);
+  if (kind === "unavailable") {
+    boundaryObject(document.preview, ["kind"]);
+    if (preparedPhase) throw new RangeError("Prepared phase requires the sealed initial state");
+    return Object.freeze({ kind, phaseCode });
+  }
+  if (!preparedPhase) throw new RangeError("Initial launch projection requires a preparation phase");
+  const preview = boundaryObject(document.preview, ["kind", "scenario", "control_identity", "state"]);
+  const identity = decodeIdentity(preview.scenario, preview.control_identity);
+  if (identity.kind !== "prepared") throw new RangeError("Initial launch projection requires sealed identity");
+  const state = decodeState(preview.state, physicsHz);
+  if (state.tick !== 0 || state.fraction !== 0 || state.flightTimeSeconds !== 0) {
+    throw new RangeError("Initial launch projection must retain its zero tick");
+  }
+  return Object.freeze({ kind, phaseCode, identity, state });
+}
+
 export function encodeTailLogicalInput(input: TailLogicalInput): string {
   const object = boundaryObject(input, ["controlLayout", "noseUp", "turnRight", "desiredPitchRateRadiansPerSecond",
     "desiredYawRateRadiansPerSecond", "pilotPositionCommand"]);

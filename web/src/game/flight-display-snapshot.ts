@@ -2,7 +2,7 @@ import type { LegacyPhysicalFlightControls, TailPhysicalFlightControls, TailPres
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
 import type { FlightSnapshot } from "./flight-snapshot.js";
 import type { LegacyTerminalFinalization, NamedRecordSample, RecordQueryContext } from "./named-record-query.js";
-import type { TailControlIdentity, TailFlightProgressMeters, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
+import type { TailControlIdentity, TailFlightProgressMeters, TailFlightTelemetry, TailPreparedLaunchSnapshot, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
 
 type NedVector = FlightSnapshot["positionNed"];
 type BodyRate = Readonly<{ roll: number; pitch: number; yaw: number }>;
@@ -158,6 +158,20 @@ export function projectFlightRenderPose(snapshot: FlightDisplaySnapshot, initial
     case "legacy_record":
       return Object.freeze({ ...pose, controls: snapshot.controls });
   }
+}
+
+export function projectPreparedLaunchRenderPose(snapshot: TailPreparedLaunchSnapshot): FlightRenderPose | null {
+  if (snapshot.kind === "unavailable") return null;
+  const state = snapshot.state;
+  return Object.freeze({
+    datumPositionNed: ned(state.datumPositionNedMeters),
+    attitudeBodyToNed: attitude(state.attitudeBodyToNed),
+    pilotPositionMeters: state.pilotPositionMeters,
+    initialPilotPositionMeters: state.pilotPositionMeters,
+    simulationTimeSeconds: 0,
+    controls: Object.freeze({ layout: "tail_incidence", physicalIncidence: state.physicalIncidence }),
+    tailGeometry: projectTailGeometry(snapshot.identity.scenario, snapshot.identity.controls)
+  });
 }
 
 function projectTailGeometry(scenario: TailScenarioIdentity, controls: TailControlIdentity): TailPresentationGeometryAvailability {

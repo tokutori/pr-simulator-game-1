@@ -19,6 +19,10 @@ FRD/NEDから描画座標への変換はadapterで完了させる。
 Three.js座標では $(forward,right,down)$ を $(right,-down,-forward)$ へ写像する。
 位置と姿勢に同じbasisを使用し、姿勢は $q_{view}=q_{basis}q_{FRD}q_{basis}^{-1}$ で変換する。
 このbasisのquaternionはwxyz順で $(0.5,0.5,0.5,-0.5)$ とする。
+Briefing/Countdownの機体表示は、Rustのsealed configurationからread-onlyに取得した初期状態を使用する。
+このprojectionは物理tick、記録sample、Flight telemetryを生成しない。発進直後のlive状態には同じ初期状態を適用する。
+Title/FlightSetupの展示姿勢は共有venueの方位とplatform lip高度から導出し、飛行状態と区別する。
+準備中の機体姿勢を変更しても、menu cameraとUI anchorのworld参照系を維持する。
 cameraはRenderSnapshot、view metadata、view入力、camera用時刻を受け取り、coreをimport・呼出ししない。
 engine非依存の数値poseを生成し、Three.js等のcameraや数学型を公開しない。
 機体姿勢を直接反映し、強い追従遅延を追加しない。

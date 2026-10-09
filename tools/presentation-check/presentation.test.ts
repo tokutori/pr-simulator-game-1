@@ -413,6 +413,7 @@ class FakeRenderer implements RendererAdapter {
   }
 
   setFlightPose(): void {}
+  setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
 
   setFlightCameraMode(): void {}

@@ -276,6 +276,7 @@ class RecordingRenderer implements RendererAdapter {
   stopLoop(): void {}
   render(): void {}
   setFlightPose(): void {}
+  setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}

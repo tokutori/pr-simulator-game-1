@@ -50,6 +50,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
     }),
     beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(), setLakeVisualCondition: vi.fn(),
+    setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
@@ -116,6 +117,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
     expect(scene()).toBe("Flight");
   };
   return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, abort, tick,
+    countdownTick: () => { countdown.shift()?.(); },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
 }
@@ -130,6 +132,35 @@ function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTi
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("projects the sealed aircraft throughout Briefing and Countdown and replaces it with the identical first live pose", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toBeNull();
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    expect(trial.scene()).toBe("Briefing");
+    const initial = trial.renderer.setPreparedFlightPose.mock.lastCall?.[0];
+    if (initial === null || initial === undefined) throw new Error("Missing Rust sealed launch pose");
+    expect(initial).toMatchObject({ controls: { layout: "tail_incidence" }, simulationTimeSeconds: 0 });
+    trial.click("game-briefing-start");
+    for (let step = 0; step < 3; step++) {
+      expect(trial.scene()).toBe("Countdown");
+      trial.frame(step * 10);
+      expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toEqual(initial);
+      expect(trial.tick).not.toHaveBeenCalled();
+      trial.countdownTick();
+    }
+    expect(trial.scene()).toBe("Flight");
+    expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toBeNull();
+    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]).toMatchObject(initial);
+    trial.click("game-flight-abort");
+    trial.click("game-result-retry");
+    expect(trial.scene()).toBe("Briefing");
+    expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toEqual(initial);
+    trial.click("game-briefing-cancel");
+    expect(trial.scene()).toBe("FlightSetup");
+    expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toBeNull();
+  });
   it("connects explicit Setup, flight, Result, Retry, named Replay and Attract without disposing the Rust owner", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

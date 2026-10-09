@@ -142,6 +142,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     driver.xr.isPresenting = false;
     bundle.renderer.setStereoPresentation(null);
     bundle.renderer.setFlightPose(null);
+    bundle.renderer.setPreparedFlightPose(null);
     bundle.renderer.setFlightCameraMode("pilot");
     bundle.renderer.setCinematicCameraView(null);
     driver.draws.length = 0;
@@ -434,6 +435,53 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.render(current);
     expectMatrix(singleDraw(driver).camera, new Matrix4());
     expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
+  });
+
+  it.each(["screen", "phone-vr", "webxr"] as const)("keeps the %s menu camera and anchors fixed while showing the sealed launch pose", (mode) => {
+    driver.xr.isPresenting = mode === "webxr";
+    bundle.renderer.setStereoPresentation(mode === "phone-vr" ? PHONE_VR_OPTICAL_PROFILE : null);
+    const current = frame({ cameraPose: turnedHead });
+    bundle.renderer.render(current);
+    const baseline = driver.draws.map((draw) => ({ camera: draw.camera.clone(), panel: draw.panel.clone() }));
+    const heading = -Math.PI / 4;
+    const initial: FlightRenderPose = {
+      datumPositionNed: { north: 0.3, east: -0.2, down: -10.4 },
+      attitudeBodyToNed: quaternion(Math.cos(heading / 2), 0, 0, Math.sin(heading / 2)),
+      pilotPositionMeters: 0.17,
+      initialPilotPositionMeters: 0.17,
+      controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.035, verticalTailRadians: -0.018 } },
+      tailGeometry: { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } }
+    };
+    bundle.renderer.setPreparedFlightPose(initial);
+    driver.draws.length = 0;
+    bundle.renderer.render(current);
+    expect(driver.draws).toHaveLength(baseline.length);
+    driver.draws.forEach((draw, index) => {
+      const previous = baseline[index];
+      if (previous === undefined) throw new Error("Missing baseline camera");
+      expectMatrix(draw.camera, previous.camera);
+      expectMatrix(draw.panel, previous.panel);
+    });
+    const aircraft = driver.scene?.getObjectByName("aircraft-presentation-root");
+    if (aircraft === undefined) throw new Error("Missing projected aircraft");
+    const preparedMatrix = aircraft.matrixWorld.clone();
+    expectMatrix(preparedMatrix, poseMatrix(flightRelativePose(initial, IDENTITY_POSE)));
+    expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.rotation.x).toBeCloseTo(0.035, 12);
+    expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.rotation.y).toBeCloseTo(0.018, 12);
+    bundle.renderer.setPreparedFlightPose(null);
+    bundle.renderer.setFlightPose(initial);
+    driver.draws.length = 0;
+    bundle.renderer.render(current);
+    expectMatrix(aircraft.matrixWorld, preparedMatrix);
+    bundle.renderer.setFlightPose(null);
+    driver.draws.length = 0;
+    bundle.renderer.render(current);
+    driver.draws.forEach((draw, index) => {
+      const previous = baseline[index];
+      if (previous === undefined) throw new Error("Missing return-to-Title camera");
+      expectMatrix(draw.camera, previous.camera);
+      expectMatrix(draw.panel, previous.panel);
+    });
   });
 
   it("renders legacy and physical tail controls independently without a legacy substitution", () => {

@@ -765,6 +765,7 @@ class FakeRenderer implements RendererAdapter {
   stopLoop(): void { this.frameCallback = null; }
   render(frame: BackendFrame): void { this.frames.push(frame); }
   setFlightPose(): void {}
+  setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}

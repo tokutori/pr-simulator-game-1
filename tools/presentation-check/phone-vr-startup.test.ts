@@ -427,6 +427,7 @@ function createFixture() {
     stopLoop: vi.fn<RendererAdapter["stopLoop"]>(),
     render: vi.fn<RendererAdapter["render"]>(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(),
+    setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeVisualCondition: vi.fn<RendererAdapter["setLakeVisualCondition"]>(),
     setFlightCameraMode: vi.fn<RendererAdapter["setFlightCameraMode"]>(),
     setCinematicCameraView: vi.fn<RendererAdapter["setCinematicCameraView"]>(),

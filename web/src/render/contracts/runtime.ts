@@ -84,6 +84,7 @@ export interface RendererAdapter {
   stopLoop(): void;
   render(frame: BackendFrame): void;
   setFlightPose(pose: FlightRenderPose | null): void;
+  setPreparedFlightPose(pose: FlightRenderPose | null): void;
   setLakeVisualCondition(condition: LakeVisualCondition): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   setCinematicCameraView(view: CinematicCameraView | null): void;

@@ -152,9 +152,16 @@ function renderModel(): void {
   flightRenderer?.setCinematicCameraView(cinematicView);
   flightRenderer?.setFlightCameraMode(cameraMode);
   if (phaseCode === 9 || phaseCode === 10) {
+    flightRenderer?.setPreparedFlightPose(null);
     flightRenderer?.setFlightPose(model.replayPose);
-  } else if (phaseCode <= 3 || phaseCode === 8 || (phaseCode === 7 && flightController === null)) {
+  } else if (phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8) {
     flightRenderer?.setFlightPose(null);
+    flightRenderer?.setPreparedFlightPose(gameSession?.readPreparedLaunchPose() ?? null);
+  } else {
+    flightRenderer?.setPreparedFlightPose(null);
+    if (phaseCode <= 1 || (phaseCode === 7 && flightController === null)) {
+      flightRenderer?.setFlightPose(null);
+    }
   }
   const viewModel = currentViewModel();
   screenUi.render(viewModel, domVisible);
