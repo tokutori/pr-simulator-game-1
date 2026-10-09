@@ -2,8 +2,9 @@ use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{
     ControlMode, FbwAuthority, FlightState, GameSession, GameSessionError, PauseReason,
-    SessionPhase, SessionSnapshot, SessionTerminalState, TailFlightTickInput, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    SessionFlightState, SessionPhase, SessionSnapshot, SessionTerminalState, TailFlightTickInput,
+    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailRateTarget,
 };
 use birdman_game_session::{
     DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
@@ -158,6 +159,18 @@ impl NativeSession {
         self.display_state().map(|display| display.state)
     }
 
+    pub(crate) fn prepared_display_state(&self) -> Option<TailDisplay> {
+        match self.game.prepared_launch_state()? {
+            SessionFlightState::TailIncidence(state) => Some(TailDisplay {
+                state: state.flight_state(),
+                incidence: state.incidence(),
+                tick: state.tick_index() as f64,
+                held_target_m: state.pilot_position_target().position_m(),
+            }),
+            SessionFlightState::LegacyThreeAxis(_) => None,
+        }
+    }
+
     pub(crate) fn display_state(&self) -> Option<TailDisplay> {
         match self.game.snapshot() {
             SessionSnapshot::TailFlightRunning { state, .. }
@@ -277,6 +290,45 @@ impl FlightInput {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepared_native_display_matches_launch_and_retry_without_publishing_live_telemetry() {
+        let mut session = NativeSession::default();
+        assert!(session.prepared_display_state().is_none());
+        session.action(MenuAction::Start).unwrap();
+        assert!(session.prepared_display_state().is_none());
+        session.action(MenuAction::Prepare).unwrap();
+        let initial = session.prepared_display_state().unwrap();
+        assert!(session.display_state().is_none());
+        assert!(session.physical_state().is_none());
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        session.action(MenuAction::Launch).unwrap();
+        for _step in 0..2 {
+            session.countdown(1.0);
+            let countdown = session.prepared_display_state().unwrap();
+            assert_eq!(countdown.state, initial.state);
+            assert_eq!(countdown.incidence, initial.incidence);
+            assert_eq!(countdown.held_target_m, initial.held_target_m);
+            assert!(session.display_state().is_none());
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        }
+        session.countdown(1.0);
+        assert!(session.prepared_display_state().is_none());
+        let launched = session.display_state().unwrap();
+        assert_eq!(launched.state, initial.state);
+        assert_eq!(launched.incidence, initial.incidence);
+        assert_eq!(launched.held_target_m, initial.held_target_m);
+        assert_eq!(launched.tick, 0.0);
+        session.tick(FlightInput::default());
+        session.action(MenuAction::Abort).unwrap();
+        session.action(MenuAction::Retry).unwrap();
+        let retry = session.prepared_display_state().unwrap();
+        assert_eq!(retry.state, initial.state);
+        assert_eq!(retry.incidence, initial.incidence);
+        assert_eq!(retry.held_target_m, initial.held_target_m);
+        assert!(session.display_state().is_none());
+        session.action(MenuAction::Title).unwrap();
+        assert!(session.prepared_display_state().is_none());
+    }
     use super::*;
 
     #[test]

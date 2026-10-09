@@ -354,7 +354,7 @@ pub(crate) fn setup_world(
     commands
         .spawn((
             WorldProjection::Aircraft,
-            Transform::from_xyz(0.0, 10.0, 0.0),
+            exhibition_aircraft_transform(platform),
             Visibility::Visible,
         ))
         .with_children(|parent| {
@@ -437,9 +437,11 @@ pub(crate) fn project_world(
     mut water: ResMut<Assets<WaterMaterial>>,
 ) {
     let display = session.display_state();
-    let projected = display
-        .as_ref()
-        .map_or(Transform::from_xyz(0.0, 10.0, 0.0), |display| {
+    let preview = session.prepared_display_state();
+    let aircraft_display = display.as_ref().or(preview.as_ref());
+    let projected = aircraft_display.map_or_else(
+        || exhibition_aircraft_transform(launch_venue().expect("登録launch venueが不正").platform),
+        |display| {
             let exact = aircraft_transform(display.state);
             if session.game.snapshot().phase() == birdman_game_core::SessionPhase::FlightRunning {
                 history
@@ -448,7 +450,8 @@ pub(crate) fn project_world(
             } else {
                 exact
             }
-        });
+        },
+    );
     let projected_camera = display.as_ref().map_or_else(
         || Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
         |display| {
@@ -467,16 +470,12 @@ pub(crate) fn project_world(
             WorldProjection::FlightCamera => *transform = projected_camera,
             WorldProjection::HorizontalTail => {
                 transform.rotation = Quat::from_rotation_x(
-                    display
-                        .as_ref()
-                        .map_or(0.0, |display| display.incidence.elevator_rad() as f32),
+                    aircraft_display.map_or(0.0, |display| display.incidence.elevator_rad() as f32),
                 )
             }
             WorldProjection::VerticalTail => {
                 transform.rotation = Quat::from_rotation_y(
-                    -display
-                        .as_ref()
-                        .map_or(0.0, |display| display.incidence.rudder_rad() as f32),
+                    -aircraft_display.map_or(0.0, |display| display.incidence.rudder_rad() as f32),
                 )
             }
             WorldProjection::SkyDome => transform.translation = projected_camera.translation,
@@ -490,9 +489,147 @@ pub(crate) fn project_world(
     }
 }
 
+fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
+    Transform::from_xyz(0.0, platform.front_lip_above_water_meters as f32, 0.0)
+        .with_rotation(Quat::from_rotation_y(-platform.heading_rad() as f32))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::super::native_session::MenuAction;
     use super::*;
+
+    #[test]
+    fn prepared_world_projection_preserves_menu_camera_and_continues_into_the_exact_launch() {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<RenderHistory>()
+            .init_resource::<Time<Fixed>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Update, project_world);
+        let aircraft = app
+            .world_mut()
+            .spawn((WorldProjection::Aircraft, Transform::default()))
+            .id();
+        let camera = app
+            .world_mut()
+            .spawn((WorldProjection::FlightCamera, Transform::default()))
+            .id();
+        let horizontal_tail = app
+            .world_mut()
+            .spawn((WorldProjection::HorizontalTail, Transform::default()))
+            .id();
+        let vertical_tail = app
+            .world_mut()
+            .spawn((WorldProjection::VerticalTail, Transform::default()))
+            .id();
+        app.update();
+        let menu_camera = *app.world().entity(camera).get::<Transform>().unwrap();
+        let platform = launch_venue().unwrap().platform;
+        let exhibition = *app.world().entity(aircraft).get::<Transform>().unwrap();
+        let [north, east] = platform.horizontal_direction_ned();
+        assert!(
+            (exhibition.rotation * Vec3::NEG_Z).distance(Vec3::new(
+                east as f32,
+                0.0,
+                -north as f32
+            )) < 1.0e-5
+        );
+        assert_eq!(
+            exhibition.translation.y,
+            platform.front_lip_above_water_meters as f32
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+        }
+        let initial = app
+            .world()
+            .resource::<NativeSession>()
+            .prepared_display_state()
+            .unwrap();
+        let prepared_snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        app.update();
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            prepared_snapshot
+        );
+        assert_eq!(
+            *app.world().entity(aircraft).get::<Transform>().unwrap(),
+            aircraft_transform(initial.state)
+        );
+        assert_eq!(
+            *app.world().entity(camera).get::<Transform>().unwrap(),
+            menu_camera
+        );
+        assert_eq!(
+            app.world()
+                .entity(horizontal_tail)
+                .get::<Transform>()
+                .unwrap()
+                .rotation,
+            Quat::from_rotation_x(initial.incidence.elevator_rad() as f32)
+        );
+        assert_eq!(
+            app.world()
+                .entity(vertical_tail)
+                .get::<Transform>()
+                .unwrap()
+                .rotation,
+            Quat::from_rotation_y(-initial.incidence.rudder_rad() as f32)
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Launch)
+            .unwrap();
+        for _step in 0..2 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
+            app.update();
+            assert_eq!(
+                *app.world().entity(aircraft).get::<Transform>().unwrap(),
+                aircraft_transform(initial.state)
+            );
+            assert_eq!(
+                *app.world().entity(camera).get::<Transform>().unwrap(),
+                menu_camera
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
+        }
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .countdown(1.0);
+        app.update();
+        assert_eq!(
+            *app.world().entity(aircraft).get::<Transform>().unwrap(),
+            aircraft_transform(initial.state)
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Abort).unwrap();
+            session.action(MenuAction::Retry).unwrap();
+        }
+        app.update();
+        assert_eq!(
+            *app.world().entity(aircraft).get::<Transform>().unwrap(),
+            aircraft_transform(initial.state)
+        );
+        assert_eq!(
+            *app.world().entity(camera).get::<Transform>().unwrap(),
+            menu_camera
+        );
+    }
     #[test]
     fn native_tail_presentation_selects_the_shared_default_model_identity() {
         let preparation = birdman_game_session::HybridSessionPreparation::try_default().unwrap();
