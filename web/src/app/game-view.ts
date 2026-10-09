@@ -45,12 +45,14 @@ export function createGameViewModel(
   const canResume = !stopped && model.gameSession.kind === "paused-flight" && model.gameSession.canResume;
   const pauseOverlay = model.gameSession.kind === "paused-flight" ? model.gameSession.overlay.kind : null;
   const scene = sceneForPhase(phaseCode);
+  const replayReturnLabel = model.gameSession.kind === "replay" && model.gameSession.returnTarget === "title" ? "Titleへ戻る" : "Resultへ戻る";
   const buttons = gameButtons(
     phaseCode,
     model.configurationMetadata,
     model.flightAnalysis !== null,
     canResume,
-    pauseOverlay
+    pauseOverlay,
+    replayReturnLabel
   );
   if (phaseCode === 0) {
     const savedFlightButtons = model.storedFlightRecords.slice(0, 3).map((record) => button(
@@ -218,7 +220,7 @@ export function createGameViewModel(
         ...button("game-replay-camera", `Camera: ${replayCameraLabel(model.replayCameraMode)}`, model.presentation.type === "ready"),
         rect: normalizedRect(0.04, 0.91, 0.32, 0.06)
       }),
-      Object.freeze({ ...button("game-replay-return", "Resultへ戻る", true), rect: normalizedRect(0.64, 0.91, 0.32, 0.06) })
+      Object.freeze({ ...button("game-replay-return", replayReturnLabel, true), rect: normalizedRect(0.64, 0.91, 0.32, 0.06) })
     );
   } else if (phaseCode === 9) {
     const durationSeconds = analysis?.summary.durationSeconds ?? 0;
@@ -744,7 +746,8 @@ function gameButtons(
   configurationMetadata: ConfigurationMetadataUiState | null,
   replayAvailable: boolean,
   canResume: boolean,
-  pauseOverlay: "menu" | "settings" | "help" | null
+  pauseOverlay: "menu" | "settings" | "help" | null,
+  replayReturnLabel: string
 ): (UiButton | UiToggle)[] {
   switch (phaseCode) {
     case 0:
@@ -788,7 +791,7 @@ function gameButtons(
         actionButton("game-failed-setup", "設定へ戻る", "secondary")
       ];
     case 9:
-      return [button("game-replay-return", "Resultへ戻る", true)];
+      return [button("game-replay-return", replayReturnLabel, true)];
     case 10:
       return [button("game-attract-return", "Titleへ戻る", true)];
     default:

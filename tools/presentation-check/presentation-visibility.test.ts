@@ -198,7 +198,7 @@ function readyModel(phaseCode: number): AppModel {
     type: "presentation-initialized", requestId: 1, activeMode: "screen",
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(snapshotValues()) : null, true);
+  const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(snapshotValues()) : null, true, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
   if (gameSession === null) throw new Error("Invalid game phase fixture");
   return { ...ready, gameSession };
 }

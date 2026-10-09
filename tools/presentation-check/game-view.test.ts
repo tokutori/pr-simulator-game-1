@@ -626,7 +626,7 @@ describe("Game scene view model", () => {
 
 function sessionForPhase(phaseCode: number, canResume = false) {
   const snapshot = phaseCode === 5 || phaseCode === 6 ? flightSnapshot : null;
-  const session = gameSessionState(phaseCode, 0, snapshot, canResume);
+  const session = gameSessionState(phaseCode, 0, snapshot, canResume, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }

@@ -413,6 +413,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     const cues = session.information_profile_codes();
     return {
       phaseCode: session.phase_code(), controlModeCode: session.control_mode_code(), countdownRemaining: session.countdown_remaining(),
+      ...(session.phase_code() === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
       canResume: session.can_resume(), configurationMetadata: null, snapshot: null,
       difficulty: {
         presetCode: session.difficulty_preset_code(), informationCode: session.information_level_code(), assistanceCode: session.assistance_level_code(), weatherCode: session.weather_class_code(),

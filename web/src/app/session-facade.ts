@@ -1,5 +1,5 @@
 import type { GameSessionOperation } from "./app-state.js";
-import type { DifficultyUiState, TailGameSessionProjection } from "./app-state.js";
+import type { DifficultyUiState, ReplayReturnTarget, TailGameSessionProjection } from "./app-state.js";
 import { decodePreparedUiConfiguration, decodeSessionDifficulty } from "./session-selection.js";
 import type { PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
 import { projectTailGameSession } from "./session-snapshot.js";
@@ -57,6 +57,7 @@ export interface SessionResourcePort extends SessionSelectionPort, FlightLogExpo
   environment_snapshot_json(): string;
   export_flight_record_json(): string;
   open_archived_flight_record(json: string): void;
+  is_archived_replay(): boolean;
   free(): void;
 }
 const ownedSessionResources = new WeakSet<SessionResourcePort>();
@@ -82,7 +83,6 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     advance_playback(elapsedSeconds: number): ArrayLike<number>;
     flight_record_summary_json(): string;
     flight_wind_grid_json(northMinimumMeters: number, eastMinimumMeters: number, altitudeMeters: number, spacingMeters: number): string;
-    is_archived_replay(): boolean;
   };
 type CompletedOperation = Readonly<{ kind: "completed" }> | Readonly<{ kind: "countdown-started" }>;
 export type LegacyAppOperationResult = CompletedOperation | Readonly<{ kind: "aborted"; terminalSnapshot: FlightSnapshot }>;
@@ -154,6 +154,18 @@ abstract class SessionResourceOwner {
 
   readEnvironmentJson(): string {
     return this.observe(() => this.resource.environment_snapshot_json());
+  }
+
+  readReplayReturnTarget(): ReplayReturnTarget {
+    return this.observe(() => {
+      const token = this.captureQueryToken();
+      if (this.readLifecycle().phaseCode !== 9) throw new RangeError("Replay return target requires the Rust Replay phase");
+      const archived = this.resource.is_archived_replay();
+      if (typeof archived !== "boolean") throw new RangeError("Rust archive projection requires a boolean");
+      const target = archived ? "title" : "result";
+      if (this.acceptQuery(token, target).kind === "stale") throw new RangeError("Replay ownership changed during observation");
+      return target;
+    });
   }
 
   exportRecordJson(): string {

@@ -158,7 +158,7 @@ describe("pure saved Analysis view projection", () => {
       expect(view.windGrid).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
       expect(view.origin).toMatchObject({ context: { finalization: { failure: { kind: "dynamics" } } } });
       expect(analysisScenarioId(data, 1)).toBe(999);
-      const gameSession = gameSessionState(9, 0, session.queryRecordDisplay(0), false, null, "tail_incidence");
+      const gameSession = gameSessionState(9, 0, session.queryRecordDisplay(0), false, null, "tail_incidence", session.readReplayReturnTarget());
       if (gameSession === null) throw new Error("Expected the Rust Replay display");
       for (const mode of ["screen", "phone-vr", "webxr"] as const) {
         const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode } as const,
@@ -211,6 +211,7 @@ describe("pure saved Analysis view projection", () => {
       const display = session.queryRecordDisplay(0.015);
       if (display.kind !== "tail_record") throw new Error("Expected the current two-tail record");
       const projection = { controlLayout: "tail_incidence" as const, phaseCode: 9 as const, countdownRemaining: 0,
+        returnTarget: session.readReplayReturnTarget(),
         controlModeCode: 0, difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, canResume: false,
         display: { kind: "available" as const, value: display } };
       const replay = updateApp(model, { type: "game-operation-completed", requestId: 5, ...projection });
@@ -244,6 +245,7 @@ describe("pure saved Analysis view projection", () => {
       if (display.kind !== "tail_record") throw new Error("Expected the current two-tail record");
       let replay = updateApp(model, { type: "game-operation-completed", requestId: 5,
         controlLayout: "tail_incidence", phaseCode: 9, countdownRemaining: 0, controlModeCode: 0,
+        returnTarget: session.readReplayReturnTarget(),
         difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, canResume: false,
         display: { kind: "available", value: display } }).model;
       const oldRequestId = replay.pendingAnalysisRequestId;

@@ -21,7 +21,7 @@ world差し替え・context復旧・終了時には所有者がresourceを明示
 | Countdown | Rustが初期状態を固定し、物理時刻を進めない | 完了→Flight、取消→Briefing |
 | Flight | Rustが100 Hz physics・入力適用・記録・重心telemetryを処理し、Webは共通snapshotからScreen HUDとcamera固定のVR Head HUDを導出する。Pause/AbortのMenuは独立anchorに配置する | 終了→Result、Pause→同じFlight内で停止 |
 | Result | Rustが確定したrecord・metricsを参照 | Replay、Retry→Briefing、Setup、Title |
-| Replay | Rust queryが確定recordを時刻指定で再生・seek | 戻るintent→Result |
+| Replay | Rust queryが確定recordを時刻指定で再生・seek | current recordの戻るintent→Result、imported archive→Title |
 
 SummaryとAnalysisはResult内のtabである。Replayボタンは主要Scene遷移を行う。
 Retry、Attract、camera種別、解析グラフごとのGameSceneは追加しない。
@@ -106,7 +106,7 @@ live描画とResult通知はfixed-tick clockの更新完了後に行い、描画
 Retryはsealed configuration・初期状態・scenario seed・波の位相基準を維持し、
 controller/actuator内部状態、時刻、入力buffer、recordを初期状態へ戻してBriefingへ遷移する。
 同一分類からのscenario再抽選は行わない。条件を変更する場合はFlightSetupへ戻る。
-Replayから戻る際はResult tabと選択時刻を復元する。
+current recordのReplayから戻る際はResult tabと選択時刻を復元する。imported archiveのReplayはTitleへ戻る。退出ボタンのラベルはRust ownerのreadonly観測から導出したtyped UI snapshotに従い、Screen/Phone VR/WebXRとAnalysis/Cinematic/Telemetryで同じ退出先を表示する。
 
 ## Attract・Credits
 
