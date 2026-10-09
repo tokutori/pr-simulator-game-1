@@ -2,7 +2,7 @@ import { pose, vec3 } from "../contracts/math.js";
 import { IDENTITY_POSE, multiplyQuaternion, quaternion } from "../contracts/math.js";
 import type { Pose, Quaternion, Vec3 } from "../contracts/math.js";
 
-const FRD_TO_THREE = quaternion(0.5, -0.5, 0.5, -0.5);
+const FRD_TO_THREE = quaternion(0.5, 0.5, 0.5, -0.5);
 const THREE_TO_FRD = quaternion(FRD_TO_THREE.w, -FRD_TO_THREE.x, -FRD_TO_THREE.y, -FRD_TO_THREE.z);
 
 export const SYNTHETIC_PILOT_EYE_POINT = createPilotEyePoint(

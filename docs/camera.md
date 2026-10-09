@@ -16,6 +16,9 @@ T_{world,view}=T_{world,aircraft}\,T_{aircraft,pilot}\,T_{pilot,head}\,T_{head,e
 ```
 
 FRD/NEDから描画座標への変換はadapterで完了させる。
+Three.js座標では $(forward,right,down)$ を $(right,-down,-forward)$ へ写像する。
+位置と姿勢に同じbasisを使用し、姿勢は $q_{view}=q_{basis}q_{FRD}q_{basis}^{-1}$ で変換する。
+このbasisのquaternionはwxyz順で $(0.5,0.5,0.5,-0.5)$ とする。
 cameraはRenderSnapshot、view metadata、view入力、camera用時刻を受け取り、coreをimport・呼出ししない。
 engine非依存の数値poseを生成し、Three.js等のcameraや数学型を公開しない。
 機体姿勢を直接反映し、強い追従遅延を追加しない。
