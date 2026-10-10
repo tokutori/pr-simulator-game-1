@@ -68,6 +68,8 @@ Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持
 Resultは終了理由、確定距離、短い原因説明を表示し、入れ子の内部診断は「技術情報」に格納する。
 Flight HUDは飛行中に限定する。一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
 本文と下部操作を同じcolumnに配置する。本文は最大65vhと残余高の範囲へ収め、操作領域を保持する。
+設定画面の本文は65vh制限を解除し、bounded rootの実残余高へ収める。既存の`flex_shrink: 1`・`min_height: 0`・縦scrollと下部navigationを保持し、他Sceneの高さを変更しない。
+GPU撮影時は表示中の画質buttonについて祖先のoverflow clipも検査する。viewport内にあるbuttonがscroll panelで切断される場合も検出する。
 ボタンは明示幅と最低高48pxを持ち、狭いwindowでは折り返す。本文と技術情報はwheelでスクロールできる。
 Resultでは選択した操縦支援、記録由来のcontroller version、確定した飛行時刻も確認できる。
 通常の概要と元のtyped causeを保持した技術情報を分離し、UIの折畳み操作から物理状態を変更しない。

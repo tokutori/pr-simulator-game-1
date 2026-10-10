@@ -1,7 +1,7 @@
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     native_session::{FlightInput, MenuAction, NativeSession},
-    ui::{MenuButton, UiPanel},
+    ui::{MenuButton, UiPanel, UiText},
     water::NearWaterSurface,
     water_quality::{WaterQuality, WaterQualitySelection},
 };
@@ -19,6 +19,7 @@ use bevy::{
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
     shader::{Shader, ShaderCacheError, ShaderRef},
+    ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
     PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult, SessionSnapshot,
@@ -423,17 +424,33 @@ pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<Fl
     };
 }
 
+#[derive(SystemParam)]
+pub(crate) struct VerificationUiHierarchy<'w, 's> {
+    clipping: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            &'static Node,
+        ),
+    >,
+    parents: Query<'w, 's, &'static ChildOf, Without<OverrideClip>>,
+}
+
 pub(crate) fn verify_ui_layout(
     mut verification: ResMut<Verification>,
-    buttons: Query<(&ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
+    buttons: Query<(Entity, &ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
     labels: Query<(
         &Text,
         &ComputedNode,
         &bevy::text::TextLayoutInfo,
         &UiGlobalTransform,
+        Option<&UiText>,
     )>,
     panels: Query<(&UiPanel, &ComputedNode, &UiGlobalTransform)>,
     windows: Query<&Window>,
+    hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !verification.capture_pending || verification.failure.is_some() {
@@ -443,7 +460,7 @@ pub(crate) fn verify_ui_layout(
         let window = windows.iter().next().ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
         let mut visible_buttons = 0;
-        for (button, transform, children) in &buttons {
+        for (entity, button, transform, children) in &buttons {
             if button.is_empty() {
                 continue;
             }
@@ -454,7 +471,7 @@ pub(crate) fn verify_ui_layout(
             }
             let mut visible_labels = 0;
             for child in children.iter() {
-                let Ok((text, node, layout, transform)) = labels.get(child) else {
+                let Ok((text, node, layout, transform, role)) = labels.get(child) else {
                     continue;
                 };
                 if text.0.trim().is_empty()
@@ -475,6 +492,14 @@ pub(crate) fn verify_ui_layout(
                 {
                     return Err(format!(
                         "Button label exceeds its allocated bounds: {:?}",
+                        text.0
+                    ));
+                }
+                if matches!(role, Some(UiText::WaterQualityChoice(_)))
+                    && !within_ancestor_clip(entity, bounds, &hierarchy)
+                {
+                    return Err(format!(
+                        "Visible quality control is clipped by an ancestor: {:?}",
                         text.0
                     ));
                 }
@@ -522,6 +547,20 @@ fn contains_layout(outer: Rect, inner: Rect) -> bool {
         && inner.min.y >= outer.min.y - 2.0
         && inner.max.x <= outer.max.x + 2.0
         && inner.max.y <= outer.max.y + 2.0
+}
+
+fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUiHierarchy) -> bool {
+    let inset = Vec2::splat(2.0).min(bounds.size() * 0.5);
+    let minimum = bounds.min + inset;
+    let maximum = bounds.max - inset;
+    [
+        minimum,
+        Vec2::new(maximum.x, minimum.y),
+        maximum,
+        Vec2::new(minimum.x, maximum.y),
+    ]
+    .into_iter()
+    .all(|point| clip_check_recursive(point, entity, &hierarchy.clipping, &hierarchy.parents))
 }
 
 #[derive(SystemParam)]
@@ -1038,10 +1077,13 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::{
-        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion, contains_layout,
-        shader_is_pending,
+        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion,
+        VerificationUiHierarchy, contains_layout, shader_is_pending, within_ancestor_clip,
     };
-    use bevy::prelude::{Rect, Vec2};
+    use bevy::ecs::system::SystemState;
+    use bevy::prelude::{
+        ChildOf, ComputedNode, Node, Overflow, Rect, UiGlobalTransform, Vec2, World,
+    };
     use bevy::shader::ShaderCacheError;
 
     #[test]
@@ -1063,6 +1105,40 @@ mod tests {
             button,
             Rect::from_corners(Vec2::new(16.0, 10.0), Vec2::new(184.0, 52.0),)
         ));
+    }
+
+    #[test]
+    fn quality_controls_inside_the_viewport_can_still_be_clipped_by_scroll_ancestors() {
+        let mut world = World::new();
+        let panel = world
+            .spawn((
+                Node {
+                    overflow: Overflow::scroll_y(),
+                    ..Default::default()
+                },
+                ComputedNode {
+                    size: Vec2::new(560.0, 390.0),
+                    ..Default::default()
+                },
+                UiGlobalTransform::from_translation(Vec2::new(280.0, 195.0)),
+            ))
+            .id();
+        let container = world.spawn((Node::default(), ChildOf(panel))).id();
+        let control = world.spawn((Node::default(), ChildOf(container))).id();
+        let viewport = Rect::from_corners(Vec2::ZERO, Vec2::new(800.0, 600.0));
+        let visible = Rect::from_center_size(Vec2::new(280.0, 345.0), Vec2::new(240.0, 48.0));
+        let clipped = Rect::from_center_size(Vec2::new(280.0, 430.0), Vec2::new(240.0, 48.0));
+        assert!(contains_layout(viewport, clipped));
+        let mut state = SystemState::<VerificationUiHierarchy>::new(&mut world);
+        let hierarchy = state.get(&world).unwrap();
+        assert!(within_ancestor_clip(control, visible, &hierarchy));
+        assert!(!within_ancestor_clip(control, clipped, &hierarchy));
+        world.get_mut::<ComputedNode>(panel).unwrap().size.y = 520.0;
+        world
+            .entity_mut(panel)
+            .insert(UiGlobalTransform::from_translation(Vec2::new(280.0, 260.0)));
+        let hierarchy = state.get(&world).unwrap();
+        assert!(within_ancestor_clip(control, clipped, &hierarchy));
     }
 
     #[test]
