@@ -588,6 +588,14 @@ fn preparation_progress(phase: SessionPhase) -> Option<&'static str> {
     }
 }
 
+fn session_content_max_height(phase: SessionPhase) -> Val {
+    if phase == SessionPhase::FlightSetup {
+        Val::Auto
+    } else {
+        vh(65)
+    }
+}
+
 fn control_mode_label(mode: ControlMode) -> String {
     match mode {
         ControlMode::Manual => "手動（Manual）".into(),
@@ -887,6 +895,9 @@ pub(crate) fn update_ui(
         *border = BorderColor::all(border_color);
     }
     for (panel, mut node, mut position) in &mut view.panels {
+        if matches!(panel, UiPanel::SessionContent) {
+            node.max_height = session_content_max_height(phase);
+        }
         let visible = match panel {
             UiPanel::SessionContent | UiPanel::Navigation => true,
             UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
@@ -1717,6 +1728,35 @@ mod tests {
         assert_eq!(content.overflow, Overflow::scroll_y());
         assert_eq!(content.min_height, px(0));
         assert_eq!(content.position_type, PositionType::Relative);
+    }
+
+    #[test]
+    fn setup_content_uses_remaining_height_and_other_scenes_keep_the_existing_limit() {
+        assert_eq!(
+            session_content_max_height(SessionPhase::FlightSetup),
+            Val::Auto
+        );
+        for phase in [
+            SessionPhase::Title,
+            SessionPhase::BriefingReady,
+            SessionPhase::Countdown { remaining_ticks: 3 },
+            SessionPhase::FlightRunning,
+            SessionPhase::Result,
+        ] {
+            assert_eq!(session_content_max_height(phase), vh(65));
+        }
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _step in 0..3 {
+            session.countdown(1.0);
+        }
+        session.action(MenuAction::Pause).unwrap();
+        assert_eq!(
+            session_content_max_height(session.game.snapshot().phase()),
+            vh(65)
+        );
     }
 
     #[test]
