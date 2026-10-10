@@ -95,6 +95,13 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
 水面は八方向の波packet、画素footprintで減衰するnormal、Fresnel・低コントラストの空反射・広い太陽反射を使用する。
 波の位相と方向は同じ環境snapshotとsimulation timeから導出する。空はprocedural gradientを使用する。
+白波の明度maskは同じ八方向の波頂・packet・登録風から導出し、既存loop内のsin/cosを再利用する。
+Calmまたはdetail amplitude 0ではmaskを0とする。風速1.2–4.5 m/sで表示量を増加させ、波頂のsin値0.72–0.96をsmoothstepで選択する。
+合成gain 6と最大混合率0.22は描画用game tuningであり、実際の砕波率・波浪予報を表さない。
+波頂閾値の最大勾配`1.5 / (0.96 - 0.72)`とpacket勾配を画素footprintへ含め、未解像maskを減衰する。
+near/farと全画質で同じworld-space位置・位相・時刻を用い、geometry patch境界で白波を切り替えない。不透明度、geometry安全上限、着水面は保持する。
+CPU参照試験とshader接続の静的検査は、有限値・上限・Calm・解像減衰・画質とnear/farの位相一致を対象とする。
+shaderの実GPU compile、画像上の白波、時間的aliasing、optic flow、性能は別途検証する。非線形maskの厳密なbandlimitや実GPUでの形式証明は提供しない。
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
