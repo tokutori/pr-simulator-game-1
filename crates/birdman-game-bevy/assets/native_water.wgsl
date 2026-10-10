@@ -15,6 +15,8 @@ const WHITECAP_WIND_START: f32 = 1.2;
 const WHITECAP_WIND_END: f32 = 4.5;
 const WHITECAP_CREST_START: f32 = 0.72;
 const WHITECAP_CREST_END: f32 = 0.96;
+const WHITECAP_PACKET_GATE_START: f32 = 0.80;
+const WHITECAP_PACKET_GATE_END: f32 = 0.95;
 const WHITECAP_GAIN: f32 = 6.0;
 const WHITECAP_MAX_AMOUNT: f32 = 0.22;
 
@@ -168,10 +170,17 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
         let slope_energy = band.z * strength * packet;
         unresolved_variance += 0.5 * slope_energy * slope_energy * (1.0 - visibility * visibility);
         let crest = smoothstep(WHITECAP_CREST_START, WHITECAP_CREST_END, phase_sine);
+        let gate_progress = clamp((packet - WHITECAP_PACKET_GATE_START)
+            / (WHITECAP_PACKET_GATE_END - WHITECAP_PACKET_GATE_START), 0.0, 1.0);
+        let packet_gate = gate_progress * gate_progress * (3.0 - 2.0 * gate_progress);
+        let gate_slope = 6.0 * gate_progress * (1.0 - gate_progress)
+            / (WHITECAP_PACKET_GATE_END - WHITECAP_PACKET_GATE_START);
+        let whitecap_packet = packet * packet_gate;
+        let whitecap_packet_gradient = amplitude_gradient * (packet_gate + packet * gate_slope);
         let whitecap_footprint = footprint * (1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START))
-            + abs(dot(amplitude_gradient, footprint_x)) + abs(dot(amplitude_gradient, footprint_y));
+            + abs(dot(whitecap_packet_gradient, footprint_x)) + abs(dot(whitecap_packet_gradient, footprint_y));
         let whitecap_visibility = wave_visibility(whitecap_footprint);
-        whitecap_energy += band.z * packet * crest * whitecap_visibility * whitecap_visibility;
+        whitecap_energy += band.z * whitecap_packet * crest * whitecap_visibility * whitecap_visibility;
     }
     let wind_activation = smoothstep(WHITECAP_WIND_START, WHITECAP_WIND_END, wind_speed);
     let whitecaps = clamp(whitecap_energy * wind_activation * clamp(waves_sky.z, 0.0, 3.0) * WHITECAP_GAIN,

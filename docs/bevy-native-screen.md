@@ -98,7 +98,8 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 白波の明度maskは同じ八方向の波頂・packet・登録風から導出し、既存loop内のsin/cosを再利用する。
 Calmまたはdetail amplitude 0ではmaskを0とする。風速1.2–4.5 m/sで表示量を増加させ、波頂のsin値0.72–0.96をsmoothstepで選択する。
 合成gain 6と最大混合率0.22は描画用game tuningであり、実際の砕波率・波浪予報を表さない。
-波頂閾値の最大勾配`1.5 / (0.96 - 0.72)`とpacket勾配を画素footprintへ含め、未解像maskを減衰する。
+既存packetに白波専用の`smoothstep(0.80, 0.95, packet)`を乗じ、弱いpacketでは白波を0にする。波頂が途切れない長い線網を避け、局所的な峰の表示へ限定する。gate閾値も描画用game tuningであり、既存波の法線・反射は変更しない。
+波頂閾値の最大勾配`1.5 / (0.96 - 0.72)`と、gateを乗じたpacketの積の勾配を画素footprintへ含め、未解像maskを減衰する。
 near/farと全画質で同じworld-space位置・位相・時刻を用い、geometry patch境界で白波を切り替えない。不透明度、geometry安全上限、着水面は保持する。
 CPU参照試験とshader接続の静的検査は、有限値・上限・Calm・解像減衰・画質とnear/farの位相一致を対象とする。
 shaderの実GPU compile、画像上の白波、時間的aliasing、optic flow、性能は別途検証する。非線形maskの厳密なbandlimitや実GPUでの形式証明は提供しない。

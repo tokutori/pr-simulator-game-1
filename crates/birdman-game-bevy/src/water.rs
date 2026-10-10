@@ -353,12 +353,15 @@ mod tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
 
+    #[derive(Clone, Copy)]
     struct WhitecapReference {
         bands: [Vec4; 8],
         wind_start: f32,
         wind_end: f32,
         crest_start: f32,
         crest_end: f32,
+        packet_gate_start: f32,
+        packet_gate_end: f32,
         gain: f32,
         maximum: f32,
     }
@@ -402,9 +405,19 @@ mod tests {
                 wind_end: scalar("WHITECAP_WIND_END"),
                 crest_start: scalar("WHITECAP_CREST_START"),
                 crest_end: scalar("WHITECAP_CREST_END"),
+                packet_gate_start: scalar("WHITECAP_PACKET_GATE_START"),
+                packet_gate_end: scalar("WHITECAP_PACKET_GATE_END"),
                 gain: scalar("WHITECAP_GAIN"),
                 maximum: scalar("WHITECAP_MAX_AMOUNT"),
             }
+        }
+
+        fn gated_packet(&self, packet: f32, gradient: Vec2) -> (f32, Vec2) {
+            let width = self.packet_gate_end - self.packet_gate_start;
+            let progress = ((packet - self.packet_gate_start) / width).clamp(0.0, 1.0);
+            let gate = progress * progress * (3.0 - 2.0 * progress);
+            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
+            (packet * gate, gradient * (gate + packet * gate_slope))
         }
 
         fn amount(
@@ -436,13 +449,15 @@ mod tests {
                     - (9.80665 * band.y).sqrt() * time
                     + band.w;
                 let crest = smoothstep(self.crest_start, self.crest_end, phase.sin());
+                let (whitecap_packet, whitecap_packet_gradient) =
+                    self.gated_packet(packet, amplitude_gradient);
                 let footprint = (phase_gradient.dot(footprint_x).abs()
                     + phase_gradient.dot(footprint_y).abs())
                     * (1.5 / (self.crest_end - self.crest_start))
-                    + amplitude_gradient.dot(footprint_x).abs()
-                    + amplitude_gradient.dot(footprint_y).abs();
+                    + whitecap_packet_gradient.dot(footprint_x).abs()
+                    + whitecap_packet_gradient.dot(footprint_y).abs();
                 let visibility = 1.0 - smoothstep(0.65, 2.4, footprint);
-                energy += band.z * packet * crest * visibility * visibility;
+                energy += band.z * whitecap_packet * crest * visibility * visibility;
             }
             (energy
                 * smoothstep(self.wind_start, self.wind_end, speed)
@@ -471,8 +486,10 @@ mod tests {
         assert_eq!(detail.matches("sin(phase)").count(), 1);
         assert_eq!(detail.matches("cos(phase)").count(), 1);
         assert!(!detail.contains("geometry_patch"));
-        assert!(detail.contains("abs(dot(amplitude_gradient, footprint_x))"));
-        assert!(detail.contains("abs(dot(amplitude_gradient, footprint_y))"));
+        assert!(detail.contains("packet * packet_gate"));
+        assert!(detail.contains("amplitude_gradient * (packet_gate + packet * gate_slope)"));
+        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_x))"));
+        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_y))"));
         assert!(detail.contains("1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START)"));
         assert!(detail.contains("return vec4<f32>(slope, unresolved_variance, whitecaps)"));
         assert_eq!(shader.matches("let detail = lake_wave_detail(").count(), 1);
@@ -514,6 +531,81 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn whitecap_packet_gate_and_footprint_gradient_are_continuous() {
+        let reference = WhitecapReference::from_shader();
+        assert!(reference.packet_gate_start >= 0.44);
+        assert!(reference.packet_gate_end > reference.packet_gate_start);
+        assert!(reference.packet_gate_end < 1.0);
+        let gradient = Vec2::new(0.07, -0.03);
+        for packet in [
+            0.44,
+            reference.packet_gate_start - 0.001,
+            reference.packet_gate_start,
+        ] {
+            assert_eq!(reference.gated_packet(packet, gradient), (0.0, Vec2::ZERO));
+        }
+        for packet in [
+            reference.packet_gate_end,
+            reference.packet_gate_end + 0.001,
+            1.0,
+        ] {
+            assert_eq!(reference.gated_packet(packet, gradient), (packet, gradient));
+        }
+        for progress in [0.01, 0.25, 0.5, 0.75, 0.99] {
+            let packet = reference.packet_gate_start
+                + progress * (reference.packet_gate_end - reference.packet_gate_start);
+            let (amount, analytic_gradient) = reference.gated_packet(packet, gradient);
+            assert!(amount.is_finite() && (0.0..=packet).contains(&amount));
+            let step = 0.0001;
+            let derivative = (reference.gated_packet(packet + step, Vec2::ZERO).0
+                - reference.gated_packet(packet - step, Vec2::ZERO).0)
+                / (2.0 * step);
+            assert!((analytic_gradient - gradient * derivative).length() < 0.002);
+        }
+        for boundary in [reference.packet_gate_start, reference.packet_gate_end] {
+            let (_, at_boundary) = reference.gated_packet(boundary, gradient);
+            for offset in [-0.00001, 0.00001] {
+                let (_, nearby) = reference.gated_packet(boundary + offset, gradient);
+                assert!((nearby - at_boundary).length() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn every_whitecap_band_breaks_its_crest_into_localized_packets() {
+        let reference = WhitecapReference::from_shader();
+        let mut material = WaterMaterial::registered(false).unwrap();
+        material.waves_sky = Vec4::new(4.5, 0.0, 1.0, 0.0);
+        material.camera_time.w = 0.0;
+        for band in reference.bands {
+            let mut isolated = reference;
+            isolated.bands = [Vec4::ZERO; 8];
+            isolated.bands[0] = band;
+            let direction = Vec2::new(band.x.cos(), band.x.sin());
+            let transverse = Vec2::new(-direction.y, direction.x);
+            let mut absent = 0;
+            let mut present = 0;
+            for index in 0..128 {
+                let across = (index as f32 - 64.0) * 1.5;
+                let warp_phase = band.y * 0.19 * across + band.w * 1.73;
+                let along =
+                    (std::f32::consts::FRAC_PI_2 - 0.55 * warp_phase.sin() - band.w) / band.y;
+                let position = direction * along + transverse * across;
+                let amount =
+                    isolated.amount(&material, position, Vec2::X * 0.00001, Vec2::Y * 0.00001);
+                assert!(amount.is_finite());
+                if amount == 0.0 {
+                    absent += 1;
+                } else {
+                    present += 1;
+                }
+            }
+            assert!(absent > 16, "crest must contain gaps: {band:?}");
+            assert!(present > 16, "crest must retain visible packets: {band:?}");
         }
     }
 
