@@ -49,6 +49,10 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 カウントダウンを取り消すと確認画面へ戻り、確認画面から設定変更もできる。
 既定のTypical環境を維持し、nativeで未提供の気象選択を表示しない。
 
+湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
+現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
+Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
+
 | 入力 | 操作 |
 |---|---|
 | ↑ / ↓ | 現行二系統モデルのpitch入力 |
@@ -64,6 +68,8 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 Resultは終了理由、確定距離、短い原因説明を表示し、入れ子の内部診断は「技術情報」に格納する。
 Flight HUDは飛行中に限定する。一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
 本文と下部操作を同じcolumnに配置する。本文は最大65vhと残余高の範囲へ収め、操作領域を保持する。
+設定画面の本文は65vh制限を解除し、bounded rootの実残余高へ収める。既存の`flex_shrink: 1`・`min_height: 0`・縦scrollと下部navigationを保持し、他Sceneの高さを変更しない。
+GPU撮影時は表示中の画質buttonについて祖先のoverflow clipも検査する。viewport内にあるbuttonがscroll panelで切断される場合も検出する。
 ボタンは明示幅と最低高48pxを持ち、狭いwindowでは折り返す。本文と技術情報はwheelでスクロールできる。
 Resultでは選択した操縦支援、記録由来のcontroller version、確定した飛行時刻も確認できる。
 通常の概要と元のtyped causeを保持した技術情報を分離し、UIの折畳み操作から物理状態を変更しない。
@@ -95,7 +101,9 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
 Gerstnerの水平・鉛直geometry変位を描画専用で追加する。登録済みwave inputsの風・fetch・detail amplitude・pattern seedから固定した4成分を生成し、有限fetch近似とmesh間隔のfilterを適用する。既存の八方向packetは別の細部法線層として保持する。実測波浪の再現性や波浪予報精度は主張しない。
-near meshは64 m四方・256 cells・66,049頂点・131,072 triangleであり、Startup時に一度だけ生成する。4 quadのfar ringで18万m四方を覆い、中央のnear領域を除外して波の谷でfar面が露出することを防ぐ。両者を0.25 m格子へsnapしてcameraの水平移動へ追従させ、位相はworld-spaceで評価する。境界の8 mで水平・鉛直変位を0へ減衰し、減衰の勾配も解析normalへ含める。合計鉛直振幅を0.35 m以下、境界勾配を含めた水平写像の微分変動上限を0.45以下に制限する。これらは描画安全性の上限であり、環境assetや着水面を変更しない。
+near meshは全画質で64 m四方を保持する。Lowは64 cells・4,225頂点・8,192 triangle、Mediumは128 cells・16,641頂点・32,768 triangle、Highは256 cells・66,049頂点・131,072 triangleである。Highは既存の波係数とmeshを維持する。画質変更時は近景meshと対応materialを準備して交換し、旧mesh assetを解放する。4 quadのfar ringで18万m四方を覆い、中央のnear領域を除外して波の谷でfar面が露出することを防ぐ。両者を画質と独立した0.25 m格子へsnapしてcameraの水平移動へ追従させる。この格子は再中心化の共通基準であり、低画質のmesh間隔を意味しない。位相はworld-spaceで評価する。境界の8 mで水平・鉛直変位を0へ減衰し、減衰の勾配も解析normalへ含める。合計鉛直振幅を0.35 m以下、境界勾配を含めた水平写像の微分変動上限を0.45以下に制限する。これらは描画安全性の上限であり、環境assetや着水面を変更しない。
+
+Low・Mediumでは実meshの最大辺長に対する既存の波長filterを適用し、Highの4成分から未解像geometryの振幅だけを減衰する。振幅はHigh以下を保持し、同じHigh Aabbと安全上限を共用する。波の方向・波数・位相・角周波数、近景幅、fade、八方向の微小法線、far/sky資源と反射式は共用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
 vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow生成・prepassは無効とし、平面のdefault prepassとの不一致を回避する。機体の鏡映反射・水面への影など高品質な反射は未移植である。追加のvertex波評価は最大264,196成分/frameであり、80FPS目標の達成は実GPUでの計測を必要とする。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
@@ -116,6 +124,11 @@ cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 ```
 
 寸法は正の整数で指定し、`--verify`との併用を必須とする。通常起動は1280×720を維持する。
+
+`--verify`は一時停止中の同じ飛行state・camera・simulation時刻でLow→Medium→Highへ交換し、
+`03b-paused-quality-low.png`、`03c-paused-quality-medium.png`、`03d-paused-quality-high.png`を追加保存する。
+新near meshがGPU資源へ反映され、既存shader/pipeline readinessが成立した後に撮影する。
+この経路は画質交換の起動検査であり、時間的optic flow、複数Weather、性能目標の全面的な受入とは分離する。
 OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS倍率により異なりうるため、保存ログの実寸も確認する。
 
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、

@@ -2,7 +2,7 @@ use super::{
     CameraMode,
     native_session::{NativeSession, TailDisplay},
     projection::{aircraft_transform, camera_transform, sunlight_transform},
-    water::{WaterMaterial, far_mesh, near_mesh, patch_center},
+    water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
@@ -347,6 +347,7 @@ pub(crate) fn setup_world(
     let surface = water.add(registered_water);
     commands.spawn((
         WorldProjection::LakeSurface,
+        NearWaterSurface,
         Mesh3d(meshes.add(near_mesh())),
         MeshMaterial3d(surface),
         Transform::IDENTITY,

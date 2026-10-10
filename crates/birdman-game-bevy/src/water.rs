@@ -1,3 +1,4 @@
+use super::water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection};
 use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     asset::RenderAssetUsages,
@@ -97,6 +98,23 @@ impl WaterMaterial {
         material
     }
 
+    pub(crate) fn registered_for_quality(quality: WaterQuality) -> Result<Self, String> {
+        let mut material = Self::registered(false)?;
+        if quality != WaterQuality::High {
+            for wave in &mut material.geometry_waves {
+                let high = geometry_resolution(wave.z, NEAR_CELLS);
+                let selected = geometry_resolution(wave.z, quality.profile().near_cells);
+                let ratio = if high > 0.0 {
+                    (selected / high).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                wave.w *= ratio as f32;
+            }
+        }
+        Ok(material)
+    }
+
     pub(crate) fn near_bounds(&self) -> Aabb {
         let vertical = self.geometry_waves.iter().map(|wave| wave.w).sum::<f32>();
         let horizontal = self
@@ -132,11 +150,58 @@ pub(crate) fn patch_center(camera: Vec3) -> Vec2 {
 }
 
 pub(crate) fn near_mesh() -> Mesh {
+    near_mesh_for_quality(WaterQuality::High)
+}
+
+pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
     Plane3d::default()
         .mesh()
         .size(NEAR_WIDTH_M, NEAR_WIDTH_M)
-        .subdivisions(NEAR_CELLS - 1)
+        .subdivisions(quality.profile().near_cells - 1)
         .build()
+}
+
+#[derive(Component)]
+pub(crate) struct NearWaterSurface;
+
+pub(crate) fn apply_quality(
+    mut selection: ResMut<WaterQualitySelection>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<WaterMaterial>>,
+    mut near: Query<(&mut Mesh3d, &MeshMaterial3d<WaterMaterial>), With<NearWaterSurface>>,
+) {
+    let Some(requested) = selection.pending() else {
+        return;
+    };
+    let result = (|| {
+        let (mut current, material_handle) = near
+            .single_mut()
+            .map_err(|_| WaterQualityFailure::NearSurfaceUnavailable)?;
+        let previous = current.0.id();
+        if meshes.get(previous).is_none() {
+            return Err(WaterQualityFailure::MeshUnavailable);
+        }
+        let mut current_material = materials
+            .get_mut(material_handle.0.id())
+            .ok_or(WaterQualityFailure::MaterialUnavailable)?;
+        let prepared_mesh = near_mesh_for_quality(requested);
+        let mut prepared_material = WaterMaterial::registered_for_quality(requested)
+            .map_err(WaterQualityFailure::WavePreparation)?;
+        prepared_material.camera_time = current_material.camera_time;
+        prepared_material.geometry_patch = current_material.geometry_patch;
+        current.0 = meshes.add(prepared_mesh);
+        *current_material = prepared_material;
+        meshes.remove(previous);
+        Ok(())
+    })();
+    *selection = selection.completed(result);
+}
+
+fn geometry_resolution(wave_number: f32, cells: u32) -> f64 {
+    let maximum_edge = f64::from(NEAR_WIDTH_M / cells as f32) * 2.0_f64.sqrt();
+    let wavelength = std::f64::consts::TAU / f64::from(wave_number);
+    let resolution = ((wavelength - maximum_edge * 2.0) / (maximum_edge * 2.0)).clamp(0.0, 1.0);
+    resolution * resolution * (3.0 - 2.0 * resolution)
 }
 
 pub(crate) fn far_mesh() -> Mesh {
@@ -287,6 +352,227 @@ fn geometry_components(
 mod tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn quality_profiles_preserve_registered_waves_and_bound_every_real_mesh_triangle() {
+        let high = WaterMaterial::registered(false).unwrap();
+        let high_bounds = high.near_bounds();
+        assert_eq!(
+            WaterMaterial::registered_for_quality(WaterQuality::High)
+                .unwrap()
+                .geometry_waves,
+            high.geometry_waves
+        );
+        for quality in WaterQuality::ALL {
+            let material = WaterMaterial::registered_for_quality(quality).unwrap();
+            assert_eq!(material.camera_time, high.camera_time);
+            assert_eq!(material.sun_cloud, high.sun_cloud);
+            assert_eq!(material.waves_sky, high.waves_sky);
+            assert_eq!(material.geometry_patch, high.geometry_patch);
+            assert_eq!(material.geometry_motion, high.geometry_motion);
+            for (wave, original) in material.geometry_waves.iter().zip(high.geometry_waves) {
+                assert_eq!(wave.truncate(), original.truncate());
+                assert!(wave.w >= 0.0 && wave.w <= original.w);
+                let cells = quality.profile().near_cells;
+                let edge = NEAR_WIDTH_M / cells as f32 * 2.0_f32.sqrt();
+                if std::f32::consts::TAU / wave.z <= edge * 2.0 {
+                    assert_eq!(wave.w, 0.0);
+                }
+            }
+            let mesh = near_mesh_for_quality(quality);
+            let cells = quality.profile().near_cells as usize;
+            assert_eq!(mesh.count_vertices(), (cells + 1).pow(2));
+            let positions: Vec<_> = mesh_positions(&mesh)
+                .iter()
+                .map(|position| {
+                    let point = Vec3::from_array(*position);
+                    let (offset, tangent_x, tangent_z) = reference_surface(&material, point.xz());
+                    let normal = tangent_z.cross(tangent_x).normalize();
+                    assert!(normal.is_finite() && normal.y > 0.0);
+                    assert!(offset.y.abs() <= high_bounds.half_extents.y);
+                    assert!(
+                        offset.x.abs() <= high_bounds.half_extents.x - NEAR_WIDTH_M * 0.5 + 1.0e-5
+                    );
+                    assert!(
+                        offset.z.abs() <= high_bounds.half_extents.z - NEAR_WIDTH_M * 0.5 + 1.0e-5
+                    );
+                    point + offset
+                })
+                .collect();
+            let Some(Indices::U32(indices)) = mesh.indices() else {
+                panic!("Expected uint32 quality mesh indices");
+            };
+            assert_eq!(indices.len(), cells * cells * 6);
+            for triangle in indices.chunks_exact(3) {
+                let first = positions[triangle[0] as usize];
+                let second = positions[triangle[1] as usize];
+                let third = positions[triangle[2] as usize];
+                assert!((second - first).cross(third - first).y > 0.0);
+            }
+            assert_eq!(
+                patch_center(Vec3::new(-0.01, 0.0, 0.24)),
+                Vec2::new(-0.25, 0.0)
+            );
+        }
+    }
+
+    #[test]
+    fn quality_exchange_replaces_only_owned_near_resources_and_releases_old_meshes() {
+        let mut app = App::new();
+        app.init_resource::<WaterQualitySelection>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Update, apply_quality);
+        let mut material = WaterMaterial::registered(false).unwrap();
+        material.project_camera(Vec3::new(1.01, 10.0, 2.04), 12.5);
+        let bounds = material.near_bounds();
+        let far_material = app
+            .world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .add(material.far_surface());
+        let near_material = app
+            .world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .add(material.clone());
+        let far_mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(far_mesh());
+        let near_mesh = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(near_mesh());
+        let near = app
+            .world_mut()
+            .spawn((
+                NearWaterSurface,
+                Mesh3d(near_mesh),
+                MeshMaterial3d(near_material.clone()),
+                bounds,
+            ))
+            .id();
+        for quality in [
+            WaterQuality::Low,
+            WaterQuality::Medium,
+            WaterQuality::High,
+            WaterQuality::Low,
+        ] {
+            let previous = app.world().get::<Mesh3d>(near).unwrap().0.id();
+            let next = app
+                .world()
+                .resource::<WaterQualitySelection>()
+                .request(quality, birdman_game_core::SessionPhase::FlightSetup)
+                .unwrap();
+            *app.world_mut().resource_mut::<WaterQualitySelection>() = next;
+            app.update();
+            let current = app.world().get::<Mesh3d>(near).unwrap().0.id();
+            assert_ne!(current, previous);
+            let meshes = app.world().resource::<Assets<Mesh>>();
+            assert!(meshes.get(previous).is_none());
+            assert!(meshes.get(far_mesh.id()).is_some());
+            assert_eq!(meshes.len(), 2);
+            let cells = quality.profile().near_cells as usize;
+            assert_eq!(
+                meshes.get(current).unwrap().count_vertices(),
+                (cells + 1).pow(2)
+            );
+            let materials = app.world().resource::<Assets<WaterMaterial>>();
+            assert_eq!(materials.len(), 2);
+            let updated = materials.get(near_material.id()).unwrap();
+            assert_eq!(updated.camera_time, material.camera_time);
+            assert_eq!(updated.geometry_patch, material.geometry_patch);
+            assert_eq!(updated.sun_cloud, material.sun_cloud);
+            assert_eq!(updated.waves_sky, material.waves_sky);
+            assert_eq!(
+                materials.get(far_material.id()).unwrap().geometry_patch,
+                Vec4::ZERO
+            );
+            assert_eq!(
+                app.world().get::<Aabb>(near).unwrap().half_extents,
+                material.near_bounds().half_extents
+            );
+            assert_eq!(
+                app.world().resource::<WaterQualitySelection>().applied(),
+                quality
+            );
+        }
+    }
+
+    #[test]
+    fn quality_preparation_failure_preserves_applied_selection_and_mesh() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .insert_resource(
+                WaterQualitySelection::default()
+                    .request(
+                        WaterQuality::Low,
+                        birdman_game_core::SessionPhase::FlightSetup,
+                    )
+                    .unwrap(),
+            )
+            .add_systems(Update, apply_quality);
+        let previous = app
+            .world_mut()
+            .resource_mut::<Assets<Mesh>>()
+            .add(near_mesh());
+        let missing_material = Handle::<WaterMaterial>::default();
+        let entity = app
+            .world_mut()
+            .spawn((
+                NearWaterSurface,
+                Mesh3d(previous.clone()),
+                MeshMaterial3d(missing_material),
+            ))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<Mesh3d>(entity).unwrap().0, previous);
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 1);
+        let quality = app.world().resource::<WaterQualitySelection>();
+        assert_eq!(quality.applied(), WaterQuality::High);
+        assert_eq!(quality.pending(), None);
+        assert!(quality.status().contains("material"));
+    }
+
+    #[test]
+    fn missing_near_surface_or_mesh_rejects_before_allocating_replacement_resources() {
+        for has_surface in [false, true] {
+            let mut app = App::new();
+            app.init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<WaterMaterial>>()
+                .insert_resource(
+                    WaterQualitySelection::default()
+                        .request(
+                            WaterQuality::Low,
+                            birdman_game_core::SessionPhase::FlightSetup,
+                        )
+                        .unwrap(),
+                )
+                .add_systems(Update, apply_quality);
+            let material = app
+                .world_mut()
+                .resource_mut::<Assets<WaterMaterial>>()
+                .add(WaterMaterial::registered(false).unwrap());
+            if has_surface {
+                app.world_mut().spawn((
+                    NearWaterSurface,
+                    Mesh3d(Handle::default()),
+                    MeshMaterial3d(material),
+                ));
+            }
+            app.update();
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 0);
+            assert_eq!(app.world().resource::<Assets<WaterMaterial>>().len(), 1);
+            let quality = app.world().resource::<WaterQualitySelection>();
+            assert_eq!(quality.applied(), WaterQuality::High);
+            assert_eq!(quality.pending(), None);
+            assert!(quality.status().contains(if has_surface {
+                "mesh asset"
+            } else {
+                "描画対象"
+            }));
+        }
+    }
 
     fn reference_surface(material: &WaterMaterial, position: Vec2) -> (Vec3, Vec3, Vec3) {
         let mut displacement = Vec3::ZERO;

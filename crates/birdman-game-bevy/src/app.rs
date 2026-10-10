@@ -14,6 +14,8 @@ mod ui;
 mod verification;
 #[path = "water.rs"]
 mod water;
+#[path = "water_quality.rs"]
+mod water_quality;
 #[path = "world.rs"]
 mod world;
 
@@ -114,6 +116,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
     .init_resource::<NativeSession>()
     .init_resource::<FlightInput>()
+    .init_resource::<water_quality::WaterQualitySelection>()
     .init_resource::<CameraMode>();
     app.init_resource::<frame_rate::FrameRate>();
     let font = app
@@ -128,6 +131,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             (
                 frame_rate::observe_frame,
                 ui::button_actions,
+                water::apply_quality,
                 advance_presentation,
                 world::project_world,
                 ui::update_ui,

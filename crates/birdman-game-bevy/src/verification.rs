@@ -1,19 +1,25 @@
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     native_session::{FlightInput, MenuAction, NativeSession},
-    ui::{MenuButton, UiPanel},
+    ui::{MenuButton, UiPanel, UiText},
+    water::NearWaterSurface,
+    water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
+use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     material::descriptor::PipelineDescriptor,
     prelude::*,
     render::{
         ExtractSchedule, MainWorld, RenderApp,
+        mesh::RenderMesh,
+        render_asset::RenderAssets,
         render_resource::{CachedPipelineState, PipelineCache},
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
     shader::{Shader, ShaderCacheError, ShaderRef},
+    ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
     PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult, SessionSnapshot,
@@ -75,6 +81,7 @@ impl RenderReadiness {
 fn observe_render_readiness(
     mut main_world: ResMut<MainWorld>,
     pipelines: Option<Res<PipelineCache>>,
+    meshes: Option<Res<RenderAssets<RenderMesh>>>,
 ) {
     let Some(verification) = main_world.get_resource::<Verification>() else {
         return;
@@ -86,8 +93,9 @@ fn observe_render_readiness(
         assets_loaded: true,
         ..default()
     };
+    let scene_shaders = verification.scene_shaders.clone();
     let asset_server = main_world.resource::<AssetServer>();
-    for shader in &verification.scene_shaders {
+    for shader in &scene_shaders {
         readiness.assets_loaded &= asset_server.is_loaded_with_dependencies(shader.id());
         if let Some((load, dependencies, recursive)) = asset_server.get_load_states(shader.id()) {
             let error = match (load, dependencies, recursive) {
@@ -103,6 +111,19 @@ fn observe_render_readiness(
             }
         }
     }
+    let mut near = main_world.query_filtered::<&Mesh3d, With<NearWaterSurface>>();
+    match near.single(&main_world) {
+        Ok(mesh) => {
+            readiness.assets_loaded &= meshes
+                .as_ref()
+                .is_some_and(|meshes| meshes.get(mesh.0.id()).is_some());
+        }
+        Err(error) => {
+            readiness
+                .error
+                .get_or_insert_with(|| format!("Verification near mesh: {error}"));
+        }
+    }
     if let Some(pipelines) = pipelines {
         readiness.pending_pipelines = pipelines.waiting_pipelines().count();
         let mut unresolved_pipelines = 0;
@@ -113,10 +134,10 @@ fn observe_render_readiness(
                         &pipeline.descriptor
                         && let Some(fragment) = &descriptor.fragment
                     {
-                        if fragment.shader.id() == verification.scene_shaders[0].id() {
+                        if fragment.shader.id() == scene_shaders[0].id() {
                             readiness.water_pipelines += 1;
                         }
-                        if fragment.shader.id() == verification.scene_shaders[1].id() {
+                        if fragment.shader.id() == scene_shaders[1].id() {
                             readiness.material_pipelines += 1;
                         }
                     }
@@ -266,6 +287,9 @@ enum VerificationStage {
     Chase,
     Pause,
     PausedCapture,
+    QualityLow,
+    QualityMedium,
+    QualityHigh,
     Resume,
     Abort,
     Result,
@@ -400,17 +424,33 @@ pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<Fl
     };
 }
 
+#[derive(SystemParam)]
+pub(crate) struct VerificationUiHierarchy<'w, 's> {
+    clipping: Query<
+        'w,
+        's,
+        (
+            &'static ComputedNode,
+            &'static UiGlobalTransform,
+            &'static Node,
+        ),
+    >,
+    parents: Query<'w, 's, &'static ChildOf, Without<OverrideClip>>,
+}
+
 pub(crate) fn verify_ui_layout(
     mut verification: ResMut<Verification>,
-    buttons: Query<(&ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
+    buttons: Query<(Entity, &ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
     labels: Query<(
         &Text,
         &ComputedNode,
         &bevy::text::TextLayoutInfo,
         &UiGlobalTransform,
+        Option<&UiText>,
     )>,
     panels: Query<(&UiPanel, &ComputedNode, &UiGlobalTransform)>,
     windows: Query<&Window>,
+    hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !verification.capture_pending || verification.failure.is_some() {
@@ -420,7 +460,7 @@ pub(crate) fn verify_ui_layout(
         let window = windows.iter().next().ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
         let mut visible_buttons = 0;
-        for (button, transform, children) in &buttons {
+        for (entity, button, transform, children) in &buttons {
             if button.is_empty() {
                 continue;
             }
@@ -431,7 +471,7 @@ pub(crate) fn verify_ui_layout(
             }
             let mut visible_labels = 0;
             for child in children.iter() {
-                let Ok((text, node, layout, transform)) = labels.get(child) else {
+                let Ok((text, node, layout, transform, role)) = labels.get(child) else {
                     continue;
                 };
                 if text.0.trim().is_empty()
@@ -452,6 +492,14 @@ pub(crate) fn verify_ui_layout(
                 {
                     return Err(format!(
                         "Button label exceeds its allocated bounds: {:?}",
+                        text.0
+                    ));
+                }
+                if matches!(role, Some(UiText::WaterQualityChoice(_)))
+                    && !within_ancestor_clip(entity, bounds, &hierarchy)
+                {
+                    return Err(format!(
+                        "Visible quality control is clipped by an ancestor: {:?}",
                         text.0
                     ));
                 }
@@ -501,10 +549,30 @@ fn contains_layout(outer: Rect, inner: Rect) -> bool {
         && inner.max.y <= outer.max.y + 2.0
 }
 
+fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUiHierarchy) -> bool {
+    let inset = Vec2::splat(2.0).min(bounds.size() * 0.5);
+    let minimum = bounds.min + inset;
+    let maximum = bounds.max - inset;
+    [
+        minimum,
+        Vec2::new(maximum.x, minimum.y),
+        maximum,
+        Vec2::new(minimum.x, maximum.y),
+    ]
+    .into_iter()
+    .all(|point| clip_check_recursive(point, entity, &hierarchy.clipping, &hierarchy.parents))
+}
+
+#[derive(SystemParam)]
+pub(crate) struct VerificationPresentation<'w> {
+    camera: ResMut<'w, CameraMode>,
+    quality: ResMut<'w, WaterQualitySelection>,
+}
+
 pub(crate) fn advance(
     mut verification: ResMut<Verification>,
     mut session: ResMut<NativeSession>,
-    mut camera: ResMut<CameraMode>,
+    mut presentation: VerificationPresentation,
     windows: Query<&Window>,
     time: Res<Time<Real>>,
     mut commands: Commands,
@@ -516,7 +584,7 @@ pub(crate) fn advance(
     let result = advance_step(
         &mut verification,
         &mut session,
-        &mut camera,
+        (&mut presentation.camera, &mut presentation.quality),
         &windows,
         time.delta() <= MAX_FRAME_DELTA,
         &mut commands,
@@ -542,11 +610,12 @@ pub(crate) fn advance(
 fn advance_step(
     verification: &mut Verification,
     session: &mut NativeSession,
-    camera: &mut CameraMode,
+    presentation: (&mut CameraMode, &mut WaterQualitySelection),
     windows: &Query<&Window>,
     normal_frame: bool,
     commands: &mut Commands,
 ) -> Result<(), String> {
+    let (camera, quality) = presentation;
     let started = match verification.started {
         Some(started) => started,
         None => {
@@ -590,7 +659,25 @@ fn advance_step(
                     VerificationStage::Chase
                 }
                 VerificationStage::Chase => VerificationStage::Pause,
-                VerificationStage::PausedCapture => VerificationStage::Resume,
+                VerificationStage::PausedCapture => {
+                    *quality = quality
+                        .request(WaterQuality::Low, session.game.snapshot().phase())
+                        .ok_or("Paused quality selection is unavailable")?;
+                    VerificationStage::QualityLow
+                }
+                VerificationStage::QualityLow => {
+                    *quality = quality
+                        .request(WaterQuality::Medium, session.game.snapshot().phase())
+                        .ok_or("Medium quality selection is unavailable")?;
+                    VerificationStage::QualityMedium
+                }
+                VerificationStage::QualityMedium => {
+                    *quality = quality
+                        .request(WaterQuality::High, session.game.snapshot().phase())
+                        .ok_or("High quality selection is unavailable")?;
+                    VerificationStage::QualityHigh
+                }
+                VerificationStage::QualityHigh => VerificationStage::Resume,
                 VerificationStage::Result => VerificationStage::Retry,
                 VerificationStage::InputTrialResult => {
                     commands.queue(|world: &mut World| {
@@ -766,6 +853,41 @@ fn advance_step(
                 && verification.readiness.can_capture()
             {
                 verification.capture(commands, "03a-paused.png");
+            }
+        }
+        VerificationStage::QualityLow
+        | VerificationStage::QualityMedium
+        | VerificationStage::QualityHigh => {
+            if !matches!(phase, SessionPhase::FlightPaused { .. })
+                || session.game.snapshot().tail_flight_state() != verification.paused_state
+            {
+                return Err("Quality exchange changed paused core state".into());
+            }
+            if quality.pending().is_some() {
+                return Ok(());
+            }
+            let (expected, filename) = match verification.stage {
+                VerificationStage::QualityLow => (WaterQuality::Low, "03b-paused-quality-low.png"),
+                VerificationStage::QualityMedium => {
+                    (WaterQuality::Medium, "03c-paused-quality-medium.png")
+                }
+                VerificationStage::QualityHigh => {
+                    (WaterQuality::High, "03d-paused-quality-high.png")
+                }
+                _ => return Err("Unexpected quality capture stage".into()),
+            };
+            if quality.applied() != expected {
+                return Err(format!("Quality exchange failed: {}", quality.status()));
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                println!(
+                    "Paused water quality: {} / {} cells",
+                    expected.label(),
+                    expected.profile().near_cells
+                );
+                verification.capture(commands, filename);
             }
         }
         VerificationStage::Resume => {
@@ -955,10 +1077,13 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::{
-        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion, contains_layout,
-        shader_is_pending,
+        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion,
+        VerificationUiHierarchy, contains_layout, shader_is_pending, within_ancestor_clip,
     };
-    use bevy::prelude::{Rect, Vec2};
+    use bevy::ecs::system::SystemState;
+    use bevy::prelude::{
+        ChildOf, ComputedNode, Node, Overflow, Rect, UiGlobalTransform, Vec2, World,
+    };
     use bevy::shader::ShaderCacheError;
 
     #[test]
@@ -980,6 +1105,40 @@ mod tests {
             button,
             Rect::from_corners(Vec2::new(16.0, 10.0), Vec2::new(184.0, 52.0),)
         ));
+    }
+
+    #[test]
+    fn quality_controls_inside_the_viewport_can_still_be_clipped_by_scroll_ancestors() {
+        let mut world = World::new();
+        let panel = world
+            .spawn((
+                Node {
+                    overflow: Overflow::scroll_y(),
+                    ..Default::default()
+                },
+                ComputedNode {
+                    size: Vec2::new(560.0, 390.0),
+                    ..Default::default()
+                },
+                UiGlobalTransform::from_translation(Vec2::new(280.0, 195.0)),
+            ))
+            .id();
+        let container = world.spawn((Node::default(), ChildOf(panel))).id();
+        let control = world.spawn((Node::default(), ChildOf(container))).id();
+        let viewport = Rect::from_corners(Vec2::ZERO, Vec2::new(800.0, 600.0));
+        let visible = Rect::from_center_size(Vec2::new(280.0, 345.0), Vec2::new(240.0, 48.0));
+        let clipped = Rect::from_center_size(Vec2::new(280.0, 430.0), Vec2::new(240.0, 48.0));
+        assert!(contains_layout(viewport, clipped));
+        let mut state = SystemState::<VerificationUiHierarchy>::new(&mut world);
+        let hierarchy = state.get(&world).unwrap();
+        assert!(within_ancestor_clip(control, visible, &hierarchy));
+        assert!(!within_ancestor_clip(control, clipped, &hierarchy));
+        world.get_mut::<ComputedNode>(panel).unwrap().size.y = 520.0;
+        world
+            .entity_mut(panel)
+            .insert(UiGlobalTransform::from_translation(Vec2::new(280.0, 260.0)));
+        let hierarchy = state.get(&world).unwrap();
+        assert!(within_ancestor_clip(control, clipped, &hierarchy));
     }
 
     #[test]
