@@ -17,6 +17,8 @@ const WHITECAP_CREST_START: f32 = 0.72;
 const WHITECAP_CREST_END: f32 = 0.96;
 const WHITECAP_PACKET_GATE_START: f32 = 0.80;
 const WHITECAP_PACKET_GATE_END: f32 = 0.95;
+const WHITECAP_LOCAL_GATE_START: f32 = 0.9889;
+const WHITECAP_LOCAL_GATE_END: f32 = 0.99875;
 const WHITECAP_GAIN: f32 = 6.0;
 const WHITECAP_MAX_AMOUNT: f32 = 0.22;
 
@@ -158,8 +160,10 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
         let amplitude_gradient = packet_gradient * (0.28 * cos(packet_phase));
         let warp_gradient = transverse * (band.y * 0.19);
         let warp_phase = dot(position, warp_gradient) - camera_time.w * 0.12 + band.w * 1.73;
-        let phase_gradient = direction * band.y + warp_gradient * (0.55 * cos(warp_phase));
-        let phase = dot(position, direction) * band.y + 0.55 * sin(warp_phase)
+        let warp_sine = sin(warp_phase);
+        let warp_cosine = cos(warp_phase);
+        let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_cosine);
+        let phase = dot(position, direction) * band.y + 0.55 * warp_sine
             - sqrt(9.80665 * band.y) * camera_time.w + band.w;
         let footprint = abs(dot(phase_gradient, footprint_x)) + abs(dot(phase_gradient, footprint_y));
         let visibility = wave_visibility(footprint);
@@ -175,8 +179,16 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
         let packet_gate = gate_progress * gate_progress * (3.0 - 2.0 * gate_progress);
         let gate_slope = 6.0 * gate_progress * (1.0 - gate_progress)
             / (WHITECAP_PACKET_GATE_END - WHITECAP_PACKET_GATE_START);
-        let whitecap_packet = packet * packet_gate;
-        let whitecap_packet_gradient = amplitude_gradient * (packet_gate + packet * gate_slope);
+        let gated_packet = packet * packet_gate;
+        let gated_packet_gradient = amplitude_gradient * (packet_gate + packet * gate_slope);
+        let local_progress = clamp((warp_cosine - WHITECAP_LOCAL_GATE_START)
+            / (WHITECAP_LOCAL_GATE_END - WHITECAP_LOCAL_GATE_START), 0.0, 1.0);
+        let local_gate = local_progress * local_progress * (3.0 - 2.0 * local_progress);
+        let local_slope = 6.0 * local_progress * (1.0 - local_progress)
+            / (WHITECAP_LOCAL_GATE_END - WHITECAP_LOCAL_GATE_START);
+        let local_gradient = warp_gradient * (-warp_sine * local_slope);
+        let whitecap_packet = gated_packet * local_gate;
+        let whitecap_packet_gradient = gated_packet_gradient * local_gate + gated_packet * local_gradient;
         let whitecap_footprint = footprint * (1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START))
             + abs(dot(whitecap_packet_gradient, footprint_x)) + abs(dot(whitecap_packet_gradient, footprint_y));
         let whitecap_visibility = wave_visibility(whitecap_footprint);

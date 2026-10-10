@@ -362,6 +362,8 @@ mod tests {
         crest_end: f32,
         packet_gate_start: f32,
         packet_gate_end: f32,
+        local_gate_start: f32,
+        local_gate_end: f32,
         gain: f32,
         maximum: f32,
     }
@@ -407,6 +409,8 @@ mod tests {
                 crest_end: scalar("WHITECAP_CREST_END"),
                 packet_gate_start: scalar("WHITECAP_PACKET_GATE_START"),
                 packet_gate_end: scalar("WHITECAP_PACKET_GATE_END"),
+                local_gate_start: scalar("WHITECAP_LOCAL_GATE_START"),
+                local_gate_end: scalar("WHITECAP_LOCAL_GATE_END"),
                 gain: scalar("WHITECAP_GAIN"),
                 maximum: scalar("WHITECAP_MAX_AMOUNT"),
             }
@@ -418,6 +422,26 @@ mod tests {
             let gate = progress * progress * (3.0 - 2.0 * progress);
             let gate_slope = 6.0 * progress * (1.0 - progress) / width;
             (packet * gate, gradient * (gate + packet * gate_slope))
+        }
+
+        fn localized_packet(
+            &self,
+            packet: f32,
+            gradient: Vec2,
+            warp_sine: f32,
+            warp_cosine: f32,
+            warp_gradient: Vec2,
+        ) -> (f32, Vec2) {
+            let (gated_packet, gated_gradient) = self.gated_packet(packet, gradient);
+            let width = self.local_gate_end - self.local_gate_start;
+            let progress = ((warp_cosine - self.local_gate_start) / width).clamp(0.0, 1.0);
+            let gate = progress * progress * (3.0 - 2.0 * progress);
+            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
+            let local_gradient = warp_gradient * (-warp_sine * gate_slope);
+            (
+                gated_packet * gate,
+                gated_gradient * gate + gated_packet * local_gradient,
+            )
         }
 
         fn amount(
@@ -444,13 +468,20 @@ mod tests {
                 let amplitude_gradient = packet_gradient * (0.28 * packet_phase.cos());
                 let warp_gradient = transverse * (band.y * 0.19);
                 let warp_phase = position.dot(warp_gradient) - time * 0.12 + band.w * 1.73;
-                let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_phase.cos());
-                let phase = position.dot(direction) * band.y + 0.55 * warp_phase.sin()
+                let warp_sine = warp_phase.sin();
+                let warp_cosine = warp_phase.cos();
+                let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_cosine);
+                let phase = position.dot(direction) * band.y + 0.55 * warp_sine
                     - (9.80665 * band.y).sqrt() * time
                     + band.w;
                 let crest = smoothstep(self.crest_start, self.crest_end, phase.sin());
-                let (whitecap_packet, whitecap_packet_gradient) =
-                    self.gated_packet(packet, amplitude_gradient);
+                let (whitecap_packet, whitecap_packet_gradient) = self.localized_packet(
+                    packet,
+                    amplitude_gradient,
+                    warp_sine,
+                    warp_cosine,
+                    warp_gradient,
+                );
                 let footprint = (phase_gradient.dot(footprint_x).abs()
                     + phase_gradient.dot(footprint_y).abs())
                     * (1.5 / (self.crest_end - self.crest_start))
@@ -485,9 +516,16 @@ mod tests {
         assert_eq!(detail.matches("for (").count(), 1);
         assert_eq!(detail.matches("sin(phase)").count(), 1);
         assert_eq!(detail.matches("cos(phase)").count(), 1);
+        assert_eq!(detail.matches("sin(warp_phase)").count(), 1);
+        assert_eq!(detail.matches("cos(warp_phase)").count(), 1);
         assert!(!detail.contains("geometry_patch"));
         assert!(detail.contains("packet * packet_gate"));
         assert!(detail.contains("amplitude_gradient * (packet_gate + packet * gate_slope)"));
+        assert!(detail.contains("warp_gradient * (-warp_sine * local_slope)"));
+        assert!(detail.contains("gated_packet * local_gate"));
+        assert!(
+            detail.contains("gated_packet_gradient * local_gate + gated_packet * local_gradient")
+        );
         assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_x))"));
         assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_y))"));
         assert!(detail.contains("1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START)"));
@@ -576,8 +614,11 @@ mod tests {
     }
 
     #[test]
-    fn every_whitecap_band_breaks_its_crest_into_localized_packets() {
+    fn every_whitecap_band_limits_crest_patch_support_to_quarter_wavelength() {
         let reference = WhitecapReference::from_shader();
+        assert!(reference.local_gate_start > 0.0);
+        assert!(reference.local_gate_end > reference.local_gate_start);
+        assert!(reference.local_gate_end < 1.0);
         let mut material = WaterMaterial::registered(false).unwrap();
         material.waves_sky = Vec4::new(4.5, 0.0, 1.0, 0.0);
         material.camera_time.w = 0.0;
@@ -587,10 +628,22 @@ mod tests {
             isolated.bands[0] = band;
             let direction = Vec2::new(band.x.cos(), band.x.sin());
             let transverse = Vec2::new(-direction.y, direction.x);
-            let mut absent = 0;
-            let mut present = 0;
-            for index in 0..128 {
-                let across = (index as f32 - 64.0) * 1.5;
+            let wavelength = std::f32::consts::TAU / band.y;
+            let half_support = reference.local_gate_start.acos() / (band.y * 0.19);
+            assert!(2.0 * half_support <= 0.25 * wavelength);
+            assert!(2.0 * half_support >= 0.24 * wavelength);
+            assert!(2.0 * half_support < 2.0);
+            let center = (0..256)
+                .find_map(|index| {
+                    let across =
+                        (std::f32::consts::TAU * index as f32 - band.w * 1.73) / (band.y * 0.19);
+                    let along = (std::f32::consts::FRAC_PI_2 - band.w) / band.y;
+                    let packet = 0.72 + 0.28 * (across * 0.13 + along * 0.037 + band.w).sin();
+                    (packet > 0.98).then_some(across)
+                })
+                .expect("every band must retain a resolved crest patch");
+            for offset in [-1.05, -0.5, 0.0, 0.5, 1.05] {
+                let across = center + offset * half_support;
                 let warp_phase = band.y * 0.19 * across + band.w * 1.73;
                 let along =
                     (std::f32::consts::FRAC_PI_2 - 0.55 * warp_phase.sin() - band.w) / band.y;
@@ -598,15 +651,42 @@ mod tests {
                 let amount =
                     isolated.amount(&material, position, Vec2::X * 0.00001, Vec2::Y * 0.00001);
                 assert!(amount.is_finite());
-                if amount == 0.0 {
-                    absent += 1;
+                if offset.abs() > 1.0 {
+                    assert_eq!(amount, 0.0, "outside local crest support: {band:?}");
                 } else {
-                    present += 1;
+                    assert!(
+                        amount > 0.0,
+                        "resolved local crest must remain visible: {band:?}"
+                    );
                 }
             }
-            assert!(absent > 16, "crest must contain gaps: {band:?}");
-            assert!(present > 16, "crest must retain visible packets: {band:?}");
         }
+    }
+
+    #[test]
+    fn localized_whitecap_packet_gradient_matches_spatial_differences() {
+        let reference = WhitecapReference::from_shader();
+        let packet_gradient = Vec2::new(0.07, -0.03);
+        let warp_gradient = Vec2::new(0.33, 0.47);
+        let sample = |offset: Vec2| {
+            let packet = 0.9 + packet_gradient.dot(offset);
+            let warp_phase = 0.1 + warp_gradient.dot(offset);
+            reference.localized_packet(
+                packet,
+                packet_gradient,
+                warp_phase.sin(),
+                warp_phase.cos(),
+                warp_gradient,
+            )
+        };
+        let (amount, analytic_gradient) = sample(Vec2::ZERO);
+        assert!(amount > 0.0 && amount < 0.9);
+        let step = 0.001;
+        let difference_gradient = Vec2::new(
+            (sample(Vec2::X * step).0 - sample(-Vec2::X * step).0) / (2.0 * step),
+            (sample(Vec2::Y * step).0 - sample(-Vec2::Y * step).0) / (2.0 * step),
+        );
+        assert!((analytic_gradient - difference_gradient).length() < 0.01);
     }
 
     #[test]
@@ -646,20 +726,23 @@ mod tests {
         let sample = |material: &WaterMaterial, index: i32| {
             reference.amount(
                 material,
-                Vec2::new(index as f32 * 0.3, 1.2),
+                Vec2::new(
+                    (index % 64) as f32 * 0.7 - 22.4,
+                    (index / 64) as f32 * 0.7 - 22.4,
+                ),
                 Vec2::X * 0.01,
                 Vec2::Y * 0.01,
             )
         };
-        let initial: Vec<_> = (0..64).map(|index| sample(&material, index)).collect();
+        let initial: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
         assert!(initial.iter().any(|amount| *amount > 0.01));
         assert!(initial.windows(2).any(|values| values[0] != values[1]));
         material.camera_time.w = 0.1;
-        let advanced: Vec<_> = (0..64).map(|index| sample(&material, index)).collect();
+        let advanced: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
         assert_ne!(initial, advanced);
         assert_eq!(
             advanced,
-            (0..64)
+            (0..4096)
                 .map(|index| sample(&material, index))
                 .collect::<Vec<_>>()
         );
