@@ -1,6 +1,5 @@
 import {
   AmbientLight,
-  BufferAttribute,
   CanvasTexture,
   CircleGeometry,
   Color,
@@ -42,13 +41,15 @@ import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
 import { flightRelativePose } from "./flight-pose.js";
 import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
-import { createLakeWaveSpectrum, DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile, selectLakeWaveComponentsForQuality } from "../../contracts/lake-water.js";
+import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyCondition } from "../../contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
+import { createLakeGeometry } from "./lake-water-geometry.js";
+import { createLakeWaveProjection, LAKE_WAVE_PACKET_GLSL, LAKE_WAVE_PROJECTION_GLSL } from "./lake-wave-projection.js";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
 import { createLakeVenue } from "./lake-venue-mesh.js";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
@@ -67,9 +68,6 @@ export interface ThreeRendererBundle {
   readonly webxr: WebXrSessionPort;
 }
 
-// The reference photograph has no metric scale. This affects appearance only;
-// the spectrum contract and the still-water contact plane retain their values.
-const LAKE_VISUAL_HEIGHT_SCALE = 8.0;
 // Place Takeshima just outside the centered title panel at every viewport
 // aspect ratio. Its bearing is computed from the OSM island outline.
 const TITLE_SCREEN_ISLAND_BEARING_RADIANS = 272.16851686166876 * Math.PI / 180;
@@ -108,6 +106,8 @@ interface LakeWaveResources {
   readonly waveOmegaPhase: readonly Vector4[];
   readonly waveCount: number;
   readonly visualWaveHeight: number;
+  readonly choppiness: number;
+  readonly spacingGradientMagnitude: number;
 }
 
 interface LakeVisualResources extends LakeWaveResources {
@@ -117,43 +117,12 @@ interface LakeVisualResources extends LakeWaveResources {
 }
 
 function createLakeWaveResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeWaveResources {
-  const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
-  const renderedWaves = selectLakeWaveComponentsForQuality(spectrum, quality);
-  const renderedWaveBands = renderedWaves.map((wave) =>
-    Math.floor(spectrum.components.indexOf(wave) / 3)
-  );
-  const directionCountByBand = new Array<number>(6).fill(0);
-  for (const band of renderedWaveBands) {
-    if (band >= 0 && band < directionCountByBand.length) {
-      directionCountByBand[band] = (directionCountByBand[band] ?? 0) + 1;
-    }
-  }
-  const amplitudeScaleByWave = renderedWaveBands.map((band) => {
-    const directionCount = directionCountByBand[band] ?? 0;
-    return directionCount > 0 ? Math.sqrt(3 / directionCount) : 1;
-  });
-  const waveKAmplitude = Array.from({ length: 24 }, (_, index) => {
-    const wave = renderedWaves[index];
-    return wave === undefined ? new Vector4() : new Vector4(
-      wave.directionEast,
-      -wave.directionNorth,
-      wave.waveNumberRadiansPerMeter,
-      wave.amplitudeMeters * (amplitudeScaleByWave[index] ?? 1) * lakeVisualAmplitudeScale(wave.waveNumberRadiansPerMeter)
-    );
-  });
-  const waveOmegaPhase = Array.from({ length: 24 }, (_, index) => {
-    const wave = renderedWaves[index];
-    return wave === undefined ? new Vector4() : new Vector4(
-      wave.angularFrequencyRadiansPerSecond,
-      wave.phaseRadians,
-      0,
-      0
-    );
-  });
+  const projection = createLakeWaveProjection(condition, quality);
   return {
-    waveKAmplitude, waveOmegaPhase,
-    waveCount: renderedWaves.length,
-    visualWaveHeight: spectrum.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE
+    waveKAmplitude: projection.waveKAmplitude.map((wave) => new Vector4(...wave)),
+    waveOmegaPhase: projection.waveOmegaPhase.map((wave) => new Vector4(...wave)),
+    waveCount: projection.waveCount, visualWaveHeight: projection.visualWaveHeight,
+    choppiness: projection.choppiness, spacingGradientMagnitude: projection.spacing.gradientMagnitude
   };
 }
 
@@ -249,6 +218,8 @@ export function createThreeRenderer(
       uWaveKAmplitude: { value: lakeResources.waveKAmplitude },
       uWaveOmegaPhase: { value: lakeResources.waveOmegaPhase },
       uWaveCount: { value: lakeResources.waveCount },
+      uChoppiness: { value: lakeResources.choppiness },
+      uGridSpacingGradient: { value: lakeResources.spacingGradientMagnitude },
       uVisualWaveHeight: { value: lakeResources.visualWaveHeight },
       uWaterDark: { value: new Color(0x172831) },
       uWaterMid: { value: new Color(0x293b43) },
@@ -280,6 +251,8 @@ export function createThreeRenderer(
     waveKAmplitude: lakeUniform(waterMaterial, "uWaveKAmplitude", lakeResources.waveKAmplitude),
     waveOmegaPhase: lakeUniform(waterMaterial, "uWaveOmegaPhase", lakeResources.waveOmegaPhase),
     waveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
+    choppiness: lakeUniform(waterMaterial, "uChoppiness", lakeResources.choppiness),
+    spacingGradient: lakeUniform(waterMaterial, "uGridSpacingGradient", lakeResources.spacingGradientMagnitude),
     visualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight),
     skyTexture: lakeUniform(waterMaterial, "uSkyTexture", skyTexture),
     sunDirection: lakeUniform(waterMaterial, "uSunDirection", new Vector4()),
@@ -300,6 +273,8 @@ export function createThreeRenderer(
     uWaveKAmplitude: lakeUniform(waterMaterial, "uWaveKAmplitude", lakeResources.waveKAmplitude),
     uWaveOmegaPhase: lakeUniform(waterMaterial, "uWaveOmegaPhase", lakeResources.waveOmegaPhase),
     uWaveCount: lakeUniform(waterMaterial, "uWaveCount", lakeResources.waveCount),
+    uChoppiness: lakeUniform(waterMaterial, "uChoppiness", lakeResources.choppiness),
+    uGridSpacingGradient: lakeUniform(waterMaterial, "uGridSpacingGradient", lakeResources.spacingGradientMagnitude),
     uVisualWaveHeight: lakeUniform(waterMaterial, "uVisualWaveHeight", lakeResources.visualWaveHeight),
     uWaterDark: lakeUniform(waterMaterial, "uWaterDark", new Color(0x172831)),
     uWaterMid: lakeUniform(waterMaterial, "uWaterMid", new Color(0x293b43)),
@@ -457,6 +432,8 @@ export function createThreeRenderer(
     lakeUniforms.waveKAmplitude.value = nextWaves.waveKAmplitude;
     lakeUniforms.waveOmegaPhase.value = nextWaves.waveOmegaPhase;
     lakeUniforms.waveCount.value = nextWaves.waveCount;
+    lakeUniforms.choppiness.value = nextWaves.choppiness;
+    lakeUniforms.spacingGradient.value = nextWaves.spacingGradientMagnitude;
     lakeUniforms.visualWaveHeight.value = nextWaves.visualWaveHeight;
     lakeResources = { ...lakeResources, ...nextWaves };
     water.geometry = nextGeometry;
@@ -784,6 +761,8 @@ export function createThreeRenderer(
       lakeUniforms.waveKAmplitude.value = next.waveKAmplitude;
       lakeUniforms.waveOmegaPhase.value = next.waveOmegaPhase;
       lakeUniforms.waveCount.value = next.waveCount;
+      lakeUniforms.choppiness.value = next.choppiness;
+      lakeUniforms.spacingGradient.value = next.spacingGradientMagnitude;
       lakeUniforms.visualWaveHeight.value = next.visualWaveHeight;
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
@@ -1021,36 +1000,6 @@ function lakeUniform<T>(material: ShaderMaterial, name: string, expectedValue: T
   return uniform as { value: T };
 }
 
-function lakeVisualAmplitudeScale(waveNumberRadiansPerMeter: number): number {
-  const shortWaveWeight = Math.max(0, Math.min(1, (waveNumberRadiansPerMeter - 1.5) / 4.5));
-  const smoothWeight = shortWaveWeight * shortWaveWeight * (3 - 2 * shortWaveWeight);
-  return 0.65 + 1.35 * smoothWeight;
-}
-
-function createLakeGeometry(segments: number): PlaneGeometry {
-  const extent = 6000;
-  const geometry = new PlaneGeometry(extent, extent, segments, segments);
-  const positions = geometry.getAttribute("position");
-  const spacing = new Float32Array(positions.count);
-  const halfWidth = extent / 2;
-  // Preserve the former near-eye spacing while extending the lake beyond the
-  // camera far plane in every horizontal viewing direction.
-  const exponent = 7.2;
-  const denominator = Math.expm1(exponent);
-  const map = (coordinate: number): number => Math.sign(coordinate) * halfWidth * Math.expm1(exponent * Math.abs(coordinate) / halfWidth) / denominator;
-  const localStep = (coordinate: number): number => extent / segments * exponent * Math.exp(exponent * Math.abs(coordinate) / halfWidth) / denominator;
-  for (let index = 0; index < positions.count; index++) {
-    const x = positions.getX(index);
-    const y = positions.getY(index);
-    spacing[index] = Math.max(localStep(x), localStep(y));
-    positions.setXY(index, map(x), map(y));
-  }
-  positions.needsUpdate = true;
-  geometry.setAttribute("aGridSpacing", new BufferAttribute(spacing, 1));
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1069,48 +1018,6 @@ function sessionFromState(state: ThreeWebXrState): XRSession | null {
   }
 }
 
-const lakeWavePacketShader = /* glsl */ `
-float lakeWaveHash(vec2 cell) {
-  return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-vec3 lakeValueNoise(vec2 point) {
-  vec2 cell = floor(point);
-  vec2 fraction = fract(point);
-  vec2 blend = fraction * fraction * (3.0 - 2.0 * fraction);
-  vec2 blendGradient = 6.0 * fraction * (1.0 - fraction);
-  float a = lakeWaveHash(cell);
-  float b = lakeWaveHash(cell + vec2(1.0, 0.0));
-  float c = lakeWaveHash(cell + vec2(0.0, 1.0));
-  float d = lakeWaveHash(cell + vec2(1.0, 1.0));
-  float value = mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
-  vec2 gradient = vec2(
-    blendGradient.x * mix(b - a, d - c, blend.y),
-    blendGradient.y * mix(c - a, d - b, blend.x)
-  );
-  return vec3(value * 2.0 - 1.0, gradient * 2.0);
-}
-
-mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed) {
-  vec2 across = vec2(-direction.y, direction.x);
-  float frequency = max(0.11, waveNumber * 0.055);
-  vec2 coordinate = vec2(dot(point, across), dot(point, direction)) * frequency + vec2(seed * 1.7, seed * 2.3);
-  vec2 secondCoordinate = vec2(coordinate.x * 1.7 + coordinate.y * 0.37,
-    coordinate.y * 1.9 - coordinate.x * 0.24) + vec2(13.7, -8.2);
-  vec3 broad = lakeValueNoise(coordinate);
-  vec3 fine = lakeValueNoise(secondCoordinate);
-  vec2 broadGradient = frequency * (across * broad.y + direction * broad.z);
-  vec2 fineGradient = frequency * (fine.y * (across * 1.7 + direction * 0.37)
-    + fine.z * (across * -0.24 + direction * 1.9));
-  // Shared, two-scale noise bends and interrupts crests without an empty mask.
-  float packet = 1.0 + 0.38 * broad.x + 0.12 * fine.x;
-  vec2 packetGradient = 0.38 * broadGradient + 0.12 * fineGradient;
-  float offset = 4.6 * broad.x + 1.4 * fine.x;
-  vec2 offsetGradient = 4.6 * broadGradient + 1.4 * fineGradient;
-  return mat3(vec3(packet, packetGradient), vec3(offset, offsetGradient), vec3(0.0));
-}
-`;
-
 const lakeWaterVertexShader = /* glsl */ `
 uniform mat4 uReflectionMatrix;
 uniform float uTimeSeconds;
@@ -1119,9 +1026,8 @@ uniform float uDetailScale;
 uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform vec4 uDetailExtents;
-uniform vec4 uWaveKAmplitude[24];
-uniform vec4 uWaveOmegaPhase[24];
-uniform int uWaveCount;
+uniform float uChoppiness;
+uniform float uGridSpacingGradient;
 attribute float aGridSpacing;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -1132,7 +1038,7 @@ varying vec2 vBaseXZ;
 varying vec2 vRepresentedSlope;
 varying vec4 vReflectionCoord;
 #include <shadowmap_pars_vertex>
-${lakeWavePacketShader}
+${LAKE_WAVE_PROJECTION_GLSL}
 
 void main() {
   // PlaneGeometry's XY winding points +Z; reversing its second axis while
@@ -1148,60 +1054,18 @@ void main() {
   float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
   p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.55 * farVisibility) * uDetailScale;
-  float slopeEnergy = 0.0;
-  for (int i = 0; i < 24; i++) {
-    if (i < uWaveCount) slopeEnergy += uWaveKAmplitude[i].z * uWaveKAmplitude[i].w;
-  }
-  // Limit horizontal displacement as the combined wave steepness rises.
-  // Gerstner displacement gathers vertices near each sharp crest.
-  float q = min(4.5, 0.56 / max(3.1 * slopeEnergy, 0.001));
-  float dxx = 1.0;
-  float dxz = 0.0;
-  float dzx = 0.0;
-  float dzz = 1.0;
-  float dhdx = 0.0;
-  float dhdz = 0.0;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 resolvedDetailSlope = (nearSlope * (0.6 * nearVisibility)
     + farSlope * (0.55 * farVisibility)) * uDetailScale;
-  dhdx += resolvedDetailSlope.x;
-  dhdz += resolvedDetailSlope.y;
-  float crest = 0.0;
-  for (int i = 0; i < 24; i++) {
-    if (i < uWaveCount) {
-      vec4 ka = uWaveKAmplitude[i];
-      vec4 op = uWaveOmegaPhase[i];
-      vec2 direction = ka.xy;
-      float k = ka.z;
-      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * aGridSpacing);
-      mat3 modulation = lakeWaveModulation(waveXZ, direction, k, op.y);
-      vec3 packet = modulation[0];
-      vec3 warp = modulation[1];
-      float baseAmplitude = ka.w * geometricVisibility;
-      float a = baseAmplitude * packet.x;
-      vec2 amplitudeGradient = baseAmplitude * packet.yz;
-      float phase = k * dot(direction, waveXZ) + warp.x - op.x * uTimeSeconds + op.y;
-      vec2 phaseGradient = k * direction + warp.yz;
-      float s = sin(phase);
-      float c = cos(phase);
-      // A cubic offset sine gives a narrow crest and a broad trough. 0.625 is
-      // twice the cycle mean of ((1 + sin(phase)) / 2)^3, so mean height is zero.
-      float crestBasis = 0.5 + 0.5 * s;
-      p.xz += q * a * direction * c;
-      p.y += a * (2.0 * crestBasis * crestBasis * crestBasis - 0.625);
-      vec2 horizontalGradient = q * (c * amplitudeGradient - a * s * phaseGradient);
-      dxx += direction.x * horizontalGradient.x;
-      dxz += direction.x * horizontalGradient.y;
-      dzx += direction.y * horizontalGradient.x;
-      dzz += direction.y * horizontalGradient.y;
-      vec2 heightGradient = a * 3.0 * crestBasis * crestBasis * c * phaseGradient
-        + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
-      dhdx += heightGradient.x;
-      dhdz += heightGradient.y;
-      crest += s * k * a;
-    }
-  }
+  LakeWaveProjection projected = projectLakeWaves(p, waveXZ, aGridSpacing,
+    uGridSpacingGradient, uTimeSeconds, uChoppiness);
+  p = projected.position;
+  float dxx = projected.horizontalJacobian.x;
+  float dxz = projected.horizontalJacobian.y;
+  float dzx = projected.horizontalJacobian.z;
+  float dzz = projected.horizontalJacobian.w;
+  vec2 heightGradient = projected.heightGradient + resolvedDetailSlope;
   float horizontalDeterminant = dxx * dzz - dxz * dzx;
   // The geometric normal is measured after Gerstner horizontal displacement.
   // Convert the represented detail slope into that same coordinate system.
@@ -1209,8 +1073,8 @@ void main() {
     dzz * resolvedDetailSlope.x - dzx * resolvedDetailSlope.y,
     -dxz * resolvedDetailSlope.x + dxx * resolvedDetailSlope.y
   ) / max(horizontalDeterminant, 0.01);
-  vec3 tangentX = vec3(dxx, dhdx, dzx);
-  vec3 tangentZ = vec3(dxz, dhdz, dzz);
+  vec3 tangentX = vec3(dxx, heightGradient.x, dzx);
+  vec3 tangentZ = vec3(dxz, heightGradient.y, dzz);
   vec3 localNormal = normalize(cross(tangentZ, tangentX));
   vec4 worldPosition = modelMatrix * vec4(p, 1.0);
   vWorldPosition = worldPosition.xyz;
@@ -1220,7 +1084,7 @@ void main() {
     vDirectionalShadowCoord[0] = directionalShadowMatrix[0] *
       (worldPosition + vec4(vWorldNormal * directionalLightShadows[0].shadowNormalBias, 0.0));
   #endif
-  vCrest = crest / max(slopeEnergy, 0.001);
+  vCrest = projected.crest / max(projected.slopeEnergy, 0.001);
   vCompression = clamp(1.0 - horizontalDeterminant, 0.0, 1.0);
   vGridSpacing = aGridSpacing;
   gl_Position = projectionMatrix * viewMatrix * worldPosition;
@@ -1291,7 +1155,7 @@ varying vec2 vRepresentedSlope;
 varying vec4 vReflectionCoord;
 #include <common>
 #include <shadowmap_pars_fragment>
-${lakeWavePacketShader}
+${LAKE_WAVE_PACKET_GLSL}
 
 vec3 lakeSkyRadiance(vec3 ray) {
   vec3 skyRay = vec3(ray.x, max(ray.y, 0.0), ray.z);
