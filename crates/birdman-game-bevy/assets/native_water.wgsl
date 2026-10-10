@@ -11,6 +11,17 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(4) var<uniform> geometry_waves: array<vec4<f32>, 4>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(5) var<uniform> geometry_motion: array<vec4<f32>, 4>;
 
+const WHITECAP_WIND_START: f32 = 1.2;
+const WHITECAP_WIND_END: f32 = 4.5;
+const WHITECAP_CREST_START: f32 = 0.72;
+const WHITECAP_CREST_END: f32 = 0.96;
+const WHITECAP_PACKET_GATE_START: f32 = 0.80;
+const WHITECAP_PACKET_GATE_END: f32 = 0.95;
+const WHITECAP_LOCAL_GATE_START: f32 = 0.9889;
+const WHITECAP_LOCAL_GATE_END: f32 = 0.99875;
+const WHITECAP_GAIN: f32 = 6.0;
+const WHITECAP_MAX_AMOUNT: f32 = 0.22;
+
 struct SurfaceProjection {
     offset: vec3<f32>,
     tangent_x: vec3<f32>,
@@ -118,7 +129,7 @@ fn wave_visibility(phase_footprint: f32) -> f32 {
     return 1.0 - smoothstep(0.65, 2.4, phase_footprint);
 }
 
-fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
+fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec4<f32> {
     let bands = array<vec4<f32>, 8>(
         vec4<f32>(-0.57, 0.86, 0.027, 0.73),
         vec4<f32>(0.43, 1.41, 0.029, 2.19),
@@ -135,6 +146,7 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
     let strength = smoothstep(0.05, 0.6, wind_speed) * waves_sky.z;
     var slope = vec2<f32>(0.0);
     var unresolved_variance = 0.0;
+    var whitecap_energy = 0.0;
     for (var component: u32 = 0u; component < 8u; component += 1u) {
         let band = bands[component];
         let direction = vec2<f32>(
@@ -148,17 +160,44 @@ fn lake_wave_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: ve
         let amplitude_gradient = packet_gradient * (0.28 * cos(packet_phase));
         let warp_gradient = transverse * (band.y * 0.19);
         let warp_phase = dot(position, warp_gradient) - camera_time.w * 0.12 + band.w * 1.73;
-        let phase_gradient = direction * band.y + warp_gradient * (0.55 * cos(warp_phase));
-        let phase = dot(position, direction) * band.y + 0.55 * sin(warp_phase)
+        let warp_sine = sin(warp_phase);
+        let warp_cosine = cos(warp_phase);
+        let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_cosine);
+        let phase = dot(position, direction) * band.y + 0.55 * warp_sine
             - sqrt(9.80665 * band.y) * camera_time.w + band.w;
         let footprint = abs(dot(phase_gradient, footprint_x)) + abs(dot(phase_gradient, footprint_y));
         let visibility = wave_visibility(footprint);
         let amplitude = band.z * strength / band.y;
-        slope += amplitude * (packet * cos(phase) * phase_gradient + sin(phase) * amplitude_gradient) * visibility;
+        let phase_sine = sin(phase);
+        let phase_cosine = cos(phase);
+        slope += amplitude * (packet * phase_cosine * phase_gradient + phase_sine * amplitude_gradient) * visibility;
         let slope_energy = band.z * strength * packet;
         unresolved_variance += 0.5 * slope_energy * slope_energy * (1.0 - visibility * visibility);
+        let crest = smoothstep(WHITECAP_CREST_START, WHITECAP_CREST_END, phase_sine);
+        let gate_progress = clamp((packet - WHITECAP_PACKET_GATE_START)
+            / (WHITECAP_PACKET_GATE_END - WHITECAP_PACKET_GATE_START), 0.0, 1.0);
+        let packet_gate = gate_progress * gate_progress * (3.0 - 2.0 * gate_progress);
+        let gate_slope = 6.0 * gate_progress * (1.0 - gate_progress)
+            / (WHITECAP_PACKET_GATE_END - WHITECAP_PACKET_GATE_START);
+        let gated_packet = packet * packet_gate;
+        let gated_packet_gradient = amplitude_gradient * (packet_gate + packet * gate_slope);
+        let local_progress = clamp((warp_cosine - WHITECAP_LOCAL_GATE_START)
+            / (WHITECAP_LOCAL_GATE_END - WHITECAP_LOCAL_GATE_START), 0.0, 1.0);
+        let local_gate = local_progress * local_progress * (3.0 - 2.0 * local_progress);
+        let local_slope = 6.0 * local_progress * (1.0 - local_progress)
+            / (WHITECAP_LOCAL_GATE_END - WHITECAP_LOCAL_GATE_START);
+        let local_gradient = warp_gradient * (-warp_sine * local_slope);
+        let whitecap_packet = gated_packet * local_gate;
+        let whitecap_packet_gradient = gated_packet_gradient * local_gate + gated_packet * local_gradient;
+        let whitecap_footprint = footprint * (1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START))
+            + abs(dot(whitecap_packet_gradient, footprint_x)) + abs(dot(whitecap_packet_gradient, footprint_y));
+        let whitecap_visibility = wave_visibility(whitecap_footprint);
+        whitecap_energy += band.z * whitecap_packet * crest * whitecap_visibility * whitecap_visibility;
     }
-    return vec3<f32>(slope, unresolved_variance);
+    let wind_activation = smoothstep(WHITECAP_WIND_START, WHITECAP_WIND_END, wind_speed);
+    let whitecaps = clamp(whitecap_energy * wind_activation * clamp(waves_sky.z, 0.0, 3.0) * WHITECAP_GAIN,
+        0.0, WHITECAP_MAX_AMOUNT);
+    return vec4<f32>(slope, unresolved_variance, whitecaps);
 }
 
 @fragment
@@ -193,5 +232,6 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let sun = pow(max(dot(reflection, sun_cloud.xyz), 0.0), mix(180.0, 48.0, roughness));
     let glitter = sun * sun_visibility * 0.16 * facet_visibility;
     let color = mix(base, reflected_sky, fresnel * 0.45) + vec3<f32>(1.0, 0.82, 0.58) * glitter;
-    return vec4<f32>(color, 1.0);
+    let whitecap_color = vec3<f32>(0.66, 0.72, 0.68) * (0.62 + 0.38 * sun_visibility);
+    return vec4<f32>(mix(color, whitecap_color, detail.w), 1.0);
 }

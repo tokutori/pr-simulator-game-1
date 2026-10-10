@@ -956,6 +956,401 @@ mod tests {
         assert!(app.world().get::<Text>(details).unwrap().0.is_empty());
     }
 
+    #[derive(Clone, Copy)]
+    struct WhitecapReference {
+        bands: [Vec4; 8],
+        wind_start: f32,
+        wind_end: f32,
+        crest_start: f32,
+        crest_end: f32,
+        packet_gate_start: f32,
+        packet_gate_end: f32,
+        local_gate_start: f32,
+        local_gate_end: f32,
+        gain: f32,
+        maximum: f32,
+    }
+
+    impl WhitecapReference {
+        fn from_shader() -> Self {
+            let shader = include_str!("../assets/native_water.wgsl");
+            let scalar = |name: &str| {
+                let prefix = format!("const {name}: f32 = ");
+                shader
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix(&prefix))
+                    .unwrap()
+                    .trim_end_matches(';')
+                    .parse::<f32>()
+                    .unwrap()
+            };
+            let bands = shader
+                .split_once("let bands = array<vec4<f32>, 8>(")
+                .unwrap()
+                .1
+                .split_once(");")
+                .unwrap()
+                .0
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("vec4<f32>("))
+                .map(|line| {
+                    let values: Vec<f32> = line
+                        .trim_end_matches([',', ')'])
+                        .split(',')
+                        .map(|value| value.trim().parse::<f32>().unwrap())
+                        .collect();
+                    Vec4::from_array(values.try_into().unwrap())
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap();
+            Self {
+                bands,
+                wind_start: scalar("WHITECAP_WIND_START"),
+                wind_end: scalar("WHITECAP_WIND_END"),
+                crest_start: scalar("WHITECAP_CREST_START"),
+                crest_end: scalar("WHITECAP_CREST_END"),
+                packet_gate_start: scalar("WHITECAP_PACKET_GATE_START"),
+                packet_gate_end: scalar("WHITECAP_PACKET_GATE_END"),
+                local_gate_start: scalar("WHITECAP_LOCAL_GATE_START"),
+                local_gate_end: scalar("WHITECAP_LOCAL_GATE_END"),
+                gain: scalar("WHITECAP_GAIN"),
+                maximum: scalar("WHITECAP_MAX_AMOUNT"),
+            }
+        }
+
+        fn gated_packet(&self, packet: f32, gradient: Vec2) -> (f32, Vec2) {
+            let width = self.packet_gate_end - self.packet_gate_start;
+            let progress = ((packet - self.packet_gate_start) / width).clamp(0.0, 1.0);
+            let gate = progress * progress * (3.0 - 2.0 * progress);
+            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
+            (packet * gate, gradient * (gate + packet * gate_slope))
+        }
+
+        fn localized_packet(
+            &self,
+            packet: f32,
+            gradient: Vec2,
+            warp_sine: f32,
+            warp_cosine: f32,
+            warp_gradient: Vec2,
+        ) -> (f32, Vec2) {
+            let (gated_packet, gated_gradient) = self.gated_packet(packet, gradient);
+            let width = self.local_gate_end - self.local_gate_start;
+            let progress = ((warp_cosine - self.local_gate_start) / width).clamp(0.0, 1.0);
+            let gate = progress * progress * (3.0 - 2.0 * progress);
+            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
+            let local_gradient = warp_gradient * (-warp_sine * gate_slope);
+            (
+                gated_packet * gate,
+                gated_gradient * gate + gated_packet * local_gradient,
+            )
+        }
+
+        fn amount(
+            &self,
+            material: &WaterMaterial,
+            position: Vec2,
+            footprint_x: Vec2,
+            footprint_y: Vec2,
+        ) -> f32 {
+            let wind = material.waves_sky.truncate().truncate();
+            let speed = wind.length();
+            let propagation = if speed > 0.001 { wind / speed } else { Vec2::X };
+            let time = material.camera_time.w;
+            let mut energy = 0.0;
+            for band in self.bands {
+                let direction = Vec2::new(
+                    propagation.x * band.x.cos() - propagation.y * band.x.sin(),
+                    propagation.x * band.x.sin() + propagation.y * band.x.cos(),
+                );
+                let transverse = Vec2::new(-direction.y, direction.x);
+                let packet_gradient = transverse * 0.13 + direction * 0.037;
+                let packet_phase = position.dot(packet_gradient) - time * 0.18 + band.w;
+                let packet = 0.72 + 0.28 * packet_phase.sin();
+                let amplitude_gradient = packet_gradient * (0.28 * packet_phase.cos());
+                let warp_gradient = transverse * (band.y * 0.19);
+                let warp_phase = position.dot(warp_gradient) - time * 0.12 + band.w * 1.73;
+                let warp_sine = warp_phase.sin();
+                let warp_cosine = warp_phase.cos();
+                let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_cosine);
+                let phase = position.dot(direction) * band.y + 0.55 * warp_sine
+                    - (9.80665 * band.y).sqrt() * time
+                    + band.w;
+                let crest = smoothstep(self.crest_start, self.crest_end, phase.sin());
+                let (whitecap_packet, whitecap_packet_gradient) = self.localized_packet(
+                    packet,
+                    amplitude_gradient,
+                    warp_sine,
+                    warp_cosine,
+                    warp_gradient,
+                );
+                let footprint = (phase_gradient.dot(footprint_x).abs()
+                    + phase_gradient.dot(footprint_y).abs())
+                    * (1.5 / (self.crest_end - self.crest_start))
+                    + whitecap_packet_gradient.dot(footprint_x).abs()
+                    + whitecap_packet_gradient.dot(footprint_y).abs();
+                let visibility = 1.0 - smoothstep(0.65, 2.4, footprint);
+                energy += band.z * whitecap_packet * crest * visibility * visibility;
+            }
+            (energy
+                * smoothstep(self.wind_start, self.wind_end, speed)
+                * material.waves_sky.z.clamp(0.0, 3.0)
+                * self.gain)
+                .clamp(0.0, self.maximum)
+        }
+    }
+
+    fn smoothstep(start: f32, end: f32, value: f32) -> f32 {
+        let progress = ((value - start) / (end - start)).clamp(0.0, 1.0);
+        progress * progress * (3.0 - 2.0 * progress)
+    }
+
+    #[test]
+    fn whitecaps_reuse_the_filtered_wave_loop_and_opaque_fragment_output() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        let detail = shader
+            .split_once("fn lake_wave_detail(")
+            .unwrap()
+            .1
+            .split_once("@fragment")
+            .unwrap()
+            .0;
+        assert_eq!(detail.matches("for (").count(), 1);
+        assert_eq!(detail.matches("sin(phase)").count(), 1);
+        assert_eq!(detail.matches("cos(phase)").count(), 1);
+        assert_eq!(detail.matches("sin(warp_phase)").count(), 1);
+        assert_eq!(detail.matches("cos(warp_phase)").count(), 1);
+        assert!(!detail.contains("geometry_patch"));
+        assert!(detail.contains("packet * packet_gate"));
+        assert!(detail.contains("amplitude_gradient * (packet_gate + packet * gate_slope)"));
+        assert!(detail.contains("warp_gradient * (-warp_sine * local_slope)"));
+        assert!(detail.contains("gated_packet * local_gate"));
+        assert!(
+            detail.contains("gated_packet_gradient * local_gate + gated_packet * local_gradient")
+        );
+        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_x))"));
+        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_y))"));
+        assert!(detail.contains("1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START)"));
+        assert!(detail.contains("return vec4<f32>(slope, unresolved_variance, whitecaps)"));
+        assert_eq!(shader.matches("let detail = lake_wave_detail(").count(), 1);
+        assert!(shader.contains("output.uv = base_position.xz;"));
+        assert!(shader.contains("vec4<f32>(mix(color, whitecap_color, detail.w), 1.0)"));
+    }
+
+    #[test]
+    fn whitecaps_are_bounded_and_suppressed_for_calm_or_unresolved_pixels() {
+        let reference = WhitecapReference::from_shader();
+        assert!(reference.wind_end > reference.wind_start && reference.wind_start > 0.0);
+        assert!(reference.crest_end > reference.crest_start && reference.crest_end <= 1.0);
+        assert!(reference.maximum > 0.0 && reference.maximum < 1.0);
+        assert_eq!(
+            smoothstep(reference.crest_start, reference.crest_end, -1.0),
+            0.0
+        );
+        let mut material = WaterMaterial::registered(false).unwrap();
+        for wind_speed in [0.0, 0.5, 1.2, 2.5, 4.5, 12.0, 60.0] {
+            for detail in [0.0, 0.1, 1.0, 3.0] {
+                material.waves_sky = Vec4::new(wind_speed, 0.0, detail, 0.0);
+                for time in [0.0, 0.1, 5.0] {
+                    material.camera_time.w = time;
+                    for index in 0..32 {
+                        let position = Vec2::new(index as f32 * 0.47, index as f32 * -0.23);
+                        let fine =
+                            reference.amount(&material, position, Vec2::X * 0.01, Vec2::Y * 0.01);
+                        let coarse =
+                            reference.amount(&material, position, Vec2::X * 0.2, Vec2::Y * 0.2);
+                        assert!(fine.is_finite() && (0.0..=reference.maximum).contains(&fine));
+                        assert!(coarse.is_finite() && coarse <= fine);
+                        if wind_speed <= reference.wind_start || detail == 0.0 {
+                            assert_eq!(fine, 0.0);
+                        }
+                        assert_eq!(
+                            reference.amount(&material, position, Vec2::X * 100.0, Vec2::Y * 100.0),
+                            0.0
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn whitecap_packet_gate_and_footprint_gradient_are_continuous() {
+        let reference = WhitecapReference::from_shader();
+        assert!(reference.packet_gate_start >= 0.44);
+        assert!(reference.packet_gate_end > reference.packet_gate_start);
+        assert!(reference.packet_gate_end < 1.0);
+        let gradient = Vec2::new(0.07, -0.03);
+        for packet in [
+            0.44,
+            reference.packet_gate_start - 0.001,
+            reference.packet_gate_start,
+        ] {
+            assert_eq!(reference.gated_packet(packet, gradient), (0.0, Vec2::ZERO));
+        }
+        for packet in [
+            reference.packet_gate_end,
+            reference.packet_gate_end + 0.001,
+            1.0,
+        ] {
+            assert_eq!(reference.gated_packet(packet, gradient), (packet, gradient));
+        }
+        for progress in [0.01, 0.25, 0.5, 0.75, 0.99] {
+            let packet = reference.packet_gate_start
+                + progress * (reference.packet_gate_end - reference.packet_gate_start);
+            let (amount, analytic_gradient) = reference.gated_packet(packet, gradient);
+            assert!(amount.is_finite() && (0.0..=packet).contains(&amount));
+            let step = 0.0001;
+            let derivative = (reference.gated_packet(packet + step, Vec2::ZERO).0
+                - reference.gated_packet(packet - step, Vec2::ZERO).0)
+                / (2.0 * step);
+            assert!((analytic_gradient - gradient * derivative).length() < 0.002);
+        }
+        for boundary in [reference.packet_gate_start, reference.packet_gate_end] {
+            let (_, at_boundary) = reference.gated_packet(boundary, gradient);
+            for offset in [-0.00001, 0.00001] {
+                let (_, nearby) = reference.gated_packet(boundary + offset, gradient);
+                assert!((nearby - at_boundary).length() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn every_whitecap_band_limits_crest_patch_support_to_quarter_wavelength() {
+        let reference = WhitecapReference::from_shader();
+        assert!(reference.local_gate_start > 0.0);
+        assert!(reference.local_gate_end > reference.local_gate_start);
+        assert!(reference.local_gate_end < 1.0);
+        let mut material = WaterMaterial::registered(false).unwrap();
+        material.waves_sky = Vec4::new(4.5, 0.0, 1.0, 0.0);
+        material.camera_time.w = 0.0;
+        for band in reference.bands {
+            let mut isolated = reference;
+            isolated.bands = [Vec4::ZERO; 8];
+            isolated.bands[0] = band;
+            let direction = Vec2::new(band.x.cos(), band.x.sin());
+            let transverse = Vec2::new(-direction.y, direction.x);
+            let wavelength = std::f32::consts::TAU / band.y;
+            let half_support = reference.local_gate_start.acos() / (band.y * 0.19);
+            assert!(2.0 * half_support <= 0.25 * wavelength);
+            assert!(2.0 * half_support >= 0.24 * wavelength);
+            assert!(2.0 * half_support < 2.0);
+            let center = (0..256)
+                .find_map(|index| {
+                    let across =
+                        (std::f32::consts::TAU * index as f32 - band.w * 1.73) / (band.y * 0.19);
+                    let along = (std::f32::consts::FRAC_PI_2 - band.w) / band.y;
+                    let packet = 0.72 + 0.28 * (across * 0.13 + along * 0.037 + band.w).sin();
+                    (packet > 0.98).then_some(across)
+                })
+                .expect("every band must retain a resolved crest patch");
+            for offset in [-1.05, -0.5, 0.0, 0.5, 1.05] {
+                let across = center + offset * half_support;
+                let warp_phase = band.y * 0.19 * across + band.w * 1.73;
+                let along =
+                    (std::f32::consts::FRAC_PI_2 - 0.55 * warp_phase.sin() - band.w) / band.y;
+                let position = direction * along + transverse * across;
+                let amount =
+                    isolated.amount(&material, position, Vec2::X * 0.00001, Vec2::Y * 0.00001);
+                assert!(amount.is_finite());
+                if offset.abs() > 1.0 {
+                    assert_eq!(amount, 0.0, "outside local crest support: {band:?}");
+                } else {
+                    assert!(
+                        amount > 0.0,
+                        "resolved local crest must remain visible: {band:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn localized_whitecap_packet_gradient_matches_spatial_differences() {
+        let reference = WhitecapReference::from_shader();
+        let packet_gradient = Vec2::new(0.07, -0.03);
+        let warp_gradient = Vec2::new(0.33, 0.47);
+        let sample = |offset: Vec2| {
+            let packet = 0.9 + packet_gradient.dot(offset);
+            let warp_phase = 0.1 + warp_gradient.dot(offset);
+            reference.localized_packet(
+                packet,
+                packet_gradient,
+                warp_phase.sin(),
+                warp_phase.cos(),
+                warp_gradient,
+            )
+        };
+        let (amount, analytic_gradient) = sample(Vec2::ZERO);
+        assert!(amount > 0.0 && amount < 0.9);
+        let step = 0.001;
+        let difference_gradient = Vec2::new(
+            (sample(Vec2::X * step).0 - sample(-Vec2::X * step).0) / (2.0 * step),
+            (sample(Vec2::Y * step).0 - sample(-Vec2::Y * step).0) / (2.0 * step),
+        );
+        assert!((analytic_gradient - difference_gradient).length() < 0.01);
+    }
+
+    #[test]
+    fn whitecaps_share_world_phase_across_quality_patch_tracking_and_far_surface() {
+        let reference = WhitecapReference::from_shader();
+        let mut baseline = WaterMaterial::registered(false).unwrap();
+        baseline.project_camera(Vec3::new(0.0, 10.0, 0.0), 2.5);
+        let footprint_x = Vec2::new(0.01, 0.002);
+        let footprint_y = Vec2::new(-0.003, 0.01);
+        for quality in WaterQuality::ALL {
+            let mut near = WaterMaterial::registered_for_quality(quality).unwrap();
+            near.project_camera(Vec3::new(0.0, 10.0, 0.0), 2.5);
+            let far = near.far_surface();
+            for position in [Vec2::ZERO, Vec2::new(24.0, 2.0), Vec2::new(32.0, -32.0)] {
+                let expected = reference.amount(&baseline, position, footprint_x, footprint_y);
+                assert_eq!(
+                    reference.amount(&near, position, footprint_x, footprint_y),
+                    expected
+                );
+                assert_eq!(
+                    reference.amount(&far, position, footprint_x, footprint_y),
+                    expected
+                );
+                near.project_camera(Vec3::new(1.01, 20.0, 2.04), 2.5);
+                assert_eq!(
+                    reference.amount(&near, position, footprint_x, footprint_y),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn registered_whitecap_reference_has_spatial_and_simulation_time_variation() {
+        let reference = WhitecapReference::from_shader();
+        let mut material = WaterMaterial::registered(false).unwrap();
+        let sample = |material: &WaterMaterial, index: i32| {
+            reference.amount(
+                material,
+                Vec2::new(
+                    (index % 64) as f32 * 0.7 - 22.4,
+                    (index / 64) as f32 * 0.7 - 22.4,
+                ),
+                Vec2::X * 0.01,
+                Vec2::Y * 0.01,
+            )
+        };
+        let initial: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
+        assert!(initial.iter().any(|amount| *amount > 0.01));
+        assert!(initial.windows(2).any(|values| values[0] != values[1]));
+        material.camera_time.w = 0.1;
+        let advanced: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
+        assert_ne!(initial, advanced);
+        assert_eq!(
+            advanced,
+            (0..4096)
+                .map(|index| sample(&material, index))
+                .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn quality_profiles_preserve_registered_waves_and_bound_every_real_mesh_triangle() {
         let high = WaterMaterial::registered(false).unwrap();
