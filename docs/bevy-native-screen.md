@@ -168,17 +168,25 @@ cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-
 他の指定値は`calm-medium`、`calm-high`、`typical-low`、`typical-medium`、`typical-high`である。
 shared preparationで実GameSessionのWeatherを確定し、既存の画質要求と環境投影を通す。
 Calmも登録済み波浪を使用する。気象値・波浪・skyのuniformだけを検証用の値へ置換しない。
-実飛行の初期Pilot poseを観測基点とし、静止、前進5 m、横移動1.5 m、pitch 6°、roll 10°の
-各区間の開始・終了画像を保存する。移動・姿勢変更は描画cameraだけに適用し、各区間は約0.5秒である。
+実飛行の初期Pilot poseを観測基点とし、静止、前進20 m（10 m/s）、横移動6 m（3 m/s）、pitch 6°、roll 10°の
+各区間の開始・終了画像を保存する。移動・姿勢変更は描画cameraだけに適用し、各区間は2秒である。
+開始画像のreadbackと保存が完了し、正常なRunning frameへ到達してから区間を開始する。
+区間中は撮影要求を発行せず、正常Running frameの実deltaだけを進捗へ加算する。
+区間内のframe数、最大delta、Pause回数を集計する。focus喪失、ProcessingDelay、過大delta、
+早期終了を含む中断区間はエラーとし、回復後のResumeによって連続観測の成功へ読み替えない。
 静止cameraでも波位相は共通RenderSampleのsimulation timeで進む。近景・遠景・skyのcameraと時刻を照合する。
 撮影ログのtickと時刻は要求時点の観測値であり、非同期画像の露光時点を保証する値ではない。
 
 observerはPause・Result・Retryで無効化する。Pause中のcore state・record・波時刻を保持し、
 異なる画質への交換と指定画質への復帰後、Resumeによるtick・record・波時刻の進行と同条件Retryを検査する。
 各撮影は既存のGPU資源・pipeline readinessを待ち、失敗・timeout・遅延callbackを成功扱いしない。
+画像変換・RGB変換・PNG圧縮と保存は既存`AsyncComputeTaskPool`で実行する。
+保持するsave taskは1件とし、case・stage・serialを照合した保存完了後だけ次段階へ進む。
+区間外のProcessingDelayは既存の安全停止と明示的な回復経路を維持する。GPU readbackの負荷は別途計測する。
 検証processだけにBevyの[RenderDiagnosticsPlugin](https://docs.rs/bevy/0.19.1/bevy/render/diagnostic/struct.RenderDiagnosticsPlugin.html)を追加し、
 完了時に取得済み`elapsed_gpu`のscene/pass別値をmsで出力する。timestamp featureの強制要求は行わず、未取得を明記する。
-画像の時間的aliasing・optic flow・白波OFF/ONは実GPU画像で評価する。
+画像の時間的aliasing・optic flow・白波OFF/ONは、native表示の直接観測と実GPU画像で評価する。
+開始・終了画像だけを連続表示の受入根拠にしない。
 このcamera-only観測とscene/pass計測は、物理入力応答、描画FPS非依存性、80 FPSやrelease予算の達成を証明しない。
 6条件の実行・画像評価結果は実施後に記録する。
 

@@ -22,6 +22,7 @@ use bevy::{
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
     shader::{Shader, ShaderCacheError, ShaderRef},
+    tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
     ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
@@ -39,6 +40,7 @@ use std::{
 };
 
 const READY_CONFIRMATION_FRAMES: usize = 5;
+const MOTION_DURATION: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WaterVerificationCase {
@@ -115,12 +117,12 @@ impl WaterMotion {
         if self != Self::Static {
             pose.translation += base.rotation
                 * Vec3::NEG_Z
-                * 5.0
+                * 20.0
                 * if self == Self::Forward { progress } else { 1.0 };
         }
         if matches!(self, Self::Lateral | Self::Pitch | Self::Roll) {
             pose.translation +=
-                base.rotation * Vec3::X * 1.5 * if self == Self::Lateral { progress } else { 1.0 };
+                base.rotation * Vec3::X * 6.0 * if self == Self::Lateral { progress } else { 1.0 };
         }
         if matches!(self, Self::Pitch | Self::Roll) {
             pose.rotation *= Quat::from_rotation_x(
@@ -140,12 +142,68 @@ enum MotionEndpoint {
     End,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct MotionMetrics {
+    elapsed: Duration,
+    frames: u32,
+    maximum_delta: Duration,
+    pauses: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionInterval {
+    Observing(MotionMetrics),
+    Complete(MotionMetrics),
+    Interrupted {
+        metrics: MotionMetrics,
+        phase: SessionPhase,
+    },
+}
+
+impl MotionInterval {
+    fn observe(self, phase: SessionPhase, delta: Duration) -> Self {
+        let Self::Observing(mut metrics) = self else {
+            return self;
+        };
+        metrics.maximum_delta = metrics.maximum_delta.max(delta);
+        if phase != SessionPhase::FlightRunning || delta > MAX_FRAME_DELTA {
+            metrics.pauses += u32::from(matches!(phase, SessionPhase::FlightPaused { .. }));
+            return Self::Interrupted { metrics, phase };
+        }
+        metrics.frames += 1;
+        metrics.elapsed = (metrics.elapsed + delta).min(MOTION_DURATION);
+        if metrics.elapsed == MOTION_DURATION {
+            Self::Complete(metrics)
+        } else {
+            Self::Observing(metrics)
+        }
+    }
+
+    fn progress(self) -> f32 {
+        let metrics = match self {
+            Self::Observing(metrics)
+            | Self::Complete(metrics)
+            | Self::Interrupted { metrics, .. } => metrics,
+        };
+        metrics.elapsed.as_secs_f32() / MOTION_DURATION.as_secs_f32()
+    }
+}
+
 pub(crate) fn project_observer(
-    verification: Res<Verification>,
+    mut verification: ResMut<Verification>,
     session: Res<NativeSession>,
+    time: Res<Time<Real>>,
     observer: Option<ResMut<VerificationObserver>>,
     mut commands: Commands,
 ) {
+    if matches!(
+        verification.stage,
+        VerificationStage::WaterMotion(_, MotionEndpoint::End)
+    ) && let Some(interval) = verification.motion_interval
+    {
+        verification.motion_interval =
+            Some(interval.observe(session.game.snapshot().phase(), time.delta()));
+    }
     if verification.failure.is_none()
         && session.game.snapshot().phase() == SessionPhase::FlightRunning
         && let VerificationStage::WaterMotion(motion, endpoint) = verification.stage
@@ -154,7 +212,9 @@ pub(crate) fn project_observer(
         let progress = if endpoint == MotionEndpoint::Start {
             0.0
         } else {
-            verification.stage_started.elapsed().as_secs_f32() / 0.5
+            verification
+                .motion_interval
+                .map_or(0.0, MotionInterval::progress)
         };
         let pose = motion.pose(base, progress);
         if let Some(mut observer) = observer {
@@ -440,6 +500,88 @@ enum VerificationStage {
     Finished,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CaptureIdentity {
+    stage: VerificationStage,
+    water_case: Option<WaterVerificationCase>,
+    serial: u64,
+}
+
+#[derive(Debug)]
+struct SavedCapture {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+}
+
+struct CaptureCompletion {
+    identity: CaptureIdentity,
+    result: Result<SavedCapture, String>,
+}
+
+enum CaptureState {
+    Idle,
+    Requested(CaptureIdentity),
+    Saving {
+        identity: CaptureIdentity,
+        task: Task<CaptureCompletion>,
+    },
+    Completed(CaptureCompletion),
+}
+
+impl CaptureState {
+    fn pending(&self) -> bool {
+        !matches!(self, Self::Idle)
+    }
+
+    fn accepts(&self, request: CaptureIdentity, current: CaptureIdentity) -> bool {
+        matches!(self, Self::Requested(expected) if *expected == request && current == request)
+    }
+
+    fn poll(&mut self, current: CaptureIdentity) -> Result<Option<SavedCapture>, String> {
+        if let Self::Saving { identity, task } = self
+            && let Some(completion) = check_ready(task)
+        {
+            let expected = *identity;
+            *self = Self::Completed(completion);
+            if expected != current {
+                return Err("Capture owner changed before saving completed".into());
+            }
+        }
+        if !matches!(self, Self::Completed(_)) {
+            return Ok(None);
+        }
+        let Self::Completed(completion) = std::mem::replace(self, Self::Idle) else {
+            unreachable!()
+        };
+        if completion.identity != current {
+            return Err("Stale capture completion does not match case/stage/serial".into());
+        }
+        completion.result.map(Some)
+    }
+}
+
+fn save_capture(identity: CaptureIdentity, image: Image, path: PathBuf) -> CaptureCompletion {
+    let result = image
+        .try_into_dynamic()
+        .map_err(|cause| format!("Screenshot conversion: {cause}"))
+        .and_then(|image| {
+            let image = image.to_rgb8();
+            if image.width() == 0 || image.height() == 0 {
+                return Err("Screenshot has zero dimensions".into());
+            }
+            image
+                .save(&path)
+                .map_err(|cause| format!("Screenshot {}: {cause}", path.display()))?;
+            Ok(SavedCapture {
+                path,
+                width: image.width(),
+                height: image.height(),
+            })
+        });
+    CaptureCompletion { identity, result }
+}
+
 #[derive(Resource)]
 pub(crate) struct Verification {
     directory: PathBuf,
@@ -450,8 +592,8 @@ pub(crate) struct Verification {
     scene_shaders: [Handle<Shader>; 2],
     readiness: RenderReadiness,
     processing_delay_reported: bool,
-    capture_pending: bool,
-    capture_result: Option<Result<(), String>>,
+    capture: CaptureState,
+    capture_serial: u64,
     launch_state: Option<TailFlightTickState>,
     paused_state: Option<TailFlightTickState>,
     terminal: Option<SessionResult>,
@@ -460,6 +602,7 @@ pub(crate) struct Verification {
     water_case: Option<WaterVerificationCase>,
     observer_base: Option<Transform>,
     motion_start_time: Option<f32>,
+    motion_interval: Option<MotionInterval>,
     paused_sample_count: usize,
     paused_water_time: Option<f32>,
     failure: Option<String>,
@@ -493,8 +636,8 @@ impl Verification {
                 scene_shaders: [asset_server.load("native_water.wgsl"), material_shader],
                 readiness: RenderReadiness::default(),
                 processing_delay_reported: false,
-                capture_pending: false,
-                capture_result: None,
+                capture: CaptureState::Idle,
+                capture_serial: 0,
                 launch_state: None,
                 paused_state: None,
                 terminal: None,
@@ -503,6 +646,7 @@ impl Verification {
                 water_case,
                 observer_base: None,
                 motion_start_time: None,
+                motion_interval: None,
                 paused_sample_count: 0,
                 paused_water_time: None,
                 failure: None,
@@ -521,6 +665,11 @@ impl Verification {
     }
 
     fn next(&mut self, stage: VerificationStage) {
+        self.motion_interval = matches!(
+            stage,
+            VerificationStage::WaterMotion(_, MotionEndpoint::End)
+        )
+        .then_some(MotionInterval::Observing(MotionMetrics::default()));
         self.stage = stage;
         self.stage_started = Instant::now();
         self.readiness.confirmation_frames = 0;
@@ -528,55 +677,34 @@ impl Verification {
 
     fn capture(&mut self, commands: &mut Commands, filename: &str) {
         let path = self.directory.join(filename);
-        let stage = self.stage;
-        let water_case = self.water_case;
-        self.capture_pending = true;
+        self.capture_serial += 1;
+        let identity = self.capture_identity();
+        self.capture = CaptureState::Requested(identity);
         commands.spawn(Screenshot::primary_window()).observe(
             move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
-                if !accept_capture(
-                    (verification.stage, verification.water_case),
-                    (stage, water_case),
-                    verification.capture_pending,
-                    verification.capture_result.is_some(),
-                    verification.failure.is_some(),
-                ) {
+                if verification.failure.is_some()
+                    || !verification
+                        .capture
+                        .accepts(identity, verification.capture_identity())
+                {
                     return;
                 }
-                let result = capture
-                    .image
-                    .clone()
-                    .try_into_dynamic()
-                    .map_err(|error| format!("Screenshot conversion: {error}"))
-                    .and_then(|image| {
-                        let image = image.to_rgb8();
-                        if image.width() == 0 || image.height() == 0 {
-                            return Err("Screenshot has zero dimensions".into());
-                        }
-                        image
-                            .save(&path)
-                            .map_err(|error| format!("Screenshot {}: {error}", path.display()))?;
-                        println!(
-                            "GPU capture saved: {} ({}x{})",
-                            path.display(),
-                            image.width(),
-                            image.height()
-                        );
-                        Ok(())
-                    });
-                verification.capture_result = Some(result);
+                let image = capture.image.clone();
+                let path = path.clone();
+                let task = AsyncComputeTaskPool::get()
+                    .spawn(async move { save_capture(identity, image, path) });
+                verification.capture = CaptureState::Saving { identity, task };
             },
         );
     }
-}
 
-fn accept_capture(
-    current: (VerificationStage, Option<WaterVerificationCase>),
-    requested: (VerificationStage, Option<WaterVerificationCase>),
-    pending: bool,
-    received: bool,
-    failed: bool,
-) -> bool {
-    current == requested && pending && !received && !failed
+    fn capture_identity(&self) -> CaptureIdentity {
+        CaptureIdentity {
+            stage: self.stage,
+            water_case: self.water_case,
+            serial: self.capture_serial,
+        }
+    }
 }
 
 pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<FlightInput>) {
@@ -623,7 +751,7 @@ pub(crate) fn verify_ui_layout(
     hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if !verification.capture_pending || verification.failure.is_some() {
+    if !verification.capture.pending() || verification.failure.is_some() {
         return;
     }
     let result = (|| {
@@ -870,6 +998,12 @@ fn advance_step(
     normal_frame: bool,
     commands: &mut Commands,
 ) -> Result<(), String> {
+    if let Some(MotionInterval::Interrupted { metrics, phase }) = verification.motion_interval {
+        return Err(format!(
+            "Continuous water motion was interrupted in {:?}: {metrics:?}, phase={phase:?}; interval acceptance is incomplete",
+            verification.stage
+        ));
+    }
     let water_time = if let Some(case) = verification.water_case
         && matches!(
             verification.stage,
@@ -916,10 +1050,59 @@ fn advance_step(
             "Verification requires a focused native window; focus safety remains enabled".into(),
         );
     }
-    if verification.capture_pending {
-        if let Some(result) = verification.capture_result.take() {
-            result?;
-            verification.capture_pending = false;
+    let phase = session.game.snapshot().phase();
+    if let SessionPhase::FlightPaused { reasons } = phase
+        && matches!(
+            verification.stage,
+            VerificationStage::Pilot
+                | VerificationStage::Chase
+                | VerificationStage::Pause
+                | VerificationStage::Abort
+                | VerificationStage::InputTrialFlight
+                | VerificationStage::WaterMotion(..)
+                | VerificationStage::WaterResumed
+        )
+    {
+        if !processing_delay_only(reasons) {
+            return Err(format!(
+                "Unexpected core pause in {:?}: {reasons:?}",
+                verification.stage
+            ));
+        }
+        if !verification.processing_delay_reported {
+            println!(
+                "GPU verification observed ProcessingDelay in {:?}; waiting for a normal focused frame before explicit Resume.",
+                verification.stage
+            );
+            verification.processing_delay_reported = true;
+        }
+        if normal_frame && verification.readiness.can_capture() {
+            session.action(MenuAction::Resume)?;
+            require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
+            println!(
+                "GPU verification explicitly resumed after ProcessingDelay recovery outside a continuous observation interval."
+            );
+            verification.processing_delay_reported = false;
+        }
+        return Ok(());
+    }
+    if verification.capture.pending() {
+        if matches!(
+            verification.stage,
+            VerificationStage::WaterMotion(_, MotionEndpoint::Start)
+        ) && !normal_frame
+        {
+            return Ok(());
+        }
+        let identity = verification.capture_identity();
+        if let Some(saved) = verification.capture.poll(identity)? {
+            println!(
+                "GPU capture saved: {} ({}x{}), serial={}",
+                saved.path.display(),
+                saved.width,
+                saved.height,
+                identity.serial
+            );
             let next = match verification.stage {
                 VerificationStage::Title => VerificationStage::Start,
                 VerificationStage::Setup => VerificationStage::Prepare,
@@ -987,40 +1170,6 @@ fn advance_step(
                 _ => return Err("Unexpected screenshot stage".into()),
             };
             verification.next(next);
-        }
-        return Ok(());
-    }
-    let phase = session.game.snapshot().phase();
-    if let SessionPhase::FlightPaused { reasons } = phase
-        && matches!(
-            verification.stage,
-            VerificationStage::Pilot
-                | VerificationStage::Chase
-                | VerificationStage::Pause
-                | VerificationStage::Abort
-                | VerificationStage::InputTrialFlight
-                | VerificationStage::WaterMotion(..)
-                | VerificationStage::WaterResumed
-        )
-    {
-        if !processing_delay_only(reasons) {
-            return Err(format!(
-                "Unexpected core pause in {:?}: {reasons:?}",
-                verification.stage
-            ));
-        }
-        if !verification.processing_delay_reported {
-            println!(
-                "GPU verification observed ProcessingDelay in {:?}; waiting for a normal focused frame before explicit Resume.",
-                verification.stage
-            );
-            verification.processing_delay_reported = true;
-        }
-        if normal_frame && verification.readiness.can_capture() {
-            session.action(MenuAction::Resume)?;
-            require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
-            println!("GPU verification explicitly resumed after ProcessingDelay recovery.");
-            verification.processing_delay_reported = false;
         }
         return Ok(());
     }
@@ -1208,7 +1357,10 @@ fn advance_step(
             }
             if verification.readiness.can_capture()
                 && (endpoint == MotionEndpoint::Start
-                    || verification.stage_started.elapsed() >= Duration::from_millis(500))
+                    || matches!(
+                        verification.motion_interval,
+                        Some(MotionInterval::Complete(_))
+                    ))
             {
                 if endpoint == MotionEndpoint::Start {
                     verification.motion_start_time = Some(clock);
@@ -1226,6 +1378,12 @@ fn advance_step(
                     motion.label(),
                     state.tick_index()
                 );
+                if let Some(MotionInterval::Complete(metrics)) = verification.motion_interval {
+                    println!(
+                        "Continuous water motion {}: {metrics:?}; no screenshot request inside the two-second interval",
+                        motion.label()
+                    );
+                }
                 verification.capture(
                     commands,
                     &format!(
@@ -1577,16 +1735,21 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::{
-        MotionEndpoint, READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion,
-        VerificationStage, VerificationUiHierarchy, WaterMotion, WaterVerificationCase,
-        accept_capture, contains_layout, shader_is_pending, within_ancestor_clip,
+        CaptureCompletion, CaptureIdentity, CaptureState, MOTION_DURATION, MenuAction,
+        MotionEndpoint, MotionInterval, MotionMetrics, NativeSession, READY_CONFIRMATION_FRAMES,
+        RenderReadiness, VerificationCompletion, VerificationStage, VerificationUiHierarchy,
+        WaterMotion, WaterVerificationCase, contains_layout, save_capture, shader_is_pending,
+        within_ancestor_clip,
     };
     use bevy::ecs::system::SystemState;
     use bevy::prelude::{
-        ChildOf, ComputedNode, Node, Overflow, Quat, Rect, Transform, UiGlobalTransform, Vec2,
-        Vec3, World,
+        ChildOf, ComputedNode, Image, Node, Overflow, Quat, Rect, Transform, UiGlobalTransform,
+        Vec2, Vec3, World,
     };
     use bevy::shader::ShaderCacheError;
+    use bevy::tasks::TaskPoolBuilder;
+    use birdman_game_core::{PauseReason, SessionPhase};
+    use std::time::Duration;
 
     #[test]
     fn water_cases_are_exactly_the_registered_weather_quality_cross_product() {
@@ -1617,12 +1780,13 @@ mod tests {
             assert!((start.rotation.dot(previous.rotation).abs() - 1.0).abs() < 1.0e-6);
             let end = motion.pose(base, 1.0);
             let expected_distance = match motion {
-                WaterMotion::Forward => 5.0,
-                WaterMotion::Lateral => 1.5,
+                WaterMotion::Forward => 20.0,
+                WaterMotion::Lateral => 6.0,
                 _ => 0.0,
             };
             assert!(
-                (end.translation.distance(start.translation) - expected_distance).abs() < 1.0e-6
+                (end.translation.distance(start.translation) - expected_distance).abs()
+                    < expected_distance.max(1.0) * f32::EPSILON * 8.0
             );
             if matches!(
                 motion,
@@ -1640,26 +1804,133 @@ mod tests {
     #[test]
     fn stale_or_failed_capture_callbacks_cannot_complete_the_next_case_or_stage() {
         let case = Some(WaterVerificationCase::parse("calm-low").unwrap());
-        let requested = (
-            VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::Start),
-            case,
-        );
-        assert!(accept_capture(requested, requested, true, false, false));
+        let requested = CaptureIdentity {
+            stage: VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::Start),
+            water_case: case,
+            serial: 1,
+        };
+        let mut capture = CaptureState::Requested(requested);
+        assert!(capture.accepts(requested, requested));
         for current in [
-            (
-                VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::End),
-                case,
-            ),
-            (
-                requested.0,
-                Some(WaterVerificationCase::parse("typical-low").unwrap()),
-            ),
+            CaptureIdentity {
+                stage: VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::End),
+                ..requested
+            },
+            CaptureIdentity {
+                water_case: Some(WaterVerificationCase::parse("typical-low").unwrap()),
+                ..requested
+            },
+            CaptureIdentity {
+                serial: 2,
+                ..requested
+            },
         ] {
-            assert!(!accept_capture(current, requested, true, false, false));
+            assert!(!capture.accepts(requested, current));
+            capture = CaptureState::Completed(CaptureCompletion {
+                identity: requested,
+                result: Err("original disk failure".into()),
+            });
+            assert!(capture.poll(current).unwrap_err().contains("Stale capture"));
+            capture = CaptureState::Requested(requested);
         }
-        assert!(!accept_capture(requested, requested, false, false, false));
-        assert!(!accept_capture(requested, requested, true, true, false));
-        assert!(!accept_capture(requested, requested, true, false, true));
+        capture = CaptureState::Completed(CaptureCompletion {
+            identity: requested,
+            result: Err("original disk failure".into()),
+        });
+        assert!(!capture.accepts(requested, requested));
+        assert_eq!(
+            capture.poll(requested).unwrap_err(),
+            "original disk failure"
+        );
+        assert!(!capture.pending());
+    }
+
+    #[test]
+    fn unfinished_save_task_cannot_advance_capture_or_report_success() {
+        let pool = TaskPoolBuilder::new().num_threads(1).build();
+        let identity = CaptureIdentity {
+            stage: VerificationStage::Title,
+            water_case: None,
+            serial: 1,
+        };
+        let task = pool.spawn(std::future::pending::<CaptureCompletion>());
+        let mut capture = CaptureState::Saving { identity, task };
+        assert!(capture.poll(identity).unwrap().is_none());
+        assert!(matches!(capture, CaptureState::Saving { .. }));
+        assert!(capture.pending());
+        assert!(!capture.accepts(identity, identity));
+    }
+
+    #[test]
+    fn capture_worker_retains_the_disk_path_and_original_failure() {
+        let identity = CaptureIdentity {
+            stage: VerificationStage::Title,
+            water_case: None,
+            serial: 1,
+        };
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir()
+            .join(format!(
+                "birdman-uncreated-capture-{}-{nonce}",
+                std::process::id()
+            ))
+            .join("capture.png");
+        let completion = save_capture(identity, Image::default(), path.clone());
+        assert_eq!(completion.identity, identity);
+        let failure = completion.result.unwrap_err();
+        assert!(failure.starts_with("Screenshot "));
+        assert!(failure.contains(path.to_str().unwrap()));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn continuous_motion_uses_normal_running_frames_and_cannot_recover_an_interrupted_interval() {
+        let mut interval = MotionInterval::Observing(MotionMetrics::default());
+        for _ in 0..20 {
+            interval = interval.observe(SessionPhase::FlightRunning, Duration::from_millis(100));
+        }
+        let MotionInterval::Complete(metrics) = interval else {
+            panic!("Normal interval must complete");
+        };
+        assert_eq!(metrics.elapsed, MOTION_DURATION);
+        assert_eq!(metrics.frames, 20);
+        assert_eq!(metrics.maximum_delta, Duration::from_millis(100));
+        assert_eq!(metrics.pauses, 0);
+        assert_eq!(interval.progress(), 1.0);
+        let paused_phases =
+            [PauseReason::ProcessingDelay, PauseReason::DocumentHidden].map(|reason| {
+                let mut session = NativeSession::default();
+                for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                    session.action(action).unwrap();
+                }
+                for _ in 0..3 {
+                    session.countdown(1.0);
+                }
+                session.game.pause(reason).unwrap();
+                session.game.snapshot().phase()
+            });
+        for (phase, delta, pauses) in [
+            (paused_phases[0], Duration::from_millis(200), 1),
+            (paused_phases[1], Duration::from_millis(16), 1),
+            (SessionPhase::FlightRunning, Duration::from_millis(151), 0),
+        ] {
+            let interrupted =
+                MotionInterval::Observing(MotionMetrics::default()).observe(phase, delta);
+            let MotionInterval::Interrupted { metrics, .. } = interrupted else {
+                panic!("Interrupted interval cannot pass");
+            };
+            assert_eq!(metrics.frames, 0);
+            assert_eq!(metrics.elapsed, Duration::ZERO);
+            assert_eq!(metrics.maximum_delta, delta);
+            assert_eq!(metrics.pauses, pauses);
+            assert_eq!(
+                interrupted.observe(SessionPhase::FlightRunning, MOTION_DURATION),
+                interrupted
+            );
+        }
     }
 
     #[test]
