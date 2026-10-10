@@ -96,6 +96,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
       startLoop: (callback) => { evidence.loop = callback; }, beginViewFrame: vi.fn(),
       stopLoop: () => { evidence.loop = null; }, render: renderFrame,
       setFlightPose, setPreparedFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
       setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: (value) => value,
       resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
     };

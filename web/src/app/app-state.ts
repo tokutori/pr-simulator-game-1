@@ -1,4 +1,5 @@
-import type { FlightCameraMode, FlightRenderPose, PresentationMode } from "../render/contracts/runtime.js";
+import type { FlightCameraMode, FlightRenderPose, LakeWaterQualityCleanupResult, PresentationMode } from "../render/contracts/runtime.js";
+import type { LakeWaterQuality } from "../render/contracts/lake-water.js";
 import type { UiAction } from "../render/contracts/ui.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
 import type { FlightSnapshot } from "../game/flight-snapshot.js";
@@ -123,7 +124,13 @@ export type FlightLogDownloadState =
   | { readonly kind: "requested"; readonly message: string }
   | { readonly kind: "failed"; readonly message: string };
 
+export type LakeWaterQualityUiState =
+  | { readonly kind: "ready"; readonly applied: LakeWaterQuality; readonly cleanup: LakeWaterQualityCleanupResult }
+  | { readonly kind: "applying"; readonly applied: LakeWaterQuality; readonly requested: LakeWaterQuality; readonly requestId: number }
+  | { readonly kind: "failed"; readonly applied: LakeWaterQuality; readonly requested: LakeWaterQuality; readonly message: string };
+
 export interface AppModel {
+  readonly lakeWaterQuality: LakeWaterQualityUiState;
   readonly flightLogDownload: FlightLogDownloadState;
   readonly nextFlightLogDownloadRequestId: number;
   readonly flightRecordSourceRevision: number;
@@ -237,6 +244,8 @@ export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ 
 export type GameSessionProjection = LegacyGameSessionProjection | TailGameSessionProjection;
 
 export type AppMessage =
+  | { readonly type: "lake-water-quality-applied"; readonly requestId: number; readonly quality: LakeWaterQuality; readonly cleanup: LakeWaterQualityCleanupResult }
+  | { readonly type: "lake-water-quality-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "flight-log-download-requested"; readonly requestId: number; readonly source: FlightLogSource }
   | { readonly type: "flight-log-download-failed"; readonly requestId: number; readonly source: FlightLogSource; readonly message: string }
   | { readonly type: "initialize" }
@@ -322,6 +331,7 @@ export type AppMessage =
     };
 
 export type AppEffect =
+  | { readonly type: "apply-lake-water-quality"; readonly requestId: number; readonly quality: LakeWaterQuality }
   | { readonly type: "download-flight-log"; readonly requestId: number; readonly source: FlightLogSource; readonly format: "csv" | "json" }
   | { readonly type: "initialize-presentation"; readonly requestId: number }
   | { readonly type: "request-permission"; readonly mode: "webxr" | "phone-vr"; readonly requestId: number }
@@ -350,6 +360,12 @@ export type AppEffect =
 export interface AppTransition {
   readonly model: AppModel;
   readonly effects: readonly AppEffect[];
+}
+
+export function canSelectLakeWaterQuality(model: AppModel): boolean {
+  return model.presentation.type === "ready" && model.pendingGameRequestId === null && model.lakeWaterQuality.kind !== "applying"
+    && (model.gameSession.kind === "setup" || (model.gameSession.kind === "paused-flight"
+      && model.gameSession.overlay.kind === "settings" && model.flightExecution.kind !== "stopped"));
 }
 
 export function gameSessionPhaseCode(session: GameSessionUiState): number {
@@ -437,6 +453,7 @@ export function gameSessionState(
 
 export function createInitialAppModel(): AppModel {
   return Object.freeze({
+    lakeWaterQuality: Object.freeze({ kind: "ready", applied: "high", cleanup: Object.freeze({ kind: "complete" }) }),
     flightLogDownload: Object.freeze({ kind: "idle" }),
     nextFlightLogDownloadRequestId: 1,
     flightRecordSourceRevision: 0,
@@ -522,6 +539,20 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "lake-water-quality-applied": {
+      const quality = model.lakeWaterQuality;
+      if (quality.kind !== "applying" || quality.requestId !== message.requestId || quality.requested !== message.quality) return transition(model);
+      return transition(withModel(model, {
+        lakeWaterQuality: Object.freeze({ kind: "ready", applied: message.quality, cleanup: Object.freeze({ ...message.cleanup }) })
+      }));
+    }
+    case "lake-water-quality-failed": {
+      const quality = model.lakeWaterQuality;
+      if (quality.kind !== "applying" || quality.requestId !== message.requestId) return transition(model);
+      return transition(withModel(model, {
+        lakeWaterQuality: Object.freeze({ kind: "failed", applied: quality.applied, requested: quality.requested, message: message.message })
+      }));
+    }
     case "flight-controller-ready": {
       const previous = model.flightExecution;
       const identity = message.identity;
@@ -1014,6 +1045,18 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
+  if (action.type === "activate" && action.controlId.startsWith("presentation-water-quality-")) {
+    if (!canSelectLakeWaterQuality(model)) return transition(model);
+    const quality = action.controlId.slice("presentation-water-quality-".length);
+    if (quality !== "low" && quality !== "medium" && quality !== "high") return transition(model);
+    if (quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready") return transition(model);
+    const requestId = model.nextRequestId;
+    if (!Number.isSafeInteger(requestId) || requestId < 1 || requestId >= Number.MAX_SAFE_INTEGER) return transition(model);
+    return transition(withModel(model, {
+      lakeWaterQuality: Object.freeze({ kind: "applying", applied: model.lakeWaterQuality.applied, requested: quality, requestId }),
+      nextRequestId: requestId + 1
+    }), [{ type: "apply-lake-water-quality", requestId, quality }]);
+  }
   if (action.type === "activate" && action.controlId === "game-briefing-technical") {
     if (model.pendingGameRequestId !== null || ![2, 3, 8].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
     return transition(withModel(model, { briefingDetailsOpen: !model.briefingDetailsOpen }));

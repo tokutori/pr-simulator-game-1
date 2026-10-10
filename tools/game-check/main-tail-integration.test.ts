@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js";
+import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 
 const teardowns: (() => Promise<void>)[] = [];
@@ -50,6 +50,7 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
     }),
     beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(), setLakeVisualCondition: vi.fn(),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
@@ -134,6 +135,59 @@ function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTi
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("waits for quality application and retains the selection through weather changes and Retry", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    let complete: () => void = () => { throw new Error("Quality request is missing"); };
+    trial.renderer.setLakeWaterQuality.mockImplementationOnce(() => new Promise<LakeWaterQualityCleanupResult>((resolve) => { complete = () => { resolve({ kind: "complete" }); }; }));
+    trial.click("presentation-water-quality-low");
+    expect(trial.renderer.setLakeWaterQuality).toHaveBeenCalledWith("low");
+    expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Lowを適用中");
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-high"]')?.getAttribute("aria-pressed")).toBe("true");
+    complete();
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true"); });
+    trial.click("game-setup-select-weather-2");
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0); trial.frame(10);
+    trial.click("game-flight-abort");
+    trial.click("game-result-retry");
+    trial.launch();
+    trial.frame(20); trial.frame(30);
+    trial.click("game-flight-pause");
+    trial.click("game-pause-open-settings");
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(trial.renderer.setLakeWaterQuality).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a quality failure without changing the Rust setup selection and permits retry", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    const weather = trial.documentRef.querySelector("output#game-setup-weather-current")?.textContent;
+    expect(weather).toBeTruthy();
+    trial.renderer.setLakeWaterQuality.mockRejectedValueOnce(new Error("Injected quality allocation failure"));
+    trial.click("presentation-water-quality-medium");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Injected quality allocation failure"); });
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-high"]')?.getAttribute("aria-pressed")).toBe("true");
+    expect(trial.documentRef.querySelector("output#game-setup-weather-current")?.textContent).toBe(weather);
+    trial.click("presentation-water-quality-medium");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-medium"]')?.getAttribute("aria-pressed")).toBe("true"); });
+    expect(trial.renderer.setLakeWaterQuality).toHaveBeenCalledTimes(2);
+  });
+
+  it("reflects an applied quality despite a reported post-swap cleanup failure", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.renderer.setLakeWaterQuality.mockResolvedValueOnce({ kind: "failed", message: "Injected retired geometry cleanup failure" });
+    trial.click("presentation-water-quality-medium");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-medium"]')?.getAttribute("aria-pressed")).toBe("true"); });
+    expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Mediumを適用した。旧geometryの解放に失敗した");
+  });
+
   it("uses selected and sealed sky through Retry and Replay while preserving unrecorded archive sky", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });

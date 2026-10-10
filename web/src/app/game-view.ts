@@ -17,7 +17,7 @@ import type {
   DifficultyUiState,
   PresentationUiState
 } from "./app-state.js";
-import { gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
+import { canSelectLakeWaterQuality, gameSessionCountdown, gameSessionPhaseCode } from "./app-state.js";
 
 const DEFAULT_STATUS_RECT = normalizedRect(0.08, 0.84, 0.84, 0.075);
 const RESULT_ANALYSIS_LAYOUT = Object.freeze({
@@ -92,6 +92,7 @@ export function createGameViewModel(
     if (!vrFlightPanel) {
       if (phaseCode === 6 && pauseOverlay === "settings") {
         controls.push(status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"));
+        controls.push(...lakeWaterQualityControls(model));
       } else if (phaseCode === 6 && pauseOverlay === "help") {
         controls.push(status("game-pause-help-info", "操縦方法", flightControlInstructions(model)));
       }
@@ -109,8 +110,11 @@ export function createGameViewModel(
       if (pauseOverlay === "settings") {
         controls.push(Object.freeze({
           ...status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"),
-          rect: normalizedRect(0.08, 0.24, 0.84, 0.25)
+          rect: normalizedRect(0.08, 0.20, 0.84, 0.12)
         }));
+        lakeWaterQualityControls(model).forEach((control, index) => controls.push(Object.freeze({
+          ...control, rect: normalizedRect(0.08, 0.35 + index * 0.09, 0.84, 0.08)
+        })));
       } else if (pauseOverlay === "help") {
         controls.push(Object.freeze({
           ...status("game-pause-help-info", "操縦方法", flightControlInstructions(model)),
@@ -122,7 +126,7 @@ export function createGameViewModel(
       buttons.forEach((entry, index) => {
         controls.push(Object.freeze({
           ...entry,
-          rect: normalizedRect(0.08, pauseOverlay === "menu" ? 0.4 + index * 0.11 : 0.72, 0.84, 0.085)
+          rect: normalizedRect(0.08, pauseOverlay === "menu" ? 0.4 + index * 0.11 : pauseOverlay === "settings" ? 0.84 : 0.72, 0.84, 0.085)
         }));
       });
     }
@@ -289,7 +293,7 @@ export function createGameViewModel(
       Object.freeze({ ...button("game-attract-return", "Titleへ戻る", true), rect: normalizedRect(0.04, 0.40, 0.92, 0.075) })
     );
   } else if ([1, 2, 3, 4, 8].includes(phaseCode)) {
-    const flowControls = phaseCode === 1 ? setupControls(model.difficulty, environment)
+    const flowControls = phaseCode === 1 ? setupControls(model, environment)
       : briefingControls(model, phaseCode, environment);
     const isTechnical = (control: UiControl): boolean => control.id === "game-briefing-technical" || control.id === "game-briefing-technical-content";
     const entries: UiControl[] = [...flowControls.filter((control) => !isTechnical(control)), ...buttons, ...flowControls.filter(isTechnical)];
@@ -825,7 +829,27 @@ function choiceDescription(axis: "preset" | "information" | "assistance" | "weat
   }
 }
 
-function setupControls(difficulty: DifficultyUiState, environment: EnvironmentBriefingProjection): UiControl[] {
+function lakeWaterQualityControls(model: AppModel): UiControl[] {
+  const state = model.lakeWaterQuality;
+  const label = (quality: "low" | "medium" | "high"): string => quality === "low" ? "Low" : quality === "medium" ? "Medium" : "High";
+  const description = state.kind === "applying" ? `${label(state.applied)} · ${label(state.requested)}を適用中`
+    : state.kind === "failed" ? `${label(state.applied)}を維持した。${label(state.requested)}の適用に失敗した: ${state.message}`
+    : state.cleanup.kind === "failed" ? `${label(state.applied)}を適用した。旧geometryの解放に失敗した: ${state.cleanup.message}`
+    : `${label(state.applied)} · 水面の描画密度を選択する。飛行物理と記録条件は維持する。`;
+  return [
+    status("presentation-water-quality-status", "水面画質", description),
+    ...(["low", "medium", "high"] as const).map((quality) => Object.freeze({
+      ...button(`presentation-water-quality-${quality}`, label(quality), canSelectLakeWaterQuality(model)),
+      presentation: Object.freeze({
+        kind: "choice" as const, group: "water-quality", groupLabel: "水面画質", selected: quality === state.applied,
+        description: quality === "low" ? "描画負荷を抑える" : quality === "medium" ? "描画負荷と波面密度の均衡" : "波面の描画密度を優先する"
+      })
+    }))
+  ];
+}
+
+function setupControls(model: AppModel, environment: EnvironmentBriefingProjection): UiControl[] {
+  const difficulty = model.difficulty;
   return [
     preparationProgress(1),
     status("game-setup-preset-current", "プリセット", difficulty.presetCode === 4 ? "Custom · プリセットから変更済み" : presetLabel(difficulty.presetCode)),
@@ -838,6 +862,7 @@ function setupControls(difficulty: DifficultyUiState, environment: EnvironmentBr
     status("game-setup-weather-current", "気象条件", weatherLabel(difficulty.weatherCode)),
     ...choiceButtons("weather", difficulty.weatherCode),
     weatherConditions(environment),
+    ...lakeWaterQualityControls(model),
     status("game-setup-confirmation", "設定の確定", "飛行準備へ進むと、選択した条件を確認する。")
   ];
 }

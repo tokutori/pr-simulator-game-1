@@ -415,6 +415,7 @@ class FakeRenderer implements RendererAdapter {
   setFlightPose(): void {}
   setPreparedFlightPose(): void {}
   setLakeVisualCondition(): void {}
+  setLakeWaterQuality(): Promise<{ readonly kind: "complete" }> { return Promise.resolve({ kind: "complete" }); }
   setLakeSkyCondition(): void {}
   setLakeVenueVisible(): void {}
 

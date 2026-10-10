@@ -250,6 +250,20 @@ for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fon
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "apply-lake-water-quality": {
+      const renderer = flightRenderer;
+      try {
+        if (renderer === null) throw new Error("水面rendererを利用できない");
+        void renderer.setLakeWaterQuality(effect.quality).then((cleanup) => {
+          if (flightRenderer === renderer) dispatch({ type: "lake-water-quality-applied", requestId: effect.requestId, quality: effect.quality, cleanup });
+        }, (error: unknown) => {
+          if (flightRenderer === renderer) dispatch({ type: "lake-water-quality-failed", requestId: effect.requestId, message: errorMessage(error) });
+        });
+      } catch (error: unknown) {
+        dispatch({ type: "lake-water-quality-failed", requestId: effect.requestId, message: errorMessage(error) });
+      }
+      return;
+    }
     case "download-flight-log": {
       const session = gameSession;
       if (!isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
@@ -539,7 +553,7 @@ async function initializePresentation(requestId: number): Promise<void> {
   try {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
-    const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, "high", headHudCanvas);
+    const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
     const session = initializedSession;

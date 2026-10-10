@@ -2,15 +2,15 @@ import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Vector3, Vector4 } from "three";
-import type { Camera, Color, Scene, Vector2 } from "three";
+import { BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Vector3, Vector4 } from "three";
+import type { Camera, Color, Object3D, Scene, Vector2 } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
 import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
 import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/render/camera/pilot-eye-point.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
-import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
+import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction, UiViewModel, UiPanel } from "../../web/src/render/contracts/ui.js";
@@ -21,7 +21,9 @@ import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { hitTestControl, intersectPanel } from "../../web/src/presentation/panel-interaction.js";
-import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import type { AppModel } from "../../web/src/app/app-state.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
@@ -31,6 +33,9 @@ import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js"
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
+import * as lakeWater from "../../web/src/render/contracts/lake-water.js";
+import * as lakeDetail from "../../web/src/render/engines/three/lake-detail-texture.js";
+import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -158,6 +163,157 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it("exchanges quality geometry and wave budgets without regenerating detail or reflection resources", async () => {
+    bundle.renderer.setFlightPose({ datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+      pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
+    bundle.renderer.render(frame());
+    const original = lakeDrawResources(driver);
+    const near: unknown = original.foreground.material.uniforms.uDetailNear?.value;
+    const far: unknown = original.foreground.material.uniforms.uDetailFar?.value;
+    const sky: unknown = original.foreground.material.uniforms.uSkyTexture?.value;
+    const reflection: unknown = original.foreground.material.uniforms.uReflectionTexture?.value;
+    expect(reflection).toBeDefined();
+    const detailCreation = vi.spyOn(lakeDetail, "createLakeDetailLayer");
+    try {
+      for (const quality of ["high", "medium", "low"] as const) {
+        const previous = original.foreground.mesh.geometry;
+        let disposals = 0;
+        const onDispose = (): void => { disposals += 1; };
+        previous.addEventListener("dispose", onDispose);
+        await bundle.renderer.setLakeWaterQuality(quality);
+        const profile = lakeWater.lakeWaterQualityProfile(quality);
+        expect(original.foreground.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
+        expect(original.foreground.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
+        expect(original.backing.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
+        expect(disposals).toBe(1);
+        expect(Object.is(original.foreground.mesh.geometry, previous)).toBe(false);
+        expect(Object.is(original.foreground.material.uniforms.uDetailNear?.value, near)).toBe(true);
+        expect(Object.is(original.foreground.material.uniforms.uDetailFar?.value, far)).toBe(true);
+        expect(Object.is(original.foreground.material.uniforms.uSkyTexture?.value, sky)).toBe(true);
+        expect(Object.is(original.foreground.material.uniforms.uReflectionTexture?.value, reflection)).toBe(true);
+        expect(original.foreground.material.uniforms.uTimeSeconds?.value).toBe(12.345);
+        expect(original.backing.material.uniforms.uTimeSeconds?.value).toBe(12.345);
+        previous.removeEventListener("dispose", onDispose);
+      }
+      const unchanged = original.foreground.mesh.geometry;
+      await bundle.renderer.setLakeWaterQuality("low");
+      expect(Object.is(original.foreground.mesh.geometry, unchanged)).toBe(true);
+      expect(detailCreation).not.toHaveBeenCalled();
+    } finally { detailCreation.mockRestore(); }
+  });
+
+  it("settles staged quality only after the next frame exchanges the current environment resources", async () => {
+    const counts: unknown[] = [];
+    let request: Promise<LakeWaterQualityCleanupResult> = Promise.resolve({ kind: "complete" });
+    let applied = false;
+    const detailCreation = vi.spyOn(lakeDetail, "createLakeDetailLayer");
+    bundle.renderer.startLoop((timestamp) => {
+      bundle.renderer.beginViewFrame();
+      if (timestamp === 1) {
+        bundle.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, windEastMetersPerSecond: 2, patternSeed: 42 });
+        request = bundle.renderer.setLakeWaterQuality("high");
+        void request.then(() => { applied = true; });
+      }
+      bundle.renderer.render(frame({ timestampMs: timestamp }));
+      counts.push(lakeDrawResources(driver).foreground.material.uniforms.uWaveCount?.value);
+    });
+    try {
+      driver.tick(1, null);
+      expect(applied).toBe(false);
+      expect(counts).toEqual([6]);
+      expect(detailCreation).not.toHaveBeenCalled();
+      driver.tick(2, null);
+      await request;
+      expect(applied).toBe(true);
+      expect(counts).toEqual([6, 18]);
+      expect(detailCreation).toHaveBeenCalledTimes(2);
+      const foreground = lakeDrawResources(driver).foreground.material;
+      expect(vectorUniform(foreground, "uWindVelocity").toArray()).toEqual([2, -0.54, 0, 0]);
+      bundle.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, windNorthMetersPerSecond: 3, patternSeed: 43 });
+      expect(foreground.uniforms.uWaveCount?.value).toBe(18);
+    } finally {
+      bundle.renderer.stopLoop();
+      detailCreation.mockRestore();
+      bundle.renderer.setLakeVisualCondition(lakeWater.DEFAULT_LAKE_VISUAL_CONDITION);
+      await bundle.renderer.setLakeWaterQuality("low");
+    }
+  });
+
+  it("retains all applied lake resources when quality preparation fails", async () => {
+    bundle.renderer.render(frame());
+    const foreground = lakeDrawResources(driver).foreground;
+    const geometry = foreground.mesh.geometry;
+    const waves: unknown = foreground.material.uniforms.uWaveKAmplitude?.value;
+    const detail: unknown = foreground.material.uniforms.uDetailNear?.value;
+    const spectrum = vi.spyOn(lakeWater, "createLakeWaveSpectrum");
+    const failure = new Error("Injected wave allocation failure");
+    spectrum.mockImplementationOnce(() => { throw failure; });
+    try {
+      await expect(bundle.renderer.setLakeWaterQuality("high")).rejects.toBe(failure);
+      expect(Object.is(foreground.mesh.geometry, geometry)).toBe(true);
+      expect(Object.is(foreground.material.uniforms.uWaveKAmplitude?.value, waves)).toBe(true);
+      expect(Object.is(foreground.material.uniforms.uDetailNear?.value, detail)).toBe(true);
+      expect(foreground.material.uniforms.uWaveCount?.value).toBe(6);
+      await expect(bundle.renderer.setLakeWaterQuality("unknown" as LakeWaterQuality)).rejects.toThrow(RangeError);
+      expect(Object.is(foreground.mesh.geometry, geometry)).toBe(true);
+    } finally { spectrum.mockRestore(); }
+    await bundle.renderer.setLakeWaterQuality("medium");
+    expect(foreground.material.uniforms.uWaveCount?.value).toBe(10);
+    await bundle.renderer.setLakeWaterQuality("low");
+  });
+
+  it("rejects an unfinished staged quality command on disposal", async () => {
+    const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
+    const trial = createThreeRenderer(canvas, canvas, null, "low", canvas);
+    const localDriver = capture.driver;
+    if (localDriver === null) throw new Error("Missing private recording driver");
+    let request: Promise<LakeWaterQualityCleanupResult> | null = null;
+    const readRequest = (): Promise<LakeWaterQualityCleanupResult> | null => request;
+    trial.renderer.startLoop(() => {
+      trial.renderer.beginViewFrame();
+      request = trial.renderer.setLakeWaterQuality("high");
+    });
+    localDriver.tick(1, null);
+    const pendingRequest = readRequest();
+    if (pendingRequest === null) throw new Error("Missing staged quality request");
+    const rejected = expect(pendingRequest).rejects.toThrow("disposed");
+    trial.renderer.dispose();
+    await rejected;
+    await expect(trial.renderer.setLakeWaterQuality("medium")).rejects.toThrow("disposed");
+  });
+
+  it("reports post-swap cleanup failure as an applied quality and keeps the common view consistent", async () => {
+    bundle.renderer.render(frame());
+    const foreground = lakeDrawResources(driver).foreground;
+    const previous = foreground.mesh.geometry;
+    const failure = new Error("Injected geometry disposal failure");
+    const onDispose = (): never => { throw failure; };
+    previous.addEventListener("dispose", onDispose);
+    const session = gameSessionState(1, 0, null);
+    if (session === null) throw new Error("Missing quality selection session");
+    const initial: AppModel = {
+      ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" }, gameSession: session,
+      lakeWaterQuality: { kind: "ready", applied: "low", cleanup: { kind: "complete" } }
+    };
+    const requested = updateApp(initial, { type: "ui-action", action: { type: "activate", controlId: "presentation-water-quality-high" } });
+    try {
+      const cleanup = await bundle.renderer.setLakeWaterQuality("high");
+      expect(cleanup).toEqual({ kind: "failed", message: failure.message });
+      expect(Object.is(foreground.mesh.geometry, previous)).toBe(false);
+      expect(foreground.mesh.geometry.getAttribute("position").count).toBe(225 ** 2);
+      expect(foreground.material.uniforms.uWaveCount?.value).toBe(18);
+      const completed = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "high", cleanup }).model;
+      expect(completed.lakeWaterQuality).toEqual({ kind: "ready", applied: "high", cleanup });
+      const controls = createGameViewModel(completed, null).panels[0]?.controls ?? [];
+      expect(controls.find((control) => control.id === "presentation-water-quality-high")).toMatchObject({ presentation: { selected: true } });
+      expect(controls.find((control) => control.id === "presentation-water-quality-status")).toMatchObject({ value: `Highを適用した。旧geometryの解放に失敗した: ${failure.message}` });
+    } finally {
+      previous.removeEventListener("dispose", onDispose);
+      previous.dispose();
+      await bundle.renderer.setLakeWaterQuality("low");
+    }
+  });
 
   it.each(["registered-archive", "unknown-archive", "calm-archive", "legacy-archive", "current-calm"] as const)(
     "applies the actual Rust %s venue projection without hiding water or aircraft", (recordKind) => {
@@ -941,6 +1097,27 @@ function phonePanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
     id: "phone-eye-button", kind: "button", label: "Phone Eye", enabled: true,
     rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
   }] }] };
+}
+
+function lakeDrawResources(driver: RecordingDriver): {
+  readonly foreground: { readonly mesh: Mesh; readonly material: ShaderMaterial };
+  readonly backing: { readonly mesh: Mesh; readonly material: ShaderMaterial };
+} {
+  const candidates: { readonly mesh: Mesh; readonly material: ShaderMaterial }[] = [];
+  driver.scene?.traverse((object) => {
+    if (isLakeDrawMesh(object)) {
+      candidates.push({ mesh: object, material: object.material });
+    }
+  });
+  const foreground = candidates.find((entry) => entry.mesh.geometry.getAttribute("position").count > 4);
+  const backing = candidates.find((entry) => entry.mesh.geometry.getAttribute("position").count === 4);
+  if (foreground === undefined || backing === undefined) throw new Error("Missing lake render resources");
+  return { foreground, backing };
+}
+
+function isLakeDrawMesh(object: Object3D): object is Mesh<BufferGeometry, ShaderMaterial> {
+  return object instanceof Mesh && object.geometry instanceof BufferGeometry
+    && object.material instanceof ShaderMaterial && "uWaveCount" in object.material.uniforms;
 }
 
 function vectorUniform(material: ShaderMaterial, name: string): Vector4 {

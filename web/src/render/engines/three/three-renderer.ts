@@ -28,7 +28,7 @@ import {
 } from "three";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import type { Object3D } from "three";
-import type { BackendFrame, FlightCameraMode, FlightRenderPose, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
+import type { BackendFrame, FlightCameraMode, FlightRenderPose, LakeWaterQualityCleanupResult, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import type { CinematicCameraView } from "../../contracts/camera.js";
 import { uiPanelComposition } from "../../contracts/ui.js";
 import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
@@ -103,25 +103,20 @@ function titleCameraPoseForViewport(width: number, height: number, pitchHalfRadi
     )
   );
 }
-interface LakeVisualResources {
-  readonly windSpeed: number;
-  readonly near: LakeDetailLayer;
-  readonly far: LakeDetailLayer;
+interface LakeWaveResources {
   readonly waveKAmplitude: readonly Vector4[];
   readonly waveOmegaPhase: readonly Vector4[];
   readonly waveCount: number;
   readonly visualWaveHeight: number;
 }
 
-function createLakeVisualResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeVisualResources {
-  const windSpeed = Math.hypot(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond);
-  if (!Number.isFinite(windSpeed) || windSpeed < 0.05 ||
-      !Number.isFinite(condition.detailAmplitudeScale) || condition.detailAmplitudeScale <= 0 || condition.detailAmplitudeScale > 3 ||
-      !Number.isSafeInteger(condition.patternSeed) || condition.patternSeed < 0) {
-    throw new RangeError("Invalid render-only lake visual condition");
-  }
-  const directionX = condition.windEastMetersPerSecond / windSpeed;
-  const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
+interface LakeVisualResources extends LakeWaveResources {
+  readonly windSpeed: number;
+  readonly near: LakeDetailLayer;
+  readonly far: LakeDetailLayer;
+}
+
+function createLakeWaveResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeWaveResources {
   const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
   const renderedWaves = selectLakeWaveComponentsForQuality(spectrum, quality);
   const renderedWaveBands = renderedWaves.map((wave) =>
@@ -137,15 +132,6 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
     const directionCount = directionCountByBand[band] ?? 0;
     return directionCount > 0 ? Math.sqrt(3 / directionCount) : 1;
   });
-  const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
-  let far: LakeDetailLayer;
-  try {
-    far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ,
-      { count: 900, featureScaleMeters: 4.5, heightScale: 0.5 });
-  } catch (error) {
-    near.texture.dispose();
-    throw error;
-  }
   const waveKAmplitude = Array.from({ length: 24 }, (_, index) => {
     const wave = renderedWaves[index];
     return wave === undefined ? new Vector4() : new Vector4(
@@ -165,10 +151,31 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
     );
   });
   return {
-    windSpeed, near, far, waveKAmplitude, waveOmegaPhase,
+    waveKAmplitude, waveOmegaPhase,
     waveCount: renderedWaves.length,
     visualWaveHeight: spectrum.significantWaveHeightMeters * LAKE_VISUAL_HEIGHT_SCALE
   };
+}
+
+function createLakeVisualResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeVisualResources {
+  const windSpeed = Math.hypot(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond);
+  if (!Number.isFinite(windSpeed) || windSpeed < 0.05 ||
+      !Number.isFinite(condition.detailAmplitudeScale) || condition.detailAmplitudeScale <= 0 || condition.detailAmplitudeScale > 3 ||
+      !Number.isSafeInteger(condition.patternSeed) || condition.patternSeed < 0) {
+    throw new RangeError("Invalid render-only lake visual condition");
+  }
+  const waves = createLakeWaveResources(condition, quality);
+  const directionX = condition.windEastMetersPerSecond / windSpeed;
+  const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
+  const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
+  try {
+    const far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ,
+      { count: 900, featureScaleMeters: 4.5, heightScale: 0.5 });
+    return { ...waves, windSpeed, near, far };
+  } catch (error) {
+    near.texture.dispose();
+    throw error;
+  }
 }
 
 function sameLakeVisualCondition(a: LakeVisualCondition, b: LakeVisualCondition): boolean {
@@ -222,8 +229,9 @@ export function createThreeRenderer(
   scene.add(sun.target);
   const sunOffset = new Vector3(0, sunDistanceMeters, 0);
 
-  const waterQuality = lakeWaterQualityProfile(lakeQuality);
-  const waterGeometry = createLakeGeometry(waterQuality.meshSegments);
+  let activeLakeQuality = lakeQuality;
+  const waterQuality = lakeWaterQualityProfile(activeLakeQuality);
+  let waterGeometry = createLakeGeometry(waterQuality.meshSegments);
   let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
   let lakeResources = createLakeVisualResources(activeLakeCondition, lakeQuality);
   const waterMaterial = new ShaderMaterial({
@@ -413,6 +421,11 @@ export function createThreeRenderer(
   let framePhase: "idle" | "physics" | "view" = "idle";
   let frameViewport: ViewportSize | null = null;
   let renderedTrackingMount: Pose | null = null;
+  type LakeQualityRequest = Readonly<{
+    quality: LakeWaterQuality;
+    resolve: (cleanup: LakeWaterQualityCleanupResult) => void;
+    reject: (reason: unknown) => void;
+  }>;
   type PendingViewInputs = Readonly<{
     flightPose?: FlightRenderPose | null;
     preparedFlightPose?: FlightRenderPose | null;
@@ -423,10 +436,38 @@ export function createThreeRenderer(
     lake?: LakeVisualCondition;
     sky?: LakeSkyCondition | null;
     venueVisible?: boolean;
+    lakeQuality?: LakeQualityRequest;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
   const stageViewInputs = (inputs: PendingViewInputs): void => {
     pendingViewInputs = Object.freeze({ ...pendingViewInputs, ...inputs });
+  };
+  const applyLakeQuality = (request: LakeQualityRequest): void => {
+    if (request.quality === activeLakeQuality) { request.resolve({ kind: "complete" }); return; }
+    let nextWaves: LakeWaveResources;
+    let nextGeometry: PlaneGeometry;
+    try {
+      nextWaves = createLakeWaveResources(activeLakeCondition, request.quality);
+      nextGeometry = createLakeGeometry(lakeWaterQualityProfile(request.quality).meshSegments);
+    } catch (error: unknown) {
+      request.reject(error);
+      return;
+    }
+    const previousGeometry = waterGeometry;
+    lakeUniforms.waveKAmplitude.value = nextWaves.waveKAmplitude;
+    lakeUniforms.waveOmegaPhase.value = nextWaves.waveOmegaPhase;
+    lakeUniforms.waveCount.value = nextWaves.waveCount;
+    lakeUniforms.visualWaveHeight.value = nextWaves.visualWaveHeight;
+    lakeResources = { ...lakeResources, ...nextWaves };
+    water.geometry = nextGeometry;
+    waterGeometry = nextGeometry;
+    activeLakeQuality = request.quality;
+    try {
+      previousGeometry.dispose();
+      request.resolve({ kind: "complete" });
+    } catch (error: unknown) {
+      request.resolve({ kind: "failed", message: errorMessage(error) });
+    }
   };
   const currentExternalCameraPose = (): Pose | null => {
     if (flightPose === null || flightCameraMode === "pilot") return null;
@@ -481,15 +522,21 @@ export function createThreeRenderer(
         const pending = pendingViewInputs;
         pendingViewInputs = null;
         if (pending !== null) {
-          if ("flightPose" in pending) rendererAdapter.setFlightPose(pending.flightPose ?? null);
-          if ("preparedFlightPose" in pending) rendererAdapter.setPreparedFlightPose(pending.preparedFlightPose ?? null);
-          if (pending.cameraMode !== undefined) rendererAdapter.setFlightCameraMode(pending.cameraMode);
-          if ("cameraView" in pending) rendererAdapter.setCinematicCameraView(pending.cameraView ?? null);
-          if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
-          if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
-          if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
-          if ("sky" in pending) rendererAdapter.setLakeSkyCondition(pending.sky ?? null);
-          if (pending.venueVisible !== undefined) rendererAdapter.setLakeVenueVisible(pending.venueVisible);
+          try {
+            if ("flightPose" in pending) rendererAdapter.setFlightPose(pending.flightPose ?? null);
+            if ("preparedFlightPose" in pending) rendererAdapter.setPreparedFlightPose(pending.preparedFlightPose ?? null);
+            if (pending.cameraMode !== undefined) rendererAdapter.setFlightCameraMode(pending.cameraMode);
+            if ("cameraView" in pending) rendererAdapter.setCinematicCameraView(pending.cameraView ?? null);
+            if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
+            if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
+            if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
+            if ("sky" in pending) rendererAdapter.setLakeSkyCondition(pending.sky ?? null);
+            if (pending.venueVisible !== undefined) rendererAdapter.setLakeVenueVisible(pending.venueVisible);
+          } catch (error: unknown) {
+            pending.lakeQuality?.reject(error);
+            throw error;
+          }
+          if (pending.lakeQuality !== undefined) applyLakeQuality(pending.lakeQuality);
         }
         frameViewport = width > 0 && height > 0 ? Object.freeze({ x: width, y: height, pixelRatio }) : null;
         framePhase = "physics";
@@ -685,6 +732,7 @@ export function createThreeRenderer(
       if (disposed) return;
       if (loopRunning) renderer.setAnimationLoop(null);
       loopRunning = false;
+      pendingViewInputs?.lakeQuality?.reject(new Error("Renderer was disposed before lake quality could be applied"));
       pendingViewInputs = null;
       framePhase = "idle";
       frameViewport = null;
@@ -727,7 +775,7 @@ export function createThreeRenderer(
       ensureActive(disposed);
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ lake: condition }); return; }
       if (sameLakeVisualCondition(activeLakeCondition, condition)) return;
-      const next = createLakeVisualResources(condition, lakeQuality);
+      const next = createLakeVisualResources(condition, activeLakeQuality);
       lakeUniforms.windSpeed.value = next.windSpeed;
       lakeUniforms.windVelocity.value.set(condition.windEastMetersPerSecond, -condition.windNorthMetersPerSecond, 0, 0);
       lakeUniforms.detailScale.value = condition.detailAmplitudeScale;
@@ -741,6 +789,16 @@ export function createThreeRenderer(
       lakeResources.far.texture.dispose();
       lakeResources = next;
       activeLakeCondition = condition;
+    },
+    setLakeWaterQuality(quality: LakeWaterQuality) {
+      return new Promise<LakeWaterQualityCleanupResult>((resolve, reject) => {
+        ensureActive(disposed);
+        if (!["low", "medium", "high"].includes(quality)) throw new RangeError("Invalid lake water quality");
+        if (pendingViewInputs?.lakeQuality !== undefined) throw new Error("Lake water quality is already pending");
+        const request: LakeQualityRequest = Object.freeze({ quality, resolve, reject });
+        if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ lakeQuality: request }); return; }
+        applyLakeQuality(request);
+      });
     },
     setLakeSkyCondition(condition: LakeSkyCondition | null) {
       ensureActive(disposed);
