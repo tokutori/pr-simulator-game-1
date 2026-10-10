@@ -3,6 +3,7 @@ use super::{
     diagnostics::{failure_summary, result_reason_label},
     frame_rate::FrameRate,
     native_session::{MenuAction, NativeSession},
+    water_quality::{WaterQuality, WaterQualitySelection, quality_menu_visible},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
@@ -23,6 +24,7 @@ const FLIGHT_CONTROL_GUIDE: &str =
 #[derive(Clone, Copy)]
 enum UiAction {
     Session(MenuAction),
+    WaterQuality(WaterQuality),
     TechnicalDetails,
 }
 
@@ -41,6 +43,8 @@ pub(crate) enum UiText {
     PreparationSteps,
     Session,
     AssistanceSelection,
+    WaterQualitySelection,
+    WaterQualityChoice(WaterQuality),
     Action(MenuAction),
     Hud,
     TechnicalDetails,
@@ -53,6 +57,7 @@ pub(crate) enum UiPanel {
     Navigation,
     PreparationSteps,
     AssistanceChoices,
+    WaterQualityChoices,
     FlightHud,
     TechnicalDetails,
 }
@@ -65,6 +70,7 @@ pub(crate) struct TechnicalDisclosure {
 
 #[derive(SystemParam)]
 pub(crate) struct UiViewQueries<'w, 's> {
+    quality: Res<'w, WaterQualitySelection>,
     buttons: Query<
         'w,
         's,
@@ -102,6 +108,7 @@ impl TechnicalDisclosure {
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
     commands.init_resource::<TechnicalDisclosure>();
+    commands.init_resource::<WaterQualitySelection>();
     commands.spawn((
         UiText::FrameRate,
         Text::new("FPS —"),
@@ -223,6 +230,45 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
                                 MenuAction::Automatic,
                             ] {
                                 spawn_session_button(buttons, &font, action);
+                            }
+                        });
+                });
+            parent
+                .spawn((
+                    UiPanel::WaterQualityChoices,
+                    Node {
+                        display: Display::None,
+                        width: percent(100),
+                        min_width: px(0),
+                        flex_shrink: 0.0,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: px(8),
+                        ..default()
+                    },
+                ))
+                .with_children(|choices| {
+                    choices.spawn((
+                        UiText::WaterQualitySelection,
+                        Text::new(""),
+                        TextFont {
+                            font: font.0.clone().into(),
+                            font_size: FontSize::Px(18.0),
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                    choices
+                        .spawn(Node {
+                            width: percent(100),
+                            min_width: px(0),
+                            flex_wrap: FlexWrap::Wrap,
+                            column_gap: px(8),
+                            row_gap: px(8),
+                            ..default()
+                        })
+                        .with_children(|buttons| {
+                            for quality in WaterQuality::ALL {
+                                spawn_quality_button(buttons, &font, quality);
                             }
                         });
                 });
@@ -418,12 +464,57 @@ fn spawn_session_button(parent: &mut ChildSpawnerCommands, font: &NativeFont, ac
         });
 }
 
+fn quality_choice_label(quality: WaterQuality, selection: &WaterQualitySelection) -> String {
+    if quality == selection.applied() {
+        format!("✓ {}", quality.label())
+    } else {
+        quality.label().into()
+    }
+}
+
+fn spawn_quality_button(
+    parent: &mut ChildSpawnerCommands,
+    font: &NativeFont,
+    quality: WaterQuality,
+) {
+    parent
+        .spawn((
+            Button,
+            MenuButton(UiAction::WaterQuality(quality)),
+            session_button_node(MenuAction::Title),
+            BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
+            BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                UiText::WaterQualityChoice(quality),
+                Text::new(quality_choice_label(
+                    quality,
+                    &WaterQualitySelection::default(),
+                )),
+                Node {
+                    width: percent(100),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+                TextFont {
+                    font: font.0.clone().into(),
+                    font_size: FontSize::Px(20.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
+}
+
 pub(crate) fn button_actions(
     buttons: Query<(Entity, &Interaction, &MenuButton), Changed<Interaction>>,
     mut session: ResMut<NativeSession>,
     mut exit: MessageWriter<AppExit>,
     mut focus: ResMut<InputFocus>,
     mut disclosure: ResMut<TechnicalDisclosure>,
+    mut quality: ResMut<WaterQualitySelection>,
 ) {
     for (entity, interaction, button) in &buttons {
         if *interaction != Interaction::Pressed {
@@ -434,8 +525,18 @@ pub(crate) fn button_actions(
         {
             continue;
         }
+        if matches!(button.0, UiAction::WaterQuality(_))
+            && !quality.can_select(session.game.snapshot().phase())
+        {
+            continue;
+        }
         focus.set(entity, FocusCause::Pressed);
         match button.0 {
+            UiAction::WaterQuality(requested) => {
+                if let Some(next) = quality.request(requested, session.game.snapshot().phase()) {
+                    *quality = next;
+                }
+            }
             UiAction::TechnicalDetails => disclosure.toggle(),
             UiAction::Session(MenuAction::Exit) => {
                 exit.write(AppExit::Success);
@@ -758,6 +859,7 @@ pub(crate) fn update_ui(
     for (button, interaction, mut node, mut background, mut border) in &mut view.buttons {
         let visible = match button.0 {
             UiAction::Session(action) => visible_action(phase, action),
+            UiAction::WaterQuality(_) => quality_menu_visible(phase),
             UiAction::TechnicalDetails => !details.is_empty(),
         };
         node.display = if visible {
@@ -766,6 +868,15 @@ pub(crate) fn update_ui(
             Display::None
         };
         let emphasis = match button.0 {
+            UiAction::WaterQuality(quality) => {
+                if view.quality.can_select(phase) {
+                    ButtonEmphasis::Choice {
+                        selected: quality == view.quality.applied(),
+                    }
+                } else {
+                    ButtonEmphasis::Disabled
+                }
+            }
             UiAction::Session(action) if !action_available(&session, action) => {
                 ButtonEmphasis::Disabled
             }
@@ -780,6 +891,7 @@ pub(crate) fn update_ui(
             UiPanel::SessionContent | UiPanel::Navigation => true,
             UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
             UiPanel::AssistanceChoices => phase == SessionPhase::FlightSetup,
+            UiPanel::WaterQualityChoices => quality_menu_visible(phase),
             UiPanel::FlightHud => visible_hud(phase, details_open),
             UiPanel::TechnicalDetails => details_open,
         };
@@ -893,6 +1005,10 @@ pub(crate) fn update_ui(
                 control_mode_label(session.control_mode),
                 control_mode_description(session.control_mode),
             )),
+            UiText::WaterQualitySelection => Cow::Owned(view.quality.status()),
+            UiText::WaterQualityChoice(quality) => {
+                Cow::Owned(quality_choice_label(*quality, &view.quality))
+            }
             UiText::Action(action) => {
                 Cow::Owned(action_label(phase, *action, session.control_mode))
             }
@@ -927,6 +1043,167 @@ mod tests {
     };
 
     #[test]
+    fn quality_choices_use_the_applied_resource_and_preserve_core_state_and_retry() {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<WaterQualitySelection>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::water::WaterMaterial>>()
+            .insert_resource(NativeFont(Handle::default()))
+            .add_systems(Startup, (super::super::world::setup_world, setup_ui))
+            .add_systems(
+                Update,
+                (
+                    button_actions,
+                    super::super::water::apply_quality,
+                    update_ui,
+                )
+                    .chain(),
+            );
+        app.update();
+        let quality_panel = app
+            .world_mut()
+            .query::<(Entity, &UiPanel)>()
+            .iter(app.world())
+            .find_map(|(entity, panel)| {
+                matches!(panel, UiPanel::WaterQualityChoices).then_some(entity)
+            })
+            .unwrap();
+        assert_eq!(
+            app.world().get::<Node>(quality_panel).unwrap().display,
+            Display::None
+        );
+        let quality_buttons: Vec<_> = app
+            .world_mut()
+            .query::<(Entity, &MenuButton)>()
+            .iter(app.world())
+            .filter_map(|(entity, button)| match button.0 {
+                UiAction::WaterQuality(quality) => Some((quality, entity)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(quality_buttons.len(), 3);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Start)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(quality_panel).unwrap().display,
+            Display::Flex
+        );
+        for quality in WaterQuality::ALL {
+            let before = app.world().resource::<NativeSession>().game.snapshot();
+            let entity = quality_buttons
+                .iter()
+                .find(|(candidate, _)| *candidate == quality)
+                .unwrap()
+                .1;
+            app.world_mut()
+                .entity_mut(entity)
+                .insert(Interaction::Pressed);
+            app.update();
+            assert_eq!(
+                app.world().resource::<WaterQualitySelection>().applied(),
+                quality
+            );
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                before
+            );
+            let mut selected = 0;
+            for (kind, text) in app
+                .world_mut()
+                .query::<(&UiText, &Text)>()
+                .iter(app.world())
+            {
+                if let UiText::WaterQualityChoice(candidate) = kind {
+                    assert_eq!(text.0.starts_with('✓'), *candidate == quality);
+                    selected += usize::from(text.0.starts_with('✓'));
+                }
+            }
+            assert_eq!(selected, 1);
+            app.world_mut().entity_mut(entity).insert(Interaction::None);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(quality_panel).unwrap().display,
+            Display::None
+        );
+        let medium = quality_buttons
+            .iter()
+            .find(|(quality, _)| *quality == WaterQuality::Medium)
+            .unwrap()
+            .1;
+        app.world_mut()
+            .entity_mut(medium)
+            .insert(Interaction::Pressed);
+        app.update();
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::High
+        );
+        app.world_mut().entity_mut(medium).insert(Interaction::None);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Pause)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().get::<Node>(quality_panel).unwrap().display,
+            Display::Flex
+        );
+        let before = app.world().resource::<NativeSession>().game.snapshot();
+        let record = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap();
+        let identity = record.header();
+        let sample_count = record.sample_count();
+        app.world_mut()
+            .entity_mut(medium)
+            .insert(Interaction::Pressed);
+        app.update();
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Medium
+        );
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot(), before);
+        assert_eq!(session.game.flight_record().unwrap().header(), identity);
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Abort).unwrap();
+            session.action(MenuAction::Retry).unwrap();
+        }
+        app.update();
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Medium
+        );
+        assert_eq!(
+            app.world().get::<Node>(quality_panel).unwrap().display,
+            Display::None
+        );
+    }
+
+    #[test]
     fn unchanged_derived_labels_preserve_every_text_change_tick() {
         let mut session = NativeSession::default();
         for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
@@ -941,6 +1218,7 @@ mod tests {
         app.insert_resource(session)
             .init_resource::<CameraMode>()
             .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
             .add_systems(Update, update_ui);
         let entities = [
             UiText::PreparationSteps,
@@ -978,6 +1256,7 @@ mod tests {
         app.init_resource::<NativeSession>()
             .init_resource::<CameraMode>()
             .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
             .add_systems(Update, update_ui);
         let entities = [
             UiText::Session,
@@ -1192,6 +1471,7 @@ mod tests {
         app.init_resource::<NativeSession>()
             .init_resource::<CameraMode>()
             .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
             .init_resource::<InputFocus>()
             .add_message::<AppExit>()
             .add_systems(Update, (button_actions, update_ui).chain());
@@ -1319,6 +1599,7 @@ mod tests {
         app.insert_resource(session)
             .init_resource::<CameraMode>()
             .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
             .init_resource::<InputFocus>()
             .add_message::<AppExit>()
             .add_systems(Update, (button_actions, update_ui).chain());
@@ -1646,6 +1927,7 @@ mod tests {
         app.insert_resource(session)
             .init_resource::<CameraMode>()
             .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
             .init_resource::<InputFocus>()
             .add_message::<AppExit>()
             .add_systems(Update, (button_actions, update_ui).chain());

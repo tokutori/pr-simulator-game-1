@@ -2,14 +2,19 @@ use super::{
     CameraMode, MAX_FRAME_DELTA,
     native_session::{FlightInput, MenuAction, NativeSession},
     ui::{MenuButton, UiPanel},
+    water::NearWaterSurface,
+    water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
+use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     material::descriptor::PipelineDescriptor,
     prelude::*,
     render::{
         ExtractSchedule, MainWorld, RenderApp,
+        mesh::RenderMesh,
+        render_asset::RenderAssets,
         render_resource::{CachedPipelineState, PipelineCache},
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
@@ -75,6 +80,7 @@ impl RenderReadiness {
 fn observe_render_readiness(
     mut main_world: ResMut<MainWorld>,
     pipelines: Option<Res<PipelineCache>>,
+    meshes: Option<Res<RenderAssets<RenderMesh>>>,
 ) {
     let Some(verification) = main_world.get_resource::<Verification>() else {
         return;
@@ -86,8 +92,9 @@ fn observe_render_readiness(
         assets_loaded: true,
         ..default()
     };
+    let scene_shaders = verification.scene_shaders.clone();
     let asset_server = main_world.resource::<AssetServer>();
-    for shader in &verification.scene_shaders {
+    for shader in &scene_shaders {
         readiness.assets_loaded &= asset_server.is_loaded_with_dependencies(shader.id());
         if let Some((load, dependencies, recursive)) = asset_server.get_load_states(shader.id()) {
             let error = match (load, dependencies, recursive) {
@@ -103,6 +110,19 @@ fn observe_render_readiness(
             }
         }
     }
+    let mut near = main_world.query_filtered::<&Mesh3d, With<NearWaterSurface>>();
+    match near.single(&main_world) {
+        Ok(mesh) => {
+            readiness.assets_loaded &= meshes
+                .as_ref()
+                .is_some_and(|meshes| meshes.get(mesh.0.id()).is_some());
+        }
+        Err(error) => {
+            readiness
+                .error
+                .get_or_insert_with(|| format!("Verification near mesh: {error}"));
+        }
+    }
     if let Some(pipelines) = pipelines {
         readiness.pending_pipelines = pipelines.waiting_pipelines().count();
         let mut unresolved_pipelines = 0;
@@ -113,10 +133,10 @@ fn observe_render_readiness(
                         &pipeline.descriptor
                         && let Some(fragment) = &descriptor.fragment
                     {
-                        if fragment.shader.id() == verification.scene_shaders[0].id() {
+                        if fragment.shader.id() == scene_shaders[0].id() {
                             readiness.water_pipelines += 1;
                         }
-                        if fragment.shader.id() == verification.scene_shaders[1].id() {
+                        if fragment.shader.id() == scene_shaders[1].id() {
                             readiness.material_pipelines += 1;
                         }
                     }
@@ -266,6 +286,9 @@ enum VerificationStage {
     Chase,
     Pause,
     PausedCapture,
+    QualityLow,
+    QualityMedium,
+    QualityHigh,
     Resume,
     Abort,
     Result,
@@ -501,10 +524,16 @@ fn contains_layout(outer: Rect, inner: Rect) -> bool {
         && inner.max.y <= outer.max.y + 2.0
 }
 
+#[derive(SystemParam)]
+pub(crate) struct VerificationPresentation<'w> {
+    camera: ResMut<'w, CameraMode>,
+    quality: ResMut<'w, WaterQualitySelection>,
+}
+
 pub(crate) fn advance(
     mut verification: ResMut<Verification>,
     mut session: ResMut<NativeSession>,
-    mut camera: ResMut<CameraMode>,
+    mut presentation: VerificationPresentation,
     windows: Query<&Window>,
     time: Res<Time<Real>>,
     mut commands: Commands,
@@ -516,7 +545,7 @@ pub(crate) fn advance(
     let result = advance_step(
         &mut verification,
         &mut session,
-        &mut camera,
+        (&mut presentation.camera, &mut presentation.quality),
         &windows,
         time.delta() <= MAX_FRAME_DELTA,
         &mut commands,
@@ -542,11 +571,12 @@ pub(crate) fn advance(
 fn advance_step(
     verification: &mut Verification,
     session: &mut NativeSession,
-    camera: &mut CameraMode,
+    presentation: (&mut CameraMode, &mut WaterQualitySelection),
     windows: &Query<&Window>,
     normal_frame: bool,
     commands: &mut Commands,
 ) -> Result<(), String> {
+    let (camera, quality) = presentation;
     let started = match verification.started {
         Some(started) => started,
         None => {
@@ -590,7 +620,25 @@ fn advance_step(
                     VerificationStage::Chase
                 }
                 VerificationStage::Chase => VerificationStage::Pause,
-                VerificationStage::PausedCapture => VerificationStage::Resume,
+                VerificationStage::PausedCapture => {
+                    *quality = quality
+                        .request(WaterQuality::Low, session.game.snapshot().phase())
+                        .ok_or("Paused quality selection is unavailable")?;
+                    VerificationStage::QualityLow
+                }
+                VerificationStage::QualityLow => {
+                    *quality = quality
+                        .request(WaterQuality::Medium, session.game.snapshot().phase())
+                        .ok_or("Medium quality selection is unavailable")?;
+                    VerificationStage::QualityMedium
+                }
+                VerificationStage::QualityMedium => {
+                    *quality = quality
+                        .request(WaterQuality::High, session.game.snapshot().phase())
+                        .ok_or("High quality selection is unavailable")?;
+                    VerificationStage::QualityHigh
+                }
+                VerificationStage::QualityHigh => VerificationStage::Resume,
                 VerificationStage::Result => VerificationStage::Retry,
                 VerificationStage::InputTrialResult => {
                     commands.queue(|world: &mut World| {
@@ -766,6 +814,41 @@ fn advance_step(
                 && verification.readiness.can_capture()
             {
                 verification.capture(commands, "03a-paused.png");
+            }
+        }
+        VerificationStage::QualityLow
+        | VerificationStage::QualityMedium
+        | VerificationStage::QualityHigh => {
+            if !matches!(phase, SessionPhase::FlightPaused { .. })
+                || session.game.snapshot().tail_flight_state() != verification.paused_state
+            {
+                return Err("Quality exchange changed paused core state".into());
+            }
+            if quality.pending().is_some() {
+                return Ok(());
+            }
+            let (expected, filename) = match verification.stage {
+                VerificationStage::QualityLow => (WaterQuality::Low, "03b-paused-quality-low.png"),
+                VerificationStage::QualityMedium => {
+                    (WaterQuality::Medium, "03c-paused-quality-medium.png")
+                }
+                VerificationStage::QualityHigh => {
+                    (WaterQuality::High, "03d-paused-quality-high.png")
+                }
+                _ => return Err("Unexpected quality capture stage".into()),
+            };
+            if quality.applied() != expected {
+                return Err(format!("Quality exchange failed: {}", quality.status()));
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                println!(
+                    "Paused water quality: {} / {} cells",
+                    expected.label(),
+                    expected.profile().near_cells
+                );
+                verification.capture(commands, filename);
             }
         }
         VerificationStage::Resume => {
