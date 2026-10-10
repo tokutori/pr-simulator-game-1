@@ -36,6 +36,7 @@ import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import * as lakeWater from "../../web/src/render/contracts/lake-water.js";
 import * as lakeDetail from "../../web/src/render/engines/three/lake-detail-texture.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
+import { createLakeWaveProjection, LAKE_WAVE_PROJECTION_GLSL } from "../../web/src/render/engines/three/lake-wave-projection.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -169,6 +170,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
     bundle.renderer.render(frame());
     const original = lakeDrawResources(driver);
+    expect(original.foreground.material.vertexShader).toContain(LAKE_WAVE_PROJECTION_GLSL);
+    expect(original.foreground.material.vertexShader).toContain("projectLakeWaves(p, waveXZ");
+    expect(original.foreground.material.vertexShader).not.toContain("3.1 * slopeEnergy");
     const near: unknown = original.foreground.material.uniforms.uDetailNear?.value;
     const far: unknown = original.foreground.material.uniforms.uDetailFar?.value;
     const sky: unknown = original.foreground.material.uniforms.uSkyTexture?.value;
@@ -183,9 +187,14 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         previous.addEventListener("dispose", onDispose);
         await bundle.renderer.setLakeWaterQuality(quality);
         const profile = lakeWater.lakeWaterQualityProfile(quality);
+        const projection = createLakeWaveProjection(lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, quality);
         expect(original.foreground.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
         expect(original.foreground.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         expect(original.backing.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
+        expect(original.foreground.material.uniforms.uChoppiness?.value).toBe(projection.choppiness);
+        expect(original.backing.material.uniforms.uChoppiness?.value).toBe(projection.choppiness);
+        expect(original.foreground.material.uniforms.uGridSpacingGradient?.value).toBe(projection.spacing.gradientMagnitude);
+        expect(original.backing.material.uniforms.uGridSpacingGradient?.value).toBe(projection.spacing.gradientMagnitude);
         expect(disposals).toBe(1);
         expect(Object.is(original.foreground.mesh.geometry, previous)).toBe(false);
         expect(Object.is(original.foreground.material.uniforms.uDetailNear?.value, near)).toBe(true);
