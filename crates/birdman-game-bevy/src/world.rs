@@ -697,7 +697,13 @@ mod tests {
             session.action(MenuAction::Start).unwrap();
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
-            session.countdown(3.0);
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            assert_eq!(
+                session.game.snapshot().phase(),
+                birdman_game_core::SessionPhase::FlightRunning
+            );
         }
         app.update();
         let sample = RenderSample::from_display(
