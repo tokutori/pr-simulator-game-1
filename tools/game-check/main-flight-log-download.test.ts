@@ -38,6 +38,7 @@ async function fixture(archive: false | "tail" | "legacy" = false) {
   const renderer = {
     startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
   } satisfies RendererAdapter;

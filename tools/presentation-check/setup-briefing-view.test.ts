@@ -55,7 +55,23 @@ describe("Flight Setup and Briefing presentation", () => {
     validateUiViewModel(view);
     const controls = view.panels[0]?.controls ?? [];
     const choices = controls.filter((control) => control.kind === "button" && control.presentation?.kind === "choice");
-    expect(choices).toHaveLength(18);
+    const setupChoices = choices.filter((choice) => choice.id.startsWith("game-setup-select-"));
+    expect(setupChoices).toHaveLength(18);
+    expect(setupChoices.map((choice) => choice.id)).toEqual(
+      ([["preset", 4], ["information", 5], ["assistance", 4], ["weather", 5]] as const)
+        .flatMap(([axis, count]) => Array.from({ length: count }, (_candidateSlot, code) => `game-setup-select-${axis}-${String(code)}`))
+    );
+    expect(choices).toHaveLength(21);
+    expect(choices.filter((choice) => choice.id.startsWith("presentation-water-quality-"))).toMatchObject([
+      { id: "presentation-water-quality-low", label: "Low", enabled: true,
+        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: false, description: "描画負荷を抑える" } },
+      { id: "presentation-water-quality-medium", label: "Medium", enabled: true,
+        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: false, description: "描画負荷と波面密度の均衡" } },
+      { id: "presentation-water-quality-high", label: "High", enabled: true,
+        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: true, description: "波面の描画密度を優先する" } }
+    ]);
+    expect(statusValue(view, "presentation-water-quality-status"))
+      .toBe("High · 水面の描画密度を選択する。飛行物理と記録条件は維持する。");
     expect(choices.map((choice) => choice.id)).not.toContain("game-setup-select-preset-4");
     expect(controls.map((control) => control.id)).not.toContain("game-state");
     expect(controls.map((control) => control.id)).not.toContain("game-setup-weather");
@@ -261,7 +277,9 @@ describe("Flight Setup and Briefing presentation", () => {
     const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
     try {
       adapter.render(createGameViewModel(model, null));
-      expect(root.querySelectorAll("fieldset")).toHaveLength(4);
+      expect(root.querySelectorAll("fieldset")).toHaveLength(5);
+      expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
+        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
       const selected = root.querySelector<HTMLButtonElement>('[data-control-id="game-setup-select-information-0"]');
       const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
       if (selected === null || shell === null) throw new Error("Missing Setup DOM");
@@ -269,7 +287,8 @@ describe("Flight Setup and Briefing presentation", () => {
       expect(selected.textContent).toContain("利用可能な計器");
       selected.focus();
       shell.scrollTop = 40;
-      adapter.render(createGameViewModel({ ...model, difficulty: { ...model.difficulty, informationCode: 2 } }, null));
+      model = { ...model, difficulty: { ...model.difficulty, informationCode: 2 } };
+      adapter.render(createGameViewModel(model, null));
       expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
       expect(documentRef.activeElement).toBe(selected);
       expect(shell.scrollTop).toBe(40);
@@ -277,6 +296,25 @@ describe("Flight Setup and Briefing presentation", () => {
       expect(root.querySelector('[data-control-id="game-setup-back"]')?.getAttribute("data-emphasis")).toBe("secondary");
       selected.click();
       expect(actions).toEqual([{ type: "activate", controlId: "game-setup-select-information-0" }]);
+      const difficulty = model.difficulty;
+      const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "presentation-water-quality-low" } });
+      if (requested.model.lakeWaterQuality.kind !== "applying") throw new Error("Missing quality request");
+      adapter.render(createGameViewModel(requested.model, null));
+      expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
+      expect(documentRef.activeElement).toBe(selected);
+      expect(shell.scrollTop).toBe(40);
+      expect(root.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Lowを適用中");
+      model = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: requested.model.lakeWaterQuality.requestId,
+        quality: "low", cleanup: { kind: "complete" } }).model;
+      adapter.render(createGameViewModel(model, null));
+      expect(model.difficulty).toBe(difficulty);
+      expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
+      expect(documentRef.activeElement).toBe(selected);
+      expect(shell.scrollTop).toBe(40);
+      expect(selected.getAttribute("aria-pressed")).toBe("false");
+      expect(root.querySelector('[data-control-id="game-setup-select-information-2"]')?.getAttribute("aria-pressed")).toBe("true");
+      expect(root.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
+      expect(root.querySelector('[data-control-id="presentation-water-quality-high"]')?.getAttribute("aria-pressed")).toBe("false");
       model = preparationModel(3);
       adapter.render(createGameViewModel(model, null));
       const disclosure = root.querySelector<HTMLButtonElement>('[data-control-id="game-briefing-technical"]');

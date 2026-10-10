@@ -2,7 +2,7 @@ import type { Pose, Vec2, Vec3 } from "./math.js";
 import type { CinematicCameraView } from "./camera.js";
 import type { MenuScrollContext, UiPanel, UiViewModel } from "./ui.js";
 import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
-import type { LakeVisualCondition } from "./lake-water.js";
+import type { LakeVisualCondition, LakeWaterQuality } from "./lake-water.js";
 import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
@@ -79,6 +79,10 @@ export interface SelectRay {
   readonly timestampMs: number;
 }
 
+export type LakeWaterQualityCleanupResult =
+  | { readonly kind: "complete" }
+  | { readonly kind: "failed"; readonly message: string };
+
 export interface RendererAdapter {
   startLoop(callback: (timestampMs: number, viewer: ViewerFrame) => void): void;
   beginViewFrame(): void;
@@ -87,6 +91,7 @@ export interface RendererAdapter {
   setFlightPose(pose: FlightRenderPose | null): void;
   setPreparedFlightPose(pose: FlightRenderPose | null): void;
   setLakeVisualCondition(condition: LakeVisualCondition): void;
+  setLakeWaterQuality(quality: LakeWaterQuality): Promise<LakeWaterQualityCleanupResult>;
   setLakeSkyCondition(condition: LakeSkyCondition | null): void;
   setLakeVenueVisible(visible: boolean): void;
   setFlightCameraMode(mode: FlightCameraMode): void;

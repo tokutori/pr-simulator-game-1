@@ -429,6 +429,7 @@ function createFixture() {
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(),
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeVisualCondition: vi.fn<RendererAdapter["setLakeVisualCondition"]>(),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
     setFlightCameraMode: vi.fn<RendererAdapter["setFlightCameraMode"]>(),

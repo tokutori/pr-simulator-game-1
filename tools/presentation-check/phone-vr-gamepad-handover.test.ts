@@ -448,6 +448,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const renderer = {
     startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
     setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), setStereoPresentation: vi.fn(),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     transformTrackingPose: (pose) => pose
   } satisfies RendererAdapter;
   const input = createBrowserPhoneVrGamepadInputPort(browser, browser);
