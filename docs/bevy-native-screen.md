@@ -147,6 +147,32 @@ shader/assetの確定エラーは原因を保持して返す。timeoutはGPU初�
 通常モードの安全停止・再開条件は変更しない。
 scripted logical inputの検査は、実キーボード・マウスによる操作の受入と区別する。
 
+### 湖面の6条件GPU観測
+
+検証専用の`--verify-water`は、Calm/TypicalとLow/Medium/Highの6条件から1条件を指定する。
+各条件は独立したprocessと保存先で実行する。通常起動と通常の`--verify`は既存の経路を維持する。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-calm-low --verify-water calm-low
+```
+
+他の指定値は`calm-medium`、`calm-high`、`typical-low`、`typical-medium`、`typical-high`である。
+shared preparationで実GameSessionのWeatherを確定し、既存の画質要求と環境投影を通す。
+Calmも登録済み波浪を使用する。気象値・波浪・skyのuniformだけを検証用の値へ置換しない。
+実飛行の初期Pilot poseを観測基点とし、静止、前進5 m、横移動1.5 m、pitch 6°、roll 10°の
+各区間の開始・終了画像を保存する。移動・姿勢変更は描画cameraだけに適用し、各区間は約0.5秒である。
+静止cameraでも波位相は共通RenderSampleのsimulation timeで進む。近景・遠景・skyのcameraと時刻を照合する。
+撮影ログのtickと時刻は要求時点の観測値であり、非同期画像の露光時点を保証する値ではない。
+
+observerはPause・Result・Retryで無効化する。Pause中のcore state・record・波時刻を保持し、
+異なる画質への交換と指定画質への復帰後、Resumeによるtick・record・波時刻の進行と同条件Retryを検査する。
+各撮影は既存のGPU資源・pipeline readinessを待ち、失敗・timeout・遅延callbackを成功扱いしない。
+検証processだけにBevyの[RenderDiagnosticsPlugin](https://docs.rs/bevy/0.19.1/bevy/render/diagnostic/struct.RenderDiagnosticsPlugin.html)を追加し、
+完了時に取得済み`elapsed_gpu`のscene/pass別値をmsで出力する。timestamp featureの強制要求は行わず、未取得を明記する。
+画像の時間的aliasing・optic flow・白波OFF/ONは実GPU画像で評価する。
+このcamera-only観測とscene/pass計測は、物理入力応答、描画FPS非依存性、80 FPSやrelease予算の達成を証明しない。
+6条件の実行・画像評価結果は実施後に記録する。
+
 ## 検証状態
 
 Windows 11 / AMD Radeon 860MのVulkanでnativeウィンドウの起動を確認した。

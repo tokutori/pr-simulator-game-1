@@ -2,7 +2,7 @@ use super::{
     CameraMode,
     environment::{EnvironmentSun, EnvironmentSurface, NativeEnvironment},
     native_session::{NativeSession, TailDisplay},
-    projection::{aircraft_transform, camera_transform, sunlight_transform},
+    projection::{VerificationObserver, aircraft_transform, camera_transform, sunlight_transform},
     water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
 };
 use bevy::ecs as bevy_ecs;
@@ -500,6 +500,7 @@ pub(crate) fn project_world(
     camera: Res<CameraMode>,
     mut history: ResMut<RenderHistory>,
     fixed: Res<Time<Fixed>>,
+    observer: Option<Res<VerificationObserver>>,
     mut transforms: Query<(&WorldProjection, &mut Transform)>,
     mut water: ResMut<Assets<WaterMaterial>>,
 ) {
@@ -536,6 +537,10 @@ pub(crate) fn project_world(
             )
         },
     );
+    let projected_camera = observer
+        .as_ref()
+        .filter(|_| running)
+        .map_or(projected_camera, |observer| observer.0);
     for (projection, mut transform) in &mut transforms {
         match projection {
             WorldProjection::Aircraft => *transform = projected,
@@ -682,6 +687,101 @@ mod tests {
             projected_transform(app, WorldProjection::LakeSurface).translation,
             Vec3::new(center.x, 0.0, center.y)
         );
+    }
+
+    #[test]
+    fn verification_observer_changes_only_render_camera_and_preserves_the_common_sample() {
+        let mut app = projection_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            session.countdown(3.0);
+        }
+        app.update();
+        let sample = RenderSample::from_display(
+            &app.world()
+                .resource::<NativeSession>()
+                .display_state()
+                .unwrap(),
+        );
+        let before = app.world().resource::<NativeSession>().game.snapshot();
+        let count = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        let observer = Transform::from_xyz(31.0, 14.0, -47.0).with_rotation(Quat::from_euler(
+            EulerRot::YXZ,
+            0.3,
+            0.1,
+            0.2,
+        ));
+        app.insert_resource(VerificationObserver(observer));
+        app.update();
+        assert_eq!(
+            projected_transform(&mut app, WorldProjection::FlightCamera),
+            observer
+        );
+        assert_eq!(
+            projected_transform(&mut app, WorldProjection::Aircraft),
+            sample.aircraft
+        );
+        assert_eq!(
+            projected_transform(&mut app, WorldProjection::SkyDome).translation,
+            observer.translation
+        );
+        let center = patch_center(observer.translation);
+        assert_eq!(
+            projected_transform(&mut app, WorldProjection::LakeSurface).translation,
+            Vec3::new(center.x, 0.0, center.y)
+        );
+        for (_, material) in app.world().resource::<Assets<WaterMaterial>>().iter() {
+            assert_eq!(
+                material.camera_time,
+                observer
+                    .translation
+                    .extend(sample.simulation_time_seconds as f32)
+            );
+        }
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            before
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            count
+        );
+        app.world_mut().remove_resource::<VerificationObserver>();
+        app.update();
+        assert_sample_projection(&mut app, sample, true);
+        app.insert_resource(VerificationObserver(observer));
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Pause)
+            .unwrap();
+        app.update();
+        assert_sample_projection(&mut app, sample, true);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Abort)
+            .unwrap();
+        app.update();
+        assert_sample_projection(&mut app, sample, true);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Retry)
+            .unwrap();
+        app.update();
+        assert_sample_projection(&mut app, sample, false);
     }
 
     #[test]

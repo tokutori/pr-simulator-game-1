@@ -50,6 +50,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             .join("Fonts/meiryo.ttc");
     let mut verification_directory = None;
     let mut verification_size = None;
+    let mut water_verification = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--font" => {
@@ -72,9 +73,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--verify-size requires WIDTHxHEIGHT")?,
                 )?);
             }
+            "--verify-water" => {
+                water_verification = Some(verification::WaterVerificationCase::parse(
+                    &arguments
+                        .next()
+                        .ok_or("--verify-water requires WEATHER-QUALITY")?,
+                )?);
+            }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--verify DIR [--verify-size WIDTHxHEIGHT]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。"
+                    "birdman-game-bevy [--font PATH] [--verify DIR [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
                 );
                 return Ok(());
             }
@@ -83,6 +91,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     }
     if verification_size.is_some() && verification_directory.is_none() {
         return Err("--verify-size requires --verify DIR".into());
+    }
+    if water_verification.is_some() && verification_directory.is_none() {
+        return Err("--verify-water requires --verify DIR".into());
     }
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
@@ -144,12 +155,22 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     register_input(&mut app);
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {
-        let (verification, completion) =
-            verification::Verification::try_new(directory, app.world().resource::<AssetServer>())?;
+        if water_verification.is_some() {
+            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        }
+        let (verification, completion) = verification::Verification::try_new(
+            directory,
+            app.world().resource::<AssetServer>(),
+            water_verification,
+        )?;
         verification_completion = Some(completion);
         app.insert_resource(verification)
             .add_plugins(verification::VerificationRenderPlugin)
             .add_systems(PreUpdate, verification::supply_input.after(read_input))
+            .add_systems(
+                Update,
+                verification::project_observer.before(world::project_world),
+            )
             .add_systems(Update, verification::advance.after(ui::update_ui))
             .add_systems(
                 PostUpdate,

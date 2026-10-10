@@ -1,5 +1,9 @@
+use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{FlightState, UnitQuaternion};
+
+#[derive(Resource)]
+pub(crate) struct VerificationObserver(pub(crate) Transform);
 
 pub(crate) fn ned_to_engine(components: [f64; 3]) -> Vec3 {
     Vec3::new(

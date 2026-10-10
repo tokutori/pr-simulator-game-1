@@ -1,14 +1,17 @@
 use super::{
     CameraMode, MAX_FRAME_DELTA,
+    environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{FlightInput, MenuAction, NativeSession},
+    projection::{VerificationObserver, aircraft_transform, camera_transform},
     ui::{MenuButton, UiPanel, UiText},
-    water::NearWaterSurface,
+    water::{NearWaterSurface, WaterMaterial},
     water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
+    diagnostic::DiagnosticsStore,
     material::descriptor::PipelineDescriptor,
     prelude::*,
     render::{
@@ -22,8 +25,12 @@ use bevy::{
     ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
-    PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult, SessionSnapshot,
-    TailFlightTickState,
+    PHYSICS_HZ, PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult,
+    SessionSnapshot, TailFlightTickState,
+};
+use birdman_game_format::WeatherClass;
+use birdman_game_session::{
+    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, HybridSessionPreparation,
 };
 use std::{
     path::PathBuf,
@@ -32,6 +39,133 @@ use std::{
 };
 
 const READY_CONFIRMATION_FRAMES: usize = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WaterVerificationCase {
+    weather: WeatherClass,
+    quality: WaterQuality,
+}
+
+impl WaterVerificationCase {
+    pub(crate) fn parse(value: &str) -> Result<Self, &'static str> {
+        let (weather, quality) = value
+            .split_once('-')
+            .ok_or("Expected calm/typical-low/medium/high")?;
+        let weather = match weather {
+            "calm" => WeatherClass::Calm,
+            "typical" => WeatherClass::Typical,
+            _ => return Err("Water verification Weather must be calm or typical"),
+        };
+        let quality = match quality {
+            "low" => WaterQuality::Low,
+            "medium" => WaterQuality::Medium,
+            "high" => WaterQuality::High,
+            _ => return Err("Water verification quality must be low, medium or high"),
+        };
+        Ok(Self { weather, quality })
+    }
+
+    fn alternate_quality(self) -> WaterQuality {
+        if self.quality == WaterQuality::High {
+            WaterQuality::Low
+        } else {
+            WaterQuality::High
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaterMotion {
+    Static,
+    Forward,
+    Lateral,
+    Pitch,
+    Roll,
+}
+
+impl WaterMotion {
+    const ALL: [Self; 5] = [
+        Self::Static,
+        Self::Forward,
+        Self::Lateral,
+        Self::Pitch,
+        Self::Roll,
+    ];
+
+    fn next(self) -> Option<Self> {
+        Self::ALL
+            .windows(2)
+            .find(|pair| pair[0] == self)
+            .map(|pair| pair[1])
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Static => "static",
+            Self::Forward => "forward",
+            Self::Lateral => "lateral",
+            Self::Pitch => "pitch",
+            Self::Roll => "roll",
+        }
+    }
+
+    fn pose(self, base: Transform, progress: f32) -> Transform {
+        let progress = progress.clamp(0.0, 1.0);
+        let mut pose = base;
+        if self != Self::Static {
+            pose.translation += base.rotation
+                * Vec3::NEG_Z
+                * 5.0
+                * if self == Self::Forward { progress } else { 1.0 };
+        }
+        if matches!(self, Self::Lateral | Self::Pitch | Self::Roll) {
+            pose.translation +=
+                base.rotation * Vec3::X * 1.5 * if self == Self::Lateral { progress } else { 1.0 };
+        }
+        if matches!(self, Self::Pitch | Self::Roll) {
+            pose.rotation *= Quat::from_rotation_x(
+                6.0_f32.to_radians() * if self == Self::Pitch { progress } else { 1.0 },
+            );
+        }
+        if self == Self::Roll {
+            pose.rotation *= Quat::from_rotation_z(10.0_f32.to_radians() * progress);
+        }
+        pose
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionEndpoint {
+    Start,
+    End,
+}
+
+pub(crate) fn project_observer(
+    verification: Res<Verification>,
+    session: Res<NativeSession>,
+    observer: Option<ResMut<VerificationObserver>>,
+    mut commands: Commands,
+) {
+    if verification.failure.is_none()
+        && session.game.snapshot().phase() == SessionPhase::FlightRunning
+        && let VerificationStage::WaterMotion(motion, endpoint) = verification.stage
+        && let Some(base) = verification.observer_base
+    {
+        let progress = if endpoint == MotionEndpoint::Start {
+            0.0
+        } else {
+            verification.stage_started.elapsed().as_secs_f32() / 0.5
+        };
+        let pose = motion.pose(base, progress);
+        if let Some(mut observer) = observer {
+            observer.0 = pose;
+        } else {
+            commands.insert_resource(VerificationObserver(pose));
+        }
+    } else if observer.is_some() {
+        commands.remove_resource::<VerificationObserver>();
+    }
+}
 
 pub(crate) struct VerificationRenderPlugin;
 
@@ -285,11 +419,15 @@ enum VerificationStage {
     Countdown,
     Pilot,
     Chase,
+    WaterMotion(WaterMotion, MotionEndpoint),
     Pause,
     PausedCapture,
     QualityLow,
     QualityMedium,
     QualityHigh,
+    WaterQualitySwapped,
+    WaterQualityRestored,
+    WaterResumed,
     Resume,
     Abort,
     Result,
@@ -319,6 +457,11 @@ pub(crate) struct Verification {
     terminal: Option<SessionResult>,
     terminal_sample_count: usize,
     input_trial: bool,
+    water_case: Option<WaterVerificationCase>,
+    observer_base: Option<Transform>,
+    motion_start_time: Option<f32>,
+    paused_sample_count: usize,
+    paused_water_time: Option<f32>,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
 }
@@ -327,6 +470,7 @@ impl Verification {
     pub(crate) fn try_new(
         directory: PathBuf,
         asset_server: &AssetServer,
+        water_case: Option<WaterVerificationCase>,
     ) -> Result<(Self, VerificationCompletion), std::io::Error> {
         std::fs::create_dir_all(&directory)?;
         let material_shader = match StandardMaterial::fragment_shader() {
@@ -356,6 +500,11 @@ impl Verification {
                 terminal: None,
                 terminal_sample_count: 0,
                 input_trial: false,
+                water_case,
+                observer_base: None,
+                motion_start_time: None,
+                paused_sample_count: 0,
+                paused_water_time: None,
                 failure: None,
                 completion: Some(sender),
             },
@@ -379,9 +528,20 @@ impl Verification {
 
     fn capture(&mut self, commands: &mut Commands, filename: &str) {
         let path = self.directory.join(filename);
+        let stage = self.stage;
+        let water_case = self.water_case;
         self.capture_pending = true;
         commands.spawn(Screenshot::primary_window()).observe(
             move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
+                if !accept_capture(
+                    (verification.stage, verification.water_case),
+                    (stage, water_case),
+                    verification.capture_pending,
+                    verification.capture_result.is_some(),
+                    verification.failure.is_some(),
+                ) {
+                    return;
+                }
                 let result = capture
                     .image
                     .clone()
@@ -407,6 +567,16 @@ impl Verification {
             },
         );
     }
+}
+
+fn accept_capture(
+    current: (VerificationStage, Option<WaterVerificationCase>),
+    requested: (VerificationStage, Option<WaterVerificationCase>),
+    pending: bool,
+    received: bool,
+    failed: bool,
+) -> bool {
+    current == requested && pending && !received && !failed
 }
 
 pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<FlightInput>) {
@@ -564,9 +734,67 @@ fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUi
 }
 
 #[derive(SystemParam)]
-pub(crate) struct VerificationPresentation<'w> {
+pub(crate) struct VerificationPresentation<'w, 's> {
     camera: ResMut<'w, CameraMode>,
     quality: ResMut<'w, WaterQualitySelection>,
+    environment: Res<'w, NativeEnvironment>,
+    materials: Res<'w, Assets<WaterMaterial>>,
+    surfaces: Query<
+        'w,
+        's,
+        (
+            &'static EnvironmentSurface,
+            &'static MeshMaterial3d<WaterMaterial>,
+        ),
+    >,
+    diagnostics: Option<Res<'w, DiagnosticsStore>>,
+}
+
+impl VerificationPresentation<'_, '_> {
+    fn water_time(
+        &self,
+        session: &NativeSession,
+        case: WaterVerificationCase,
+    ) -> Result<f32, String> {
+        let target = EnvironmentTarget::project(
+            session.game.snapshot().phase(),
+            session.game.configuration_identity(),
+        );
+        let condition = self
+            .environment
+            .condition_for(target)
+            .map_err(|cause| format!("Water case environment: {cause:?}"))?;
+        if condition.weather != case.weather {
+            return Err("Water case sealed Weather differs from the applied environment".into());
+        }
+        let mut times = [None; 3];
+        for (role, handle) in &self.surfaces {
+            let material = self
+                .materials
+                .get(&handle.0)
+                .ok_or("Water case material is unavailable")?;
+            if times[role.index()]
+                .replace(material.camera_time.w)
+                .is_some()
+            {
+                return Err("Water case duplicated environment surface".into());
+            }
+            if material.waves_sky.x != condition.waves.wind_velocity_ne_mps[1] as f32
+                || material.waves_sky.y != -condition.waves.wind_velocity_ne_mps[0] as f32
+                || material.waves_sky.z != condition.waves.detail_amplitude_scale as f32
+                || (condition.sky.is_none() && material.sun_cloud != Vec4::ZERO)
+            {
+                return Err("Water/sky material differs from the sealed environment".into());
+            }
+        }
+        let [Some(near), Some(far), Some(sky)] = times else {
+            return Err("Water case requires near/far/sky surfaces".into());
+        };
+        if !near.is_finite() || near != far || near != sky {
+            return Err("Water case surface clocks disagree".into());
+        }
+        Ok(near)
+    }
 }
 
 pub(crate) fn advance(
@@ -584,7 +812,7 @@ pub(crate) fn advance(
     let result = advance_step(
         &mut verification,
         &mut session,
-        (&mut presentation.camera, &mut presentation.quality),
+        &mut presentation,
         &windows,
         time.delta() <= MAX_FRAME_DELTA,
         &mut commands,
@@ -592,9 +820,36 @@ pub(crate) fn advance(
     match result {
         Ok(()) if verification.stage == VerificationStage::Finished => {
             verification.complete(Ok(()));
-            println!(
-                "GPU captures and scripted logical-input core loop completed; visual review and physical keyboard/mouse acceptance are separate."
-            );
+            if let Some(case) = verification.water_case {
+                println!(
+                    "Water case {case:?} completed: camera-only observation, actual sealed Weather/quality and core Pause/Resume/Retry. Visual temporal acceptance and physical input are separate."
+                );
+                let mut available = false;
+                if let Some(diagnostics) = &presentation.diagnostics {
+                    for diagnostic in diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.path().as_str().ends_with("elapsed_gpu"))
+                    {
+                        if let Some(value) = diagnostic.value().filter(|value| value.is_finite()) {
+                            println!(
+                                "GPU diagnostic {}: latest={value:.3} ms, samples={} (verification scene/pass, not release frame budget)",
+                                diagnostic.path().as_str(),
+                                diagnostic.history_len()
+                            );
+                            available = true;
+                        }
+                    }
+                }
+                if !available {
+                    println!(
+                        "GPU elapsed_gpu diagnostics unavailable; timestamp features were not forced."
+                    );
+                }
+            } else {
+                println!(
+                    "GPU captures and scripted logical-input core loop completed; visual review and physical keyboard/mouse acceptance are separate."
+                );
+            }
             exit.write(AppExit::Success);
         }
         Ok(()) => {}
@@ -610,12 +865,28 @@ pub(crate) fn advance(
 fn advance_step(
     verification: &mut Verification,
     session: &mut NativeSession,
-    presentation: (&mut CameraMode, &mut WaterQualitySelection),
+    presentation: &mut VerificationPresentation,
     windows: &Query<&Window>,
     normal_frame: bool,
     commands: &mut Commands,
 ) -> Result<(), String> {
-    let (camera, quality) = presentation;
+    let water_time = if let Some(case) = verification.water_case
+        && matches!(
+            verification.stage,
+            VerificationStage::WaterMotion(..)
+                | VerificationStage::Pause
+                | VerificationStage::PausedCapture
+                | VerificationStage::WaterQualitySwapped
+                | VerificationStage::WaterQualityRestored
+                | VerificationStage::Resume
+                | VerificationStage::WaterResumed
+        ) {
+        Some(presentation.water_time(session, case)?)
+    } else {
+        None
+    };
+    let camera = &mut presentation.camera;
+    let quality = &mut presentation.quality;
     let started = match verification.started {
         Some(started) => started,
         None => {
@@ -659,20 +930,44 @@ fn advance_step(
                     VerificationStage::Chase
                 }
                 VerificationStage::Chase => VerificationStage::Pause,
+                VerificationStage::WaterMotion(motion, MotionEndpoint::Start) => {
+                    VerificationStage::WaterMotion(motion, MotionEndpoint::End)
+                }
+                VerificationStage::WaterMotion(motion, MotionEndpoint::End) => {
+                    motion.next().map_or(VerificationStage::Pause, |next| {
+                        VerificationStage::WaterMotion(next, MotionEndpoint::Start)
+                    })
+                }
+                VerificationStage::PausedCapture if verification.water_case.is_some() => {
+                    let case = verification.water_case.ok_or("Missing water case")?;
+                    **quality = quality
+                        .request(case.alternate_quality(), session.game.snapshot().phase())
+                        .ok_or("Paused water quality is unavailable")?;
+                    VerificationStage::WaterQualitySwapped
+                }
+                VerificationStage::WaterQualitySwapped => {
+                    let case = verification.water_case.ok_or("Missing water case")?;
+                    **quality = quality
+                        .request(case.quality, session.game.snapshot().phase())
+                        .ok_or("Restored water quality is unavailable")?;
+                    VerificationStage::WaterQualityRestored
+                }
+                VerificationStage::WaterQualityRestored => VerificationStage::Resume,
+                VerificationStage::WaterResumed => VerificationStage::Abort,
                 VerificationStage::PausedCapture => {
-                    *quality = quality
+                    **quality = quality
                         .request(WaterQuality::Low, session.game.snapshot().phase())
                         .ok_or("Paused quality selection is unavailable")?;
                     VerificationStage::QualityLow
                 }
                 VerificationStage::QualityLow => {
-                    *quality = quality
+                    **quality = quality
                         .request(WaterQuality::Medium, session.game.snapshot().phase())
                         .ok_or("Medium quality selection is unavailable")?;
                     VerificationStage::QualityMedium
                 }
                 VerificationStage::QualityMedium => {
-                    *quality = quality
+                    **quality = quality
                         .request(WaterQuality::High, session.game.snapshot().phase())
                         .ok_or("High quality selection is unavailable")?;
                     VerificationStage::QualityHigh
@@ -704,6 +999,8 @@ fn advance_step(
                 | VerificationStage::Pause
                 | VerificationStage::Abort
                 | VerificationStage::InputTrialFlight
+                | VerificationStage::WaterMotion(..)
+                | VerificationStage::WaterResumed
         )
     {
         if !processing_delay_only(reasons) {
@@ -735,29 +1032,73 @@ fn advance_step(
                     "Title scene render readiness confirmed: {:?}",
                     verification.readiness
                 );
-                verification.capture(commands, "01-title.png");
+                if verification.water_case.is_some() {
+                    verification.next(VerificationStage::Start);
+                } else {
+                    verification.capture(commands, "01-title.png");
+                }
             }
         }
         VerificationStage::Start => {
             session.action(MenuAction::Start)?;
             require_phase(session.game.snapshot().phase(), SessionPhase::FlightSetup)?;
+            if let Some(case) = verification.water_case {
+                **quality = quality
+                    .request(case.quality, SessionPhase::FlightSetup)
+                    .ok_or("Setup water quality is unavailable")?;
+            }
             verification.next(VerificationStage::Setup);
         }
         VerificationStage::Setup => {
             require_phase(phase, SessionPhase::FlightSetup)?;
             if verification.readiness.can_capture() {
-                verification.capture(commands, "01a-flight-setup.png");
+                if let Some(case) = verification.water_case {
+                    if quality.pending().is_none() {
+                        if quality.applied() != case.quality {
+                            return Err(format!(
+                                "Setup water quality failed: {}",
+                                quality.status()
+                            ));
+                        }
+                        verification.next(VerificationStage::Prepare);
+                    }
+                } else {
+                    verification.capture(commands, "01a-flight-setup.png");
+                }
             }
         }
         VerificationStage::Prepare => {
-            session.action(MenuAction::Prepare)?;
+            if let Some(case) = verification.water_case {
+                let preparation = HybridSessionPreparation::try_new_for_weather(
+                    session.control_mode,
+                    DEFAULT_MAXIMUM_FLIGHT_TICKS,
+                    DEFAULT_SESSION_SEED,
+                    case.weather,
+                )
+                .map_err(|cause| format!("Water case shared preparation: {cause:?}"))?;
+                session
+                    .game
+                    .prepare_flight(preparation.into_parts().0)
+                    .and_then(|()| session.game.mark_briefing_ready())
+                    .map_err(|cause| format!("Water case GameSession preparation: {cause:?}"))?;
+                println!(
+                    "Water case prepared: {case:?}, sealed={:?}; observer is camera-only",
+                    session.game.configuration_identity()
+                );
+            } else {
+                session.action(MenuAction::Prepare)?;
+            }
             require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
             verification.next(VerificationStage::Briefing);
         }
         VerificationStage::Briefing => {
             require_phase(phase, SessionPhase::BriefingReady)?;
             if verification.readiness.can_capture() {
-                verification.capture(commands, "01b-briefing.png");
+                if verification.water_case.is_some() {
+                    verification.next(VerificationStage::Launch);
+                } else {
+                    verification.capture(commands, "01b-briefing.png");
+                }
             }
         }
         VerificationStage::Launch => {
@@ -767,7 +1108,11 @@ fn advance_step(
                 SessionPhase::Countdown { remaining_ticks: 3 },
             )?;
             verification.countdown_started = Some(Instant::now());
-            verification.next(VerificationStage::CountdownCapture);
+            verification.next(if verification.water_case.is_some() {
+                VerificationStage::Countdown
+            } else {
+                VerificationStage::CountdownCapture
+            });
         }
         VerificationStage::CountdownCapture => {
             if !matches!(phase, SessionPhase::Countdown { .. }) {
@@ -792,7 +1137,22 @@ fn advance_step(
                     );
                 }
                 verification.launch_state = Some(state);
-                verification.next(VerificationStage::Pilot);
+                if verification.water_case.is_some() {
+                    let flight = state.flight_state();
+                    verification.observer_base = Some(camera_transform(
+                        aircraft_transform(flight),
+                        flight.pilot_position_m(),
+                        session.initial_pilot_position_m,
+                        false,
+                        Vec2::ZERO,
+                    ));
+                    verification.next(VerificationStage::WaterMotion(
+                        WaterMotion::Static,
+                        MotionEndpoint::Start,
+                    ));
+                } else {
+                    verification.next(VerificationStage::Pilot);
+                }
             }
             snapshot => return Err(format!("Countdown ended with {snapshot:?}")),
         },
@@ -832,8 +1192,63 @@ fn advance_step(
                 verification.capture(commands, "03-flight-chase.png");
             }
         }
+        VerificationStage::WaterMotion(motion, endpoint) => {
+            require_phase(phase, SessionPhase::FlightRunning)?;
+            let state = session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .ok_or("Missing water case core state")?;
+            let clock = water_time.ok_or("Missing water case render clock")?;
+            let tick_seconds = state.tick_index() as f32 / PHYSICS_HZ as f32;
+            if clock > tick_seconds + 1.0e-5
+                || clock < tick_seconds - 1.0 / PHYSICS_HZ as f32 - 1.0e-5
+            {
+                return Err("Water clock is outside the common fixed-tick render interval".into());
+            }
+            if verification.readiness.can_capture()
+                && (endpoint == MotionEndpoint::Start
+                    || verification.stage_started.elapsed() >= Duration::from_millis(500))
+            {
+                if endpoint == MotionEndpoint::Start {
+                    verification.motion_start_time = Some(clock);
+                } else if clock
+                    <= verification
+                        .motion_start_time
+                        .ok_or("Missing motion start clock")?
+                {
+                    return Err(
+                        "Motion endpoint did not advance the shared simulation clock".into(),
+                    );
+                }
+                println!(
+                    "Water observer {} {endpoint:?}: request-time core tick={}, render-time={clock:.4}s",
+                    motion.label(),
+                    state.tick_index()
+                );
+                verification.capture(
+                    commands,
+                    &format!(
+                        "water-{}-{}.png",
+                        motion.label(),
+                        if endpoint == MotionEndpoint::Start {
+                            "start"
+                        } else {
+                            "end"
+                        }
+                    ),
+                );
+            }
+        }
         VerificationStage::Pause => {
+            commands.remove_resource::<VerificationObserver>();
+            verification.observer_base = None;
             verification.paused_state = session.game.snapshot().tail_flight_state();
+            verification.paused_water_time = None;
+            verification.paused_sample_count = session
+                .game
+                .flight_record()
+                .map_or(0, |record| record.sample_count());
             session.action(MenuAction::Pause)?;
             if !matches!(
                 session.game.snapshot().phase(),
@@ -849,6 +1264,12 @@ fn advance_step(
             {
                 return Err("Paused view did not retain the core state".into());
             }
+            if verification.water_case.is_some() {
+                if verification.paused_water_time.is_none() {
+                    verification.paused_water_time = water_time;
+                }
+                verify_paused_water(verification, session, water_time)?;
+            }
             if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
             {
@@ -857,7 +1278,9 @@ fn advance_step(
         }
         VerificationStage::QualityLow
         | VerificationStage::QualityMedium
-        | VerificationStage::QualityHigh => {
+        | VerificationStage::QualityHigh
+        | VerificationStage::WaterQualitySwapped
+        | VerificationStage::WaterQualityRestored => {
             if !matches!(phase, SessionPhase::FlightPaused { .. })
                 || session.game.snapshot().tail_flight_state() != verification.paused_state
             {
@@ -874,10 +1297,24 @@ fn advance_step(
                 VerificationStage::QualityHigh => {
                     (WaterQuality::High, "03d-paused-quality-high.png")
                 }
+                VerificationStage::WaterQualitySwapped => (
+                    verification
+                        .water_case
+                        .ok_or("Missing water case")?
+                        .alternate_quality(),
+                    "water-paused-quality-swapped.png",
+                ),
+                VerificationStage::WaterQualityRestored => (
+                    verification.water_case.ok_or("Missing water case")?.quality,
+                    "water-paused-quality-restored.png",
+                ),
                 _ => return Err("Unexpected quality capture stage".into()),
             };
             if quality.applied() != expected {
                 return Err(format!("Quality exchange failed: {}", quality.status()));
+            }
+            if verification.water_case.is_some() {
+                verify_paused_water(verification, session, water_time)?;
             }
             if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
@@ -899,9 +1336,48 @@ fn advance_step(
             }
             session.action(MenuAction::Resume)?;
             require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
-            verification.next(VerificationStage::Abort);
+            verification.next(if verification.water_case.is_some() {
+                VerificationStage::WaterResumed
+            } else {
+                VerificationStage::Abort
+            });
+        }
+        VerificationStage::WaterResumed => {
+            require_phase(phase, SessionPhase::FlightRunning)?;
+            let state = session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .ok_or("Missing resumed core state")?;
+            let paused = verification
+                .paused_state
+                .ok_or("Missing paused core state")?;
+            let clock = water_time.ok_or("Missing resumed render clock")?;
+            if state.tick_index() >= paused.tick_index() + 3 && verification.readiness.can_capture()
+            {
+                if clock
+                    <= verification
+                        .paused_water_time
+                        .ok_or("Missing paused water clock")?
+                    || session
+                        .game
+                        .flight_record()
+                        .map_or(0, |record| record.sample_count())
+                        <= verification.paused_sample_count
+                {
+                    return Err(
+                        "Resume did not advance the shared render clock and retained record".into(),
+                    );
+                }
+                println!(
+                    "Water Resume: core tick={} render-time={clock:.4}s",
+                    state.tick_index()
+                );
+                verification.capture(commands, "water-resumed.png");
+            }
         }
         VerificationStage::Abort => {
+            commands.remove_resource::<VerificationObserver>();
             session.action(MenuAction::Abort)?;
             let terminal = session
                 .game
@@ -953,6 +1429,7 @@ fn advance_step(
             }
         }
         VerificationStage::Retry => {
+            commands.remove_resource::<VerificationObserver>();
             session.action(MenuAction::Retry)?;
             match session.game.snapshot() {
                 SessionSnapshot::BriefingReady { scenario }
@@ -960,7 +1437,7 @@ fn advance_step(
                         .terminal
                         .is_some_and(|terminal| terminal.scenario == scenario) =>
                 {
-                    if verification.input_trial {
+                    if verification.input_trial || verification.water_case.is_some() {
                         verification.next(VerificationStage::Finished);
                     } else {
                         verification.input_trial = true;
@@ -1055,6 +1532,29 @@ fn advance_step(
     Ok(())
 }
 
+fn verify_paused_water(
+    verification: &Verification,
+    session: &NativeSession,
+    water_time: Option<f32>,
+) -> Result<(), String> {
+    let state = verification
+        .paused_state
+        .ok_or("Missing water case paused state")?;
+    let clock = water_time.ok_or("Missing paused render clock")?;
+    let expected = state.tick_index() as f64 / f64::from(PHYSICS_HZ);
+    if (f64::from(clock) - expected).abs() > 1.0e-5
+        || Some(clock) != verification.paused_water_time
+        || session
+            .game
+            .flight_record()
+            .map_or(0, |record| record.sample_count())
+            != verification.paused_sample_count
+    {
+        return Err("Pause/quality exchange changed core record or common water time".into());
+    }
+    Ok(())
+}
+
 fn processing_delay_only(reasons: PauseReasons) -> bool {
     reasons.contains(PauseReason::ProcessingDelay)
         && ![
@@ -1077,14 +1577,90 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::{
-        READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion,
-        VerificationUiHierarchy, contains_layout, shader_is_pending, within_ancestor_clip,
+        MotionEndpoint, READY_CONFIRMATION_FRAMES, RenderReadiness, VerificationCompletion,
+        VerificationStage, VerificationUiHierarchy, WaterMotion, WaterVerificationCase,
+        accept_capture, contains_layout, shader_is_pending, within_ancestor_clip,
     };
     use bevy::ecs::system::SystemState;
     use bevy::prelude::{
-        ChildOf, ComputedNode, Node, Overflow, Rect, UiGlobalTransform, Vec2, World,
+        ChildOf, ComputedNode, Node, Overflow, Quat, Rect, Transform, UiGlobalTransform, Vec2,
+        Vec3, World,
     };
     use bevy::shader::ShaderCacheError;
+
+    #[test]
+    fn water_cases_are_exactly_the_registered_weather_quality_cross_product() {
+        for weather in ["calm", "typical"] {
+            for quality in ["low", "medium", "high"] {
+                let case = WaterVerificationCase::parse(&format!("{weather}-{quality}")).unwrap();
+                assert_ne!(case.quality, case.alternate_quality());
+            }
+        }
+        for invalid in [
+            "calm",
+            "mild-low",
+            "typical-auto",
+            "Calm-high",
+            "calm-high-extra",
+        ] {
+            assert!(WaterVerificationCase::parse(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn observer_endpoints_are_continuous_and_only_the_selected_component_moves() {
+        let base = Transform::from_xyz(10.0, 11.0, 12.0).with_rotation(Quat::from_rotation_y(0.3));
+        let mut previous = base;
+        for motion in WaterMotion::ALL {
+            let start = motion.pose(base, 0.0);
+            assert!(start.translation.distance(previous.translation) < 1.0e-6);
+            assert!((start.rotation.dot(previous.rotation).abs() - 1.0).abs() < 1.0e-6);
+            let end = motion.pose(base, 1.0);
+            let expected_distance = match motion {
+                WaterMotion::Forward => 5.0,
+                WaterMotion::Lateral => 1.5,
+                _ => 0.0,
+            };
+            assert!(
+                (end.translation.distance(start.translation) - expected_distance).abs() < 1.0e-6
+            );
+            if matches!(
+                motion,
+                WaterMotion::Static | WaterMotion::Forward | WaterMotion::Lateral
+            ) {
+                assert_eq!(end.rotation, base.rotation);
+            }
+            assert!(end.translation.is_finite() && end.rotation.is_finite());
+            assert_eq!(end.scale, Vec3::ONE);
+            previous = end;
+        }
+        assert_eq!(WaterMotion::Roll.next(), None);
+    }
+
+    #[test]
+    fn stale_or_failed_capture_callbacks_cannot_complete_the_next_case_or_stage() {
+        let case = Some(WaterVerificationCase::parse("calm-low").unwrap());
+        let requested = (
+            VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::Start),
+            case,
+        );
+        assert!(accept_capture(requested, requested, true, false, false));
+        for current in [
+            (
+                VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::End),
+                case,
+            ),
+            (
+                requested.0,
+                Some(WaterVerificationCase::parse("typical-low").unwrap()),
+            ),
+        ] {
+            assert!(!accept_capture(current, requested, true, false, false));
+        }
+        assert!(!accept_capture(requested, requested, false, false, false));
+        assert!(!accept_capture(requested, requested, true, true, false));
+        assert!(!accept_capture(requested, requested, true, false, true));
+    }
 
     #[test]
     fn button_bounds_allow_rounding_but_reject_clipped_labels() {
