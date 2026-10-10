@@ -1,3 +1,4 @@
+use super::environment::EnvironmentFailure;
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::Resource;
 use birdman_game_core::SessionPhase;
@@ -43,15 +44,17 @@ pub(crate) enum WaterQualityFailure {
     MeshUnavailable,
     MaterialUnavailable,
     WavePreparation(String),
+    EnvironmentProjection(EnvironmentFailure),
 }
 
 impl WaterQualityFailure {
-    fn label(&self) -> &str {
+    fn label(&self) -> String {
         match self {
-            Self::NearSurfaceUnavailable => "近景水面の描画対象を特定できない",
-            Self::MeshUnavailable => "現在の近景mesh assetを取得できない",
-            Self::MaterialUnavailable => "現在の近景水面materialを取得できない",
-            Self::WavePreparation(cause) => cause,
+            Self::NearSurfaceUnavailable => "近景水面の描画対象を特定できない".into(),
+            Self::MeshUnavailable => "現在の近景mesh assetを取得できない".into(),
+            Self::MaterialUnavailable => "現在の近景水面materialを取得できない".into(),
+            Self::WavePreparation(cause) => cause.clone(),
+            Self::EnvironmentProjection(cause) => format!("描画環境を適用できない: {cause:?}"),
         }
     }
 }

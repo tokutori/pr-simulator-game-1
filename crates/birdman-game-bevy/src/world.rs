@@ -1,5 +1,6 @@
 use super::{
     CameraMode,
+    environment::{EnvironmentSun, EnvironmentSurface, NativeEnvironment},
     native_session::{NativeSession, TailDisplay},
     projection::{aircraft_transform, camera_transform, sunlight_transform},
     water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
@@ -304,6 +305,7 @@ pub(crate) fn setup_world(
     mut water: ResMut<Assets<WaterMaterial>>,
 ) {
     commands.init_resource::<RenderHistory>();
+    commands.insert_resource(NativeEnvironment::try_default().expect("登録環境が不正"));
     let terrain: Terrain = serde_json::from_str(include_str!("../../../assets/biwa-terrain.json"))
         .expect("登録terrain JSONが不正");
     let masks: LandMasks =
@@ -348,6 +350,7 @@ pub(crate) fn setup_world(
     commands.spawn((
         WorldProjection::LakeSurface,
         NearWaterSurface,
+        EnvironmentSurface::Near,
         Mesh3d(meshes.add(near_mesh())),
         MeshMaterial3d(surface),
         Transform::IDENTITY,
@@ -355,6 +358,7 @@ pub(crate) fn setup_world(
     ));
     commands.spawn((
         WorldProjection::LakeSurface,
+        EnvironmentSurface::Far,
         Mesh3d(meshes.add(far_mesh())),
         MeshMaterial3d(far_surface),
         Transform::IDENTITY,
@@ -367,11 +371,13 @@ pub(crate) fn setup_world(
     }
     commands.spawn((
         WorldProjection::SkyDome,
+        EnvironmentSurface::Sky,
         Mesh3d(meshes.add(dome)),
         MeshMaterial3d(water.add(registered_sky)),
         Transform::IDENTITY,
     ));
     commands.spawn((
+        EnvironmentSun,
         DirectionalLight {
             illuminance: 18_000.0,
             ..default()

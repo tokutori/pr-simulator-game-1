@@ -1,4 +1,12 @@
-use super::water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection};
+use super::{
+    environment::{
+        EnvironmentCondition, EnvironmentFailure, EnvironmentSun, EnvironmentSurface,
+        EnvironmentTarget, NativeEnvironment,
+    },
+    native_session::NativeSession,
+    projection::{sky_sun_direction, sunlight_transform},
+    water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection},
+};
 use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     asset::RenderAssetUsages,
@@ -9,7 +17,6 @@ use bevy::{
     render::render_resource::{AsBindGroup, PrimitiveTopology},
     shader::ShaderRef,
 };
-use birdman_game_session::bundled_environment;
 
 const GEOMETRY_WAVE_COUNT: usize = 4;
 const NEAR_WIDTH_M: f32 = 64.0;
@@ -56,30 +63,39 @@ impl Material for WaterMaterial {
 
 impl WaterMaterial {
     pub(crate) fn registered(sky: bool) -> Result<Self, String> {
-        let environment =
-            bundled_environment().map_err(|error| format!("環境assetを読めない: {error:?}"))?;
-        let document = environment.document();
-        let direction = super::projection::sky_sun_direction(
-            document.sky.sun_azimuth_degrees,
-            document.sky.sun_elevation_degrees,
-        );
+        let condition = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .map_err(|error| format!("環境assetを読めない: {error:?}"))?
+            .condition();
+        Self::from_environment(condition, sky)
+    }
+
+    pub(crate) fn from_environment(
+        condition: EnvironmentCondition,
+        sky: bool,
+    ) -> Result<Self, String> {
+        let waves = condition.waves;
+        let sun_cloud = condition.sky.map_or(Vec4::ZERO, |sky| {
+            sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
+                .extend(sky.cloud_fraction as f32)
+        });
         let wind = Vec2::new(
-            document.waves.wind_velocity_ne_mps[1] as f32,
-            -document.waves.wind_velocity_ne_mps[0] as f32,
+            waves.wind_velocity_ne_mps[1] as f32,
+            -waves.wind_velocity_ne_mps[0] as f32,
         );
         let (geometry_waves, geometry_motion) = geometry_components(
             wind,
-            document.waves.fetch_m,
-            document.waves.detail_amplitude_scale,
-            document.waves.pattern_seed,
+            waves.fetch_m,
+            waves.detail_amplitude_scale,
+            waves.pattern_seed,
         )?;
         Ok(Self {
             camera_time: Vec4::ZERO,
-            sun_cloud: direction.extend(document.sky.cloud_fraction as f32),
+            sun_cloud,
             waves_sky: Vec4::new(
-                document.waves.wind_velocity_ne_mps[1] as f32,
-                -document.waves.wind_velocity_ne_mps[0] as f32,
-                document.waves.detail_amplitude_scale as f32,
+                waves.wind_velocity_ne_mps[1] as f32,
+                -waves.wind_velocity_ne_mps[0] as f32,
+                waves.detail_amplitude_scale as f32,
                 f32::from(sky),
             ),
             geometry_patch: if sky {
@@ -98,10 +114,16 @@ impl WaterMaterial {
         material
     }
 
+    #[cfg(test)]
     pub(crate) fn registered_for_quality(quality: WaterQuality) -> Result<Self, String> {
         let mut material = Self::registered(false)?;
+        material.apply_profile(quality);
+        Ok(material)
+    }
+
+    fn apply_profile(&mut self, quality: WaterQuality) {
         if quality != WaterQuality::High {
-            for wave in &mut material.geometry_waves {
+            for wave in &mut self.geometry_waves {
                 let high = geometry_resolution(wave.z, NEAR_CELLS);
                 let selected = geometry_resolution(wave.z, quality.profile().near_cells);
                 let ratio = if high > 0.0 {
@@ -112,7 +134,6 @@ impl WaterMaterial {
                 wave.w *= ratio as f32;
             }
         }
-        Ok(material)
     }
 
     pub(crate) fn near_bounds(&self) -> Aabb {
@@ -164,7 +185,104 @@ pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
 #[derive(Component)]
 pub(crate) struct NearWaterSurface;
 
+pub(crate) fn apply_environment(
+    session: Res<NativeSession>,
+    quality: Res<WaterQualitySelection>,
+    mut presentation: ResMut<NativeEnvironment>,
+    mut materials: ResMut<Assets<WaterMaterial>>,
+    mut surfaces: Query<(
+        &EnvironmentSurface,
+        &MeshMaterial3d<WaterMaterial>,
+        Option<&mut Aabb>,
+    )>,
+    mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
+) {
+    let target = EnvironmentTarget::project(
+        session.game.snapshot().phase(),
+        session.game.configuration_identity(),
+    );
+    if !presentation.needs_update(target)
+        && (quality.pending().is_none() || presentation.condition_for(target).is_ok())
+    {
+        return;
+    }
+    let result = (|| {
+        let resolved = target.resolve()?;
+        let condition = resolved.condition();
+        let high = WaterMaterial::from_environment(condition, false)
+            .map_err(EnvironmentFailure::WavePreparation)?;
+        let bounds = high.near_bounds();
+        let mut near = high.clone();
+        near.apply_profile(quality.applied());
+        let mut sky = high.clone();
+        sky.waves_sky.w = 1.0;
+        sky.geometry_patch = Vec4::ZERO;
+        let mut prepared = [near, high.far_surface(), sky];
+        let mut handles: [Option<Handle<WaterMaterial>>; 3] = std::array::from_fn(|_| None);
+        for (role, handle, bounds) in surfaces.iter() {
+            if handles[role.index()].replace(handle.0.clone()).is_some() {
+                return Err(EnvironmentFailure::SurfaceDuplicated(*role));
+            }
+            if *role == EnvironmentSurface::Near && bounds.is_none() {
+                return Err(EnvironmentFailure::BoundsUnavailable);
+            }
+        }
+        for role in EnvironmentSurface::ALL {
+            let handle = handles[role.index()]
+                .as_ref()
+                .ok_or(EnvironmentFailure::SurfaceUnavailable(role))?;
+            let current = materials
+                .get(handle.id())
+                .ok_or(EnvironmentFailure::MaterialUnavailable(role))?;
+            prepared[role.index()].camera_time = current.camera_time;
+            prepared[role.index()].geometry_patch = current.geometry_patch;
+        }
+        for first in 0..handles.len() {
+            for second in (first + 1)..handles.len() {
+                if handles[first] == handles[second] {
+                    return Err(EnvironmentFailure::SharedMaterial);
+                }
+            }
+        }
+        let (mut light, mut transform) = sun
+            .single_mut()
+            .map_err(|_| EnvironmentFailure::SunUnavailable)?;
+        let direction = prepared[EnvironmentSurface::Sky.index()]
+            .sun_cloud
+            .truncate();
+        let sunlight = if condition.sky.is_some() {
+            sunlight_transform(direction)
+        } else {
+            Transform::IDENTITY
+        };
+        for (role, handle, current_bounds) in &mut surfaces {
+            *materials
+                .get_mut(handle.0.id())
+                .expect("Validated environment material") = prepared[role.index()].clone();
+            if *role == EnvironmentSurface::Near {
+                *current_bounds.expect("Validated near bounds") = bounds;
+            }
+        }
+        *transform = sunlight;
+        light.illuminance = if condition
+            .sky
+            .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0)
+        {
+            18_000.0
+        } else {
+            0.0
+        };
+        Ok(resolved)
+    })();
+    match result {
+        Ok(resolved) => presentation.commit(resolved),
+        Err(cause) => presentation.failed(target, cause),
+    }
+}
+
 pub(crate) fn apply_quality(
+    session: Res<NativeSession>,
+    environment: Res<NativeEnvironment>,
     mut selection: ResMut<WaterQualitySelection>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<WaterMaterial>>,
@@ -185,8 +303,16 @@ pub(crate) fn apply_quality(
             .get_mut(material_handle.0.id())
             .ok_or(WaterQualityFailure::MaterialUnavailable)?;
         let prepared_mesh = near_mesh_for_quality(requested);
-        let mut prepared_material = WaterMaterial::registered_for_quality(requested)
+        let target = EnvironmentTarget::project(
+            session.game.snapshot().phase(),
+            session.game.configuration_identity(),
+        );
+        let condition = environment
+            .condition_for(target)
+            .map_err(WaterQualityFailure::EnvironmentProjection)?;
+        let mut prepared_material = WaterMaterial::from_environment(condition, false)
             .map_err(WaterQualityFailure::WavePreparation)?;
+        prepared_material.apply_profile(requested);
         prepared_material.camera_time = current_material.camera_time;
         prepared_material.geometry_patch = current_material.geometry_patch;
         current.0 = meshes.add(prepared_mesh);
@@ -350,8 +476,485 @@ fn geometry_components(
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        CameraMode,
+        native_session::{FlightInput, MenuAction},
+        ui::{TechnicalDisclosure, UiText, update_ui},
+        world,
+    };
     use super::*;
     use bevy::mesh::VertexAttributeValues;
+    use birdman_game_format::WeatherClass;
+    use birdman_game_session::{
+        DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, HybridSessionPreparation,
+        bundled_environment,
+    };
+
+    fn environment_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<WaterQualitySelection>()
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(
+                birdman_game_core::PHYSICS_HZ,
+            )))
+            .add_systems(Startup, world::setup_world)
+            .add_systems(
+                Update,
+                (apply_environment, apply_quality, world::project_world).chain(),
+            );
+        app.update();
+        app
+    }
+
+    fn prepare_calm(app: &mut App) {
+        let mut session = app.world_mut().resource_mut::<NativeSession>();
+        session.action(MenuAction::Start).unwrap();
+        let preparation = HybridSessionPreparation::try_new_for_weather(
+            session.control_mode,
+            DEFAULT_MAXIMUM_FLIGHT_TICKS,
+            DEFAULT_SESSION_SEED,
+            WeatherClass::Calm,
+        )
+        .unwrap();
+        session
+            .game
+            .prepare_flight(preparation.into_parts().0)
+            .unwrap();
+        session.game.mark_briefing_ready().unwrap();
+    }
+
+    fn environment_surface(
+        app: &mut App,
+        role: EnvironmentSurface,
+    ) -> (Entity, Handle<WaterMaterial>) {
+        let world = app.world_mut();
+        let mut query =
+            world.query::<(Entity, &EnvironmentSurface, &MeshMaterial3d<WaterMaterial>)>();
+        query
+            .iter(world)
+            .find(|(_, candidate, _)| **candidate == role)
+            .map(|(entity, _, material)| (entity, material.0.clone()))
+            .unwrap()
+    }
+
+    fn environment_materials(app: &mut App) -> [WaterMaterial; 3] {
+        EnvironmentSurface::ALL.map(|role| {
+            let (_, handle) = environment_surface(app, role);
+            app.world()
+                .resource::<Assets<WaterMaterial>>()
+                .get(handle.id())
+                .unwrap()
+                .clone()
+        })
+    }
+
+    fn environment_light(app: &mut App) -> (f32, Transform) {
+        let world = app.world_mut();
+        let mut query =
+            world.query_filtered::<(&DirectionalLight, &Transform), With<EnvironmentSun>>();
+        let (light, transform) = query.single(world).unwrap();
+        (light.illuminance, *transform)
+    }
+
+    #[test]
+    fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
+        let mut app = environment_app();
+        app.init_resource::<TechnicalDisclosure>()
+            .add_systems(Update, update_ui.after(apply_quality));
+        let summary = app.world_mut().spawn((UiText::Session, Text::new(""))).id();
+        prepare_calm(&mut app);
+        app.update();
+        let briefing = &app.world().get::<Text>(summary).unwrap().0;
+        assert!(briefing.contains("Calm"));
+        assert!(!briefing.contains("Typical"));
+        let identity = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .configuration_identity()
+            .unwrap();
+        let target = EnvironmentTarget::Sealed(identity);
+        let condition = target.resolve().unwrap().condition();
+        let high = WaterMaterial::from_environment(condition, false).unwrap();
+        let (near, _) = environment_surface(&mut app, EnvironmentSurface::Near);
+        assert_eq!(
+            app.world().get::<Aabb>(near).unwrap().half_extents,
+            high.near_bounds().half_extents
+        );
+        assert_eq!(environment_light(&mut app), (0.0, Transform::IDENTITY));
+        for (role, material) in EnvironmentSurface::ALL
+            .into_iter()
+            .zip(environment_materials(&mut app))
+        {
+            assert_eq!(material.sun_cloud, Vec4::ZERO);
+            assert_eq!(material.waves_sky.truncate(), high.waves_sky.truncate());
+            assert_eq!(
+                material.waves_sky.w,
+                f32::from(role == EnvironmentSurface::Sky)
+            );
+            assert_eq!(material.geometry_waves, high.geometry_waves);
+            assert_eq!(material.geometry_motion, high.geometry_motion);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+            session.tick(FlightInput::default());
+            session.action(MenuAction::Pause).unwrap();
+        }
+        app.update();
+        let state = app
+            .world()
+            .resource::<NativeSession>()
+            .physical_state()
+            .unwrap();
+        let samples = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        let before = environment_materials(&mut app);
+        assert!(before[0].camera_time.w > 0.0);
+        for quality in [
+            WaterQuality::Low,
+            WaterQuality::Medium,
+            WaterQuality::High,
+            WaterQuality::Low,
+        ] {
+            let phase = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase();
+            let next = app
+                .world()
+                .resource::<WaterQualitySelection>()
+                .request(quality, phase)
+                .unwrap();
+            *app.world_mut().resource_mut::<WaterQualitySelection>() = next;
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.physical_state(), Some(state));
+            assert_eq!(
+                session.game.flight_record().unwrap().sample_count(),
+                samples
+            );
+            assert_eq!(session.game.configuration_identity(), Some(identity));
+            assert_eq!(
+                app.world()
+                    .resource::<NativeEnvironment>()
+                    .condition_for(target),
+                Ok(condition)
+            );
+            assert_eq!(
+                app.world().resource::<WaterQualitySelection>().applied(),
+                quality
+            );
+            let mut selected = high.clone();
+            selected.apply_profile(quality);
+            for (role, material) in EnvironmentSurface::ALL
+                .into_iter()
+                .zip(environment_materials(&mut app))
+            {
+                assert_eq!(material.camera_time, before[role.index()].camera_time);
+                assert_eq!(material.geometry_patch, before[role.index()].geometry_patch);
+                assert_eq!(material.sun_cloud, Vec4::ZERO);
+                assert_eq!(material.waves_sky, before[role.index()].waves_sky);
+                assert_eq!(material.geometry_motion, high.geometry_motion);
+                assert_eq!(
+                    material.geometry_waves,
+                    if role == EnvironmentSurface::Near {
+                        selected.geometry_waves
+                    } else {
+                        high.geometry_waves
+                    }
+                );
+            }
+            assert_eq!(
+                app.world().get::<Aabb>(near).unwrap().half_extents,
+                high.near_bounds().half_extents
+            );
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Abort).unwrap();
+            session.action(MenuAction::Retry).unwrap();
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .condition_for(target),
+            Ok(condition)
+        );
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Low
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Title)
+            .unwrap();
+        app.update();
+        let default = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .unwrap()
+            .condition();
+        assert_eq!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .condition_for(EnvironmentTarget::DefaultExhibition),
+            Ok(default)
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Title)
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase(),
+            birdman_game_core::SessionPhase::Title
+        );
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Low
+        );
+        assert_eq!(
+            environment_materials(&mut app)[0].sun_cloud,
+            WaterMaterial::registered(false).unwrap().sun_cloud
+        );
+        assert_eq!(environment_light(&mut app).0, 18_000.0);
+    }
+
+    #[test]
+    fn material_bounds_and_sun_failures_are_rejected_before_any_environment_commit() {
+        for failure in [
+            EnvironmentFailure::MaterialUnavailable(EnvironmentSurface::Far),
+            EnvironmentFailure::BoundsUnavailable,
+            EnvironmentFailure::SunUnavailable,
+        ] {
+            let mut app = environment_app();
+            let (near, near_handle) = environment_surface(&mut app, EnvironmentSurface::Near);
+            let (_, far_handle) = environment_surface(&mut app, EnvironmentSurface::Far);
+            let (_, sky_handle) = environment_surface(&mut app, EnvironmentSurface::Sky);
+            let initial = environment_materials(&mut app);
+            let sunlight = environment_light(&mut app);
+            let sun = app
+                .world_mut()
+                .query_filtered::<Entity, With<EnvironmentSun>>()
+                .single(app.world())
+                .unwrap();
+            match failure {
+                EnvironmentFailure::MaterialUnavailable(_) => {
+                    app.world_mut()
+                        .resource_mut::<Assets<WaterMaterial>>()
+                        .remove(far_handle.id());
+                }
+                EnvironmentFailure::BoundsUnavailable => {
+                    app.world_mut().entity_mut(near).remove::<Aabb>();
+                }
+                EnvironmentFailure::SunUnavailable => {
+                    app.world_mut().entity_mut(sun).remove::<EnvironmentSun>();
+                }
+                _ => unreachable!(),
+            }
+            prepare_calm(&mut app);
+            let before = app.world().resource::<NativeSession>().game.snapshot();
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.game.snapshot(), before);
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            let target = EnvironmentTarget::Sealed(session.game.configuration_identity().unwrap());
+            assert_eq!(
+                app.world()
+                    .resource::<NativeEnvironment>()
+                    .condition_for(target),
+                Err(failure)
+            );
+            for (role, handle) in [
+                (EnvironmentSurface::Near, near_handle),
+                (EnvironmentSurface::Sky, sky_handle),
+            ] {
+                let retained = app
+                    .world()
+                    .resource::<Assets<WaterMaterial>>()
+                    .get(handle.id())
+                    .unwrap();
+                assert_eq!(retained.sun_cloud, initial[role.index()].sun_cloud);
+                assert_eq!(retained.waves_sky, initial[role.index()].waves_sky);
+                assert_eq!(
+                    retained.geometry_waves,
+                    initial[role.index()].geometry_waves
+                );
+            }
+            assert_eq!(
+                app.world()
+                    .get::<DirectionalLight>(sun)
+                    .unwrap()
+                    .illuminance,
+                sunlight.0
+            );
+            assert_eq!(*app.world().get::<Transform>(sun).unwrap(), sunlight.1);
+        }
+    }
+
+    #[test]
+    fn incomplete_environment_retains_every_resource_and_quality_cannot_restore_the_default() {
+        let mut app = environment_app();
+        app.init_resource::<TechnicalDisclosure>()
+            .add_systems(Update, update_ui.after(apply_quality));
+        let summary = app.world_mut().spawn((UiText::Session, Text::new(""))).id();
+        let details = app
+            .world_mut()
+            .spawn((UiText::TechnicalDetails, Text::new("")))
+            .id();
+        let (far, far_handle) = environment_surface(&mut app, EnvironmentSurface::Far);
+        let (near, _) = environment_surface(&mut app, EnvironmentSurface::Near);
+        let materials = environment_materials(&mut app);
+        let light = environment_light(&mut app);
+        let bounds = *app.world().get::<Aabb>(near).unwrap();
+        let mesh = app.world().get::<Mesh3d>(near).unwrap().0.clone();
+        app.world_mut()
+            .entity_mut(far)
+            .remove::<EnvironmentSurface>();
+        prepare_calm(&mut app);
+        app.update();
+        let target = EnvironmentTarget::Sealed(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .configuration_identity()
+                .unwrap(),
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .condition_for(target),
+            Err(EnvironmentFailure::SurfaceUnavailable(
+                EnvironmentSurface::Far
+            ))
+        );
+        let (_, near_handle) = environment_surface(&mut app, EnvironmentSurface::Near);
+        let (_, sky_handle) = environment_surface(&mut app, EnvironmentSurface::Sky);
+        for (role, handle) in [
+            (EnvironmentSurface::Near, near_handle),
+            (EnvironmentSurface::Far, far_handle),
+            (EnvironmentSurface::Sky, sky_handle),
+        ] {
+            let retained = app
+                .world()
+                .resource::<Assets<WaterMaterial>>()
+                .get(handle.id())
+                .unwrap();
+            assert_eq!(retained.sun_cloud, materials[role.index()].sun_cloud);
+            assert_eq!(retained.waves_sky, materials[role.index()].waves_sky);
+            assert_eq!(
+                retained.geometry_waves,
+                materials[role.index()].geometry_waves
+            );
+        }
+        assert_eq!(environment_light(&mut app), light);
+        assert_eq!(
+            app.world().get::<Aabb>(near).unwrap().half_extents,
+            bounds.half_extents
+        );
+        assert!(
+            app.world()
+                .get::<Text>(summary)
+                .unwrap()
+                .0
+                .contains("以前の表示を保持する")
+        );
+        assert!(
+            app.world()
+                .get::<Text>(details)
+                .unwrap()
+                .0
+                .contains("SurfaceUnavailable(Far)")
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+            session.action(MenuAction::Pause).unwrap();
+        }
+        let phase = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .snapshot()
+            .phase();
+        let next = app
+            .world()
+            .resource::<WaterQualitySelection>()
+            .request(WaterQuality::Low, phase)
+            .unwrap();
+        *app.world_mut().resource_mut::<WaterQualitySelection>() = next;
+        app.update();
+        assert_eq!(app.world().get::<Mesh3d>(near).unwrap().0, mesh);
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::High
+        );
+        assert!(
+            app.world()
+                .resource::<WaterQualitySelection>()
+                .status()
+                .contains("SurfaceUnavailable(Far)")
+        );
+        app.world_mut()
+            .entity_mut(far)
+            .insert(EnvironmentSurface::Far);
+        app.update();
+        assert!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .failure_notice()
+                .is_some()
+        );
+        let next = app
+            .world()
+            .resource::<WaterQualitySelection>()
+            .request(WaterQuality::Low, phase)
+            .unwrap();
+        *app.world_mut().resource_mut::<WaterQualitySelection>() = next;
+        app.update();
+        assert!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .failure_notice()
+                .is_none()
+        );
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Low
+        );
+        assert_eq!(environment_light(&mut app), (0.0, Transform::IDENTITY));
+        assert_eq!(environment_materials(&mut app)[0].sun_cloud, Vec4::ZERO);
+        assert!(
+            !app.world()
+                .get::<Text>(summary)
+                .unwrap()
+                .0
+                .contains("以前の表示を保持する")
+        );
+        assert!(app.world().get::<Text>(details).unwrap().0.is_empty());
+    }
 
     #[test]
     fn quality_profiles_preserve_registered_waves_and_bound_every_real_mesh_triangle() {
@@ -419,7 +1022,9 @@ mod tests {
     #[test]
     fn quality_exchange_replaces_only_owned_near_resources_and_releases_old_meshes() {
         let mut app = App::new();
-        app.init_resource::<WaterQualitySelection>()
+        app.init_resource::<NativeSession>()
+            .insert_resource(NativeEnvironment::try_default().unwrap())
+            .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Update, apply_quality);
@@ -501,7 +1106,9 @@ mod tests {
     #[test]
     fn quality_preparation_failure_preserves_applied_selection_and_mesh() {
         let mut app = App::new();
-        app.init_resource::<Assets<Mesh>>()
+        app.init_resource::<NativeSession>()
+            .insert_resource(NativeEnvironment::try_default().unwrap())
+            .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<WaterMaterial>>()
             .insert_resource(
                 WaterQualitySelection::default()
@@ -538,7 +1145,9 @@ mod tests {
     fn missing_near_surface_or_mesh_rejects_before_allocating_replacement_resources() {
         for has_surface in [false, true] {
             let mut app = App::new();
-            app.init_resource::<Assets<Mesh>>()
+            app.init_resource::<NativeSession>()
+                .insert_resource(NativeEnvironment::try_default().unwrap())
+                .init_resource::<Assets<Mesh>>()
                 .init_resource::<Assets<WaterMaterial>>()
                 .insert_resource(
                     WaterQualitySelection::default()

@@ -1,6 +1,7 @@
 use super::{
     CameraMode, NativeFont,
     diagnostics::{failure_summary, result_reason_label},
+    environment::{EnvironmentTarget, NativeEnvironment},
     frame_rate::FrameRate,
     native_session::{MenuAction, NativeSession},
     water_quality::{WaterQuality, WaterQualitySelection, quality_menu_visible},
@@ -14,7 +15,8 @@ use bevy::{
 };
 use birdman_game_core::{
     ControlMode, FlightRecordFinalization, FlightRecordHeader, PauseReason, PauseReasons,
-    SessionEndReason, SessionPhase, SessionSimulationFailure, SessionSnapshot,
+    SessionEndReason, SessionPhase, SessionScenarioIdentity, SessionSimulationFailure,
+    SessionSnapshot,
 };
 use std::borrow::Cow;
 
@@ -71,6 +73,7 @@ pub(crate) struct TechnicalDisclosure {
 #[derive(SystemParam)]
 pub(crate) struct UiViewQueries<'w, 's> {
     quality: Res<'w, WaterQualitySelection>,
+    environment: Option<Res<'w, NativeEnvironment>>,
     buttons: Query<
         'w,
         's,
@@ -742,9 +745,15 @@ fn format_pause_summary(reasons: PauseReasons, can_resume: bool) -> String {
     format!("一時停止 — {labels}\n{availability}\n{FLIGHT_CONTROL_GUIDE}")
 }
 
-fn format_briefing(mode: ControlMode) -> String {
+fn format_briefing(mode: ControlMode, identity: Option<SessionScenarioIdentity>) -> String {
+    let weather = identity
+        .and_then(|identity| EnvironmentTarget::Sealed(identity).resolve().ok())
+        .map_or_else(
+            || "登録情報未確認".into(),
+            |resolved| format!("{:?}", resolved.condition().weather),
+        );
     format!(
-        "飛行条件の確認 — Typical / 架空の機体\n選択した操縦支援: {}\n{FLIGHT_CONTROL_GUIDE}\n尾翼２軸を操作する。独立したRoll入力はない。\n準備完了。3秒のカウントダウンで発進する。\nモデルの適用範囲外では飛行を終了する。",
+        "飛行条件の確認 — {weather} / 架空の機体\n選択した操縦支援: {}\n{FLIGHT_CONTROL_GUIDE}\n尾翼２軸を操作する。独立したRoll入力はない。\n準備完了。3秒のカウントダウンで発進する。\nモデルの適用範囲外では飛行を終了する。",
         control_mode_label(mode),
     )
 }
@@ -858,11 +867,21 @@ pub(crate) fn update_ui(
         SessionSnapshot::Result(result) => Some(result),
         _ => None,
     };
-    let details = format_technical_details(
+    let mut details = format_technical_details(
         result.map(|result| result.reason),
         result.and_then(|result| result.failure),
         session.notice.as_deref(),
     );
+    let environment_notice = view
+        .environment
+        .as_ref()
+        .and_then(|environment| environment.failure_notice());
+    if let Some(notice) = &environment_notice {
+        if !details.is_empty() {
+            details.push('\n');
+        }
+        details.push_str(notice);
+    }
     let details_open = disclosure.is_expanded() && !details.is_empty();
     for (button, interaction, mut node, mut background, mut border) in &mut view.buttons {
         let visible = match button.0 {
@@ -923,7 +942,7 @@ pub(crate) fn update_ui(
     let mut title = match snapshot {
         SessionSnapshot::Title => "Birdman native Screen\n架空の機体モデルで飛行を試す。\n「飛行を設定」から操縦支援を選び、飛行条件を確認する。".into(),
         SessionSnapshot::FlightSetup => "飛行条件の設定\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援を選び、飛行準備へ進む。".into(),
-        SessionSnapshot::BriefingReady { .. } => format_briefing(session.control_mode),
+        SessionSnapshot::BriefingReady { .. } => format_briefing(session.control_mode, session.game.configuration_identity()),
         SessionSnapshot::Countdown {
             remaining_ticks, ..
         } => format_countdown(remaining_ticks),
@@ -956,6 +975,11 @@ pub(crate) fn update_ui(
     };
     if session.notice.is_some() {
         title.push_str("\n通知がある。技術情報で詳細を確認できる。");
+    }
+    if environment_notice.is_some() {
+        title.push_str(
+            "\n描画環境の適用に失敗した。以前の表示を保持する。技術情報で原因を確認できる。",
+        );
     }
     let mut readout = String::new();
     if visible_hud(phase, details_open)
@@ -1068,6 +1092,7 @@ mod tests {
                 Update,
                 (
                     button_actions,
+                    super::super::water::apply_environment,
                     super::super::water::apply_quality,
                     update_ui,
                 )
@@ -1709,7 +1734,13 @@ mod tests {
             ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
             ControlMode::Automatic,
         ] {
-            let briefing = format_briefing(mode);
+            let identity = EnvironmentTarget::DefaultExhibition
+                .resolve()
+                .unwrap()
+                .condition()
+                .identity;
+            let briefing = format_briefing(mode, Some(identity));
+            assert!(briefing.contains("Typical"));
             assert!(briefing.lines().count() <= 7);
             assert!(briefing.contains(FLIGHT_CONTROL_GUIDE));
             assert!(briefing.contains("独立したRoll入力はない"));
@@ -1728,6 +1759,20 @@ mod tests {
         assert_eq!(content.overflow, Overflow::scroll_y());
         assert_eq!(content.min_height, px(0));
         assert_eq!(content.position_type, PositionType::Relative);
+    }
+
+    #[test]
+    fn briefing_does_not_supply_typical_for_a_missing_or_unknown_identity() {
+        assert!(format_briefing(ControlMode::Manual, None).contains("登録情報未確認"));
+        let mut identity = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .unwrap()
+            .condition()
+            .identity;
+        identity.environment_version = 99;
+        let briefing = format_briefing(ControlMode::Manual, Some(identity));
+        assert!(briefing.contains("登録情報未確認"));
+        assert!(!briefing.contains("Typical"));
     }
 
     #[test]

@@ -2,6 +2,8 @@
 
 #[path = "diagnostics.rs"]
 mod diagnostics;
+#[path = "environment.rs"]
+mod environment;
 #[path = "frame_rate.rs"]
 mod frame_rate;
 #[path = "native_session.rs"]
@@ -131,6 +133,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             (
                 frame_rate::observe_frame,
                 ui::button_actions,
+                water::apply_environment,
                 water::apply_quality,
                 advance_presentation,
                 world::project_world,

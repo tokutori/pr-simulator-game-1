@@ -12,6 +12,7 @@ birdman-game-core.workspace = true
 birdman-game-session = { path = "../birdman-game-session" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+birdman-game-format.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 parley = { version = "=0.9.0", default-features = false, features = ["std", "complex-scripts"] }
