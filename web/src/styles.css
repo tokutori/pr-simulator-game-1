@@ -257,6 +257,42 @@ body {
   font-size: 0.85rem;
 }
 
+.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] {
+  inset: auto;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 1;
+  display: block;
+  width: min(30rem, calc(100vw - max(0.75rem, env(safe-area-inset-left)) - max(0.75rem, env(safe-area-inset-right))));
+  max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 1rem;
+  padding: 1rem;
+  border: 1px solid rgb(185 214 207 / 45%);
+  border-radius: 0.75rem;
+  background: rgb(16 36 43 / 92%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+  pointer-events: auto;
+}
+
+.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  gap: 0.75rem;
+}
+
+.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-choice-options {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+}
+
+.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-status {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
 .flight-hud {
   position: fixed;
   top: max(0.75rem, env(safe-area-inset-top));

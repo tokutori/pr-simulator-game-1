@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { canSelectLakeWaterQuality, createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, AppTransition } from "../../web/src/app/app-state.js";
@@ -117,6 +119,54 @@ describe("manual lake water quality ownership", () => {
       const pending = createGameViewModel(requested, phase === 6 ? snapshot : null).panels[0]?.controls ?? [];
       expect(pending.filter((control) => control.id.startsWith("presentation-water-quality-") && control.kind === "button").every((control) => !control.enabled)).toBe(true);
       expect(pending.find((control) => control.id === "presentation-water-quality-status")).toMatchObject({ value: "High · Lowを適用中" });
+    }
+  });
+
+  it("keeps paused Settings quality choices and back focus inside the scoped scrollable card", async () => {
+    const window = new Window({ width: 320, height: 240 });
+    Object.assign(globalThis, { window, document: window.document });
+    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+    const documentRef = window.document as unknown as Document;
+    const root = documentRef.createElement("main");
+    documentRef.body.append(root);
+    const actions: unknown[] = [];
+    const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
+    try {
+      const initial = readyModel(6);
+      adapter.render(createGameViewModel(initial, snapshot));
+      const shell = root.querySelector<HTMLElement>('.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"]');
+      const back = root.querySelector<HTMLButtonElement>('[data-control-id="game-pause-settings-back"]');
+      if (shell === null || back === null) throw new Error("Missing paused Settings card");
+      expect(root.querySelectorAll("fieldset button")).toHaveLength(3);
+      expect(back.disabled).toBe(false);
+      back.focus();
+      shell.scrollTop = 40;
+      const requested = select(initial, "low").model;
+      if (requested.lakeWaterQuality.kind !== "applying") throw new Error("Missing paused quality request");
+      adapter.render(createGameViewModel(requested, snapshot));
+      expect(root.querySelector('[data-control-id="game-pause-settings-back"]')).toBe(back);
+      expect(documentRef.activeElement).toBe(back);
+      expect(shell.scrollTop).toBe(40);
+      const completed = updateApp(requested, { type: "lake-water-quality-applied", requestId: requested.lakeWaterQuality.requestId,
+        quality: "low", cleanup: { kind: "complete" } }).model;
+      adapter.render(createGameViewModel(completed, snapshot));
+      expect(documentRef.activeElement).toBe(back);
+      expect(shell.scrollTop).toBe(40);
+      expect(root.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
+      back.click();
+      expect(actions).toEqual([{ type: "activate", controlId: "game-pause-settings-back" }]);
+      const stylesheet = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+      const cardRule = stylesheet.match(/\.screen-ui-shell\[data-scene="Flight"\]\[data-overlay="PauseSettings"\] \{([^}]+)\}/)?.[1];
+      expect(cardRule).toContain("display: block");
+      expect(cardRule).toContain("max-height: calc(100dvh");
+      expect(cardRule).toContain("overflow-y: auto");
+      expect(cardRule).toContain("pointer-events: auto");
+      expect(stylesheet).toContain('.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-controls');
+      expect(stylesheet).toContain("repeat(auto-fit, minmax(min(100%, 12rem), 1fr))");
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
     }
   });
 });
