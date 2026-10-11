@@ -25,40 +25,38 @@ pub use view::game_ui_view;
 /// Serializes schemas from the exact shared Rust wire types without performing I/O.
 #[cfg(feature = "schema")]
 pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
-    let output = schemars::generate::SchemaSettings::draft2020_12().for_serialize();
-    let input_settings = schemars::generate::SchemaSettings::draft2020_12().for_deserialize();
-    let view = output
-        .clone()
-        .into_generator()
-        .into_root_schema_for::<GameUiView>();
-    let action = input_settings
-        .clone()
-        .into_generator()
-        .into_root_schema_for::<GameUiAction>();
-    let input = input_settings
-        .clone()
-        .into_generator()
-        .into_root_schema_for::<GameUiPlatformInput>();
-    let tail_input = input_settings
-        .into_generator()
-        .into_root_schema_for::<birdman_game_format::TailInputDocument>();
-    let effects = output
-        .clone()
-        .into_generator()
-        .into_root_schema_for::<GameUiUpdate>();
-    let frame = output
-        .into_generator()
-        .into_root_schema_for::<GameUiFrame>();
-    let value = match name {
-        "bundle" => {
-            serde_json::json!({ "view": view, "action": action, "input": input, "effects": effects, "frame": frame, "tail_input": tail_input })
-        }
-        "view" => serde_json::to_value(view).map_err(|error| error.to_string())?,
-        "action" => serde_json::to_value(action).map_err(|error| error.to_string())?,
-        "input" => serde_json::to_value(input).map_err(|error| error.to_string())?,
-        "effects" => serde_json::to_value(effects).map_err(|error| error.to_string())?,
-        "frame" => serde_json::to_value(frame).map_err(|error| error.to_string())?,
-        "tail-input" => serde_json::to_value(tail_input).map_err(|error| error.to_string())?,
+    let mut output = schemars::generate::SchemaSettings::draft2020_12()
+        .for_serialize()
+        .into_generator();
+    output.subschema_for::<GameUiView>();
+    output.subschema_for::<GameUiUpdate>();
+    output.subschema_for::<GameUiFrame>();
+    let mut input = schemars::generate::SchemaSettings::draft2020_12()
+        .for_deserialize()
+        .into_generator();
+    input.subschema_for::<GameUiAction>();
+    input.subschema_for::<GameUiPlatformInput>();
+    input.subschema_for::<birdman_game_format::TailInputDocument>();
+    let bundle = serde_json::json!({
+        "serialize": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": output.take_definitions(true),
+        },
+        "deserialize": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": input.take_definitions(true),
+        },
+    });
+    if name == "bundle" {
+        return serde_json::to_string_pretty(&bundle).map_err(|error| error.to_string());
+    }
+    let (group, root) = match name {
+        "view" => ("serialize", "GameUiView"),
+        "action" => ("deserialize", "GameUiAction"),
+        "input" => ("deserialize", "GameUiPlatformInput"),
+        "effects" => ("serialize", "GameUiUpdate"),
+        "frame" => ("serialize", "GameUiFrame"),
+        "tail-input" => ("deserialize", "TailInputDocument"),
         _ => {
             return Err(
                 "schema must be bundle, view, action, input, effects, frame or tail-input"
@@ -66,7 +64,14 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
             );
         }
     };
-    serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
+    let mut schema = bundle[group]["$defs"][root]
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("missing generated schema for {root}"))?;
+    schema.insert("title".to_owned(), root.into());
+    schema.insert("$schema".to_owned(), bundle[group]["$schema"].clone());
+    schema.insert("$defs".to_owned(), bundle[group]["$defs"].clone());
+    serde_json::to_string_pretty(&schema).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

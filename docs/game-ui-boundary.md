@@ -18,7 +18,11 @@ npm run generate:game-ui
 npm run check:game-ui
 ```
 
-生成処理はCLIの`export-game-ui-schema bundle`からView、Action、platform input、update、frameのSchemaを取得する。
+生成処理はCLIの`export-game-ui-schema bundle`からSerializeとDeserializeの共通定義を取得する。
+各groupは独立したSchemarsの`SchemaGenerator`を使用し、同じRust型を一度だけ`$defs`へ登録する。
+View、update、frameはSerialize、Action、platform input、TailInputはDeserializeの契約を使用する。
+Ajvは各groupを`$id`で登録し、公開validatorを共通定義への参照から生成する。
+`allErrors`とnumeric formatsを維持し、同じgroupのvalidatorを再利用する。
 runtimeの深いreadonly型とstandalone validatorは`web/src/generated/`へ生成する。
 build専用のJSON Schemaとgeneration stampは`tools/game-ui-build/generated/`へ生成する。
 ライセンス通知は`assets/game-ui-validators.LICENSE.txt`へ生成し、出典・version・hash・帰属を`assets/manifest.toml`に登録する。

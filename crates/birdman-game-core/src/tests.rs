@@ -1143,11 +1143,96 @@ fn invalid_values_return_typed_errors_without_changing_input() {
 }
 
 #[test]
+fn scaled_vector_norm_retains_zero_subnormal_and_large_finite_values() {
+    for components in [[0.0; 3], [-0.0, 0.0, -0.0]] {
+        let vector = BodyVector::try_new(components[0], components[1], components[2]).unwrap();
+        assert_eq!(vector.norm().unwrap().to_bits(), 0.0_f64.to_bits());
+    }
+    for scale in [f64::from_bits(1), f64::MIN_POSITIVE, 1.0e-200, 1.0e200] {
+        let vector = BodyVector::try_new(3.0 * scale, -4.0 * scale, 0.0).unwrap();
+        close(
+            vector.norm().unwrap() / scale,
+            5.0,
+            4.0 * f64::EPSILON * 5.0,
+        );
+    }
+}
+
+#[test]
+fn quaternion_constructor_retains_unit_tolerance_and_typed_errors() {
+    for norm_error in [-0.5, 0.5] {
+        let component = 0.5 * (1.0 + norm_error * UnitQuaternion::UNIT_TOLERANCE);
+        let quaternion =
+            UnitQuaternion::try_new(component, -component, component, -component).unwrap();
+        for (actual, expected) in quaternion
+            .components()
+            .into_iter()
+            .zip([0.5, -0.5, 0.5, -0.5])
+        {
+            close(actual, expected, f64::EPSILON);
+        }
+    }
+    for norm_error in [-2.0, 2.0] {
+        let component = 0.5 * (1.0 + norm_error * UnitQuaternion::UNIT_TOLERANCE);
+        assert_eq!(
+            UnitQuaternion::try_new(component, -component, component, -component),
+            Err(MathError::InvalidQuaternion)
+        );
+    }
+    for component in [0.0, f64::from_bits(1), f64::MIN_POSITIVE, f64::MAX] {
+        assert_eq!(
+            UnitQuaternion::try_new(component, component, component, component),
+            Err(MathError::InvalidQuaternion)
+        );
+    }
+    for component in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            UnitQuaternion::try_new(component, 0.0, 0.0, 0.0),
+            Err(MathError::NonFinite)
+        );
+    }
+}
+
+#[test]
+fn integrated_quaternion_retains_normalization_domain() {
+    for component in [f64::MIN_POSITIVE, 1.0e-200, 1.0e200, f64::MAX / 4.0] {
+        let quaternion = UnitQuaternion::from_integrated_components([
+            component, -component, component, -component,
+        ])
+        .unwrap();
+        for (actual, expected) in quaternion
+            .components()
+            .into_iter()
+            .zip([0.5, -0.5, 0.5, -0.5])
+        {
+            close(actual, expected, f64::EPSILON);
+        }
+    }
+    for component in [0.0, f64::from_bits(1), f64::MIN_POSITIVE / 2.0, f64::MAX] {
+        assert_eq!(
+            UnitQuaternion::from_integrated_components([component; 4]),
+            Err(MathError::InvalidQuaternion)
+        );
+    }
+    for component in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            UnitQuaternion::from_integrated_components([component, 0.0, 0.0, 0.0]),
+            Err(MathError::NonFinite)
+        );
+    }
+}
+
+#[test]
 fn finite_vector_and_point_operations_reject_overflow() {
     let pythagorean_vector = BodyVector::try_new(3.0, 4.0, 0.0).unwrap();
     close(pythagorean_vector.norm().unwrap(), 5.0, 1.0e-15);
     close(pythagorean_vector.norm_squared().unwrap(), 25.0, 1.0e-15);
     let large_vector = BodyVector::try_new(f64::MAX, 0.0, 0.0).unwrap();
+    assert_eq!(large_vector.norm(), Ok(f64::MAX));
+    assert_eq!(
+        BodyVector::try_new(f64::MAX, f64::MAX, 0.0).unwrap().norm(),
+        Err(MathError::NonFinite)
+    );
     assert_eq!(large_vector.scaled(2.0), Err(MathError::NonFinite));
     assert_eq!(large_vector.plus(large_vector), Err(MathError::NonFinite));
     let large_point = BodyPoint::try_new(f64::MAX, 0.0, 0.0).unwrap();
