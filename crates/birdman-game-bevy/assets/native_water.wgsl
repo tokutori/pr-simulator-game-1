@@ -15,6 +15,8 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(8) var detail_near_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(9) var detail_far: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(10) var detail_far_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(11) var<uniform> water_palette: array<vec4<f32>, 4>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(12) var<uniform> haze_parameters: vec4<f32>;
 
 struct SurfaceProjection {
     offset: vec3<f32>,
@@ -196,7 +198,7 @@ fn sky_background(direction: vec3<f32>) -> vec3<f32> {
 }
 
 fn sky_color(direction: vec3<f32>) -> vec3<f32> {
-    return sky_background(direction) + vec3<f32>(1.0, 0.84, 0.58) * pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0);
+    return sky_background(direction) + vec3<f32>(1.0, 0.84, 0.58) * pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0) * haze_parameters.z;
 }
 
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
@@ -286,33 +288,52 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
         + lake_micro_detail(position + quarter_x + quarter_y, footprint_x, footprint_y)
     ) * 0.25;
     let wave_slope = lake_wave_slope(position, spacing, footprint_x, footprint_y);
+    let patches = 0.5 + 0.5 * lake_value_noise(mesh.world_position.xz * 0.17 + vec2<f32>(2.3, -7.1)).x;
     let unresolved_variance = max(micro_detail.z - dot(micro_detail.xy, micro_detail.xy), 0.0);
     var detail = vec4<f32>(wave_slope + micro_detail.xy, unresolved_variance, 0.0);
+    var crest_light = 0.0;
 #ifdef VERTEX_COLORS
     detail.x -= mesh.color.x;
     detail.y -= mesh.color.y;
     detail.w = smoothstep(0.68, 0.84, mesh.color.w) * smoothstep(0.7, 0.98, mesh.color.z) * 0.12;
+    let sharp_crest = smoothstep(0.42, 0.76, mesh.color.w);
+    crest_light = smoothstep(0.05, 1.05, mesh.color.z) * sharp_crest * mix(0.35, 1.0, patches);
 #endif
     let geometric_normal = normalize(mesh.world_normal);
     let geometric_slope = -geometric_normal.xz / max(geometric_normal.y, 0.01);
     let total_slope = geometric_slope + detail.xy;
     let normal = normalize(vec3<f32>(-total_slope.x, 1.0, -total_slope.y));
-    let geometric_ndv = clamp(dot(view, geometric_normal), 0.0, 1.0);
+    let geometric_ndv = max(dot(view, geometric_normal), 0.0);
     let facet_ndv = dot(view, normal);
     let facet_visibility = smoothstep(0.0, 0.18, facet_ndv);
-    let reflected = mix(reflect(-view, geometric_normal), reflect(-view, normal), facet_visibility);
-    let reflection = normalize(vec3<f32>(reflected.x, max(reflected.y, 0.0), reflected.z));
+    let reflected_direction = normalize(mix(reflect(-view, geometric_normal), reflect(-view, normal), facet_visibility));
+    var sky_ray = vec3<f32>(reflected_direction.x, max(reflected_direction.y, 0.0), reflected_direction.z);
+    if dot(sky_ray, sky_ray) < 1.0e-8 {
+        sky_ray = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let reflection = sky_background(normalize(sky_ray));
     let geometric_fresnel = 0.02 + 0.98 * pow(1.0 - geometric_ndv, 5.0);
-    let facet_fresnel = 0.02 + 0.98 * pow(1.0 - clamp(facet_ndv, 0.0, 1.0), 5.0);
-    let fresnel = mix(geometric_fresnel, facet_fresnel, 0.35 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
+    let facet_fresnel = 0.02 + 0.98 * pow(1.0 - max(facet_ndv, 0.0), 5.0);
+    let fresnel = mix(geometric_fresnel, facet_fresnel, 0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
     let roughness = clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
-    let reflected_sky = mix(sky_background(reflection), sky_background(normalize(reflection + vec3<f32>(0.0, 0.65, 0.0))), roughness * 0.4);
-    let sun_visibility = 1.0 - sun_cloud.w * 0.65;
-    let diffuse = 0.42 + 0.38 * max(dot(normal, sun_cloud.xyz), 0.0) * sun_visibility;
-    let base = mix(vec3<f32>(0.027, 0.057, 0.046), vec3<f32>(0.058, 0.112, 0.089), diffuse);
-    let sun = pow(max(dot(reflection, sun_cloud.xyz), 0.0), mix(180.0, 48.0, roughness));
-    let glitter = sun * sun_visibility * 0.16 * facet_visibility;
-    let color = mix(base, reflected_sky, fresnel * 0.45) + vec3<f32>(1.0, 0.82, 0.58) * glitter;
-    let whitecap_color = vec3<f32>(0.66, 0.72, 0.68) * (0.62 + 0.38 * sun_visibility);
-    return vec4<f32>(mix(color, whitecap_color, detail.w), 1.0);
+    let sun_direction = select(vec3<f32>(0.0, 1.0, 0.0), sun_cloud.xyz, dot(sun_cloud.xyz, sun_cloud.xyz) > 0.5);
+    let sun_visibility = 1.0;
+    let sun_alignment = max(dot(reflected_direction, sun_direction), 0.0);
+    let glitter_lobe = pow(sun_alignment, mix(220.0, 45.0, roughness));
+    let glitter_noise = 0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0);
+    let glitter = glitter_lobe * glitter_noise * smoothstep(0.35, 2.0, length(waves_sky.xy)) * sun_visibility * haze_parameters.z;
+    let diffuse = 0.58 + 0.42 * sun_visibility * max(dot(normal, sun_direction), 0.0) * haze_parameters.z;
+    var base = mix(water_palette[0].xyz, water_palette[1].xyz, diffuse * 0.72);
+    base = mix(base, water_palette[2].xyz, crest_light * 0.16 + patches * 0.07);
+    base *= mix(0.82, 1.0, sun_visibility);
+    base *= vec3<f32>(0.29, 0.34, 0.37);
+    var color = mix(base, reflection, fresnel * 0.45);
+    let depth_tint = clamp(geometry_parameters.z / 0.35, 0.0, 1.0);
+    color = mix(color, color * vec3<f32>(0.92, 0.97, 1.04), depth_tint * 0.12);
+    color += vec3<f32>(1.0, 0.78, 0.52) * glitter * 0.15;
+    color = mix(color, vec3<f32>(0.38, 0.43, 0.43), detail.w * 0.28);
+    let distance_to_eye = length(camera_time.xyz - mesh.world_position.xyz);
+    let atmospheric_fade = smoothstep(haze_parameters.x, haze_parameters.y, distance_to_eye);
+    color = mix(color, water_palette[3].xyz, atmospheric_fade);
+    return vec4<f32>(color, 1.0);
 }

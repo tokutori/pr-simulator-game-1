@@ -52,7 +52,7 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
 波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。
 近景水面は6 kmの非均一格子と96/144/224分割を使用する。GPUへの投影、mesh、WGSLはBevy adapterが所有する。
-水面のfinite wave packetと解析的勾配はWeb基準へ移行した。fine/ripple、反射pass、shadow、Fresnel、glitter、haze等の完全移植と実描画比較はIssue #311の後続である。
+水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。fmt・compile・Clippy・Native 103試験とWindows 11/AMD Radeon 860M/Vulkanのscripted GPU検査が合格した。Web全天textureのradiance、機体mirror pass、水面shadowと同一条件の実描画比較はIssue #311の後続である。物理キー・マウスの受入とrelease 80 FPSの計測は未完了である。
 現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
 Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
 
@@ -98,27 +98,19 @@ ICU4X 2.3の`BidiClass::to_icu4c_value`に関する非推奨警告は、公式�
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
-水面は八方向の波packet、画素footprintで減衰するnormal、Fresnel・低コントラストの空反射・広い太陽反射を使用する。
-波の位相と方向は同じ環境snapshotとsimulation timeから導出する。空はprocedural gradientを使用する。
-白波の明度maskは同じ八方向の波頂・packet・登録風から導出し、既存loop内のsin/cosを再利用する。
-Calmまたはdetail amplitude 0ではmaskを0とする。風速1.2–4.5 m/sで表示量を増加させ、波頂のsin値0.72–0.96をsmoothstepで選択する。
-合成gain 6と最大混合率0.22は描画用game tuningであり、実際の砕波率・波浪予報を表さない。
-既存packetに白波専用の`smoothstep(0.80, 0.95, packet)`を乗じ、弱いpacketでは白波を0にする。
-既存warp位相のcos値に`smoothstep(0.9889, 0.99875, cos(warp_phase))`を適用し、各波頂を短い局所patchへ限定する。横方向の位相勾配が`0.19 k`であるため、変位前world-space座標での非零支持幅は`2 acos(0.9889) / (0.19 k)`となり、波長の0.25倍以下である。最長の約7.31 mの波でも支持幅は約1.83 mに収まる。既存warpのsin/cosを共有し、trig評価を追加しない。gate閾値は描画用game tuningであり、既存波の法線・反射式は変更しない。
-波頂閾値の最大勾配`1.5 / (0.96 - 0.72)`と、packet・両gateの積/chain ruleによる勾配を画素footprintへ含め、未解像maskを減衰する。CPU回帰で全8-bandの支持幅、patch内の非零表示、支持幅外の0、解析勾配と空間差分の一致を確認する。
-near/farと全画質で同じworld-space位置・位相・時刻を用い、geometry patch境界で白波を切り替えない。不透明度、geometry安全上限、着水面は保持する。
-CPU参照試験とshader接続の静的検査は、有限値・上限・Calm・解像減衰・画質とnear/farの位相一致を対象とする。
-shaderの実GPU compile、画像上の白波、時間的aliasing、optic flow、性能は別途検証する。非線形maskの厳密なbandlimitや実GPUでの形式証明は提供しない。
+水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
+明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
+near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。
+空と天空反射は既存analytic背景を共用する。Web全天texture、機体mirror pass、水面shadowは後続である。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
 Titleと未準備のSetupは共有catalogの既定Typicalを展示する。準備後はGameSessionが確定した全identityを共有登録sourceと照合し、同じ環境の近景・遠景水面、空、DirectionalLight、変位Aabbを一括適用する。未知identityや資源欠損はtyped causeを保持し、交換前の表示を維持する。通知概要と技術情報から原因を確認できる。通常Updateは同じ失敗を反復せず、別環境への遷移または明示的な別画質への変更で再適用する。
 Calm等のsynthetic preset環境には共有の登録済み波浪入力を使用する。物理風から波浪入力を再生成しない。sky metadataが欠ける場合は共通の中立背景を使用し、太陽・雲と直達照明を無効化する。現在の環境6の太陽条件を補完しない。画質変更とRetryは確定した環境を維持し、近景mesh交換でcamera・波位相のsimulation timeを変更しない。Weather選択UIの追加と複数Weatherの時間的optic flow検査は別作業である。
-Gerstnerの水平・鉛直geometry変位を描画専用で追加する。登録済みwave inputsの風・fetch・detail amplitude・pattern seedから固定した4成分を生成し、有限fetch近似とmesh間隔のfilterを適用する。既存の八方向packetは別の細部法線層として保持する。実測波浪の再現性や波浪予報精度は主張しない。
-near meshは全画質で64 m四方を保持する。Lowは64 cells・4,225頂点・8,192 triangle、Mediumは128 cells・16,641頂点・32,768 triangle、Highは256 cells・66,049頂点・131,072 triangleである。Highは既存の波係数とmeshを維持する。画質変更時は近景meshと対応materialを準備して交換し、旧mesh assetを解放する。4 quadのfar ringで18万m四方を覆い、中央のnear領域を除外して波の谷でfar面が露出することを防ぐ。両者を画質と独立した0.25 m格子へsnapしてcameraの水平移動へ追従させる。この格子は再中心化の共通基準であり、低画質のmesh間隔を意味しない。位相はworld-spaceで評価する。境界の8 mで水平・鉛直変位を0へ減衰し、減衰の勾配も解析normalへ含める。合計鉛直振幅を0.35 m以下、境界勾配を含めた水平写像の微分変動上限を0.45以下に制限する。これらは描画安全性の上限であり、環境assetや着水面を変更しない。
+near meshは全画質で6 km四方の非一様gridを使用し、cameraの水平位置を1 m格子へsnapして追従する。far ringは18万m四方を覆い、中央のnear領域を除外する。波の位相はworld-space、時刻は共有simulation timeで評価する。finite packetと解析的勾配、共有投影の非反転reserveを使用し、描画専用の水平・鉛直変位を与える。実測波浪の再現性や波浪予報精度は主張しない。
 
-Low・Mediumでは実meshの最大辺長に対する既存の波長filterを適用し、Highの4成分から未解像geometryの振幅だけを減衰する。振幅はHigh以下を保持し、選択した環境のHigh Aabbと安全上限を共用する。波の方向・波数・位相・角周波数、近景幅、fade、八方向の微小法線、far/sky資源と反射式は共用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
-vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow生成・prepassは無効とし、平面のdefault prepassとの不一致を回避する。機体の鏡映反射・水面への影など高品質な反射は未移植である。追加のvertex波評価は最大264,196成分/frameであり、80FPS目標の達成は実GPUでの計測を必要とする。
+Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択し、near/farへ同じ投影を原子的に適用する。実meshの間隔に対する波長filterと非反転reserveを使用し、選択した環境の全quality共通Aabbを保持する。detail画像、4層micro-normal、環境時刻と固定phase、sky資源を再利用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
+vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow生成・prepassは無効とし、平面のdefault prepassとの不一致を回避する。機体の鏡映反射・水面への影など高品質な反射は未移植である。geometryとmicro-normalの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、

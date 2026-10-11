@@ -14,6 +14,7 @@ use bevy::{
 use bevy::{
     asset::{AssetId, RenderAssetUsages},
     camera::primitives::Aabb,
+    color::ColorToComponents,
     core_pipeline::mip_generation::{
         DownsampleShaders, MipGenerationJobs, MipGenerationPhaseId, MipGenerationPipelines,
         generate_mips_for_phase,
@@ -67,6 +68,10 @@ pub(crate) struct WaterMaterial {
     #[texture(9)]
     #[sampler(10)]
     detail_far: Option<Handle<Image>>,
+    #[uniform(11)]
+    water_palette: [Vec4; 4],
+    #[uniform(12)]
+    haze_parameters: Vec4,
     visual_condition: LakeVisualCondition,
     displacement_bounds: Vec2,
 }
@@ -120,6 +125,16 @@ impl WaterMaterial {
             sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
                 .extend(sky.cloud_fraction as f32)
         });
+        let visibility = condition.sky.map_or(80_000.0, |sky| sky.visibility_m) as f32;
+        let haze_start = visibility * 0.175;
+        if !visibility.is_finite() || visibility <= 0.0 || haze_start >= visibility {
+            return Err("水面hazeのvisibilityをGPU表現へ変換できない".to_owned());
+        }
+        let daylight = f32::from(
+            condition
+                .sky
+                .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0),
+        );
         let mut displacement_bounds = Vec2::ZERO;
         for quality in WaterQuality::ALL {
             let projection = LakeWaveProjection::try_new(visual_condition, quality.shared())
@@ -154,6 +169,14 @@ impl WaterMaterial {
             geometry_parameters: Vec4::ZERO,
             detail_near: None,
             detail_far: None,
+            water_palette: [
+                [0x17, 0x28, 0x31],
+                [0x29, 0x3b, 0x43],
+                [0x50, 0x63, 0x6a],
+                [0x9a, 0xaf, 0xb1],
+            ]
+            .map(|[red, green, blue]| Color::srgb_u8(red, green, blue).to_linear().to_vec4()),
+            haze_parameters: Vec4::new(haze_start, visibility, daylight, 0.0),
             visual_condition,
             displacement_bounds,
         };
@@ -897,6 +920,11 @@ mod tests {
                 assert_eq!(material.geometry_patch, before[role.index()].geometry_patch);
                 assert_eq!(material.sun_cloud, Vec4::ZERO);
                 assert_eq!(material.waves_sky, before[role.index()].waves_sky);
+                assert_eq!(material.water_palette, before[role.index()].water_palette);
+                assert_eq!(
+                    material.haze_parameters,
+                    before[role.index()].haze_parameters
+                );
                 assert_eq!(material.detail_near, before[role.index()].detail_near);
                 assert_eq!(material.detail_far, before[role.index()].detail_far);
                 assert_eq!(
@@ -1058,6 +1086,11 @@ mod tests {
                     .unwrap();
                 assert_eq!(retained.sun_cloud, initial[role.index()].sun_cloud);
                 assert_eq!(retained.waves_sky, initial[role.index()].waves_sky);
+                assert_eq!(retained.water_palette, initial[role.index()].water_palette);
+                assert_eq!(
+                    retained.haze_parameters,
+                    initial[role.index()].haze_parameters
+                );
                 assert_eq!(retained.detail_near, initial[role.index()].detail_near);
                 assert_eq!(retained.detail_far, initial[role.index()].detail_far);
                 assert_eq!(
@@ -1126,6 +1159,14 @@ mod tests {
                 .unwrap();
             assert_eq!(retained.sun_cloud, materials[role.index()].sun_cloud);
             assert_eq!(retained.waves_sky, materials[role.index()].waves_sky);
+            assert_eq!(
+                retained.water_palette,
+                materials[role.index()].water_palette
+            );
+            assert_eq!(
+                retained.haze_parameters,
+                materials[role.index()].haze_parameters
+            );
             assert_eq!(
                 retained.geometry_waves,
                 materials[role.index()].geometry_waves
@@ -1370,6 +1411,8 @@ mod tests {
             assert_eq!(updated.geometry_patch, material.geometry_patch);
             assert_eq!(updated.sun_cloud, material.sun_cloud);
             assert_eq!(updated.waves_sky, material.waves_sky);
+            assert_eq!(updated.water_palette, material.water_palette);
+            assert_eq!(updated.haze_parameters, material.haze_parameters);
             assert_eq!(updated.detail_near, material.detail_near);
             assert_eq!(updated.detail_far, material.detail_far);
             let far = materials.get(far_material.id()).unwrap();
@@ -1377,6 +1420,8 @@ mod tests {
             assert_eq!(far.geometry_motion, updated.geometry_motion);
             assert_eq!(far.geometry_parameters, updated.geometry_parameters);
             assert_eq!(far.camera_time, material.camera_time);
+            assert_eq!(far.water_palette, material.water_palette);
+            assert_eq!(far.haze_parameters, material.haze_parameters);
             assert_eq!(far.detail_near, material.detail_near);
             assert_eq!(far.detail_far, material.detail_far);
             assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
@@ -1846,13 +1891,13 @@ mod tests {
         assert!(shader.contains("textureSampleLevel(detail_near"));
         assert!(!shader.contains("patch_fade"));
         assert!(!shader.contains("array<vec4<f32>, 8>"));
-        assert!(shader.contains("vec4<f32>(mix(color, whitecap_color, detail.w), 1.0)"));
+        assert!(shader.contains("return vec4<f32>(color, 1.0);"));
     }
 
     #[test]
     fn wgsl_filters_four_web_micro_normal_bands_and_retains_their_variance() {
         let shader = include_str!("../assets/native_water.wgsl");
-        assert_eq!(shader.matches("@binding(").count(), 11);
+        assert_eq!(shader.matches("@binding(").count(), 13);
         assert_eq!(shader.matches("textureSampleGrad(").count(), 4);
         assert_eq!(shader.matches("lake_micro_detail(position ").count(), 4);
         assert_eq!(
@@ -1897,6 +1942,94 @@ mod tests {
     }
 
     #[test]
+    fn haze_and_daylight_follow_sealed_sky_and_preserve_missing_metadata() {
+        let mut condition = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .unwrap()
+            .condition();
+        let mut sky = condition.sky.unwrap();
+        sky.visibility_m = 10_000.0;
+        for (elevation, daylight) in [(0.0, 1.0), (55.0, 1.0), (-0.1, 0.0)] {
+            sky.sun_elevation_degrees = elevation;
+            sky.cloud_fraction = 0.95;
+            condition.sky = Some(sky);
+            let water = WaterMaterial::from_environment(condition, false).unwrap();
+            assert_eq!(
+                water.haze_parameters,
+                Vec4::new(1750.0, 10_000.0, daylight, 0.0)
+            );
+            assert_eq!(water.far_surface().haze_parameters, water.haze_parameters);
+            assert_eq!(
+                WaterMaterial::from_environment(condition, true)
+                    .unwrap()
+                    .water_palette,
+                water.water_palette
+            );
+        }
+        condition.sky = None;
+        let missing = WaterMaterial::from_environment(condition, false).unwrap();
+        assert_eq!(
+            missing.haze_parameters,
+            Vec4::new(14_000.0, 80_000.0, 0.0, 0.0)
+        );
+        assert_eq!(missing.sun_cloud, Vec4::ZERO);
+        condition.sky = Some(sky);
+        for visibility in [
+            0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+        ] {
+            condition.sky.as_mut().unwrap().visibility_m = visibility;
+            assert!(WaterMaterial::from_environment(condition, false).is_err());
+        }
+    }
+
+    #[test]
+    fn wgsl_uses_web_fresnel_glitter_crest_color_and_haze() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        for expected in [
+            "var<uniform> water_palette: array<vec4<f32>, 4>",
+            "var<uniform> haze_parameters: vec4<f32>",
+            "let patches = 0.5 + 0.5 * lake_value_noise(mesh.world_position.xz * 0.17 + vec2<f32>(2.3, -7.1)).x;",
+            "0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv)",
+            "mix(220.0, 45.0, roughness)",
+            "0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0)",
+            "smoothstep(0.35, 2.0, length(waves_sky.xy)) * sun_visibility * haze_parameters.z",
+            "smoothstep(0.42, 0.76, mesh.color.w)",
+            "smoothstep(0.05, 1.05, mesh.color.z) * sharp_crest * mix(0.35, 1.0, patches)",
+            "mix(water_palette[0].xyz, water_palette[1].xyz, diffuse * 0.72)",
+            "crest_light * 0.16 + patches * 0.07",
+            "base *= vec3<f32>(0.29, 0.34, 0.37)",
+            "clamp(geometry_parameters.z / 0.35, 0.0, 1.0)",
+            "vec3<f32>(1.0, 0.78, 0.52) * glitter * 0.15",
+            "vec3<f32>(0.38, 0.43, 0.43), detail.w * 0.28",
+            "smoothstep(haze_parameters.x, haze_parameters.y, distance_to_eye)",
+            "mix(color, water_palette[3].xyz, atmospheric_fade)",
+        ] {
+            assert!(
+                shader.contains(expected),
+                "missing Web shading contract: {expected}"
+            );
+        }
+        assert!(!shader.contains("1.0 - sun_cloud.w * 0.65"));
+        assert!(!shader.contains("roughness * 0.4"));
+        assert!(!shader.contains("let patches = lake_value_noise("));
+        for (noise, expected) in [(-1.0_f32, 0.0), (0.0, 0.5), (1.0, 1.0)] {
+            let patches = 0.5 + 0.5 * noise;
+            assert_eq!(patches, expected);
+            let crest_modulation = 0.35 + 0.65 * patches;
+            assert!((0.35..=1.0).contains(&crest_modulation));
+            for crest_gate in [0.0, 0.5, 1.0] {
+                let palette_weight = crest_gate * crest_modulation * 0.16 + patches * 0.07;
+                assert!((0.0..=(0.16 + 0.07)).contains(&palette_weight));
+            }
+        }
+    }
+
+    #[test]
     fn registered_water_and_sky_share_environment_without_transparency() {
         let water = WaterMaterial::registered(false).unwrap();
         let sky = WaterMaterial::registered(true).unwrap();
@@ -1905,6 +2038,8 @@ mod tests {
         assert_eq!(water.camera_time, Vec4::ZERO);
         assert_eq!(sky.camera_time, water.camera_time);
         assert_eq!(sky.sun_cloud, water.sun_cloud);
+        assert_eq!(sky.water_palette, water.water_palette);
+        assert_eq!(sky.haze_parameters, water.haze_parameters);
         assert_eq!(sky.waves_sky.truncate(), water.waves_sky.truncate());
         assert_eq!(water.waves_sky.w, 0.0);
         assert_eq!(sky.waves_sky.w, 1.0);
