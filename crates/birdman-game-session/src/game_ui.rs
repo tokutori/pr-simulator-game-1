@@ -36,8 +36,12 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_generator()
         .into_root_schema_for::<GameUiAction>();
     let input = input_settings
+        .clone()
         .into_generator()
         .into_root_schema_for::<GameUiPlatformInput>();
+    let tail_input = input_settings
+        .into_generator()
+        .into_root_schema_for::<birdman_game_format::TailInputDocument>();
     let effects = output
         .clone()
         .into_generator()
@@ -47,14 +51,20 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_root_schema_for::<GameUiFrame>();
     let value = match name {
         "bundle" => {
-            serde_json::json!({ "view": view, "action": action, "input": input, "effects": effects, "frame": frame })
+            serde_json::json!({ "view": view, "action": action, "input": input, "effects": effects, "frame": frame, "tail_input": tail_input })
         }
         "view" => serde_json::to_value(view).map_err(|error| error.to_string())?,
         "action" => serde_json::to_value(action).map_err(|error| error.to_string())?,
         "input" => serde_json::to_value(input).map_err(|error| error.to_string())?,
         "effects" => serde_json::to_value(effects).map_err(|error| error.to_string())?,
         "frame" => serde_json::to_value(frame).map_err(|error| error.to_string())?,
-        _ => return Err("schema must be bundle, view, action, input, effects or frame".to_owned()),
+        "tail-input" => serde_json::to_value(tail_input).map_err(|error| error.to_string())?,
+        _ => {
+            return Err(
+                "schema must be bundle, view, action, input, effects, frame or tail-input"
+                    .to_owned(),
+            );
+        }
     };
     serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
 }

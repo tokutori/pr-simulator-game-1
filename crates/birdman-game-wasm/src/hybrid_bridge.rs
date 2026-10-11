@@ -7,10 +7,12 @@ use birdman_game_core::{
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
-    InformationLevel, TailFlightRecordFinalizationDocument, TailIncidenceDocument,
-    TailPersonalBestConfiguration, TailPilotPositionCommandDocument, WeatherClass,
+    InformationLevel, TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION,
+    TailControlLayoutDocument as ControlLayout, TailFlightRecordFinalizationDocument,
+    TailIncidenceDocument, TailInputDocument, TailPersonalBestConfiguration,
+    TailPilotPositionCommandDocument, WeatherClass,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use wasm_bindgen::{JsValue, prelude::*};
 
 use crate::{
@@ -18,7 +20,6 @@ use crate::{
     environment_snapshot::EnvironmentIdentity, pause_reason_from_code, phase_code,
 };
 
-const SCHEMA_VERSION: u32 = 2;
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
 mod analysis;
@@ -36,49 +37,29 @@ struct PreparedMetadata {
     control_mode: ControlMode,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ControlLayout {
-    TailIncidence,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct InputDocument {
-    schema_version: u32,
-    control_layout: ControlLayout,
-    nose_up: f64,
-    turn_right: f64,
-    desired_pitch_rate_rad_s: f64,
-    desired_yaw_rate_rad_s: f64,
-    pilot_position_command: TailPilotPositionCommandDocument,
-}
-
-impl InputDocument {
-    fn decode(json: &str) -> Result<TailFlightTickInput, BoundaryError> {
-        if json.len() > MAX_INPUT_JSON_BYTES {
-            return Err(BoundaryError::InputTooLarge);
-        }
-        let document: Self = serde_json::from_str(json).map_err(BoundaryError::Json)?;
-        if document.schema_version != SCHEMA_VERSION {
-            return Err(BoundaryError::UnsupportedSchema);
-        }
-        let manual = TailPilotIntent::try_new(document.nose_up, document.turn_right)
-            .map_err(BoundaryError::Control)?;
-        let rate = TailRateTarget::try_new(
-            document.desired_pitch_rate_rad_s,
-            document.desired_yaw_rate_rad_s,
-        )
-        .map_err(BoundaryError::Control)?;
-        let position = match document.pilot_position_command {
-            TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
-            TailPilotPositionCommandDocument::Set { normalized } => TailPilotPositionCommand::Set(
-                TailPilotPositionIntent::try_new(normalized).map_err(BoundaryError::Control)?,
-            ),
-        };
-        let ControlLayout::TailIncidence = document.control_layout;
-        Ok(TailFlightTickInput::new(manual, rate, position))
+fn decode_input(json: &str) -> Result<TailFlightTickInput, BoundaryError> {
+    if json.len() > MAX_INPUT_JSON_BYTES {
+        return Err(BoundaryError::InputTooLarge);
     }
+    let document: TailInputDocument = serde_json::from_str(json).map_err(BoundaryError::Json)?;
+    if document.schema_version != SCHEMA_VERSION {
+        return Err(BoundaryError::UnsupportedSchema);
+    }
+    let manual = TailPilotIntent::try_new(document.nose_up, document.turn_right)
+        .map_err(BoundaryError::Control)?;
+    let rate = TailRateTarget::try_new(
+        document.desired_pitch_rate_rad_s,
+        document.desired_yaw_rate_rad_s,
+    )
+    .map_err(BoundaryError::Control)?;
+    let position = match document.pilot_position_command {
+        TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
+        TailPilotPositionCommandDocument::Set { normalized } => TailPilotPositionCommand::Set(
+            TailPilotPositionIntent::try_new(normalized).map_err(BoundaryError::Control)?,
+        ),
+    };
+    let ControlLayout::TailIncidence = document.control_layout;
+    Ok(TailFlightTickInput::new(manual, rate, position))
 }
 
 #[derive(Serialize)]
@@ -498,7 +479,7 @@ impl HybridGameSessionBridge {
     }
 
     fn advance_internal(&mut self, json: &str) -> Result<String, BoundaryError> {
-        let input = InputDocument::decode(json)?;
+        let input = decode_input(json)?;
         match self.session.advance_tail_flight_tick(input) {
             Ok(_) => self.snapshot_internal(),
             Err(_) if self.session.snapshot().phase() == SessionPhase::Result => {

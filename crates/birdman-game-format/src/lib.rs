@@ -6,6 +6,9 @@ extern crate alloc;
 mod environment;
 mod flight_record;
 mod personal_best;
+mod tail_input;
+
+pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
 
 pub use environment::{
     ENVIRONMENT_SCHEMA_VERSION, EnvironmentBasisDocument, EnvironmentComponent,

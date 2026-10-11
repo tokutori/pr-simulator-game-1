@@ -163,7 +163,7 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
             for _tick in 0..10 {
                 bridge.advance_internal(&json).unwrap();
                 native
-                    .advance_tail_flight_tick(InputDocument::decode(&json).unwrap())
+                    .advance_tail_flight_tick(decode_input(&json).unwrap())
                     .unwrap();
                 assert_eq!(bridge.session.snapshot(), native.snapshot());
                 assert_eq!(
@@ -366,6 +366,10 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
             "pilot_position_command",
             json!({"kind":"hold", "normalized":0.0}),
         ),
+        ("pilot_position_command", json!({"kind":"unknown"})),
+        ("pilot_position_command", json!({"kind":"set"})),
+        ("pilot_position_command", json!(null)),
+        ("desired_yaw_rate_rad_s", json!(-0.201)),
     ] {
         let mut document = base.clone();
         document[field] = replacement;
@@ -376,8 +380,27 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
         assert_eq!(bridge.snapshot_internal().unwrap(), before);
         assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
     }
-    assert!(InputDocument::decode(&" ".repeat(MAX_INPUT_JSON_BYTES + 1)).is_err());
-    assert!(InputDocument::decode("{\"nose_up\":1e400}").is_err());
+    for field in base.as_object().unwrap().keys() {
+        let mut document = base.clone();
+        document.as_object_mut().unwrap().remove(field);
+        assert!(bridge.advance_internal(&document.to_string()).is_err());
+        document[field] = Value::Null;
+        assert!(bridge.advance_internal(&document.to_string()).is_err());
+        assert_eq!(bridge.snapshot_internal().unwrap(), before);
+        assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
+    }
+    let valid = base.to_string();
+    let padded = format!("{valid}{}", " ".repeat(MAX_INPUT_JSON_BYTES - valid.len()));
+    assert_eq!(padded.len(), MAX_INPUT_JSON_BYTES);
+    assert!(decode_input(&padded).is_ok());
+    for rejected in [
+        format!("{padded} "),
+        valid.replace("\"nose_up\":0.0", "\"nose_up\":1e400"),
+    ] {
+        assert!(bridge.advance_internal(&rejected).is_err());
+        assert_eq!(bridge.snapshot_internal().unwrap(), before);
+        assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
+    }
 }
 
 #[test]
@@ -710,7 +733,7 @@ fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explici
     let mut document: Value = serde_json::from_str(&input(json!({"kind":"hold"}))).unwrap();
     document["desired_pitch_rate_rad_s"] = json!(desired_pitch);
     document["desired_yaw_rate_rad_s"] = json!(desired_yaw);
-    let decoded = InputDocument::decode(&document.to_string()).unwrap();
+    let decoded = decode_input(&document.to_string()).unwrap();
     assert_eq!(
         decoded.desired_body_rate(),
         TailRateTarget::try_new(desired_pitch, desired_yaw).unwrap()
