@@ -17,7 +17,15 @@ pub fn game_ui_view(
     let mut description = description(phase, can_resume);
     match phase {
         SessionPhase::Title => {
-            menu.status("game-state", "状態", &description);
+            menu.status(
+                "game-state",
+                "状態",
+                if context.platform.notification.is_empty() {
+                    &description
+                } else {
+                    &context.platform.notification
+                },
+            );
             menu.session(
                 "game-title-start",
                 "飛行を設定",
@@ -186,13 +194,15 @@ pub fn game_ui_view(
             menu.preparation_rects();
         }
         SessionPhase::FlightRunning => {
-            menu.session(
-                "game-flight-pause",
-                "Pause",
-                GameUiSessionCommand::Pause {},
-                GameUiEmphasis::Normal,
-                true,
-            );
+            if context.platform.flight_controller_failure.is_none() {
+                menu.session(
+                    "game-flight-pause",
+                    "Pause",
+                    GameUiSessionCommand::Pause {},
+                    GameUiEmphasis::Normal,
+                    true,
+                );
+            }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
                 || context.platform.flight_controller_failure.is_some()
             {
@@ -485,6 +495,15 @@ pub fn game_ui_view(
     }
     let spatial_flight = phase == SessionPhase::FlightRunning
         && context.platform.presentation_mode != GameUiPresentationMode::Screen;
+    let expanded_head_failure = spatial_flight && context.platform.head_hud_failure.is_some();
+    let expanded_controller_failure =
+        spatial_flight && context.platform.flight_controller_failure.is_some();
+    let spatial_height = match (expanded_head_failure, expanded_controller_failure) {
+        (true, true) => 0.80,
+        (false, true) => 0.65,
+        (true, false) => 0.50,
+        (false, false) => 0.25,
+    };
     let layout = layout(state, context, phase)?;
     Ok(GameUiView {
         schema_version: GAME_UI_SCHEMA_VERSION,
@@ -515,12 +534,12 @@ pub fn game_ui_view(
             .to_owned(),
             anchor: GameUiAnchor::Menu,
             local_position: if spatial_flight {
-                [0.0, -1.12, 0.0]
+                [0.0, -0.995 - spatial_height / 2.0, 0.0]
             } else {
                 [0.0; 3]
             },
             size: if spatial_flight {
-                [0.62, 0.25]
+                [0.62, spatial_height]
             } else {
                 [2.4, 1.8]
             },
@@ -667,6 +686,18 @@ impl Menu {
         phase: SessionPhase,
         mode: GameUiPresentationMode,
     ) {
+        let expanded_head_failure = phase == SessionPhase::FlightRunning
+            && mode != GameUiPresentationMode::Screen
+            && self
+                .controls
+                .iter()
+                .any(|control| control.id == "game-head-hud-unavailable");
+        let expanded_controller_failure = phase == SessionPhase::FlightRunning
+            && mode != GameUiPresentationMode::Screen
+            && self
+                .controls
+                .iter()
+                .any(|control| control.id == "game-controller-stopped");
         let normalized = matches!(
             phase,
             SessionPhase::Result
@@ -695,7 +726,30 @@ impl Menu {
                 "game-flight-pause" if mode == GameUiPresentationMode::Screen => {
                     Some(rect(0.63, 0.90, 0.32, 0.07))
                 }
+                "game-flight-pause" if expanded_head_failure => Some(rect(0.10, 0.20, 0.80, 0.16)),
                 "game-flight-pause" => Some(rect(0.10, 0.30, 0.80, 0.40)),
+                "game-head-hud-unavailable"
+                    if expanded_head_failure && expanded_controller_failure =>
+                {
+                    Some(rect(0.08, 0.30, 0.84, 0.31))
+                }
+                "game-controller-stopped"
+                    if expanded_head_failure && expanded_controller_failure =>
+                {
+                    Some(rect(0.08, 0.62, 0.84, 0.25))
+                }
+                "game-controller-stopped" if expanded_controller_failure => {
+                    Some(rect(0.08, 0.36, 0.84, 0.44))
+                }
+                "game-flight-abort" if expanded_head_failure && expanded_controller_failure => {
+                    Some(rect(0.08, 0.89, 0.84, 0.10))
+                }
+                "game-flight-abort" if expanded_controller_failure => {
+                    Some(rect(0.08, 0.84, 0.84, 0.13))
+                }
+                "game-head-hud-unavailable" if expanded_head_failure => {
+                    Some(rect(0.08, 0.40, 0.84, 0.55))
+                }
                 "game-flight-abort" => Some(rect(0.28, 0.90, 0.32, 0.07)),
                 "game-pause-settings-info" => Some(rect(0.08, 0.20, 0.84, 0.12)),
                 "game-pause-help-info" => Some(rect(0.08, 0.24, 0.84, 0.25)),
@@ -1278,7 +1332,7 @@ fn analysis(
         menu.status(
             "game-analysis-cursor-values",
             "At cursor",
-            &super::frame::analysis_cursor_readout(sample, time),
+            &super::frame::analysis_cursor_readout(sample, time, record.header().scenario),
         );
     } else {
         menu.status(

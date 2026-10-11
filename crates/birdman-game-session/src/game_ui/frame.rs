@@ -1,4 +1,4 @@
-use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase};
+use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase, SessionScenarioIdentity};
 
 use super::{types::*, view};
 
@@ -39,6 +39,12 @@ pub fn game_ui_frame(
             "game-countdown-status",
             format!("{remaining_ticks} 秒"),
         ));
+    }
+    if !matches!(
+        phase,
+        SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
+    ) {
+        return Ok(frame);
     }
     let Some(record) = context.record else {
         return Ok(frame);
@@ -125,7 +131,7 @@ pub fn game_ui_frame(
             .map_err(GameUiError::Record)?;
         frame.readouts.push(readout(
             "game-analysis-cursor-values",
-            analysis_cursor_readout(sample, time),
+            analysis_cursor_readout(sample, time, record.header().scenario),
         ));
         frame.chart_cursor = Some(super::chart::chart_cursor(*chart, plot, sample, time));
     }
@@ -139,13 +145,21 @@ fn readout(id: &str, value: String) -> GameUiReadoutValue {
     }
 }
 
-pub(super) fn analysis_cursor_readout(sample: FlightRecordPlaybackSample, time: f64) -> String {
+pub(super) fn analysis_cursor_readout(
+    sample: FlightRecordPlaybackSample,
+    time: f64,
+    identity: SessionScenarioIdentity,
+) -> String {
     let [north, east, _] = sample.telemetry.composite_cg_position_ned_m.components();
     let [wind_north, wind_east, wind_down] = sample.telemetry.wind_velocity_ned_mps.components();
-    format!(
+    let mut readout = format!(
         "t {time:.2} s · N {north:.1} m · E {east:.1} m · h {:.1} m\nVair {:.1} · Vground {:.1} · WN {wind_north:.1} · WE {wind_east:.1} · WD {wind_down:.1} m/s",
         sample.telemetry.altitude_m,
         sample.telemetry.airspeed_mps,
         sample.telemetry.groundspeed_mps
-    )
+    );
+    if !super::environment::registered(identity) {
+        readout.push_str(" · 風場 unavailable (unregistered_environment_identity)");
+    }
+    readout
 }
