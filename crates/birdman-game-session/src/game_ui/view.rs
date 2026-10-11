@@ -686,6 +686,41 @@ impl Menu {
         phase: SessionPhase,
         mode: GameUiPresentationMode,
     ) {
+        if mode == GameUiPresentationMode::Screen
+            && matches!(
+                phase,
+                SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+            )
+        {
+            let groups = [
+                ("flight-status", GameUiSectionLayout::Column),
+                ("water-quality", GameUiSectionLayout::ChoiceGrid),
+                ("flight-actions", GameUiSectionLayout::Row),
+            ];
+            for control in &mut self.controls {
+                control.section = match &control.content {
+                    GameUiControlContent::Status { .. } => groups[0].0,
+                    GameUiControlContent::Button {
+                        presentation: GameUiButtonPresentation::Choice { .. },
+                        ..
+                    } => groups[1].0,
+                    _ => groups[2].0,
+                }
+                .to_owned();
+            }
+            self.controls
+                .sort_by_key(|control| groups.iter().position(|(id, _)| *id == control.section));
+            self.sections = groups
+                .into_iter()
+                .filter(|(id, _)| self.controls.iter().any(|control| control.section == *id))
+                .map(|(id, layout)| GameUiSection {
+                    id: id.to_owned(),
+                    label: String::new(),
+                    layout,
+                })
+                .collect();
+            return;
+        }
         let screen_analysis = mode == GameUiPresentationMode::Screen
             && (phase == SessionPhase::Result && state.result_tab == GameUiResultTab::Analysis
                 || phase == SessionPhase::Replay
@@ -1572,7 +1607,7 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
     }
 }
 
-fn layout(
+pub(super) fn layout(
     state: &GameUiState,
     context: &GameUiContext<'_, '_>,
     phase: SessionPhase,
@@ -1585,10 +1620,16 @@ fn layout(
         return Err(GameUiError::InvalidViewport);
     }
     let font = viewport.root_font_size;
+    let pause_settings_width = (viewport.width - 1.5 * font).max(1.0).min(30.0 * font);
     let shell = match phase {
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
-            if state.pause_overlay == GameUiPauseOverlay::Settings =>
+            if state.pause_overlay == GameUiPauseOverlay::Settings
+                && (context.platform.presentation_mode != GameUiPresentationMode::Screen
+                    || viewport.width
+                        >= super::hud::hud_width(context.platform)
+                            + pause_settings_width
+                            + 2.25 * font) =>
         {
             GameUiShell::PauseSettings
         }
@@ -1607,7 +1648,7 @@ fn layout(
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis | GameUiShell::FlightBar => viewport.width,
-        GameUiShell::PauseSettings => (viewport.width - 1.5 * font).max(1.0).min(30.0 * font),
+        GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => (viewport.width - 1.5 * font).max(1.0).min(21.0 * font),
     };
     let padding = match shell {
@@ -1624,6 +1665,13 @@ fn layout(
         width_px: width,
         maximum_height_px: if shell == GameUiShell::Analysis {
             viewport.height
+        } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
+            && shell == GameUiShell::FlightBar
+            && matches!(phase, SessionPhase::FlightPaused { .. })
+        {
+            ((viewport.height - 1.5 * font).max(1.0) * 0.45)
+                .min(14.0 * font)
+                .max(1.0)
         } else if shell == GameUiShell::PauseSettings {
             (viewport.height - 1.5 * font).max(1.0)
         } else {
@@ -1639,7 +1687,7 @@ fn layout(
             || context.platform.presentation_mode == GameUiPresentationMode::Screen)
             && !(shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning),
         clip_x: true,
-        passthrough: shell == GameUiShell::FlightBar
+        passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
                 && context.platform.presentation_mode != GameUiPresentationMode::Screen),
     })

@@ -151,7 +151,8 @@ pub(super) fn game_ui_hud(
     });
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = alpha_visible.then_some(alpha).flatten();
-    let mut hud = GameUiHud { layout: hud_layout(context.platform), geometry: hud_geometry(attitude, path_angle, heading_degrees, angle_of_attack_degrees), heading_label: "HEADING".to_owned(), pilot_position_label: "PILOT CG".to_owned(), wind_label: "WIND N/E/D".to_owned(), angle_of_attack_label: "AoA".to_owned(), status: status.to_owned(), attitude,
+    let menu_layout = super::view::layout(state, context, phase)?;
+    let mut hud = GameUiHud { layout: hud_layout(context.platform, phase, &menu_layout), geometry: hud_geometry(attitude, path_angle, heading_degrees, angle_of_attack_degrees), heading_label: "HEADING".to_owned(), pilot_position_label: "PILOT CG".to_owned(), wind_label: "WIND N/E/D".to_owned(), angle_of_attack_label: "AoA".to_owned(), status: status.to_owned(), attitude,
         flight_path_angle_degrees: path_angle, warning: None,
         heading_degrees, wind_direction_degrees: if wind_visible && (wind_north != 0.0 || wind_east != 0.0) { Some(wind_east.atan2(wind_north).to_degrees().rem_euclid(360.0)) } else { None },
         angle_of_attack_degrees, readouts: readouts.join("\n"), heading: attitude_visible.then(|| format!("{heading:.0}°")),
@@ -231,14 +232,30 @@ fn rounded_bearing(value: f64) -> u32 {
     rounded.rem_euclid(360.0) as u32
 }
 
-fn hud_layout(platform: &GameUiPlatformInput) -> GameUiHudLayout {
+pub(super) fn hud_width(platform: &GameUiPlatformInput) -> f64 {
+    let font = platform.viewport.root_font_size;
+    let compact = platform.viewport.width <= 600.0;
+    ((if compact { 19.0 } else { 25.0 }) * font)
+        .min((platform.viewport.width - if compact { 1.2 } else { 1.5 } * font).max(1.0))
+}
+
+fn hud_layout(
+    platform: &GameUiPlatformInput,
+    phase: SessionPhase,
+    menu: &GameUiLayout,
+) -> GameUiHudLayout {
     let font = platform.viewport.root_font_size;
     let compact = platform.viewport.width <= 600.0;
     GameUiHudLayout {
         offset_px: [0.75 * font; 2],
-        width_px: ((if compact { 19.0 } else { 25.0 }) * font)
-            .min((platform.viewport.width - if compact { 1.2 } else { 1.5 } * font).max(1.0)),
-        maximum_height_px: (platform.viewport.height - 5.0 * font).max(1.0),
+        width_px: hud_width(platform),
+        maximum_height_px: if matches!(phase, SessionPhase::FlightPaused { .. })
+            && menu.shell == GameUiShell::FlightBar
+        {
+            (platform.viewport.height - menu.maximum_height_px - 1.5 * font).max(1.0)
+        } else {
+            (platform.viewport.height - 5.0 * font).max(1.0)
+        },
         padding_px: if compact {
             [0.5 * font, 0.4 * font]
         } else {

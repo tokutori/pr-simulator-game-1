@@ -1349,6 +1349,94 @@ fn registered_weather_briefing_is_shared_and_unknown_identity_has_explicit_absen
 }
 
 #[test]
+fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
+    let mut session = launched();
+    session.pause(PauseReason::Manual).unwrap();
+    let snapshot = session.snapshot();
+    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+        let mut platform = platform();
+        platform.viewport.width = width;
+        platform.viewport.height = height;
+        for information in [
+            InformationLevel::Full,
+            InformationLevel::Standard,
+            InformationLevel::Minimal,
+            InformationLevel::Realistic,
+            InformationLevel::Custom,
+        ] {
+            for overlay in [
+                GameUiPauseOverlay::Menu,
+                GameUiPauseOverlay::Settings,
+                GameUiPauseOverlay::Help,
+            ] {
+                let state = GameUiState {
+                    pause_overlay: overlay,
+                    ..GameUiState::default()
+                };
+                let context = context(
+                    &session,
+                    difficulty().with_information(information),
+                    &platform,
+                );
+                let view = game_ui_view(&state, &context).unwrap();
+                let frame = game_ui_frame(&state, &context, &view).unwrap();
+                let hud = view.hud.as_ref().unwrap();
+                assert_eq!(hud.status, "一時停止");
+                assert_eq!(frame.hud, view.hud);
+                assert!(view.layout.scroll_y && !view.layout.passthrough);
+                assert!(view.layout.maximum_height_px > 0.0);
+                assert!(view.layout.maximum_height_px <= height);
+                assert!(hud.layout.maximum_height_px > 0.0);
+                assert!(hud.layout.offset_px[1] + hud.layout.maximum_height_px <= height);
+                let panel = &view.panels[0];
+                assert!(
+                    panel
+                        .sections
+                        .iter()
+                        .all(|section| section.layout != GameUiSectionLayout::Normalized)
+                );
+                let actions = panel
+                    .sections
+                    .iter()
+                    .find(|section| section.id == "flight-actions")
+                    .unwrap();
+                assert_eq!(actions.layout, GameUiSectionLayout::Row);
+                for control in &panel.controls {
+                    let section = panel
+                        .sections
+                        .iter()
+                        .find(|section| section.id == control.section)
+                        .unwrap();
+                    if matches!(control.content, GameUiControlContent::Status { .. }) {
+                        assert_eq!(section.layout, GameUiSectionLayout::Column);
+                    }
+                }
+                if view.layout.shell == GameUiShell::PauseSettings {
+                    assert_eq!(overlay, GameUiPauseOverlay::Settings);
+                    let menu_left =
+                        width - 0.75 * platform.viewport.root_font_size - view.layout.width_px;
+                    assert!(hud.layout.offset_px[0] + hud.layout.width_px < menu_left);
+                } else {
+                    assert_eq!(view.layout.shell, GameUiShell::FlightBar);
+                    let menu_top = height - view.layout.maximum_height_px;
+                    assert!(hud.layout.offset_px[1] + hud.layout.maximum_height_px < menu_top);
+                }
+                assert_eq!(session.snapshot(), snapshot);
+            }
+        }
+    }
+    let running = launched();
+    let platform = platform();
+    let view = game_ui_view(
+        &GameUiState::default(),
+        &context(&running, difficulty(), &platform),
+    )
+    .unwrap();
+    assert!(view.layout.passthrough);
+    assert_eq!(view.panels[0].sections[0].layout, GameUiSectionLayout::Row);
+}
+
+#[test]
 fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
     for mode in [
         GameUiPresentationMode::Screen,
