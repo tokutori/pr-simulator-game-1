@@ -604,6 +604,24 @@ fn undefined_flow_tiny_positive_speed_and_computed_overflow_are_distinct() {
             }
         );
         assert_eq!(result.wrench(), Wrench::zero());
+        let non_axial = table
+            .evaluate_body_velocity(vector([3.0 * speed, 12.0 * speed, 4.0 * speed]), 1.0)
+            .unwrap();
+        near(
+            non_axial.flow().speed_mps() / speed,
+            13.0,
+            4.0 * f64::EPSILON * 13.0,
+        );
+        let FlowAngles::Defined {
+            alpha_rad,
+            beta_rad,
+        } = non_axial.flow().angles()
+        else {
+            panic!("Tiny non-axial velocity has defined flow angles");
+        };
+        near(alpha_rad, 4.0_f64.atan2(3.0), 1e-15);
+        near(beta_rad, 12.0_f64.atan2(5.0), 1e-15);
+        assert_eq!(non_axial.wrench(), Wrench::zero());
     }
     assert_eq!(
         table.evaluate_body_velocity(vector([f64::MAX, 0.0, 0.0]), 1.0),
