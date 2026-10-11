@@ -1,0 +1,1130 @@
+{
+  "$defs": {
+    "AssistanceLevel": {
+      "description": "Controller category resolved from the Assistance axis.",
+      "oneOf": [
+        {
+          "const": "strong",
+          "description": "Full FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "assisted",
+          "description": "Shared pilot and FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "description": "Limited FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "manual",
+          "description": "Pilot-only surface commands.",
+          "type": "string"
+        }
+      ]
+    },
+    "DifficultyPreset": {
+      "description": "Named preset whose axes are resolved independently.",
+      "oneOf": [
+        {
+          "const": "beginner",
+          "description": "Full information, strong assistance, mild weather.",
+          "type": "string"
+        },
+        {
+          "const": "standard",
+          "description": "Standard information, assisted control, typical weather.",
+          "type": "string"
+        },
+        {
+          "const": "expert",
+          "description": "Minimal information, light assistance, challenging weather.",
+          "type": "string"
+        },
+        {
+          "const": "realistic",
+          "description": "Realistic information, manual control, typical weather.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "Individually selected axes.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiAction": {
+      "description": "UI message whose handling is shared by native and browser adapters.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Produces one canonical domain operation.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiSessionCommand",
+              "description": "Operation admitted by the current view."
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Produces one platform operation.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiPlatformCommand",
+              "description": "Explicit capability-bound operation."
+            },
+            "kind": {
+              "const": "platform",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggles preparation diagnostic disclosure.",
+          "properties": {
+            "kind": {
+              "const": "toggle_technical",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Result presentation.",
+          "properties": {
+            "kind": {
+              "const": "set_result_tab",
+              "type": "string"
+            },
+            "tab": {
+              "$ref": "#/$defs/GameUiResultTab",
+              "description": "Requested tab."
+            }
+          },
+          "required": [
+            "kind",
+            "tab"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects a record plot.",
+          "properties": {
+            "chart": {
+              "$ref": "#/$defs/GameUiAnalysisChart",
+              "description": "Requested plot."
+            },
+            "kind": {
+              "const": "set_analysis_chart",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "chart"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects an explicit pause overlay.",
+          "properties": {
+            "kind": {
+              "const": "set_pause_overlay",
+              "type": "string"
+            },
+            "overlay": {
+              "$ref": "#/$defs/GameUiPauseOverlay",
+              "description": "Requested overlay."
+            }
+          },
+          "required": [
+            "kind",
+            "overlay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects a replay presentation mode.",
+          "properties": {
+            "kind": {
+              "const": "set_replay_view",
+              "type": "string"
+            },
+            "view": {
+              "$ref": "#/$defs/GameUiReplayView",
+              "description": "Requested view."
+            }
+          },
+          "required": [
+            "kind",
+            "view"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Advances the common ordered camera selection.",
+          "properties": {
+            "kind": {
+              "const": "cycle_replay_camera",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Queries a recorded analysis instant without moving the playback clock.",
+          "properties": {
+            "kind": {
+              "const": "seek_analysis",
+              "type": "string"
+            },
+            "time_seconds": {
+              "description": "Requested recorded time.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "time_seconds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves the Rust-owned replay clock.",
+          "properties": {
+            "kind": {
+              "const": "seek_replay",
+              "type": "string"
+            },
+            "time_seconds": {
+              "description": "Requested recorded time.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "time_seconds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggles the Rust-owned replay clock.",
+          "properties": {
+            "kind": {
+              "const": "toggle_replay_playing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes playback rate by existing stable code.",
+          "properties": {
+            "code": {
+              "description": "Zero is half speed, one normal speed, two double speed.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "set_replay_rate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiAnalysisChart": {
+      "description": "Plot generated from the retained record.",
+      "oneOf": [
+        {
+          "const": "map",
+          "description": "Equal-scale horizontal trajectory.",
+          "type": "string"
+        },
+        {
+          "const": "altitude",
+          "description": "Altitude over recorded time.",
+          "type": "string"
+        },
+        {
+          "const": "speed",
+          "description": "Air-relative and ground-relative speed.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiEffect": {
+      "description": "Side-effect request produced after pure action admission.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Existing session command.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiSessionCommand",
+              "description": "Operation to execute through the shared session owner."
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Platform operation.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiPlatformCommand",
+              "description": "Operation to interpret at the platform boundary."
+            },
+            "kind": {
+              "const": "platform",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Queries existing record or clock APIs.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/GameUiAction",
+              "description": "Admitted seek, clock toggle or rate action."
+            },
+            "kind": {
+              "const": "record",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiPauseOverlay": {
+      "description": "Exclusive pause overlay.",
+      "oneOf": [
+        {
+          "const": "menu",
+          "description": "Pause navigation.",
+          "type": "string"
+        },
+        {
+          "const": "settings",
+          "description": "Render settings.",
+          "type": "string"
+        },
+        {
+          "const": "help",
+          "description": "Input instructions.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiPlatformCommand": {
+      "description": "Platform-owned operation requested by common UI.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Changes render-only mesh quality.",
+          "properties": {
+            "kind": {
+              "const": "set_water_quality",
+              "type": "string"
+            },
+            "quality": {
+              "$ref": "#/$defs/GameUiWaterQuality",
+              "description": "Requested quality."
+            }
+          },
+          "required": [
+            "kind",
+            "quality"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Requests a supported display mode.",
+          "properties": {
+            "kind": {
+              "const": "set_presentation",
+              "type": "string"
+            },
+            "mode": {
+              "$ref": "#/$defs/GameUiPresentationMode",
+              "description": "Requested mode."
+            }
+          },
+          "required": [
+            "kind",
+            "mode"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Recalibrates phone heading.",
+          "properties": {
+            "kind": {
+              "const": "recenter_phone_tracking",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Places the retained menu in front of the viewer.",
+          "properties": {
+            "kind": {
+              "const": "recenter_menu",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Downloads the original JSON record.",
+          "properties": {
+            "kind": {
+              "const": "download_record_json",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Downloads record-derived numeric CSV.",
+          "properties": {
+            "kind": {
+              "const": "download_flight_csv",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Loads a stored finalized record.",
+          "properties": {
+            "id": {
+              "description": "Platform persistence key.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "open_stored_record",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Advances the supported replay camera selection.",
+          "properties": {
+            "camera": {
+              "$ref": "#/$defs/GameUiReplayCamera",
+              "description": "Shared UI selection to apply."
+            },
+            "kind": {
+              "const": "set_replay_camera",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "camera"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiPresentationMode": {
+      "description": "Presentation mode supported by a platform adapter.",
+      "oneOf": [
+        {
+          "const": "screen",
+          "description": "Flat native or browser display.",
+          "type": "string"
+        },
+        {
+          "const": "webxr",
+          "description": "Browser HMD display.",
+          "type": "string"
+        },
+        {
+          "const": "phone_vr",
+          "description": "Browser phone headset display.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiReplayCamera": {
+      "description": "Current Web replay camera candidates in their shared selection order.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Recorded-event camera director.",
+          "type": "string"
+        },
+        {
+          "const": "pilot",
+          "description": "Pilot eye view.",
+          "type": "string"
+        },
+        {
+          "const": "chase",
+          "description": "Aircraft-following view.",
+          "type": "string"
+        },
+        {
+          "const": "orbit",
+          "description": "Orbiting aircraft view.",
+          "type": "string"
+        },
+        {
+          "const": "platform",
+          "description": "Launch-platform fixed view.",
+          "type": "string"
+        },
+        {
+          "const": "shore",
+          "description": "Lake-shore fixed view.",
+          "type": "string"
+        },
+        {
+          "const": "overhead",
+          "description": "Overhead aircraft view.",
+          "type": "string"
+        },
+        {
+          "const": "side",
+          "description": "Side-on aircraft view.",
+          "type": "string"
+        },
+        {
+          "const": "front",
+          "description": "Forward aircraft view.",
+          "type": "string"
+        },
+        {
+          "const": "telephoto",
+          "description": "Fixed distant telephoto view.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiReplayView": {
+      "description": "Replay presentation selection.",
+      "oneOf": [
+        {
+          "const": "cinematic",
+          "description": "Scenic replay.",
+          "type": "string"
+        },
+        {
+          "const": "telemetry",
+          "description": "Scenic replay with telemetry.",
+          "type": "string"
+        },
+        {
+          "const": "analysis",
+          "description": "Record plot and shared cursor.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiResultTab": {
+      "description": "Result presentation mode.",
+      "oneOf": [
+        {
+          "const": "summary",
+          "description": "Condensed result and navigation.",
+          "type": "string"
+        },
+        {
+          "const": "analysis",
+          "description": "Recorded analysis charts.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiSessionCommand": {
+      "description": "Existing domain commands emitted by the pure UI update.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Opens flight settings.",
+          "properties": {
+            "kind": {
+              "const": "open_setup",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns to Title.",
+          "properties": {
+            "kind": {
+              "const": "return_to_title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Seals the selected configuration.",
+          "properties": {
+            "kind": {
+              "const": "prepare",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns from Briefing to Setup.",
+          "properties": {
+            "kind": {
+              "const": "cancel_briefing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts the existing launch countdown.",
+          "properties": {
+            "kind": {
+              "const": "start_countdown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cancels the launch countdown.",
+          "properties": {
+            "kind": {
+              "const": "cancel_countdown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Pauses the current flight.",
+          "properties": {
+            "kind": {
+              "const": "pause",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicitly resumes the retained flight.",
+          "properties": {
+            "kind": {
+              "const": "resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Finalizes the active flight by pilot request.",
+          "properties": {
+            "kind": {
+              "const": "abort",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reuses the retained flight configuration.",
+          "properties": {
+            "kind": {
+              "const": "retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Repeats preparation of the sealed configuration.",
+          "properties": {
+            "kind": {
+              "const": "retry_briefing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Opens replay of the finalized record.",
+          "properties": {
+            "kind": {
+              "const": "enter_replay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Leaves replay for its Rust-owned return target.",
+          "properties": {
+            "kind": {
+              "const": "leave_replay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Opens the independent Title demonstration.",
+          "properties": {
+            "kind": {
+              "const": "enter_attract",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns from the demonstration to Title.",
+          "properties": {
+            "kind": {
+              "const": "leave_attract",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolves one existing preset.",
+          "properties": {
+            "kind": {
+              "const": "select_preset",
+              "type": "string"
+            },
+            "preset": {
+              "$ref": "#/$defs/DifficultyPreset",
+              "description": "Named preset; Custom is not a selectable shortcut."
+            }
+          },
+          "required": [
+            "kind",
+            "preset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Information axis.",
+          "properties": {
+            "information": {
+              "$ref": "#/$defs/InformationLevel",
+              "description": "Existing information level."
+            },
+            "kind": {
+              "const": "select_information",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "information"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Assistance axis.",
+          "properties": {
+            "assistance": {
+              "$ref": "#/$defs/AssistanceLevel",
+              "description": "Existing assistance level."
+            },
+            "kind": {
+              "const": "select_assistance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "assistance"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Weather axis.",
+          "properties": {
+            "kind": {
+              "const": "select_weather",
+              "type": "string"
+            },
+            "weather": {
+              "$ref": "#/$defs/WeatherClass",
+              "description": "Existing weather class."
+            }
+          },
+          "required": [
+            "kind",
+            "weather"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes one Custom information cue.",
+          "properties": {
+            "cue": {
+              "$ref": "#/$defs/HudCue",
+              "description": "Existing cue."
+            },
+            "kind": {
+              "const": "set_cue",
+              "type": "string"
+            },
+            "visible": {
+              "description": "Requested visibility.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "cue",
+            "visible"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiState": {
+      "additionalProperties": false,
+      "description": "UI-only selections; physical state and domain phase remain in GameSession.",
+      "properties": {
+        "analysis_chart": {
+          "$ref": "#/$defs/GameUiAnalysisChart",
+          "description": "Selected record plot."
+        },
+        "analysis_time_seconds": {
+          "description": "Read-only analysis query position in seconds.",
+          "format": "double",
+          "type": "number"
+        },
+        "pause_overlay": {
+          "$ref": "#/$defs/GameUiPauseOverlay",
+          "description": "Paused menu selection."
+        },
+        "replay_camera": {
+          "$ref": "#/$defs/GameUiReplayCamera",
+          "description": "Shared replay camera selection; adapters only apply its geometry."
+        },
+        "replay_view": {
+          "$ref": "#/$defs/GameUiReplayView",
+          "description": "Replay presentation selection."
+        },
+        "result_tab": {
+          "$ref": "#/$defs/GameUiResultTab",
+          "description": "Result presentation selection."
+        },
+        "technical_open": {
+          "description": "Expanded preparation diagnostics.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "technical_open",
+        "result_tab",
+        "analysis_chart",
+        "analysis_time_seconds",
+        "pause_overlay",
+        "replay_view",
+        "replay_camera"
+      ],
+      "type": "object"
+    },
+    "GameUiWaterQuality": {
+      "description": "Rendering quality has no effect on physics or record identity.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Reduced mesh density.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Balanced mesh density.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Detailed mesh density.",
+          "type": "string"
+        }
+      ]
+    },
+    "HudCue": {
+      "description": "Stable identity for one independently configurable HUD cue.",
+      "oneOf": [
+        {
+          "const": "telemetry",
+          "description": "Numeric telemetry readouts.",
+          "type": "string"
+        },
+        {
+          "const": "attitude",
+          "description": "Attitude indicator and heading.",
+          "type": "string"
+        },
+        {
+          "const": "wind",
+          "description": "Wind vector readout.",
+          "type": "string"
+        },
+        {
+          "const": "flight_path",
+          "description": "Flight-path marker.",
+          "type": "string"
+        },
+        {
+          "const": "angle_of_attack",
+          "description": "Angle-of-attack cue.",
+          "type": "string"
+        },
+        {
+          "const": "warnings",
+          "description": "Warning cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "InformationLevel": {
+      "description": "Information presentation selected for a session.",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Full flight telemetry and warnings.",
+          "type": "string"
+        },
+        {
+          "const": "standard",
+          "description": "Primary flight instruments.",
+          "type": "string"
+        },
+        {
+          "const": "minimal",
+          "description": "Altitude, distance, and elapsed time.",
+          "type": "string"
+        },
+        {
+          "const": "realistic",
+          "description": "Instrumentation configured for a validated aircraft model.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "Independently configured flight information cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "WeatherClass": {
+      "description": "Weather classification attached to a versioned scenario catalog.",
+      "oneOf": [
+        {
+          "const": "calm",
+          "description": "Low-variation synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "mild",
+          "description": "Mild synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "typical",
+          "description": "Typical-class scenario; no real-world claim is implied.",
+          "type": "string"
+        },
+        {
+          "const": "challenging",
+          "description": "Challenging synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "near_limit",
+          "description": "Near-limit game classification.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Pure update output.",
+  "properties": {
+    "effects": {
+      "description": "Ordered operations to interpret.",
+      "items": {
+        "$ref": "#/$defs/GameUiEffect"
+      },
+      "type": "array"
+    },
+    "state": {
+      "$ref": "#/$defs/GameUiState",
+      "description": "Next UI-only selections."
+    }
+  },
+  "required": [
+    "state",
+    "effects"
+  ],
+  "title": "GameUiUpdate",
+  "type": "object",
+  "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/effects"
+}

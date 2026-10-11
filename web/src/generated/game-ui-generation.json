@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "generators": {
+    "ajv": "8.20.0",
+    "jsonSchemaToTypescript": "16.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  },
+  "sources": {
+    "view": "b9e7a6c4bc7b889af276124a2ef756efaf7966bf09b3f018971e002fc3a0003f",
+    "action": "3e822d24096977810eba3b01fd674d0349e82952106a8c1293a4f6505931881a",
+    "input": "3d2ea1af9aa9b363679414823aedcae0f6aee7ea1ecadb5c6d06127aab094b10",
+    "effects": "643c0997a8b48d0bef20e47ee20f49c763beb4c2757a26fcd4be3c46d3777f38",
+    "frame": "374f2f312caaa482d5f6e4f08bdb2ff97cbf8bc216deb3ef1f670167a7e1a675"
+  }
+}
