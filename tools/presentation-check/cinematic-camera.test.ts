@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { cinematicCameraView, worldLookAtPose } from "../../web/src/render/camera/cinematic-camera.js";
 import { rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion } from "../../web/src/render/contracts/math.js";
-import { syntheticVenueMapForScenario } from "../../web/src/game/synthetic-venue-map.js";
+import { currentVenueMapFixture } from "./current-venue-fixture.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
 
 const flight: FlightRenderPose = Object.freeze({
@@ -12,15 +12,17 @@ const flight: FlightRenderPose = Object.freeze({
   pilotPositionMeters: 0,
   initialPilotPositionMeters: 0
 });
-const points = syntheticVenueMapForScenario(1)?.cameraPoints ?? [];
+const venueProjection = currentVenueMapFixture();
+if (venueProjection.kind !== "available") throw new Error("Missing registered Lake Biwa venue");
+const venue = venueProjection.value;
+const points = venue.cameraPoints;
 
 describe("cinematic camera rigs", () => {
-  it("binds fixed camera points to the versioned synthetic venue", () => {
-    const venue = syntheticVenueMapForScenario(1);
-    expect(venue?.origin).toBe("scenario-launch-composite-cg");
-    expect(venue?.version).toBe(1);
-    expect(venue?.cameraPointsSha256)
-      .toBe(createHash("sha256").update(JSON.stringify(venue?.cameraPoints)).digest("hex"));
+  it("binds fixed camera points to the versioned registered Lake Biwa venue", () => {
+    expect(venue.origin).toBe("launch-origin-wgs84-35.294075-136.254448");
+    expect(venue.version).toBeGreaterThan(0);
+    expect(venue.cameraPointsSha256)
+      .toBe(createHash("sha256").update(JSON.stringify(venue.cameraPoints)).digest("hex"));
   });
 
   it("aims a fixed platform camera at the recorded aircraft position", () => {

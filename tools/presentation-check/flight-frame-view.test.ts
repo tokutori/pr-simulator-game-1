@@ -4,13 +4,18 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { Window } from "happy-dom";
-import { FlightController } from "../../web/src/game/flight-controller.js";
+import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { launchCurrentSession } from "../game-check/current-session-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
@@ -19,18 +24,9 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5): AppModel {
-  const values = new Array<number>(33).fill(0);
-  values[4] = 8;
-  values[7] = 1;
-  values[19] = -1;
-  values[20] = 12;
-  values[21] = 8;
-  values[22] = 9;
-  values[23] = 2;
-  values[24] = -1;
-  values[31] = 1;
-  if (phase === 7 || phase === 9 || phase === 10) values[16] = 4;
-  const session = gameSessionState(phase, 0, parseFlightSnapshot(values), true, null, "legacy_three_axis", phase === 9 ? "result" : undefined);
+  const snapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase)
+    : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
+  const session = gameSessionState(phase, 0, snapshot, true, null, "tail_incidence", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Missing session fixture");
   return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: session };
 }
@@ -87,13 +83,18 @@ describe("Immutable same-frame Flight view finalization", () => {
       setLakeWaterQuality: () => Promise.resolve({ kind: "complete" }),
       transformTrackingPose: (value) => value, resize() {}, setStereoPresentation() {}, setSelectRayHandler() {}, dispose() {}
     };
-    const packed = new Array<number>(33).fill(0); packed[7] = 1; packed[19] = -1;
-    const controller = new FlightController({ snapshot: () => packed, advance_tick: () => { throw new Error("Rust tick failed"); }, free() {} }, {
-      readIntent: () => ({ roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: 0 }), reset() {}, suspend() {}, resume() {}, dispose() {}
-    }, renderer, hud, 100, () => []);
+    initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    launchCurrentSession(session);
+    const controller = new TailFlightController({ ...session.flightPort,
+      advance_tick_json: () => { throw new Error("Rust tick failed"); } }, {
+      readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
+      reset() {}, suspend() {}, resume() {}, dispose() {}
+    }, renderer, { render: (snapshot) => { hud.renderDisplaySnapshot(snapshot); },
+      fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, () => []);
     const model = flightModel("screen");
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
-      (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentSnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
+      (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentDisplaySnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });
     try {
       expect(await runtime.start("screen")).toEqual({ ok: true });
@@ -104,7 +105,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       evidence.loop(40);
       expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("飛行処理を停止した: Rust tick failed");
       expect(evidence.frames).toBe(3);
-    } finally { controller.dispose(); await runtime.dispose(); await window.happyDOM.abort(); }
+    } finally { controller.dispose(); session.dispose(); await runtime.dispose(); await window.happyDOM.abort(); }
   });
   it("uses one captured model, snapshot and shared HUD through measurement and finalization", () => {
     let currentModel = flightModel("phone-vr");
@@ -125,7 +126,7 @@ describe("Immutable same-frame Flight view finalization", () => {
     expect(view.headHud).toBe(draft.headHud.layer);
     expect(view.activeOverlay).toBeNull();
     expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-flight-pause"]);
-    expect(draft.hud?.readouts).toContain("ALT 12.0 m");
+    expect(draft.hud?.readouts).toContain("ALT 10.0 m");
   });
 
   it.each(["invalid-view-geometry", "viewer-unavailable"] as const)("keeps %s local to the HUD and explains it in the same Menu", (reason) => {

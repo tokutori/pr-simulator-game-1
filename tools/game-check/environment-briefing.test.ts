@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "../../web/src/game/environment-briefing.js";
 
 function snapshot(metadata: Record<string, unknown> = {}, phaseCode = 1, source = "selected"): string {
@@ -57,12 +57,16 @@ describe("Environment briefing boundary", () => {
 
   it("decodes both selection and sealed Briefing metadata from actual WASM", () => {
     initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-    const session = new GameSessionBridge(0);
+    const session = new HybridGameSessionBridge(0, 21, 22);
     try {
       session.open_setup();
       session.set_weather_class(2);
       const setup = parseEnvironmentBriefingSnapshot(session.environment_snapshot_json(), 1);
-      expect(setup).toMatchObject({ kind: "available", representativeWindNedMetersPerSecond: [-0.25, 0.5, 0], spatialVariation: "uniform" });
+      expect(setup).toMatchObject({ kind: "available", spatialVariation: "grid" });
+      if (setup.kind !== "available") throw new Error("Expected the registered Typical wind");
+      expect(setup.representativeWindNedMetersPerSecond[0]).toBeCloseTo(-1.767766953, 12);
+      expect(setup.representativeWindNedMetersPerSecond[1]).toBeCloseTo(1.767766953, 12);
+      expect(setup.representativeWindNedMetersPerSecond[2]).toBe(0);
       session.prepare();
       session.mark_briefing_ready();
       expect(parseEnvironmentBriefingSnapshot(session.environment_snapshot_json(), 3)).toEqual(setup);

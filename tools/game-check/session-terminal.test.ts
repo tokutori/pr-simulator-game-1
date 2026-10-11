@@ -15,7 +15,7 @@ const disposals: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); });
 
 function fixture() {
-  const facade = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+  const facade = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
   facade.executeOperation("open-setup");
   facade.executeOperation("prepare");
   facade.executeOperation("start-flight");

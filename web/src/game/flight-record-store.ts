@@ -36,13 +36,12 @@ export interface SavedFlightRecord extends StoredFlightRecord {
 }
 
 export interface FlightRecordPersistencePort {
-  add(json: string, savedAt: string, selection: PersonalBestSelectionPort, createSelection: PersonalBestSelectionFactory): Promise<number>;
+  add(json: string, savedAt: string, selection: PersonalBestSelectionPort): Promise<number>;
   get(id: number): Promise<StoredFlightRecord | null>;
-  getAll(createSelection: PersonalBestSelectionFactory): Promise<readonly StoredFlightRecordSummary[]>;
+  getAll(): Promise<readonly StoredFlightRecordSummary[]>;
 }
 
 const maximumRecordBytes = 16 * 1024 * 1024;
-const personalBestIndexRevision = "first-winner-layouts-v1-physics-v3";
 
 export class FlightRecordRepository {
   constructor(
@@ -57,7 +56,7 @@ export class FlightRecordRepository {
     const savedAt = this.now().toISOString();
     const selection = this.createSelection(json);
     try {
-      const id = await this.persistence.add(json, savedAt, selection, this.createSelection);
+      const id = await this.persistence.add(json, savedAt, selection);
       return Object.freeze({ id, savedAt, json, personalBest: resolvePersonalBestUpdate(id, selection) });
     } finally {
       selection.free();
@@ -70,7 +69,7 @@ export class FlightRecordRepository {
   }
 
   async list(): Promise<readonly StoredFlightRecordSummary[]> {
-    const records = await this.persistence.getAll(this.createSelection);
+    const records = await this.persistence.getAll();
     return Object.freeze([...records]
       .sort((left, right) => right.id - left.id)
       .map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
@@ -84,10 +83,10 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
   ) {}
 
   async add(
-    json: string, savedAt: string, selection: PersonalBestSelectionPort, createSelection: PersonalBestSelectionFactory
+    json: string, savedAt: string, selection: PersonalBestSelectionPort
   ): Promise<number> {
     return this.withDatabase((database) => new Promise<number>((resolve, reject) => {
-      const transaction = database.transaction(["records", "recordMetadata", "personalBests", "personalBestIndexState"], "readwrite");
+      const transaction = database.transaction(["records", "recordMetadata", "personalBests"], "readwrite");
       const records = transaction.objectStore("records");
       let id: number | null = null;
       let failure: { readonly kind: "unrecorded" } | { readonly kind: "recorded"; readonly error: Error } = { kind: "unrecorded" };
@@ -132,7 +131,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
                 return;
               }
               try {
-                selection.consider_existing(Number(cursor.primaryKey), value.json);
+                if (recordSchemaVersion(value.json) === 6) selection.consider_existing(Number(cursor.primaryKey), value.json);
               } catch (error: unknown) {
                 abort(error);
                 return;
@@ -159,7 +158,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
                 return;
               }
               try {
-                selection.consider_existing(indexed.recordId, existing.json);
+                if (recordSchemaVersion(existing.json) === 6) selection.consider_existing(indexed.recordId, existing.json);
               } catch (error: unknown) {
                 abort(error);
                 return;
@@ -171,7 +170,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
           addCandidate();
         }
       };
-      preparePersonalBestIndex(transaction, createSelection, addWithPersonalBest, abort);
+      addWithPersonalBest();
       transaction.oncomplete = () => {
         if (id === null) reject(new Error("IndexedDB completed without a record key"));
         else resolve(id);
@@ -207,11 +206,9 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     }));
   }
 
-  async getAll(
-    createSelection: PersonalBestSelectionFactory
-  ): Promise<readonly StoredFlightRecordSummary[]> {
+  async getAll(): Promise<readonly StoredFlightRecordSummary[]> {
     return this.withDatabase((database) => new Promise<readonly StoredFlightRecordSummary[]>((resolve, reject) => {
-      const transaction = database.transaction(["records", "recordMetadata", "personalBests", "personalBestIndexState"], "readwrite");
+      const transaction = database.transaction(["recordMetadata", "personalBests"], "readonly");
       const metadataRequest = transaction.objectStore("recordMetadata").getAll();
       const personalBests = transaction.objectStore("personalBests");
       let metadata: readonly StoredFlightRecordMetadata[] | null = null;
@@ -237,7 +234,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
           return;
         }
         metadata = result;
-        preparePersonalBestIndex(transaction, createSelection, readPersonalBestIndex, abort);
+        readPersonalBestIndex();
       };
       transaction.oncomplete = () => {
         const currentMetadata = metadata;
@@ -274,118 +271,6 @@ function normalizeInsertionError(reason: unknown): Error {
   }
 }
 
-function preparePersonalBestIndex(
-  transaction: IDBTransaction,
-  createSelection: PersonalBestSelectionFactory,
-  completed: () => void,
-  abort: (error: unknown) => void
-): void {
-  const stateStore = transaction.objectStore("personalBestIndexState");
-  const stateRequest = stateStore.get(personalBestIndexRevision);
-  stateRequest.onsuccess = () => {
-    try {
-      const state: unknown = stateRequest.result;
-      if (state === undefined) {
-        rebuildPersonalBestIndex(transaction, transaction.objectStore("personalBests"), stateStore, createSelection, completed, abort);
-      } else if (!isPersonalBestIndexState(state)) {
-        abort(new TypeError("IndexedDB Personal Best index state is malformed"));
-      } else completed();
-    } catch (error: unknown) {
-      abort(error);
-    }
-  };
-}
-
-function rebuildPersonalBestIndex(
-  transaction: IDBTransaction,
-  personalBests: IDBObjectStore,
-  stateStore: IDBObjectStore,
-  createSelection: PersonalBestSelectionFactory,
-  completed: () => void,
-  abort: (error: unknown) => void
-): void {
-  const records = transaction.objectStore("records");
-  const selections = new Map<string, PersonalBestSelectionPort>();
-  let activeSelection: PersonalBestSelectionPort | null = null;
-  const releaseSelections = (): void => {
-    activeSelection?.free();
-    activeSelection = null;
-    for (const selection of selections.values()) selection.free();
-    selections.clear();
-  };
-  transaction.addEventListener("abort", releaseSelections, { once: true });
-  const fail = (error: unknown): void => {
-    releaseSelections();
-    abort(error);
-  };
-  const clearRequest = personalBests.clear();
-  clearRequest.onsuccess = () => {
-    const cursorRequest = records.openCursor();
-    cursorRequest.onsuccess = () => {
-      const cursor = cursorRequest.result;
-      if (cursor === null) {
-        const selected: { readonly key: string; readonly recordId: number }[] = [];
-        try {
-          for (const [key, selection] of selections) {
-            const recordId = selection.selected_existing_id();
-            if (key.length !== 64 || !/^[0-9a-f]{64}$/.test(key) || !Number.isSafeInteger(recordId) || recordId < 1) {
-              fail(new TypeError("Rust returned an invalid Personal Best migration result"));
-              return;
-            }
-            selected.push({ key, recordId });
-          }
-          for (const entry of selected) personalBests.put(entry);
-          stateStore.put({ key: personalBestIndexRevision });
-        } catch (error: unknown) {
-          fail(error);
-          return;
-        }
-        releaseSelections();
-        try {
-          completed();
-        } catch (error: unknown) {
-          abort(error);
-        }
-        return;
-      }
-      const value: unknown = cursor.value;
-      if (!isStoredFlightRecord(value)) {
-        fail(new TypeError("IndexedDB flight record is malformed during Personal Best migration"));
-        return;
-      }
-      const id = Number(cursor.primaryKey);
-      try {
-        activeSelection = createSelection(value.json);
-        if (!activeSelection.is_eligible()) {
-          activeSelection.free();
-          activeSelection = null;
-          cursor.continue();
-          return;
-        }
-        const key = activeSelection.key_hex();
-        if (key.length !== 64 || !/^[0-9a-f]{64}$/.test(key)) {
-          fail(new TypeError("Rust returned an invalid Personal Best key during migration"));
-          return;
-        }
-        const existing = selections.get(key);
-        if (existing === undefined) {
-          activeSelection.consider_existing(id, value.json);
-          selections.set(key, activeSelection);
-          activeSelection = null;
-        } else {
-          existing.consider_existing(id, value.json);
-          activeSelection.free();
-          activeSelection = null;
-        }
-      } catch (error: unknown) {
-        fail(error);
-        return;
-      }
-      cursor.continue();
-    };
-  };
-}
-
 function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let ownership: "pending" | "abandoned" | "transferred" | "closed" = "pending";
@@ -395,9 +280,14 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
       reject(error);
     };
     const request = factory.open(databaseName, 4);
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const database = request.result;
       const transaction = request.transaction;
+      if (event.oldVersion !== 0) {
+        abandon(new Error("Unsupported flight record database version; stored data is retained"));
+        transaction?.abort();
+        return;
+      }
       if (transaction === null) {
         request.transaction?.abort();
         return;
@@ -406,25 +296,12 @@ function openDatabase(factory: IDBFactory, databaseName: string): Promise<IDBDat
         database.createObjectStore("records", { keyPath: "id", autoIncrement: true });
       }
       if (!database.objectStoreNames.contains("recordMetadata")) {
-        const metadata = database.createObjectStore("recordMetadata", { keyPath: "id" });
-        const records = transaction.objectStore("records");
-        const cursorRequest = records.openCursor();
-        cursorRequest.onsuccess = () => {
-          const cursor = cursorRequest.result;
-          if (cursor === null) return;
-          const record = cursor.value as { readonly savedAt?: unknown };
-          if (typeof record.savedAt === "string") {
-            metadata.put({ id: Number(cursor.primaryKey), savedAt: record.savedAt });
-          }
-          cursor.continue();
-        };
+        database.createObjectStore("recordMetadata", { keyPath: "id" });
       }
       if (!database.objectStoreNames.contains("personalBests")) {
         database.createObjectStore("personalBests", { keyPath: "key" });
       }
-      if (!database.objectStoreNames.contains("personalBestIndexState")) {
-        database.createObjectStore("personalBestIndexState", { keyPath: "key" });
-      }
+
     };
     request.onsuccess = () => {
       if (ownership === "transferred" || ownership === "closed") return;
@@ -476,10 +353,6 @@ function isPersonalBestEntry(value: unknown): value is { readonly key: string; r
     && Number.isSafeInteger(value.recordId) && value.recordId > 0;
 }
 
-function isPersonalBestIndexState(value: unknown): value is { readonly key: typeof personalBestIndexRevision } {
-  return typeof value === "object" && value !== null && "key" in value && value.key === personalBestIndexRevision;
-}
-
 function validateFinalizedRecord(json: string): void {
   if (new TextEncoder().encode(json).byteLength > maximumRecordBytes) {
     throw new RangeError("Flight record exceeds the persistence size limit");
@@ -491,6 +364,7 @@ function validateFinalizedRecord(json: string): void {
     throw new TypeError("Rust returned invalid flight record JSON");
   }
   if (!isObject(value)) throw new TypeError("Flight record document must be an object");
+  if (value.schema_version !== 6) throw new RangeError("Unsupported flight record schema version");
   const document = value as { readonly header?: unknown; readonly samples?: unknown; readonly finalization?: unknown };
   if (!isObject(document.header)
       || !Array.isArray(document.samples)
@@ -502,4 +376,12 @@ function validateFinalizedRecord(json: string): void {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function recordSchemaVersion(json: string): number {
+  const value: unknown = JSON.parse(json);
+  if (!isObject(value) || typeof value.schema_version !== "number" || !Number.isSafeInteger(value.schema_version)) {
+    throw new TypeError("Stored flight record must declare a schema version");
+  }
+  return value.schema_version;
 }

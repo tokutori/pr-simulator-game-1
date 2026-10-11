@@ -258,13 +258,6 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
       }
       line(context, centerX - fontSize * 0.2, top + height * 0.1, centerX + fontSize * 0.2, top + height * 0.1, "#ffde71", fontSize);
       return;
-    case "pilot-position": {
-      const markerX = centerX + element.ratio * width * 0.4;
-      line(context, left + width * 0.1, centerY, left + width * 0.9, centerY, "#dffaf3", fontSize);
-      line(context, centerX, top + height * 0.3, centerX, top + height * 0.7, "#9dc9cc", fontSize);
-      line(context, markerX, top + height * 0.15, markerX, top + height * 0.85, "#ffde71", fontSize);
-      return;
-    }
     case "wind": {
       const radians = element.degrees * Math.PI / 180;
       const radius = Math.min(width * 0.3, height * 0.4);

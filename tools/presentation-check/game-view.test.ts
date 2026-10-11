@@ -1,15 +1,16 @@
+import { currentNamedAnalysisFixture, currentNamedCursorFixture } from "../game-check/current-session-fixture.js";
 import { describe, expect, it } from "vitest";
+import { currentVenueMapFixture } from "./current-venue-fixture.js";
+import { NO_VENUE_MAP } from "../../web/src/game/biwa-venue-map.js";
+import type { VenueMapProjection } from "../../web/src/game/biwa-venue-map.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { drawVrPanel } from "../../web/src/presentation/vr-panel-canvas.js";
 import type { PanelDrawingContext } from "../../web/src/presentation/vr-panel-canvas.js";
 import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 
-const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
-flightSnapshotValues[7] = 1;
-flightSnapshotValues[19] = -1;
-const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
+const flightSnapshot = currentFlightDisplayFixture();
 
 describe("Game scene view model", () => {
   it.each([
@@ -178,7 +179,7 @@ describe("Game scene view model", () => {
       gameSession: sessionForPhase(9),
       replayViewMode: "telemetry" as const,
       analysisCursorTimeSeconds: 1.25,
-      flightAnalysis: Object.freeze({
+      flightAnalysis: currentNamedAnalysisFixture({
         samples: Object.freeze([]),
         initialPilotPositionMeters: 0.1,
         summary: Object.freeze({
@@ -201,7 +202,7 @@ describe("Game scene view model", () => {
     const base = {
       ...createInitialAppModel(),
       gameSession: sessionForPhase(9),
-      flightAnalysis: Object.freeze({
+      flightAnalysis: currentNamedAnalysisFixture({
         samples: Object.freeze([]),
         initialPilotPositionMeters: 0,
         summary: Object.freeze({
@@ -271,15 +272,15 @@ describe("Game scene view model", () => {
       configurationMetadata: Object.freeze({
         presetCode: 4, informationCode: 2, hudProfile: createInitialAppModel().difficulty.hudProfile,
         assistanceCode: 3, weatherCode: 4,
-        catalogVersion: 1, scenarioId: 5, scenarioVersion: 1, aircraftModelVersion: 1,
-        environmentVersion: 5, controllerProfileVersion: 4, seedLow: 0, seedHigh: 0
+        catalogVersion: 3, scenarioId: 5, scenarioVersion: 3, aircraftModelVersion: 2,
+        environmentVersion: 5, controllerProfileVersion: 3, seedLow: 0, seedHigh: 0
       })
     });
     const configuration = createGameViewModel(model, null).panels[0]?.controls.find((control) => control.id === "game-result-configuration");
     expect(configuration?.label).toContain("Custom / Minimal / Manual / Synthetic NearLimit");
-    expect(configuration?.label).toContain("Catalog v1");
-    expect(configuration?.label).toContain("Scenario 5 v1");
-    expect(configuration?.label).toContain("Controller v4");
+    expect(configuration?.label).toContain("Catalog v3");
+    expect(configuration?.label).toContain("Scenario 5 v3");
+    expect(configuration?.label).toContain("Controller v3");
     expect(configuration?.label).toContain("Seed 0:0");
     expect(configuration?.label).toContain("\n");
     expect(configuration?.rect.height).toBe(0.11 * 0.81);
@@ -287,7 +288,7 @@ describe("Game scene view model", () => {
 
   it("shows Rust-derived FlightRecord summary metrics in Result", () => {
     const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(7) });
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({
       samples: Object.freeze([]),
       initialPilotPositionMeters: 0,
       summary: Object.freeze({
@@ -315,7 +316,7 @@ describe("Game scene view model", () => {
       angleOfAttackRadians: null, sideslipRadians: null,
       rollRadians: 0, pitchRadians: 0, headingRadians: 0
     });
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({
       samples: Object.freeze([sample(0, 0, 0, 10, 9, 10), sample(1, 8, 6, 8, 8, 9)]),
       initialPilotPositionMeters: 0,
       summary: Object.freeze({
@@ -328,7 +329,7 @@ describe("Game scene view model", () => {
     });
     const model = Object.freeze({
       ...base, gameSession: sessionForPhase(7), resultTab: "analysis" as const, analysisChart, flightAnalysis: analysis,
-      analysisCursorSample: analysis.samples[1] ?? null
+      analysisCursorSample: currentNamedCursorFixture(analysis, 1)
     });
     const view = createGameViewModel(model, null);
     validateUiViewModel(view);
@@ -425,8 +426,8 @@ describe("Game scene view model", () => {
           windDownMetersPerSecond: 0.5
         })))
       });
-      const gridAnalysis = Object.freeze({ ...analysis, windGrid });
-      const gridView = createGameViewModel({ ...model, flightAnalysis: gridAnalysis }, null, gridAnalysis);
+      const gridAnalysis = currentNamedAnalysisFixture({ samples: [sample(0, 0, 0, 10, 9, 10), sample(1, 8, 6, 8, 8, 9)], windGrid });
+      const gridView = createGameViewModel({ ...model, flightAnalysis: gridAnalysis, analysisCursorSample: currentNamedCursorFixture(gridAnalysis, 1) }, null, gridAnalysis);
       const gridChart = gridView.panels[0]?.controls.find((control) => control.kind === "chart");
       if (gridChart?.kind !== "chart") throw new Error("Wind grid chart is missing");
       expect(gridChart.vectors).toHaveLength(26);
@@ -434,13 +435,10 @@ describe("Game scene view model", () => {
       expect(gridChart.vectors[1]?.label).toContain("W_D 0.5…0.5 m/s");
       expect(gridChart.vectors[1]?.end?.x).toBeLessThan(gridChart.vectors[1]?.start?.x ?? 0);
       expect(gridChart.vectors[1]?.end?.y).toBeGreaterThan(gridChart.vectors[1]?.start?.y ?? 0);
-      const extendedAnalysis = Object.freeze({
-        ...analysis,
-        samples: Object.freeze([...analysis.samples, sample(2, 16, 12, 6, 7, 8)]),
-        summary: Object.freeze({ ...analysis.summary, sampleCount: 3, durationSeconds: 2,
-          terminal: Object.freeze({ reason: "water-contact" as const, disposition: "complete" as const, timeSeconds: 2 }) })
+      const extendedAnalysis = currentNamedAnalysisFixture({
+        samples: [sample(0, 0, 0, 10, 9, 10), sample(1, 8, 6, 8, 8, 9), sample(2, 16, 12, 6, 7, 8)]
       });
-      const timeSeries = createGameViewModel({ ...model, flightAnalysis: extendedAnalysis }, null, extendedAnalysis)
+      const timeSeries = createGameViewModel({ ...model, flightAnalysis: extendedAnalysis, analysisCursorSample: currentNamedCursorFixture(extendedAnalysis, 1) }, null, extendedAnalysis)
         .panels[0]?.controls.find((control) => control.kind === "chart");
       if (timeSeries?.kind !== "chart") throw new Error("Time-coloured trajectory is missing");
       expect(timeSeries.series[0]?.segmentColors).toEqual(["#440154", "#fde725"]);
@@ -455,7 +453,7 @@ describe("Game scene view model", () => {
     }
   });
 
-  it("shows versioned schematic venue geometry only for known synthetic scenarios", () => {
+  it("shows registered venue geometry only when the saved environment resolves its origin", () => {
     const base = createInitialAppModel();
     const samples = [0, 1].map((timeSeconds) => Object.freeze({
       timeSeconds, northMeters: timeSeconds * 8, eastMeters: timeSeconds * 6, altitudeMeters: 10 - timeSeconds * 2,
@@ -463,31 +461,27 @@ describe("Game scene view model", () => {
       windNorthMetersPerSecond: 0, windEastMetersPerSecond: 0, windDownMetersPerSecond: 0,
       angleOfAttackRadians: null, sideslipRadians: null, rollRadians: 0, pitchRadians: 0, headingRadians: 0
     }));
-    const analysis = Object.freeze({
-      samples: Object.freeze(samples),
-      initialPilotPositionMeters: 0,
-      summary: Object.freeze({
-        sampleCount: 2, durationSeconds: 1, maximumAltitudeMeters: 10,
-        maximumAirspeedMetersPerSecond: 9, maximumGroundspeedMetersPerSecond: 10,
-        maximumAngleOfAttackRadians: null, maximumAbsoluteRollRadians: 0, score: null,
-        terminal: Object.freeze({ reason: "water-contact" as const, disposition: "complete" as const, timeSeconds: 1 })
-      })
-    });
     const configurationMetadata = Object.freeze({
       presetCode: 0, informationCode: 0, hudProfile: createInitialAppModel().difficulty.hudProfile,
       assistanceCode: 0, weatherCode: 0,
-      catalogVersion: 1, scenarioId: 1, scenarioVersion: 1, aircraftModelVersion: 1,
-      environmentVersion: 1, controllerProfileVersion: 1, seedLow: 0, seedHigh: 0
+      catalogVersion: 3, scenarioId: 1, scenarioVersion: 3, aircraftModelVersion: 2,
+      environmentVersion: 1, controllerProfileVersion: 3, seedLow: 0, seedHigh: 0
     });
-    const createMap = (scenarioId: number) => {
+    const createMap = (scenarioId: number, venue: VenueMapProjection) => {
+      const scenarioAnalysis = currentNamedAnalysisFixture({ samples, summary: {
+        durationSeconds: 1, maximumAltitudeMeters: 10, maximumAirspeedMetersPerSecond: 9,
+        maximumGroundspeedMetersPerSecond: 10,
+        terminal: { reason: "water-contact", disposition: "complete", timeSeconds: 1 }
+      }, scenarioId });
       const model = Object.freeze({
         ...base, gameSession: sessionForPhase(7), resultTab: "analysis" as const, analysisChart: "map" as const,
-        flightAnalysis: analysis, configurationMetadata: Object.freeze({ ...configurationMetadata, scenarioId })
+        flightAnalysis: scenarioAnalysis, configurationMetadata: Object.freeze({ ...configurationMetadata, scenarioId, environmentVersion: scenarioId,
+          weatherCode: scenarioId === 6 ? 2 : 0 })
       });
-      return createGameViewModel(model, null, analysis).panels[0]?.controls.find((control) => control.kind === "chart");
+      return createGameViewModel(model, null, scenarioAnalysis, undefined, undefined, venue).panels[0]?.controls.find((control) => control.kind === "chart");
     };
-    const knownScenarioChart = createMap(1);
-    const unknownScenarioChart = createMap(99);
+    const knownScenarioChart = createMap(6, currentVenueMapFixture());
+    const unknownScenarioChart = createMap(1, NO_VENUE_MAP);
     if (knownScenarioChart?.kind !== "chart" || unknownScenarioChart?.kind !== "chart") {
       throw new Error("Analysis map is missing");
     }
@@ -531,7 +525,7 @@ describe("Game scene view model", () => {
   });
 
   it("queries and rejects stale Analysis cursor responses through TEA", () => {
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({
       samples: Object.freeze([]),
       initialPilotPositionMeters: 0,
       summary: Object.freeze({
@@ -552,12 +546,7 @@ describe("Game scene view model", () => {
     expect(moved.effects).toEqual([{ type: "load-flight-analysis-cursor", requestId: 9, timeSeconds: 2 }]);
     const stale = updateApp(moved.model, {
       type: "flight-analysis-cursor-loaded", requestId: 8,
-      sample: Object.freeze({
-        timeSeconds: 0, northMeters: 0, eastMeters: 0, altitudeMeters: 0,
-        airspeedMetersPerSecond: 0, groundspeedMetersPerSecond: 0,
-        windNorthMetersPerSecond: 0, windEastMetersPerSecond: 0, windDownMetersPerSecond: 0,
-        angleOfAttackRadians: null, sideslipRadians: null, rollRadians: 0, pitchRadians: 0, headingRadians: 0
-      })
+      sample: currentNamedCursorFixture(analysis)
     });
     expect(stale.model.analysisCursorSample).toBeNull();
     expect(stale.model.pendingAnalysisCursorRequestId).toBe(9);
@@ -565,7 +554,7 @@ describe("Game scene view model", () => {
 
   it("draws the active analysis chart into the VR panel canvas", () => {
     const model = Object.freeze({ ...createInitialAppModel(), gameSession: sessionForPhase(7), resultTab: "analysis" as const, analysisChart: "altitude" as const });
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({
       samples: Object.freeze([{
         timeSeconds: 0, northMeters: 0, eastMeters: 0, altitudeMeters: 10,
         airspeedMetersPerSecond: 9, groundspeedMetersPerSecond: 10,
@@ -625,8 +614,8 @@ describe("Game scene view model", () => {
 });
 
 function sessionForPhase(phaseCode: number, canResume = false) {
-  const snapshot = phaseCode === 5 || phaseCode === 6 ? flightSnapshot : null;
-  const session = gameSessionState(phaseCode, 0, snapshot, canResume, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
+  const snapshot = phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null;
+  const session = gameSessionState(phaseCode, 0, snapshot, canResume, null, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }

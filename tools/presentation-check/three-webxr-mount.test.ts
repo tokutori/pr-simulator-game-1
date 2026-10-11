@@ -18,7 +18,7 @@ import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backe
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery } from "../../web/src/app/flight-frame-view.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
@@ -273,15 +273,16 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
     }], (viewer) => {
       evidence.viewer = viewer;
-      const values = new Array<number>(33).fill(0);
-      values[4] = 8;
-      values[7] = 1;
-      values[19] = -1;
-      values[20] = 15;
-      values[21] = 8;
-      values[22] = 9;
-      values[31] = 1;
-      const snapshot = parseFlightSnapshot(values);
+      const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 15, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+      const snapshot = valuesSnapshot;
       const gameSession = gameSessionState(5, 0, snapshot, true);
       if (gameSession === null) throw new Error("Missing Flight session");
       const initial = createInitialAppModel();
@@ -378,9 +379,16 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   });
 
   it("keeps all 64 Custom cue combinations and all-off Pause access through actual native eye frames", async () => {
-    const values = new Array<number>(33).fill(0);
-    values[4] = 8; values[7] = 1; values[19] = -1; values[20] = 15; values[21] = 8; values[22] = 9; values[31] = 1;
-    const snapshot = parseFlightSnapshot(values);
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 15, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Flight session");
     const initial = createInitialAppModel();
@@ -531,8 +539,16 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   it("clears failed Menu pick and Head before guarded after-frame Screen recovery", async () => {
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);
-    const values = new Array<number>(33).fill(0); values[7] = 1; values[19] = -1;
-    const snapshot = parseFlightSnapshot(values);
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 0, airspeedMetersPerSecond: 0, groundspeedMetersPerSecond: 0,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const }, sideslipAngleRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Flight fixture");
     let model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "webxr" } as const } as ReturnType<typeof createInitialAppModel>;

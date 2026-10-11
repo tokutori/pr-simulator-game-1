@@ -23,8 +23,8 @@ function preparationModel(phaseCode: number): AppModel {
   const gameSession = gameSessionState(phaseCode, 3, null);
   if (gameSession === null) throw new Error("Invalid phase fixture");
   return { ...base, status: "", presentation: { type: "ready", mode: "screen" }, gameSession,
-    configurationMetadata: { ...base.difficulty, catalogVersion: 1, scenarioId: 1, scenarioVersion: 1,
-      aircraftModelVersion: 1, environmentVersion: 1, controllerProfileVersion: 4, seedHigh: 21930, seedLow: 24472 } };
+    configurationMetadata: { ...base.difficulty, catalogVersion: 3, scenarioId: 1, scenarioVersion: 3,
+      aircraftModelVersion: 2, environmentVersion: 1, controllerProfileVersion: 3, seedHigh: 21930, seedLow: 24472 } };
 }
 
 function statusValue(view: UiViewModel, id: string): string {
@@ -101,9 +101,9 @@ describe("Flight Setup and Briefing presentation", () => {
 
   it("closes technical information on phase changes and retains it during redraw", () => {
     const model = { ...preparationModel(3), briefingDetailsOpen: true };
-    for (const phaseCode of [1, 3, 4]) {
+    for (const phaseCode of [1, 3, 4] as const) {
       const synced = updateApp(model, { type: "game-session-synced", phaseCode, controlModeCode: 0,
-        difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3, snapshot: null });
+        difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3, display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false });
       expect(synced.model.briefingDetailsOpen).toBe(phaseCode === 3);
     }
   });
@@ -122,7 +122,7 @@ describe("Flight Setup and Briefing presentation", () => {
         const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message,
           ...(includeProjection ? { currentSession: { phaseCode, controlModeCode: model.controlModeCode,
             difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3,
-            snapshot: null, canResume: false } } : {}) });
+            display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false } } : {}) });
         expect(failed.model.pendingGameRequestId).toBeNull();
         expect(failed.model.gameSession.phaseCode).toBe(phaseCode);
         for (const mode of ["screen", "phone-vr", "webxr"] as const) {
@@ -139,7 +139,7 @@ describe("Flight Setup and Briefing presentation", () => {
         if (retryId === null) throw new Error("Missing retry request");
         const completed = updateApp(retry.model, { type: "game-operation-completed", requestId: retryId,
           phaseCode: successPhaseCode, controlModeCode: model.controlModeCode, difficulty: model.difficulty,
-          configurationMetadata: model.configurationMetadata, countdownRemaining: 3, snapshot: null });
+          configurationMetadata: model.configurationMetadata, countdownRemaining: 3, display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false });
         expect(completed.model.status).toBe("");
         expect(createGameViewModel(completed.model, null).panels[0]?.controls.map((control) => control.id))
           .not.toContain("game-preparation-feedback");

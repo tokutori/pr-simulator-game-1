@@ -10,9 +10,7 @@ import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { isTerminalSessionSnapshot, projectTailGameSession } from "../../web/src/app/session-snapshot.js";
 import type { TerminalSessionSnapshot } from "../../web/src/app/session-snapshot.js";
-import { projectLegacyFlightSnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -32,14 +30,13 @@ function launch(session: TailAppSessionFacade): void {
 }
 
 function session(): TailAppSessionFacade {
-  return createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+  return createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
 }
 
 describe("single Rust snapshot application projection", () => {
   it("correlates the public live layout and phase types and requires terminal record proof", () => {
     expectTypeOf<Extract<GameSessionUiState, { kind: "flight"; controlLayout: "tail_incidence" }>["snapshot"]["phaseCode"]>().toEqualTypeOf<5>();
     expectTypeOf<Extract<GameSessionUiState, { kind: "paused-flight"; controlLayout: "tail_incidence" }>["snapshot"]["phaseCode"]>().toEqualTypeOf<6>();
-    expectTypeOf<Extract<GameSessionUiState, { kind: "flight"; controlLayout: "legacy_three_axis" }>["snapshot"]["kind"]>().toEqualTypeOf<"legacy_live">();
     expectTypeOf<Extract<FlightDisplaySnapshot, { kind: "tail_record" }>>().not.toExtend<TerminalSessionSnapshot>();
     expectTypeOf<Extract<Extract<GameSessionUiState, { kind: "result"; controlLayout: "tail_incidence" }>["display"], { kind: "available" }>["value"]["kind"]>()
       .toEqualTypeOf<"tail_result" | "tail_record">();
@@ -90,12 +87,6 @@ describe("single Rust snapshot application projection", () => {
       const current = projection(facade);
       if (current.phaseCode !== 5) throw new Error("Expected a live tail projection");
       const tail = current.display.value;
-      const packed = new Array<number>(33).fill(0);
-      packed[7] = 1;
-      packed[19] = -1;
-      const legacy = projectLegacyFlightSnapshot(parseFlightSnapshot(packed));
-      expect(gameSessionState(5, 0, tail, false, null, "legacy_three_axis")).toBeNull();
-      expect(gameSessionState(5, 0, legacy, false, null, "tail_incidence")).toBeNull();
       expect(gameSessionState(6, 0, tail, false, null, "tail_incidence")).toBeNull();
       expect(gameSessionState(1, 0, tail, false, null, "tail_incidence")).toBeNull();
       const initial = createInitialAppModel();
@@ -114,12 +105,10 @@ describe("single Rust snapshot application projection", () => {
       facade.executeOperation("abort");
       const early = facade.queryRecordDisplay(0.005);
       const terminal = facade.queryRecordDisplay(0.01);
-      expect(isTerminalSessionSnapshot(early, "tail_incidence")).toBe(false);
+      expect(isTerminalSessionSnapshot(early)).toBe(false);
       expect(gameSessionState(7, 0, early, false, null, "tail_incidence")).toBeNull();
       const result = gameSessionState(7, 0, terminal, false, null, "tail_incidence");
       expect(result?.kind).toBe("result");
-      expect(gameSessionState(7, 0, terminal, false, null, "legacy_three_axis")).toBeNull();
-      expect(gameSessionState(10, 0, early, false, null, "legacy_three_axis")).toBeNull();
       expect(gameSessionSnapshot(result ?? { kind: "boot", phaseCode: -1 })).toBe(terminal);
       for (const phase of [9, 10]) {
         const playback = gameSessionState(phase, 0, early, false, null, "tail_incidence", phase === 9 ? "result" : undefined);
@@ -198,32 +187,4 @@ describe("single Rust snapshot application projection", () => {
     }
   });
 
-  it("keeps legacy archive Replay distinct from the sealed tail Attract demo", () => {
-    const legacy = createAppSession({ controlLayout: "legacy_three_axis", controlModeCode: 0 });
-    const facade = session();
-    try {
-      legacy.executeOperation("open-setup");
-      legacy.executeOperation("prepare");
-      legacy.executeOperation("start-flight");
-      while (legacy.advanceCountdown() > 0) continue;
-      legacy.launch();
-      legacy.flightPort.advance_tick(0, 0, 0, 0);
-      legacy.executeOperation("abort");
-      facade.openArchive(legacy.exportRecordJson());
-      const saved = facade.queryRecordDisplay(0.005);
-      expect(saved.kind).toBe("legacy_record");
-      expect(gameSessionState(9, 0, saved, false, null, "tail_incidence", facade.readReplayReturnTarget())?.kind).toBe("replay");
-      expect(gameSessionState(10, 0, saved, false, null, "tail_incidence")).toBeNull();
-      expect(gameSessionState(10, 0, saved, false, null, "legacy_three_axis")?.kind).toBe("attract");
-      facade.executeOperation("leave-replay");
-      facade.executeOperation("enter-attract");
-      const demo = facade.queryRecordDisplay(0.005);
-      expect(gameSessionState(10, 0, demo, false, null, "tail_incidence")).toMatchObject({
-        kind: "attract", controlLayout: "tail_incidence", display: { kind: "available", value: { kind: "tail_record" } }
-      });
-    } finally {
-      legacy.dispose();
-      facade.dispose();
-    }
-  });
 });

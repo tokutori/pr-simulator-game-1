@@ -1,16 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createInitialAppModel, gameSessionState } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { drawFlightMenu, flightMenuCanvasSize, prepareFlightMenuPaint } from "../../web/src/presentation/flight-menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 
 describe("Small gaze Menu Canvas metrics and physical aspect", () => {
   it.each([false, true])("preflights all labels without glyph squeeze (HUD unavailable=%s)", (unavailable) => {
-    const values = new Array<number>(33).fill(0);
-    values[7] = 1;
-    values[19] = -1;
-    const snapshot = parseFlightSnapshot(values);
+    const snapshot = currentFlightDisplayFixture();
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing session");
     const view = createGameViewModel({ ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } }, snapshot,
@@ -37,10 +34,7 @@ describe("Small gaze Menu Canvas metrics and physical aspect", () => {
 
   it("rejects missing metrics before any glyph or card is published", () => {
     const initial = createInitialAppModel();
-    const values = new Array<number>(33).fill(0);
-    values[7] = 1;
-    values[19] = -1;
-    const snapshot = parseFlightSnapshot(values);
+    const snapshot = currentFlightDisplayFixture();
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing session");
     const panel = createGameViewModel({ ...initial, gameSession, presentation: { type: "ready", mode: "phone-vr" } }, null).panels[0];

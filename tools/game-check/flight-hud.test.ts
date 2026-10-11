@@ -1,14 +1,15 @@
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { FLIGHT_SNAPSHOT_LENGTH, parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
+import { currentFlightDisplayFixture } from "./current-session-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
-import { createFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import { createFlightDisplayHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { drawVrFlightInstruments } from "../../web/src/presentation/vr-panel-canvas.js";
 import type { PanelDrawingContext } from "../../web/src/presentation/vr-panel-canvas.js";
 
 describe("flight HUD instruments", () => {
   it("derives axis readouts and gauge inputs from Rust telemetry", () => {
-    const model = createFlightHudModel(flightSnapshot({
+    const model = createFlightDisplayHudModel(flightSnapshot({
       pilotPosition: 0.2,
       windEast: 2,
       pitchDegrees: 5,
@@ -19,18 +20,18 @@ describe("flight HUD instruments", () => {
 
     expect(model.attitude).toEqual({ rollDegrees: -10, pitchDegrees: 5 });
     expect(model.headingDegrees).toBe(90);
-    expect(model.pilotPositionRatio).toBe(0.5);
+    expect(model.pilotPosition).toBe("+0.20 m");
     expect(model.windDirectionDegrees).toBe(90);
     expect(model.angleOfAttackDegrees).toBe(6);
   });
 
   it("marks calm wind and undefined angle of attack without inventing directions", () => {
     const snapshot = flightSnapshot({ airspeed: 0, pilotPosition: 1.2 });
-    const model = createFlightHudModel(snapshot, 0);
+    const model = createFlightDisplayHudModel(snapshot, 0);
 
     expect(model.windDirectionDegrees).toBeNull();
     expect(model.angleOfAttackDegrees).toBeNull();
-    expect(model.pilotPositionRatio).toBe(1);
+    expect(model.pilotPosition).toBe("+1.20 m");
   });
 
   it("applies Custom cue visibility and derives flight-path and warning cues", () => {
@@ -43,7 +44,7 @@ describe("flight HUD instruments", () => {
       angleOfAttack: true,
       warnings: true
     };
-    const model = createFlightHudModel(snapshot, 4, profile);
+    const model = createFlightDisplayHudModel(snapshot, 4, profile);
 
     expect(model.attitude).toBeNull();
     expect(model.heading).toBeNull();
@@ -76,7 +77,7 @@ describe("flight HUD instruments", () => {
 
     expect(root.querySelector('[data-instrument="heading"]')?.querySelectorAll("text")).toHaveLength(5);
     expect(root.querySelector('[data-instrument="wind"] g')?.getAttribute("transform")).toBe("rotate(270 36 36)");
-    expect(root.querySelector('[data-instrument="pilot-position"] polygon')?.getAttribute("points")).toBe("60,5 54,1 66,1");
+    expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe("-0.20 m");
     expect(root.querySelector('[data-instrument="angle-of-attack"] polygon')?.getAttribute("points")).toBe("70,5 64,1 76,1");
     expect(root.querySelector(".flight-hud-adi")?.getAttribute("aria-label")).toBe("姿勢指示器");
 
@@ -101,7 +102,7 @@ describe("flight HUD instruments", () => {
       stroke() {}, setFillStyle() {}, setStrokeStyle() {},
       setFont() {}, setTextBaseline() {}, setLineWidth() {}, setGlobalAlpha() {}
     };
-    const model = createFlightHudModel(flightSnapshot({
+    const model = createFlightDisplayHudModel(flightSnapshot({
       headingDegrees: 90,
       pitchDegrees: 5,
       rollDegrees: -10,
@@ -114,14 +115,16 @@ describe("flight HUD instruments", () => {
 
     expect(drawnText).toContain("ADI · PITCH / ROLL");
     expect(drawnText).toContain("HDG");
-    expect(drawnText).toContain("PILOT CG · FORWARD / AFT");
+    expect(drawnText).toContain("PILOT POSITION");
+    expect(drawnText).toContain("+0.20 m");
+    expect(drawnText).toContain("PILOT TARGET 0.20 m [u=0.50]");
     expect(drawnText).toContain("WIND VECTOR");
     expect(drawnText).toContain("ANGLE OF ATTACK");
     expect(drawnText).toContain("90°");
     expect(lineCount).toBeGreaterThan(20);
 
     drawnText.length = 0;
-    drawVrFlightInstruments(context, createFlightHudModel(flightSnapshot(), 2));
+    drawVrFlightInstruments(context, createFlightDisplayHudModel(flightSnapshot(), 2));
     expect(drawnText).toContain("FLIGHT DATA");
     expect(drawnText).not.toContain("HDG");
     expect(drawnText).not.toContain("WIND VECTOR");
@@ -143,23 +146,30 @@ function flightSnapshot(overrides: {
   readonly velocityDown?: number;
   readonly terminal?: number;
 } = {}) {
-  const values = new Array<number>(FLIGHT_SNAPSHOT_LENGTH).fill(0);
-  values[7] = 1;
-  values[11] = overrides.pilotPosition ?? 0;
-  values[4] = overrides.velocityNorth ?? 0;
-  values[6] = overrides.velocityDown ?? 0;
-  values[19] = -1;
-  values[16] = overrides.terminal ?? 0;
-  values[20] = 10;
-  values[21] = overrides.airspeed ?? 10;
-  values[22] = 10;
-  values[23] = overrides.windNorth ?? 0;
-  values[24] = overrides.windEast ?? 0;
-  values[25] = overrides.windDown ?? 0;
-  values[26] = (overrides.angleOfAttackDegrees ?? 0) * Math.PI / 180;
-  values[28] = (overrides.rollDegrees ?? 0) * Math.PI / 180;
-  values[29] = (overrides.pitchDegrees ?? 0) * Math.PI / 180;
-  values[30] = (overrides.headingDegrees ?? 0) * Math.PI / 180;
-  values[31] = 1;
-  return parseFlightSnapshot(values);
+  const base = currentFlightDisplayFixture();
+  const angle = overrides.angleOfAttackDegrees === null || overrides.airspeed === 0
+    ? { kind: "unavailable" as const, reason: "undefined_flow_angle" as const }
+    : { kind: "available" as const, value: (overrides.angleOfAttackDegrees ?? 0) * Math.PI / 180 };
+  const common = {
+    ...base,
+    pilotPositionMeters: overrides.pilotPosition ?? 0,
+    pilotPositionTargetMeters: { kind: "available" as const, value: overrides.pilotPosition ?? 0 },
+    pilotPositionTargetNormalized: { kind: "available" as const, value: (overrides.pilotPosition ?? 0) / 0.4 },
+    velocityNed: { north: overrides.velocityNorth ?? 0, east: 0, down: overrides.velocityDown ?? 0 },
+    telemetry: { kind: "available" as const, value: {
+      ...base.telemetry.value,
+      airspeedMetersPerSecond: overrides.airspeed ?? 10,
+      windVelocityNedMetersPerSecond: { north: overrides.windNorth ?? 0, east: overrides.windEast ?? 0, down: overrides.windDown ?? 0 },
+      angleOfAttackRadians: angle,
+      rollRadians: (overrides.rollDegrees ?? 0) * Math.PI / 180,
+      pitchRadians: (overrides.pitchDegrees ?? 0) * Math.PI / 180,
+      headingRadians: (overrides.headingDegrees ?? 0) * Math.PI / 180
+    } }
+  };
+  const snapshot: FlightDisplaySnapshot = overrides.terminal === 3 ? {
+    ...common, kind: "tail_result", progressMeters: { kind: "unavailable", reason: "terminal_progress_unavailable" },
+    finalization: { reason: "out_of_valid_envelope", disposition: "failed", terminalTick: base.stamp.tick,
+      terminalFraction: 0, scoreMeters: null, failure: null }
+  } : common;
+  return snapshot;
 }

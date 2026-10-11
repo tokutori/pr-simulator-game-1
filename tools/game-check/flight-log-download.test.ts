@@ -6,7 +6,10 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { actionForControl } from "../../web/src/presentation/panel-interaction.js";
 import { readFlightLog } from "../../web/src/game/flight-log-export.js";
-import type { FlightAnalysisData } from "../../web/src/game/flight-record-query.js";
+import { readFileSync } from "node:fs";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -15,7 +18,7 @@ afterEach(() => {
 
 function readyModel(phaseCode: number): AppModel {
   const initial = createInitialAppModel();
-  const gameSession = gameSessionState(phaseCode, 0, null, false, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
+  const gameSession = gameSessionState(phaseCode, 0, null, false, null, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (gameSession === null) throw new Error("Invalid download fixture phase");
   return { ...initial, presentation: { type: "ready", mode: "screen" }, gameSession };
 }
@@ -27,21 +30,17 @@ function beginDownload(model: AppModel, format: "csv" | "json" = "csv") {
   return { ...requested, effect };
 }
 
-const analysisFixture: FlightAnalysisData = {
-  samples: [0, 1].map((timeSeconds) => ({
-    timeSeconds, northMeters: timeSeconds * 8, eastMeters: timeSeconds * 6,
-    altitudeMeters: 10 - timeSeconds, airspeedMetersPerSecond: 9, groundspeedMetersPerSecond: 10,
-    windNorthMetersPerSecond: 0, windEastMetersPerSecond: 0, windDownMetersPerSecond: 0,
-    angleOfAttackRadians: null, sideslipRadians: null, rollRadians: 0, pitchRadians: 0, headingRadians: 0
-  })),
-  initialPilotPositionMeters: 0,
-  summary: {
-    sampleCount: 2, durationSeconds: 1, maximumAltitudeMeters: 10,
-    maximumAirspeedMetersPerSecond: 9, maximumGroundspeedMetersPerSecond: 10,
-    maximumAngleOfAttackRadians: null, maximumAbsoluteRollRadians: 0, score: null,
-    terminal: { reason: "manual-abort", disposition: "interrupted", timeSeconds: 1 }
-  }
-};
+initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
+
+const analysisFixture = (() => {
+  const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+  try {
+    launchCurrentSession(session);
+    session.flightPort.advance_tick_json(neutralTailInput);
+    session.executeOperation("abort");
+    return session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+  } finally { session.dispose(); }
+})();
 
 describe("flight log download state and common presentation", () => {
   it.each([
@@ -56,7 +55,8 @@ describe("flight log download state and common presentation", () => {
         const model: AppModel = {
           ...readyModel(phaseCode), presentation: { type: "ready", mode },
           resultTab, replayViewMode, analysisChart, flightAnalysis: analysisFixture,
-          analysisCursorSample: analysisFixture.samples[1] ?? null
+          analysisCursorSample: analysisFixture.samples[1] === undefined ? null
+            : { ...analysisFixture.samples[1], kind: "named_record", context: analysisFixture.context }
         };
         const panel = createGameViewModel(model, null).panels[0];
         if (panel === undefined) throw new Error("Download panel is unavailable");

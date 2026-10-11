@@ -5,9 +5,9 @@ const MATH_CAUSES = ["non_finite", "invalid_quaternion", "invalid_interpolation_
 const WIND_CAUSES = ["non_finite", "invalid_grid_dimensions", "invalid_grid_spacing", "invalid_grid_domain",
   "grid_length_mismatch", "outside_grid"] as const;
 const ACTUATOR_CAUSES = ["non_finite", "invalid_authority", "invalid_feedback_gain", "invalid_limit",
-  "invalid_time_step", "invalid_interpolation_fraction", "deflection_out_of_range"] as const;
+  "invalid_time_step"] as const;
 const AERO_CAUSES = ["non_finite", "invalid_air_density", "invalid_reference_geometry", "invalid_orientation",
-  "invalid_envelope", "incompatible_control_envelope", "negative_drag_coefficient", "invalid_element_set",
+  "invalid_envelope", "negative_drag_coefficient",
   "invalid_polar_table", "invalid_polar_metadata", "invalid_hybrid_geometry", "invalid_hybrid_anchor",
   "invalid_hybrid_proxy_set", "unsupported_control", "undefined_flow_angle", "outside_envelope"] as const;
 const DYNAMICS_CAUSES = ["non_finite", "invalid_mass", "invalid_gravity", "invalid_pilot_limits", "pilot_out_of_range",
@@ -38,8 +38,7 @@ export interface TailHybridFailure {
 }
 export type TailAerodynamicFailure =
   | Readonly<{ kind: "hybrid"; cause: TailHybridFailure }>
-  | Readonly<{ kind: "static_polar" | "aggregate"; cause: TailAeroFailure }>
-  | Readonly<{ kind: "element"; role: "left_wing" | "right_wing" | "horizontal_tail" | "vertical_tail" | "fuselage"; cause: TailAeroFailure }>;
+  | Readonly<{ kind: "static_polar"; cause: TailAeroFailure }>;
 export type TailLoadFailure =
   | Readonly<{ kind: "outside_domain" | "unavailable" }>
   | Readonly<{ kind: "aerodynamic"; cause: TailAerodynamicFailure }>;
@@ -54,7 +53,6 @@ export type TailControlFailure =
 export type TailContactFailure =
   | Readonly<{ kind: "empty_geometry" | "non_adjacent_ticks" }>
   | Readonly<{ kind: "math"; cause: MathCause }>
-  | Readonly<{ kind: "actuator"; cause: ActuatorCause }>
   | Readonly<{ kind: "dynamics"; cause: TailDynamicsFailure }>;
 export type TailTickFailure =
   | Readonly<{ kind: "tick_overflow" }>
@@ -115,7 +113,6 @@ function decodeContact(value: unknown): TailContactFailure {
   const { tag, payload } = boundaryExternalTag(value);
   switch (tag) {
     case "math": return Object.freeze({ kind: tag, cause: boundaryTag(payload, MATH_CAUSES) });
-    case "actuator": return Object.freeze({ kind: tag, cause: boundaryTag(payload, ACTUATOR_CAUSES) });
     case "dynamics": return Object.freeze({ kind: tag, cause: decodeDynamics(payload) });
     default: throw new RangeError("Unknown tail contact failure");
   }
@@ -125,13 +122,7 @@ function decodeAerodynamic(value: unknown): TailAerodynamicFailure {
   const { tag, payload } = boundaryExternalTag(value);
   switch (tag) {
     case "hybrid": return Object.freeze({ kind: tag, cause: decodeHybrid(payload) });
-    case "static_polar":
-    case "aggregate": return Object.freeze({ kind: tag, cause: decodeAero(boundaryObject(payload, ["cause"]).cause) });
-    case "element": {
-      const element = boundaryObject(payload, ["role", "cause"]);
-      return Object.freeze({ kind: tag, role: boundaryTag(element.role,
-        ["left_wing", "right_wing", "horizontal_tail", "vertical_tail", "fuselage"]), cause: decodeAero(element.cause) });
-    }
+    case "static_polar": return Object.freeze({ kind: tag, cause: decodeAero(boundaryObject(payload, ["cause"]).cause) });
     default: throw new RangeError("Unknown tail aerodynamic failure");
   }
 }

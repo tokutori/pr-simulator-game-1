@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { parseNamedRecordSummary, parseNamedWindGrid } from "../../web/src/game/named-record-analysis.js";
 import type { NamedWindGridRequest } from "../../web/src/game/named-record-analysis.js";
@@ -37,35 +37,6 @@ function windJson(bridge: HybridGameSessionBridge, grid = request): string {
   return bridge.flight_wind_grid_json(grid.northMinimumMeters, grid.eastMinimumMeters, grid.altitudeMeters, grid.spacingMeters);
 }
 
-function legacyRecord(): Record<string, unknown> {
-  const bridge = new GameSessionBridge(0);
-  try {
-    bridge.open_setup();
-    bridge.set_difficulty_preset(1);
-    bridge.prepare();
-    bridge.mark_briefing_ready();
-    bridge.start_countdown(1);
-    bridge.advance_countdown();
-    bridge.launch();
-    bridge.advance_tick(0, 0, 0, 0);
-    bridge.abort();
-    return jsonObject(bridge.export_flight_record_json());
-  } finally {
-    bridge.free();
-  }
-}
-
-function legacyVersion(version: number): Record<string, unknown> {
-  const saved = legacyRecord();
-  saved.schema_version = version;
-  const header = nested(saved, "header");
-  if (version < 5) delete header.personal_best_key;
-  if (version < 4) delete header.physics_model_version;
-  if (version < 3) delete header.score_definition_version;
-  if (version < 2) delete nested(header, "difficulty").hud_profile;
-  return saved;
-}
-
 describe("named Rust record summary and wind boundary", () => {
   it("preserves Rust Result metrics and provider values through Replay without moving the cursor", () => {
     const bridge = result();
@@ -100,28 +71,13 @@ describe("named Rust record summary and wind boundary", () => {
     }
   });
 
-  it.each([1, 2, 3, 4, 5])("preserves saved v%d legacy layout, score and environment values", (version) => {
-    const saved = legacyVersion(version);
-    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(2, 91, 92), physics_hz());
-    try {
-      facade.openArchive(JSON.stringify(saved));
-      const summary = facade.readRecordSummary();
-      expect(summary.context).toMatchObject({ phase: "replay", controlLayout: "legacy_three_axis", controlIdentity: null });
-      expect(summary.context.finalization).not.toHaveProperty("failure");
-      expect(summary.context.finalization.scoreMeters).toEqual(nested(saved, "finalization").score_m);
-      const grid = facade.queryWindGrid(request);
-      expect(grid.projection).toMatchObject({ kind: "available", source: "archive", identity: summary.context.scenario });
-      expect(facade.queryRecordSample(0.005).controls.layout).toBe("legacy_three_axis");
-      expect(summary.scoreMeters.kind).toBe("available");
-    } finally {
-      facade.dispose();
-    }
-  });
 
-  it("preserves missing legacy metrics as reasoned tags, including a zero-duration record", () => {
-    const saved = legacyVersion(1);
+  it("preserves unavailable metrics as reasoned tags, including a zero-duration record", () => {
+    const source = result();
+    const saved = jsonObject(source.export_flight_record_json());
+    source.free();
     nested(saved, "finalization").score_m = null;
-    for (const sample of saved.samples as Record<string, unknown>[]) nested(sample, "telemetry").angle_of_attack_rad = null;
+    for (const sample of saved.samples as Record<string, unknown>[]) nested(nested(sample, "state"), "telemetry").angle_of_attack_rad = null;
     const viewer = new TailAppSessionFacade(new HybridGameSessionBridge(2, 91, 92), physics_hz());
     const zero = new TailAppSessionFacade(result(0), physics_hz());
     try {
@@ -151,7 +107,6 @@ describe("named Rust record summary and wind boundary", () => {
       } });
       viewer.openArchive(JSON.stringify(saved));
       const summary = viewer.readRecordSummary();
-      if (summary.context.controlLayout !== "tail_incidence") throw new Error("Expected the original tail record");
       expect(summary.context.finalization.failure).toMatchObject({ kind: "dynamics", cause: { kind: "load", cause: { kind: "aerodynamic" } } });
       const unknown = viewer.queryWindGrid(request);
       expect(unknown.projection).toMatchObject({ kind: "unavailable", source: "archive", reason: "unregistered_environment_identity",

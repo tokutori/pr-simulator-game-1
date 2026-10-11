@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
@@ -10,12 +10,13 @@ import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../../web/src/game/environment-briefing.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 import { NO_HEAD_HUD_VIEW } from "../../web/src/presentation/head-hud-view.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
 function prepared() {
-  const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+  const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
   session.executeOperation("open-setup");
   session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 2 });
   session.executeOperation("prepare");
@@ -81,32 +82,46 @@ describe("application runtime session projection", () => {
     } finally { session.dispose(); }
   });
 
-  it("preserves the legacy saved controls in a tail-owned archive without packed snapshot conversion", () => {
-    const legacy = new GameSessionBridge(0);
+  it("preserves current saved controls in an imported archive without resimulation", () => {
+    const archived = new HybridGameSessionBridge(0, 21, 22);
     const session = prepared();
     try {
-      legacy.open_setup(); legacy.prepare(); legacy.mark_briefing_ready();
-      legacy.start_countdown(1); legacy.advance_countdown(); legacy.launch(); legacy.advance_tick(0, 0, 0, 0); legacy.abort();
+      archived.open_setup(); archived.prepare(); archived.mark_briefing_ready();
+      archived.start_countdown(1); archived.advance_countdown(); archived.launch();
+      archived.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.05, turnRight: -0.05,
+        desiredPitchRateRadiansPerSecond: 0.01, desiredYawRateRadiansPerSecond: -0.01,
+        pilotPositionCommand: { kind: "set", normalized: 0.25 } }));
+      archived.abort();
       session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title");
-      session.openArchive(legacy.export_flight_record_json());
-      expect(sessionVenue(session).venue).toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
-      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 9, controlLayout: "tail_incidence", display: { value: { kind: "legacy_record" } } });
+      const saved = archived.export_flight_record_json();
+      session.openArchive(saved);
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "recorded_origin" });
+      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 9, controlLayout: "tail_incidence", display: { value: { kind: "tail_record" } } });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const clock = session.readPlaybackClock();
       const queried = queryRuntimeRecordPose(session, dataset, 0.005);
-      expect(queried.pose.controls?.layout).toBe("legacy_three_axis");
-      expect(queried.display.pilotPositionTargetNormalized.kind).toBe("unavailable");
+      const terminalSample = dataset.samples.at(-1);
+      if (terminalSample === undefined) throw new Error("Expected the saved terminal control sample");
+      expect(terminalSample.controls.physicalIncidence.horizontalTailRadians).not.toBe(0);
+      expect(queried.cursor.controls).toEqual(terminalSample.controls);
+      expect(queried.pose.controls).toEqual(terminalSample.controls);
+      expect(queried.pose.controls?.layout).toBe("tail_incidence");
+      expect(queried.display.pilotPositionTargetNormalized).toEqual({ kind: "unavailable", reason: "record_pilot_target_unavailable" });
+      expect(session.readPlaybackClock()).toEqual(clock);
+      expect(session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" }).samples).toEqual(dataset.samples);
+      expect(archived.export_flight_record_json()).toBe(saved);
       session.executeOperation("leave-replay");
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
       session.executeOperation("enter-attract");
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "attract" } });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-    } finally { session.dispose(); legacy.free(); }
+    } finally { session.dispose(); archived.free(); }
   });
 });
 
 describe("registered environment and venue projection", () => {
   it.each([0, 1])("preserves current weather %s venue through flight, Result, Replay and Retry but hides its imported record", (weather) => {
-    const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
       session.executeOperation("open-setup");
@@ -143,7 +158,7 @@ describe("registered environment and venue projection", () => {
   });
 
   it("keeps the independent default Attract venue without inventing a recorded origin", () => {
-    const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
       session.executeOperation("enter-attract");
       const projected = sessionVenue(session);

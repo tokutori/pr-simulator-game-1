@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "../../web/src/render/camera/camera-director.js";
-import type { FlightAnalysisData } from "../../web/src/game/flight-record-query.js";
+import type { FlightAnalysisSample } from "../../web/src/game/flight-analysis-view.js";
+import { currentNamedAnalysisFixture } from "../game-check/current-session-fixture.js";
 
-const analysis: FlightAnalysisData = Object.freeze({
+const analysis = currentNamedAnalysisFixture({
   initialPilotPositionMeters: 0,
   samples: Object.freeze([
     sample(0, 10),
@@ -48,11 +49,9 @@ describe("replay camera director", () => {
   });
 
   it("handles short records without indexing outside the sample range", () => {
-    const short = Object.freeze({
-      ...analysis,
-      samples: Object.freeze([sample(0, 1), sample(0.4, 0)]),
-      summary: Object.freeze({ ...analysis.summary, sampleCount: 2, durationSeconds: 0.4,
-        terminal: Object.freeze({ reason: "water-contact" as const, disposition: "complete" as const, timeSeconds: 0.4 }) })
+    const short = currentNamedAnalysisFixture({
+      samples: [sample(0, 1), sample(0.4, 0)],
+      summary: { durationSeconds: 0.4, terminal: { reason: "water-contact", disposition: "complete", timeSeconds: 0.4 } }
     });
     expect(resolveReplayCameraMode("auto", short, 0.2, "screen")).toBe("side");
     expect(resolveReplayCameraMode("auto", short, 5, "screen")).toBe("shore");
@@ -68,7 +67,7 @@ describe("replay camera director", () => {
   });
 });
 
-function sample(timeSeconds: number, altitudeMeters: number): FlightAnalysisData["samples"][number] {
+function sample(timeSeconds: number, altitudeMeters: number): FlightAnalysisSample {
   return Object.freeze({
     timeSeconds,
     northMeters: timeSeconds * 9,

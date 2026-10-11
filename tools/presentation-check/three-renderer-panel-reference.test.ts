@@ -25,11 +25,11 @@ import { createInitialAppModel, gameSessionState, updateApp } from "../../web/sr
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
-import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
@@ -324,9 +324,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     }
   });
 
-  it.each(["registered-archive", "unknown-archive", "calm-archive", "legacy-archive", "current-calm"] as const)(
+  it.each(["registered-archive", "unknown-archive", "calm-archive", "current-calm"] as const)(
     "applies the actual Rust %s venue projection without hiding water or aircraft", (recordKind) => {
-      const session = createAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+      const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
       try {
         session.executeOperation("open-setup");
         session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: recordKind === "registered-archive" || recordKind === "unknown-archive" ? 2 : 0 });
@@ -337,14 +337,6 @@ describe("Three adapter panel reference with real StereoEffect", () => {
           const document = JSON.parse(saved) as { header: { environment_version: number } };
           document.header.environment_version = 99;
           saved = JSON.stringify(document);
-        }
-        if (recordKind === "legacy-archive") {
-          const legacy = new GameSessionBridge(0);
-          try {
-            legacy.open_setup(); legacy.prepare(); legacy.mark_briefing_ready(); legacy.start_countdown(1);
-            legacy.advance_countdown(); legacy.launch(); legacy.advance_tick(0, 0, 0, 0); legacy.abort();
-            saved = legacy.export_flight_record_json();
-          } finally { legacy.free(); }
         }
         if (recordKind !== "current-calm") session.openArchive(saved);
         const phaseCode = session.readLifecycle().phaseCode;
@@ -580,9 +572,16 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("keeps the Phone Head layer fixed in both actual StereoEffect eyes through body, PilotEye and head rotations", async () => {
-    const values = new Array<number>(33).fill(0);
-    values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9; values[31] = 1;
-    const snapshot = parseFlightSnapshot(values);
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Flight fixture");
     const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };
@@ -822,12 +821,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     });
   });
 
-  it("renders legacy and physical tail controls independently without a legacy substitution", () => {
+  it("renders the current physical tail controls and resets absent controls", () => {
     const base = { datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
       pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
-    bundle.renderer.setFlightPose({ ...base, controls: { layout: "legacy_three_axis", rollRadians: 0.1, pitchRadians: 0.02, yawRadians: -0.03 } });
-    expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
-    driver.draws.length = 0;
     bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } },
       tailGeometry: { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } } });
     expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
@@ -836,18 +832,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.rotation.y).toBeCloseTo(0.03);
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.position.z).toBe(3.6);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.position.z).toBe(1.8);
-    expect(driver.scene?.getObjectByName("legacy-tail-assembly")?.visible).toBe(false);
-    expect(driver.scene?.getObjectByName("elevator")?.rotation.x).toBe(0);
-    expect(driver.scene?.getObjectByName("rudder")?.rotation.y).toBe(0);
-    bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } },
-      tailGeometry: { kind: "available", value: { kind: "bpg041_version_one", horizontalTailArmMeters: 1.8 } } });
-    bundle.renderer.render(frame({}));
-    expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.position.z).toBe(1.8);
     bundle.renderer.setFlightPose(base);
     bundle.renderer.render(frame({}));
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.visible).toBe(false);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.visible).toBe(false);
-    expect(driver.scene?.getObjectByName("legacy-tail-assembly")?.visible).toBe(true);
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.rotation.x).toBe(0);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.rotation.y).toBe(0);
   });
@@ -921,9 +909,16 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   it.each([[1280, 720], [720, 1280]] as const)("fits the actual Pause Menu and hit targets in both frozen StereoEffect eyes at %s x %s", async (width, height) => {
     const size = { x: width, y: height, pixelRatio: 1 };
-    const values = new Array<number>(33).fill(0);
-    values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9; values[31] = 1;
-    const snapshot = parseFlightSnapshot(values);
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(6),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(6, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Pause domain fixture");
     const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };

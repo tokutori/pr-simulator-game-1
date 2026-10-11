@@ -1,439 +1,210 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
-import { GameSessionBridge, PersonalBestSelectionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
-import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
-import type { AppEffect, AppModel, LegacyGameSessionProjection } from "../../web/src/app/app-state.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
-import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSampleAt } from "../../web/src/game/flight-record-query.js";
-import { FlightRecordRepository } from "../../web/src/game/flight-record-store.js";
+import { createInitialAppModel, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
+import type { AppEffect, AppModel } from "../../web/src/app/app-state.js";
+import { queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
+import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 
-const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
-let wasmInitialized = false;
-
-function initializeWasm(): void {
-  if (wasmInitialized) return;
+beforeAll(() => {
+  const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  wasmInitialized = true;
-}
+});
 
-function hudProfile(session: GameSessionBridge) {
-  const values = session.information_profile_codes();
-  return {
-    telemetry: values[0] === 1,
-    attitude: values[1] === 1,
-    wind: values[2] === 1,
-    flightPath: values[3] === 1,
-    angleOfAttack: values[4] === 1,
-    warnings: values[5] === 1
-  };
-}
-
-describe("Screen UI to WebAssembly GameSession transitions", () => {
-  it.each(["manual-abort", "water-contact"] as const)("loads initial and range Result cursor effects through WASM after %s", (terminal) => {
-    initializeWasm();
-    const session = new GameSessionBridge(0);
+describe("Screen UI to current WebAssembly GameSession transitions", () => {
+  it.each(["manual_abort", "water_contact"] as const)("loads Result cursor effects through WASM after %s", (terminal) => {
+    const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
-      session.open_setup();
-      session.prepare();
-      session.mark_briefing_ready();
-      session.start_countdown(1);
-      session.advance_countdown();
-      session.launch();
-      let model = updateApp(createInitialAppModel(), {
-        type: "game-session-synced", phaseCode: 5, controlModeCode: 0,
-        difficulty: createInitialAppModel().difficulty, configurationMetadata: null,
-        countdownRemaining: 0, snapshot: parseFlightSnapshot(session.snapshot())
-      }).model;
-      if (terminal === "manual-abort") {
-        session.advance_tick(0, 0, 0, 0);
-        session.advance_tick(0, 0, 0, 0);
-        session.abort();
-      } else {
-        for (let tick = 0; tick < 4_000 && session.phase_code() === 5; tick += 1) {
-          session.advance_tick(0, 0, 0, 0);
-        }
+      launchCurrentSession(session);
+      let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
+      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advance_tick_json(neutralTailInput);
+      if (terminal === "manual_abort") session.executeOperation("abort");
+      else for (let tick = 2; tick < 4_000 && session.readLifecycle().phaseCode === 5; tick += 1) {
+        session.flightPort.advance_tick_json(neutralTailInput);
       }
-      expect(session.phase_code()).toBe(7);
-      const before = session.snapshot();
-      const finalization = session.flight_record_finalization();
-      const encoded = session.export_flight_record_json();
-      const entered = updateApp(model, {
-        type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
-        difficulty: model.difficulty, configurationMetadata: null,
-        countdownRemaining: 0, snapshot: parseFlightSnapshot(before)
-      });
+      const before = session.flightPort.snapshot_json();
+      const encoded = session.exportRecordJson();
+      const entered = updateApp(model, { type: "game-session-synced", ...session.readGameSessionProjection() });
       model = entered.model;
       const load = entered.effects.find((effect) => effect.type === "load-flight-analysis");
       if (load?.type !== "load-flight-analysis") throw new Error("Result did not request Analysis");
-      const analysis = loadFlightAnalysis(session, physics_hz());
-      expect(analysis.summary.terminal.reason).toBe(terminal);
+      const analysis = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      expect(analysis.context.finalization.reason).toBe(terminal);
       const completeCursor = (transition: ReturnType<typeof updateApp>): void => {
         model = transition.model;
         const query = transition.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
         if (query?.type !== "load-flight-analysis-cursor") throw new Error("Result cursor query was not requested");
-        const sample = queryFlightRecordSampleAt(session, physics_hz(), query.timeSeconds);
+        const sample = session.queryAnalysisCursor(query.timeSeconds, analysis);
         model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: query.requestId, sample }).model;
         expect(model.analysisCursorSample?.timeSeconds).toBeCloseTo(query.timeSeconds, 12);
         expect(model.pendingAnalysisCursorRequestId).toBeNull();
         expect(model.gameSession.kind).toBe("result");
-        expect(model.status).not.toMatch(/InvalidTransition|cursorを取得できない/);
       };
       completeCursor(updateApp(model, { type: "flight-analysis-loaded", requestId: load.requestId, data: analysis }));
-      expect(model.analysisCursorSample).toEqual(analysis.samples[0]);
-      model = updateApp(model, {
-        type: "ui-action", action: { type: "activate", controlId: "game-result-open-analysis" }
-      }).model;
-      expect(model.resultTab).toBe("analysis");
+      expect(model.analysisCursorSample?.state).toEqual(analysis.samples[0]?.state);
+      model = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-result-open-analysis" } }).model;
       for (const timeSeconds of [0.005, analysis.summary.durationSeconds]) {
-        completeCursor(updateApp(model, {
-          type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds }
-        }));
+        completeCursor(updateApp(model, { type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds } }));
       }
-      expect(model.analysisCursorSample).toEqual(analysis.samples.at(-1));
-      if (terminal === "water-contact") {
-        expect(finalization[3]).toBeGreaterThan(0);
-        expect(finalization[3]).toBeLessThan(1);
-      } else {
-        expect(analysis.summary.durationSeconds).toBe(0.02);
-      }
-      for (const timeSeconds of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -0.01]) {
-        expect(() => session.flight_record_sample_at_seconds(timeSeconds)).toThrow(/PlaybackQuery\(InvalidTime\)/);
-      }
-      expect(() => session.flight_record_sample_at_seconds(analysis.summary.durationSeconds + 0.01))
-        .toThrow(/PlaybackQuery\(OutsideRecordedRange\)/);
-      expect(() => session.seek_playback(0)).toThrow(/InvalidTransition/);
-      expect(() => session.set_playback_playing(true)).toThrow(/InvalidTransition/);
-      expect(() => session.set_playback_rate_code(1)).toThrow(/InvalidTransition/);
-      expect(() => session.advance_playback(0.01)).toThrow(/InvalidTransition/);
-      expect(session.phase_code()).toBe(7);
-      expect(session.snapshot()).toEqual(before);
-      expect(session.flight_record_finalization()).toEqual(finalization);
-      expect(session.export_flight_record_json()).toBe(encoded);
-    } finally {
-      session.free();
-    }
+      expect(model.analysisCursorSample?.state).toEqual(analysis.samples.at(-1)?.state);
+      expect(session.flightPort.snapshot_json()).toBe(before);
+      expect(session.exportRecordJson()).toBe(encoded);
+    } finally { session.dispose(); }
   });
 
-  it("completes the visible Title-to-Result-to-Retry flow through actual DOM clicks", async () => {
-    initializeWasm();
-    const session = new GameSessionBridge(0);
+  it("completes Title-to-Result-to-Retry and Replay through actual DOM controls", async () => {
+    const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     const window = new Window();
-    Object.assign(globalThis, { window, document: window.document });
+    vi.stubGlobal("window", window);
+    vi.stubGlobal("document", window.document);
+    vi.stubGlobal("HTMLElement", window.HTMLElement);
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
     const root = window.document.createElement("main") as unknown as HTMLElement;
     window.document.body.append(root as never);
-    let model: AppModel = Object.freeze({
-      ...createInitialAppModel(),
-      presentation: Object.freeze({ type: "ready", mode: "screen" })
-    });
-
-    const sessionProjection = (): LegacyGameSessionProjection => {
-      const phaseCode = session.phase_code();
-      return {
-        phaseCode,
-        ...(phaseCode === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
-        controlModeCode: session.control_mode_code(),
-        difficulty: {
-          presetCode: session.difficulty_preset_code(),
-          informationCode: session.information_level_code(),
-          hudProfile: hudProfile(session),
-          assistanceCode: session.assistance_level_code(),
-          weatherCode: session.weather_class_code()
-        },
-        configurationMetadata: null,
-        countdownRemaining: session.countdown_remaining(),
-        canResume: session.can_resume(),
-        snapshot: [5, 6, 7].includes(phaseCode) ? parseFlightSnapshot(session.snapshot()) : null
-      };
-    };
-
-    const render = (): void => {
-      const projection = sessionProjection();
-      model = updateApp(model, { type: "game-session-synced", ...projection }).model;
-      adapter.render(createGameViewModel(model, projection.snapshot, model.flightAnalysis));
-    };
-
-    const adapter = new ScreenUiAdapter(root, (action) => {
-      const requested = updateApp(model, { type: "ui-action", action });
-      model = requested.model;
-      adapter.render(createGameViewModel(model, sessionProjection().snapshot, model.flightAnalysis));
-      const effect = requested.effects.find((candidate) => candidate.type === "game-session-operation");
-      if (effect?.type !== "game-session-operation") return;
-      const result = executeGameSessionOperation(session, effect.operation);
-      const projection = sessionProjection();
-      model = updateApp(model, {
-        type: "game-operation-completed",
-        requestId: effect.requestId,
-        ...projection
-      }).model;
-      adapter.render(createGameViewModel(model, projection.snapshot, model.flightAnalysis));
-      if (result.kind === "countdown-started") return;
-      if (model.status.length > 0) throw new Error(model.status);
-    });
-
-    const activate = (controlId: string): void => {
-      const button = root.querySelector(`button[data-control-id="${controlId}"]`) as unknown as HTMLButtonElement | null;
-      if (button === null) throw new Error(`Visible control not found: ${controlId}`);
-      if (button.disabled) throw new Error(`Visible control is disabled: ${controlId}`);
-      button.click();
-      expect(model.status).not.toMatch(/unavailable|rejected|InvalidTransition/i);
-    };
-
-    try {
-      render();
-      expect(model.gameSession.kind).toBe("title");
-      activate("game-title-start");
-      expect(model.gameSession.kind).toBe("setup");
-      const selectedInformation = (code: number): string | null => root
-        .querySelector(`button[data-control-id="game-setup-select-information-${String(code)}"]`)
-        ?.getAttribute("aria-pressed") ?? null;
-      expect(selectedInformation(0)).toBe("true");
-      activate("game-setup-select-information-3");
-      expect(selectedInformation(3)).toBe("true");
-      activate("game-setup-select-information-4");
-      expect(selectedInformation(4)).toBe("true");
-      expect(selectedInformation(3)).toBe("false");
-      const windCue = root.querySelector('input[data-control-id="game-setup-information-wind"]') as unknown as HTMLInputElement | null;
-      if (windCue === null) throw new Error("Custom wind cue toggle is missing");
-      windCue.checked = false;
-      windCue.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
-      expect(session.information_level_code()).toBe(4);
-      expect(Array.from(session.information_profile_codes())).toEqual([1, 1, 0, 0, 0, 0]);
-      expect(model.difficulty.hudProfile.wind).toBe(false);
-      activate("game-setup-start");
-      expect(model.gameSession.kind).toBe("briefing-ready");
-      activate("game-briefing-start");
-      expect(model.gameSession.kind).toBe("countdown");
-      while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
-      render();
-      expect(model.gameSession.kind).toBe("flight");
-
-      let snapshot = parseFlightSnapshot(session.snapshot());
-      for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick += 1) {
-        snapshot = parseFlightSnapshot(session.advance_tick(0, 0, 0, 0));
-      }
-      expect(snapshot.terminal).toBe("water-contact");
-      render();
-      expect(model.gameSession.kind).toBe("result");
-      const persistedRecords: { readonly json: string; readonly savedAt: string }[] = [];
-      const repository = new FlightRecordRepository({
-        add: (json: string, savedAt: string) => {
-          persistedRecords.push({ json, savedAt });
-          return Promise.resolve(persistedRecords.length);
-        },
-        get: () => Promise.resolve(null),
-        getAll: () => Promise.resolve([])
-      }, undefined, (json) => new PersonalBestSelectionBridge(json));
-      const saved = await repository.saveFrom(session);
-      const document = JSON.parse(saved.json) as {
-        readonly schema_version: number;
-        readonly header: {
-          readonly difficulty: { readonly hud_profile: unknown };
-          readonly physics_model_version: number;
-        };
-      };
-      expect(document.schema_version).toBe(5);
-      expect(document.header.physics_model_version).toBe(3);
-      expect(document.header.difficulty.hud_profile).toEqual({
-        telemetry: true,
-        attitude: true,
-        wind: false,
-        flight_path: false,
-        angle_of_attack: false,
-        warnings: false
-      });
-      activate("game-result-retry");
-      expect(model.gameSession.kind).toBe("briefing-ready");
-
-      activate("game-briefing-cancel");
-      expect(model.gameSession.kind).toBe("setup");
-      activate("game-setup-start");
-      expect(model.gameSession.kind).toBe("briefing-ready");
-      activate("game-briefing-cancel");
-      expect(model.gameSession.kind).toBe("setup");
-      activate("game-setup-back");
-      expect(model.gameSession.kind).toBe("title");
-      activate("game-title-demo");
-      expect(model.gameSession.kind).toBe("attract");
-      activate("game-attract-return");
-      expect(model.gameSession.kind).toBe("title");
-
-      activate("game-title-start");
-      activate("game-setup-start");
-      activate("game-briefing-start");
-      expect(model.gameSession.kind).toBe("countdown");
-      activate("game-countdown-cancel");
-      expect(model.gameSession.kind).toBe("briefing-ready");
-      activate("game-briefing-start");
-      while (session.countdown_remaining() > 0) session.advance_countdown();
-      session.launch();
-      render();
-      expect(model.gameSession.kind).toBe("flight");
-      activate("game-flight-pause");
-      expect(model.gameSession.kind).toBe("paused-flight");
-      activate("game-pause-open-settings");
-      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("settings");
-      activate("game-pause-settings-back");
-      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("menu");
-      activate("game-flight-resume");
-      expect(model.gameSession.kind).toBe("flight");
-      activate("game-flight-abort");
-      expect(model.gameSession.kind).toBe("result");
-
-      const analysisRequestId = model.pendingAnalysisRequestId;
-      if (analysisRequestId === null) throw new Error("Result analysis request was not created");
-      const analysis = loadFlightAnalysis(session, physics_hz());
-      model = updateApp(model, { type: "flight-analysis-loaded", requestId: analysisRequestId, data: analysis }).model;
-      adapter.render(createGameViewModel(model, gameSessionSnapshot(model.gameSession), model.flightAnalysis));
-      activate("game-result-replay");
-      expect(model.gameSession.kind).toBe("replay");
-      activate("game-replay-return");
-      expect(model.gameSession.kind).toBe("result");
-      activate("game-result-setup");
-      expect(model.gameSession.kind).toBe("setup");
-      activate("game-setup-back");
-      expect(model.gameSession.kind).toBe("title");
-    } finally {
-      session.free();
-      await window.happyDOM.abort();
-      Reflect.deleteProperty(globalThis, "window");
-      Reflect.deleteProperty(globalThis, "document");
-    }
-  });
-
-  it("plays and seeks from visible Replay controls using the Rust-owned clock", async () => {
-    initializeWasm();
-    const session = new GameSessionBridge(0);
-    const window = new Window();
-    Object.assign(globalThis, { window, document: window.document });
-    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
-    const root = window.document.createElement("main") as unknown as HTMLElement;
-    window.document.body.append(root as never);
-    session.open_setup();
-    session.prepare();
-    session.mark_briefing_ready();
-    session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
-    session.advance_tick(0, 0, 0, 0);
-    session.abort();
-    const flightAnalysis = loadFlightAnalysis(session, physics_hz());
-    const resultState = gameSessionState(7, 0, parseFlightSnapshot(session.snapshot()));
-    if (resultState === null) throw new Error("Rust Result snapshot was rejected by the UI projection");
-    let model: AppModel = Object.freeze({
-      ...createInitialAppModel(),
-      presentation: Object.freeze({ type: "ready", mode: "screen" }),
-      gameSession: resultState,
-      flightAnalysis,
-      resultTab: "analysis",
-      analysisCursorTimeSeconds: 0.005,
-      pendingGameRequestId: null,
-      nextRequestId: 2
-    });
-    let lastActionEffects: readonly AppEffect[] = [];
+    let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } };
+    let lastEffects: readonly AppEffect[] = [];
     const render = (): void => {
       adapter.render(createGameViewModel(model, gameSessionSnapshot(model.gameSession), model.flightAnalysis));
     };
     const adapter = new ScreenUiAdapter(root, (action) => {
       const transition = updateApp(model, { type: "ui-action", action });
       model = transition.model;
-      lastActionEffects = transition.effects;
+      lastEffects = transition.effects;
+      const operation = transition.effects.find((effect) => effect.type === "game-session-operation");
+      if (operation?.type === "game-session-operation") {
+        session.executeOperation(operation.operation);
+        const completed = updateApp(model, { type: "game-operation-completed", requestId: operation.requestId, ...readRuntimeSessionProjection(session) });
+        model = completed.model;
+        lastEffects = completed.effects;
+      }
       render();
     });
-    const activate = (controlId: string): readonly AppEffect[] => {
-      const button = root.querySelector(`button[data-control-id="${controlId}"]`) as unknown as HTMLButtonElement | null;
+    const activate = (controlId: string): void => {
+      const button = root.querySelector<HTMLButtonElement>(`button[data-control-id="${controlId}"]`);
       if (button === null || button.disabled) throw new Error(`Enabled control not found: ${controlId}`);
       button.click();
-      return lastActionEffects;
+      expect(model.status).not.toMatch(/unavailable|rejected|InvalidTransition/i);
+    };
+    const synchronize = (): void => {
+      const transition = updateApp(model, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
+      model = transition.model;
+      lastEffects = transition.effects;
+      render();
+    };
+    const completeRecordQueries = (effects: readonly AppEffect[]): void => {
+      for (const effect of effects) {
+        if (effect.type === "load-flight-analysis") {
+          const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+          const loaded = updateApp(model, { type: "flight-analysis-loaded", requestId: effect.requestId, data });
+          model = loaded.model;
+          completeRecordQueries(loaded.effects);
+        } else if (effect.type === "load-flight-analysis-cursor") {
+          if (model.flightAnalysis === null) throw new Error("Cursor requires observed Analysis");
+          const sample = session.queryAnalysisCursor(effect.timeSeconds, model.flightAnalysis);
+          model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: effect.requestId, sample }).model;
+        } else if (effect.type === "load-flight-replay-pose") {
+          if (model.flightAnalysis === null) throw new Error("Replay pose requires observed Analysis");
+          const { pose } = queryRuntimeRecordPose(session, model.flightAnalysis, effect.timeSeconds);
+          model = updateApp(model, { type: "flight-replay-pose-loaded", requestId: effect.requestId, pose }).model;
+        }
+      }
     };
     const runClockEffect = (effect: Extract<AppEffect, { type: "control-replay-clock" }>): void => {
       switch (effect.command.kind) {
-        case "synchronize":
-          if (effect.command.seekTimeSeconds !== null) session.seek_playback(effect.command.seekTimeSeconds);
-          break;
-        case "play": session.set_playback_playing(true); break;
-        case "pause": session.set_playback_playing(false); break;
-        case "seek": session.seek_playback(effect.command.timeSeconds); break;
-        case "rate": session.set_playback_rate_code(effect.command.rateCode); break;
-        case "advance": session.advance_playback(effect.command.elapsedSeconds); break;
+        case "synchronize": if (effect.command.seekTimeSeconds !== null) session.seekPlayback(effect.command.seekTimeSeconds); break;
+        case "play": session.setPlaybackPlaying(true); break;
+        case "pause": session.setPlaybackPlaying(false); break;
+        case "seek": session.seekPlayback(effect.command.timeSeconds); break;
+        case "rate": session.setPlaybackRate(effect.command.rateCode); break;
+        case "advance": session.advancePlayback(effect.command.elapsedSeconds); break;
       }
-      const state = session.playback_clock_state();
-      const completed = updateApp(model, {
-        type: "replay-clock-command-completed",
-        requestId: effect.requestId,
-        generation: effect.generation,
-        state: {
-          timeSeconds: state[0] ?? Number.NaN,
-          rateCode: (state[1] ?? -1) as 0 | 1 | 2,
-          playing: state[2] === 1
-        }
-      });
+      const clock = session.readPlaybackClock();
+      const completed = updateApp(model, { type: "replay-clock-command-completed",
+        requestId: effect.requestId, generation: effect.generation,
+        state: { timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: clock.kind === "playing" } });
       model = completed.model;
-      for (const query of completed.effects) {
-        if (query.type === "load-flight-replay-pose") {
-          const pose = queryFlightRecordRenderPoseAt(
-            session, physics_hz(), query.timeSeconds, flightAnalysis.initialPilotPositionMeters
-          );
-          model = updateApp(model, { type: "flight-replay-pose-loaded", requestId: query.requestId, pose }).model;
-        } else if (query.type === "load-flight-analysis-cursor") {
-          const sample = queryFlightRecordSampleAt(session, physics_hz(), query.timeSeconds);
-          model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: query.requestId, sample }).model;
-        }
-      }
+      completeRecordQueries(completed.effects);
       render();
     };
-
     try {
-      render();
-      const replayOperation = activate("game-result-replay").find((effect) => effect.type === "game-session-operation");
-      if (replayOperation?.type !== "game-session-operation") throw new Error("Replay operation was not requested");
-      session.enter_replay();
-      const entered = updateApp(model, {
-        type: "game-operation-completed", requestId: replayOperation.requestId, phaseCode: 9, controlModeCode: 0,
-        returnTarget: session.is_archived_replay() ? "title" : "result",
-        difficulty: model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
-      });
-      model = entered.model;
-      const synchronize = entered.effects.find((effect) => effect.type === "control-replay-clock");
-      if (synchronize?.type !== "control-replay-clock") throw new Error("Replay clock synchronization was not requested");
-      runClockEffect(synchronize);
-      expect(model.analysisCursorTimeSeconds).toBeCloseTo(0.005);
-      expect(session.playback_clock_state()[0]).toBeCloseTo(0.005);
-
-      const playEffect = activate("game-replay-play-pause").find((effect) => effect.type === "control-replay-clock");
-      if (playEffect?.type !== "control-replay-clock") throw new Error("Replay play command was not requested");
-      runClockEffect(playEffect);
-      expect(model.replayPlaying).toBe(true);
-
-      const tick = updateApp(model, { type: "replay-clock-tick", generation: model.replayClockGeneration, elapsedSeconds: 0.005 });
-      const advanceEffect = tick.effects.find((effect) => effect.type === "control-replay-clock");
-      model = tick.model;
-      if (advanceEffect?.type !== "control-replay-clock") throw new Error("Replay advance command was not requested");
-      runClockEffect(advanceEffect);
-      expect(model.analysisCursorTimeSeconds).toBeCloseTo(0.01);
-      expect(model.replayPlaying).toBe(false);
-      expect(model.status).not.toMatch(/unavailable|rejected|InvalidTransition/i);
-
-      const returnOperation = activate("game-replay-return").find((effect) => effect.type === "game-session-operation");
-      if (returnOperation?.type !== "game-session-operation") throw new Error("Replay return operation was not requested");
-      session.leave_replay();
-      const returned = updateApp(model, {
-        type: "game-operation-completed", requestId: returnOperation.requestId, phaseCode: 7, controlModeCode: 0,
-        difficulty: model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
-      });
-      model = returned.model;
+      synchronize();
+      activate("game-title-start");
+      expect(model.gameSession.kind).toBe("setup");
+      activate("game-setup-select-information-4");
+      const windCue = root.querySelector<HTMLInputElement>('input[data-control-id="game-setup-information-wind"]');
+      if (windCue === null) throw new Error("Custom wind cue toggle is missing");
+      windCue.checked = false;
+      windCue.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
+      expect(session.readDifficulty().hudProfile.wind).toBe(false);
+      activate("game-setup-start");
+      expect(model.gameSession.kind).toBe("briefing-ready");
+      activate("game-briefing-start");
+      expect(model.gameSession.kind).toBe("countdown");
+      activate("game-countdown-cancel");
+      activate("game-briefing-start");
+      while (session.advanceCountdown() > 0) continue;
+      session.launch();
+      synchronize();
+      activate("game-flight-pause");
+      activate("game-pause-open-settings");
+      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("settings");
+      activate("game-pause-settings-back");
+      activate("game-flight-resume");
+      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advance_tick_json(neutralTailInput);
+      activate("game-flight-abort");
       expect(model.gameSession.kind).toBe("result");
-      expect(model.analysisCursorTimeSeconds).toBeCloseTo(0.01);
+      const record = JSON.parse(session.exportRecordJson()) as { schema_version: number; header: { difficulty: { hud_profile: { wind: boolean } } } };
+      expect(record.schema_version).toBe(6);
+      expect(record.header.difficulty.hud_profile.wind).toBe(false);
+      const requestId = model.pendingAnalysisRequestId;
+      if (requestId === null) throw new Error("Result did not request Analysis");
+      const analysis = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const loaded = updateApp(model, { type: "flight-analysis-loaded", requestId, data: analysis });
+      model = loaded.model;
+      completeRecordQueries(loaded.effects);
+      render();
+      activate("game-result-open-analysis");
+      const cursor = updateApp(model, { type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: 0.005 } });
+      model = cursor.model;
+      completeRecordQueries(cursor.effects);
+      render();
+      activate("game-result-replay");
+      expect(model.gameSession.kind).toBe("replay");
+      const synchronizeClock = lastEffects.find((effect) => effect.type === "control-replay-clock");
+      if (synchronizeClock?.type !== "control-replay-clock") throw new Error("Replay clock synchronization was not requested");
+      completeRecordQueries(lastEffects);
+      runClockEffect(synchronizeClock);
+      expect(session.readPlaybackClock().timeSeconds).toBeCloseTo(0.005);
+      activate("game-replay-play-pause");
+      const play = lastEffects.find((effect) => effect.type === "control-replay-clock");
+      if (play?.type !== "control-replay-clock") throw new Error("Replay play was not requested");
+      runClockEffect(play);
+      const advance = updateApp(model, { type: "replay-clock-tick", generation: model.replayClockGeneration, elapsedSeconds: 0.1 });
+      model = advance.model;
+      const advanceClock = advance.effects.find((effect) => effect.type === "control-replay-clock");
+      if (advanceClock?.type !== "control-replay-clock") throw new Error("Replay advance was not requested");
+      runClockEffect(advanceClock);
+      expect(model.replayPlaying).toBe(false);
+      expect(model.analysisCursorTimeSeconds).toBeCloseTo(analysis.summary.durationSeconds);
+      activate("game-replay-return");
+      activate("game-result-retry");
+      expect(model.gameSession.kind).toBe("briefing-ready");
+      activate("game-briefing-cancel");
+      activate("game-setup-back");
+      activate("game-title-demo");
+      expect(model.gameSession.kind).toBe("attract");
+      activate("game-attract-return");
+      expect(model.gameSession.kind).toBe("title");
     } finally {
-      session.free();
+      session.dispose();
       await window.happyDOM.abort();
-      Reflect.deleteProperty(globalThis, "window");
-      Reflect.deleteProperty(globalThis, "document");
+      vi.unstubAllGlobals();
     }
   });
 });

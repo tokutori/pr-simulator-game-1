@@ -48,7 +48,7 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   validateProfile(profile);
   const instruments = model === null ? [] : instrumentElements(model);
   const readouts = (model?.readouts ?? "").split("\n").filter((line) => !line.startsWith("PITCH ")).join("\n");
-  const basicText = [readouts, model?.telemetry ?? ""].filter((line) => line !== "").join("\n").replaceAll(" · ", "\n");
+  const basicText = [readouts, model?.telemetry ?? ""].filter((line) => line !== "").join("\n");
   const text = [basicText, ...(model?.supplementaryReadouts ?? [])].filter((line) => line !== "").join("\n");
   const frameRateLabel = framesPerSecond === undefined ? null : formatFrameRate(framesPerSecond);
   const textElements: HeadHudElement[] = [];
@@ -163,7 +163,6 @@ export function headHudElementValue(element: HeadHudElement): string {
     case "attitude": return `P ${element.pitchDegrees.toFixed(0)}°  R ${element.rollDegrees.toFixed(0)}°`;
     case "heading": return `${element.degrees.toFixed(0)}°`;
     case "text":
-    case "pilot-position":
     case "wind":
     case "angle-of-attack":
     case "flight-path": return element.value;
@@ -194,11 +193,7 @@ function instrumentElements(model: FlightHudModel): readonly HeadHudElement[] {
   if (model.headingDegrees !== null) elements.push(Object.freeze({
     kind: "heading", id: "head-heading", label: "HDG", bounds: unitRect, degrees: model.headingDegrees
   }));
-  if (model.pilotPositionRatio !== null && model.pilotPosition !== null) elements.push(Object.freeze({
-    kind: "pilot-position", id: "head-pilot", label: "PILOT CG", bounds: unitRect,
-    ratio: model.pilotPositionRatio, value: model.pilotPosition
-  }));
-  if (model.pilotPositionRatio === null && model.pilotPosition !== null) elements.push(Object.freeze({
+  if (model.pilotPosition !== null) elements.push(Object.freeze({
     kind: "text", id: "head-pilot", label: "PILOT POSITION", bounds: unitRect, value: model.pilotPosition, tone: "normal"
   }));
   if (model.wind !== null) elements.push(model.windDirectionDegrees === null

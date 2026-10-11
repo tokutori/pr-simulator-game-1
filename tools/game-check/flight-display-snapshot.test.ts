@@ -2,15 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
 import type { TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "../../web/src/render/contracts/flight-controls.js";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { projectFlightRenderPose, projectLegacyFlightSnapshot, projectRecordedFlightSnapshot, projectTailFlightSnapshot } from "../../web/src/game/flight-display-snapshot.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { projectFlightRenderPose, projectRecordedFlightSnapshot, projectTailFlightSnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import { parseNamedRecordSample, parseNamedReplayContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
-function launch(session: GameSessionBridge | HybridGameSessionBridge): void {
+function launch(session: HybridGameSessionBridge): void {
   session.open_setup();
   session.prepare();
   session.mark_briefing_ready();
@@ -20,44 +19,12 @@ function launch(session: GameSessionBridge | HybridGameSessionBridge): void {
 }
 
 describe("control-layout-aware display snapshots", () => {
-  it("requires geometry for tail render poses and excludes it from legacy poses", () => {
+  it("requires registered geometry for controlled render poses", () => {
     type TailPose = Extract<FlightRenderPose, { controls: TailPhysicalFlightControls }>;
     expectTypeOf<TailPose["tailGeometry"]>().toEqualTypeOf<TailPresentationGeometryAvailability>();
     expectTypeOf<Omit<TailPose, "tailGeometry">>().not.toExtend<FlightRenderPose>();
-    expectTypeOf<{ datumPositionNed: TailPose["datumPositionNed"]; attitudeBodyToNed: TailPose["attitudeBodyToNed"];
-      pilotPositionMeters: number; initialPilotPositionMeters: number;
-      controls: { layout: "legacy_three_axis"; rollRadians: number; pitchRadians: number; yawRadians: number };
-      tailGeometry: TailPresentationGeometryAvailability }>().not.toExtend<FlightRenderPose>();
   });
 
-  it("retains the old 33-value snapshot and marks unavailable physical fields explicitly", () => {
-    const session = new GameSessionBridge(0);
-    try {
-      launch(session);
-      const raw = parseFlightSnapshot(session.advance_tick(0.5, -0.5, 0.25, 0));
-      const snapshot = projectLegacyFlightSnapshot(raw);
-      expect(snapshot).toMatchObject({ kind: "legacy_live", positionNed: raw.positionNed, velocityNed: raw.velocityNed,
-        stamp: { kind: "legacy_projection", tick: raw.tick, contactFraction: { kind: "unavailable", reason: "non_contact_snapshot" }, timeSeconds: raw.flightTimeSeconds },
-        controls: { layout: "legacy_three_axis", rollRadians: raw.actuatorDeflectionRadians.roll,
-          pitchRadians: raw.actuatorDeflectionRadians.pitch, yawRadians: raw.actuatorDeflectionRadians.yaw },
-        angularRateBodyRadiansPerSecond: { kind: "unavailable", reason: "legacy_body_rate_unavailable" },
-        compositeCgPositionNedMeters: { kind: "unavailable", reason: "legacy_cg_unavailable" },
-        pilotPositionTargetMeters: { kind: "unavailable", reason: "legacy_pilot_target_unavailable" } });
-      expect(snapshot.progressMeters).toEqual({ kind: "unavailable", reason: "legacy_progress_unavailable" });
-      expect(snapshot.controls).not.toHaveProperty("physicalIncidence");
-      expect(snapshot).not.toHaveProperty("finalization");
-      if (snapshot.telemetry.kind !== "available") throw new Error("Expected legacy telemetry");
-      expect(snapshot.telemetry.value).toMatchObject({ altitudeMeters: raw.telemetry?.altitudeMeters,
-        angleOfAttackRadians: { kind: "available", value: raw.telemetry?.angleOfAttackRadians } });
-      expect(Object.isFrozen(snapshot)).toBe(true);
-      expect(Object.isFrozen(snapshot.controls)).toBe(true);
-      const pose = projectFlightRenderPose(snapshot, -0.1);
-      expect(pose).toMatchObject({ controls: snapshot.controls, simulationTimeSeconds: raw.flightTimeSeconds, initialPilotPositionMeters: -0.1 });
-      expect(pose).not.toHaveProperty("actuatorDeflectionRadians");
-    } finally {
-      session.free();
-    }
-  });
 
   it("projects tail flight and pause without adding a roll control or unavailable score", () => {
     const session = new HybridGameSessionBridge(0, 21, 22);
@@ -123,23 +90,22 @@ describe("control-layout-aware display snapshots", () => {
     }
   });
 
-  it.each(["legacy_three_axis", "tail_incidence"] as const)("projects saved %s without a held target or new-model reintegration", (layout) => {
-    const source = layout === "legacy_three_axis" ? new GameSessionBridge(0) : new HybridGameSessionBridge(0, 21, 22);
+  it("projects saved controls without a held target or new-model reintegration", () => {
+    const source = new HybridGameSessionBridge(0, 21, 22);
     const replay = new HybridGameSessionBridge(2, 31, 32);
     try {
       launch(source);
-      if (source instanceof GameSessionBridge) source.advance_tick(0.5, -0.5, 0.25, 0);
-      else source.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.5, turnRight: -0.5,
+      source.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.5, turnRight: -0.5,
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
       source.abort();
       replay.open_archived_flight_record(source.export_flight_record_json());
       const context = parseNamedReplayContext(replay.playback_context_json());
       const sample = parseNamedRecordSample(replay.flight_record_sample_at_seconds(0.005), physics_hz(), context);
       const display = projectRecordedFlightSnapshot(sample, context);
-      expect(display).toMatchObject({ kind: layout === "legacy_three_axis" ? "legacy_record" : "tail_record",
+      expect(display).toMatchObject({ kind: "tail_record",
         pilotPositionTargetMeters: { kind: "unavailable", reason: "record_pilot_target_unavailable" },
         stamp: { kind: "exact", tick: sample.tickIndex, fraction: sample.fraction, timeSeconds: sample.timeSeconds }, controls: sample.controls });
-      if (display.kind !== "legacy_record" && display.kind !== "tail_record") throw new Error("Expected saved display");
+      if (display.kind !== "tail_record") throw new Error("Expected saved display");
       expect(display.finalization).toBe(context.finalization);
       expect(display.progressMeters).toEqual({ kind: "unavailable", reason: "record_course_axis_unavailable" });
       expect(sample).not.toHaveProperty("progressMeters");
@@ -149,12 +115,6 @@ describe("control-layout-aware display snapshots", () => {
       expect(display.finalization.terminalTick).toBe(1);
       expect(display.stamp.tick).toBe(0);
       expect(projectFlightRenderPose(display, 0).controls).toBe(sample.controls);
-      const conflicting = context.controlLayout === "legacy_three_axis"
-        ? { controlLayout: "tail_incidence" as const, scenario: context.scenario,
-            controlIdentity: { aircraftConfigurationId: "bpg041-rectangular-hybrid-mock", controllerProfileId: "test-controller" },
-            finalization: { ...context.finalization, failure: null } }
-        : { controlLayout: "legacy_three_axis" as const, finalization: context.finalization };
-      expect(() => projectRecordedFlightSnapshot(sample, conflicting)).toThrow("same layout");
       expect(() => projectFlightRenderPose(display, Number.NaN)).toThrow("finite");
     } finally {
       source.free();
@@ -163,8 +123,8 @@ describe("control-layout-aware display snapshots", () => {
   });
 
   it.each([
-    ["bpg041-rectangular-hybrid-mock", 1, 1.8],
-    ["bpg041-zero-dihedral-oracle", 1, 1.8],
+    ["bpg041-rectangular-hybrid-mock", 1, null],
+    ["bpg041-zero-dihedral-oracle", 1, null],
     ["bpg041-playable-hybrid-mock", 2, 3.6],
     ["bpg041-rectangular-hybrid-mock", 2, null],
     ["bpg041-playable-hybrid-mock", 1, null],
@@ -192,7 +152,7 @@ describe("control-layout-aware display snapshots", () => {
         const display = projected.value;
         expect(display.tailGeometry).toEqual(expectedArm === null
           ? { kind: "unavailable", reason: "unregistered_aircraft_geometry" }
-          : { kind: "available", value: { kind: modelVersion === 1 ? "bpg041_version_one" : "bpg041_playable_version_two", horizontalTailArmMeters: expectedArm } });
+          : { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: expectedArm } });
         expect(Object.isFrozen(display.tailGeometry)).toBe(true);
         if (display.tailGeometry.kind === "available") expect(Object.isFrozen(display.tailGeometry.value)).toBe(true);
         expect(display.controls.physicalIncidence).toBe(raw.frame.state.physicalIncidence);
@@ -214,12 +174,11 @@ describe("control-layout-aware display snapshots", () => {
       source.abort();
       replay.open_archived_flight_record(source.export_flight_record_json());
       const context = parseNamedReplayContext(replay.playback_context_json());
-      if (context.controlLayout !== "tail_incidence") throw new Error("Expected two-tail record context");
       const sample = parseNamedRecordSample(replay.flight_record_sample_at_seconds(0.005), physics_hz(), context);
       const before = JSON.stringify(sample);
       for (const [configurationId, modelVersion, expectedArm] of [
-        ["bpg041-rectangular-hybrid-mock", 1, 1.8],
-        ["bpg041-zero-dihedral-oracle", 1, 1.8],
+        ["bpg041-rectangular-hybrid-mock", 1, null],
+        ["bpg041-zero-dihedral-oracle", 1, null],
         ["bpg041-playable-hybrid-mock", 2, 3.6],
         ["bpg041-playable-hybrid-mock", 1, null],
         ["unregistered-record-aircraft", 2, null]
@@ -230,7 +189,7 @@ describe("control-layout-aware display snapshots", () => {
         if (display.kind !== "tail_record") throw new Error("Expected recorded tail display");
         expect(display.tailGeometry).toEqual(expectedArm === null
           ? { kind: "unavailable", reason: "unregistered_aircraft_geometry" }
-          : { kind: "available", value: { kind: modelVersion === 1 ? "bpg041_version_one" : "bpg041_playable_version_two", horizontalTailArmMeters: expectedArm } });
+          : { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: expectedArm } });
         expect(display.controls).toBe(sample.controls);
         expect(display.finalization).toBe(context.finalization);
         expect(display.stamp).toEqual({ kind: "exact", tick: sample.tickIndex, fraction: sample.fraction, timeSeconds: sample.timeSeconds });
@@ -243,20 +202,4 @@ describe("control-layout-aware display snapshots", () => {
     }
   });
 
-  it("normalizes legacy missing telemetry and undefined flow angles at the projection boundary", () => {
-    const values = new Array<number>(33).fill(0);
-    values[7] = 1;
-    values[19] = -1;
-    const missing = projectLegacyFlightSnapshot(parseFlightSnapshot(values));
-    expect(missing.telemetry).toEqual({ kind: "unavailable", reason: "legacy_telemetry_unavailable" });
-    expect(projectFlightRenderPose(missing, 0)).toMatchObject({ airspeedMetersPerSecond: null, windVelocityNedMetersPerSecond: null });
-    values[31] = 1;
-    const zeroFlow = projectLegacyFlightSnapshot(parseFlightSnapshot(values));
-    if (zeroFlow.telemetry.kind !== "available") throw new Error("Expected zero-speed telemetry");
-    expect(zeroFlow.telemetry.value.angleOfAttackRadians).toEqual({ kind: "unavailable", reason: "undefined_flow_angle" });
-    expect(zeroFlow.telemetry.value.sideslipAngleRadians).toEqual({ kind: "unavailable", reason: "undefined_flow_angle" });
-    values[16] = 1;
-    values[19] = 0.25;
-    expect(projectLegacyFlightSnapshot(parseFlightSnapshot(values)).stamp).toMatchObject({ contactFraction: { kind: "available", value: 0.25 } });
-  });
 });

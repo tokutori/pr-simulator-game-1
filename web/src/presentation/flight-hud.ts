@@ -1,11 +1,10 @@
-import type { FlightHudPort } from "../game/flight-controller.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
+import type { TailFlightHudPort } from "../game/tail-flight-controller.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import { createFlightDisplayHudModel, createFlightHudModel } from "./flight-hud-model.js";
+import { createFlightDisplayHudModel } from "./flight-hud-model.js";
 import type { FlightHudModel, InformationLevelCode } from "./flight-hud-model.js";
 import type { HudProfileUiState } from "../app/app-state.js";
 
-export class FlightHudAdapter implements FlightHudPort {
+export class FlightHudAdapter implements TailFlightHudPort {
   private readonly status: HTMLOutputElement;
   private readonly warning: HTMLOutputElement;
   private readonly telemetry: HTMLOutputElement;
@@ -26,7 +25,6 @@ export class FlightHudAdapter implements FlightHudPort {
   private readonly angleInstrument: HTMLDivElement;
   private readonly angleReadout: HTMLOutputElement;
   private readonly headingScale: SVGGElement;
-  private readonly pilotPositionIndicator: SVGPolygonElement;
   private readonly windNeedle: SVGGElement;
   private readonly angleIndicator: SVGPolygonElement;
   private readonly flightPathIndicator: SVGCircleElement;
@@ -36,7 +34,7 @@ export class FlightHudAdapter implements FlightHudPort {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly onRender: (snapshot: FlightSnapshot) => void = () => undefined
+    private readonly onRender: (snapshot: FlightDisplaySnapshot) => void = () => undefined
   ) {
     const documentRef = root.ownerDocument;
     const heading = documentRef.createElement("h2");
@@ -136,14 +134,6 @@ export class FlightHudAdapter implements FlightHudPort {
     const pilotPositionInstrument = instrumentOutput(documentRef, instruments, "PILOT CG", "pilot-position");
     this.pilotPositionInstrument = pilotPositionInstrument.cell;
     this.pilotPositionReadout = pilotPositionInstrument.output;
-    const pilotGauge = svgGauge(documentRef, pilotPositionInstrument.cell, "pilot-position", "0 0 200 34", "前後重心位置");
-    pilotGauge.append(svgElement(documentRef, "path", { d: "M 20 16 H 180", stroke: "#b9c9c2", "stroke-width": "3" }));
-    for (let index = 0; index <= 8; index += 1) {
-      const x = 20 + index * 20;
-      pilotGauge.append(svgElement(documentRef, "path", { d: `M ${String(x)} 12 V 21`, stroke: "#b9c9c2", "stroke-width": "1" }));
-    }
-    this.pilotPositionIndicator = svgElement(documentRef, "polygon", { points: "20,5 14,1 26,1", fill: "#ffd45c" });
-    pilotGauge.append(this.pilotPositionIndicator);
     const windInstrument = instrumentOutput(documentRef, instruments, "WIND N / E / D", "wind");
     this.windInstrument = windInstrument.cell;
     this.windReadout = windInstrument.output;
@@ -190,7 +180,7 @@ export class FlightHudAdapter implements FlightHudPort {
     this.informationProfile = profile;
   }
 
-  render(snapshot: FlightSnapshot, model: FlightHudModel = createFlightHudModel(snapshot, this.informationCode, this.informationProfile)): void {
+  render(snapshot: FlightDisplaySnapshot, model: FlightHudModel = createFlightDisplayHudModel(snapshot, this.informationCode, this.informationProfile)): void {
     this.applyModel(model);
     this.onRender(snapshot);
   }
@@ -221,11 +211,6 @@ export class FlightHudAdapter implements FlightHudPort {
     if (model.headingDegrees !== null) renderHeadingScale(this.headingScale, model.headingDegrees);
     this.pilotPositionInstrument.hidden = model.pilotPosition === null;
     this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
-    this.pilotPositionIndicator.setAttribute("visibility", model.pilotPositionRatio === null ? "hidden" : "visible");
-    if (model.pilotPositionRatio !== null) {
-      const x = 20 + ((model.pilotPositionRatio + 1) / 2) * 160;
-      this.pilotPositionIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
-    }
     this.windInstrument.hidden = model.wind === null;
     this.windReadout.textContent = model.wind ?? "";
     this.windNeedle.setAttribute("visibility", model.windDirectionDegrees === null ? "hidden" : "visible");

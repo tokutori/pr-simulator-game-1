@@ -66,7 +66,6 @@ describe("tail-aware shared Flight HUD", () => {
       expect(model.controlsDescription).toContain("←/→ left/right intent");
       expect(model.controlsDescription).toContain("pilot Hold");
       expect(model.controlsDescription).not.toContain("A/D roll");
-      expect(model.pilotPositionRatio).toBeNull();
       expect(Object.isFrozen(model.supplementaryReadouts)).toBe(true);
       session.pause(0);
       expect(createFlightDisplayHudModel(display(session), 0).status).toBe("一時停止");
@@ -108,7 +107,8 @@ describe("tail-aware shared Flight HUD", () => {
       adapter.renderDisplaySnapshot(snapshot, model);
       expect(root.querySelector(".flight-hud-readouts")?.textContent).toContain(model.supplementaryReadouts[1]);
       expect(root.querySelector(".flight-hud-controls")?.textContent).toBe(model.controlsDescription);
-      expect(root.querySelector('[data-instrument="pilot-position"] polygon')?.getAttribute("visibility")).toBe("hidden");
+      expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe(model.pilotPosition);
+      expect(root.querySelector('[data-instrument="pilot-position"]')).toBeNull();
       adapter.setVisible(false);
       adapter.renderDisplaySnapshot(snapshot, createFlightDisplayHudModel(snapshot, 2));
       expect(root.querySelector(".flight-hud-readouts")?.textContent).not.toContain("水平尾翼");

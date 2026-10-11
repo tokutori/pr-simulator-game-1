@@ -1,5 +1,3 @@
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
-import { projectLegacyFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { TailTerminalReason } from "../game/tail-session-codec.js";
 import type { HudProfileUiState } from "../app/app-state.js";
@@ -13,7 +11,6 @@ export interface FlightHudModel {
   readonly flightPathAngleDegrees: number | null;
   readonly warning: string | null;
   readonly headingDegrees: number | null;
-  readonly pilotPositionRatio: number | null;
   readonly windDirectionDegrees: number | null;
   readonly angleOfAttackDegrees: number | null;
   readonly readouts: string;
@@ -26,14 +23,6 @@ export interface FlightHudModel {
   readonly mapAttribution: string;
   readonly supplementaryReadouts: readonly string[];
   readonly controlsDescription: string;
-}
-
-export function createFlightHudModel(
-  snapshot: FlightSnapshot,
-  informationCode: InformationLevelCode,
-  customProfile: HudProfileUiState = fullProfile
-): FlightHudModel {
-  return createFlightDisplayHudModel(projectLegacyFlightSnapshot(snapshot), informationCode, customProfile);
 }
 
 export function createFlightDisplayHudModel(
@@ -51,29 +40,8 @@ export function createFlightDisplayHudModel(
   const presentation = Object.freeze({
     status: snapshotStatus(snapshot),
     supplementaryReadouts: informationCode === 0 ? supplementaryReadouts(snapshot) : Object.freeze([]),
-    controlsDescription: controlsDescription(snapshot)
+    controlsDescription: controlsDescription()
   });
-  if (telemetry.kind === "unavailable") {
-    return Object.freeze({
-      ...presentation,
-      attitude: null,
-      flightPathAngleDegrees: informationCode === 0 ? flightPathAngle(snapshot) : null,
-      warning: informationCode === 0 ? warningFor(snapshot) : null,
-      headingDegrees: null,
-      pilotPositionRatio: informationCode === 0 ? legacyPilotPositionRatio(snapshot) : null,
-      windDirectionDegrees: null,
-      angleOfAttackDegrees: null,
-      readouts: informationCode === 2 ? `${distance} · ${duration}` : `計器データ unavailable · ${distance} · ${duration}`,
-      heading: null,
-      pilotPosition: informationCode === 0 ? `${snapshot.pilotPositionMeters.toFixed(2)} m` : null,
-      wind: informationCode === 0 ? "unavailable" : null,
-      angleOfAttack: informationCode === 0 ? "unavailable" : null,
-      telemetry: "telemetry unavailable",
-      location,
-      mapAttribution
-    });
-  }
-
   const values = telemetry.value;
   const rollDegrees = values.rollRadians * 180 / Math.PI;
   const pitchDegrees = values.pitchRadians * 180 / Math.PI;
@@ -96,7 +64,6 @@ export function createFlightDisplayHudModel(
         flightPathAngleDegrees: flightPathAngle(snapshot),
         warning: warningFor(snapshot),
         headingDegrees,
-        pilotPositionRatio: legacyPilotPositionRatio(snapshot),
         windDirectionDegrees: windDirectionDegrees(wind.north, wind.east),
         angleOfAttackDegrees,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
@@ -118,7 +85,6 @@ export function createFlightDisplayHudModel(
         flightPathAngleDegrees: null,
         warning: null,
         headingDegrees,
-        pilotPositionRatio: null,
         windDirectionDegrees: null,
         angleOfAttackDegrees: null,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
@@ -137,7 +103,6 @@ export function createFlightDisplayHudModel(
         flightPathAngleDegrees: null,
         warning: null,
         headingDegrees: null,
-        pilotPositionRatio: null,
         windDirectionDegrees: null,
         angleOfAttackDegrees: null,
         readouts: `${altitude} · ${distance} · ${duration}`,
@@ -156,7 +121,6 @@ export function createFlightDisplayHudModel(
         flightPathAngleDegrees: null,
         warning: null,
         headingDegrees,
-        pilotPositionRatio: null,
         windDirectionDegrees: null,
         angleOfAttackDegrees: null,
         readouts: `${airspeed} · ${altitude}\n${attitudeText}`,
@@ -179,7 +143,7 @@ function customFlightHudModel(snapshot: FlightDisplaySnapshot, profile: HudProfi
   const attitudeReadout = profile.attitude && full.attitude !== null
     ? `PITCH ${full.attitude.pitchDegrees.toFixed(0)}° · ROLL ${full.attitude.rollDegrees.toFixed(0)}°`
     : null;
-  const telemetryReadout = profile.telemetry && telemetry.kind === "available"
+  const telemetryReadout = profile.telemetry
     ? `IAS ${telemetry.value.airspeedMetersPerSecond.toFixed(1)} m/s · ALT ${telemetry.value.altitudeMeters.toFixed(1)} m`
     : null;
   const wind = profile.wind ? full.wind : null;
@@ -188,7 +152,6 @@ function customFlightHudModel(snapshot: FlightDisplaySnapshot, profile: HudProfi
     ...full,
     attitude: profile.attitude ? full.attitude : null,
     headingDegrees: profile.attitude ? full.headingDegrees : null,
-    pilotPositionRatio: profile.telemetry ? full.pilotPositionRatio : null,
     windDirectionDegrees: profile.wind ? full.windDirectionDegrees : null,
     angleOfAttackDegrees: profile.angleOfAttack ? full.angleOfAttackDegrees : null,
     flightPathAngleDegrees: profile.flightPath ? flightPathAngle(snapshot) : null,
@@ -211,26 +174,18 @@ function flightPathAngle(snapshot: FlightDisplaySnapshot): number | null {
 
 function warningFor(snapshot: FlightDisplaySnapshot): string | null {
   switch (snapshot.kind) {
-    case "legacy_live": return terminalWarning(snapshot.terminal);
     case "tail_flight": return null;
-    case "legacy_record":
     case "tail_record": return null;
     case "tail_result": return terminalWarning(snapshot.finalization.reason);
   }
 }
 
-function terminalWarning(reason: FlightSnapshot["terminal"] | TailTerminalReason): string | null {
+function terminalWarning(reason: TailTerminalReason): string | null {
   switch (reason) {
-    case "out_of_valid_envelope":
-    case "out-of-valid-envelope": return "AERODYNAMIC ENVELOPE";
-    case "fatal_simulation_error":
-    case "fatal-simulation-error": return "SIMULATION FAILURE";
-    case "airborne":
+    case "out_of_valid_envelope": return "AERODYNAMIC ENVELOPE";
+    case "fatal_simulation_error": return "SIMULATION FAILURE";
     case "water_contact":
-    case "water-contact":
     case "time_limit":
-    case "time-limit":
-    case "manual-abort":
     case "manual_abort": return null;
   }
 }
@@ -248,40 +203,29 @@ function normalizeDegrees(degrees: number): number {
   return ((degrees % 360) + 360) % 360;
 }
 
-function pilotPositionRatio(positionMeters: number): number {
-  return Math.max(-1, Math.min(1, positionMeters / 0.4));
-}
-
-function legacyPilotPositionRatio(snapshot: FlightDisplaySnapshot): number | null {
-  return snapshot.controls.layout === "legacy_three_axis" ? pilotPositionRatio(snapshot.pilotPositionMeters) : null;
-}
-
 function distanceReadout(snapshot: FlightDisplaySnapshot): string {
-  if (snapshot.kind === "legacy_live") return `距離 ${snapshot.scoreCourseMeters.toFixed(1)} m`;
   if (snapshot.kind === "tail_flight") return `距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`;
   if (snapshot.kind === "tail_result" && snapshot.finalization.scoreMeters !== null) {
     return `確定距離 ${snapshot.finalization.scoreMeters[0].toFixed(1)} m`;
   }
-  return snapshot.kind === "legacy_record" || snapshot.kind === "tail_record" ? "保存標本" : "距離 unavailable";
+  return snapshot.kind === "tail_record" ? "保存標本" : "距離 unavailable";
 }
 
 function snapshotStatus(snapshot: FlightDisplaySnapshot): string {
   switch (snapshot.kind) {
-    case "legacy_live": return terminalLabel(snapshot.terminal);
     case "tail_flight": return snapshot.phaseCode === 6 ? "一時停止" : "滑空中";
     case "tail_result": return terminalLabel(snapshot.finalization.reason);
-    case "legacy_record":
     case "tail_record": return "記録再生";
   }
 }
 
 function supplementaryReadouts(snapshot: FlightDisplaySnapshot, attitudeVisible = true, telemetryVisible = true): readonly string[] {
   const lines: string[] = [];
-  if (attitudeVisible && snapshot.angularRateBodyRadiansPerSecond.kind === "available") {
+  if (attitudeVisible) {
     const rate = snapshot.angularRateBodyRadiansPerSecond.value;
     lines.push(`p ${degrees(rate.roll)}  q ${degrees(rate.pitch)}  r ${degrees(rate.yaw)} °/s`);
   }
-  if (telemetryVisible && snapshot.controls.layout === "tail_incidence") {
+  if (telemetryVisible) {
     const incidence = snapshot.controls.physicalIncidence;
     lines.push(`水平尾翼 ${degrees(incidence.horizontalTailRadians)}°  垂直尾翼 ${degrees(incidence.verticalTailRadians)}°`);
     const target = snapshot.pilotPositionTargetMeters;
@@ -296,10 +240,8 @@ function degrees(radians: number): string {
   return (radians * 180 / Math.PI).toFixed(1);
 }
 
-function controlsDescription(snapshot: FlightDisplaySnapshot): string {
-  return snapshot.controls.layout === "tail_incidence"
-    ? "↑/↓ nose-up/down intent · ←/→ left/right intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set"
-    : "A/D roll · ↑/↓ pitch · ←/→ yaw · J/L CG · Gamepad sticks";
+function controlsDescription(): string {
+  return "↑/↓ nose-up/down intent · ←/→ left/right intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set";
 }
 
 function windDirectionDegrees(north: number, east: number): number | null {
@@ -307,18 +249,12 @@ function windDirectionDegrees(north: number, east: number): number | null {
   return normalizeDegrees(Math.atan2(east, north) * 180 / Math.PI);
 }
 
-function terminalLabel(terminal: FlightSnapshot["terminal"] | TailTerminalReason): string {
+function terminalLabel(terminal: TailTerminalReason): string {
   switch (terminal) {
-    case "airborne": return "滑空中";
-    case "water_contact":
-    case "water-contact": return "着水";
-    case "time_limit":
-    case "time-limit": return "時間制限";
-    case "out_of_valid_envelope":
-    case "out-of-valid-envelope": return "空力モデルの適用範囲外";
-    case "manual_abort":
-    case "manual-abort": return "手動終了";
-    case "fatal_simulation_error":
-    case "fatal-simulation-error": return "シミュレーションエラー";
+    case "water_contact": return "着水";
+    case "time_limit": return "時間制限";
+    case "out_of_valid_envelope": return "空力モデルの適用範囲外";
+    case "manual_abort": return "手動終了";
+    case "fatal_simulation_error": return "シミュレーションエラー";
   }
 }

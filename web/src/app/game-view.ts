@@ -7,7 +7,7 @@ import type { EnvironmentBriefingProjection } from "../game/environment-briefing
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { analysisScenarioId, projectAnalysisView, projectAnalysisCursor } from "../game/flight-analysis-view.js";
 import type { FlightAnalysisInput, AnalysisViewData, AnalysisViewSample } from "../game/flight-analysis-view.js";
-import { NO_VENUE_MAP, venueMapForScenario } from "../game/biwa-venue-map.js";
+import { NO_VENUE_MAP } from "../game/biwa-venue-map.js";
 import type { VenueMapProjection } from "../game/biwa-venue-map.js";
 import { NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "../presentation/head-hud-view.js";
@@ -94,7 +94,7 @@ export function createGameViewModel(
         controls.push(status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。"));
         controls.push(...lakeWaterQualityControls(model));
       } else if (phaseCode === 6 && pauseOverlay === "help") {
-        controls.push(status("game-pause-help-info", "操縦方法", flightControlInstructions(model)));
+        controls.push(status("game-pause-help-info", "操縦方法", flightControlInstructions()));
       }
       (phaseCode === 6 ? buttons : flightButtons).forEach((entry) => controls.push(entry));
     } else if (phaseCode === 5) {
@@ -117,7 +117,7 @@ export function createGameViewModel(
         })));
       } else if (pauseOverlay === "help") {
         controls.push(Object.freeze({
-          ...status("game-pause-help-info", "操縦方法", flightControlInstructions(model)),
+          ...status("game-pause-help-info", "操縦方法", flightControlInstructions()),
           rect: normalizedRect(0.08, 0.24, 0.84, 0.25)
         }));
       } else {
@@ -451,14 +451,13 @@ function createAnalysisChart(
   analysis: AnalysisViewData,
   chart: AppModel["analysisChart"],
   cursorSample: AnalysisViewSample | null,
-  scenarioId: number | null,
+  _scenarioId: number | null,
   rect = normalizedRect(0.08, 0.22, 0.84, 0.30),
   registeredVenue: VenueMapProjection = NO_VENUE_MAP
 ): UiChart {
   const samples = analysis.samples;
   if (chart === "map") {
-    const venue = analysis.origin.kind === "named_record" ? registeredVenue.kind === "available" ? registeredVenue.value : null
-      : scenarioId === null ? null : venueMapForScenario(scenarioId);
+    const venue = registeredVenue.kind === "available" ? registeredVenue.value : null;
     const north = samples.map((sample) => sample.northMeters);
     const east = samples.map((sample) => sample.eastMeters);
     const centerNorth = (Math.min(...north) + Math.max(...north)) / 2;
@@ -709,8 +708,7 @@ function resultAnalysisSummary(analysis: AnalysisViewData | null): string {
   const aoa = summary.maximumAngleOfAttackRadians.kind === "unavailable"
     ? `AoA unavailable (${summary.maximumAngleOfAttackRadians.reason})`
     : `最大AoA ${(summary.maximumAngleOfAttackRadians.value * 180 / Math.PI).toFixed(1)}°`;
-  const failure = analysis.origin.kind === "named_record" && analysis.origin.context.controlLayout === "tail_incidence"
-    ? analysis.origin.context.finalization.failure : null;
+  const failure = analysis.origin.context.finalization.failure;
   return `${terminalMarkerLabel(summary.terminal.reason)} · ${score} · 飛行時間 ${summary.durationSeconds.toFixed(1)} s · 最大対気速度 ${summary.maximumAirspeedMetersPerSecond.toFixed(1)} m/s · ${aoa} · 最大|roll| ${(summary.maximumAbsoluteRollRadians * 180 / Math.PI).toFixed(1)}° · ${analysisWindDescription(analysis)}${failure === null ? "" : ` · 原因 ${JSON.stringify(failure)}`}`;
 }
 
@@ -721,12 +719,11 @@ function analysisWindDescription(analysis: AnalysisViewData | null): string {
     case "not_requested": return "風断面は未要求";
     case "unregistered_environment_identity": return "保存環境が未登録 (unregistered_environment_identity)";
     case "outside_registered_domain": return "風断面が登録領域外 (outside_registered_domain)";
-    case "legacy_wind_grid_unavailable": return "旧記録の風断面を取得できない";
   }
 }
 
 function analysisConfigurationSummary(analysis: AnalysisViewData | null, metadata: ConfigurationMetadataUiState | null): string {
-  if (analysis?.origin.kind !== "named_record") return `${configurationSummary(metadata)} · ${analysisWindDescription(analysis)}`;
+  if (analysis === null) return `${configurationSummary(metadata)} · ${analysisWindDescription(analysis)}`;
   const { scenario, difficulty, controlLayout } = analysis.origin.context;
   return `保存条件 ${difficulty.information} / ${difficulty.assistance} / ${difficulty.weather} · ${controlLayout} · Scenario ${String(scenario.scenarioId)} v${String(scenario.scenarioVersion)} · Environment v${String(scenario.environmentVersion)} · ${analysisWindDescription(analysis)}`;
 }
@@ -879,7 +876,7 @@ function briefingControls(model: AppModel, phaseCode: number, environment: Envir
       `気象: ${weatherLabel(metadata.weatherCode)}`
     ].join("\n")),
     weatherConditions(environment),
-    status("game-briefing-controls", "操縦", flightControlInstructions(model)),
+    status("game-briefing-controls", "操縦", flightControlInstructions()),
     status("game-briefing-readiness", "発進準備", phaseCode === 3 ? "✓ 発進準備完了" : phaseCode === 8 ? model.status || "準備に失敗した。再試行または設定変更を選択する。" : "飛行条件を確認し、必要なデータを準備している。"),
     Object.freeze({
       ...button("game-briefing-technical", "技術情報", true),
@@ -895,10 +892,8 @@ function preparationProgress(phaseCode: number): UiStatus {
     : phaseCode === 4 ? "✓ 設定 ─ ✓ 確認 ─ ● 発進" : "✓ 設定 ─ ● 確認 ─ ○ 発進");
 }
 
-function flightControlInstructions(model: AppModel): string {
-  return model.gameSession.kind !== "boot" && model.gameSession.controlLayout === "tail_incidence"
-    ? "機首上げ / 下げ ↑ / ↓ · 右 / 左旋回 → / ←\n水平・垂直尾翼のincidenceを制御する。独立したroll入力はない。\n重心移動 J / L · Keyboardは解放時Hold、Gamepadは位置をSetする。"
-    : "Pitch ↑ / ↓ · Roll A / D · Yaw ← / →\n重心移動 J / L · Keyboard / Gamepad対応";
+function flightControlInstructions(): string {
+  return "機首上げ / 下げ ↑ / ↓ · 右 / 左旋回 → / ←\n水平・垂直尾翼のincidenceを制御する。独立したroll入力はない。\n重心移動 J / L · Keyboardは解放時Hold、Gamepadは位置をSetする。";
 }
 
 function weatherConditions(environment: EnvironmentBriefingProjection): UiStatus {

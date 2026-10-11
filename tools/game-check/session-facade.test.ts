@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { LegacyAppSessionFacade, TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppSessionFacade, TailAppSessionPort } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
@@ -23,8 +23,7 @@ function launch(facade: AppSessionFacade): void {
 }
 
 function advance(facade: AppSessionFacade): void {
-  if (facade.controlLayout === "legacy_three_axis") facade.flightPort.advance_tick(0.25, -0.5, 0.5, 0);
-  else facade.flightPort.advance_tick_json(neutralTail);
+  facade.flightPort.advance_tick_json(neutralTail);
 }
 
 describe("layout-discriminated application session facade", () => {
@@ -351,24 +350,20 @@ describe("layout-discriminated application session facade", () => {
     expect(() => new TailAppSessionFacade(bridge, physics_hz())).toThrow("already has an application owner");
   });
 
-  it.each(["legacy_three_axis", "tail_incidence"] as const)("delegates %s operations and snapshots without a second domain state", (layout) => {
-    const bridge = layout === "legacy_three_axis" ? new GameSessionBridge(0) : new HybridGameSessionBridge(0, 21, 22);
-    const facade = bridge instanceof GameSessionBridge ? new LegacyAppSessionFacade(bridge, physics_hz()) : new TailAppSessionFacade(bridge, physics_hz());
+  it("delegates current operations and snapshots without a second domain state", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
     try {
       expect(facade.readLifecycle()).toMatchObject({ phaseCode: 0, controlModeCode: 0, canResume: false });
       launch(facade);
       advance(facade);
       expect(facade.readLifecycle().phaseCode).toBe(5);
-      if (facade.controlLayout === "legacy_three_axis") {
-        expect(facade.readSnapshot().actuatorDeflectionRadians).toHaveProperty("roll");
-        expect(facade.readSnapshot().tick).toBe(1);
-      } else {
+
         const snapshot = facade.readSnapshot();
         if (snapshot.frame.kind !== "flight") throw new Error("Expected Rust flight frame");
         expect(snapshot.frame.state.tick).toBe(1);
         expect(snapshot.frame.state.physicalIncidence).not.toHaveProperty("rollRadians");
         expect(snapshot.frame.progressMeters.courseParallelMeters).toBeGreaterThan(0);
-      }
       facade.executeOperation("pause");
       expect(facade.readLifecycle()).toMatchObject({ phaseCode: 6, canResume: bridge.can_resume() });
       facade.clearPauseReason(0);
@@ -376,7 +371,7 @@ describe("layout-discriminated application session facade", () => {
       facade.executeOperation("resume");
       expect(facade.executeOperation("abort").kind).toBe("aborted");
       expect(facade.readLifecycle().phaseCode).toBe(7);
-      expect(facade.exportRecordJson()).toContain(layout === "tail_incidence" ? '"schema_version":6' : '"schema_version":5');
+      expect(facade.exportRecordJson()).toContain('"schema_version":6');
       facade.executeOperation("retry");
       expect(facade.readLifecycle().phaseCode).toBe(3);
     } finally {
@@ -417,9 +412,9 @@ describe("layout-discriminated application session facade", () => {
     }
   });
 
-  it.each(["legacy_three_axis", "tail_incidence"] as const)("preserves saved %s controls through the named archive query", (layout) => {
-    const sourceBridge = layout === "legacy_three_axis" ? new GameSessionBridge(0) : new HybridGameSessionBridge(0, 21, 22);
-    const source = sourceBridge instanceof GameSessionBridge ? new LegacyAppSessionFacade(sourceBridge, physics_hz()) : new TailAppSessionFacade(sourceBridge, physics_hz());
+  it.each(["tail_incidence"] as const)("preserves saved %s controls through the named archive query", (layout) => {
+    const sourceBridge = new HybridGameSessionBridge(0, 21, 22);
+    const source = new TailAppSessionFacade(sourceBridge, physics_hz());
     const viewerBridge = new HybridGameSessionBridge(2, 31, 32);
     const viewer = new TailAppSessionFacade(viewerBridge, physics_hz());
     try {
@@ -431,7 +426,7 @@ describe("layout-discriminated application session facade", () => {
       expect(viewer.readReplayContext().controlLayout).toBe(layout);
       const sample = viewer.queryRecordSample(0.005);
       expect(sample.controls.layout).toBe(layout);
-      expect(viewer.queryRecordDisplay(0.005).kind).toBe(layout === "legacy_three_axis" ? "legacy_record" : "tail_record");
+      expect(viewer.queryRecordDisplay(0.005).kind).toBe("tail_record");
       expect(viewer.readAnalysisSamples()).toHaveLength(2);
       expect(() => viewer.readSnapshot()).toThrow();
       const archiveToken = viewer.captureQueryToken();

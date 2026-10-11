@@ -1,73 +1,60 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
-import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import type { NamedRecordSample } from "../../web/src/game/named-record-query.js";
 import { record } from "../shared/validation.js";
+import { currentRecordFixture } from "./current-session-fixture.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const angles = [
-  { field: "angle_of_attack_rad", packed: "angle_of_attack_rad", defined: "angle_of_attack_defined" },
-  { field: "sideslip_angle_rad", packed: "sideslip_rad", defined: "sideslip_defined" }
+  { field: "angle_of_attack_rad", telemetry: "angleOfAttackRadians" },
+  { field: "sideslip_angle_rad", telemetry: "sideslipAngleRadians" }
 ] as const;
 type AngleField = typeof angles[number]["field"];
 let sourceJson: string;
 
 beforeAll(() => {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  const session = new GameSessionBridge(0);
-  try {
-    session.open_setup();
-    session.prepare();
-    session.mark_briefing_ready();
-    session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
-    session.advance_tick(0, 0, 0, 0);
-    session.abort();
-    sourceJson = session.export_flight_record_json();
-  } finally {
-    session.free();
-  }
+  sourceJson = currentRecordFixture(false);
 });
 
 function recordJson(field: AngleField, start: number | null, end: number | null): string {
   const document = record(JSON.parse(sourceJson) as unknown);
   const samples: unknown = document.samples;
   if (!Array.isArray(samples) || samples.length !== 2) throw new Error("Expected two recorded samples");
-  record(record(samples[0]).telemetry)[field] = start;
-  record(record(samples[1]).telemetry)[field] = end;
+  record(record(record(samples[0]).state).telemetry)[field] = start;
+  record(record(record(samples[1]).state).telemetry)[field] = end;
   return JSON.stringify(document);
 }
 
-function expectAngle(packed: Float64Array, angle: typeof angles[number], expected: number | null): void {
-  const layout = GameSessionBridge.flight_record_playback_sample_layout().split(",");
-  expect(packed).toHaveLength(layout.length);
-  expect(Array.from(packed).every(Number.isFinite)).toBe(true);
-  expect(packed[layout.indexOf(angle.defined)]).toBe(expected === null ? 0 : 1);
-  expect(packed[layout.indexOf(angle.packed)]).toBe(expected ?? 0);
+function expectAngle(sample: NamedRecordSample, angle: typeof angles[number], expected: number | null): void {
+  const actual = sample.state.telemetry[angle.telemetry];
+  expect(actual).toBe(expected);
+  expect(sample.controls.layout).toBe("tail_incidence");
+  expect(sample.state.datumPositionNedMeters.every(Number.isFinite)).toBe(true);
 }
 
 describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
   it.each([-1, 1])("rejects midpoint overflow for sign %i while preserving endpoints", (sign) => {
-    const archive = new GameSessionBridge(0);
+    const archive = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
       const start = sign * 1e308;
       const end = -sign * 1e308;
-      archive.open_archived_flight_record(recordJson(angle.field, start, end));
-      const stored = archive.flight_record_samples_packed();
-      expect(Array.from(stored).every(Number.isFinite)).toBe(true);
+      archive.openArchive(recordJson(angle.field, start, end));
+      const stored = archive.readFlightLog("json");
+      const clock = archive.readPlaybackClock();
       for (const fraction of [0.25, 0.5, 0.75]) {
-        expect(() => archive.flight_record_sample_at(0, fraction)).toThrow(/NonFiniteInterpolation/);
-        expect(() => archive.flight_record_sample_at_seconds(fraction / 100)).toThrow(/NonFiniteInterpolation/);
+        expect(() => archive.queryRecordSample(fraction / 100)).toThrow(/NonFiniteInterpolation/);
       }
-      expectAngle(archive.flight_record_sample_at(0, 0), angle, start);
-      expectAngle(archive.flight_record_sample_at_seconds(0), angle, start);
-      expectAngle(archive.flight_record_sample_at(1, 0), angle, end);
-      expectAngle(archive.flight_record_sample_at_seconds(0.01), angle, end);
-      expect(archive.flight_record_samples_packed()).toEqual(stored);
-      expect(archive.phase_code()).toBe(9);
+      expectAngle(archive.queryRecordSample(0), angle, start);
+      expectAngle(archive.queryRecordSample(0.01), angle, end);
+      expect(archive.readFlightLog("json")).toBe(stored);
+      expect(archive.readPlaybackClock()).toEqual(clock);
+      expect(archive.readLifecycle().phaseCode).toBe(9);
     } finally {
-      archive.free();
+      archive.dispose();
     }
   });
 
@@ -78,17 +65,14 @@ describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
     { start: -1e308, end: null, midpoint: null },
     { start: Number.MAX_VALUE, end: Number.MAX_VALUE, midpoint: Number.MAX_VALUE }
   ])("preserves finite or absent angles: $start to $end", ({ start, end, midpoint }) => {
-    const archive = new GameSessionBridge(0);
+    const archive = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
-      archive.open_archived_flight_record(recordJson(angle.field, start, end));
-      expectAngle(archive.flight_record_sample_at(0, 0), angle, start);
-      expectAngle(archive.flight_record_sample_at_seconds(0), angle, start);
-      expectAngle(archive.flight_record_sample_at(1, 0), angle, end);
-      expectAngle(archive.flight_record_sample_at_seconds(0.01), angle, end);
-      expectAngle(archive.flight_record_sample_at(0, 0.5), angle, midpoint);
-      expectAngle(archive.flight_record_sample_at_seconds(0.005), angle, midpoint);
+      archive.openArchive(recordJson(angle.field, start, end));
+      expectAngle(archive.queryRecordSample(0), angle, start);
+      expectAngle(archive.queryRecordSample(0.01), angle, end);
+      expectAngle(archive.queryRecordSample(0.005), angle, midpoint);
     } finally {
-      archive.free();
+      archive.dispose();
     }
   });
 });

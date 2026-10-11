@@ -2,16 +2,17 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window as BrowserWindow } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { GameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { installBrowserPageLifecycle } from "../../web/src/app/browser-page-lifecycle.js";
-import { FlightController } from "../../web/src/game/flight-controller.js";
+import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
+import { parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import { suspendPageFlight } from "../../web/src/game/page-flight-lifecycle.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
-function preparedSession(): GameSessionBridge {
+function preparedSession(): HybridGameSessionBridge {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  const session = new GameSessionBridge(0);
+  const session = new HybridGameSessionBridge(0, 21, 22);
   session.open_setup();
   session.prepare();
   session.mark_briefing_ready();
@@ -26,11 +27,16 @@ describe("browser cache to Rust session boundary", () => {
     session.advance_countdown();
     session.launch();
     const free = vi.spyOn(session, "free");
+    const readState = () => {
+      const snapshot = parseTailSessionSnapshot(session.snapshot_json(), physics_hz());
+      if (snapshot.frame.kind !== "flight") throw new Error("Expected a retained current flight state");
+      return snapshot.frame.state;
+    };
     const input = {
-      readIntent: () => ({ roll: 0, pitch: 0, yaw: 0, pilotPositionMeters: 0 }),
+      readDemand: () => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" as const } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
     };
-    const controller = new FlightController(session, input, { setFlightPose() {} }, {
+    const controller = new TailFlightController(session, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
     }, physics_hz(), () => []);
     const synchronize = vi.fn();
@@ -48,22 +54,22 @@ describe("browser cache to Rust session boundary", () => {
       controller.onFrame(0);
       controller.onFrame(10);
       for (let roundTrip = 0; roundTrip < 2; roundTrip += 1) {
-        const before = Array.from(session.snapshot());
+        const before = readState();
         event("pagehide", true);
         expect(session.phase_code()).toBe(6);
         controller.onFrame(40_000 + roundTrip * 50_000);
         event("pageshow", true);
         expect(session.phase_code()).toBe(6);
         expect(session.can_resume()).toBe(true);
-        expect(Array.from(session.snapshot())).toEqual(before);
+        expect(readState()).toEqual(before);
         expect(free).not.toHaveBeenCalled();
         session.resume();
         controller.resume();
         const baseline = 40_010 + roundTrip * 50_000;
         controller.onFrame(baseline);
-        expect(Array.from(session.snapshot())).toEqual(before);
+        expect(readState()).toEqual(before);
         controller.onFrame(baseline + 10);
-        expect(controller.currentSnapshot.tick).toBe(roundTrip + 2);
+        expect(controller.currentSnapshot.frame.state.tick).toBe(roundTrip + 2);
       }
       event("pagehide", false);
       event("pagehide", false);

@@ -17,7 +17,6 @@ export type HeadHudElement = HeadHudElementBase & (
   | { readonly kind: "text"; readonly value: string; readonly tone: "normal" | "warning" }
   | { readonly kind: "attitude"; readonly rollDegrees: number; readonly pitchDegrees: number; readonly flightPathAngleDegrees: number | null }
   | { readonly kind: "heading"; readonly degrees: number }
-  | { readonly kind: "pilot-position"; readonly ratio: number; readonly value: string }
   | { readonly kind: "wind"; readonly degrees: number; readonly value: string }
   | { readonly kind: "angle-of-attack"; readonly degrees: number; readonly value: string }
   | { readonly kind: "flight-path"; readonly degrees: number; readonly value: string }
@@ -78,11 +77,6 @@ export function validateHeadHudLayer(layer: HeadHudLayer): void {
         if (![element.rollDegrees, element.pitchDegrees].every(Number.isFinite) ||
             (element.flightPathAngleDegrees !== null && !Number.isFinite(element.flightPathAngleDegrees))) {
           throw new RangeError(`Head HUD attitude is non-finite: ${element.id}`);
-        }
-        break;
-      case "pilot-position":
-        if (!Number.isFinite(element.ratio) || element.ratio < -1 || element.ratio > 1) {
-          throw new RangeError(`Head HUD pilot position must lie in [-1, 1]: ${element.id}`);
         }
         break;
       case "heading":

@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 
@@ -135,10 +134,9 @@ describe("versioned two-tail TypeScript boundary", () => {
     }
   });
 
-  it("reads generated WASM identities and lifecycle without changing the legacy factory", () => {
+  it("reads generated WASM identities and lifecycle with current lifecycle ownership", () => {
     for (const mode of [0, 1, 2]) {
       const session = launch(mode);
-      const legacy = new GameSessionBridge(0);
       try {
         const initial = parseTailSessionSnapshot(session.snapshot_json(), physics_hz());
         expect(initial.phaseCode).toBe(5);
@@ -166,16 +164,8 @@ describe("versioned two-tail TypeScript boundary", () => {
         expect(result.frame.finalization.terminalTick).toBe(result.frame.state.tick);
         session.retry();
         expect(parseTailSessionSnapshot(session.snapshot_json()).phaseCode).toBe(3);
-        legacy.open_setup();
-        legacy.prepare();
-        legacy.mark_briefing_ready();
-        legacy.start_countdown(1);
-        legacy.advance_countdown();
-        expect(parseFlightSnapshot(legacy.launch()).tick).toBe(0);
-        expect(legacy.snapshot()).toHaveLength(33);
       } finally {
         session.free();
-        legacy.free();
       }
     }
   });
@@ -285,6 +275,15 @@ describe("versioned two-tail TypeScript boundary", () => {
       cause: { kind: "hybrid", cause: { site: { kind: "proxy", surface: "horizontal_tail", index: 1 },
         cause: { kind: "wind", cause: "outside_grid" }, limit: null, stage: "second" } } } } });
     const causes: readonly unknown[] = ["unknown", { control: "unknown" }, { dynamics: { load: "unknown" } },
+      { control: { actuator: "invalid_interpolation_fraction" } },
+      { control: { actuator: "deflection_out_of_range" } },
+      { contact: { actuator: "invalid_interpolation_fraction" } },
+      { contact: { actuator: "deflection_out_of_range" } },
+      { contact: { actuator: "non_finite" } },
+      { dynamics: { load: { aerodynamic: { element: { role: "left_wing", cause: "non_finite" } } } } },
+      { dynamics: { load: { aerodynamic: { aggregate: { cause: "non_finite" } } } } },
+      { dynamics: { load: { aerodynamic: { static_polar: { cause: "invalid_element_set" } } } } },
+      { dynamics: { load: { aerodynamic: { static_polar: { cause: "incompatible_control_envelope" } } } } },
       { control: { incidence: { site: "static_polar", cause: "outside_envelope", limit: "global_beta", stage: "fourth" } } },
       { control: { incidence: { site: "tail_incidence", cause: "non_finite", limit: null, stage: "first" } } },
       { dynamics: { load: { aerodynamic: { hybrid: { ...hybrid, cause: "non_finite", limit: "local_speed" } } } } },

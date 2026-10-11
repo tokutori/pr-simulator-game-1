@@ -1,11 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { describe, expect, it } from "vitest";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
-import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
-import type { GameSessionOperationPort } from "../../web/src/app/game-session-operation.js";
 
 function setupModel(): AppModel {
-  return { ...createInitialAppModel(), gameSession: { kind: "setup", phaseCode: 1, controlLayout: "legacy_three_axis" } };
+  return { ...createInitialAppModel(), gameSession: { kind: "setup", phaseCode: 1, controlLayout: "tail_incidence" } };
 }
 
 describe("Direct flight setup selection", () => {
@@ -36,16 +38,16 @@ describe("Direct flight setup selection", () => {
     }
   });
 
-  it.each(["preset", "information", "assistance", "weather"] as const)("uses one existing WASM setter for %s", (axis) => {
-    const setters = {
-      set_difficulty_preset: vi.fn(), set_information_level: vi.fn(),
-      set_assistance_level: vi.fn(), set_weather_class: vi.fn()
-    };
-    const session = setters as unknown as GameSessionOperationPort;
-    expect(executeGameSessionOperation(session, { kind: "set-difficulty-option", axis, code: 2 })).toEqual({ kind: "completed" });
-    const name = axis === "preset" ? "set_difficulty_preset" : axis === "information" ? "set_information_level"
-      : axis === "assistance" ? "set_assistance_level" : "set_weather_class";
-    expect(setters[name]).toHaveBeenCalledExactlyOnceWith(2);
-    expect(Object.values(setters).reduce((count, setter) => count + setter.mock.calls.length, 0)).toBe(1);
+  it.each(["preset", "information", "assistance", "weather"] as const)("sets the selected %s through the current Rust session", (axis) => {
+    initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    try {
+      session.executeOperation("open-setup");
+      expect(session.executeOperation({ kind: "set-difficulty-option", axis, code: 2 })).toEqual({ kind: "completed" });
+      const difficulty = session.readDifficulty();
+      const value = axis === "preset" ? difficulty.presetCode : axis === "information" ? difficulty.informationCode
+        : axis === "assistance" ? difficulty.assistanceCode : difficulty.weatherCode;
+      expect(value).toBe(2);
+    } finally { session.dispose(); }
   });
 });

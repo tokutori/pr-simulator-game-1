@@ -42,7 +42,7 @@ import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js"
 import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import { NO_VENUE_MAP, venueMapForEnvironment } from "./game/biwa-venue-map.js";
-import { analysisCursorMatches, isNamedAnalysis, projectAnalysisView } from "./game/flight-analysis-view.js";
+import { analysisCursorMatches, projectAnalysisView } from "./game/flight-analysis-view.js";
 import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import { projectRuntimeVenue } from "./game/runtime-venue.js";
@@ -91,8 +91,7 @@ const flightHud = new FlightHudAdapter(flightHudRoot);
 const flightControllerUi = new FlightControllerUiBindings();
 const controllerHudDisplay = Object.freeze({
   render: (snapshot: FlightSnapshotInput): void => {
-    if ("kind" in snapshot) flightHud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model, snapshot));
-    else flightHud.render(snapshot, createFlightUiHudModel(model, snapshot));
+    flightHud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model, snapshot));
   },
   setVisible: (visible: boolean): void => { flightHud.setVisible(visible); }
 });
@@ -430,7 +429,7 @@ function runEffect(effect: AppEffect): void {
     case "load-flight-analysis-cursor": {
       const session = gameSession;
       const analysis = model.flightAnalysis;
-      if (session === null || analysis === null || !isNamedAnalysis(analysis)) {
+      if (session === null || analysis === null) {
         dispatch({ type: "flight-analysis-cursor-failed", requestId: effect.requestId, message: "Rust GameSession is unavailable" });
         return;
       }
@@ -447,7 +446,7 @@ function runEffect(effect: AppEffect): void {
     case "load-flight-replay-pose": {
       const session = gameSession;
       const analysis = model.flightAnalysis;
-      if (session === null || analysis === null || !isNamedAnalysis(analysis)) {
+      if (session === null || analysis === null) {
         dispatch({ type: "flight-replay-pose-failed", requestId: effect.requestId, message: "Rust FlightRecord is unavailable" });
         return;
       }
@@ -555,7 +554,7 @@ async function initializePresentation(requestId: number): Promise<void> {
     if (model.presentation.type === "hidden") return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
-    const initializedSession = await initializeAppSession({ controlLayout: "tail_incidence", controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
+    const initializedSession = await initializeAppSession({ controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
     const session = initializedSession;
     gameSession = session;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
@@ -697,8 +696,6 @@ function runGameSessionOperation(operation: GameSessionOperation, requestId: num
   }
   try {
     if (operation === "cancel-countdown") countdownGeneration += 1;
-    if (operation === "cycle-difficulty-preset" || operation === "cycle-information-level"
-        || operation === "cycle-assistance-level" || operation === "cycle-weather-class") throw new RangeError("Tail settings require an explicit candidate selection");
     const result = session.executeOperation(operation);
     if (result.kind === "countdown-started") {
       completeGameOperation(requestId);
@@ -1032,7 +1029,7 @@ function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
     const expected = "kind" in identity ? identity.kind === "prepared" ? identity.scenario : undefined : identity;
     const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, expected);
     const analysis = model.flightAnalysis;
-    if (analysis !== null && isNamedAnalysis(analysis) && environment.kind === "available"
+    if (analysis !== null && environment.kind === "available"
         && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
     return environment;
   } catch {
@@ -1043,7 +1040,7 @@ function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
 function currentVenueMap() {
   const analysis = model.flightAnalysis;
   const environment = currentRuntimeEnvironment();
-  if (analysis !== null && isNamedAnalysis(analysis) && environment.kind === "available"
+  if (analysis !== null && environment.kind === "available"
       && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return NO_VENUE_MAP;
   return venueMapForEnvironment(environment);
 }

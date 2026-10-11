@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import shoreline from "../../../assets/biwa-shoreline.json";
-import terrain from "../../../assets/biwa-terrain.json";
-import venueFeatures from "../../../assets/biwa-venue-features.json";
-import { LAUNCH_PLATFORM } from "../render/contracts/launch-venue.js";
-import { venueMapForScenario } from "./biwa-venue-map.js";
+import shoreline from "../../assets/biwa-shoreline.json";
+import terrain from "../../assets/biwa-terrain.json";
+import venueFeatures from "../../assets/biwa-venue-features.json";
+import { LAUNCH_PLATFORM } from "../../web/src/render/contracts/launch-venue.js";
+import { currentVenueEnvironmentFixture, currentVenueMapFixture } from "./current-venue-fixture.js";
+import { venueMapForEnvironment } from "../../web/src/game/biwa-venue-map.js";
 
 function pointInRing(north: number, east: number, ring: readonly (readonly number[])[]): boolean {
   let inside = false;
@@ -24,9 +25,25 @@ function pointInRing(north: number, east: number, ring: readonly (readonly numbe
 }
 
 describe("Hikone venue map", () => {
+  it("requires the recorded registered origin instead of a scenario-number fallback", () => {
+    const environment = currentVenueEnvironmentFixture();
+    if (environment.kind !== "available") throw new Error("Missing current environment fixture");
+    expect(venueMapForEnvironment({ kind: "unavailable", reason: "unregistered_environment_identity" }))
+      .toEqual({ kind: "unavailable", reason: "environment_unavailable" });
+    expect(venueMapForEnvironment({ kind: "available", value: { ...environment.value,
+      localFrame: { kind: "unavailable", reason: "origin_not_recorded" } } }))
+      .toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
+    const frame = environment.value.localFrame;
+    if (frame.kind !== "available") throw new Error("Missing registered origin");
+    expect(venueMapForEnvironment({ kind: "available", value: { ...environment.value,
+      localFrame: { kind: "available", value: { ...frame.value, longitudeDegrees: frame.value.longitudeDegrees + 0.1 } } } }))
+      .toEqual({ kind: "unavailable", reason: "unregistered_origin" });
+  });
   it("uses the launch platform's full dimensions and northwest orientation", () => {
-    const venue = venueMapForScenario(1);
-    const platform = venue?.lines.find((line) => line.id === "launch-platform");
+    const projection = currentVenueMapFixture();
+    if (projection.kind !== "available") throw new Error("Missing registered Lake Biwa venue");
+    const venue = projection.value;
+    const platform = venue.lines.find((line) => line.id === "launch-platform");
     expect(platform).toBeDefined();
     const points = platform?.points ?? [];
     expect(points).toHaveLength(5);
@@ -167,11 +184,13 @@ describe("Hikone venue map", () => {
     expect(venueFeatures.features.map((feature) => feature.kind)).toEqual(expect.arrayContaining([
       "beach", "woodland", "tree-row", "pier", "quay", "breakwater"
     ]));
-    const venue = venueMapForScenario(1);
-    expect(venue?.sourceNote).toContain("ODbL-1.0");
-    expect(venue?.lines.some((line) => line.label === "松原水泳場")).toBe(true);
-    expect(venue?.lines.some((line) => line.label.startsWith("桟橋"))).toBe(true);
-    expect(venue?.lines.some((line) => line.label.startsWith("防波堤"))).toBe(true);
-    expect(venue?.landmarks.some((landmark) => landmark.label === "松原水泳場")).toBe(true);
+    const projection = currentVenueMapFixture();
+    if (projection.kind !== "available") throw new Error("Missing registered Lake Biwa venue");
+    const venue = projection.value;
+    expect(venue.sourceNote).toContain("ODbL-1.0");
+    expect(venue.lines.some((line) => line.label === "松原水泳場")).toBe(true);
+    expect(venue.lines.some((line) => line.label.startsWith("桟橋"))).toBe(true);
+    expect(venue.lines.some((line) => line.label.startsWith("防波堤"))).toBe(true);
+    expect(venue.landmarks.some((landmark) => landmark.label === "松原水泳場")).toBe(true);
   });
 });

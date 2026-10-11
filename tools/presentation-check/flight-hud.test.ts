@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 
 class TestElement {
@@ -48,32 +48,32 @@ describe("Flight HUD DOM lifecycle", () => {
 
     expect(root.children).toHaveLength(10);
     hud.setVisible(true);
-    const firstValues = new Array<number>(33).fill(0);
-    firstValues[7] = 1;
-    firstValues[19] = -1;
-    const firstSnapshot = parseFlightSnapshot(firstValues);
-    hud.render(firstSnapshot);
+    const firstValuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 0, airspeedMetersPerSecond: 0, groundspeedMetersPerSecond: 0,
+      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const }, sideslipAngleRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const firstSnapshot = firstValuesSnapshot;
+    hud.renderDisplaySnapshot(firstSnapshot);
     expect(root.hidden).toBe(false);
 
     hud.setVisible(false);
-    const secondValues = new Array<number>(33).fill(0);
-    secondValues[0] = 1;
-    secondValues[7] = 1;
-    secondValues[16] = 2;
-    secondValues[19] = -1;
-    secondValues[20] = 12;
-    secondValues[21] = 10;
-    secondValues[22] = 9;
-    secondValues[23] = 2;
-    secondValues[24] = -1;
-    secondValues[25] = 0.5;
-    secondValues[26] = 0.1;
-    secondValues[28] = 0.2;
-    secondValues[29] = 0.05;
-    secondValues[30] = 0.3;
-    secondValues[31] = 1;
-    const secondSnapshot = parseFlightSnapshot(secondValues);
-    hud.render(secondSnapshot);
+    const secondValuesSnapshot = {
+    ...currentFlightDisplayFixture(7),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 1, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 10, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 2, east: -1, down: 0.5 }, angleOfAttackRadians: { kind: "available" as const, value: 0.1 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0.2, pitchRadians: 0.05, headingRadians: 0.3 } },
+    finalization: { reason: "time_limit" as const, disposition: "complete" as const, terminalTick: 1, terminalFraction: 0, scoreMeters: [0, 0, 0] as const, failure: null }
+  };
+    const secondSnapshot = secondValuesSnapshot;
+    hud.renderDisplaySnapshot(secondSnapshot);
 
     expect(root.hidden).toBe(true);
     expect(root.attributes.get("aria-hidden")).toBe("true");

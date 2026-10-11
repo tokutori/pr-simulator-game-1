@@ -3,10 +3,10 @@ import { fixtureBackendFrame, fixtureSemanticAction } from "./menu-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { GameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, GameSessionOperation, GameSessionProjection } from "../../web/src/app/app-state.js";
-import { executeGameSessionOperation } from "../../web/src/app/game-session-operation.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
@@ -46,7 +46,7 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       fixture.actions.length = 0;
       fixture.frame();
       expect(fixture.operations).not.toContain("start-flight");
-      expect(fixture.session.phase_code()).toBe(3);
+      expect(fixture.session.readLifecycle().phaseCode).toBe(3);
       expect(fixture.actions.filter((action) => action.type === "activate" || action.type === "back")).toEqual([]);
       const selected = change === "lower index addition" ? first : replacement;
       if (selected === replacement) moveToStart(fixture, selected);
@@ -57,7 +57,7 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       selected.buttons = [{ pressed: true }, { pressed: false }];
       fixture.frame();
       expect(fixture.operations).toEqual(["start-flight"]);
-      expect(fixture.session.phase_code()).toBe(4);
+      expect(fixture.session.readLifecycle().phaseCode).toBe(4);
       fixture.frame();
       expect(fixture.operations).toEqual(["start-flight"]);
     }
@@ -402,25 +402,13 @@ function gamepad(index: number, buttons: readonly boolean[] = [false, false]): T
 }
 
 async function createFixture(browser: GamepadBrowser, options: { readonly autoStart?: boolean; readonly initialSample?: boolean } = {}) {
-  const session = new GameSessionBridge(0);
-  session.open_setup();
-  session.prepare();
-  session.mark_briefing_ready();
+  const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+  session.executeOperation("open-setup");
+  session.executeOperation("prepare");
   const actions: UiAction[] = [];
   const operations: GameSessionOperation[] = [];
   let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "phone-vr" } };
-  const projection = (): GameSessionProjection => {
-    const cues = session.information_profile_codes();
-    return {
-      phaseCode: session.phase_code(), controlModeCode: session.control_mode_code(), countdownRemaining: session.countdown_remaining(),
-      ...(session.phase_code() === 9 ? { returnTarget: session.is_archived_replay() ? "title" as const : "result" as const } : {}),
-      canResume: session.can_resume(), configurationMetadata: null, snapshot: null,
-      difficulty: {
-        presetCode: session.difficulty_preset_code(), informationCode: session.information_level_code(), assistanceCode: session.assistance_level_code(), weatherCode: session.weather_class_code(),
-        hudProfile: { telemetry: cues[0] === 1, attitude: cues[1] === 1, wind: cues[2] === 1, flightPath: cues[3] === 1, angleOfAttack: cues[4] === 1, warnings: cues[5] === 1 }
-      }
-    };
-  };
+  const projection = (): GameSessionProjection => session.readGameSessionProjection();
   const dispatch = (action: UiAction): void => {
     const semantic = fixtureSemanticAction(action);
     actions.push(semantic);
@@ -430,7 +418,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     for (const effect of update.effects) {
       if (effect.type !== "game-session-operation") continue;
       operations.push(effect.operation);
-      executeGameSessionOperation(session, effect.operation);
+      session.executeOperation(effect.operation);
       model = updateApp(model, { type: "game-operation-completed", requestId: effect.requestId, ...projection() }).model;
     }
   };
@@ -454,7 +442,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const input = createBrowserPhoneVrGamepadInputPort(browser, browser);
   const unavailable = vi.fn<(message: string) => void>();
   const backend = new PhoneVrPresentationBackend(sensors, renderer, () => ({ x: 1280, y: 720, pixelRatio: 1 }), dispatch, unavailable, { gamepadInput: input, nowMs: () => 100, firstSampleTimeoutMs: 50 });
-  cleanups.push(async () => { try { await backend.stop(); } finally { session.free(); } });
+  cleanups.push(async () => { try { await backend.stop(); } finally { session.dispose(); } });
   if (options.autoStart !== false) {
     await backend.requestPermissionFromUserGesture();
     await backend.start();

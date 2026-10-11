@@ -3,9 +3,7 @@ import type { DifficultyUiState, ReplayReturnTarget, TailGameSessionProjection }
 import { decodePreparedUiConfiguration, decodeSessionDifficulty } from "./session-selection.js";
 import type { PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
 import { projectTailGameSession } from "./session-snapshot.js";
-import { executeGameSessionOperation } from "./game-session-operation.js";
 import type { GameSessionOperationPort } from "./game-session-operation.js";
-import type { FlightSessionPort } from "../game/flight-controller.js";
 import { readFlightLog } from "../game/flight-log-export.js";
 import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
 import { projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
@@ -13,10 +11,6 @@ import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
 import { validateAnalysisInput } from "../game/flight-analysis-view.js";
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../game/flight-analysis-view.js";
-import { loadFlightAnalysis, queryFlightRecordRenderPoseAt, queryFlightRecordSampleAt } from "../game/flight-record-query.js";
-import type { FlightAnalysisData, FlightAnalysisSample, FlightRecordQueryPort } from "../game/flight-record-query.js";
-import { parseFlightSnapshot } from "../game/flight-snapshot.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import { parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
 import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
 import { parseNamedRecordSummary, parseNamedWindGrid, sameNamedRecordContext } from "../game/named-record-analysis.js";
@@ -61,15 +55,9 @@ export interface SessionResourcePort extends SessionSelectionPort, FlightLogExpo
   free(): void;
 }
 const ownedSessionResources = new WeakSet<SessionResourcePort>();
-export type LegacyAppSessionPort = SessionResourcePort & GameSessionOperationPort & FlightSessionPort & FlightRecordQueryPort & {
-  launch(): ArrayLike<number>;
-};
-type PendingTailOperation = "cycle-difficulty-preset" | "cycle-information-level"
-  | "cycle-assistance-level" | "cycle-weather-class";
-export type TailAppSessionOperation = Exclude<GameSessionOperation, PendingTailOperation>;
+export type TailAppSessionOperation = GameSessionOperation;
 export type TailAppSessionPort = SessionResourcePort & TailSessionPort
-  & Omit<GameSessionOperationPort, "abort" | "cycle_difficulty_preset"
-    | "cycle_information_level" | "cycle_assistance_level" | "cycle_weather_class"> & {
+  & Omit<GameSessionOperationPort, "abort"> & {
     abort(): string;
     launch(): string;
     prepared_launch_snapshot_json(): string;
@@ -85,7 +73,6 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     flight_wind_grid_json(northMinimumMeters: number, eastMinimumMeters: number, altitudeMeters: number, spacingMeters: number): string;
   };
 type CompletedOperation = Readonly<{ kind: "completed" }> | Readonly<{ kind: "countdown-started" }>;
-export type LegacyAppOperationResult = CompletedOperation | Readonly<{ kind: "aborted"; terminalSnapshot: FlightSnapshot }>;
 export type TailAppOperationResult = CompletedOperation
   | Readonly<{ kind: "aborted"; terminalSnapshot: Extract<TailSessionSnapshot, { phaseCode: 7 }> }>;
 export interface SessionLifecycleProjection {
@@ -208,46 +195,6 @@ abstract class SessionResourceOwner {
       if (recordPolicy === "replace_record") this.sourceGeneration = Symbol("record source generation");
       return operation();
     });
-  }
-}
-
-export class LegacyAppSessionFacade extends SessionResourceOwner {
-  readonly controlLayout = "legacy_three_axis";
-  readonly flightPort: FlightSessionPort;
-
-  constructor(private readonly port: LegacyAppSessionPort, physicsHz: number) {
-    super(port, physicsHz);
-    this.flightPort = Object.freeze({ snapshot: () => this.observe(() => port.snapshot()),
-      advance_tick: (roll: number, pitch: number, yaw: number, pilot: number) => this.change(() => port.advance_tick(roll, pitch, yaw, pilot)),
-      free: () => { this.dispose(); } });
-  }
-
-  executeOperation(operation: GameSessionOperation): LegacyAppOperationResult {
-    return this.change(() => {
-      const result = executeGameSessionOperation(this.port, operation);
-      return result.kind === "aborted" ? Object.freeze({ kind: "aborted", terminalSnapshot: parseFlightSnapshot(result.terminalSnapshot) })
-        : Object.freeze(result);
-    });
-  }
-
-  readSnapshot(): FlightSnapshot {
-    return this.observe(() => parseFlightSnapshot(this.port.snapshot()));
-  }
-
-  launch(): FlightSnapshot {
-    return this.change(() => parseFlightSnapshot(this.port.launch()));
-  }
-
-  readAnalysis(scenarioId: number | null = null): FlightAnalysisData {
-    return this.observe(() => loadFlightAnalysis(this.port, this.physicsHz, scenarioId));
-  }
-
-  queryRecordSample(seconds: number): FlightAnalysisSample {
-    return this.observe(() => queryFlightRecordSampleAt(this.port, this.physicsHz, seconds));
-  }
-
-  queryRecordRenderPose(seconds: number, initialPilotPositionMeters: number): FlightRenderPose {
-    return this.observe(() => queryFlightRecordRenderPoseAt(this.port, this.physicsHz, seconds, initialPilotPositionMeters));
   }
 }
 
@@ -479,7 +426,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 }
 
-export type AppSessionFacade = LegacyAppSessionFacade | TailAppSessionFacade;
+export type AppSessionFacade = TailAppSessionFacade;
 
 function isAnalysisObservationProof(value: unknown): value is AnalysisObservationProof {
   if (typeof value !== "object" || value === null || !("source" in value) || !("context" in value)) return false;

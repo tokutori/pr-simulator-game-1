@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { parseNamedAnalysisSamples, parseNamedAttractContext, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
   tailResultRecordContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
@@ -28,24 +28,6 @@ function tailResult(ticks = 2): HybridGameSessionBridge {
     noseUp: 0.5, turnRight: -0.5, desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
   session.abort();
   return session;
-}
-
-function legacyRecord(): Record<string, unknown> {
-  const session = new GameSessionBridge(0);
-  try {
-    session.open_setup();
-    session.set_difficulty_preset(1);
-    session.prepare();
-    session.mark_briefing_ready();
-    session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
-    session.advance_tick(0.5, -0.5, 0.25, 0);
-    session.abort();
-    return jsonObject(session.export_flight_record_json());
-  } finally {
-    session.free();
-  }
 }
 
 describe("named saved-record query boundary", () => {
@@ -115,7 +97,7 @@ describe("named saved-record query boundary", () => {
     try {
       const result = parseTailSessionSnapshot(session.snapshot_json());
       const context = tailResultRecordContext(result);
-      if (context.controlLayout !== "tail_incidence" || result.identity.kind !== "prepared") throw new Error("Expected sealed tail Result identity");
+      if (result.identity.kind !== "prepared") throw new Error("Expected sealed tail Result identity");
       expect(context.scenario).toBe(result.identity.scenario);
       expect(context.controlIdentity).toBe(result.identity.controls);
       const analysis = parseNamedAnalysisSamples(session.flight_analysis_samples_json(), physics_hz(), context);
@@ -151,38 +133,6 @@ describe("named saved-record query boundary", () => {
     }
   });
 
-  it.each([1, 2, 3, 4, 5])("views saved v%d legacy controls and unknown environments without reintegration", (version) => {
-    const saved = legacyRecord();
-    saved.schema_version = version;
-    const header = nested(saved, "header");
-    header.environment_version = 99;
-    if (version < 5) delete header.personal_best_key;
-    if (version < 4) delete header.physics_model_version;
-    if (version < 3) delete header.score_definition_version;
-    if (version < 2) delete nested(header, "difficulty").hud_profile;
-    const session = new HybridGameSessionBridge(2, 19, 20);
-    try {
-      const selected = session.control_mode_code();
-      session.open_archived_flight_record(JSON.stringify(saved));
-      const context = parseNamedReplayContext(session.playback_context_json());
-      expect(context).toMatchObject({ controlLayout: "legacy_three_axis", controlIdentity: null,
-        scenario: { environmentVersion: 99 }, difficulty: { preset: "standard", information: "standard", hudProfile: null } });
-      expect(context.finalization).not.toHaveProperty("failure");
-      const analysis = parseNamedAnalysisSamples(session.flight_analysis_samples_json(), physics_hz(), context);
-      const sample = parseNamedRecordSample(session.flight_record_sample_at_seconds(0.005), physics_hz(), context);
-      expect(sample.controls.layout).toBe("legacy_three_axis");
-      expect(sample.controls).toEqual(analysis[1]?.controls);
-      expect(sample.controls).toHaveProperty("rollRadians");
-      expect(sample.controls).not.toHaveProperty("physicalIncidence");
-      expect(() => session.control_profile_json()).toThrow();
-      expect(() => session.export_flight_record_json()).toThrow();
-      session.leave_replay();
-      expect(session.phase_code()).toBe(0);
-      expect(session.control_mode_code()).toBe(selected);
-    } finally {
-      session.free();
-    }
-  });
 
   it("views v6 archives from their saved context while retaining original nested failure causes", () => {
     const source = tailResult();
@@ -203,7 +153,6 @@ describe("named saved-record query boundary", () => {
           cause: { wind: "outside_grid" }, limit: null, stage: "second" } } } }
       } });
       const failed = parseNamedReplayContext(JSON.stringify(document));
-      if (failed.controlLayout !== "tail_incidence") throw new Error("Expected two-tail finalization");
       expect(failed.finalization.failure).toMatchObject({ kind: "dynamics", cause: { kind: "load", cause: { kind: "aerodynamic",
         cause: { kind: "hybrid", cause: { stage: "second", site: { kind: "proxy", index: 1 }, cause: { kind: "wind", cause: "outside_grid" } } } } } });
       const terminal = nested(nested(document, "finalization"), "value");

@@ -1,12 +1,16 @@
 import { FixedTickClock } from "./fixed-tick-clock.js";
 import { projectFlightRenderPose, projectTailFlightSnapshot } from "./flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "./flight-display-snapshot.js";
-import type { FlightPosePort } from "./flight-controller.js";
+import type { FlightRenderPose } from "../render/contracts/runtime.js";
 import { parseTailControlProfile, tailInputFromControlProfile, validateTailControlProfileSession } from "./tail-control-profile.js";
 import type { TailControlProfile } from "./tail-control-profile.js";
 import type { TailPilotDemand } from "./tail-device-input.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "./tail-session-codec.js";
 import type { TailSessionSnapshot } from "./tail-session-codec.js";
+
+export interface FlightPosePort {
+  setFlightPose(pose: FlightRenderPose | null): void;
+}
 
 export interface TailSessionPort {
   snapshot_json(): string;

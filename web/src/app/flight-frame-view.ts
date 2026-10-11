@@ -3,7 +3,6 @@ import { createGameViewModel } from "./game-view.js";
 import { gameSessionPhaseCode } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import { normalizeFlightSnapshot } from "./session-snapshot.js";
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
@@ -35,7 +34,7 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   const phase = gameSessionPhaseCode(model.gameSession);
   const code = model.difficulty.informationCode;
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
-  let snapshot = snapshotInput === null ? null : normalizeFlightSnapshot(snapshotInput);
+  let snapshot = snapshotInput;
   if (model.flightExecution.kind === "stopped" && (phase === 5 || phase === 6)) snapshot = model.flightExecution.snapshot;
   const hud = snapshot !== null && (phase === 5 || phase === 6)
     ? createFlightUiHudModel(model, snapshot)
@@ -51,7 +50,7 @@ export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshot
   if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
   const stopped = model.flightExecution;
   const failure = stopped.kind === "stopped" && [5, 6].includes(gameSessionPhaseCode(model.gameSession));
-  const retained = failure ? stopped.snapshot : normalizeFlightSnapshot(snapshot);
+  const retained = failure ? stopped.snapshot : snapshot;
   const hud = createFlightDisplayHudModel(retained, code as InformationLevelCode, model.difficulty.hudProfile);
   return failure ? Object.freeze({ ...hud,
     status: "飛行処理停止",

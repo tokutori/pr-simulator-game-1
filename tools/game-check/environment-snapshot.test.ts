@@ -3,21 +3,22 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
-  GameSessionBridge,
+  HybridGameSessionBridge,
   environment_snapshot_for_identity_json,
   initSync
 } from "../../web/pkg/birdman_game_wasm.js";
 import { record } from "../shared/validation.js";
+import { neutralTailInput } from "./current-session-fixture.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const assetPath = fileURLToPath(new URL("../../assets/biwa-typical-july-environment-v6.json", import.meta.url));
 const identity = Object.freeze({
-  catalog_version: 2,
+  catalog_version: 3,
   scenario_id: 6,
-  scenario_version: 1,
-  aircraft_model_version: 1,
+  scenario_version: 3,
+  aircraft_model_version: 2,
   environment_version: 6,
-  controller_profile_version: 4,
+  controller_profile_version: 3,
   seed_low: 4_294_967_295,
   seed_high: 4_294_967_295
 });
@@ -57,7 +58,7 @@ it("classifies JS envelope, bounded JSON and seed-word failures at the actual WA
   for (const input of [null, undefined, 0, true, {}, []]) {
     expect(() => environment_snapshot_for_identity_json(input)).toThrow("InvalidInputType");
   }
-  const duplicate = JSON.stringify(identity).replace("{", '{"catalog_version":2,');
+  const duplicate = JSON.stringify(identity).replace("{", '{"catalog_version":3,');
   for (const input of ["null", "[]", "[1,1,1,1,1,1,0,0]", "{}", "{", duplicate, JSON.stringify({ ...identity, extra: 1 })]) {
     expect(() => environment_snapshot_for_identity_json(input)).toThrow("InvalidJson");
   }
@@ -72,41 +73,39 @@ it("classifies JS envelope, bounded JSON and seed-word failures at the actual WA
   expect(unknown.projection).toEqual({ kind: "unavailable", source: "registry", identity: { ...identity, environment_version: 99 } });
 });
 
-it("preserves environment metadata for both archived and current playable aircraft identities", () => {
+it("requires the complete current registered aircraft and scenario identity", () => {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  const archived = record(parse(environment_snapshot_for_identity_json(JSON.stringify(identity))).projection);
-  const currentIdentity = { ...identity, aircraft_model_version: 2 };
-  const current = record(parse(environment_snapshot_for_identity_json(JSON.stringify(currentIdentity))).projection);
-  expect(current).toMatchObject({ kind: "available", identity: currentIdentity });
-  expect(current.metadata).toEqual(archived.metadata);
-  const unknownIdentity = { ...identity, aircraft_model_version: 3 };
-  expect(parse(environment_snapshot_for_identity_json(JSON.stringify(unknownIdentity))).projection).toEqual({
-    kind: "unavailable", source: "registry", identity: unknownIdentity
-  });
+  expect(parse(environment_snapshot_for_identity_json(JSON.stringify(identity))).projection).toMatchObject({ kind: "available", identity });
+  for (const changed of [{ aircraft_model_version: 1 }, { aircraft_model_version: 3 }, { catalog_version: 2 }, { scenario_version: 1 }, { controller_profile_version: 4 }]) {
+    const unknown = { ...identity, ...changed };
+    expect(parse(environment_snapshot_for_identity_json(JSON.stringify(unknown))).projection).toEqual({
+      kind: "unavailable", source: "registry", identity: unknown
+    });
+  }
 });
 
 it("uses selected, sealed, record and Attract identities without modifying the current flight", () => {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  const session = new GameSessionBridge(0);
+  const session = new HybridGameSessionBridge(0, 21, 22);
   try {
     expect(parse(session.environment_snapshot_json())).toMatchObject({ context: { kind: "session", phase_code: 0 }, projection: { kind: "no_selection" } });
     session.open_setup();
     session.set_weather_class(2);
     const selected = record(parse(session.environment_snapshot_json()).projection);
-    expect(selected).toMatchObject({ kind: "available", source: "selected", identity: { catalog_version: 1, scenario_id: 3, environment_version: 3 } });
-    expect(record(selected.metadata).sky).toEqual({ kind: "unavailable" });
-    expect(record(selected.metadata).local_frame).toEqual({ kind: "unavailable" });
-    expect(record(record(selected.metadata).waves).wind_velocity_ne_mps).toEqual([-0.35, 1.42]);
-    expect(session.flight_record_sample_count()).toBe(0);
+    expect(selected).toMatchObject({ kind: "available", source: "selected", identity: { catalog_version: 3, scenario_id: 6, environment_version: 6 } });
+    expect(record(record(selected.metadata).sky).kind).toBe("defined");
+    expect(record(record(selected.metadata).local_frame).kind).toBe("defined");
+    expect(record(record(selected.metadata).waves).wind_velocity_ne_mps).toEqual([-1.767766953, 1.767766953]);
+    expect(() => session.flight_record_summary_json()).toThrow();
     session.prepare();
     expect(record(parse(session.environment_snapshot_json()).projection)).toEqual({ ...selected, source: "sealed" });
     session.mark_briefing_ready();
     session.start_countdown(1);
     session.advance_countdown();
     session.launch();
-    const before = session.snapshot();
+    const before = session.snapshot_json();
     session.environment_snapshot_json();
-    expect(session.snapshot()).toEqual(before);
+    expect(session.snapshot_json()).toEqual(before);
     session.abort();
     expect(record(parse(session.environment_snapshot_json()).projection).source).toBe("sealed");
     session.enter_replay();
@@ -114,7 +113,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
     session.leave_replay();
     session.return_to_title();
     session.enter_attract();
-    expect(parse(session.environment_snapshot_json()).projection).toMatchObject({ source: "attract", identity: { catalog_version: 1, scenario_id: 1, environment_version: 1 } });
+    expect(parse(session.environment_snapshot_json()).projection).toMatchObject({ source: "attract", identity: { catalog_version: 3, scenario_id: 1, environment_version: 1 } });
   } finally {
     session.free();
   }
@@ -122,8 +121,8 @@ it("uses selected, sealed, record and Attract identities without modifying the c
 
 it("retains archived samples when environment metadata is unavailable", () => {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
-  const session = new GameSessionBridge(0);
-  const archive = new GameSessionBridge(0);
+  const session = new HybridGameSessionBridge(0, 21, 22);
+  const archive = new HybridGameSessionBridge(0, 21, 22);
   try {
     session.open_setup();
     session.set_weather_class(2);
@@ -132,17 +131,17 @@ it("retains archived samples when environment metadata is unavailable", () => {
     session.start_countdown(1);
     session.advance_countdown();
     session.launch();
-    session.advance_tick(0, 0, 0, 0);
+    session.advance_tick_json(neutralTailInput);
     session.abort();
     const document = parse(session.export_flight_record_json());
     const header = record(document.header);
-    for (const version of [3, 99]) {
+    for (const version of [6, 99]) {
       archive.open_archived_flight_record(JSON.stringify({ ...document, header: { ...header, environment_version: version } }));
-      const before = archive.flight_record_sample_at(0, 0);
-      expect(parse(archive.environment_snapshot_json()).projection).toMatchObject({ kind: version === 3 ? "available" : "unavailable", source: "archive", identity: { environment_version: version } });
-      expect(archive.flight_record_sample_at(0, 0)).toEqual(before);
+      const before = archive.flight_record_sample_at_seconds(0);
+      expect(parse(archive.environment_snapshot_json()).projection).toMatchObject({ kind: version === 6 ? "available" : "unavailable", source: "archive", identity: { environment_version: version } });
       expect(archive.flight_record_sample_at_seconds(0)).toEqual(before);
-      expect(archive.flight_record_summary()).toEqual(session.flight_record_summary());
+      const currentSummary = record(parse(session.flight_record_summary_json()).summary);
+      expect(record(parse(archive.flight_record_summary_json()).summary)).toEqual(currentSummary);
       expect(archive.phase_code()).toBe(9);
       expect(archive.is_archived_replay()).toBe(true);
       archive.leave_replay();

@@ -13,7 +13,7 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
 });
 
-async function fixture(failInitialization = false, seedLegacyArchive = false, deferScreenStart = false) {
+async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
@@ -63,22 +63,25 @@ async function fixture(failInitialization = false, seedLegacyArchive = false, de
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-  if (seedLegacyArchive) {
+  if (seedCurrentArchive) {
     const { FlightRecordRepository, IndexedDbFlightRecordPersistence } = await import("../../web/src/game/flight-record-store.js");
     const { createArchivedPersonalBestSelection } = await import("../../web/src/game/archived-personal-best.js");
-    const legacy = new wasm.GameSessionBridge(0);
+    const archived = new wasm.HybridGameSessionBridge(0, 21, 22);
     try {
-      legacy.open_setup();
-      legacy.prepare();
-      legacy.mark_briefing_ready();
-      legacy.start_countdown(1);
-      legacy.advance_countdown();
-      legacy.launch();
-      for (let tick = 0; tick < 5; tick += 1) legacy.advance_tick(0, 0, 0, 0);
-      legacy.abort();
+      archived.open_setup();
+      archived.prepare();
+      archived.mark_briefing_ready();
+      archived.start_countdown(1);
+      archived.advance_countdown();
+      archived.launch();
+      const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
+      const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+        desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+      for (let tick = 0; tick < 5; tick += 1) archived.advance_tick_json(neutral);
+      archived.abort();
       const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(persistence), () => new Date("2026-10-08T00:00:00Z"), createArchivedPersonalBestSelection);
-      await repository.saveFrom(legacy);
-    } finally { legacy.free(); }
+      await repository.saveFrom(archived);
+    } finally { archived.free(); }
   }
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
@@ -188,7 +191,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Mediumを適用した。旧geometryの解放に失敗した");
   });
 
-  it("uses selected and sealed sky through Retry and Replay while preserving unrecorded archive sky", async () => {
+  it("uses selected and sealed sky through Retry and Replay and resolves the recorded current environment", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
     expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toBeNull();
@@ -213,8 +216,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-result-title");
     trial.click("game-title-open-record-1");
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
-    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toBeNull();
-    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls?.layout).toBe("legacy_three_axis");
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
+    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls?.layout).toBe("tail_incidence");
   });
 
   it("projects the sealed aircraft throughout Briefing and Countdown and replaces it with the identical first live pose", async () => {
@@ -309,14 +312,14 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.browser.document.body.textContent).toContain("Page hidden");
   });
 
-  it("opens a legacy saved snapshot through the Tail owner and preserves its explicit three-axis render layout", async () => {
+  it("opens a current saved snapshot through the Tail owner with its registered venue and two-tail controls", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
     expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.click("game-title-open-record-1");
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
-    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(false);
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("legacy_three_axis");
+    expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
     expect(trial.exportRecord).not.toHaveBeenCalled();
     trial.click("game-replay-view-mode");
     trial.click("game-replay-speed-2");

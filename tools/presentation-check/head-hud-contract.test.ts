@@ -11,6 +11,7 @@ describe("Non-interactive Head HUD contract", () => {
     expectTypeOf<VisibleHeadHud["anchor"]>().toEqualTypeOf<"head">();
     expectTypeOf<VisibleHeadHud>().not.toHaveProperty("controls");
     expectTypeOf<HeadHudElement>().not.toHaveProperty("action");
+    expectTypeOf<HeadHudElement>().not.toHaveProperty("ratio");
     const hud = createHeadHudFixture();
     const view = { ...createSceneFixture("Flight"), headHud: hud };
     expect(() => { validateUiViewModel(view); }).not.toThrow();
@@ -64,7 +65,6 @@ describe("Non-interactive Head HUD contract", () => {
       { id: "attitude", label: "ADI", bounds, kind: "attitude", rollDegrees: Number.NaN, pitchDegrees: 0, flightPathAngleDegrees: null },
       { id: "path", label: "ADI", bounds, kind: "attitude", rollDegrees: 0, pitchDegrees: 0, flightPathAngleDegrees: Number.NaN },
       { id: "heading", label: "HDG", bounds, kind: "heading", degrees: Number.NaN },
-      { id: "pilot", label: "CG", bounds, kind: "pilot-position", ratio: 1.1, value: "outside" },
       { id: "wind", label: "WIND", bounds, kind: "wind", degrees: Number.NaN, value: "invalid" },
       { id: "aoa", label: "AoA", bounds, kind: "angle-of-attack", degrees: Number.NaN, value: "invalid" },
       { id: "path", label: "PATH", bounds, kind: "flight-path", degrees: Number.NaN, value: "invalid" }

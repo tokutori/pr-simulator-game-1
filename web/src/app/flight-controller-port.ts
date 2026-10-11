@@ -1,31 +1,12 @@
 import type { AppMessage, FlightControllerIdentity, TailGameSessionProjection } from "./app-state.js";
 import type { TailResultSnapshot } from "../game/tail-flight-controller.js";
-import type { FlightHudPort, FlightSessionPort } from "../game/flight-controller.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { TailFlightHudPort, TailSessionPort } from "../game/tail-flight-controller.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 
 export class FlightControllerUiBindings {
-  private readonly sessionIds = new WeakMap<FlightSessionPort | TailSessionPort, number>();
+  private readonly sessionIds = new WeakMap<TailSessionPort, number>();
   private nextSessionId = 1;
   private nextControllerId = 1;
-
-  bind(
-    session: FlightSessionPort,
-    display: Pick<FlightHudPort, "render" | "setVisible">,
-    readSnapshot: () => FlightSnapshot,
-    dispatch: (message: AppMessage) => void
-  ): { readonly identity: FlightControllerIdentity; readonly port: FlightHudPort } {
-    const identity = this.identityFor(session);
-    const port: FlightHudPort = Object.freeze({
-      render: (snapshot: FlightSnapshot): void => { display.render(snapshot); },
-      setVisible: (visible: boolean): void => { display.setVisible(visible); },
-      fail: (message: string): void => {
-        dispatch({ type: "flight-controller-stopped", identity, message, snapshot: readSnapshot() });
-      }
-    });
-    return Object.freeze({ identity, port });
-  }
 
   bindDisplay(session: TailSessionPort, display: Pick<TailFlightHudPort, "render" | "setVisible">,
     readSnapshot: () => FlightDisplaySnapshot, dispatch: (message: AppMessage) => void
@@ -64,7 +45,7 @@ export class FlightControllerUiBindings {
     return Object.freeze({ identity, port, onTerminal: publishTerminal });
   }
 
-  private identityFor(session: FlightSessionPort | TailSessionPort): FlightControllerIdentity {
+  private identityFor(session: TailSessionPort): FlightControllerIdentity {
     let sessionId = this.sessionIds.get(session);
     if (sessionId === undefined) {
       sessionId = this.nextSessionId++;

@@ -2,18 +2,18 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { GameSessionBridge, PersonalBestSelectionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { TailPersonalBestSelectionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { currentRecordFixture } from "./current-session-fixture.js";
 import {
   FlightRecordRepository,
   IndexedDbFlightRecordPersistence,
   type PersonalBestSelectionPort
 } from "../../web/src/game/flight-record-store.js";
 
-const storeNames = ["records", "recordMetadata", "personalBests", "personalBestIndexState"];
+const storeNames = ["records", "recordMetadata", "personalBests"];
 const savedAt = "2026-10-03T00:00:00.000Z";
-const formatMessage = "flight record format error: UnsupportedSchemaVersion";
-type ComparisonRoute = "repair" | "indexed" | "scan";
+const formatMessage = "flight record format error: InvalidJson";
+type ComparisonRoute = "indexed" | "scan";
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -22,23 +22,8 @@ let validRecord: string | undefined;
 function waterContactRecord(): string {
   if (validRecord !== undefined) return validRecord;
   initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
-  const session = new GameSessionBridge(0);
-  try {
-    session.open_setup();
-    session.prepare();
-    session.mark_briefing_ready();
-    session.start_countdown(1);
-    session.advance_countdown();
-    let snapshot = parseFlightSnapshot(session.launch());
-    for (let tick = 0; tick < 3_000 && snapshot.terminal === "airborne"; tick++) {
-      snapshot = parseFlightSnapshot(session.advance_tick(0, 0, 0, 0));
-    }
-    expect(snapshot.terminal).toBe("water-contact");
-    validRecord = session.export_flight_record_json();
-    return validRecord;
-  } finally {
-    session.free();
-  }
+  validRecord = currentRecordFixture();
+  return validRecord;
 }
 
 function requestResult<Value>(request: IDBRequest<Value>): Promise<Value> {
@@ -65,11 +50,10 @@ async function createFixture(route: ComparisonRoute, existingJson: string) {
     database.createObjectStore("records", { keyPath: "id", autoIncrement: true });
     database.createObjectStore("recordMetadata", { keyPath: "id" });
     database.createObjectStore("personalBests", { keyPath: "key" });
-    database.createObjectStore("personalBestIndexState", { keyPath: "key" });
   };
   const database = await requestResult(request);
   const json = waterContactRecord();
-  const selection = new PersonalBestSelectionBridge(json);
+  const selection = new TailPersonalBestSelectionBridge(json);
   let key: string;
   try { key = selection.key_hex(); } finally { selection.free(); }
   try {
@@ -80,7 +64,6 @@ async function createFixture(route: ComparisonRoute, existingJson: string) {
       transaction.objectStore("recordMetadata").add({ id, savedAt });
     }
     if (route !== "scan") transaction.objectStore("personalBests").put({ key, recordId: 2 });
-    transaction.objectStore("personalBestIndexState").put({ key: route === "repair" ? "canonical-v1" : "first-winner-layouts-v1-physics-v3" });
     await done;
   } finally {
     database.close();
@@ -131,8 +114,8 @@ function tracedSelections(injected?: { readonly reason: unknown }) {
     entries, failures,
     disableInjection: () => { inject = false; },
     create: (json: string): PersonalBestSelectionPort => {
-      let selection: PersonalBestSelectionBridge;
-      try { selection = new PersonalBestSelectionBridge(json); }
+      let selection: TailPersonalBestSelectionBridge;
+      try { selection = new TailPersonalBestSelectionBridge(json); }
       catch (error: unknown) { failures.push(error); throw error; }
       const entry = { freeCount: 0 };
       entries.push(entry);
@@ -159,9 +142,12 @@ async function rejection(operation: Promise<unknown>): Promise<unknown> {
 }
 
 describe("FlightRecord storage error boundary", () => {
-  it.each(["repair", "indexed", "scan"] as const)("preserves actual Rust format failure through %s and releases rolled-back resources", async (route) => {
-    const document = JSON.parse(waterContactRecord()) as Record<string, unknown>;
-    const fixture = await createFixture(route, JSON.stringify({ ...document, schema_version: 6 }));
+  it.each(["indexed", "scan"] as const)("preserves actual Rust format failure through %s and releases rolled-back resources", async (route) => {
+    const document = JSON.parse(waterContactRecord()) as { samples: { state: Record<string, unknown> }[] };
+    const sample = document.samples[0];
+    if (sample === undefined) throw new Error("Missing current record sample");
+    sample.state.pilot_position_m = "invalid";
+    const fixture = await createFixture(route, JSON.stringify(document));
     const trace = tracedSelections();
     const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, fixture.name), () => new Date(savedAt), trace.create);
     try {
@@ -171,7 +157,7 @@ describe("FlightRecord storage error boundary", () => {
       expect(failure).toBeInstanceOf(Error);
       expect(failure).toMatchObject({ message: formatMessage, cause: formatMessage });
       expect(await fixture.state()).toEqual(before);
-      expect(trace.entries.length).toBe(route === "repair" ? 2 : 1);
+      expect(trace.entries).toHaveLength(1);
       expect(trace.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
       expect(fixture.connections).toHaveLength(1);
       expect(fixture.connections[0]?.close).toHaveBeenCalledTimes(1);
@@ -263,24 +249,4 @@ describe("FlightRecord storage error boundary", () => {
     } finally { add.mockRestore(); await fixture.dispose(); }
   });
 
-  it.each([1, 2, 3, 4])("retains valid schema %i records, ineligible saves, and existing-first ties", async (version) => {
-    const document = JSON.parse(waterContactRecord()) as { readonly header: Record<string, unknown> };
-    const header = { ...document.header };
-    delete header.personal_best_key;
-    if (version < 4) delete header.physics_model_version;
-    if (version < 3) delete header.score_definition_version;
-    const legacy = JSON.stringify({ ...document, schema_version: version, header });
-    const fixture = await createFixture("repair", legacy);
-    const trace = tracedSelections();
-    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, fixture.name), () => new Date(savedAt), trace.create);
-    try {
-      expect((await repository.saveFrom({ export_flight_record_json: () => legacy })).personalBest).toEqual({ kind: "ineligible" });
-      expect(await repository.load(2)).toBe(legacy);
-      expect(await repository.load(3)).toBe(legacy);
-      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
-      expect((await repository.saveFrom({ export_flight_record_json: () => fixture.json })).personalBest).toMatchObject({ kind: "existing", id: 1 });
-      expect(trace.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
-      expect(fixture.connections.every(({ close }) => close.mock.calls.length === 1)).toBe(true);
-    } finally { await fixture.dispose(); }
-  });
 });

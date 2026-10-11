@@ -1,274 +1,147 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { beforeAll, expect, it } from "vitest";
-import {
-  GameSessionBridge,
-  compare_personal_best_json,
-  initSync
-} from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, TailPersonalBestSelectionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { neutralTailInput } from "./current-session-fixture.js";
 import { record } from "../shared/validation.js";
 
-const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
-const demoMetadata = Object.freeze([
-  4, 2, 3, 0,
-  1, 1, 1, 2, 1, 1,
-  0xD3A0, 0,
-  1, 0, 0, 0, 0, 0
-]);
-
 beforeAll(() => {
-  initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+  initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 });
 
-function selectedMetadata(session: GameSessionBridge) {
-  return {
-    preset: session.difficulty_preset_code(),
-    information: session.information_level_code(),
-    assistance: session.assistance_level_code(),
-    weather: session.weather_class_code(),
-    cues: Array.from(session.information_profile_codes())
-  };
+const demoMetadata = [4, 2, 0, 0, 3, 1, 3, 2, 1, 3, 0xD3A0, 0, 1, 0, 0, 0, 0, 0];
+
+function selection(session: HybridGameSessionBridge) {
+  return { preset: session.difficulty_preset_code(), information: session.information_level_code(),
+    assistance: session.assistance_level_code(), weather: session.weather_class_code(),
+    cues: Array.from(session.information_profile_codes()) };
 }
 
-function expectPackedSamplesEqual(actual: Float64Array, expected: Float64Array): void {
-  expect(actual.constructor).toBe(expected.constructor);
-  expect(actual.length).toBe(expected.length);
-  const mismatch = actual.findIndex((value, index) => !Object.is(value, expected[index]));
-  expect(mismatch).toBe(-1);
+function startFlight(session: HybridGameSessionBridge): void {
+  session.prepare(); session.mark_briefing_ready(); session.start_countdown(1); session.advance_countdown(); session.launch();
 }
 
-function startFlight(session: GameSessionBridge): void {
-  session.prepare();
-  session.mark_briefing_ready();
-  session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
-}
-
-it("compares packed values with SameValue semantics for NaN payloads and bounded views", () => {
-  const firstPayload = new Float64Array(new BigUint64Array([0x7ff8000000000001n]).buffer);
-  const secondPayload = new Float64Array(new BigUint64Array([0x7ff8000000000002n]).buffer);
-  expect(firstPayload).toEqual(secondPayload);
-  expectPackedSamplesEqual(firstPayload, secondPayload);
-  expectPackedSamplesEqual(
-    new Float64Array([NaN, Infinity, -Infinity, -0]),
-    new Float64Array([NaN, Infinity, -Infinity, -0])
-  );
-  expectPackedSamplesEqual(
-    new Float64Array([99, 1, 2, 99]).subarray(1, 3),
-    new Float64Array([1, 2])
-  );
-});
-
-it("rejects changed packed positions, lengths, constructors and distinct numeric values", () => {
-  const original = new Float64Array([1, 2, 3, 4, 5]);
-  for (const index of [0, 2, 4]) {
-    const changed = original.slice();
-    changed[index] = 99;
-    expect(() => {
-      expectPackedSamplesEqual(changed, original);
-    }).toThrow();
-  }
-  const shorter = original.subarray(0, original.length - 1);
-  expect(() => {
-    expectPackedSamplesEqual(shorter, original);
-  }).toThrow();
-  expect(() => {
-    expectPackedSamplesEqual(original, shorter);
-  }).toThrow();
-  class OtherFloat64Array extends Float64Array {}
-  expect(() => {
-    expectPackedSamplesEqual(new OtherFloat64Array([1]), new Float64Array([1]));
-  }).toThrow();
-  for (const [actual, expected] of [[0, -0], [NaN, 0], [Infinity, -Infinity]] as const) {
-    expect(() => {
-      expectPackedSamplesEqual(new Float64Array([actual]), new Float64Array([expected]));
-    }).toThrow();
-  }
-});
-
-it("reports the declared Custom/Minimal demo policy instead of Automatic/NearLimit player settings", () => {
-  const session = new GameSessionBridge(2);
+it("reports the independent Custom/Minimal/Automatic demonstration identity", () => {
+  const session = new HybridGameSessionBridge(2, 21, 22);
   try {
-    session.open_setup();
-    session.set_weather_class(4);
-    session.return_to_title();
-    session.enter_attract();
+    session.open_setup(); session.set_weather_class(4); session.return_to_title(); session.enter_attract();
     expect(Array.from(session.configuration_metadata())).toEqual(demoMetadata);
     const projection = record(record(JSON.parse(session.environment_snapshot_json()) as unknown).projection);
-    expect(projection.source).toBe("attract");
-    expect(projection.identity).toEqual({
-      catalog_version: 1, scenario_id: 1, scenario_version: 1,
-      aircraft_model_version: 2, environment_version: 1,
-      controller_profile_version: 1, seed_low: 0xD3A0, seed_high: 0
-    });
+    expect(projection).toMatchObject({ source: "attract", identity: {
+      catalog_version: 3, scenario_id: 1, scenario_version: 3, aircraft_model_version: 2,
+      environment_version: 1, controller_profile_version: 3, seed_low: 0xD3A0, seed_high: 0
+    } });
     expect(record(projection.metadata).representative_velocity_ned_mps).toEqual([0, 0, 0]);
-    expect(() => session.export_flight_record_json()).toThrow("flight record is unavailable");
-  } finally {
-    session.free();
-  }
+    expect(() => session.export_flight_record_json()).toThrow();
+  } finally { session.free(); }
 });
 
-it.each([0, 1, 2, 3, 4])("keeps player Information %s and all six cues independent across repeated demo queries", (information) => {
-  const session = new GameSessionBridge(2);
+it.each([0, 1, 2, 3, 4])("preserves player Information %s and Custom cues across repeated demo entries", (information) => {
+  const session = new HybridGameSessionBridge(2, 21, 22);
   try {
-    session.open_setup();
-    session.set_information_level(information);
-    session.set_assistance_level(information % 4);
-    session.set_weather_class(4);
-    if (information === 4) {
-      [true, false, true, false, true, false].forEach((visible, cue) => {
-        session.set_information_cue(cue, visible);
-      });
-    }
-    const selected = selectedMetadata(session);
+    session.open_setup(); session.set_information_level(information);
+    session.set_assistance_level(information % 4); session.set_weather_class(4);
+    if (information === 4) [true, false, true, false, true, false].forEach((visible, cue) => { session.set_information_cue(cue, visible); });
+    const selected = selection(session);
     session.return_to_title();
-    let firstDemoSamples: Float64Array | null = null;
-    for (let entry = 0; entry < 2; entry++) {
-      session.enter_attract();
-      session.seek_playback(0.75);
+    let firstSamples: string | null = null;
+    for (let entry = 0; entry < 2; entry += 1) {
+      session.enter_attract(); session.seek_playback(0.75);
       const clock = session.playback_clock_state();
-      const snapshot = session.snapshot();
-      const samples = session.flight_record_samples_packed();
-      const finalization = session.flight_record_finalization();
-      if (firstDemoSamples === null) firstDemoSamples = samples;
-      else expectPackedSamplesEqual(samples, firstDemoSamples);
-      for (let query = 0; query < 3; query++) {
+      const context = session.playback_context_json();
+      const samples = session.flight_analysis_samples_json();
+      if (firstSamples === null) firstSamples = samples;
+      else expect(samples).toBe(firstSamples);
+      for (let query = 0; query < 3; query += 1) {
         expect(Array.from(session.configuration_metadata())).toEqual(demoMetadata);
-        expect(selectedMetadata(session)).toEqual(selected);
         expect(session.playback_clock_state()).toEqual(clock);
-        expect(session.snapshot()).toEqual(snapshot);
-        expectPackedSamplesEqual(session.flight_record_samples_packed(), samples);
-        expect(session.flight_record_finalization()).toEqual(finalization);
+        expect(session.playback_context_json()).toBe(context);
+        expect(session.flight_analysis_samples_json()).toBe(samples);
         expect(session.phase_code()).toBe(10);
       }
       session.leave_attract();
       expect(session.phase_code()).toBe(0);
-      expect(selectedMetadata(session)).toEqual(selected);
-      expect(session.flight_record_sample_count()).toBe(0);
+      expect(selection(session)).toEqual(selected);
     }
-    session.open_setup();
-    expect(selectedMetadata(session)).toEqual(selected);
+    session.open_setup(); expect(selection(session)).toEqual(selected);
     session.prepare();
     const metadata = Array.from(session.configuration_metadata());
     expect(metadata.slice(0, 4)).toEqual([selected.preset, selected.information, selected.assistance, selected.weather]);
     expect(metadata.slice(12)).toEqual(selected.cues);
-  } finally {
-    session.free();
-  }
+  } finally { session.free(); }
 });
 
-it.each([0, 1, 2, 3])("does not replace player named preset %s with the demo declaration", (preset) => {
-  const session = new GameSessionBridge(0);
+it.each([0, 1, 2, 3])("retains player preset %s after Attract", (preset) => {
+  const session = new HybridGameSessionBridge(0, 21, 22);
   try {
-    session.open_setup();
-    session.set_difficulty_preset(preset);
-    const selected = selectedMetadata(session);
-    session.return_to_title();
-    session.enter_attract();
+    session.open_setup(); session.set_difficulty_preset(preset);
+    const selected = selection(session);
+    session.return_to_title(); session.enter_attract();
     expect(Array.from(session.configuration_metadata())).toEqual(demoMetadata);
-    expect(selectedMetadata(session)).toEqual(selected);
-    session.leave_attract();
-    session.open_setup();
-    expect(selectedMetadata(session)).toEqual(selected);
-  } finally {
-    session.free();
-  }
+    session.leave_attract(); session.open_setup();
+    expect(selection(session)).toEqual(selected);
+  } finally { session.free(); }
 });
 
-it("preserves non-Attract metadata, public phase errors, export and PB queries", () => {
-  const session = new GameSessionBridge(0);
+it("keeps configuration queries observational through Briefing, pause, Result and Replay", () => {
+  const session = new HybridGameSessionBridge(0, 21, 22);
   try {
-    expect(() => session.configuration_metadata()).toThrow("resolved configuration is unavailable before Briefing");
-    session.open_setup();
-    expect(() => session.configuration_metadata()).toThrow("resolved configuration is unavailable before Briefing");
-    session.set_information_cue(2, false);
-    session.prepare();
+    expect(() => session.configuration_metadata()).toThrow();
+    session.open_setup(); expect(() => session.configuration_metadata()).toThrow();
+    session.set_information_cue(2, false); session.prepare();
     const metadata = Array.from(session.configuration_metadata());
-    expect(metadata.slice(0, 4)).toEqual([4, 4, 3, 0]);
+    expect(metadata.slice(0, 4)).toEqual([4, 4, 3, 2]);
     expect(metadata.slice(12)).toEqual([1, 1, 0, 1, 1, 1]);
     const stableQuery = () => {
       const phase = session.phase_code();
-      const snapshot = session.snapshot();
-      const samples = session.flight_record_sample_count();
+      const snapshot = phase === 9 ? session.playback_context_json() : session.snapshot_json();
+      const samples = phase === 9 ? session.flight_analysis_samples_json() : null;
+      const clock = phase === 9 ? Array.from(session.playback_clock_state()) : null;
       expect(Array.from(session.configuration_metadata())).toEqual(metadata);
       expect(session.phase_code()).toBe(phase);
-      expect(session.snapshot()).toEqual(snapshot);
-      expect(session.flight_record_sample_count()).toBe(samples);
+      expect(phase === 9 ? session.playback_context_json() : session.snapshot_json()).toBe(snapshot);
+      if (phase === 9) {
+        expect(session.flight_analysis_samples_json()).toBe(samples);
+        expect(Array.from(session.playback_clock_state())).toEqual(clock);
+      }
     };
-    stableQuery();
-    session.fail_briefing(0);
-    expect(session.phase_code()).toBe(8);
-    stableQuery();
-    session.retry_briefing();
-    stableQuery();
-    session.mark_briefing_ready();
-    stableQuery();
-    session.start_countdown(1);
-    stableQuery();
-    session.advance_countdown();
-    session.launch();
-    stableQuery();
-    session.pause(0);
-    stableQuery();
-    session.resume();
-    for (let tick = 0; tick < 4000 && session.phase_code() === 5; tick++) {
-      session.advance_tick(0, 0, 0, 0);
-    }
-    expect(session.phase_code()).toBe(7);
-    stableQuery();
+    stableQuery(); session.fail_briefing(0); stableQuery(); session.retry_briefing(); stableQuery();
+    session.mark_briefing_ready(); stableQuery(); session.start_countdown(1); stableQuery();
+    session.advance_countdown(); session.launch(); stableQuery(); session.pause(0); stableQuery();
+    session.clear_pause_reason(0); session.resume(); session.advance_tick_json(neutralTailInput); session.abort(); stableQuery();
     const json = session.export_flight_record_json();
-    expect(compare_personal_best_json(json, json)).toBe(2);
-    stableQuery();
-    expect(session.export_flight_record_json()).toBe(json);
-    session.enter_replay();
-    session.seek_playback(0.5);
+    const best = new TailPersonalBestSelectionBridge(json);
+    try { expect(best.is_eligible()).toBe(false); } finally { best.free(); }
+    session.enter_replay(); session.seek_playback(0.005);
     const clock = session.playback_clock_state();
-    stableQuery();
-    expect(session.playback_clock_state()).toEqual(clock);
-    expect(session.export_flight_record_json()).toBe(json);
-    session.leave_replay();
-    expect(session.phase_code()).toBe(7);
-    stableQuery();
-  } finally {
-    session.free();
-  }
+    stableQuery(); expect(session.playback_clock_state()).toEqual(clock);
+    expect(session.export_current_flight_record_json()).toBe(json);
+    session.leave_replay(); stableQuery();
+  } finally { session.free(); }
 });
 
-it("retains archived named-preset overrides and never attributes them to the demo", () => {
-  const player = new GameSessionBridge(0);
-  const archive = new GameSessionBridge(2);
+it("retains current archive preset metadata independently of the demo declaration", () => {
+  const player = new HybridGameSessionBridge(0, 21, 22);
+  const archived = new HybridGameSessionBridge(2, 31, 32);
   try {
-    player.open_setup();
-    player.set_difficulty_preset(1);
-    startFlight(player);
-    player.advance_tick(0, 0, 0, 0);
-    player.abort();
+    player.open_setup(); player.set_difficulty_preset(1); startFlight(player);
+    player.advance_tick_json(neutralTailInput); player.abort();
     const metadata = Array.from(player.configuration_metadata());
     expect(metadata[0]).toBe(1);
     const json = player.export_flight_record_json();
-    archive.open_archived_flight_record(json);
-    expect(archive.is_archived_replay()).toBe(true);
-    const samples = archive.flight_record_samples_packed();
-    const clock = archive.playback_clock_state();
-    expect(Array.from(archive.configuration_metadata())).toEqual(metadata);
-    expect(archive.difficulty_preset_code()).toBe(1);
-    expect(archive.flight_record_samples_packed()).toEqual(samples);
-    expect(archive.playback_clock_state()).toEqual(clock);
-    archive.leave_replay();
-    expect(archive.phase_code()).toBe(0);
-    const selected = selectedMetadata(archive);
-    archive.enter_attract();
-    expect(Array.from(archive.configuration_metadata())).toEqual(demoMetadata);
-    expect(selectedMetadata(archive)).toEqual(selected);
-    archive.leave_attract();
-    archive.open_archived_flight_record(json);
-    expect(Array.from(archive.configuration_metadata())).toEqual(metadata);
-    expect(archive.flight_record_samples_packed()).toEqual(samples);
+    archived.open_archived_flight_record(json);
+    const samples = archived.flight_analysis_samples_json();
+    const clock = archived.playback_clock_state();
+    expect(Array.from(archived.configuration_metadata())).toEqual(metadata);
+    expect(archived.difficulty_preset_code()).toBe(1);
+    expect(archived.flight_analysis_samples_json()).toBe(samples);
+    expect(archived.playback_clock_state()).toEqual(clock);
+    archived.leave_replay();
+    const selected = selection(archived);
+    archived.enter_attract(); expect(Array.from(archived.configuration_metadata())).toEqual(demoMetadata);
+    archived.leave_attract(); expect(selection(archived)).toEqual(selected);
+    archived.open_archived_flight_record(json);
+    expect(Array.from(archived.configuration_metadata())).toEqual(metadata);
+    expect(archived.flight_analysis_samples_json()).toBe(samples);
     expect(player.export_flight_record_json()).toBe(json);
-    expect(compare_personal_best_json(json, json)).toBe(4);
-  } finally {
-    archive.free();
-    player.free();
-  }
+  } finally { archived.free(); player.free(); }
 });

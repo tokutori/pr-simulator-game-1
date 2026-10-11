@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { LegacyAppSessionFacade, TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { decodeHudProfile, decodePreparedUiConfiguration, decodeSessionDifficulty } from "../../web/src/app/session-selection.js";
 import type { SessionSelectionPort } from "../../web/src/app/session-selection.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
 describe("Rust-owned session selection and prepared UI metadata", () => {
-  it.each(["legacy_three_axis", "tail_incidence"] as const)("reads %s difficulty getters and distinguishes unprepared/record contexts", (layout) => {
-    const bridge = layout === "legacy_three_axis" ? new GameSessionBridge(0) : new HybridGameSessionBridge(0, 21, 22);
-    const facade = bridge instanceof GameSessionBridge ? new LegacyAppSessionFacade(bridge, physics_hz()) : new TailAppSessionFacade(bridge, physics_hz());
+  it("reads current difficulty getters and distinguishes unprepared/record contexts", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
     try {
       expect(facade.readPreparedConfiguration()).toEqual({ kind: "unavailable", reason: "unprepared_phase" });
       facade.executeOperation("open-setup");
@@ -24,15 +24,13 @@ describe("Rust-owned session selection and prepared UI metadata", () => {
       const metadata = bridge.configuration_metadata();
       expect(prepared.value).toMatchObject({ informationCode: metadata[1], weatherCode: metadata[3],
         catalogVersion: metadata[4], scenarioId: metadata[5], aircraftModelVersion: metadata[7], controllerProfileVersion: metadata[9] });
-      if (facade.controlLayout === "tail_incidence") {
-        const projection = facade.readGameSessionProjection();
-        expect(projection).toMatchObject({ phaseCode: 3, difficulty: facade.readDifficulty(), configurationMetadata: prepared.value });
-        facade.executeOperation("cancel-briefing");
-        facade.executeOperation("return-to-title");
-        facade.executeOperation("enter-attract");
-        expect(facade.readPreparedConfiguration()).toEqual({ kind: "unavailable", reason: "playback_context" });
-        expect(() => facade.readGameSessionProjection()).toThrow();
-      }
+      const projection = facade.readGameSessionProjection();
+      expect(projection).toMatchObject({ phaseCode: 3, difficulty: facade.readDifficulty(), configurationMetadata: prepared.value });
+      facade.executeOperation("cancel-briefing");
+      facade.executeOperation("return-to-title");
+      facade.executeOperation("enter-attract");
+      expect(facade.readPreparedConfiguration()).toEqual({ kind: "unavailable", reason: "playback_context" });
+      expect(() => facade.readGameSessionProjection()).toThrow();
     } finally {
       facade.dispose();
     }

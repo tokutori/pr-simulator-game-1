@@ -4,15 +4,13 @@ import { describe, expect, it } from "vitest";
 import { canSelectLakeWaterQuality, createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, AppTransition } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import type { PresentationMode } from "../../web/src/render/contracts/runtime.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 
-const values = Array.from({ length: 33 }, () => 0);
-values[7] = 1;
-values[19] = -1;
-const snapshot = parseFlightSnapshot(values);
+
+const snapshot = currentFlightDisplayFixture();
 
 describe("manual lake water quality ownership", () => {
   it("keeps one immutable applied/requested state and emits a presentation-only effect", () => {
@@ -82,7 +80,7 @@ describe("manual lake water quality ownership", () => {
     const selected = updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "medium", cleanup: { kind: "complete" } }).model;
     const synchronized = updateApp(selected, {
       type: "game-session-synced", phaseCode: 3, controlModeCode: 0, difficulty: selected.difficulty,
-      configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }, canResume: false, controlLayout: "tail_incidence"
     }).model;
     expect(synchronized.lakeWaterQuality).toBe(selected.lakeWaterQuality);
     const transition = updateApp({ ...selected, presentation: { type: "ready", mode: "phone-vr" } }, {
@@ -181,8 +179,8 @@ function readyModel(phase = 1, mode: PresentationMode = "screen"): AppModel {
     type: "presentation-initialized", requestId: 1, activeMode: mode,
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const phaseSnapshot = phase === 5 || phase === 6 ? snapshot : phase === 7 ? parseFlightSnapshot(values.map((value, index) => index === 16 ? 4 : value)) : null;
-  const session = gameSessionState(phase, 0, phaseSnapshot, true, null, "legacy_three_axis", phase === 9 ? "result" : undefined);
+  const phaseSnapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase) : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
+  const session = gameSessionState(phase, 0, phaseSnapshot, true, null, "tail_incidence", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Invalid quality fixture session");
   return { ...ready, gameSession: session.kind === "paused-flight" ? { ...session, overlay: { kind: "settings" } } : session };
 }

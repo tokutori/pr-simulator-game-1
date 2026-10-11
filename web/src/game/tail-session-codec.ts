@@ -1,4 +1,3 @@
-import type { FlightSnapshot } from "./flight-snapshot.js";
 import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
 import { decodeTailTickFailure, tailFailureIsEnvelope } from "./tail-session-failure.js";
 import type { TailTickFailure } from "./tail-session-failure.js";
@@ -83,10 +82,6 @@ export type TailSessionSnapshot = TailSessionEnvelope & (
   | Readonly<{ phaseCode: 7; identity: PreparedIdentity;
       frame: Readonly<{ kind: "result"; state: TailFlightState; telemetry: TailFlightTelemetry; finalization: TailTerminalFinalization }> }>
 );
-export type FlightSnapshotBoundary =
-  | Readonly<{ schemaVersion: 1; controlLayout: "legacy_three_axis"; snapshot: FlightSnapshot }>
-  | TailSessionSnapshot;
-
 export type TailPreparedLaunchSnapshot =
   | Readonly<{ kind: "unavailable"; phaseCode: number }>
   | Readonly<{ kind: "prepared"; phaseCode: 2 | 3 | 4 | 8; identity: PreparedIdentity; state: TailFlightState }>;

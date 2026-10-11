@@ -6,7 +6,7 @@ import type { LakeVisualCondition, LakeWaterQuality } from "./lake-water.js";
 import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
-import type { LegacyPhysicalFlightControls, TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "./flight-controls.js";
+import type { TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "./flight-controls.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
 
@@ -62,7 +62,7 @@ interface FlightRenderPoseBase {
 }
 
 export type FlightRenderPose = FlightRenderPoseBase & (
-  | Readonly<{ controls?: LegacyPhysicalFlightControls; tailGeometry?: never }>
+  | Readonly<{ controls?: never; tailGeometry?: never }>
   | Readonly<{ controls: TailPhysicalFlightControls; tailGeometry: TailPresentationGeometryAvailability }>
 );
 

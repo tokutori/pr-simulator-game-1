@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { GameSessionBridge, HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
@@ -35,30 +35,6 @@ function dataset(session: TailAppSessionFacade, request: NamedWindGridRequest = 
 
 function cursor(session: TailAppSessionFacade, data: NamedAnalysisDataset, time = 0): NamedAnalysisCursor {
   return session.queryAnalysisCursor(time, data);
-}
-
-function archive(version: number): string {
-  const bridge = new GameSessionBridge(0);
-  try {
-    bridge.open_setup();
-    bridge.prepare();
-    bridge.mark_briefing_ready();
-    bridge.start_countdown(1);
-    bridge.advance_countdown();
-    bridge.launch();
-    bridge.advance_tick(0, 0, 0, 0);
-    bridge.abort();
-    const saved = JSON.parse(bridge.export_flight_record_json()) as Record<string, unknown>;
-    saved.schema_version = version;
-    const header = saved.header as Record<string, unknown>;
-    if (version < 5) delete header.personal_best_key;
-    if (version < 4) delete header.physics_model_version;
-    if (version < 3) delete header.score_definition_version;
-    if (version < 2) delete (header.difficulty as Record<string, unknown>).hud_profile;
-    return JSON.stringify(saved);
-  } finally {
-    bridge.free();
-  }
 }
 
 describe("pure saved Analysis view projection", () => {
@@ -123,21 +99,22 @@ describe("pure saved Analysis view projection", () => {
     } finally { session.dispose(); }
   });
 
-  it.each([1, 2, 3, 4, 5])("retains v%i saved legacy controls and missing metrics in named Replay", (version) => {
+  it("preserves explicitly unrecorded current metrics in named Replay", () => {
+    const source = result();
     const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 81, 82), physics_hz());
     try {
-      const saved = JSON.parse(archive(version)) as Record<string, unknown>;
+      const saved = JSON.parse(source.exportRecordJson()) as Record<string, unknown>;
       (saved.finalization as Record<string, unknown>).score_m = null;
-      for (const sample of saved.samples as Record<string, unknown>[]) (sample.telemetry as Record<string, unknown>).angle_of_attack_rad = null;
+      for (const sample of saved.samples as Record<string, unknown>[]) ((sample.state as Record<string, unknown>).telemetry as Record<string, unknown>).angle_of_attack_rad = null;
       session.openArchive(JSON.stringify(saved));
       const data = dataset(session);
       const view = projectAnalysisView(data);
-      expect(data.samples.every((sample) => sample.controls.layout === "legacy_three_axis")).toBe(true);
-      expect(view.origin).toMatchObject({ kind: "named_record", context: { phase: "replay", controlLayout: "legacy_three_axis", controlIdentity: null } });
+      expect(data.samples.map((sample) => sample.controls.layout)).toEqual(Array.from({ length: data.samples.length }, () => "tail_incidence"));
+      expect(view.origin).toMatchObject({ kind: "named_record", context: { phase: "replay", controlLayout: "tail_incidence" } });
       expect(view.summary.score).toEqual({ kind: "unavailable", reason: "score_not_recorded" });
       expect(view.summary.maximumAngleOfAttackRadians).toEqual({ kind: "unavailable", reason: "no_defined_sample" });
       expect(projectAnalysisCursor(cursor(session, data, 0.005), data).timeSeconds).toBe(0.005);
-    } finally { session.dispose(); }
+    } finally { source.dispose(); session.dispose(); }
   });
 
   it("shows unknown environment and original saved failure without selecting the player's map or zero wind", () => {

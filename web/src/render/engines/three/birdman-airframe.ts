@@ -1,6 +1,5 @@
 import {
   BufferGeometry,
-  CanvasTexture,
   CylinderGeometry,
   DataTexture,
   DoubleSide,
@@ -11,7 +10,6 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
-  PlaneGeometry,
   RGBAFormat,
   SRGBColorSpace,
   UnsignedByteType,
@@ -30,13 +28,6 @@ const WING_ROOT_LEADING_Z = -0.42;
 const WING_LEADING_SWEEP_METERS = 0.24;
 const WING_ROOT_SPAR_Z = WING_ROOT_LEADING_Z + 0.25 * WING_ROOT_CHORD_METERS;
 const WING_COVERED_CHORD_FRACTION = 0.50;
-const TAIL_HALF_SPAN_METERS = 1.58;
-const TAIL_ROOT_CHORD_METERS = 0.55;
-const TAIL_TIP_CHORD_METERS = 0.48;
-const TAIL_LEADING_SWEEP_METERS = 0.03;
-const TAIL_Z_METERS = 4.25;
-const ELEVATOR_HINGE_FRACTION = 0.7;
-const ELEVATOR_HINGE_Z = TAIL_ROOT_CHORD_METERS * ELEVATOR_HINGE_FRACTION;
 const REFERENCE_AIRSPEED_METERS_PER_SECOND = 9.5;
 const YOUNGS_MODULUS_PASCALS = 45e9;
 const SPAR_SECOND_MOMENT_METERS_FOURTH = 4e-6;
@@ -74,11 +65,6 @@ function mainWingChord(span: number): number {
 
 function mainWingLeadingZ(span: number): number {
   return WING_ROOT_LEADING_Z + WING_LEADING_SWEEP_METERS * span / HALF_SPAN_METERS;
-}
-
-function tailChord(span: number): number {
-  return TAIL_ROOT_CHORD_METERS +
-    (TAIL_TIP_CHORD_METERS - TAIL_ROOT_CHORD_METERS) * span / TAIL_HALF_SPAN_METERS;
 }
 
 function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTexture {
@@ -166,28 +152,6 @@ function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTextur
   return texture;
 }
 
-function universityMark(onVisualReady?: () => void): CanvasTexture | null {
-  if (typeof document === "undefined") return null;
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 1536;
-  const context = canvas.getContext("2d");
-  if (context === null) return null;
-  context.fillStyle = "#20344b";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  const artwork = new Image();
-  artwork.onload = () => {
-    context.drawImage(artwork, 0, 0, canvas.width, canvas.height);
-    texture.needsUpdate = true;
-    onVisualReady?.();
-  };
-  artwork.onerror = () => { console.warn("Fin artwork could not be loaded."); };
-  artwork.src = new URL("../../../../../assets/tokushima-fin-artwork.png", import.meta.url).href;
-  return texture;
-}
-
 export interface BirdmanAirframe {
   readonly root: Group;
   setVisualState(airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void;
@@ -198,8 +162,7 @@ export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout:
 export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const);
 
 function registeredHorizontalTailArmMeters(kind: string, armMeters: number): number {
-  if ((kind === "bpg041_version_one" && armMeters === 1.8) ||
-      (kind === "bpg041_playable_version_two" && armMeters === 3.6)) return armMeters;
+  if (kind === "bpg041_playable_version_two" && armMeters === 3.6) return armMeters;
   throw new RangeError("Tail presentation requires registered aircraft geometry");
 }
 
@@ -327,19 +290,19 @@ function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial,
   return { mesh, baseY: Float32Array.from(baseY), span: Float32Array.from(span) };
 }
 
-function finGeometry(outline: readonly (readonly [number, number])[], halfThickness: number): BufferGeometry {
+function extrudedOutlineGeometry(outline: readonly (readonly [number, number])[], halfThickness: number): BufferGeometry {
   const points: number[] = [];
-  for (const x of [-halfThickness, halfThickness]) {
-    for (const [y, z] of outline) points.push(x, y, z);
+  for (const lateral of [-halfThickness, halfThickness]) {
+    for (const [vertical, longitudinal] of outline) points.push(lateral, vertical, longitudinal);
   }
   const indices: number[] = [];
-  const n = outline.length;
-  for (let index = 1; index < n - 1; index++) {
-    indices.push(0, index + 1, index, n, n + index, n + index + 1);
+  const count = outline.length;
+  for (let index = 1; index < count - 1; index++) {
+    indices.push(0, index + 1, index, count, count + index, count + index + 1);
   }
-  for (let index = 0; index < n; index++) {
-    const next = (index + 1) % n;
-    indices.push(index, next, n + index, next, n + next, n + index);
+  for (let index = 0; index < count; index++) {
+    const next = (index + 1) % count;
+    indices.push(index, next, count + index, next, count + next, count + index);
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(points, 3));
@@ -436,35 +399,7 @@ function foamRibGeometry(span: number): BufferGeometry {
     const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
     outline.push([baseY + profile.lowerY * chord, leadingZ + profile.lowerX * chord]);
   }
-  return finGeometry(outline, 0.013);
-}
-
-function tailRibPoint(side: -1 | 1, span: number, chordFraction: number): Vector3 {
-  const fraction = span / TAIL_HALF_SPAN_METERS;
-  const chord = tailChord(span);
-  return new Vector3(
-    side * span,
-    0.02 * span,
-    -ELEVATOR_HINGE_Z + TAIL_LEADING_SWEEP_METERS * fraction + chordFraction * chord
-  );
-}
-
-function tailFoamRibGeometry(span: number): BufferGeometry {
-  const fraction = span / TAIL_HALF_SPAN_METERS;
-  const chord = tailChord(span);
-  const leadingZ = -ELEVATOR_HINGE_Z + TAIL_LEADING_SWEEP_METERS * fraction;
-  const baseY = 0.02 * span;
-  const stations = [0.70, 0.85, 0.995];
-  const outline: [number, number][] = [];
-  for (const chordFraction of stations) {
-    const profile = sectionProfile(chordFraction, 0, 0.4, 0.09);
-    outline.push([baseY + profile.upperY * chord, leadingZ + profile.upperX * chord]);
-  }
-  for (const chordFraction of [...stations].reverse()) {
-    const profile = sectionProfile(chordFraction, 0, 0.4, 0.09);
-    outline.push([baseY + profile.lowerY * chord, leadingZ + profile.lowerX * chord]);
-  }
-  return finGeometry(outline, 0.008);
+  return extrudedOutlineGeometry(outline, 0.013);
 }
 
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
@@ -610,119 +545,9 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     }
   }
 
-  const tail = new Group();
-  tail.name = "legacy-tail-assembly";
-  tail.position.set(0, -0.52, TAIL_Z_METERS);
-  root.add(tail);
-  for (const side of [-1, 1] as const) {
-    const basis = {
-      side, halfSpan: TAIL_HALF_SPAN_METERS, rootChord: TAIL_ROOT_CHORD_METERS, tipChord: TAIL_TIP_CHORD_METERS,
-      leadingZ: 0, sweep: TAIL_LEADING_SWEEP_METERS, baseY: 0, dihedral: 0.02,
-      camber: 0, camberPosition: 0.4, thickness: 0.09, flex: false
-    };
-    const stabilizer = airfoilHalf({ ...basis, chordStart: 0, chordEnd: 0.28 }, whiteTail);
-    stabilizer.mesh.name = side === -1 ? "left-tail-leading" : "right-tail-leading";
-    tail.add(stabilizer.mesh);
-    const fixedFilm = airfoilHalf({ ...basis, chordStart: 0.28, chordEnd: ELEVATOR_HINGE_FRACTION }, trailingFilm);
-    fixedFilm.mesh.name = side === -1 ? "left-tail-film" : "right-tail-film";
-    tail.add(fixedFilm.mesh);
-    for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
-      const span = TAIL_HALF_SPAN_METERS * ribIndex / 9;
-      const rib = addRod(tail,
-        tailRibPoint(side, span, 0.28).add(new Vector3(0, 0, ELEVATOR_HINGE_Z)),
-        tailRibPoint(side, span, ELEVATOR_HINGE_FRACTION).add(new Vector3(0, 0, ELEVATOR_HINGE_Z)),
-        0.008, ribMaterial);
-      rib.name = "tail-fixed-rib";
-    }
-  }
-  const elevator = new Group();
-  elevator.name = "elevator";
-  elevator.position.set(0, 0, ELEVATOR_HINGE_Z);
-  tail.add(elevator);
-  for (const side of [-1, 1] as const) {
-    const half = airfoilHalf({
-      side, halfSpan: TAIL_HALF_SPAN_METERS, rootChord: TAIL_ROOT_CHORD_METERS, tipChord: TAIL_TIP_CHORD_METERS,
-      leadingZ: -ELEVATOR_HINGE_Z, sweep: TAIL_LEADING_SWEEP_METERS, baseY: 0, dihedral: 0.02,
-      camber: 0, camberPosition: 0.4, thickness: 0.09,
-      chordStart: ELEVATOR_HINGE_FRACTION, chordEnd: 1, flex: false
-    }, trailingFilm);
-    half.mesh.name = side === -1 ? "left-elevator-film" : "right-elevator-film";
-    elevator.add(half.mesh);
-    for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
-      const span = TAIL_HALF_SPAN_METERS * ribIndex / 9;
-      const foam = new Mesh(tailFoamRibGeometry(span), styrofoam);
-      foam.name = "elevator-styrofoam-rib";
-      foam.position.x = side * span;
-      elevator.add(foam);
-      const rod = addRod(elevator,
-        tailRibPoint(side, span, ELEVATOR_HINGE_FRACTION),
-        tailRibPoint(side, span, 0.995),
-        0.008, ribMaterial);
-      rod.name = "elevator-rib";
-    }
-    for (let section = 0; section < 4; section++) {
-      const from = TAIL_HALF_SPAN_METERS * section / 4;
-      const to = TAIL_HALF_SPAN_METERS * (section + 1) / 4;
-      const rod = addRod(elevator,
-        tailRibPoint(side, from, 0.995), tailRibPoint(side, to, 0.995),
-        0.006, ribMaterial);
-      rod.name = "elevator-balsa-stringer";
-    }
-  }
-  const rudder = new Group();
-  rudder.name = "rudder";
-  // The side-view grid places the fin roughly 0.6 m ahead of the horizontal tail.
-  rudder.position.z = -0.6;
-  tail.add(rudder);
-  const finFront = new Mesh(finGeometry([
-    [0, 0.02], [1.25, 0.15], [1.25, 0.50], [0, 0.42]
-  ], 0.045), skin);
-  finFront.name = "rudder-front";
-  rudder.add(finFront);
-  const universityTexture = universityMark(onVisualReady);
-  if (universityTexture !== null) {
-    const letters = new MeshBasicMaterial({ map: universityTexture, side: DoubleSide });
-    for (const side of [-1, 1] as const) {
-      const mark = new Mesh(new PlaneGeometry(0.31, 1.02), letters);
-      mark.name = "tokushima-university-mark";
-      mark.rotation.y = side * Math.PI / 2;
-      mark.position.set(side * 0.048, 0.625, 0.34);
-      rudder.add(mark);
-    }
-  }
-  const finFilm = new Mesh(finGeometry([
-    [0, 0.42], [1.25, 0.50], [1.25, 0.65], [0, 0.67]
-  ], 0.036), trailingFilm);
-  finFilm.name = "rudder-trailing-film";
-  rudder.add(finFilm);
-  for (let ribIndex = 1; ribIndex <= 8; ribIndex++) {
-    const y = 1.25 * ribIndex / 9;
-    const fraction = y / 1.25;
-    const rod = addRod(rudder,
-      new Vector3(0, y, 0.42 + 0.08 * fraction),
-      new Vector3(0, y, 0.67 - 0.02 * fraction),
-      0.009, ribMaterial);
-    rod.name = "rudder-rib";
-  }
-  for (let bay = 0; bay < 8; bay++) {
-    const lowY = bay * 1.25 / 8;
-    const highY = (bay + 1) * 1.25 / 8;
-    const frontZ = (y: number): number => 0.42 + 0.08 * y / 1.25;
-    const backZ = (y: number): number => 0.67 - 0.02 * y / 1.25;
-    const foam = new Mesh(finGeometry([
-      [lowY, frontZ(lowY)], [highY, frontZ(highY)], [lowY, backZ(lowY)]
-    ], 0.012), styrofoam);
-    foam.name = "rudder-styrofoam-panel";
-    rudder.add(foam);
-  }
-  const rudderStringer = addRod(rudder,
-    new Vector3(0, 0, 0.67), new Vector3(0, 1.25, 0.65),
-    0.006, ribMaterial);
-  rudderStringer.name = "rudder-balsa-stringer";
-
   const horizontalIncidence = new Group();
   horizontalIncidence.name = "horizontal-tail-incidence";
-  horizontalIncidence.position.set(0, -0.1, 1.8);
+  horizontalIncidence.position.set(0, -0.1, 3.6);
   const tailChordMeters = 2.5 / 3.4;
   horizontalIncidence.add(rectangularTailSurface([
     [-1.7, 0, -tailChordMeters / 4], [1.7, 0, -tailChordMeters / 4],
@@ -745,7 +570,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
         (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
       throw new RangeError("Physical tail incidence must be finite");
     }
-    let horizontalTailArmMeters = 1.8;
+    let horizontalTailArmMeters = 3.6;
     if (controls.layout === "tail_incidence") {
       if (tailGeometry?.kind !== "available") throw new RangeError("Tail presentation requires registered aircraft geometry");
       const geometry = tailGeometry.value;
@@ -781,26 +606,15 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
           wingRibPoint(stringer.side, stringer.to, stringer.chordFraction, speed));
       }
     }
-    tail.visible = controls.layout !== "tail_incidence";
     horizontalIncidence.position.z = horizontalTailArmMeters;
     horizontalIncidence.visible = controls.layout === "tail_incidence";
     verticalIncidence.visible = controls.layout === "tail_incidence";
     switch (controls.layout) {
-      case "legacy_three_axis":
-        elevator.rotation.x = -Math.max(-0.35, Math.min(0.35, controls.pitchRadians));
-        rudder.rotation.y = Math.max(-0.35, Math.min(0.35, controls.yawRadians));
-        horizontalIncidence.rotation.x = 0;
-        verticalIncidence.rotation.y = 0;
-        break;
       case "tail_incidence":
         horizontalIncidence.rotation.x = controls.physicalIncidence.horizontalTailRadians;
         verticalIncidence.rotation.y = -controls.physicalIncidence.verticalTailRadians;
-        elevator.rotation.x = 0;
-        rudder.rotation.y = 0;
         break;
       case "absent":
-        elevator.rotation.x = 0;
-        rudder.rotation.y = 0;
         horizontalIncidence.rotation.x = 0;
         verticalIncidence.rotation.y = 0;
         break;
@@ -825,7 +639,6 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       for (const material of materials) material.dispose();
       wingPatterns.left.dispose();
       wingPatterns.right.dispose();
-      universityTexture?.dispose();
     }
   };
 }

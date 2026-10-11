@@ -1,21 +1,16 @@
+import { currentNamedAnalysisFixture } from "../game-check/current-session-fixture.js";
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
-import { normalizeFlightSnapshot } from "../../web/src/app/session-snapshot.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
-import type { FlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
+import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import { GAME_SCENES, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
-const flightSnapshotValues = Array.from({ length: 33 }, () => 0);
-flightSnapshotValues[7] = 1;
-flightSnapshotValues[19] = -1;
-const flightSnapshot = parseFlightSnapshot(flightSnapshotValues);
-const terminalFlightSnapshotValues = [...flightSnapshotValues];
-terminalFlightSnapshotValues[16] = 4;
-const terminalFlightSnapshot = parseFlightSnapshot(terminalFlightSnapshotValues);
+const flightSnapshot = currentFlightDisplayFixture();
+const terminalFlightSnapshot = currentFlightDisplayFixture(7);
 const fullHudProfile = Object.freeze({
   telemetry: true,
   attitude: true,
@@ -156,10 +151,10 @@ describe("Boot application state", () => {
       type: "ui-action", action: { type: "activate", controlId: "game-title-open-record-4" }
     });
     expect(opening.effects).toEqual([{ type: "open-stored-flight-record", id: 4, requestId: 2 }]);
-    const entered = updateApp(opening.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 9, controlModeCode: 0,
+    const entered = updateApp(opening.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 9, controlModeCode: 0,
       returnTarget: "title",
-      difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.effects).toEqual([
       {
@@ -183,9 +178,9 @@ describe("Boot application state", () => {
     expect(requested.effects).toEqual([
       { type: "game-session-operation", operation: "enter-attract", requestId: 2 }
     ]);
-    const entered = updateApp(requested.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 10, controlModeCode: 0,
-      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    const entered = updateApp(requested.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 10, controlModeCode: 0,
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.model.gameSession.phaseCode).toBe(10);
     expect(entered.model.replayPlaying).toBe(false);
@@ -202,7 +197,7 @@ describe("Boot application state", () => {
     });
     expect(synchronized.model.replayPlaying).toBe(true);
 
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({ phase: "attract",
       samples: Object.freeze([]), initialPilotPositionMeters: 0,
       summary: Object.freeze({
         sampleCount: 2, durationSeconds: 2, maximumAltitudeMeters: 10,
@@ -233,9 +228,9 @@ describe("Boot application state", () => {
     expect(returning.effects).toEqual([
       { type: "game-session-operation", operation: "leave-attract", requestId: 3 }
     ]);
-    const returned = updateApp(returning.model, {
-      type: "game-operation-completed", requestId: 3, phaseCode: 0, controlModeCode: 0,
-      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    const returned = updateApp(returning.model, { canResume: false,
+      type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 0, controlModeCode: 0,
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(returned.model.gameSession.phaseCode).toBe(0);
     expect(returned.model.replayPlaying).toBe(false);
@@ -445,9 +440,9 @@ describe("Boot application state", () => {
     const active: AppModel = { ...readyModel(5), presentation: { type: "ready", mode } };
     const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking lost" });
     const paused = updateApp(recovery.model, {
-      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
-      snapshot: flightSnapshot, canResume: false
+      display: { kind: "available", value: currentFlightDisplayFixture(6) }, canResume: false
     });
     expect(paused.model.presentation).toBe(recovery.model.presentation);
     const completed = updateApp(paused.model, {
@@ -457,9 +452,9 @@ describe("Boot application state", () => {
     expect(completed.effects).toEqual([]);
     expect(createGameViewModel(completed.model, flightSnapshot).panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
     const synchronized = updateApp(completed.model, {
-      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
-      snapshot: flightSnapshot, canResume: true
+      display: { kind: "available", value: currentFlightDisplayFixture(6) }, canResume: true
     });
     expect(synchronized.model.status).toBe("Tracking lost; Screen is active");
     expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", phaseCode: 6, canResume: true });
@@ -606,19 +601,19 @@ describe("Boot application state", () => {
     const competing = updateApp(setup.model, { type: "ui-action", action: { type: "activate", controlId: "game-title-start" } });
     expect(competing.model).toBe(setup.model);
 
-    const completed = updateApp(setup.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 1, controlModeCode: 0,
+    const completed = updateApp(setup.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 0,
       difficulty: { presetCode: 1, informationCode: 1, hudProfile: fullHudProfile, assistanceCode: 1, weatherCode: 2 },
       configurationMetadata: null,
-      countdownRemaining: 0, snapshot: null
+      countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(completed.model.gameSession.phaseCode).toBe(1);
     expect(completed.model.pendingGameRequestId).toBeNull();
-    const stale = updateApp(completed.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 7, controlModeCode: 2,
+    const stale = updateApp(completed.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 2,
       difficulty: { presetCode: 0, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 1 },
       configurationMetadata: null,
-      countdownRemaining: 0, snapshot: null
+      countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(stale.model).toBe(completed.model);
   });
@@ -626,12 +621,12 @@ describe("Boot application state", () => {
   it("retains Rust pause eligibility in the paused-flight state", () => {
     const model = readyModel(6);
     const synced = updateApp(model, {
-      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: model.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
+      countdownRemaining: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
     });
     expect(synced.model.gameSession).toEqual({
-      kind: "paused-flight", phaseCode: 6, controlLayout: "legacy_three_axis", snapshot: normalizeFlightSnapshot(flightSnapshot), canResume: false, overlay: { kind: "menu" }
+      kind: "paused-flight", phaseCode: 6, controlLayout: "tail_incidence", snapshot: currentFlightDisplayFixture(6), canResume: false, overlay: { kind: "menu" }
     });
   });
 
@@ -642,15 +637,15 @@ describe("Boot application state", () => {
     });
     expect(openedSettings.effects).toEqual([]);
     expect(openedSettings.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: normalizeFlightSnapshot(flightSnapshot) });
+    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: currentFlightDisplayFixture(6) });
 
     const synchronized = updateApp(openedSettings.model, {
-      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: openedSettings.model.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: true, snapshot: flightSnapshot
+      countdownRemaining: 0, canResume: true, display: { kind: "available", value: currentFlightDisplayFixture(6) }
     });
     expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: normalizeFlightSnapshot(flightSnapshot) });
+    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: currentFlightDisplayFixture(6) });
 
     const returned = updateApp(synchronized.model, {
       type: "ui-action", action: { type: "activate", controlId: "game-pause-settings-back" }
@@ -694,9 +689,9 @@ describe("Boot application state", () => {
       gameSession: sessionForTest(6, flightSnapshot, true)
     };
     const refreshed = updateApp(stale, {
-      type: "game-session-synced", phaseCode: 6, controlModeCode: 0,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: stale.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: false, snapshot: flightSnapshot
+      countdownRemaining: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
     }).model;
     const resume = updateApp(refreshed, {
       type: "ui-action",
@@ -710,11 +705,11 @@ describe("Boot application state", () => {
     const setupModel = readyModel(1);
     const requested = updateApp(setupModel, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-assistance-0" } });
     expect(requested.effects).toEqual([{ type: "game-session-operation", operation: { kind: "set-difficulty-option", axis: "assistance", code: 0 }, requestId: 2 }]);
-    const completed = updateApp(requested.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 1, controlModeCode: 2,
+    const completed = updateApp(requested.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 2,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 0 },
       configurationMetadata: null,
-      countdownRemaining: 0, snapshot: null
+      countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(completed.model.controlModeCode).toBe(2);
     expect(completed.model.difficulty.assistanceCode).toBe(0);
@@ -740,39 +735,39 @@ describe("Boot application state", () => {
     const title = readyModel(7);
     const configurationMetadata = {
       presetCode: 4, informationCode: 2, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 4,
-      catalogVersion: 1, scenarioId: 5, scenarioVersion: 1, aircraftModelVersion: 1,
-      environmentVersion: 5, controllerProfileVersion: 4, seedLow: 0, seedHigh: 0
+      catalogVersion: 3, scenarioId: 5, scenarioVersion: 3, aircraftModelVersion: 2,
+      environmentVersion: 5, controllerProfileVersion: 3, seedLow: 0, seedHigh: 0
     };
-    const completed = updateApp(title, {
-      type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
+    const completed = updateApp(title, { canResume: false,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 2, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 4 },
-      configurationMetadata, countdownRemaining: 0, snapshot: null
+      configurationMetadata, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(completed.model.configurationMetadata).toEqual(configurationMetadata);
   });
 
   it("persists and queries one record when the Rust session first enters Result", () => {
     const flight = readyModel(5);
-    const terminal = updateApp(flight, {
-      type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
+    const terminal = updateApp(flight, { canResume: false,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
-      configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(terminal.effects).toEqual([
       { type: "persist-flight-record" },
       { type: "load-flight-analysis", requestId: 1 }
     ]);
     expect(terminal.model.pendingAnalysisRequestId).toBe(1);
-    const duplicate = updateApp(terminal.model, {
-      type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
+    const duplicate = updateApp(terminal.model, { canResume: false,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: terminal.model.difficulty,
-      configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(duplicate.effects).toEqual([]);
   });
 
   it("enters read-only Replay and rejects stale pose responses after seeking", () => {
-    const flightAnalysis = Object.freeze({
+    const flightAnalysis = currentNamedAnalysisFixture({
       samples: Object.freeze([]),
       initialPilotPositionMeters: 0.15,
       summary: Object.freeze({
@@ -796,24 +791,27 @@ describe("Boot application state", () => {
       type: "ui-action", action: { type: "activate", controlId: "game-result-replay" }
     });
     expect(requested.effects).toEqual([{ type: "game-session-operation", operation: "enter-replay", requestId: 2 }]);
-    const entered = updateApp(requested.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 9, controlModeCode: 0,
+    const entered = updateApp(requested.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 9, controlModeCode: 0,
       returnTarget: "result",
-      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.model.gameSession.phaseCode).toBe(9);
     expect(entered.model.resultTab).toBe("analysis");
     expect(entered.effects).toEqual([{
       type: "control-replay-clock", requestId: 1, generation: 1,
       command: { kind: "synchronize", seekTimeSeconds: 0.5 }
-    }]);
-    const synchronized = updateApp(entered.model, {
+    }, { type: "load-flight-analysis", requestId: 1 }]);
+    const replayAnalysis = currentNamedAnalysisFixture({ phase: "replay", initialPilotPositionMeters: 0.15,
+      summary: { durationSeconds: 2, terminal: { reason: "time-limit", disposition: "complete", timeSeconds: 2 } } });
+    const loaded = updateApp(entered.model, { type: "flight-analysis-loaded", requestId: 1, data: replayAnalysis });
+    const synchronized = updateApp(loaded.model, {
       type: "replay-clock-command-completed", requestId: 1, generation: 1,
       state: { timeSeconds: 0.5, rateCode: 1, playing: false }
     });
     expect(synchronized.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 1, timeSeconds: 0.5 },
-      { type: "load-flight-analysis-cursor", requestId: 1, timeSeconds: 0.5 }
+      { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.5 },
+      { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 }
     ]);
     const sought = updateApp(synchronized.model, {
       type: "ui-action", action: { type: "set-range", controlId: "game-replay-cursor", value: 1.25 }
@@ -828,7 +826,7 @@ describe("Boot application state", () => {
       state: { timeSeconds: 1.25, rateCode: 1, playing: false }
     });
     const stale = updateApp(seekCompleted.model, {
-      type: "flight-replay-pose-loaded", requestId: 1,
+      type: "flight-replay-pose-loaded", requestId: 2,
       pose: {
         datumPositionNed: { north: 0, east: 0, down: 0 },
         attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
@@ -836,9 +834,9 @@ describe("Boot application state", () => {
       }
     });
     expect(stale.model.replayPose).toBeNull();
-    expect(stale.model.pendingReplayPoseRequestId).toBe(2);
+    expect(stale.model.pendingReplayPoseRequestId).toBe(3);
     const currentPose = updateApp(seekCompleted.model, {
-      type: "flight-replay-pose-loaded", requestId: 2,
+      type: "flight-replay-pose-loaded", requestId: 3,
       pose: {
         datumPositionNed: { north: 12, east: 3, down: -8 },
         attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
@@ -849,19 +847,20 @@ describe("Boot application state", () => {
       type: "ui-action", action: { type: "activate", controlId: "game-replay-return" }
     });
     expect(leave.effects).toEqual([{ type: "game-session-operation", operation: "leave-replay", requestId: 3 }]);
-    const returned = updateApp(leave.model, {
-      type: "game-operation-completed", requestId: 3, phaseCode: 7, controlModeCode: 0,
-      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    const returned = updateApp(leave.model, { canResume: false,
+      type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
+      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(returned.model.gameSession.phaseCode).toBe(7);
     expect(returned.model.resultTab).toBe("analysis");
     expect(returned.model.analysisCursorTimeSeconds).toBe(1.25);
     expect(returned.model.replayPose).toBeNull();
-    expect(returned.effects).toEqual([]);
+    expect(returned.effects).toEqual([{ type: "load-flight-analysis", requestId: 2 }]);
   });
 
   it("plays the immutable record at selected speed and ignores invalidated clock ticks", () => {
-    const flightAnalysis = Object.freeze({
+    const flightAnalysis = currentNamedAnalysisFixture({
+      phase: "replay",
       samples: Object.freeze([]),
       initialPilotPositionMeters: 0.15,
       summary: Object.freeze({
@@ -943,7 +942,7 @@ describe("Boot application state", () => {
   });
 
   it("stops playback exactly at record end", () => {
-    const flightAnalysis = Object.freeze({
+    const flightAnalysis = currentNamedAnalysisFixture({
       samples: Object.freeze([]), initialPilotPositionMeters: 0,
       summary: Object.freeze({
         sampleCount: 2, durationSeconds: 2, maximumAltitudeMeters: 10,
@@ -1028,10 +1027,10 @@ describe("Boot application state", () => {
     const requested = updateApp(paused, {
       type: "ui-action", action: { type: "activate", controlId: "game-paused-abort" }
     });
-    const completed = updateApp(requested.model, {
-      type: "game-operation-completed", requestId: 2, phaseCode: 7, controlModeCode: 0,
+    const completed = updateApp(requested.model, { canResume: false,
+      type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
-      configurationMetadata: null, countdownRemaining: 0, snapshot: null
+      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(completed.effects).toEqual([
       { type: "persist-flight-record" },
@@ -1041,13 +1040,13 @@ describe("Boot application state", () => {
 
   it("rejects stale Analysis responses after leaving Result", () => {
     const flight = readyModel(5);
-    const terminal = updateApp(flight, {
-      type: "game-session-synced", phaseCode: 7, controlModeCode: 0,
-      difficulty: flight.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    const terminal = updateApp(flight, { canResume: false,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
+      difficulty: flight.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
-    const setup = updateApp(terminal.model, {
-      type: "game-session-synced", phaseCode: 1, controlModeCode: 0,
-      difficulty: terminal.model.difficulty, configurationMetadata: null, countdownRemaining: 0, snapshot: null
+    const setup = updateApp(terminal.model, { canResume: false,
+      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 0,
+      difficulty: terminal.model.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     const stale = updateApp(setup.model, {
       type: "flight-analysis-failed", requestId: 1, message: "stale"
@@ -1057,11 +1056,12 @@ describe("Boot application state", () => {
   });
 
   it("stores phase-specific payloads in exclusive states", () => {
-    const setup = gameSessionState(1, 7, flightSnapshot);
+    const setup = gameSessionState(1, 7, null);
+    expect(gameSessionState(1, 7, flightSnapshot)).toBeNull();
     const countdown = gameSessionState(4, 3, null);
 
-    expect(setup).toEqual({ kind: "setup", phaseCode: 1, controlLayout: "legacy_three_axis" });
-    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, controlLayout: "legacy_three_axis", countdownRemaining: 3 });
+    expect(setup).toEqual({ kind: "setup", phaseCode: 1, controlLayout: "tail_incidence" });
+    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, controlLayout: "tail_incidence", countdownRemaining: 3 });
     expect(gameSessionState(4, -1, null)).toBeNull();
     expect(gameSessionState(5, 0, null)).toBeNull();
     expect(gameSessionState(11, 0, null)).toBeNull();
@@ -1069,16 +1069,16 @@ describe("Boot application state", () => {
 
   it("clears a matching request when the Rust session snapshot is malformed", () => {
     const model = { ...readyModel(), pendingGameRequestId: 4 };
-    const transition = updateApp(model, {
+    const transition = updateApp(model, { canResume: false,
       type: "game-operation-completed",
       requestId: 4,
-      phaseCode: 5,
+      controlLayout: "tail_incidence", phaseCode: 5,
       controlModeCode: 0,
       difficulty: model.difficulty,
       configurationMetadata: null,
       countdownRemaining: 0,
-      snapshot: null
-    });
+      display: { kind: "unavailable", reason: "menu_phase" }
+    } as unknown as AppMessage);
 
     expect(transition.model.pendingGameRequestId).toBeNull();
     expect(transition.model.status).toContain("不正な状態snapshot");
@@ -1094,12 +1094,12 @@ describe("Boot application state", () => {
       requestId: requested.model.pendingGameRequestId as number,
       message: "InvalidTransition",
       currentSession: {
-        phaseCode: 1,
+        controlLayout: "tail_incidence", phaseCode: 1,
         controlModeCode: 0,
         difficulty: requested.model.difficulty,
         configurationMetadata: null,
         countdownRemaining: 0,
-        snapshot: null,
+        display: { kind: "unavailable", reason: "menu_phase" },
         canResume: false
       }
     });
@@ -1118,7 +1118,7 @@ describe("Boot application state", () => {
   });
 
   it("preserves Result analysis and allows Retry again after a record allocation failure", () => {
-    const analysis = Object.freeze({
+    const analysis = currentNamedAnalysisFixture({
       samples: Object.freeze([]), initialPilotPositionMeters: 0,
       summary: Object.freeze({
         sampleCount: 2, durationSeconds: 2, maximumAltitudeMeters: 10,
@@ -1138,18 +1138,18 @@ describe("Boot application state", () => {
       requestId: requested.model.pendingGameRequestId as number,
       message: "Record(AllocationFailed)",
       currentSession: {
-        phaseCode: 7,
+        controlLayout: "tail_incidence", phaseCode: 7,
         controlModeCode: 0,
         difficulty: requested.model.difficulty,
         configurationMetadata: null,
         countdownRemaining: 0,
-        snapshot: terminalFlightSnapshot,
+        display: { kind: "available", value: terminalFlightSnapshot },
         canResume: false
       }
     });
 
-    expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, controlLayout: "legacy_three_axis",
-      display: { kind: "available", value: normalizeFlightSnapshot(terminalFlightSnapshot) } });
+    expect(rejected.model.gameSession).toEqual({ kind: "result", phaseCode: 7, controlLayout: "tail_incidence",
+      display: { kind: "available", value: terminalFlightSnapshot } });
     expect(rejected.model.flightAnalysis).toBe(analysis);
     expect(rejected.model.resultTab).toBe("analysis");
     expect(rejected.model.analysisCursorTimeSeconds).toBe(1);
@@ -1466,8 +1466,9 @@ function readyModel(phaseCode = 0): AppModel {
   return { ...ready.model, gameSession: sessionForTest(phaseCode, snapshot) };
 }
 
-function sessionForTest(phaseCode: number, snapshot: FlightSnapshot | null = null, canResume = false): GameSessionUiState {
-  const session = gameSessionState(phaseCode, 0, snapshot, canResume, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
+function sessionForTest(phaseCode: number, snapshot: FlightDisplaySnapshot | null = null, canResume = false): GameSessionUiState {
+  const projected = phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 7 ? snapshot : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null;
+  const session = gameSessionState(phaseCode, 0, projected, canResume, null, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
 }

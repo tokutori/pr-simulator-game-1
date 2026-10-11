@@ -62,9 +62,11 @@ export function drawVrFlightInstruments(context: PanelDrawingContext, model: Fli
     drawInstrumentCard(context, 532, 174, 450, 102, "HDG");
     drawHeadingTape(context, model.headingDegrees, 548, 209, 418, 54);
   }
-  if (model.pilotPositionRatio !== null) {
-    drawInstrumentCard(context, 532, 290, 450, 88, "PILOT CG · FORWARD / AFT");
-    drawPilotPosition(context, model.pilotPositionRatio, 555, 337, 402);
+  if (model.pilotPosition !== null) {
+    drawInstrumentCard(context, 532, 290, 450, 88, "PILOT POSITION");
+    context.setFillStyle("#f3f4e8");
+    context.setFont("500 22px system-ui, sans-serif");
+    context.fillText(model.pilotPosition, 555, 337, 402);
   }
   if (model.windDirectionDegrees !== null && model.wind !== null) {
     drawInstrumentCard(context, 532, 392, 214, 132, "WIND VECTOR");
@@ -205,21 +207,6 @@ function drawHeadingTape(context: PanelDrawingContext, headingDegrees: number, x
   }
   context.setFillStyle("#ffd45c");
   context.fillRect(centerX - 2, y + 32, 4, height - 30);
-}
-
-function drawPilotPosition(context: PanelDrawingContext, ratio: number, x: number, y: number, width: number): void {
-  drawCanvasLine(context, x, y, x + width, y, "#b9c9c2", 3);
-  for (let index = 0; index <= 8; index += 1) {
-    const tickX = x + width * index / 8;
-    drawCanvasLine(context, tickX, y - 9, tickX, y + 9, "#b9c9c2", 1);
-  }
-  const indicatorX = x + (Math.max(-1, Math.min(1, ratio)) + 1) * width / 2;
-  context.setFillStyle("#ffd45c");
-  context.fillRect(indicatorX - 5, y - 17, 10, 18);
-  context.setFillStyle("#f3f4e8");
-  context.setFont("500 17px system-ui, sans-serif");
-  context.fillText("AFT", x, y + 27, 40);
-  context.fillText("FWD", x + width - 40, y + 27, 40);
 }
 
 function drawWindVector(context: PanelDrawingContext, directionDegrees: number, centerX: number, centerY: number, radius: number): void {

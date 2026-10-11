@@ -20,7 +20,7 @@ export function readRuntimeSessionProjection(session: TailAppSessionFacade): Tai
       if (display.kind !== "tail_record") throw new RangeError("Attract requires its two-tail demonstration record");
       projection = Object.freeze({ ...common, phaseCode: 10, display: Object.freeze({ kind: "available", value: display }) });
     } else {
-      if (display.kind !== "tail_record" && display.kind !== "legacy_record") throw new RangeError("Replay requires a recorded display");
+      if (display.kind !== "tail_record") throw new RangeError("Replay requires a recorded display");
       projection = Object.freeze({ ...common, phaseCode: 9, returnTarget: session.readReplayReturnTarget(), display: Object.freeze({ kind: "available", value: display }) });
     }
   }

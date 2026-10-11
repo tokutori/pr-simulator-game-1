@@ -5,7 +5,7 @@ import type { AppMessage, AppModel, PresentationUiState } from "../../web/src/ap
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { screenUiVisible } from "../../web/src/app/presentation-visibility.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
+import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 
@@ -172,14 +172,13 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     const app = await harness(5);
     const nodes = Array.from(app.hudRoot.childNodes);
     app.send({ type: "page-suspended" });
-    const values = snapshotValues();
-    values[0] = 20;
-    values[20] = 7;
-    values[31] = 1;
+    const base = currentFlightDisplayFixture();
+    const snapshot = { ...base, stamp: { ...base.stamp, tick: 20, timeSeconds: 0.2 },
+      telemetry: { kind: "available" as const, value: { ...base.telemetry.value, altitudeMeters: 7 } } };
     app.send({
       type: "game-session-synced", phaseCode: 5, controlModeCode: 0,
       difficulty: app.model().difficulty, configurationMetadata: null,
-      countdownRemaining: 0, snapshot: parseFlightSnapshot(values), canResume: false
+      countdownRemaining: 0, display: { kind: "available", value: snapshot }, canResume: false, controlLayout: "tail_incidence"
     });
     expect(app.hudRoot.hidden).toBe(true);
     expect(app.renderedTicks.at(-1)).toBe(20);
@@ -198,7 +197,7 @@ function readyModel(phaseCode: number): AppModel {
     type: "presentation-initialized", requestId: 1, activeMode: "screen",
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? parseFlightSnapshot(snapshotValues()) : null, true, null, "legacy_three_axis", phaseCode === 9 ? "result" : undefined);
+  const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null, true, null, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (gameSession === null) throw new Error("Invalid game phase fixture");
   return { ...ready, gameSession };
 }
@@ -209,12 +208,6 @@ function completeScreenRecovery(app: { model(): AppModel; send(message: AppMessa
   app.send({ type: "backend-transition-completed", requestId: pending.requestId, requestedMode: "screen", activeMode: "screen", ok: true, message: "", successStatus: "Screen" });
 }
 
-function snapshotValues(): number[] {
-  const values = new Array<number>(33).fill(0);
-  values[7] = 1;
-  values[19] = -1;
-  return values;
-}
 
 function required(root: HTMLElement, selector: string): HTMLElement {
   const element = root.querySelector<HTMLElement>(selector);

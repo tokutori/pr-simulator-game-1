@@ -1,14 +1,14 @@
 import { PerspectiveCamera, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
-import shoreline from "../../../../../assets/biwa-shoreline.json";
-import terrain from "../../../../../assets/biwa-terrain.json";
-import { cinematicCameraView } from "../../camera/cinematic-camera.js";
-import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
-import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../contracts/math.js";
-import type { FlightRenderPose } from "../../contracts/runtime.js";
-import { venueMapForScenario } from "../../../game/biwa-venue-map.js";
-import { flightRelativePose } from "./flight-pose.js";
-import type { FlightCameraMode } from "../../contracts/runtime.js";
+import shoreline from "../../assets/biwa-shoreline.json";
+import terrain from "../../assets/biwa-terrain.json";
+import { cinematicCameraView } from "../../web/src/render/camera/cinematic-camera.js";
+import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/render/camera/pilot-eye-point.js";
+import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../web/src/render/contracts/math.js";
+import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
+import { currentVenueMapFixture } from "./current-venue-fixture.js";
+import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
+import type { FlightCameraMode } from "../../web/src/render/contracts/runtime.js";
 
 interface Grid {
   readonly columns: number;
@@ -52,8 +52,9 @@ function projectedHorizontal(point: WorldPoint, camera: PerspectiveCamera): numb
 }
 
 function cameraForVenueView(mode: "platform" | "shore" | "telephoto"): PerspectiveCamera {
-  const venue = venueMapForScenario(1);
-  if (venue === null) throw new TypeError("Missing Lake Biwa venue map");
+  const projection = currentVenueMapFixture();
+  if (projection.kind !== "available") throw new TypeError("Missing Lake Biwa venue map");
+  const venue = projection.value;
   const flight = {
     datumPositionNed: { north: 0, east: 0, down: -10 },
     attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },

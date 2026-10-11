@@ -3,17 +3,35 @@ import venueFeatures from "../../../assets/biwa-venue-features.json";
 import registeredEnvironment from "../../../assets/biwa-typical-july-environment-v6.json";
 import type { FixedCameraPoint, FixedCameraPointId } from "../render/contracts/camera.js";
 import { LAUNCH_PLATFORM } from "../render/contracts/launch-venue.js";
-import type { SyntheticMapLandmark, SyntheticMapLine } from "./synthetic-venue-map.js";
 import type { DisplayAvailability } from "./flight-display-snapshot.js";
 import type { RuntimeEnvironmentProjection } from "./runtime-environment.js";
+
+export interface VenueMapPoint {
+  readonly northMeters: number;
+  readonly eastMeters: number;
+}
+
+export interface VenueMapLine {
+  readonly id: string;
+  readonly label: string;
+  readonly color: string;
+  readonly points: readonly VenueMapPoint[];
+}
+
+export interface VenueMapLandmark {
+  readonly id: string;
+  readonly label: string;
+  readonly color: string;
+  readonly point: VenueMapPoint;
+}
 
 export interface VenueMapDescriptor {
   readonly assetId: string;
   readonly version: number;
   readonly origin: string;
   readonly sourceNote: string;
-  readonly lines: readonly SyntheticMapLine[];
-  readonly landmarks: readonly SyntheticMapLandmark[];
+  readonly lines: readonly VenueMapLine[];
+  readonly landmarks: readonly VenueMapLandmark[];
   readonly cameraPoints: readonly FixedCameraPoint[];
   readonly cameraPointsSha256: string;
 }
@@ -34,14 +52,14 @@ const launchCorners = [
   eastMeters: along * forwardEast + across * LAUNCH_PLATFORM.widthMeters / 2 * rightEast
 }));
 
-const launchLine: SyntheticMapLine = Object.freeze({
+const launchLine: VenueMapLine = Object.freeze({
   id: "launch-platform",
   label: "発進台",
   color: "#e7c27b",
   points: Object.freeze(launchCorners)
 });
 
-const shorelineLines: SyntheticMapLine[] = analysisMap.shorelinesNorthEastMeters.map((line, index) => Object.freeze({
+const shorelineLines: VenueMapLine[] = analysisMap.shorelinesNorthEastMeters.map((line, index) => Object.freeze({
   id: `hikone-shoreline-${String(index + 1)}`,
   label: index === 0 ? "彦根 湖岸線（OSM）" : "彦根 湖岸線（OSM・続き）",
   color: "#77b6c8",
@@ -53,7 +71,7 @@ const shorelineLines: SyntheticMapLine[] = analysisMap.shorelinesNorthEastMeters
   }))
 }));
 
-const venueFeatureLines: SyntheticMapLine[] = venueFeatures.features
+const venueFeatureLines: VenueMapLine[] = venueFeatures.features
   .filter((feature) => feature.kind === "pier" || feature.kind === "quay" || feature.kind === "breakwater" ||
     (feature.kind === "beach" && feature.name === "松原水泳場"))
   .map((feature) => Object.freeze({
@@ -106,10 +124,6 @@ const BIWA_VENUE_MAP: VenueMapDescriptor = Object.freeze({
   cameraPoints,
   cameraPointsSha256: analysisMap.cameraPointsSha256
 });
-
-export function venueMapForScenario(scenarioId: number): VenueMapDescriptor | null {
-  return Number.isInteger(scenarioId) && scenarioId >= 1 && scenarioId <= 5 ? BIWA_VENUE_MAP : null;
-}
 
 export type VenueMapProjection = DisplayAvailability<VenueMapDescriptor, "not_requested" | "environment_unavailable" | "origin_not_recorded" | "unregistered_origin">;
 export const NO_VENUE_MAP: VenueMapProjection = Object.freeze({ kind: "unavailable", reason: "not_requested" });

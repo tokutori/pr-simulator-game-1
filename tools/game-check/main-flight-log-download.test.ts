@@ -14,7 +14,7 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/app/session-factory.js");
 });
 
-async function fixture(archive: false | "tail" | "legacy" = false) {
+async function fixture(archive = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
@@ -58,21 +58,7 @@ async function fixture(archive: false | "tail" | "legacy" = false) {
   session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
     desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
   session.abort();
-  let original = ` \n${session.export_flight_record_json()}\n `;
-  if (archive === "legacy") {
-    const legacy = new wasm.GameSessionBridge(0);
-    try {
-      legacy.open_setup();
-      legacy.prepare();
-      legacy.mark_briefing_ready();
-      legacy.start_countdown(1);
-      legacy.advance_countdown();
-      legacy.launch();
-      legacy.advance_tick(0, 0, 0, 0);
-      legacy.abort();
-      original = ` \n${legacy.export_flight_record_json()}\n `;
-    } finally { legacy.free(); }
-  }
+  const original = ` \n${session.export_flight_record_json()}\n `;
   if (archive) {
     session.return_to_title();
     session.open_archived_flight_record(original);
@@ -131,8 +117,8 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(trial.free).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["tail", "legacy"] as const)("preserves the selected %s archive original JSON and playback clock during Analysis export", async (layout) => {
-    const trial = await fixture(layout);
+  it("preserves the current archive original JSON and playback clock during Analysis export", async () => {
+    const trial = await fixture(true);
     trial.button("game-replay-view-mode").click();
     trial.button("game-replay-view-mode").click();
     const clock = trial.session.playback_clock_state();

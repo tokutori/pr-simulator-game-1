@@ -1,91 +1,63 @@
-import { projectLegacyFlightSnapshot, projectTailFlightSnapshot } from "../game/flight-display-snapshot.js";
+import { projectTailFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import type { FlightSnapshot } from "../game/flight-snapshot.js";
 import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { ConfigurationMetadataUiState, DifficultyUiState, GameSessionProjection, TailGameSessionProjection } from "./app-state.js";
 import type { SessionLifecycleProjection } from "./session-facade.js";
 
-export type SessionControlLayout = "legacy_three_axis" | "tail_incidence";
-export type FlightSnapshotInput = FlightSnapshot | FlightDisplaySnapshot;
-type LegacyLiveSnapshot = Extract<FlightDisplaySnapshot, { kind: "legacy_live" }>;
-type LegacyTerminalSnapshot = LegacyLiveSnapshot & Readonly<{ terminal: Exclude<FlightSnapshot["terminal"], "airborne"> }>;
-export type LiveSessionSnapshot<Phase extends 5 | 6 = 5 | 6> = (LegacyLiveSnapshot & Readonly<{ terminal: "airborne" }>)
-  | (Extract<FlightDisplaySnapshot, { kind: "tail_flight" }> & Readonly<{ phaseCode: Phase }>);
+export type SessionControlLayout = "tail_incidence";
+export type FlightSnapshotInput = FlightDisplaySnapshot;
+export type LiveSessionSnapshot<Phase extends 5 | 6 = 5 | 6> =
+  Extract<FlightDisplaySnapshot, { kind: "tail_flight" }> & Readonly<{ phaseCode: Phase }>;
 export type LiveSessionProjection<Phase extends 5 | 6> =
-  | Readonly<{ controlLayout: "legacy_three_axis"; snapshot: Extract<LiveSessionSnapshot<Phase>, { kind: "legacy_live" }> }>
-  | Readonly<{ controlLayout: "tail_incidence"; snapshot: Extract<LiveSessionSnapshot<Phase>, { kind: "tail_flight" }> }>;
+  Readonly<{ controlLayout: "tail_incidence"; snapshot: LiveSessionSnapshot<Phase> }>;
+
 declare const terminalRecordStamp: unique symbol;
-type TerminalRecordSnapshot = Extract<FlightDisplaySnapshot, { kind: "legacy_record" | "tail_record" }>
+type TerminalRecordSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_record" }>
   & Readonly<{ [terminalRecordStamp]: true }>;
-export type TerminalSessionSnapshot = LegacyTerminalSnapshot | Extract<FlightDisplaySnapshot, { kind: "tail_result" }> | TerminalRecordSnapshot;
-export type PlaybackSessionSnapshot = LegacyTerminalSnapshot | Extract<FlightDisplaySnapshot, { kind: "legacy_record" | "tail_record" }>;
+export type TerminalSessionSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_result" }> | TerminalRecordSnapshot;
+export type PlaybackSessionSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_record" }>;
 export type RecordDisplay<Value> = DisplayAvailability<Value, "record_not_loaded">;
 export type TerminalSessionProjection =
-  | Readonly<{ controlLayout: "legacy_three_axis"; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "legacy_live" | "legacy_record" }>> }>
-  | Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>;
+  Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<TerminalSessionSnapshot> }>;
 export type AttractSessionProjection =
-  | Readonly<{ controlLayout: "legacy_three_axis"; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "legacy_live" | "legacy_record" }>> }>
-  | Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>;
+  Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<PlaybackSessionSnapshot> }>;
 
-export function normalizeFlightSnapshot(snapshot: FlightSnapshotInput): FlightDisplaySnapshot {
-  return "kind" in snapshot ? snapshot : projectLegacyFlightSnapshot(snapshot);
+export function isLiveSessionSnapshot<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase): snapshot is LiveSessionSnapshot<Phase> {
+  return snapshot.kind === "tail_flight" && snapshot.phaseCode === phaseCode;
 }
 
-export function isLiveSessionSnapshot<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase, layout: SessionControlLayout): snapshot is LiveSessionSnapshot<Phase> {
-  return snapshot.kind === "legacy_live" ? layout === "legacy_three_axis" && snapshot.terminal === "airborne"
-    : snapshot.kind === "tail_flight" && layout === "tail_incidence" && snapshot.phaseCode === phaseCode;
+export function isRetainedLiveSnapshot(snapshot: FlightDisplaySnapshot): snapshot is LiveSessionSnapshot {
+  return isLiveSessionSnapshot(snapshot, 5) || isLiveSessionSnapshot(snapshot, 6);
 }
 
-export function isRetainedLiveSnapshot(snapshot: FlightDisplaySnapshot, layout: SessionControlLayout): snapshot is LiveSessionSnapshot {
-  return isLiveSessionSnapshot(snapshot, 5, layout) || isLiveSessionSnapshot(snapshot, 6, layout);
+export function liveSessionProjection<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase): LiveSessionProjection<Phase> | null {
+  return isLiveSessionSnapshot(snapshot, phaseCode) ? { controlLayout: "tail_incidence", snapshot } : null;
 }
 
-export function liveSessionProjection<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase,
-  layout: SessionControlLayout): LiveSessionProjection<Phase> | null {
-  if (!isLiveSessionSnapshot(snapshot, phaseCode, layout)) return null;
-  return snapshot.kind === "legacy_live" ? { controlLayout: "legacy_three_axis", snapshot }
-    : { controlLayout: "tail_incidence", snapshot };
-}
-
-export function isTerminalSessionSnapshot(snapshot: FlightDisplaySnapshot, layout: SessionControlLayout): snapshot is TerminalSessionSnapshot {
-  if (snapshot.kind === "legacy_live") return layout === "legacy_three_axis" && snapshot.terminal !== "airborne";
-  if (snapshot.controls.layout !== layout) return false;
-  return (snapshot.kind === "tail_result" || snapshot.kind === "legacy_record" || snapshot.kind === "tail_record")
+export function isTerminalSessionSnapshot(snapshot: FlightDisplaySnapshot): snapshot is TerminalSessionSnapshot {
+  return (snapshot.kind === "tail_result" || snapshot.kind === "tail_record")
     && snapshot.stamp.tick === snapshot.finalization.terminalTick
     && snapshot.stamp.fraction === snapshot.finalization.terminalFraction;
 }
 
-export function terminalSessionProjection(snapshot: FlightDisplaySnapshot | null, layout: SessionControlLayout): TerminalSessionProjection | null {
-  if (snapshot === null) {
-    const display = Object.freeze({ kind: "unavailable" as const, reason: "record_not_loaded" as const });
-    return layout === "legacy_three_axis" ? { controlLayout: layout, display } : { controlLayout: layout, display };
-  }
-  if (!isTerminalSessionSnapshot(snapshot, layout)) return null;
-  return snapshot.kind === "legacy_live" || snapshot.kind === "legacy_record"
-    ? { controlLayout: "legacy_three_axis", display: Object.freeze({ kind: "available", value: snapshot }) }
-    : { controlLayout: "tail_incidence", display: Object.freeze({ kind: "available", value: snapshot }) };
+export function terminalSessionProjection(snapshot: FlightDisplaySnapshot | null): TerminalSessionProjection | null {
+  if (snapshot === null) return { controlLayout: "tail_incidence", display: Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) };
+  return isTerminalSessionSnapshot(snapshot)
+    ? { controlLayout: "tail_incidence", display: Object.freeze({ kind: "available", value: snapshot }) } : null;
 }
 
 export function isPlaybackSessionSnapshot(snapshot: FlightDisplaySnapshot): snapshot is PlaybackSessionSnapshot {
-  return snapshot.kind === "legacy_record" || snapshot.kind === "tail_record"
-    || (snapshot.kind === "legacy_live" && snapshot.terminal !== "airborne");
+  return snapshot.kind === "tail_record";
 }
 
-export function attractSessionProjection(snapshot: FlightDisplaySnapshot | null, layout: SessionControlLayout): AttractSessionProjection | null {
-  if (snapshot === null) {
-    const display = Object.freeze({ kind: "unavailable" as const, reason: "record_not_loaded" as const });
-    return layout === "legacy_three_axis" ? { controlLayout: layout, display } : { controlLayout: layout, display };
-  }
-  if (!isPlaybackSessionSnapshot(snapshot)) return null;
-  if (layout === "legacy_three_axis" && (snapshot.kind === "legacy_live" || snapshot.kind === "legacy_record")) {
-    return { controlLayout: layout, display: Object.freeze({ kind: "available", value: snapshot }) };
-  }
-  return layout === "tail_incidence" && snapshot.kind === "tail_record"
-    ? { controlLayout: layout, display: Object.freeze({ kind: "available", value: snapshot }) } : null;
+export function attractSessionProjection(snapshot: FlightDisplaySnapshot | null): AttractSessionProjection | null {
+  if (snapshot === null) return { controlLayout: "tail_incidence", display: Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) };
+  return isPlaybackSessionSnapshot(snapshot)
+    ? { controlLayout: "tail_incidence", display: Object.freeze({ kind: "available", value: snapshot }) } : null;
 }
 
-export function projectionSnapshot(projection: GameSessionProjection): FlightSnapshotInput | null {
-  return "display" in projection ? projection.display.kind === "available" ? projection.display.value : null : projection.snapshot;
+export function projectionSnapshot(projection: GameSessionProjection): FlightDisplaySnapshot | null {
+  return projection.display.kind === "available" ? projection.display.value : null;
 }
 
 export function projectTailGameSession(snapshot: TailSessionSnapshot, lifecycle: SessionLifecycleProjection,

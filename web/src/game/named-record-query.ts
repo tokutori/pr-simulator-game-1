@@ -1,5 +1,5 @@
 import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
-import { decodeRecordedDistanceScore, decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
+import { decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
 import type { TailControlIdentity, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
 import type { PhysicalFlightControls } from "../render/contracts/flight-controls.js";
 
@@ -23,11 +23,8 @@ export interface NamedRecordSample {
   readonly state: NamedRecordState;
   readonly controls: RecordedPhysicalControls;
 }
-export type LegacyTerminalFinalization = Omit<TailTerminalFinalization, "failure">;
-export type RecordQueryContext =
-  | Readonly<{ controlLayout: "legacy_three_axis"; finalization: LegacyTerminalFinalization }>
-  | Readonly<{ controlLayout: "tail_incidence"; scenario: TailScenarioIdentity;
-      controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
+export type RecordQueryContext = Readonly<{ controlLayout: "tail_incidence"; scenario: TailScenarioIdentity;
+  controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 interface RecordedDifficultyAxes {
   readonly preset: "beginner" | "standard" | "expert" | "realistic" | "custom";
   readonly assistance: "strong" | "assisted" | "light" | "manual";
@@ -50,10 +47,8 @@ interface PlaybackEnvelope {
   readonly scenario: TailScenarioIdentity;
   readonly difficulty: RecordedDifficulty;
 }
-export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay" }> & (
-  | Readonly<{ controlLayout: "legacy_three_axis"; controlIdentity: null; finalization: LegacyTerminalFinalization }>
-  | Readonly<{ controlLayout: "tail_incidence"; controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>
-);
+export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay"; controlLayout: "tail_incidence";
+  controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 export type NamedAttractContext = PlaybackEnvelope & Readonly<{ phase: "attract"; controlLayout: "tail_incidence";
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 export type NamedPlaybackContext = NamedReplayContext | NamedAttractContext;
@@ -95,16 +90,12 @@ export function decodeNamedRecordContext(value: unknown): NamedRecordContext {
   const document = boundaryObject(value, ["schema_version", "phase", "scenario", "control_layout", "control_identity", "difficulty", "finalization"]);
   if (document.schema_version !== 2) throw new RangeError("Unsupported named playback context schema");
   const phase = boundaryTag(document.phase, ["result", "replay", "attract"]);
-  const layout = boundaryTag(document.control_layout, ["legacy_three_axis", "tail_incidence"]);
+  const layout = boundaryTag(document.control_layout, ["tail_incidence"]);
   const finalization = boundaryObject(document.finalization, ["layout", "value"]);
   if (finalization.layout !== layout) throw new RangeError("Playback finalization and physical control layout disagree");
   const envelope: PlaybackEnvelope = { schemaVersion: 2, scenario: decodeTailScenarioIdentity(document.scenario),
     difficulty: decodeRecordedDifficulty(document.difficulty) };
-  if (layout === "legacy_three_axis") {
-    if (phase !== "replay") throw new RangeError("Legacy named records require the archived Replay phase");
-    if (document.control_identity !== null) throw new RangeError("Legacy Replay cannot declare a two-tail controller identity");
-    return Object.freeze({ ...envelope, phase, controlLayout: layout, controlIdentity: null, finalization: decodeLegacyFinalization(finalization.value) });
-  }
+
   return Object.freeze({ ...envelope, phase, controlLayout: layout, controlIdentity: decodeTailControlIdentity(document.control_identity),
     finalization: decodeTailTerminalFinalization(finalization.value) });
 }
@@ -126,7 +117,8 @@ export function parseNamedAnalysisSamples(json: string, physicsHz: number, conte
   for (let index = 1; index < samples.length; index += 1) {
     const previous = samples[index - 1];
     const current = samples[index];
-    if (previous === undefined || current === undefined || current.timeSeconds <= previous.timeSeconds) {
+    if (previous === undefined || current === undefined || current.timeSeconds < previous.timeSeconds
+        || !namedRecordStampPrecedes(previous, current)) {
       throw new RangeError("Named Analysis samples must be strictly chronological");
     }
     const contiguous = current.fraction === 0 ? previous.fraction === 0 && current.tickIndex === previous.tickIndex + 1
@@ -134,6 +126,14 @@ export function parseNamedAnalysisSamples(json: string, physicsHz: number, conte
     if (!contiguous) throw new RangeError("Named Analysis must retain every saved integer tick and its optional terminal fraction");
   }
   return Object.freeze(samples);
+}
+
+export function namedRecordStampPrecedes(previous: NamedRecordSample, current: NamedRecordSample): boolean {
+  const previousTick = previous.tickIndex + (previous.fraction === 1 ? 1 : 0);
+  const currentTick = current.tickIndex + (current.fraction === 1 ? 1 : 0);
+  const previousFraction = previous.fraction === 1 ? 0 : previous.fraction;
+  const currentFraction = current.fraction === 1 ? 0 : current.fraction;
+  return currentTick > previousTick || (currentTick === previousTick && currentFraction > previousFraction);
 }
 
 export function parseNamedReplayClock(values: ArrayLike<number>, physicsHz: number, context: NamedReplayContext): NamedReplayClock {
@@ -158,17 +158,13 @@ function decodeNamedRecordSample(value: unknown, physicsHz: number, context: Rec
   const timeSeconds = boundaryNumber(sample.flight_time_s, 0, terminalTime(physicsHz, context));
   if (Math.abs(timeSeconds - (tickIndex + fraction) / physicsHz) > 1e-10) throw new RangeError("Record query time disagrees with its exact stamp");
   const controls = decodePhysicalControls(sample.controls);
-  if (controls.layout !== context.controlLayout) throw new RangeError("Record query controls belong to another layout");
   return Object.freeze({ schemaVersion: 2, tickIndex, fraction, timeSeconds, state: decodeSavedState(sample.state), controls });
 }
 
 function decodePhysicalControls(value: unknown): RecordedPhysicalControls {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RangeError("Record query requires physical controls");
-  const layout = boundaryTag((value as Record<string, unknown>).layout, ["legacy_three_axis", "tail_incidence"]);
-  if (layout === "legacy_three_axis") {
-    const controls = boundaryObject(value, ["layout", "roll_rad", "pitch_rad", "yaw_rad"]);
-    return Object.freeze({ layout, rollRadians: boundaryNumber(controls.roll_rad), pitchRadians: boundaryNumber(controls.pitch_rad), yawRadians: boundaryNumber(controls.yaw_rad) });
-  }
+  const layout = boundaryTag((value as Record<string, unknown>).layout, ["tail_incidence"]);
+
   const controls = boundaryObject(value, ["layout", "physical_incidence"]);
   return Object.freeze({ layout, physicalIncidence: decodeTailPhysicalIncidence(controls.physical_incidence) });
 }
@@ -207,16 +203,6 @@ function decodeRecordedDifficulty(value: unknown): RecordedDifficulty {
   const boolean = (value: unknown) => { if (typeof value !== "boolean") throw new RangeError("Saved HUD cues must be boolean"); return value; };
   return Object.freeze({ ...axes, information, hudProfile: Object.freeze({ telemetry: boolean(profile.telemetry), attitude: boolean(profile.attitude),
     wind: boolean(profile.wind), flightPath: boolean(profile.flight_path), angleOfAttack: boolean(profile.angle_of_attack), warnings: boolean(profile.warnings) }) });
-}
-
-function decodeLegacyFinalization(value: unknown): LegacyTerminalFinalization {
-  const terminal = boundaryObject(value, ["reason", "disposition", "terminal_tick", "terminal_fraction", "score_m"]);
-  const reason = boundaryTag(terminal.reason, ["water_contact", "time_limit", "manual_abort", "out_of_valid_envelope", "fatal_simulation_error"]);
-  const disposition = boundaryTag(terminal.disposition, ["complete", "interrupted", "failed"]);
-  const expected = reason === "water_contact" || reason === "time_limit" ? "complete" : reason === "manual_abort" ? "interrupted" : "failed";
-  if (disposition !== expected) throw new RangeError("Legacy finalization reason and disposition disagree");
-  return Object.freeze({ reason, disposition, terminalTick: boundaryInteger(terminal.terminal_tick), terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1),
-    scoreMeters: terminal.score_m === null ? null : decodeRecordedDistanceScore(terminal.score_m) });
 }
 
 function terminalTime(physicsHz: number, context: RecordQueryContext): number {

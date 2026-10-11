@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel } from "../../web/src/app/app-state.js";
-import { parseFlightSnapshot } from "../../web/src/game/flight-snapshot.js";
-import { createFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
+import { createFlightDisplayHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
@@ -74,21 +74,20 @@ class RecordingHeadContext implements HeadHudDrawingContext {
 }
 
 function flightView(aspect = 1280 / 720): Extract<HeadHudView, { kind: "visible" }> {
-  const values = new Array<number>(33).fill(0);
-  values[4] = 8;
-  values[7] = 1;
-  values[19] = -1;
-  values[20] = 12;
-  values[21] = 8;
-  values[22] = 9;
-  values[23] = 2;
-  values[24] = -1;
-  values[31] = 1;
+  const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 2, east: -1, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
   const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
   camera.updateMatrixWorld(true);
   const stereo = new StereoCamera();
   stereo.aspect = 0.5;
-  const model = createFlightHudModel(parseFlightSnapshot(values), 4, createInitialAppModel().difficulty.hudProfile);
+  const model = createFlightDisplayHudModel(valuesSnapshot, 4, createInitialAppModel().difficulty.hudProfile);
   const view = createHeadHudView(model, captureConfiguredViewerFrame(camera, stereo), "ja");
   if (view.kind !== "visible") throw new Error("Expected visible fixture");
   return view;
@@ -134,14 +133,20 @@ describe("Head HUD Canvas preflight and painting", () => {
   });
 
   it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 4].map((code) => ({ aspect, code }))))("fits all cues with envelope warning and long values for Information $code at aspect $aspect", ({ aspect, code }) => {
-    const values = new Array<number>(33).fill(0);
-    values[4] = 8; values[7] = 1; values[16] = 3; values[17] = 1234.5; values[19] = -1;
-    values[20] = 123.4; values[21] = 12.3; values[22] = 23.4; values[23] = -12.3;
-    values[24] = 5.6; values[25] = -8.9; values[31] = 1; values[32] = 123.4;
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(7),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 123.4 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 123.4, airspeedMetersPerSecond: 12.3, groundspeedMetersPerSecond: 23.4,
+      windVelocityNedMetersPerSecond: { north: -12.3, east: 5.6, down: -8.9 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } },
+    finalization: { reason: "out_of_valid_envelope" as const, disposition: "failed" as const, terminalTick: 0, terminalFraction: 0, scoreMeters: [1234.5, 0, 1234.5] as const, failure: null }
+  };
     const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
     const stereo = new StereoCamera(); stereo.aspect = 0.5;
     const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const model = createFlightHudModel(parseFlightSnapshot(values), code as 0 | 4, createInitialAppModel().difficulty.hudProfile);
+    const model = createFlightDisplayHudModel(valuesSnapshot, code as 0 | 4, createInitialAppModel().difficulty.hudProfile);
     const view = createHeadHudView(model, viewer, "ja");
     if (view.kind !== "visible") throw new Error("Missing warning-and-long-values layout");
     expect(view.layer.elements.some((element) => element.id === "head-warning")).toBe(true);
@@ -149,14 +154,21 @@ describe("Head HUD Canvas preflight and painting", () => {
     expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
   });
   it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 1, 2, 3, 4].map((code) => ({ aspect, code }))))("fits Information $code with nominal Menu and measured ink at aspect $aspect", ({ aspect, code }) => {
-    const values = new Array<number>(33).fill(0); values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9;
-    values[23] = 2; values[24] = -1; values[31] = 1;
-    const snapshot = parseFlightSnapshot(values);
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 2, east: -1, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
+    const snapshot = valuesSnapshot;
     const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
     const stereo = new StereoCamera(); stereo.aspect = 0.5;
     const viewer = captureConfiguredViewerFrame(camera, stereo);
     if (viewer.source === "unavailable") throw new Error("Missing binocular fixture");
-    const hudModel = createFlightHudModel(snapshot, code as 0 | 1 | 2 | 3 | 4, createInitialAppModel().difficulty.hudProfile);
+    const hudModel = createFlightDisplayHudModel(snapshot, code as 0 | 1 | 2 | 3 | 4, createInitialAppModel().difficulty.hudProfile);
     const view = createHeadHudView(hudModel, viewer, "ja");
     if (view.kind !== "visible") throw new Error("Missing Information layout");
     const size = headHudCanvasSize(view.layer);
@@ -179,14 +191,21 @@ describe("Head HUD Canvas preflight and painting", () => {
   });
 
   it.each([1280 / 720, 720 / 1280].flatMap((aspect) => Array.from({ length: 64 }, (_, mask) => ({ aspect, mask }))))("preflights independent Custom mask $mask at aspect $aspect", ({ aspect, mask }) => {
-    const values = new Array<number>(33).fill(0); values[4] = 8; values[7] = 1; values[19] = -1; values[20] = 12; values[21] = 8; values[22] = 9;
-    values[23] = 2; values[24] = -1; values[31] = 1;
+    const valuesSnapshot = {
+    ...currentFlightDisplayFixture(5),
+    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
+    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
+    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
+    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
+      windVelocityNedMetersPerSecond: { north: 2, east: -1, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
+      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
+  };
     const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
     const stereo = new StereoCamera(); stereo.aspect = 0.5;
     const viewer = captureConfiguredViewerFrame(camera, stereo);
     const custom = { telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
       flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0 };
-    const view = createHeadHudView(createFlightHudModel(parseFlightSnapshot(values), 4, custom), viewer, "ja");
+    const view = createHeadHudView(createFlightDisplayHudModel(valuesSnapshot, 4, custom), viewer, "ja");
     if (mask === 0 || mask === 32) { expect(view.kind).toBe("absent"); return; }
     if (view.kind !== "visible") throw new Error("Missing Custom layout");
     const size = headHudCanvasSize(view.layer);

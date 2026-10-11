@@ -5,8 +5,6 @@ import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "../../web/src/rende
 import type { BirdmanAirframe } from "../../web/src/render/engines/three/birdman-airframe.js";
 import type { TailPresentationGeometryAvailability } from "../../web/src/render/contracts/flight-controls.js";
 
-const VERSION_ONE_GEOMETRY = Object.freeze({ kind: "available",
-  value: Object.freeze({ kind: "bpg041_version_one", horizontalTailArmMeters: 1.8 }) }) satisfies TailPresentationGeometryAvailability;
 const PLAYABLE_GEOMETRY = Object.freeze({ kind: "available",
   value: Object.freeze({ kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 }) }) satisfies TailPresentationGeometryAvailability;
 
@@ -36,9 +34,10 @@ describe("physical two-tail airframe adapter", () => {
     try {
       const horizontal = group(airframe, "horizontal-tail-incidence");
       const vertical = group(airframe, "vertical-tail-incidence");
+      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0, verticalTailRadians: 0 } }, PLAYABLE_GEOMETRY);
       expect(horizontal.parent).toBe(airframe.root);
       expect(vertical.parent).toBe(airframe.root);
-      expect(horizontal.position.toArray()).toEqual([0, -0.1, 1.8]);
+      expect(horizontal.position.toArray()).toEqual([0, -0.1, 3.6]);
       expect(vertical.position.toArray()).toEqual([0, 0.1, 1.8]);
       const horizontalVertices = surface(horizontal).geometry.getAttribute("position");
       const verticalVertices = surface(vertical).geometry.getAttribute("position");
@@ -65,7 +64,7 @@ describe("physical two-tail airframe adapter", () => {
       const vertical = group(airframe, "vertical-tail-incidence");
       airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: {
         horizontalTailRadians: incidence, verticalTailRadians: incidence
-      } }, VERSION_ONE_GEOMETRY);
+      } }, PLAYABLE_GEOMETRY);
       airframe.root.updateMatrixWorld(true);
       const horizontalForward = new Vector3(0, 0, -1).transformDirection(horizontal.matrixWorld);
       const verticalForward = new Vector3(0, 0, -1).transformDirection(vertical.matrixWorld);
@@ -75,49 +74,35 @@ describe("physical two-tail airframe adapter", () => {
       expect(verticalForward.x).toBeCloseTo(Math.sin(incidence));
       expect(verticalForward.y).toBeCloseTo(0);
       expect(verticalForward.z).toBeCloseTo(-Math.cos(incidence));
-      expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, 1.8]);
+      expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, 3.6]);
       expect(vertical.getWorldPosition(new Vector3()).toArray()).toEqual([0, 0.1, 1.8]);
-      expect(group(airframe, "legacy-tail-assembly").visible).toBe(false);
-      expect(group(airframe, "elevator").rotation.x).toBe(0);
-      expect(group(airframe, "rudder").rotation.y).toBe(0);
       expect(horizontal.visible && vertical.visible).toBe(true);
     } finally {
       airframe.dispose();
     }
   });
 
-  it("resets visibility and incidence across tail, legacy, tail and absent controls", () => {
+  it("resets physical surface visibility and incidence across current and absent controls", () => {
     const airframe = createBirdmanAirframe();
     try {
       const horizontal = group(airframe, "horizontal-tail-incidence");
       const vertical = group(airframe, "vertical-tail-incidence");
-      const legacy = group(airframe, "legacy-tail-assembly");
-      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.1, verticalTailRadians: -0.2 } }, VERSION_ONE_GEOMETRY);
-      airframe.setVisualState(null, { layout: "legacy_three_axis", rollRadians: 0.1, pitchRadians: 0.12, yawRadians: -0.08 });
-      expect(horizontal.visible || vertical.visible).toBe(false);
-      expect(legacy.visible).toBe(true);
-      expect(horizontal.rotation.x).toBe(0);
-      expect(vertical.rotation.y).toBe(0);
-      expect(group(airframe, "elevator").rotation.x).toBeCloseTo(-0.12);
-      expect(group(airframe, "rudder").rotation.y).toBeCloseTo(-0.08);
-      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: -0.1, verticalTailRadians: 0.2 } }, VERSION_ONE_GEOMETRY);
-      expect(horizontal.rotation.x).toBeCloseTo(-0.1);
-      expect(vertical.rotation.y).toBeCloseTo(-0.2);
-      expect(group(airframe, "elevator").rotation.x).toBe(0);
-      expect(group(airframe, "rudder").rotation.y).toBe(0);
+      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.1, verticalTailRadians: -0.2 } }, PLAYABLE_GEOMETRY);
+      expect(horizontal.visible && vertical.visible).toBe(true);
+      expect(horizontal.rotation.x).toBeCloseTo(0.1);
+      expect(vertical.rotation.y).toBeCloseTo(0.2);
       airframe.setVisualState(null, NO_AIRFRAME_CONTROLS);
       expect(horizontal.visible || vertical.visible).toBe(false);
-      expect(legacy.visible).toBe(true);
       expect(horizontal.rotation.x).toBe(0);
       expect(vertical.rotation.y).toBe(0);
-      expect(group(airframe, "elevator").rotation.x).toBe(0);
-      expect(group(airframe, "rudder").rotation.y).toBe(0);
-    } finally {
-      airframe.dispose();
-    }
+      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: -0.1, verticalTailRadians: 0.2 } }, PLAYABLE_GEOMETRY);
+      expect(horizontal.visible && vertical.visible).toBe(true);
+      expect(horizontal.rotation.x).toBeCloseTo(-0.1);
+      expect(vertical.rotation.y).toBeCloseTo(-0.2);
+    } finally { airframe.dispose(); }
   });
 
-  it("projects the Playable arm and restores archived version-one geometry without changing controls or fin geometry", () => {
+  it("retains current geometry and controls without rebuilding the surface meshes", () => {
     const airframe = createBirdmanAirframe();
     const controls = Object.freeze({ layout: "tail_incidence" as const, physicalIncidence: Object.freeze({
       horizontalTailRadians: 0.1, verticalTailRadians: -0.2
@@ -127,26 +112,20 @@ describe("physical two-tail airframe adapter", () => {
       const vertical = group(airframe, "vertical-tail-incidence");
       const horizontalMesh = surface(horizontal).geometry;
       const verticalMesh = surface(vertical).geometry;
-      for (const geometry of [PLAYABLE_GEOMETRY, VERSION_ONE_GEOMETRY, PLAYABLE_GEOMETRY]) {
-        airframe.setVisualState(null, controls, geometry);
+      for (let iteration = 0; iteration < 3; iteration++) {
+        airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
         airframe.root.updateMatrixWorld(true);
-        expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, geometry.value.horizontalTailArmMeters]);
+        expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, 3.6]);
         expect(vertical.getWorldPosition(new Vector3()).toArray()).toEqual([0, 0.1, 1.8]);
         expect(horizontal.rotation.x).toBe(controls.physicalIncidence.horizontalTailRadians);
         expect(vertical.rotation.y).toBe(-controls.physicalIncidence.verticalTailRadians);
         expect(surface(horizontal).geometry).toBe(horizontalMesh);
         expect(surface(vertical).geometry).toBe(verticalMesh);
+        airframe.setVisualState(null, NO_AIRFRAME_CONTROLS);
+        expect(horizontal.visible || vertical.visible).toBe(false);
       }
-      airframe.setVisualState(null, { layout: "legacy_three_axis", rollRadians: 0, pitchRadians: 0, yawRadians: 0 });
-      expect(horizontal.position.z).toBe(1.8);
-      expect(group(airframe, "legacy-tail-assembly").visible).toBe(true);
-      airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
-      airframe.setVisualState(null, NO_AIRFRAME_CONTROLS);
-      expect(horizontal.position.z).toBe(1.8);
       expect(controls.physicalIncidence).toEqual({ horizontalTailRadians: 0.1, verticalTailRadians: -0.2 });
-    } finally {
-      airframe.dispose();
-    }
+    } finally { airframe.dispose(); }
   });
 
   it("rejects unavailable or missing tail geometry before changing the visible airframe", () => {
@@ -164,20 +143,18 @@ describe("physical two-tail airframe adapter", () => {
         expect(group(airframe, "horizontal-tail-incidence").position.z).toBe(3.6);
         expect(group(airframe, "horizontal-tail-incidence").rotation.x).toBe(0.1);
         expect(group(airframe, "vertical-tail-incidence").rotation.y).toBe(0.2);
-        expect(group(airframe, "legacy-tail-assembly").visible).toBe(false);
       }
     } finally {
       airframe.dispose();
     }
   });
 
-  it("rejects nonfinite physical incidence without hiding it behind a legacy control", () => {
+  it("rejects nonfinite physical incidence before changing the current surfaces", () => {
     const airframe = createBirdmanAirframe();
     try {
       expect(() => { airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: {
         horizontalTailRadians: Number.NaN, verticalTailRadians: 0
       } }, PLAYABLE_GEOMETRY); }).toThrow("finite");
-      expect(group(airframe, "legacy-tail-assembly").visible).toBe(true);
       expect(group(airframe, "horizontal-tail-incidence").visible).toBe(false);
     } finally {
       airframe.dispose();
