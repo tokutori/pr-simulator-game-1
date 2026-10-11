@@ -1170,9 +1170,11 @@ fn project_hud(
         height: px(7),
         ..default()
     });
+    set_text(world, retained.readouts, hud.readouts.clone());
     world
-        .entity_mut(retained.readouts)
-        .insert((Text::new(&hud.readouts), TextColor(ink)));
+        .get_mut::<TextColor>(retained.readouts)
+        .expect("HUD text color is retained")
+        .set_if_neq(TextColor(ink));
     let heading = hud
         .heading
         .as_ref()
@@ -1225,14 +1227,15 @@ fn project_hud(
     }
     for (key, value) in values {
         let entity = retained.fields[key];
-        world.entity_mut(entity).insert((
-            Text::new(value),
-            TextColor(if key == "warning" {
+        set_text(world, entity, value.to_owned());
+        world
+            .get_mut::<TextColor>(entity)
+            .expect("HUD text color is retained")
+            .set_if_neq(TextColor(if key == "warning" {
                 Color::srgb(1.0, 0.6, 0.4)
             } else {
                 ink
-            }),
-        ));
+            }));
         world
             .get_mut::<Node>(entity)
             .expect("HUD node is retained")
@@ -1244,9 +1247,11 @@ fn project_hud(
     }
     let supplementary = hud.supplementary_readouts.join("\n");
     let entity = retained.fields["supplementary"];
+    set_text(world, entity, supplementary.clone());
     world
-        .entity_mut(entity)
-        .insert((Text::new(&supplementary), TextColor(ink)));
+        .get_mut::<TextColor>(entity)
+        .expect("HUD text color is retained")
+        .set_if_neq(TextColor(ink));
     world
         .get_mut::<Node>(entity)
         .expect("HUD node is retained")
@@ -1262,7 +1267,9 @@ fn project_hud(
         .chain([retained.readouts])
         .collect::<Vec<_>>();
     for entity in entities {
-        if let Some(mut font) = world.get_mut::<TextFont>(entity) {
+        if let Some(mut font) = world.get_mut::<TextFont>(entity)
+            && !matches!(font.font_size, FontSize::Px(size) if size == layout.font_size_px as f32)
+        {
             font.font_size = FontSize::Px(layout.font_size_px as f32);
         }
     }
@@ -4056,7 +4063,29 @@ mod tests {
                 .0,
             color(&theme.panel_background, unchanged_hud.layout.opacity).unwrap()
         );
+        let stable_text_entities = [
+            retained.hud.readouts,
+            retained.hud.fields["controls"],
+            retained.hud.fields["attribution"],
+        ];
+        let previous_text = stable_text_entities.map(|entity| {
+            let entity = app.world().entity(entity);
+            let text = entity.get_ref::<Text>().unwrap();
+            let font = entity.get_ref::<TextFont>().unwrap();
+            (text.0.clone(), text.last_changed(), font.last_changed())
+        });
+        app.world_mut().increment_change_tick();
         project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        let current_text = stable_text_entities.map(|entity| {
+            let entity = app.world().entity(entity);
+            let text = entity.get_ref::<Text>().unwrap();
+            let font = entity.get_ref::<TextFont>().unwrap();
+            (text.0.clone(), text.last_changed(), font.last_changed())
+        });
+        assert_eq!(
+            current_text, previous_text,
+            "Changing only wind geometry must preserve identical text and font change ticks"
+        );
         assert_eq!(
             app.world().get::<UiTransform>(needle).unwrap().rotation,
             Rot2::degrees(90.0)
