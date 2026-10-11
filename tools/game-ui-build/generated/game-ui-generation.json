@@ -7,7 +7,7 @@
     "typescript": "5.9.3"
   },
   "sources": {
-    "serialize": "075e4e4445d0c6d6dbc32fd0334288b0faac2d721f826fd52a2353959f6a6959",
+    "serialize": "70d01e2b3d60f1194bc12e98d947f0b18c52fbebe8bdbcb2f78520bbf8f888a7",
     "deserialize": "e599e81928ceee6cd15161d9759f195d9a34b7723185864ea791f72edcf68447"
   }
 }

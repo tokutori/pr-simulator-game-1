@@ -1,5 +1,202 @@
 {
   "$defs": {
+    "ActuatorFailureDocument": {
+      "description": "Original software actuator failure.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite value.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_authority",
+          "description": "Invalid authority fraction.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_feedback_gain",
+          "description": "Invalid feedback gain.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_limit",
+          "description": "Invalid actuator limits.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_time_step",
+          "description": "Invalid timestep.",
+          "type": "string"
+        }
+      ]
+    },
+    "AeroFailureDocument": {
+      "description": "Original aerodynamic validation or evaluation cause.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite value.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original mathematical failure.",
+          "properties": {
+            "invalid_math_value": {
+              "$ref": "#/$defs/MathFailureDocument"
+            }
+          },
+          "required": [
+            "invalid_math_value"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "invalid_air_density",
+          "description": "Invalid density.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_reference_geometry",
+          "description": "Invalid reference dimensions.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_orientation",
+          "description": "Invalid orientation.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_envelope",
+          "description": "Invalid declared envelope.",
+          "type": "string"
+        },
+        {
+          "const": "negative_drag_coefficient",
+          "description": "Negative drag coefficient.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_polar_table",
+          "description": "Invalid polar knots.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_polar_metadata",
+          "description": "Invalid polar identity.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_hybrid_geometry",
+          "description": "Invalid hybrid geometry.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_hybrid_anchor",
+          "description": "Invalid geometric anchor.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_hybrid_proxy_set",
+          "description": "Invalid proxy coverage.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported_control",
+          "description": "Unsupported control layout.",
+          "type": "string"
+        },
+        {
+          "const": "undefined_flow_angle",
+          "description": "Undefined flow angle.",
+          "type": "string"
+        },
+        {
+          "const": "outside_envelope",
+          "description": "Software envelope exceeded.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original wind-field cause.",
+          "properties": {
+            "wind": {
+              "$ref": "#/$defs/WindFailureDocument"
+            }
+          },
+          "required": [
+            "wind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AerodynamicFailureDocument": {
+      "description": "Original aerodynamic failure, preserving the current provider scope.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Original hybrid diagnostic.",
+          "properties": {
+            "hybrid": {
+              "$ref": "#/$defs/HybridFailureDocument"
+            }
+          },
+          "required": [
+            "hybrid"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Static polar diagnostic.",
+          "properties": {
+            "static_polar": {
+              "additionalProperties": false,
+              "properties": {
+                "cause": {
+                  "$ref": "#/$defs/AeroFailureDocument",
+                  "description": "Original cause."
+                }
+              },
+              "required": [
+                "cause"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "static_polar"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AerodynamicStageDocument": {
+      "description": "Original classical RK4 load-evaluation stage.",
+      "oneOf": [
+        {
+          "const": "first",
+          "description": "Initial state.",
+          "type": "string"
+        },
+        {
+          "const": "second",
+          "description": "First midpoint.",
+          "type": "string"
+        },
+        {
+          "const": "third",
+          "description": "Second midpoint.",
+          "type": "string"
+        },
+        {
+          "const": "fourth",
+          "description": "Endpoint candidate.",
+          "type": "string"
+        }
+      ]
+    },
     "AssistanceLevel": {
       "description": "Controller category resolved from the Assistance axis.",
       "oneOf": [
@@ -22,6 +219,47 @@
           "const": "manual",
           "description": "Pilot-only surface commands.",
           "type": "string"
+        }
+      ]
+    },
+    "ContactFailureDocument": {
+      "description": "Original contact search or interpolation failure.",
+      "oneOf": [
+        {
+          "const": "empty_geometry",
+          "description": "Empty structural geometry.",
+          "type": "string"
+        },
+        {
+          "const": "non_adjacent_ticks",
+          "description": "Nonadjacent physics ticks.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original mathematical cause.",
+          "properties": {
+            "math": {
+              "$ref": "#/$defs/MathFailureDocument"
+            }
+          },
+          "required": [
+            "math"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original dynamics cause.",
+          "properties": {
+            "dynamics": {
+              "$ref": "#/$defs/DynamicsFailureDocument"
+            }
+          },
+          "required": [
+            "dynamics"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -54,6 +292,216 @@
           "type": "string"
         }
       ]
+    },
+    "DynamicsFailureDocument": {
+      "description": "Original dynamics failure.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite arithmetic.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_mass",
+          "description": "Invalid mass.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_gravity",
+          "description": "Invalid gravity.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_pilot_limits",
+          "description": "Invalid movement bounds.",
+          "type": "string"
+        },
+        {
+          "const": "pilot_out_of_range",
+          "description": "Pilot state outside movement bounds.",
+          "type": "string"
+        },
+        {
+          "const": "pilot_motion_unrecoverable",
+          "description": "No feasible boundary stopping distance.",
+          "type": "string"
+        },
+        {
+          "const": "pilot_motion_outside_policy_domain",
+          "description": "State outside the held-acceleration policy domain.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_time_step",
+          "description": "Invalid integration timestep.",
+          "type": "string"
+        },
+        {
+          "const": "singular_mass_matrix",
+          "description": "Singular coupled mass matrix.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original external-load failure.",
+          "properties": {
+            "load": {
+              "$ref": "#/$defs/LoadFailureDocument"
+            }
+          },
+          "required": [
+            "load"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original mathematical failure.",
+          "properties": {
+            "invalid_math_value": {
+              "$ref": "#/$defs/MathFailureDocument"
+            }
+          },
+          "required": [
+            "invalid_math_value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentIdentity": {
+      "additionalProperties": false,
+      "description": "Exact split-seed scenario identity shared by live and environment query boundaries.",
+      "properties": {
+        "aircraft_model_version": {
+          "description": "Aircraft model version.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "catalog_version": {
+          "description": "Registered catalog version.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "controller_profile_version": {
+          "description": "Controller profile version.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "environment_version": {
+          "description": "Environment content version.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scenario_id": {
+          "description": "Scenario identifier; registry lookup applies its own nonzero constraint.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scenario_version": {
+          "description": "Scenario content version.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "seed_high": {
+          "description": "High 32 bits of the exact seed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "seed_low": {
+          "description": "Low 32 bits of the exact seed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "catalog_version",
+        "scenario_id",
+        "scenario_version",
+        "aircraft_model_version",
+        "environment_version",
+        "controller_profile_version",
+        "seed_low",
+        "seed_high"
+      ],
+      "type": "object"
+    },
+    "FlightRecordDispositionDocument": {
+      "description": "Stable external completion classifications.",
+      "oneOf": [
+        {
+          "const": "complete",
+          "description": "Normal water contact or configured time limit.",
+          "type": "string"
+        },
+        {
+          "const": "interrupted",
+          "description": "Explicitly interrupted by the pilot.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "Simulation or scoring failure.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlightRecordEndReasonDocument": {
+      "description": "Stable external end-reason names.",
+      "oneOf": [
+        {
+          "const": "water_contact",
+          "description": "The aircraft contacted the still-water surface.",
+          "type": "string"
+        },
+        {
+          "const": "out_of_valid_envelope",
+          "description": "An aerodynamic validity envelope was exceeded.",
+          "type": "string"
+        },
+        {
+          "const": "manual_abort",
+          "description": "The pilot explicitly terminated the flight.",
+          "type": "string"
+        },
+        {
+          "const": "fatal_simulation_error",
+          "description": "Simulation or score evaluation failed.",
+          "type": "string"
+        },
+        {
+          "const": "time_limit",
+          "description": "The configured maximum tick count was reached.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlightRecordTailIdentityDocument": {
+      "additionalProperties": false,
+      "description": "Explicit model/controller names; their independent versions remain in the common header.",
+      "properties": {
+        "aircraft_configuration_id": {
+          "description": "Immutable aircraft configuration name.",
+          "type": "string"
+        },
+        "controller_profile_id": {
+          "description": "Software tail-controller profile name, independent of aircraft data.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "aircraft_configuration_id",
+        "controller_profile_id"
+      ],
+      "type": "object"
     },
     "GameUiAction": {
       "description": "UI message whose handling is shared by native and browser adapters.",
@@ -3101,6 +3549,223 @@
         }
       ]
     },
+    "HybridFailureDocument": {
+      "additionalProperties": false,
+      "description": "Original hybrid site, cause, closed-domain limit and optional RK stage.",
+      "properties": {
+        "cause": {
+          "$ref": "#/$defs/AeroFailureDocument",
+          "description": "Original typed failure."
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HybridLimitDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Exceeded software limit, present only for an envelope failure."
+        },
+        "site": {
+          "$ref": "#/$defs/HybridSiteDocument",
+          "description": "Original datum, polar, surface, proxy, incidence or aggregate site."
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AerodynamicStageDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Original load-evaluation stage, absent for direct evaluation or control validation."
+        }
+      },
+      "required": [
+        "site",
+        "cause",
+        "limit",
+        "stage"
+      ],
+      "type": "object"
+    },
+    "HybridFlowDocument": {
+      "description": "Original actual or reference flow identifier.",
+      "oneOf": [
+        {
+          "const": "actual",
+          "description": "Actual local flow.",
+          "type": "string"
+        },
+        {
+          "const": "reference",
+          "description": "Current-alpha reference flow.",
+          "type": "string"
+        }
+      ]
+    },
+    "HybridLimitDocument": {
+      "description": "Original exceeded software limit.",
+      "oneOf": [
+        {
+          "const": "static_alpha",
+          "description": "Static alpha interval.",
+          "type": "string"
+        },
+        {
+          "const": "undefined_reference",
+          "description": "Undefined reference flow.",
+          "type": "string"
+        },
+        {
+          "const": "global_beta",
+          "description": "Global beta bound.",
+          "type": "string"
+        },
+        {
+          "const": "elevator_incidence",
+          "description": "Horizontal-tail incidence bound.",
+          "type": "string"
+        },
+        {
+          "const": "rudder_incidence",
+          "description": "Vertical-tail incidence bound.",
+          "type": "string"
+        },
+        {
+          "const": "local_alpha_difference",
+          "description": "Local alpha increment bound.",
+          "type": "string"
+        },
+        {
+          "const": "controlled_alpha_difference",
+          "description": "Incidence-adjusted alpha increment bound.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Local span-angle bound.",
+          "properties": {
+            "local_span_angle": {
+              "$ref": "#/$defs/HybridFlowDocument"
+            }
+          },
+          "required": [
+            "local_span_angle"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Positive forward-flow bound.",
+          "properties": {
+            "local_forward": {
+              "$ref": "#/$defs/HybridFlowDocument"
+            }
+          },
+          "required": [
+            "local_forward"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "local_speed",
+          "description": "Local relative-speed bound.",
+          "type": "string"
+        }
+      ]
+    },
+    "HybridSiteDocument": {
+      "description": "Original hybrid evaluation site.",
+      "oneOf": [
+        {
+          "const": "datum",
+          "description": "Datum flow.",
+          "type": "string"
+        },
+        {
+          "const": "static_polar",
+          "description": "Static polar.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Complete surface.",
+          "properties": {
+            "surface": {
+              "$ref": "#/$defs/HybridSurfaceDocument"
+            }
+          },
+          "required": [
+            "surface"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Zero-based proxy within one complete surface.",
+          "properties": {
+            "proxy": {
+              "additionalProperties": false,
+              "properties": {
+                "index": {
+                  "description": "Original proxy index.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "surface": {
+                  "$ref": "#/$defs/HybridSurfaceDocument",
+                  "description": "Surface role."
+                }
+              },
+              "required": [
+                "surface",
+                "index"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "proxy"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "tail_incidence",
+          "description": "Physical incidence validation.",
+          "type": "string"
+        },
+        {
+          "const": "aggregate",
+          "description": "Aggregate wrench.",
+          "type": "string"
+        }
+      ]
+    },
+    "HybridSurfaceDocument": {
+      "description": "Original complete hybrid surface identifier.",
+      "oneOf": [
+        {
+          "const": "main_wing",
+          "description": "Complete main wing.",
+          "type": "string"
+        },
+        {
+          "const": "horizontal_tail",
+          "description": "Horizontal tail.",
+          "type": "string"
+        },
+        {
+          "const": "vertical_tail",
+          "description": "Vertical tail.",
+          "type": "string"
+        }
+      ]
+    },
     "InformationLevel": {
       "description": "Information presentation selected for a session.",
       "oneOf": [
@@ -3131,6 +3796,700 @@
         }
       ]
     },
+    "LoadFailureDocument": {
+      "description": "Original external-load failure.",
+      "oneOf": [
+        {
+          "const": "outside_domain",
+          "description": "Load domain exceeded.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "Load unavailable.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Original aerodynamic failure.",
+          "properties": {
+            "aerodynamic": {
+              "$ref": "#/$defs/AerodynamicFailureDocument"
+            }
+          },
+          "required": [
+            "aerodynamic"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MathFailureDocument": {
+      "description": "Original mathematical failure.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite value.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_quaternion",
+          "description": "Invalid quaternion.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_interpolation_fraction",
+          "description": "Invalid quaternion interpolation fraction.",
+          "type": "string"
+        },
+        {
+          "const": "asymmetric_tensor",
+          "description": "Asymmetric tensor.",
+          "type": "string"
+        },
+        {
+          "const": "non_positive_definite_tensor",
+          "description": "Non-positive-definite tensor.",
+          "type": "string"
+        },
+        {
+          "const": "non_physical_inertia_tensor",
+          "description": "Nonphysical mass inertia.",
+          "type": "string"
+        }
+      ]
+    },
+    "TailControlFailureDocument": {
+      "description": "Original two-tail control failure.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite control value.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_pilot_intent",
+          "description": "Invalid normalized intent.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_rate_target",
+          "description": "Invalid desired q/r rate.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Software actuator failure.",
+          "properties": {
+            "actuator": {
+              "$ref": "#/$defs/ActuatorFailureDocument"
+            }
+          },
+          "required": [
+            "actuator"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Effective incidence failure.",
+          "properties": {
+            "incidence": {
+              "$ref": "#/$defs/HybridFailureDocument"
+            }
+          },
+          "required": [
+            "incidence"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TailControlLayoutDocument": {
+      "description": "Control layout accepted by the current live session boundary.",
+      "oneOf": [
+        {
+          "const": "tail_incidence",
+          "description": "Independently controlled horizontal and vertical tail incidence.",
+          "type": "string"
+        }
+      ]
+    },
+    "TailFlightRecordFinalizationDocument": {
+      "additionalProperties": false,
+      "description": "Schema-six terminal metadata with the original typed simulation cause.",
+      "properties": {
+        "disposition": {
+          "$ref": "#/$defs/FlightRecordDispositionDocument",
+          "description": "Complete, interrupted or failed classification."
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TailTickFailureDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Original failed interval's cause, explicitly null for a non-simulation termination."
+        },
+        "reason": {
+          "$ref": "#/$defs/FlightRecordEndReasonDocument",
+          "description": "Domain termination reason."
+        },
+        "score_m": {
+          "description": "Stored course/cross-track/net score when available.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "terminal_fraction": {
+          "description": "Fraction matching that last valid sample.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "terminal_tick": {
+          "description": "Integer tick containing the last valid sample.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "reason",
+        "disposition",
+        "terminal_tick",
+        "terminal_fraction",
+        "score_m",
+        "failure"
+      ],
+      "type": "object"
+    },
+    "TailFrameDocument": {
+      "description": "Exclusive live snapshot payloads.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Menu phase without a live physics state.",
+          "properties": {
+            "kind": {
+              "const": "menu",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Last committed airborne state and derived telemetry.",
+          "properties": {
+            "kind": {
+              "const": "flight",
+              "type": "string"
+            },
+            "progress_m": {
+              "$ref": "#/$defs/TailProgressDocument",
+              "description": "Horizontal progress relative to the sealed course axis."
+            },
+            "state": {
+              "$ref": "#/$defs/TailStateDocument",
+              "description": "Committed integer-tick state."
+            },
+            "telemetry": {
+              "$ref": "#/$defs/TailTelemetryDocument",
+              "description": "Derived telemetry at the same state."
+            }
+          },
+          "required": [
+            "kind",
+            "state",
+            "telemetry",
+            "progress_m"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Last valid terminal state and original finalization.",
+          "properties": {
+            "finalization": {
+              "$ref": "#/$defs/TailFlightRecordFinalizationDocument",
+              "description": "Exact terminal stamp, score and original failure."
+            },
+            "kind": {
+              "const": "result",
+              "type": "string"
+            },
+            "state": {
+              "$ref": "#/$defs/TailStateDocument",
+              "description": "Integer or fractional terminal state."
+            },
+            "telemetry": {
+              "$ref": "#/$defs/TailTelemetryDocument",
+              "description": "Derived telemetry at the same terminal state."
+            }
+          },
+          "required": [
+            "kind",
+            "state",
+            "telemetry",
+            "finalization"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TailIncidenceDocument": {
+      "additionalProperties": false,
+      "description": "Named physical angles in radians, preserving the two-tail contract without a roll slot.",
+      "properties": {
+        "horizontal_tail_rad": {
+          "description": "Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.",
+          "format": "double",
+          "maximum": 0.2,
+          "minimum": -0.2,
+          "type": "number"
+        },
+        "vertical_tail_rad": {
+          "description": "Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.",
+          "format": "double",
+          "maximum": 0.2,
+          "minimum": -0.2,
+          "type": "number"
+        }
+      },
+      "required": [
+        "horizontal_tail_rad",
+        "vertical_tail_rad"
+      ],
+      "type": "object"
+    },
+    "TailPreparedLaunchDocument": {
+      "additionalProperties": false,
+      "description": "Initial launch projection without advancing the simulation.",
+      "properties": {
+        "control_layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Current two-tail layout."
+        },
+        "phase_code": {
+          "description": "Current domain phase, including phases without a prepared projection.",
+          "format": "uint32",
+          "maximum": 10,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preview": {
+          "$ref": "#/$defs/TailPreparedLaunchFrame",
+          "description": "Sealed zero-tick state or explicit absence."
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Current live boundary version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "control_layout",
+        "phase_code",
+        "preview"
+      ],
+      "type": "object"
+    },
+    "TailPreparedLaunchFrame": {
+      "description": "Exclusive prepared launch payload with borrowed control identity.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No sealed initial state in this phase.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Immutable initial state of the sealed scenario.",
+          "properties": {
+            "control_identity": {
+              "$ref": "#/$defs/FlightRecordTailIdentityDocument",
+              "description": "Borrowed model and controller names."
+            },
+            "kind": {
+              "const": "prepared",
+              "type": "string"
+            },
+            "scenario": {
+              "$ref": "#/$defs/EnvironmentIdentity",
+              "description": "Sealed scenario identity."
+            },
+            "state": {
+              "$ref": "#/$defs/TailStateDocument",
+              "description": "Zero-tick initial state."
+            }
+          },
+          "required": [
+            "kind",
+            "scenario",
+            "control_identity",
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TailProgressDocument": {
+      "additionalProperties": false,
+      "description": "Horizontal displacement projected along the sealed course axis.",
+      "properties": {
+        "course_parallel_m": {
+          "description": "Signed course-parallel displacement in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "cross_track_m": {
+          "description": "Signed cross-track displacement in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "net_horizontal_m": {
+          "description": "Nonnegative horizontal norm in metres.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "course_parallel_m",
+        "cross_track_m",
+        "net_horizontal_m"
+      ],
+      "type": "object"
+    },
+    "TailSnapshotDocument": {
+      "additionalProperties": false,
+      "description": "Current live snapshot with borrowed immutable control identity.",
+      "properties": {
+        "control_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlightRecordTailIdentityDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Borrowed model/controller names, explicitly null before preparation."
+        },
+        "control_layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Current two-tail layout."
+        },
+        "control_mode_code": {
+          "description": "Manual, Shared or Automatic control selection.",
+          "format": "uint32",
+          "maximum": 2,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frame": {
+          "$ref": "#/$defs/TailFrameDocument",
+          "description": "Projection for the current menu, live flight or terminal phase."
+        },
+        "phase_code": {
+          "description": "Domain phase projected by the platform adapter.",
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sealed scenario, explicitly null before preparation."
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Current live boundary version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "control_layout",
+        "phase_code",
+        "control_mode_code",
+        "scenario",
+        "control_identity",
+        "frame"
+      ],
+      "type": "object"
+    },
+    "TailStateDocument": {
+      "additionalProperties": false,
+      "description": "Named physics values in the current live snapshot.",
+      "properties": {
+        "angular_rate_body_rad_s": {
+          "description": "Body p/q/r rates in radians per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "attitude_body_to_ned": {
+          "description": "Scalar-first body-to-NED unit quaternion.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "datum_position_ned_m": {
+          "description": "Datum position in NED metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "datum_velocity_ned_mps": {
+          "description": "Datum ground velocity in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "flight_time_s": {
+          "description": "Time corresponding to the exact tick and fraction.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "fraction": {
+          "description": "Fraction within the terminal interval, zero during live flight.",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        },
+        "physical_incidence": {
+          "$ref": "#/$defs/TailIncidenceDocument",
+          "description": "Actual horizontal and vertical tail incidences."
+        },
+        "pilot_position_m": {
+          "description": "Actual longitudinal pilot position in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "pilot_position_target_m": {
+          "description": "Resolved longitudinal pilot target in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "pilot_position_target_normalized": {
+          "description": "Resolved target in the normalized inclusive interval [-1, 1].",
+          "format": "double",
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "pilot_velocity_mps": {
+          "description": "Actual longitudinal pilot velocity in metres per second.",
+          "format": "double",
+          "type": "number"
+        },
+        "tick": {
+          "description": "Integer tick containing this state.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tick",
+        "fraction",
+        "flight_time_s",
+        "datum_position_ned_m",
+        "datum_velocity_ned_mps",
+        "attitude_body_to_ned",
+        "angular_rate_body_rad_s",
+        "pilot_position_m",
+        "pilot_velocity_mps",
+        "pilot_position_target_m",
+        "pilot_position_target_normalized",
+        "physical_incidence"
+      ],
+      "type": "object"
+    },
+    "TailTelemetryDocument": {
+      "additionalProperties": false,
+      "description": "Rust-derived telemetry at a committed live or terminal state.",
+      "properties": {
+        "airspeed_mps": {
+          "description": "Nonnegative local airspeed in metres per second.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "altitude_m": {
+          "description": "Altitude above the still-water contact plane in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "angle_of_attack_rad": {
+          "description": "Defined angle of attack or explicit null.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "attitude_euler_rad": {
+          "description": "Roll, pitch and heading in radians.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "composite_cg_position_ned_m": {
+          "description": "Composite centre of gravity in NED metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "groundspeed_mps": {
+          "description": "Nonnegative horizontal ground speed in metres per second.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "sideslip_angle_rad": {
+          "description": "Defined sideslip angle or explicit null.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "wind_at_cg_ned_mps": {
+          "description": "Ambient wind at the composite centre in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "composite_cg_position_ned_m",
+        "altitude_m",
+        "airspeed_mps",
+        "groundspeed_mps",
+        "wind_at_cg_ned_mps",
+        "angle_of_attack_rad",
+        "sideslip_angle_rad",
+        "attitude_euler_rad"
+      ],
+      "type": "object"
+    },
+    "TailTickFailureDocument": {
+      "description": "Original two-tail tick failure, preserving each nested cause without string classification.",
+      "oneOf": [
+        {
+          "const": "tick_overflow",
+          "description": "Tick counter overflow.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Control evaluation failure.",
+          "properties": {
+            "control": {
+              "$ref": "#/$defs/TailControlFailureDocument"
+            }
+          },
+          "required": [
+            "control"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Dynamics or load evaluation failure.",
+          "properties": {
+            "dynamics": {
+              "$ref": "#/$defs/DynamicsFailureDocument"
+            }
+          },
+          "required": [
+            "dynamics"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Contact interpolation failure.",
+          "properties": {
+            "contact": {
+              "$ref": "#/$defs/ContactFailureDocument"
+            }
+          },
+          "required": [
+            "contact"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "WeatherClass": {
       "description": "Weather classification attached to a versioned scenario catalog.",
       "oneOf": [
@@ -3157,6 +4516,41 @@
         {
           "const": "near_limit",
           "description": "Near-limit game classification.",
+          "type": "string"
+        }
+      ]
+    },
+    "WindFailureDocument": {
+      "description": "Original wind-field construction or sampling failure.",
+      "oneOf": [
+        {
+          "const": "non_finite",
+          "description": "Non-finite value.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_grid_dimensions",
+          "description": "Invalid grid sample counts.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_grid_spacing",
+          "description": "Invalid grid spacing.",
+          "type": "string"
+        },
+        {
+          "const": "invalid_grid_domain",
+          "description": "Nonrepresentable closed grid domain.",
+          "type": "string"
+        },
+        {
+          "const": "grid_length_mismatch",
+          "description": "Inconsistent sample count.",
+          "type": "string"
+        },
+        {
+          "const": "outside_grid",
+          "description": "Query outside the closed grid domain.",
           "type": "string"
         }
       ]

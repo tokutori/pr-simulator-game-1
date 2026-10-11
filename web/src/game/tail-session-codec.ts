@@ -1,8 +1,14 @@
-import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
+import { boundaryNumber, boundaryObject, boundaryTuple } from "./tail-boundary-values.js";
 import { decodeTailTickFailure, tailFailureIsEnvelope } from "./tail-session-failure.js";
 import type { TailTickFailure } from "./tail-session-failure.js";
 import type { TailInputDocument } from "../generated/tail-input.js";
-import { validateTailInputDocument } from "../generated/game-ui-validators.js";
+import type { TailSnapshotDocument, TailStateDocument, TailTelemetryDocument, TailProgressDocument } from "../generated/tail-snapshot.js";
+import type { EnvironmentIdentity } from "../generated/tail-scenario.js";
+import type { FlightRecordTailIdentityDocument } from "../generated/tail-identity.js";
+import type { TailFlightRecordFinalizationDocument } from "../generated/tail-finalization.js";
+import { validateTailInputDocument, validateTailSnapshotDocument, validateTailPreparedLaunchDocument,
+  validateEnvironmentIdentity, validateFlightRecordTailIdentityDocument, validateTailIncidenceDocument,
+  validateTailFlightRecordFinalizationDocument } from "../generated/game-ui-validators.js";
 
 export const TAIL_SESSION_SCHEMA_VERSION: TailInputDocument["schema_version"] = 2;
 export type TailPilotPositionCommand = TailInputDocument["pilot_position_command"];
@@ -15,65 +21,68 @@ export interface TailLogicalInput {
   readonly pilotPositionCommand: TailPilotPositionCommand;
 }
 export interface TailScenarioIdentity {
-  readonly catalogVersion: number;
-  readonly scenarioId: number;
-  readonly scenarioVersion: number;
-  readonly aircraftModelVersion: number;
-  readonly environmentVersion: number;
-  readonly controllerProfileVersion: number;
-  readonly seedLow: number;
-  readonly seedHigh: number;
+  readonly catalogVersion: EnvironmentIdentity["catalog_version"];
+  readonly scenarioId: EnvironmentIdentity["scenario_id"];
+  readonly scenarioVersion: EnvironmentIdentity["scenario_version"];
+  readonly aircraftModelVersion: EnvironmentIdentity["aircraft_model_version"];
+  readonly environmentVersion: EnvironmentIdentity["environment_version"];
+  readonly controllerProfileVersion: EnvironmentIdentity["controller_profile_version"];
+  readonly seedLow: EnvironmentIdentity["seed_low"];
+  readonly seedHigh: EnvironmentIdentity["seed_high"];
 }
 export interface TailControlIdentity {
-  readonly aircraftConfigurationId: string;
-  readonly controllerProfileId: string;
+  readonly aircraftConfigurationId: FlightRecordTailIdentityDocument["aircraft_configuration_id"];
+  readonly controllerProfileId: FlightRecordTailIdentityDocument["controller_profile_id"];
 }
 export type TailSessionIdentity =
   | Readonly<{ kind: "unprepared" }>
   | Readonly<{ kind: "prepared"; scenario: TailScenarioIdentity; controls: TailControlIdentity }>;
 type PreparedIdentity = Extract<TailSessionIdentity, { kind: "prepared" }>;
-type Vector3 = readonly [number, number, number];
+type Vector3 = TailStateDocument["datum_position_ned_m"];
 export interface TailFlightState {
-  readonly tick: number;
-  readonly fraction: number;
-  readonly flightTimeSeconds: number;
-  readonly datumPositionNedMeters: Vector3;
-  readonly datumVelocityNedMetersPerSecond: Vector3;
-  readonly attitudeBodyToNed: readonly [number, number, number, number];
-  readonly angularRateBodyRadiansPerSecond: Vector3;
-  readonly pilotPositionMeters: number;
-  readonly pilotVelocityMetersPerSecond: number;
-  readonly pilotPositionTargetMeters: number;
-  readonly pilotPositionTargetNormalized: number;
-  readonly physicalIncidence: Readonly<{ horizontalTailRadians: number; verticalTailRadians: number }>;
+  readonly tick: TailStateDocument["tick"];
+  readonly fraction: TailStateDocument["fraction"];
+  readonly flightTimeSeconds: TailStateDocument["flight_time_s"];
+  readonly datumPositionNedMeters: TailStateDocument["datum_position_ned_m"];
+  readonly datumVelocityNedMetersPerSecond: TailStateDocument["datum_velocity_ned_mps"];
+  readonly attitudeBodyToNed: TailStateDocument["attitude_body_to_ned"];
+  readonly angularRateBodyRadiansPerSecond: TailStateDocument["angular_rate_body_rad_s"];
+  readonly pilotPositionMeters: TailStateDocument["pilot_position_m"];
+  readonly pilotVelocityMetersPerSecond: TailStateDocument["pilot_velocity_mps"];
+  readonly pilotPositionTargetMeters: TailStateDocument["pilot_position_target_m"];
+  readonly pilotPositionTargetNormalized: TailStateDocument["pilot_position_target_normalized"];
+  readonly physicalIncidence: Readonly<{
+    horizontalTailRadians: TailStateDocument["physical_incidence"]["horizontal_tail_rad"];
+    verticalTailRadians: TailStateDocument["physical_incidence"]["vertical_tail_rad"];
+  }>;
 }
 export interface TailFlightTelemetry {
-  readonly compositeCgPositionNedMeters: Vector3;
-  readonly altitudeMeters: number;
-  readonly airspeedMetersPerSecond: number;
-  readonly groundspeedMetersPerSecond: number;
-  readonly windAtCgNedMetersPerSecond: Vector3;
-  readonly angleOfAttackRadians: number | null;
-  readonly sideslipAngleRadians: number | null;
-  readonly attitudeEulerRadians: Vector3;
+  readonly compositeCgPositionNedMeters: TailTelemetryDocument["composite_cg_position_ned_m"];
+  readonly altitudeMeters: TailTelemetryDocument["altitude_m"];
+  readonly airspeedMetersPerSecond: TailTelemetryDocument["airspeed_mps"];
+  readonly groundspeedMetersPerSecond: TailTelemetryDocument["groundspeed_mps"];
+  readonly windAtCgNedMetersPerSecond: TailTelemetryDocument["wind_at_cg_ned_mps"];
+  readonly angleOfAttackRadians: TailTelemetryDocument["angle_of_attack_rad"];
+  readonly sideslipAngleRadians: TailTelemetryDocument["sideslip_angle_rad"];
+  readonly attitudeEulerRadians: TailTelemetryDocument["attitude_euler_rad"];
 }
 export interface TailFlightProgressMeters {
-  readonly courseParallelMeters: number;
-  readonly crossTrackMeters: number;
-  readonly netHorizontalMeters: number;
+  readonly courseParallelMeters: TailProgressDocument["course_parallel_m"];
+  readonly crossTrackMeters: TailProgressDocument["cross_track_m"];
+  readonly netHorizontalMeters: TailProgressDocument["net_horizontal_m"];
 }
-export type TailTerminalReason = "water_contact" | "time_limit" | "manual_abort" | "out_of_valid_envelope" | "fatal_simulation_error";
+export type TailTerminalReason = TailFlightRecordFinalizationDocument["reason"];
 export interface TailTerminalFinalization {
   readonly reason: TailTerminalReason;
-  readonly disposition: "complete" | "interrupted" | "failed";
-  readonly terminalTick: number;
-  readonly terminalFraction: number;
-  readonly scoreMeters: Vector3 | null;
+  readonly disposition: TailFlightRecordFinalizationDocument["disposition"];
+  readonly terminalTick: TailFlightRecordFinalizationDocument["terminal_tick"];
+  readonly terminalFraction: TailFlightRecordFinalizationDocument["terminal_fraction"];
+  readonly scoreMeters: TailFlightRecordFinalizationDocument["score_m"];
   readonly failure: TailTickFailure | null;
 }
 interface TailSessionEnvelope {
-  readonly schemaVersion: 2;
-  readonly controlLayout: "tail_incidence";
+  readonly schemaVersion: TailSnapshotDocument["schema_version"];
+  readonly controlLayout: TailSnapshotDocument["control_layout"];
   readonly controlModeCode: 0 | 1 | 2;
 }
 export type TailSessionSnapshot = TailSessionEnvelope & (
@@ -91,30 +100,25 @@ export type TailPreparedLaunchSnapshot =
 export function parseTailPreparedLaunchSnapshot(json: string, physicsHz: number): TailPreparedLaunchSnapshot {
   if (json.length > 16_384) throw new RangeError("Prepared launch snapshot exceeds its bounded envelope");
   boundaryNumber(physicsHz, Number.MIN_VALUE);
-  const document = boundaryObject(JSON.parse(json) as unknown, ["schema_version", "control_layout", "phase_code", "preview"]);
-  if (document.schema_version !== TAIL_SESSION_SCHEMA_VERSION || document.control_layout !== "tail_incidence") {
+  const document = parseBoundaryJson(json);
+  if (!validateTailPreparedLaunchDocument(document)) {
     throw new RangeError("Unsupported prepared launch schema or control layout");
   }
-  const phaseCode = boundaryInteger(document.phase_code, 0, 10);
+  const phaseCode = document.phase_code;
   const preparedPhase = phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8;
-  if (typeof document.preview !== "object" || document.preview === null || Array.isArray(document.preview)) {
-    throw new RangeError("Missing prepared launch projection");
-  }
-  const kind = boundaryTag((document.preview as Record<string, unknown>).kind, ["prepared", "unavailable"]);
-  if (kind === "unavailable") {
-    boundaryObject(document.preview, ["kind"]);
+  const preview = document.preview;
+  if (preview.kind === "unavailable") {
     if (preparedPhase) throw new RangeError("Prepared phase requires the sealed initial state");
-    return Object.freeze({ kind, phaseCode });
+    return Object.freeze({ kind: preview.kind, phaseCode });
   }
   if (!preparedPhase) throw new RangeError("Initial launch projection requires a preparation phase");
-  const preview = boundaryObject(document.preview, ["kind", "scenario", "control_identity", "state"]);
   const identity = decodeIdentity(preview.scenario, preview.control_identity);
   if (identity.kind !== "prepared") throw new RangeError("Initial launch projection requires sealed identity");
   const state = decodeState(preview.state, physicsHz);
   if (state.tick !== 0 || state.fraction !== 0 || state.flightTimeSeconds !== 0) {
     throw new RangeError("Initial launch projection must retain its zero tick");
   }
-  return Object.freeze({ kind, phaseCode, identity, state });
+  return Object.freeze({ kind: preview.kind, phaseCode, identity, state });
 }
 
 export function encodeTailLogicalInput(input: TailLogicalInput): string {
@@ -142,19 +146,16 @@ export function encodeTailLogicalInput(input: TailLogicalInput): string {
 export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSessionSnapshot {
   if (json.length > 16_384) throw new RangeError("Tail snapshot exceeds its bounded envelope");
   boundaryNumber(physicsHz, Number.MIN_VALUE);
-  const parsed: unknown = JSON.parse(json);
-  const document = boundaryObject(parsed, ["schema_version", "control_layout", "phase_code", "control_mode_code",
-    "scenario", "control_identity", "frame"]);
-  if (document.schema_version !== TAIL_SESSION_SCHEMA_VERSION || document.control_layout !== "tail_incidence") {
+  const document = parseBoundaryJson(json);
+  if (!validateTailSnapshotDocument(document)) {
     throw new RangeError("Unsupported tail snapshot schema or control layout");
   }
-  const controlModeCode = boundaryInteger(document.control_mode_code, 0, 2) as 0 | 1 | 2;
+  const controlModeCode = document.control_mode_code as 0 | 1 | 2;
   const envelope: TailSessionEnvelope = { schemaVersion: TAIL_SESSION_SCHEMA_VERSION, controlLayout: "tail_incidence", controlModeCode };
   const identity = decodeIdentity(document.scenario, document.control_identity);
-  const phase = boundaryInteger(document.phase_code, 0, 8);
-  const frameTag = boundaryObjectWithKind(document.frame);
-  if (frameTag === "menu") {
-    boundaryObject(document.frame, ["kind"]);
+  const phase = document.phase_code;
+  const frame = document.frame;
+  if (frame.kind === "menu") {
     const frame = Object.freeze({ kind: "menu" as const });
     if (phase === 0 || phase === 1) {
       if (identity.kind !== "unprepared") throw new RangeError("Title and Setup cannot retain sealed identity");
@@ -165,13 +166,11 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
     return Object.freeze({ ...envelope, phaseCode: phase, identity, frame });
   }
   if (identity.kind !== "prepared") throw new RangeError("Flight snapshot requires sealed identity");
-  const frame = boundaryObject(document.frame, frameTag === "flight"
-    ? ["kind", "state", "telemetry", "progress_m"] : ["kind", "state", "telemetry", "finalization"]);
   const state = decodeState(frame.state, physicsHz);
   const telemetry = decodeTelemetry(frame.telemetry);
-  if (frameTag === "flight") {
+  if (frame.kind === "flight") {
     if ((phase !== 5 && phase !== 6) || state.fraction !== 0) throw new RangeError("Airborne frame requires an integer flight phase");
-    return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frameTag, state, telemetry,
+    return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frame.kind, state, telemetry,
       progressMeters: decodeTailFlightProgress(frame.progress_m) }) });
   }
   if (phase !== 7) throw new RangeError("Terminal frame requires Result phase");
@@ -179,33 +178,40 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
   if (finalization.terminalTick !== state.tick || finalization.terminalFraction !== state.fraction) {
     throw new RangeError("Terminal state and finalization must share one exact stamp");
   }
-  return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frameTag, state, telemetry, finalization }) });
+  return Object.freeze({ ...envelope, phaseCode: phase, identity, frame: Object.freeze({ kind: frame.kind, state, telemetry, finalization }) });
 }
 
-function boundaryObjectWithKind(value: unknown): "menu" | "flight" | "result" {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RangeError("Missing tail frame");
-  return boundaryTag((value as Record<string, unknown>).kind, ["menu", "flight", "result"]);
+function parseBoundaryJson(json: string): unknown {
+  return JSON.parse(json, (_key, value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.setPrototypeOf(value, null) as Record<string, unknown> : value) as unknown;
 }
 
-function decodeIdentity(scenarioValue: unknown, controlsValue: unknown): TailSessionIdentity {
+function ownBoundaryValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(ownBoundaryValue);
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? Object.setPrototypeOf(Object.fromEntries(Object.entries(value).map(([key, field]) => [key, ownBoundaryValue(field)])), null) as Record<string, unknown>
+    : value;
+}
+
+function decodeIdentity(scenarioValue: TailSnapshotDocument["scenario"], controlsValue: TailSnapshotDocument["control_identity"]): TailSessionIdentity {
   if (scenarioValue === null && controlsValue === null) return Object.freeze({ kind: "unprepared" });
   return Object.freeze({ kind: "prepared", scenario: decodeTailScenarioIdentity(scenarioValue), controls: decodeTailControlIdentity(controlsValue) });
 }
 
 export function decodeTailScenarioIdentity(value: unknown): TailScenarioIdentity {
-  const scenario = boundaryObject(value, ["catalog_version", "scenario_id", "scenario_version", "aircraft_model_version",
-    "environment_version", "controller_profile_version", "seed_low", "seed_high"]);
-  const version = (value: unknown) => boundaryInteger(value, 1, 0xffff_ffff);
+  const scenario = ownBoundaryValue(value);
+  if (!validateEnvironmentIdentity(scenario)) throw new RangeError("Invalid tail scenario identity");
   return Object.freeze({
-    catalogVersion: version(scenario.catalog_version), scenarioId: boundaryInteger(scenario.scenario_id, 0, 0xffff_ffff),
-    scenarioVersion: version(scenario.scenario_version), aircraftModelVersion: version(scenario.aircraft_model_version),
-    environmentVersion: version(scenario.environment_version), controllerProfileVersion: version(scenario.controller_profile_version),
-    seedLow: boundaryInteger(scenario.seed_low, 0, 0xffff_ffff), seedHigh: boundaryInteger(scenario.seed_high, 0, 0xffff_ffff)
+    catalogVersion: scenario.catalog_version, scenarioId: scenario.scenario_id,
+    scenarioVersion: scenario.scenario_version, aircraftModelVersion: scenario.aircraft_model_version,
+    environmentVersion: scenario.environment_version, controllerProfileVersion: scenario.controller_profile_version,
+    seedLow: scenario.seed_low, seedHigh: scenario.seed_high
   });
 }
 
 export function decodeTailControlIdentity(value: unknown): TailControlIdentity {
-  const controls = boundaryObject(value, ["aircraft_configuration_id", "controller_profile_id"]);
+  const controls = ownBoundaryValue(value);
+  if (!validateFlightRecordTailIdentityDocument(controls)) throw new RangeError("Invalid tail control identity");
   return Object.freeze({ aircraftConfigurationId: identityName(controls.aircraft_configuration_id),
     controllerProfileId: identityName(controls.controller_profile_id) });
 }
@@ -217,60 +223,57 @@ function identityName(value: unknown): string {
   return value;
 }
 
-function vector3(value: unknown): Vector3 {
-  return boundaryTuple(value, 3) as Vector3;
+function vector3(value: Vector3): Vector3 {
+  return Object.freeze([...value]);
 }
 
-function decodeState(value: unknown, physicsHz: number): TailFlightState {
-  const state = boundaryObject(value, ["tick", "fraction", "flight_time_s", "datum_position_ned_m", "datum_velocity_ned_mps",
-    "attitude_body_to_ned", "angular_rate_body_rad_s", "pilot_position_m", "pilot_velocity_mps", "pilot_position_target_m", "pilot_position_target_normalized", "physical_incidence"]);
-  const tick = boundaryInteger(state.tick);
-  const fraction = boundaryNumber(state.fraction, 0, 1);
-  const flightTimeSeconds = boundaryNumber(state.flight_time_s, 0);
+function decodeState(state: TailStateDocument, physicsHz: number): TailFlightState {
+  const tick = state.tick;
+  const fraction = state.fraction;
+  const flightTimeSeconds = state.flight_time_s;
   if (Math.abs(flightTimeSeconds - (tick + fraction) / physicsHz) > 1e-10) throw new RangeError("Tail flight time disagrees with its stamp");
-  const attitude = boundaryTuple(state.attitude_body_to_ned, 4) as readonly [number, number, number, number];
+  const attitude: TailStateDocument["attitude_body_to_ned"] = Object.freeze([...state.attitude_body_to_ned]);
   if (Math.abs(Math.hypot(...attitude) - 1) > 1e-8) throw new RangeError("Tail flight attitude must be a unit quaternion");
   return Object.freeze({ tick, fraction, flightTimeSeconds,
     datumPositionNedMeters: vector3(state.datum_position_ned_m), datumVelocityNedMetersPerSecond: vector3(state.datum_velocity_ned_mps),
     attitudeBodyToNed: attitude, angularRateBodyRadiansPerSecond: vector3(state.angular_rate_body_rad_s),
-    pilotPositionMeters: boundaryNumber(state.pilot_position_m), pilotVelocityMetersPerSecond: boundaryNumber(state.pilot_velocity_mps),
-    pilotPositionTargetMeters: boundaryNumber(state.pilot_position_target_m), pilotPositionTargetNormalized: boundaryNumber(state.pilot_position_target_normalized, -1, 1),
+    pilotPositionMeters: state.pilot_position_m, pilotVelocityMetersPerSecond: state.pilot_velocity_mps,
+    pilotPositionTargetMeters: state.pilot_position_target_m, pilotPositionTargetNormalized: state.pilot_position_target_normalized,
     physicalIncidence: decodeTailPhysicalIncidence(state.physical_incidence) });
 }
 
 export function decodeTailPhysicalIncidence(value: unknown): TailFlightState["physicalIncidence"] {
-  const incidence = boundaryObject(value, ["horizontal_tail_rad", "vertical_tail_rad"]);
-  return Object.freeze({ horizontalTailRadians: boundaryNumber(incidence.horizontal_tail_rad, -0.2, 0.2),
-    verticalTailRadians: boundaryNumber(incidence.vertical_tail_rad, -0.2, 0.2) });
+  const incidence = ownBoundaryValue(value);
+  if (!validateTailIncidenceDocument(incidence)) throw new RangeError("Invalid tail physical incidence");
+  return Object.freeze({ horizontalTailRadians: incidence.horizontal_tail_rad,
+    verticalTailRadians: incidence.vertical_tail_rad });
 }
 
-function decodeTelemetry(value: unknown): TailFlightTelemetry {
-  const telemetry = boundaryObject(value, ["composite_cg_position_ned_m", "altitude_m", "airspeed_mps", "groundspeed_mps",
-    "wind_at_cg_ned_mps", "angle_of_attack_rad", "sideslip_angle_rad", "attitude_euler_rad"]);
-  const angle = (value: unknown) => value === null ? null : boundaryNumber(value);
+function decodeTelemetry(telemetry: TailTelemetryDocument): TailFlightTelemetry {
   return Object.freeze({ compositeCgPositionNedMeters: vector3(telemetry.composite_cg_position_ned_m),
-    altitudeMeters: boundaryNumber(telemetry.altitude_m), airspeedMetersPerSecond: boundaryNumber(telemetry.airspeed_mps, 0),
-    groundspeedMetersPerSecond: boundaryNumber(telemetry.groundspeed_mps, 0), windAtCgNedMetersPerSecond: vector3(telemetry.wind_at_cg_ned_mps),
-    angleOfAttackRadians: angle(telemetry.angle_of_attack_rad), sideslipAngleRadians: angle(telemetry.sideslip_angle_rad),
+    altitudeMeters: telemetry.altitude_m, airspeedMetersPerSecond: telemetry.airspeed_mps,
+    groundspeedMetersPerSecond: telemetry.groundspeed_mps, windAtCgNedMetersPerSecond: vector3(telemetry.wind_at_cg_ned_mps),
+    angleOfAttackRadians: telemetry.angle_of_attack_rad, sideslipAngleRadians: telemetry.sideslip_angle_rad,
     attitudeEulerRadians: vector3(telemetry.attitude_euler_rad) });
 }
 
 export function decodeTailTerminalFinalization(value: unknown): TailTerminalFinalization {
-  const terminal = boundaryObject(value, ["reason", "disposition", "terminal_tick", "terminal_fraction", "score_m", "failure"]);
-  const reason = boundaryTag(terminal.reason, ["water_contact", "time_limit", "manual_abort", "out_of_valid_envelope", "fatal_simulation_error"]);
-  const disposition = boundaryTag(terminal.disposition, ["complete", "interrupted", "failed"]);
+  const terminal = ownBoundaryValue(value);
+  if (!validateTailFlightRecordFinalizationDocument(terminal)) throw new RangeError("Invalid tail finalization");
+  const reason = terminal.reason;
+  const disposition = terminal.disposition;
   const expected = reason === "water_contact" || reason === "time_limit" ? "complete" : reason === "manual_abort" ? "interrupted" : "failed";
   const failure = terminal.failure === null ? null : decodeTailTickFailure(terminal.failure);
   if (disposition !== expected || (failure === null && reason === "out_of_valid_envelope")
       || (failure !== null && reason !== (tailFailureIsEnvelope(failure) ? "out_of_valid_envelope" : "fatal_simulation_error"))) {
     throw new RangeError("Tail finalization reason, disposition or cause is contradictory");
   }
-  return Object.freeze({ reason, disposition, terminalTick: boundaryInteger(terminal.terminal_tick),
-    terminalFraction: boundaryNumber(terminal.terminal_fraction, 0, 1), scoreMeters: terminal.score_m === null ? null : decodeRecordedDistanceScore(terminal.score_m), failure });
+  return Object.freeze({ reason, disposition, terminalTick: terminal.terminal_tick,
+    terminalFraction: terminal.terminal_fraction, scoreMeters: terminal.score_m === null ? null : decodeRecordedDistanceScore(terminal.score_m), failure });
 }
 
 export function decodeRecordedDistanceScore(value: unknown): Vector3 {
-  const score = vector3(value);
+  const score = boundaryTuple(value, 3) as Vector3;
   const expectedNet = boundaryNumber(Math.hypot(score[0], score[1]), 0);
   if (score[2] < 0 || Math.abs(expectedNet - score[2]) > 1e-9 * Math.max(1, expectedNet)) {
     throw new RangeError("Tail distance score violates its horizontal displacement invariant");
@@ -278,11 +281,10 @@ export function decodeRecordedDistanceScore(value: unknown): Vector3 {
   return score;
 }
 
-function decodeTailFlightProgress(value: unknown): TailFlightProgressMeters {
-  const progress = boundaryObject(value, ["course_parallel_m", "cross_track_m", "net_horizontal_m"]);
-  const course = boundaryNumber(progress.course_parallel_m);
-  const crossTrack = boundaryNumber(progress.cross_track_m);
-  const net = boundaryNumber(progress.net_horizontal_m, 0);
+function decodeTailFlightProgress(progress: TailProgressDocument): TailFlightProgressMeters {
+  const course = progress.course_parallel_m;
+  const crossTrack = progress.cross_track_m;
+  const net = progress.net_horizontal_m;
   decodeRecordedDistanceScore([course, crossTrack, net]);
   return Object.freeze({ courseParallelMeters: course, crossTrackMeters: crossTrack, netHorizontalMeters: net });
 }

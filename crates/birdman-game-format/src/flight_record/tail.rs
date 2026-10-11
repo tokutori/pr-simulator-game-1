@@ -26,6 +26,7 @@ pub use failure::{
 
 /// Schema-six terminal metadata with the original typed simulation cause.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TailFlightRecordFinalizationDocument {
     /// Domain termination reason.
@@ -35,6 +36,7 @@ pub struct TailFlightRecordFinalizationDocument {
     /// Integer tick containing the last valid sample.
     pub terminal_tick: u64,
     /// Fraction matching that last valid sample.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub terminal_fraction: f64,
     /// Stored course/cross-track/net score when available.
     pub score_m: Option<[f64; 3]>,
@@ -94,6 +96,7 @@ pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 6;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordTailIdentityDocument {
     /// Immutable aircraft configuration name.
@@ -104,11 +107,14 @@ pub struct FlightRecordTailIdentityDocument {
 
 /// Named physical angles in radians, preserving the two-tail contract without a roll slot.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TailIncidenceDocument {
     /// Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
+    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
     pub horizontal_tail_rad: f64,
     /// Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
+    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
     pub vertical_tail_rad: f64,
 }
 

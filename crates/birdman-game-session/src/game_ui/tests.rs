@@ -2258,6 +2258,8 @@ fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
         ("action", "deserialize", "GameUiAction"),
         ("input", "deserialize", "GameUiPlatformInput"),
         ("tail-input", "deserialize", "TailInputDocument"),
+        ("tail-snapshot", "serialize", "TailSnapshotDocument"),
+        ("tail-prepared", "serialize", "TailPreparedLaunchDocument"),
     ] {
         let schema: serde_json::Value =
             serde_json::from_str(&export_game_ui_schema(name).unwrap()).unwrap();
@@ -2305,4 +2307,62 @@ fn tail_input_schema_preserves_the_wire_shape_and_leaves_rate_limits_to_core() {
     assert!(definitions.contains_key("TailInputDocument"));
     assert!(definitions.contains_key("TailControlLayoutDocument"));
     assert!(definitions.contains_key("TailPilotPositionCommandDocument"));
+}
+
+#[cfg(feature = "schema")]
+#[test]
+fn tail_snapshot_schema_preserves_nullable_output_and_shared_query_leaves() {
+    let bundle: serde_json::Value =
+        serde_json::from_str(&export_game_ui_schema("bundle").unwrap()).unwrap();
+    let definitions = &bundle["serialize"]["$defs"];
+    for (name, fields) in [
+        (
+            "TailSnapshotDocument",
+            ["scenario", "control_identity"].as_slice(),
+        ),
+        (
+            "TailTelemetryDocument",
+            ["angle_of_attack_rad", "sideslip_angle_rad"].as_slice(),
+        ),
+        (
+            "TailFlightRecordFinalizationDocument",
+            ["score_m", "failure"].as_slice(),
+        ),
+        ("HybridFailureDocument", ["limit", "stage"].as_slice()),
+    ] {
+        assert_eq!(definitions[name]["additionalProperties"], false);
+        let required = definitions[name]["required"].as_array().unwrap();
+        for field in fields {
+            assert!(required.contains(&serde_json::json!(field)));
+        }
+    }
+    assert_eq!(
+        definitions["TailSnapshotDocument"]["properties"]["schema_version"]["const"],
+        2
+    );
+    assert_eq!(
+        definitions["TailPreparedLaunchDocument"]["properties"]["schema_version"]["const"],
+        2
+    );
+    assert_eq!(
+        definitions["EnvironmentIdentity"]["properties"]["catalog_version"]["minimum"],
+        1
+    );
+    assert_eq!(
+        definitions["EnvironmentIdentity"]["properties"]["scenario_id"]["minimum"],
+        0
+    );
+    assert_eq!(
+        definitions["TailStateDocument"]["properties"]["tick"]["format"],
+        "uint64"
+    );
+    for name in [
+        "EnvironmentIdentity",
+        "FlightRecordTailIdentityDocument",
+        "TailIncidenceDocument",
+        "TailFlightRecordFinalizationDocument",
+        "TailTickFailureDocument",
+    ] {
+        assert!(definitions[name].is_object());
+    }
 }

@@ -7,8 +7,13 @@ mod environment;
 mod flight_record;
 mod personal_best;
 mod tail_input;
+mod tail_snapshot;
 
 pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
+pub use tail_snapshot::{
+    EnvironmentIdentity, TailFrameDocument, TailPreparedLaunchDocument, TailPreparedLaunchFrame,
+    TailProgressDocument, TailSnapshotDocument, TailStateDocument, TailTelemetryDocument,
+};
 
 pub use environment::{
     ENVIRONMENT_SCHEMA_VERSION, EnvironmentBasisDocument, EnvironmentComponent,

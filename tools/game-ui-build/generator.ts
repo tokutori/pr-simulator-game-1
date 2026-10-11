@@ -15,7 +15,13 @@ export const schemaEntries = [
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
   { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
-  { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" }
+  { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
+  { key: "tail_snapshot", name: "TailSnapshotDocument", filename: "tail-snapshot", group: "serialize" },
+  { key: "tail_prepared", name: "TailPreparedLaunchDocument", filename: "tail-prepared", group: "serialize" },
+  { key: "tail_scenario", name: "EnvironmentIdentity", filename: "tail-scenario", group: "serialize" },
+  { key: "tail_identity", name: "FlightRecordTailIdentityDocument", filename: "tail-identity", group: "serialize" },
+  { key: "tail_incidence", name: "TailIncidenceDocument", filename: "tail-incidence", group: "serialize" },
+  { key: "tail_finalization", name: "TailFlightRecordFinalizationDocument", filename: "tail-finalization", group: "serialize" }
 ] as const;
 
 const schemaGroups = ["serialize", "deserialize"] as const;

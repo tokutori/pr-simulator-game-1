@@ -174,6 +174,7 @@ pub struct FlightRecordTelemetryDocument {
 
 /// Stable external end-reason names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordEndReasonDocument {
     /// The aircraft contacted the still-water surface.
@@ -190,6 +191,7 @@ pub enum FlightRecordEndReasonDocument {
 
 /// Stable external completion classifications.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordDispositionDocument {
     /// Normal water contact or configured time limit.

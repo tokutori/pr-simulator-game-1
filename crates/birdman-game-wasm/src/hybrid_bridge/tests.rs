@@ -407,7 +407,7 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
 fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
     let bridge = launch(ControlMode::Manual, 10);
     let initial = bridge.session.snapshot().tail_flight_state().unwrap();
-    let projected = StateDocument::new(
+    let projected = state_document(
         8,
         0.375,
         initial.flight_state(),

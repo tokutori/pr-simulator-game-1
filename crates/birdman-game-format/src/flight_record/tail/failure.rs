@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Original two-tail tick failure, preserving each nested cause without string classification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TailTickFailureDocument {
     /// Tick counter overflow.
@@ -22,6 +23,7 @@ pub enum TailTickFailureDocument {
 
 /// Original two-tail control failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum TailControlFailureDocument {
     /// Non-finite control value.
@@ -38,6 +40,7 @@ pub enum TailControlFailureDocument {
 
 /// Original dynamics failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum DynamicsFailureDocument {
     /// Non-finite arithmetic.
@@ -66,6 +69,7 @@ pub enum DynamicsFailureDocument {
 
 /// Original external-load failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum LoadFailureDocument {
     /// Load domain exceeded.
@@ -78,6 +82,7 @@ pub enum LoadFailureDocument {
 
 /// Original aerodynamic failure, preserving the current provider scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum AerodynamicFailureDocument {
     /// Original hybrid diagnostic.
@@ -91,6 +96,7 @@ pub enum AerodynamicFailureDocument {
 
 /// Original hybrid site, cause, closed-domain limit and optional RK stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct HybridFailureDocument {
     /// Original datum, polar, surface, proxy, incidence or aggregate site.
@@ -105,6 +111,7 @@ pub struct HybridFailureDocument {
 
 /// Original aerodynamic validation or evaluation cause.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum AeroFailureDocument {
     /// Non-finite value.
@@ -143,6 +150,7 @@ pub enum AeroFailureDocument {
 
 /// Original wind-field construction or sampling failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum WindFailureDocument {
     /// Non-finite value.
@@ -161,6 +169,7 @@ pub enum WindFailureDocument {
 
 /// Original mathematical failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum MathFailureDocument {
     /// Non-finite value.
@@ -179,6 +188,7 @@ pub enum MathFailureDocument {
 
 /// Original contact search or interpolation failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContactFailureDocument {
     /// Empty structural geometry.
@@ -193,6 +203,7 @@ pub enum ContactFailureDocument {
 
 /// Original software actuator failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ActuatorFailureDocument {
     /// Non-finite value.
@@ -209,6 +220,7 @@ pub enum ActuatorFailureDocument {
 
 /// Original complete hybrid surface identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum HybridSurfaceDocument {
     /// Complete main wing.
@@ -221,6 +233,7 @@ pub enum HybridSurfaceDocument {
 
 /// Original hybrid evaluation site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum HybridSiteDocument {
     /// Datum flow.
@@ -244,6 +257,7 @@ pub enum HybridSiteDocument {
 
 /// Original actual or reference flow identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum HybridFlowDocument {
     /// Actual local flow.
@@ -254,6 +268,7 @@ pub enum HybridFlowDocument {
 
 /// Original exceeded software limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum HybridLimitDocument {
     /// Static alpha interval.
@@ -280,6 +295,7 @@ pub enum HybridLimitDocument {
 
 /// Original classical RK4 load-evaluation stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AerodynamicStageDocument {
     /// Initial state.
