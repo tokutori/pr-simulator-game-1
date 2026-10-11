@@ -64,6 +64,10 @@ Replayのcursor stampとrecord finalizationを区別し、保存controlsを新�
 巨大なSceneを毎frame直列化せず、world/asset作成とtick/frame更新を分離する。
 GPU resource handleはadapter内部に保持し、上位ではasset IDを使用する。
 dispose・resize・world load・frame描画・capability取得の所有者と失敗時状態を定義する。
+PresentationRuntimeのdisposeはloop停止・backend停止・renderer解放を独立して全試行する。
+cleanup失敗は操作名・backend mode・元の原因を保持した非空の失敗一覧として返す。
+初回disposeのPromiseと結果を保持し、並行呼出し・同期再入・再disposeで解放を繰り返さない。
+mainの解放effectは失敗結果とPromise rejectionを診断出力へ伝達する。
 必要な操作だけを契約化し、汎用game engine全体を再実装しない。
 
 ## UI・camera・XR
