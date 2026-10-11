@@ -128,6 +128,7 @@ impl TailIncidenceDocument {
 
 /// Saved input absence or a normalized longitudinal-position instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TailPilotPositionCommandDocument {
     /// Retain the previously resolved physical target.
@@ -135,6 +136,7 @@ pub enum TailPilotPositionCommandDocument {
     /// Resolve this normalized target through the configured trim mapping.
     Set {
         /// Normalized position in the inclusive interval [-1, 1].
+        #[cfg_attr(feature = "schema", schemars(range(min = -1.0, max = 1.0)))]
         normalized: f64,
     },
 }

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { validateTailInputDocument } from "../../web/src/generated/game-ui-validators.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
@@ -202,6 +203,67 @@ describe("versioned two-tail TypeScript boundary", () => {
     } finally {
       session.free();
     }
+  });
+
+  it("uses the generated wire validator without weakening the camelCase input boundary", () => {
+    const document: unknown = JSON.parse(encodeTailLogicalInput(neutral));
+    if (!validateTailInputDocument(document)) throw new Error("Expected a valid generated input fixture");
+    for (const command of [{ kind: "hold" }, { kind: "set", normalized: -1 }, { kind: "set", normalized: 1 }]) {
+      expect(validateTailInputDocument({ ...document, pilot_position_command: command })).toBe(true);
+    }
+    expect(validateTailInputDocument({ ...document, desired_pitch_rate_rad_s: 0.201 })).toBe(true);
+    for (const field of Object.keys(document)) {
+      const missing = Object.fromEntries(Object.entries(document).filter(([key]) => key !== field));
+      expect(validateTailInputDocument(missing), field).toBe(false);
+      expect(validateTailInputDocument({ ...document, [field]: null }), field).toBe(false);
+    }
+    for (const invalid of [
+      { ...document, schema_version: 1 }, { ...document, control_layout: "legacy_three_axis" },
+      { ...document, roll: 0 }, { ...document, nose_up: 1.01 }, { ...document, turn_right: -1.01 },
+      { ...document, desired_pitch_rate_rad_s: NaN }, { ...document, desired_yaw_rate_rad_s: Infinity },
+      { ...document, pilot_position_command: { kind: "unknown" } },
+      { ...document, pilot_position_command: { kind: "hold", normalized: 0 } },
+      { ...document, pilot_position_command: { kind: "set" } },
+      { ...document, pilot_position_command: { kind: "set", normalized: -1.01 } },
+      { ...document, pilot_position_command: { kind: "set", normalized: NaN } },
+      { ...document, pilot_position_command: { kind: "set", normalized: 0, extra: true } }
+    ]) expect(validateTailInputDocument(invalid)).toBe(false);
+    for (const invalid of [
+      null, undefined, [], {}, { ...neutral, controlLayout: "legacy_three_axis" },
+      { ...neutral, pilotPositionCommand: null }, { ...neutral, pilotPositionCommand: undefined },
+      { ...neutral, pilotPositionCommand: { kind: "unknown" } },
+      { ...neutral, pilotPositionCommand: { kind: "set" } },
+      { ...neutral, pilotPositionCommand: { kind: "set", normalized: 0, extra: true } }
+    ]) expect(() => encodeTailLogicalInput(invalid as TailLogicalInput)).toThrow(RangeError);
+    for (const field of Object.keys(neutral)) {
+      const missing = Object.fromEntries(Object.entries(neutral).filter(([key]) => key !== field));
+      expect(() => encodeTailLogicalInput(missing as unknown as TailLogicalInput), field).toThrow(RangeError);
+    }
+  });
+
+  it("validates one own-field command projection before JSON serialization", () => {
+    const redirected = Object.defineProperty({ kind: "hold" as const }, "toJSON", {
+      value: () => ({ kind: "set", normalized: 1 })
+    });
+    const inheritedToJson = Object.create(Object.defineProperty({}, "toJSON", {
+      value: () => ({ kind: "set", normalized: 1 })
+    })) as { kind: "hold" };
+    inheritedToJson.kind = "hold";
+    for (const command of [redirected, inheritedToJson]) {
+      expect(JSON.parse(encodeTailLogicalInput({ ...neutral, pilotPositionCommand: command })))
+        .toHaveProperty("pilot_position_command", { kind: "hold" });
+    }
+    let reads = 0;
+    const getterCommand = { kind: "set" as const, get normalized() { reads += 1; return reads === 1 ? 0.5 : 10; } };
+    expect(JSON.parse(encodeTailLogicalInput({ ...neutral, pilotPositionCommand: getterCommand })))
+      .toHaveProperty("pilot_position_command", { kind: "set", normalized: 0.5 });
+    expect(reads).toBe(1);
+    for (const command of [
+      Object.create({ kind: "hold" }) as { kind: "hold" },
+      Object.defineProperty({}, "kind", { value: "hold" }) as { kind: "hold" },
+      { kind: "hold" as const, toJSON: () => ({ kind: "set", normalized: 1 }) },
+      { kind: "set" as const, normalized: 0, extra: true }
+    ]) expect(() => encodeTailLogicalInput({ ...neutral, pilotPositionCommand: command })).toThrow(RangeError);
   });
 
   it("keeps one fractional terminal time and explicit absent telemetry angles", () => {

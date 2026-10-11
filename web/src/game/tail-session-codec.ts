@@ -1,15 +1,17 @@
 import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
 import { decodeTailTickFailure, tailFailureIsEnvelope } from "./tail-session-failure.js";
 import type { TailTickFailure } from "./tail-session-failure.js";
+import type { TailInputDocument } from "../generated/tail-input.js";
+import { validateTailInputDocument } from "../generated/game-ui-validators.js";
 
-export const TAIL_SESSION_SCHEMA_VERSION = 2;
-export type TailPilotPositionCommand = Readonly<{ kind: "hold" }> | Readonly<{ kind: "set"; normalized: number }>;
+export const TAIL_SESSION_SCHEMA_VERSION: TailInputDocument["schema_version"] = 2;
+export type TailPilotPositionCommand = TailInputDocument["pilot_position_command"];
 export interface TailLogicalInput {
-  readonly controlLayout: "tail_incidence";
-  readonly noseUp: number;
-  readonly turnRight: number;
-  readonly desiredPitchRateRadiansPerSecond: number;
-  readonly desiredYawRateRadiansPerSecond: number;
+  readonly controlLayout: TailInputDocument["control_layout"];
+  readonly noseUp: TailInputDocument["nose_up"];
+  readonly turnRight: TailInputDocument["turn_right"];
+  readonly desiredPitchRateRadiansPerSecond: TailInputDocument["desired_pitch_rate_rad_s"];
+  readonly desiredYawRateRadiansPerSecond: TailInputDocument["desired_yaw_rate_rad_s"];
   readonly pilotPositionCommand: TailPilotPositionCommand;
 }
 export interface TailScenarioIdentity {
@@ -118,22 +120,23 @@ export function parseTailPreparedLaunchSnapshot(json: string, physicsHz: number)
 export function encodeTailLogicalInput(input: TailLogicalInput): string {
   const object = boundaryObject(input, ["controlLayout", "noseUp", "turnRight", "desiredPitchRateRadiansPerSecond",
     "desiredYawRateRadiansPerSecond", "pilotPositionCommand"]);
-  boundaryTag(object.controlLayout, ["tail_incidence"]);
-  const command = input.pilotPositionCommand;
-  const position = command.kind === "hold"
-    ? boundaryObject(command, ["kind"])
-    : boundaryObject(command, ["kind", "normalized"]);
-  boundaryTag(position.kind, ["hold", "set"]);
-  return JSON.stringify({
+  const command = object.pilotPositionCommand;
+  const pilotPositionCommand = typeof command === "object" && command !== null && !Array.isArray(command)
+    ? Object.fromEntries(Object.entries(command)) : command;
+  const document = {
     schema_version: TAIL_SESSION_SCHEMA_VERSION,
-    control_layout: "tail_incidence",
-    nose_up: boundaryNumber(input.noseUp, -1, 1),
-    turn_right: boundaryNumber(input.turnRight, -1, 1),
-    desired_pitch_rate_rad_s: boundaryNumber(input.desiredPitchRateRadiansPerSecond),
-    desired_yaw_rate_rad_s: boundaryNumber(input.desiredYawRateRadiansPerSecond),
-    pilot_position_command: command.kind === "hold" ? { kind: "hold" }
-      : { kind: "set", normalized: boundaryNumber(command.normalized, -1, 1) }
-  });
+    control_layout: object.controlLayout,
+    nose_up: object.noseUp,
+    turn_right: object.turnRight,
+    desired_pitch_rate_rad_s: object.desiredPitchRateRadiansPerSecond,
+    desired_yaw_rate_rad_s: object.desiredYawRateRadiansPerSecond,
+    pilot_position_command: pilotPositionCommand
+  };
+  if (!validateTailInputDocument(document)) {
+    throw new RangeError(`Invalid tail input: ${(validateTailInputDocument.errors ?? [])
+      .map((error) => `${error.instancePath || "/"} ${error.message ?? error.keyword}`).join("; ")}`);
+  }
+  return JSON.stringify(document);
 }
 
 export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSessionSnapshot {

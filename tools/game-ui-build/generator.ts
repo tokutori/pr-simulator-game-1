@@ -14,7 +14,8 @@ export const schemaEntries = [
   { key: "action", name: "GameUiAction", filename: "game-ui-action" },
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects" },
-  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame" }
+  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame" },
+  { key: "tail_input", name: "TailInputDocument", filename: "tail-input" }
 ] as const;
 
 export type SchemaKey = typeof schemaEntries[number]["key"];
