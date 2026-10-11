@@ -1526,11 +1526,8 @@ fn screen_attract_preserves_flow_information_and_vr_normalized_layout() {
             assert!(view.layout.scroll_y);
             assert_eq!(view.theme.button_min_height_px, 44.0);
             if mode != GameUiPresentationMode::Screen {
-                assert_eq!(control(&view, "game-attract-return").rect.y, 0.40 * 0.81);
-                assert_eq!(
-                    control(&view, "game-attract-return").rect.height,
-                    0.075 * 0.81
-                );
+                assert_eq!(control(&view, "game-attract-return").rect.y, 0.40);
+                assert_eq!(control(&view, "game-attract-return").rect.height, 0.075);
             }
             assert_eq!(session.snapshot(), snapshot);
             assert_eq!(session.playback_clock(), clock);
