@@ -2288,6 +2288,7 @@ fn spawn_text(
         .spawn((
             ChildOf(parent),
             Text::new(label),
+            TextLayout::linebreak(LineBreak::WordOrCharacter),
             TextFont {
                 font: font.clone().into(),
                 font_size: FontSize::Px(size),
@@ -3870,6 +3871,41 @@ mod tests {
                     assert_ne!(navigation, rebuilt);
                     assert_eq!(app.world().resource::<InputFocus>().get(), Some(rebuilt));
                     assert_visible(app.world(), shell, rebuilt);
+                    if width == 360 {
+                        let cause = "UnboundedShaderCause".repeat(4);
+                        assert_eq!(cause.len(), 80);
+                        {
+                            let mut session = app.world_mut().resource_mut::<NativeSession>();
+                            session.notice = Some(cause.clone());
+                        }
+                        press(&mut app, "game-result-technical");
+                        app.update();
+                        app.update();
+                        assert!(app.world().resource::<NativeSession>().ui.technical_open);
+                        let retained = app.world().resource::<RetainedUi>();
+                        assert!(
+                            retained
+                                .widgets
+                                .contains_key("game-result-technical-content")
+                        );
+                        assert!(labels(&app).iter().any(|label| label.contains(&cause)));
+                        let shell_bounds = bounds(app.world(), shell);
+                        for (id, widget) in &retained.widgets {
+                            assert_text_ink_within_node(app.world(), widget.text);
+                            let control_bounds = bounds(app.world(), widget.node);
+                            let text_bounds = bounds(app.world(), widget.text);
+                            assert!(
+                                control_bounds.min.x >= shell_bounds.min.x - 1.0
+                                    && control_bounds.max.x <= shell_bounds.max.x + 1.0,
+                                "Control exceeds its shell: {id}, shell={shell_bounds:?}, control={control_bounds:?}"
+                            );
+                            assert!(
+                                text_bounds.min.x >= control_bounds.min.x - 1.0
+                                    && text_bounds.max.x <= control_bounds.max.x + 1.0,
+                                "Text exceeds its control: {id}, control={control_bounds:?}, text={text_bounds:?}"
+                            );
+                        }
+                    }
                 }
                 assert_eq!(
                     app.world().resource::<NativeSession>().game.snapshot(),
