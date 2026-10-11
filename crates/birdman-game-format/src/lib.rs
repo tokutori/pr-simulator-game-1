@@ -128,54 +128,30 @@ impl HudProfile {
     /// Replaces one cue without changing the other profile values.
     pub const fn with_cue(self, cue: HudCue, visible: bool) -> Self {
         match cue {
-            HudCue::Telemetry => Self::new(
-                visible,
-                self.attitude,
-                self.wind,
-                self.flight_path,
-                self.angle_of_attack,
-                self.warnings,
-            ),
-            HudCue::Attitude => Self::new(
-                self.telemetry,
-                visible,
-                self.wind,
-                self.flight_path,
-                self.angle_of_attack,
-                self.warnings,
-            ),
-            HudCue::Wind => Self::new(
-                self.telemetry,
-                self.attitude,
-                visible,
-                self.flight_path,
-                self.angle_of_attack,
-                self.warnings,
-            ),
-            HudCue::FlightPath => Self::new(
-                self.telemetry,
-                self.attitude,
-                self.wind,
-                visible,
-                self.angle_of_attack,
-                self.warnings,
-            ),
-            HudCue::AngleOfAttack => Self::new(
-                self.telemetry,
-                self.attitude,
-                self.wind,
-                self.flight_path,
-                visible,
-                self.warnings,
-            ),
-            HudCue::Warnings => Self::new(
-                self.telemetry,
-                self.attitude,
-                self.wind,
-                self.flight_path,
-                self.angle_of_attack,
-                visible,
-            ),
+            HudCue::Telemetry => Self {
+                telemetry: visible,
+                ..self
+            },
+            HudCue::Attitude => Self {
+                attitude: visible,
+                ..self
+            },
+            HudCue::Wind => Self {
+                wind: visible,
+                ..self
+            },
+            HudCue::FlightPath => Self {
+                flight_path: visible,
+                ..self
+            },
+            HudCue::AngleOfAttack => Self {
+                angle_of_attack: visible,
+                ..self
+            },
+            HudCue::Warnings => Self {
+                warnings: visible,
+                ..self
+            },
         }
     }
 }
@@ -550,6 +526,40 @@ mod tests {
         assert!(!changed.hud_profile().flight_path());
         assert!(!changed.hud_profile().angle_of_attack());
         assert!(!changed.hud_profile().warnings());
+    }
+
+    #[test]
+    fn hud_cue_updates_only_the_selected_field() {
+        let cues = [
+            HudCue::Telemetry,
+            HudCue::Attitude,
+            HudCue::Wind,
+            HudCue::FlightPath,
+            HudCue::AngleOfAttack,
+            HudCue::Warnings,
+        ];
+        for visible in [false, true] {
+            let profile =
+                HudProfile::new(!visible, !visible, !visible, !visible, !visible, !visible);
+            for (index, cue) in cues.into_iter().enumerate() {
+                let changed = profile.with_cue(cue, visible);
+                let mut expected = [!visible; 6];
+                expected[index] = visible;
+                assert_eq!(
+                    [
+                        changed.telemetry(),
+                        changed.attitude(),
+                        changed.wind(),
+                        changed.flight_path(),
+                        changed.angle_of_attack(),
+                        changed.warnings(),
+                    ],
+                    expected,
+                    "cue={cue:?}, visible={visible}"
+                );
+                assert_eq!(changed.with_cue(cue, visible), changed);
+            }
+        }
     }
 
     #[test]
