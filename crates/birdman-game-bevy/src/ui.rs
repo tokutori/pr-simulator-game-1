@@ -3401,15 +3401,28 @@ mod tests {
                 } else {
                     GameUiAction::SeekAnalysis { time_seconds }
                 };
-                app.world_mut()
-                    .resource_mut::<NativeSession>()
-                    .update_ui_action(action, &platform)
-                    .unwrap();
+                let authoritative_time = {
+                    let mut session = app.world_mut().resource_mut::<NativeSession>();
+                    let update = session.update_ui_action(action.clone(), &platform).unwrap();
+                    assert_eq!(
+                        update.effects,
+                        [GameUiEffect::Record {
+                            action: action.clone()
+                        }]
+                    );
+                    session.execute_ui_record_action(action).unwrap();
+                    if replay {
+                        session.game.playback_clock().unwrap().time_seconds()
+                    } else {
+                        session.ui.analysis_time_seconds
+                    }
+                };
+                assert_eq!(authoritative_time, time_seconds);
                 app.update();
                 assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
                 assert_eq!(
                     app.world().get::<MenuRange>(node).unwrap().value,
-                    time_seconds
+                    authoritative_time
                 );
                 assert_eq!(
                     app.world().get::<Text>(text).unwrap().0,
