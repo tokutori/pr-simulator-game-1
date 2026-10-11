@@ -235,6 +235,11 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-result-title");
     expect(trial.scene()).toBe("Title");
     if (mode !== "normal") await vi.waitFor(() => { expect(observedView().description).toContain(message); });
+    else await vi.waitFor(() => {
+      expect(observedView().panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-title-open-record-1")).toBe(true);
+      expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull();
+      expect(observedView().description).not.toContain(message);
+    });
     trial.click("game-title-demo");
     expect(trial.documentRef.querySelector('[data-control-id="game-attract-return"]')).not.toBeNull();
     assertNoListFeedback();
