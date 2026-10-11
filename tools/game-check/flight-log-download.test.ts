@@ -187,7 +187,7 @@ describe("flight log download state and common presentation", () => {
       if (!(shell instanceof browser.HTMLElement)) throw new Error("Missing flow shell");
       expect(shell.style.overflowY).toBe("auto");
       expect(shell.dataset.scrollY).toBe("true");
-      expect(Array.from(root.querySelectorAll<HTMLElement>(".screen-ui-section"), (section) => section.dataset.sectionId))
+      expect(Array.from(root.querySelectorAll(".screen-ui-section"), (section) => section.getAttribute("data-section-id")))
         .toEqual(panel.sections.map((section) => section.id));
       for (const section of panel.sections) {
         const element = root.querySelector(`[data-section-id="${section.id}"]`);
