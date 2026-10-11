@@ -490,6 +490,97 @@ mod tests {
     }
 
     #[test]
+    fn launch_and_resume_require_new_control_key_presses() {
+        let observed = [false, true].map(|resume| {
+            let (mut app, window) = input_app();
+            app.add_plugins(bevy::time::TimePlugin)
+                .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
+                .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / f64::from(PHYSICS_HZ)),
+                ))
+                .init_resource::<world::RenderHistory>()
+                .add_systems(FixedUpdate, advance_physics)
+                .add_systems(Update, advance_presentation);
+            app.update();
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                for action in [
+                    native_session::MenuAction::Start,
+                    native_session::MenuAction::Prepare,
+                    native_session::MenuAction::Launch,
+                ] {
+                    session.action(action).unwrap();
+                }
+                if resume {
+                    for _ in 0..3 {
+                        session.countdown(1.0);
+                    }
+                    session.action(native_session::MenuAction::Pause).unwrap();
+                }
+            }
+            write_keyboard(
+                &mut app,
+                window,
+                KeyCode::ArrowUp,
+                Key::ArrowUp,
+                ButtonState::Pressed,
+            );
+            if resume {
+                app.update();
+                assert!(matches!(
+                    app.world().resource::<NativeSession>().game.snapshot().phase(),
+                    SessionPhase::FlightPaused { .. }
+                ));
+                write_keyboard(
+                    &mut app,
+                    window,
+                    KeyCode::KeyP,
+                    Key::Character("p".into()),
+                    ButtonState::Pressed,
+                );
+            } else {
+                for _ in 0..=4 * PHYSICS_HZ {
+                    app.update();
+                    if app.world().resource::<NativeSession>().game.snapshot().phase()
+                        == SessionPhase::FlightRunning
+                    {
+                        break;
+                    }
+                }
+            }
+            let initial = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            assert_eq!(initial.tick_index(), 0);
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            let session = app.world().resource::<NativeSession>();
+            let state = session.game.snapshot().tail_flight_state().unwrap();
+            let record = session.game.flight_record().unwrap();
+            assert_eq!(state.tick_index(), 1);
+            assert_eq!(record.sample_count(), 2);
+            let sample = record.samples().last().unwrap();
+            let input = sample.controls.input_from_previous.unwrap();
+            assert_eq!(sample.controls.actuators(), state.incidence());
+            eprintln!(
+                "Native held ArrowUp: resume={resume}, tick={}, intent={}, recorded_intent={}, incidence={:?}, angular_velocity={:?}",
+                state.tick_index(),
+                intent.nose_up,
+                input.manual_intent().nose_up(),
+                state.incidence(),
+                state.flight_state().angular_velocity_body().components(),
+            );
+            (intent.nose_up, input.manual_intent().nose_up())
+        });
+        assert_eq!(observed, [(0.0, 0.0); 2]);
+    }
+
+    #[test]
     fn raw_camera_key_toggles_once_per_press_in_the_same_frame() {
         let (mut app, window) = flight_input_app();
         app.world_mut().resource_mut::<CameraMode>().look = Vec2::new(0.3, -0.2);
