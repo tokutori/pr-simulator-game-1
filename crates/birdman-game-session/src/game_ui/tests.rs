@@ -709,9 +709,16 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
     assert_eq!(web.state.replay_camera, GameUiReplayCamera::Auto);
     assert_eq!(
         web.effects,
-        vec![GameUiEffect::Session {
-            command: GameUiSessionCommand::EnterReplay {},
-        }]
+        vec![
+            GameUiEffect::Session {
+                command: GameUiSessionCommand::EnterReplay {},
+            },
+            GameUiEffect::Platform {
+                command: GameUiPlatformCommand::SetReplayCamera {
+                    camera: GameUiReplayCamera::Auto
+                },
+            },
+        ]
     );
     platform.supported_replay_cameras = vec![GameUiReplayCamera::Chase, GameUiReplayCamera::Pilot];
     let native = update_game_ui(
@@ -745,7 +752,19 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
     )
     .unwrap();
     assert_eq!(retained.state.replay_camera, GameUiReplayCamera::Chase);
-    assert_eq!(retained.effects.len(), 1);
+    assert_eq!(
+        retained.effects,
+        vec![
+            GameUiEffect::Session {
+                command: GameUiSessionCommand::EnterReplay {}
+            },
+            GameUiEffect::Platform {
+                command: GameUiPlatformCommand::SetReplayCamera {
+                    camera: GameUiReplayCamera::Chase
+                }
+            },
+        ]
+    );
 }
 
 #[test]
@@ -778,9 +797,16 @@ fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
     );
     assert_eq!(
         update.effects,
-        vec![GameUiEffect::Session {
-            command: GameUiSessionCommand::EnterReplay {}
-        }]
+        vec![
+            GameUiEffect::Session {
+                command: GameUiSessionCommand::EnterReplay {}
+            },
+            GameUiEffect::Platform {
+                command: GameUiPlatformCommand::SetReplayCamera {
+                    camera: GameUiReplayCamera::Chase
+                }
+            },
+        ]
     );
 }
 
@@ -1055,6 +1081,18 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud.angle_of_attack_degrees,
         telemetry.angle_of_attack_rad.map(f64::to_degrees)
     );
+    assert_eq!(hud.geometry.heading_ticks.len(), 13);
+    assert_eq!(
+        hud.geometry
+            .adi
+            .unwrap()
+            .horizon()
+            .unwrap()
+            .rotation_degrees,
+        -hud.attitude.unwrap().roll_degrees
+    );
+    assert!(hud.geometry.adi.unwrap().flight_path_y_ratio().is_some());
+    assert!(hud.geometry.angle_of_attack_ratio.is_some());
     assert!(hud.readouts.contains("IAS") && hud.readouts.contains("PITCH"));
     assert!(hud.wind.is_some());
     assert_eq!(hud.supplementary_readouts.len(), 3);
@@ -1070,6 +1108,11 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .hud
     .unwrap();
     assert!(minimal.attitude.is_none() && minimal.wind.is_none());
+    assert!(
+        minimal.geometry.adi.is_none()
+            && minimal.geometry.heading_ticks.is_empty()
+            && minimal.geometry.angle_of_attack_ratio.is_none()
+    );
     assert!(minimal.readouts.contains("ALT") && minimal.readouts.contains("時間"));
     let custom_settings = difficulty()
         .with_information(InformationLevel::Custom)
@@ -1083,6 +1126,16 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .hud
     .unwrap();
     assert!(custom.attitude.is_none() && custom.wind.is_none());
+    assert!(
+        matches!(
+            custom.geometry.adi,
+            Some(GameUiHudAdiGeometry::FlightPathOnly { .. })
+        ) && custom.geometry.heading_ticks.is_empty()
+    );
+    assert!(
+        custom.geometry.adi.unwrap().flight_path_y_ratio().is_some()
+            && custom.geometry.angle_of_attack_ratio.is_some()
+    );
     assert!(custom.readouts.contains("IAS") && !custom.readouts.contains("PITCH"));
 }
 

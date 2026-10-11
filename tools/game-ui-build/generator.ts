@@ -60,7 +60,7 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     validatorRoots[`validate${entry.name}`] = schema.$id;
     const canonical = `${JSON.stringify(schema, null, 2)}\n`;
     sourceHashes[entry.key] = createHash("sha256").update(canonical).digest("hex");
-    files.push({ path: `web/src/generated/${entry.filename}.schema.json`, content: canonical });
+    files.push({ path: `tools/game-ui-build/generated/${entry.filename}.schema.json`, content: canonical });
     const declarations = await compile(schema, entry.name, {
       bannerComment: "",
       unknownAny: true,
@@ -95,14 +95,14 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     const packageDirectory = dirname(require.resolve(`${name}/package.json`));
     return `${name}\n${await readFile(resolve(packageDirectory, license), "utf8")}`;
   }));
-  files.push({ path: "web/src/generated/game-ui-validators.LICENSE.txt", content: normalizeText(notices.join("\n\n")) });
+  files.push({ path: "assets/game-ui-validators.LICENSE.txt", content: normalizeText(notices.join("\n\n")) });
   const generators = Object.fromEntries(await Promise.all(Object.entries({ ajv: "ajv", jsonSchemaToTypescript: "json-schema-to-typescript", esbuild: "esbuild", typescript: "typescript" })
     .map(async ([key, name]): Promise<readonly [string, string]> => {
       const metadata: unknown = JSON.parse(await readFile(require.resolve(`${name}/package.json`), "utf8"));
       if (!isObject(metadata) || typeof metadata["version"] !== "string") throw new Error(`Missing ${name} generator version`);
       return [key, metadata["version"]];
     })));
-  files.push({ path: "web/src/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 1, generators, sources: sourceHashes }, null, 2)}\n` });
+  files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 1, generators, sources: sourceHashes }, null, 2)}\n` });
   return files;
 }
 

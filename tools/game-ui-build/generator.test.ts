@@ -46,6 +46,15 @@ describe("Rust game UI schema generation", () => {
     const schemas = parseSchemaBundle(schemaBundle());
     const files = await generateGameUiFiles(schemas, root);
     expect(await generateGameUiFiles(schemas, root)).toEqual(files);
+    expect(files.filter((file) => file.path.startsWith("web/src/generated/")).map((file) => file.path)).toEqual([
+      ...schemaEntries.map((entry) => `web/src/generated/${entry.filename}.ts`),
+      "web/src/generated/game-ui-validators.js",
+      "web/src/generated/game-ui-validators.d.ts"
+    ]);
+    expect(files.filter((file) => file.path.startsWith("tools/game-ui-build/generated/")).map((file) => file.path)).toEqual([
+      ...schemaEntries.map((entry) => `tools/game-ui-build/generated/${entry.filename}.schema.json`),
+      "tools/game-ui-build/generated/game-ui-generation.json"
+    ]);
     const javascript = files.find((file) => file.path === "web/src/generated/game-ui-validators.js");
     if (javascript === undefined) throw new Error("Missing generated standalone validators");
     expect(javascript.content).not.toMatch(/\beval\s*\(|\bnew Function\s*\(|from ["']node:/);
@@ -67,6 +76,9 @@ describe("Rust game UI schema generation", () => {
       { ...valid, coordinates: [1, Number.NaN, 3] },
       { ...valid, coordinates: [1, Number.POSITIVE_INFINITY, 3] }
     ]) expect(validate(invalid)).toBe(false);
-    expect(files.find((file) => file.path.endsWith(".LICENSE.txt"))?.content).toContain("Permission is hereby granted");
+    const license = files.find((file) => file.path === "assets/game-ui-validators.LICENSE.txt");
+    expect(license?.content).toContain("Copyright (c) 2015-2021 Evgeny Poberezkin");
+    expect(license?.content).toContain("Copyright (c) 2020 Evan Wallace");
+    expect(license?.content).toContain("Permission is hereby granted");
   });
 });

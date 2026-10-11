@@ -638,6 +638,8 @@ pub enum GameUiOverlay {
 pub struct GameUiHud {
     /// Shared Web-baseline instrument placement and responsive dimensions.
     pub layout: GameUiHudLayout,
+    /// Shared Web-baseline instrument projections, independent of engine pixels.
+    pub geometry: GameUiHudGeometry,
     /// Domain-derived state label.
     pub status: String,
     /// ADI input already converted into display degrees.
@@ -718,6 +720,83 @@ pub struct GameUiHudAttitude {
     pub roll_degrees: f64,
     /// Pitch angle in degrees.
     pub pitch_degrees: f64,
+}
+
+/// Shared instrument geometry derived from the authoritative HUD angles.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudGeometry {
+    /// Visible ADI layers, absent when both attitude and flight path cues are hidden.
+    pub adi: Option<GameUiHudAdiGeometry>,
+    /// Ordered heading tape marks and compass labels.
+    pub heading_ticks: Vec<GameUiHudHeadingTick>,
+    /// AoA position between the displayed -10 and +20 degree endpoints.
+    pub angle_of_attack_ratio: Option<f64>,
+}
+
+/// Visible ADI region with an attitude layer or an independent flight path cue.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GameUiHudAdiGeometry {
+    /// Attitude horizon with an optional flight path marker.
+    Attitude {
+        /// Horizon rotation and translation.
+        horizon: GameUiHudAttitudeGeometry,
+        /// Flight path marker position relative to the ADI height.
+        flight_path_y_ratio: Option<f64>,
+    },
+    /// Flight path marker without an attitude horizon.
+    FlightPathOnly {
+        /// Flight path marker position relative to the ADI height.
+        y_ratio: f64,
+    },
+}
+
+impl GameUiHudAdiGeometry {
+    /// Returns the attitude layer when it is visible.
+    pub const fn horizon(self) -> Option<GameUiHudAttitudeGeometry> {
+        match self {
+            Self::Attitude { horizon, .. } => Some(horizon),
+            Self::FlightPathOnly { .. } => None,
+        }
+    }
+
+    /// Returns the flight path marker position when it is visible.
+    pub const fn flight_path_y_ratio(self) -> Option<f64> {
+        match self {
+            Self::Attitude {
+                flight_path_y_ratio,
+                ..
+            } => flight_path_y_ratio,
+            Self::FlightPathOnly { y_ratio } => Some(y_ratio),
+        }
+    }
+}
+
+/// Web-baseline horizon rotation and translation.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudAttitudeGeometry {
+    /// Clockwise horizon rotation in display coordinates.
+    pub rotation_degrees: f64,
+    /// Pre-rotation pitch translation relative to the ADI height.
+    pub pitch_offset_ratio: f64,
+}
+
+/// One heading tape mark in normalized instrument coordinates.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudHeadingTick {
+    /// Position relative to the complete tape width.
+    pub position_ratio: f64,
+    /// Major marks receive the long tick and a compass label.
+    pub major: bool,
+    /// Compass label, empty for a minor tick.
+    pub label: String,
 }
 
 /// Normalized control position for spatial and chart rendering.

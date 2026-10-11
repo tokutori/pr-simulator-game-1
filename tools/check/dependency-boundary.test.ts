@@ -18,6 +18,21 @@ const nativeTextDependency = {
   rename: null, optional: false, uses_default_features: false, features: ["std", "complex-scripts"]
 };
 
+const schemaDependency = {
+  name: "schemars", kind: null, target: null, req: "=1.2.2",
+  source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
+  rename: null, optional: true, uses_default_features: false, features: ["derive"]
+};
+
+function schemaProvider(
+  name: "birdman-game-format" | "birdman-game-session",
+  dependency: unknown = schemaDependency,
+  features: unknown = { schema: name === "birdman-game-format"
+    ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"] }
+): unknown[] {
+  return [{ name, dependencies: [dependency], features }];
+}
+
 function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
@@ -59,6 +74,81 @@ describe("Cargo dependency boundary", () => {
   it("allows only the pinned host numerical dev dependency", () => {
     expect(() => { assertDependencyBoundary(core(numericalDependency)); }).not.toThrow();
   });
+
+  it.each(["birdman-game-format", "birdman-game-session"] as const)(
+    "allows only the optional pinned schema generator in %s", (name) => {
+      expect(() => { assertDependencyBoundary(schemaProvider(name)); }).not.toThrow();
+    }
+  );
+
+  it.each([
+    { req: "^1.2.2" }, { req: "=1.2.3" }, { kind: "dev" }, { kind: "build" },
+    { target: HOST_NUMERICAL_TEST_TARGET }, { optional: false }, { uses_default_features: true },
+    { source: "git+https://example.invalid/schemars" }, { registry: "other" },
+    { path: "../schemars" }, { rename: "other" }, { features: [] }, { features: ["std"] },
+    { features: ["derive", "std"] }, { name: "other-generator" }
+  ])("rejects a broader schema generator %j", (difference) => {
+    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+      expect(() => { assertDependencyBoundary(schemaProvider(name, { ...schemaDependency, ...difference })); })
+        .toThrow("Forbidden dependency");
+    }
+  });
+
+  it.each([
+    {}, { schema: [] }, { schema: ["schemars"] }, { schema: ["dep:schemars", "dep:schemars"] },
+    { schema: ["dep:schemars"], default: ["schema"] },
+    { schema: ["dep:schemars", "birdman-game-format/schema"], default: ["schema"] },
+    { schema: ["dep:schemars"], runtime: ["schema"] },
+    { schema: ["dep:schemars", "birdman-game-format/schema"], runtime: ["schema"] }
+  ])("rejects broader schema activation wiring %j", (features) => {
+    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+      expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, features)); })
+        .toThrow("Forbidden dependency");
+    }
+  });
+
+  it.each(["birdman-game-core", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
+    "rejects a direct schema generator in %s", (name) => {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [schemaDependency] }]); })
+        .toThrow("Forbidden dependency");
+    }
+  );
+
+  it("allows schema activation only through the CLI exporter feature", () => {
+    expect(() => { assertDependencyBoundary([{
+      name: "birdman-game-cli", dependencies: [{ name: "birdman-game-session", features: [] }],
+      features: { schema: ["birdman-game-session/schema"] }
+    }]); }).not.toThrow();
+  });
+
+  it.each([
+    { schema: [] }, { schema: ["birdman-game-format/schema"] },
+    { schema: ["birdman-game-session/schema"], default: ["schema"] },
+    { schema: ["birdman-game-session/schema"], runtime: ["schema"] }
+  ])("rejects broader CLI schema activation %j", (features) => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [], features }]); })
+      .toThrow("Forbidden schema feature boundary");
+  });
+
+  it.each([
+    { schema: [] }, { default: ["schema"] }, { runtime: ["birdman-game-session/schema"] },
+    { default: ["birdman-game-format/schema"] }, { runtime: ["birdman-game-session?/schema"] }
+  ])("rejects runtime schema feature forwarding %j", (features) => {
+    for (const name of ["birdman-game-wasm", "birdman-game-bevy"]) {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [], features }]); })
+        .toThrow("Forbidden runtime schema feature");
+    }
+  });
+
+  it.each(["birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
+    "rejects schema requested by normal shared dependencies in %s", (name) => {
+      for (const dependency of ["birdman-game-format", "birdman-game-session"]) {
+        expect(() => { assertDependencyBoundary([{
+          name, dependencies: [{ name: dependency, kind: null, features: ["schema"] }]
+        }]); }).toThrow("Forbidden normal schema activation");
+      }
+    }
+  );
 
   it("keeps native engine and shared session dependencies outside core and format", () => {
     expect(() => { assertDependencyBoundary([

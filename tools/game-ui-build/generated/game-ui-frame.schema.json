@@ -181,6 +181,10 @@
             "null"
           ]
         },
+        "geometry": {
+          "$ref": "#/$defs/GameUiHudGeometry",
+          "description": "Shared Web-baseline instrument projections, independent of engine pixels."
+        },
         "heading": {
           "description": "Heading instrument text.",
           "type": [
@@ -271,6 +275,7 @@
       },
       "required": [
         "layout",
+        "geometry",
         "status",
         "attitude",
         "flight_path_angle_degrees",
@@ -295,6 +300,59 @@
       ],
       "type": "object"
     },
+    "GameUiHudAdiGeometry": {
+      "description": "Visible ADI region with an attitude layer or an independent flight path cue.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Attitude horizon with an optional flight path marker.",
+          "properties": {
+            "flight_path_y_ratio": {
+              "description": "Flight path marker position relative to the ADI height.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "horizon": {
+              "$ref": "#/$defs/GameUiHudAttitudeGeometry",
+              "description": "Horizon rotation and translation."
+            },
+            "kind": {
+              "const": "attitude",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "horizon",
+            "flight_path_y_ratio"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Flight path marker without an attitude horizon.",
+          "properties": {
+            "kind": {
+              "const": "flight_path_only",
+              "type": "string"
+            },
+            "y_ratio": {
+              "description": "Flight path marker position relative to the ADI height.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "y_ratio"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "GameUiHudAttitude": {
       "additionalProperties": false,
       "description": "Shared ADI orientation input.",
@@ -313,6 +371,90 @@
       "required": [
         "roll_degrees",
         "pitch_degrees"
+      ],
+      "type": "object"
+    },
+    "GameUiHudAttitudeGeometry": {
+      "additionalProperties": false,
+      "description": "Web-baseline horizon rotation and translation.",
+      "properties": {
+        "pitch_offset_ratio": {
+          "description": "Pre-rotation pitch translation relative to the ADI height.",
+          "format": "double",
+          "type": "number"
+        },
+        "rotation_degrees": {
+          "description": "Clockwise horizon rotation in display coordinates.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rotation_degrees",
+        "pitch_offset_ratio"
+      ],
+      "type": "object"
+    },
+    "GameUiHudGeometry": {
+      "additionalProperties": false,
+      "description": "Shared instrument geometry derived from the authoritative HUD angles.",
+      "properties": {
+        "adi": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiHudAdiGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Visible ADI layers, absent when both attitude and flight path cues are hidden."
+        },
+        "angle_of_attack_ratio": {
+          "description": "AoA position between the displayed -10 and +20 degree endpoints.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "heading_ticks": {
+          "description": "Ordered heading tape marks and compass labels.",
+          "items": {
+            "$ref": "#/$defs/GameUiHudHeadingTick"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "adi",
+        "heading_ticks",
+        "angle_of_attack_ratio"
+      ],
+      "type": "object"
+    },
+    "GameUiHudHeadingTick": {
+      "additionalProperties": false,
+      "description": "One heading tape mark in normalized instrument coordinates.",
+      "properties": {
+        "label": {
+          "description": "Compass label, empty for a minor tick.",
+          "type": "string"
+        },
+        "major": {
+          "description": "Major marks receive the long tick and a compass label.",
+          "type": "boolean"
+        },
+        "position_ratio": {
+          "description": "Position relative to the complete tape width.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position_ratio",
+        "major",
+        "label"
       ],
       "type": "object"
     },

@@ -52,6 +52,7 @@ pub fn update_game_ui(
     let mut effects = Vec::new();
     match action {
         GameUiAction::Session { command } => {
+            let entering_replay = command == (GameUiSessionCommand::EnterReplay {});
             if command == (GameUiSessionCommand::LeaveReplay {}) {
                 next.analysis_time_seconds = context
                     .session
@@ -59,7 +60,7 @@ pub fn update_game_ui(
                     .ok_or(GameUiError::ActionUnavailable)?
                     .time_seconds();
             }
-            if command == (GameUiSessionCommand::EnterReplay {}) {
+            if entering_replay {
                 next.replay_view = GameUiReplayView::Cinematic;
                 if !context
                     .platform
@@ -85,7 +86,7 @@ pub fn update_game_ui(
                 next.pause_overlay = GameUiPauseOverlay::Menu;
             }
             effects.push(GameUiEffect::Session { command });
-            if next.replay_camera != state.replay_camera {
+            if entering_replay {
                 effects.push(GameUiEffect::Platform {
                     command: GameUiPlatformCommand::SetReplayCamera {
                         camera: next.replay_camera,

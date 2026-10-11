@@ -4,6 +4,23 @@
  */
 export type GameUiOverlay = "Pause" | "PauseSettings" | "PauseHelp";
 /**
+ * Visible ADI region with an attitude layer or an independent flight path cue.
+ */
+export type GameUiHudAdiGeometry = {
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly flight_path_y_ratio: number | null;
+    readonly horizon: GameUiHudAttitudeGeometry;
+    readonly kind: "attitude";
+} | {
+    readonly kind: "flight_path_only";
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly y_ratio: number;
+};
+/**
  * Pure shared scene and menu projection.
  */
 export interface GameUiView {
@@ -71,6 +88,7 @@ export interface GameUiHud {
      * Flight path indicator angle.
      */
     readonly flight_path_angle_degrees: number | null;
+    readonly geometry: GameUiHudGeometry;
     /**
      * Heading instrument text.
      */
@@ -145,6 +163,53 @@ export interface GameUiHudAttitude {
      * Bank angle in degrees.
      */
     readonly roll_degrees: number;
+}
+/**
+ * Shared Web-baseline instrument projections, independent of engine pixels.
+ */
+export interface GameUiHudGeometry {
+    /**
+     * Visible ADI layers, absent when both attitude and flight path cues are hidden.
+     */
+    readonly adi: GameUiHudAdiGeometry | null;
+    /**
+     * AoA position between the displayed -10 and +20 degree endpoints.
+     */
+    readonly angle_of_attack_ratio: number | null;
+    /**
+     * Ordered heading tape marks and compass labels.
+     */
+    readonly heading_ticks: readonly GameUiHudHeadingTick[];
+}
+/**
+ * Horizon rotation and translation.
+ */
+export interface GameUiHudAttitudeGeometry {
+    /**
+     * Pre-rotation pitch translation relative to the ADI height.
+     */
+    readonly pitch_offset_ratio: number;
+    /**
+     * Clockwise horizon rotation in display coordinates.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * One heading tape mark in normalized instrument coordinates.
+ */
+export interface GameUiHudHeadingTick {
+    /**
+     * Compass label, empty for a minor tick.
+     */
+    readonly label: string;
+    /**
+     * Major marks receive the long tick and a compass label.
+     */
+    readonly major: boolean;
+    /**
+     * Position relative to the complete tape width.
+     */
+    readonly position_ratio: number;
 }
 /**
  * Shared Web-baseline instrument placement and responsive dimensions.

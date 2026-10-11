@@ -1,4 +1,15 @@
 schema_version = 1
+
+[[assets]]
+path = "assets/game-ui-validators.LICENSE.txt"
+sha256 = "6ae8c77751f931c99a799e8e3990add63daed2f7f7c14596851a09bbbdea2e48"
+source = "https://github.com/ajv-validator/ajv/blob/v8.20.0/LICENSE; https://github.com/evanw/esbuild/blob/v0.28.2/LICENSE.md"
+source_version = "ajv 8.20.0; esbuild 0.28.2; exact npm dependency pins"
+license = "MIT"
+license_url = "https://github.com/ajv-validator/ajv/blob/v8.20.0/LICENSE; https://github.com/evanw/esbuild/blob/v0.28.2/LICENSE.md"
+attribution = "Copyright (c) 2015-2021 Evgeny Poberezkin; Copyright (c) 2020 Evan Wallace"
+processing = "tools/game-ui-build/generator.ts; concatenate the installed packages' complete license notices in fixed ajv/esbuild order; preserve notice text and normalize UTF-8 LF output"
+
 [[assets]]
 path = "assets/biwa-launch-venue.json"
 sha256 = "7c851dcddf28dfd8fffe9ffe18ef835d8c5c2135c419d8f5d191fd8bdab2ba04"

@@ -19,7 +19,11 @@ npm run check:game-ui
 ```
 
 生成処理はCLIの`export-game-ui-schema bundle`からView、Action、platform input、update、frameのSchemaを取得する。
-生成物は`web/src/generated/`の深いreadonly型、JSON Schema、standalone validator、ライセンス通知とgeneration stampである。
+runtimeの深いreadonly型とstandalone validatorは`web/src/generated/`へ生成する。
+build専用のJSON Schemaとgeneration stampは`tools/game-ui-build/generated/`へ生成する。
+ライセンス通知は`assets/game-ui-validators.LICENSE.txt`へ生成し、出典・version・hash・帰属を`assets/manifest.toml`に登録する。
+固定dependencyを更新して通知の内容が変わった場合は、生成後にmanifestのversionとhashを更新する。
+Webは登録済み通知の静的URLを既存HUDの帰属linkへ接続し、Viteのasset配布経路へ含める。
 Ajvはstrict schema・finite number・整数範囲・未知field・未知variantを検査する。
 standalone validatorはbrowser用ESMへbundleし、実行時の`eval`を使用しない。
 生成物を手編集せず、Rust契約を変更して再生成する。freshness検査は実際のSchemaから全生成物を再導出して比較する。

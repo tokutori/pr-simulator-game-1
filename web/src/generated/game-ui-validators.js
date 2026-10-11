@@ -54,7 +54,7 @@ var init_numeric_formats = __esm({
 
 // game-ui-validators.ts
 var validateGameUiView = validate52;
-var schema19 = { "$defs": { "AssistanceLevel": { "description": "Controller category resolved from the Assistance axis.", "oneOf": [{ "const": "strong", "description": "Full FBW authority.", "type": "string" }, { "const": "assisted", "description": "Shared pilot and FBW authority.", "type": "string" }, { "const": "light", "description": "Limited FBW authority.", "type": "string" }, { "const": "manual", "description": "Pilot-only surface commands.", "type": "string" }] }, "DifficultyPreset": { "description": "Named preset whose axes are resolved independently.", "oneOf": [{ "const": "beginner", "description": "Full information, strong assistance, mild weather.", "type": "string" }, { "const": "standard", "description": "Standard information, assisted control, typical weather.", "type": "string" }, { "const": "expert", "description": "Minimal information, light assistance, challenging weather.", "type": "string" }, { "const": "realistic", "description": "Realistic information, manual control, typical weather.", "type": "string" }, { "const": "custom", "description": "Individually selected axes.", "type": "string" }] }, "GameUiAction": { "description": "UI message whose handling is shared by native and browser adapters.", "oneOf": [{ "additionalProperties": false, "description": "Produces one canonical domain operation.", "properties": { "command": { "$ref": "#/$defs/GameUiSessionCommand", "description": "Operation admitted by the current view." }, "kind": { "const": "session", "type": "string" } }, "required": ["kind", "command"], "type": "object" }, { "additionalProperties": false, "description": "Produces one platform operation.", "properties": { "command": { "$ref": "#/$defs/GameUiPlatformCommand", "description": "Explicit capability-bound operation." }, "kind": { "const": "platform", "type": "string" } }, "required": ["kind", "command"], "type": "object" }, { "additionalProperties": false, "description": "Toggles preparation diagnostic disclosure.", "properties": { "kind": { "const": "toggle_technical", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Result presentation.", "properties": { "kind": { "const": "set_result_tab", "type": "string" }, "tab": { "$ref": "#/$defs/GameUiResultTab", "description": "Requested tab." } }, "required": ["kind", "tab"], "type": "object" }, { "additionalProperties": false, "description": "Selects a record plot.", "properties": { "chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Requested plot." }, "kind": { "const": "set_analysis_chart", "type": "string" } }, "required": ["kind", "chart"], "type": "object" }, { "additionalProperties": false, "description": "Selects an explicit pause overlay.", "properties": { "kind": { "const": "set_pause_overlay", "type": "string" }, "overlay": { "$ref": "#/$defs/GameUiPauseOverlay", "description": "Requested overlay." } }, "required": ["kind", "overlay"], "type": "object" }, { "additionalProperties": false, "description": "Selects a replay presentation mode.", "properties": { "kind": { "const": "set_replay_view", "type": "string" }, "view": { "$ref": "#/$defs/GameUiReplayView", "description": "Requested view." } }, "required": ["kind", "view"], "type": "object" }, { "additionalProperties": false, "description": "Advances the common ordered camera selection.", "properties": { "kind": { "const": "cycle_replay_camera", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Queries a recorded analysis instant without moving the playback clock.", "properties": { "kind": { "const": "seek_analysis", "type": "string" }, "time_seconds": { "description": "Requested recorded time.", "format": "double", "type": "number" } }, "required": ["kind", "time_seconds"], "type": "object" }, { "additionalProperties": false, "description": "Moves the Rust-owned replay clock.", "properties": { "kind": { "const": "seek_replay", "type": "string" }, "time_seconds": { "description": "Requested recorded time.", "format": "double", "type": "number" } }, "required": ["kind", "time_seconds"], "type": "object" }, { "additionalProperties": false, "description": "Toggles the Rust-owned replay clock.", "properties": { "kind": { "const": "toggle_replay_playing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Changes playback rate by existing stable code.", "properties": { "code": { "description": "Zero is half speed, one normal speed, two double speed.", "format": "uint32", "minimum": 0, "type": "integer" }, "kind": { "const": "set_replay_rate", "type": "string" } }, "required": ["kind", "code"], "type": "object" }] }, "GameUiAnalysisChart": { "description": "Plot generated from the retained record.", "oneOf": [{ "const": "map", "description": "Equal-scale horizontal trajectory.", "type": "string" }, { "const": "altitude", "description": "Altitude over recorded time.", "type": "string" }, { "const": "speed", "description": "Air-relative and ground-relative speed.", "type": "string" }] }, "GameUiAnchor": { "description": "Engine-independent anchor.", "oneOf": [{ "const": "menu", "description": "Retained, recenterable menu frame.", "type": "string" }, { "const": "head", "description": "Camera-relative smart-glasses display.", "type": "string" }, { "const": "cockpit", "description": "Aircraft-relative physical instrumentation.", "type": "string" }, { "const": "world", "description": "Fixed world frame.", "type": "string" }] }, "GameUiButtonPresentation": { "description": "Shared button role and selection state.", "oneOf": [{ "additionalProperties": false, "description": "Navigation or command.", "properties": { "emphasis": { "$ref": "#/$defs/GameUiEmphasis", "description": "Primary or secondary emphasis." }, "kind": { "const": "action", "type": "string" } }, "required": ["kind", "emphasis"], "type": "object" }, { "additionalProperties": false, "description": "Explicit option in a named choice group.", "properties": { "description": { "description": "Shared option explanation.", "type": "string" }, "group": { "description": "Stable group identifier.", "type": "string" }, "group_label": { "description": "Group heading.", "type": "string" }, "kind": { "const": "choice", "type": "string" }, "selected": { "description": "Current selected option.", "type": "boolean" } }, "required": ["kind", "group", "group_label", "selected", "description"], "type": "object" }, { "additionalProperties": false, "description": "Technical-information disclosure.", "properties": { "expanded": { "description": "Current disclosure state.", "type": "boolean" }, "kind": { "const": "disclosure", "type": "string" } }, "required": ["kind", "expanded"], "type": "object" }] }, "GameUiChart": { "additionalProperties": false, "description": "Complete engine-independent recorded chart.", "properties": { "cursor_points": { "description": "Record-interpolated cursor positions.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time cursor; maps use cursor points only.", "format": "double", "type": ["number", "null"] }, "equal_axis_scale": { "description": "Preserves metre-for-metre map scale.", "type": "boolean" }, "markers": { "description": "Launch, terminal and venue markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "reference_lines": { "description": "Horizontal reference lines.", "items": { "$ref": "#/$defs/GameUiChartReferenceLine" }, "type": "array" }, "series": { "description": "Ordered curves including registered venue geometry.", "items": { "$ref": "#/$defs/GameUiChartSeries" }, "type": "array" }, "time_markers": { "description": "Recorded-time map markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "vectors": { "description": "Clipped ambient-wind arrows.", "items": { "$ref": "#/$defs/GameUiChartVector" }, "type": "array" }, "x_axis_label": { "description": "Horizontal axis label and unit.", "type": "string" }, "x_maximum": { "description": "Horizontal upper bound.", "format": "double", "type": "number" }, "x_minimum": { "description": "Horizontal lower bound.", "format": "double", "type": "number" }, "y_axis_label": { "description": "Vertical axis label and unit.", "type": "string" }, "y_maximum": { "description": "Vertical upper bound.", "format": "double", "type": "number" }, "y_minimum": { "description": "Vertical lower bound.", "format": "double", "type": "number" } }, "required": ["x_axis_label", "y_axis_label", "x_minimum", "x_maximum", "y_minimum", "y_maximum", "equal_axis_scale", "series", "vectors", "markers", "time_markers", "reference_lines", "cursor_x", "cursor_points"], "type": "object" }, "GameUiChartMarker": { "additionalProperties": false, "description": "One labelled chart location.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Shared label.", "type": "string" }, "point": { "$ref": "#/$defs/GameUiChartPoint", "description": "Chart coordinates." } }, "required": ["label", "color", "point"], "type": "object" }, "GameUiChartPoint": { "additionalProperties": false, "description": "One chart-space point with units defined by the axes.", "properties": { "x": { "description": "Horizontal component.", "format": "double", "type": "number" }, "y": { "description": "Vertical component.", "format": "double", "type": "number" } }, "required": ["x", "y"], "type": "object" }, "GameUiChartReferenceLine": { "additionalProperties": false, "description": "One horizontal plot reference.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Shared label.", "type": "string" }, "value": { "description": "Vertical-axis coordinate.", "format": "double", "type": "number" } }, "required": ["value", "label", "color"], "type": "object" }, "GameUiChartSeries": { "additionalProperties": false, "description": "One curve and its shared visual identity.", "properties": { "color": { "description": "Shared base colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "points": { "description": "Ordered chart coordinates.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "segment_colors": { "description": "Per-segment colours; empty means the base colour.", "items": { "type": "string" }, "type": "array" } }, "required": ["label", "color", "points", "segment_colors"], "type": "object" }, "GameUiChartVector": { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" }, "GameUiControl": { "additionalProperties": false, "description": "Shared control, including data and admitted semantic action.", "properties": { "content": { "$ref": "#/$defs/GameUiControlContent", "description": "Exclusive control data." }, "enabled": { "description": "Shared admission flag.", "type": "boolean" }, "id": { "description": "Stable current Web control identifier.", "type": "string" }, "label": { "description": "Shared visible label.", "type": "string" }, "rect": { "$ref": "#/$defs/GameUiRect", "description": "Shared spatial or normalized position." }, "section": { "description": "Section identifier.", "type": "string" } }, "required": ["id", "label", "enabled", "section", "rect", "content"], "type": "object" }, "GameUiControlContent": { "description": "Exclusive shared control representation.", "oneOf": [{ "additionalProperties": false, "description": "Action or selection button.", "properties": { "action": { "$ref": "#/$defs/GameUiAction", "description": "Typed semantic action." }, "kind": { "const": "button", "type": "string" }, "presentation": { "$ref": "#/$defs/GameUiButtonPresentation", "description": "Shared visual hierarchy." } }, "required": ["kind", "action", "presentation"], "type": "object" }, { "additionalProperties": false, "description": "Individual Custom information cue.", "properties": { "cue": { "$ref": "#/$defs/HudCue", "description": "Cue identifier from the existing format model." }, "kind": { "const": "toggle", "type": "string" }, "value": { "description": "Current Rust-owned visibility.", "type": "boolean" } }, "required": ["kind", "cue", "value"], "type": "object" }, { "additionalProperties": false, "description": "Record query cursor.", "properties": { "kind": { "const": "range", "type": "string" }, "maximum": { "description": "Last permitted time.", "format": "double", "type": "number" }, "minimum": { "description": "First permitted time.", "format": "double", "type": "number" }, "step": { "description": "Logical range step.", "format": "double", "type": "number" }, "target": { "$ref": "#/$defs/GameUiRangeTarget", "description": "Analysis or playback target." }, "value": { "description": "Current time.", "format": "double", "type": "number" } }, "required": ["kind", "target", "value", "minimum", "maximum", "step"], "type": "object" }, { "additionalProperties": false, "description": "Derived readout.", "properties": { "kind": { "const": "status", "type": "string" }, "value": { "description": "Shared formatted content.", "type": "string" } }, "required": ["kind", "value"], "type": "object" }, { "additionalProperties": false, "description": "Record-derived chart data, not a separately simulated trajectory.", "properties": { "chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Plot selection." }, "kind": { "const": "chart", "type": "string" }, "plot": { "$ref": "#/$defs/GameUiChart", "description": "Fully derived axes, geometry and cursor; adapters render this value." } }, "required": ["kind", "chart", "plot"], "type": "object" }] }, "GameUiEmphasis": { "description": "Shared action emphasis.", "oneOf": [{ "const": "primary", "description": "Principal forward operation.", "type": "string" }, { "const": "secondary", "description": "Back or auxiliary operation.", "type": "string" }, { "const": "normal", "description": "Existing ordinary action styling.", "type": "string" }] }, "GameUiHud": { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" }, "GameUiHudAttitude": { "additionalProperties": false, "description": "Shared ADI orientation input.", "properties": { "pitch_degrees": { "description": "Pitch angle in degrees.", "format": "double", "type": "number" }, "roll_degrees": { "description": "Bank angle in degrees.", "format": "double", "type": "number" } }, "required": ["roll_degrees", "pitch_degrees"], "type": "object" }, "GameUiHudLayout": { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" }, "GameUiLayout": { "additionalProperties": false, "description": "Responsive shell selected using the Web baseline.", "properties": { "choice_columns": { "description": "Responsive choice grid count.", "format": "uint32", "minimum": 0, "type": "integer" }, "clip_x": { "description": "Horizontal overflow is clipped.", "type": "boolean" }, "compact": { "description": "Small-screen branch selected below the Web 600px breakpoint.", "type": "boolean" }, "gap_px": { "description": "Shared control gap.", "format": "double", "type": "number" }, "maximum_height_px": { "description": "Maximum reachable scroll viewport height.", "format": "double", "type": "number" }, "padding_px": { "description": "Shared shell padding.", "format": "double", "type": "number" }, "passthrough": { "description": "Input-transparent forward view outside explicit controls.", "type": "boolean" }, "scroll_y": { "description": "Vertical scrolling is admitted for the shell.", "type": "boolean" }, "shell": { "$ref": "#/$defs/GameUiShell", "description": "Shared shell placement." }, "width_px": { "description": "Shell width in logical pixels.", "format": "double", "type": "number" } }, "required": ["shell", "width_px", "maximum_height_px", "padding_px", "gap_px", "choice_columns", "compact", "scroll_y", "clip_x", "passthrough"], "type": "object" }, "GameUiOverlay": { "description": "Exclusive current overlay names retained by both renderer adapters.", "oneOf": [{ "const": "Pause", "description": "Paused flight navigation.", "type": "string" }, { "const": "PauseSettings", "description": "Paused render settings.", "type": "string" }, { "const": "PauseHelp", "description": "Paused input help.", "type": "string" }] }, "GameUiPanel": { "additionalProperties": false, "description": "Shared ordered menu panel.", "properties": { "anchor": { "$ref": "#/$defs/GameUiAnchor", "description": "Explicit placement anchor." }, "controls": { "description": "Ordered controls and readouts.", "items": { "$ref": "#/$defs/GameUiControl" }, "type": "array" }, "id": { "description": "Stable current Web identifier.", "type": "string" }, "local_position": { "description": "Local offset in metres, with rendering forward on negative Z.", "items": { "format": "double", "type": "number" }, "maxItems": 3, "minItems": 3, "type": "array" }, "sections": { "description": "Shared ordered presentation sections.", "items": { "$ref": "#/$defs/GameUiSection" }, "type": "array" }, "size": { "description": "Spatial width and height in metres.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "title": { "description": "Shared heading.", "type": "string" } }, "required": ["id", "title", "anchor", "local_position", "size", "sections", "controls"], "type": "object" }, "GameUiPauseOverlay": { "description": "Exclusive pause overlay.", "oneOf": [{ "const": "menu", "description": "Pause navigation.", "type": "string" }, { "const": "settings", "description": "Render settings.", "type": "string" }, { "const": "help", "description": "Input instructions.", "type": "string" }] }, "GameUiPlatformCommand": { "description": "Platform-owned operation requested by common UI.", "oneOf": [{ "additionalProperties": false, "description": "Changes render-only mesh quality.", "properties": { "kind": { "const": "set_water_quality", "type": "string" }, "quality": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Requested quality." } }, "required": ["kind", "quality"], "type": "object" }, { "additionalProperties": false, "description": "Requests a supported display mode.", "properties": { "kind": { "const": "set_presentation", "type": "string" }, "mode": { "$ref": "#/$defs/GameUiPresentationMode", "description": "Requested mode." } }, "required": ["kind", "mode"], "type": "object" }, { "additionalProperties": false, "description": "Recalibrates phone heading.", "properties": { "kind": { "const": "recenter_phone_tracking", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Places the retained menu in front of the viewer.", "properties": { "kind": { "const": "recenter_menu", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Downloads the original JSON record.", "properties": { "kind": { "const": "download_record_json", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Downloads record-derived numeric CSV.", "properties": { "kind": { "const": "download_flight_csv", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Loads a stored finalized record.", "properties": { "id": { "description": "Platform persistence key.", "format": "uint32", "minimum": 0, "type": "integer" }, "kind": { "const": "open_stored_record", "type": "string" } }, "required": ["kind", "id"], "type": "object" }, { "additionalProperties": false, "description": "Advances the supported replay camera selection.", "properties": { "camera": { "$ref": "#/$defs/GameUiReplayCamera", "description": "Shared UI selection to apply." }, "kind": { "const": "set_replay_camera", "type": "string" } }, "required": ["kind", "camera"], "type": "object" }] }, "GameUiPresentationMode": { "description": "Presentation mode supported by a platform adapter.", "oneOf": [{ "const": "screen", "description": "Flat native or browser display.", "type": "string" }, { "const": "webxr", "description": "Browser HMD display.", "type": "string" }, { "const": "phone_vr", "description": "Browser phone headset display.", "type": "string" }] }, "GameUiRangeTarget": { "description": "Range action target.", "oneOf": [{ "const": "analysis", "description": "Observational analysis query.", "type": "string" }, { "const": "replay", "description": "Rust-owned playback clock.", "type": "string" }] }, "GameUiRect": { "additionalProperties": false, "description": "Normalized control position for spatial and chart rendering.", "properties": { "height": { "description": "Height.", "format": "double", "type": "number" }, "width": { "description": "Width.", "format": "double", "type": "number" }, "x": { "description": "Left edge.", "format": "double", "type": "number" }, "y": { "description": "Top edge.", "format": "double", "type": "number" } }, "required": ["x", "y", "width", "height"], "type": "object" }, "GameUiReplayCamera": { "description": "Current Web replay camera candidates in their shared selection order.", "oneOf": [{ "const": "auto", "description": "Recorded-event camera director.", "type": "string" }, { "const": "pilot", "description": "Pilot eye view.", "type": "string" }, { "const": "chase", "description": "Aircraft-following view.", "type": "string" }, { "const": "orbit", "description": "Orbiting aircraft view.", "type": "string" }, { "const": "platform", "description": "Launch-platform fixed view.", "type": "string" }, { "const": "shore", "description": "Lake-shore fixed view.", "type": "string" }, { "const": "overhead", "description": "Overhead aircraft view.", "type": "string" }, { "const": "side", "description": "Side-on aircraft view.", "type": "string" }, { "const": "front", "description": "Forward aircraft view.", "type": "string" }, { "const": "telephoto", "description": "Fixed distant telephoto view.", "type": "string" }] }, "GameUiReplayView": { "description": "Replay presentation selection.", "oneOf": [{ "const": "cinematic", "description": "Scenic replay.", "type": "string" }, { "const": "telemetry", "description": "Scenic replay with telemetry.", "type": "string" }, { "const": "analysis", "description": "Record plot and shared cursor.", "type": "string" }] }, "GameUiResultTab": { "description": "Result presentation mode.", "oneOf": [{ "const": "summary", "description": "Condensed result and navigation.", "type": "string" }, { "const": "analysis", "description": "Recorded analysis charts.", "type": "string" }] }, "GameUiScene": { "description": "Shared scene name, preserving current Web spelling.", "oneOf": [{ "const": "Boot", "description": "Initial platform preparation.", "type": "string" }, { "const": "Title", "description": "Flight and demo entry.", "type": "string" }, { "const": "FlightSetup", "description": "Flight settings.", "type": "string" }, { "const": "Briefing", "description": "Prepared flight confirmation.", "type": "string" }, { "const": "Countdown", "description": "Launch countdown.", "type": "string" }, { "const": "Flight", "description": "Active or paused flight.", "type": "string" }, { "const": "Result", "description": "Finalized result.", "type": "string" }, { "const": "Replay", "description": "Saved snapshot playback.", "type": "string" }] }, "GameUiSection": { "additionalProperties": false, "description": "Shared control group and placement mode.", "properties": { "id": { "description": "Stable group identifier.", "type": "string" }, "label": { "description": "Optional visible group heading.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiSectionLayout", "description": "Shared layout mode." } }, "required": ["id", "label", "layout"], "type": "object" }, "GameUiSectionLayout": { "description": "Group placement strategy, selected in shared Rust.", "oneOf": [{ "const": "column", "description": "Vertical flow in declared control order.", "type": "string" }, { "const": "choice_grid", "description": "Responsive choice grid using shared column count.", "type": "string" }, { "const": "row", "description": "Horizontal action row.", "type": "string" }, { "const": "normalized", "description": "Shared normalized chart and control positions.", "type": "string" }] }, "GameUiSessionCommand": { "description": "Existing domain commands emitted by the pure UI update.", "oneOf": [{ "additionalProperties": false, "description": "Opens flight settings.", "properties": { "kind": { "const": "open_setup", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns to Title.", "properties": { "kind": { "const": "return_to_title", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Seals the selected configuration.", "properties": { "kind": { "const": "prepare", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns from Briefing to Setup.", "properties": { "kind": { "const": "cancel_briefing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Starts the existing launch countdown.", "properties": { "kind": { "const": "start_countdown", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Cancels the launch countdown.", "properties": { "kind": { "const": "cancel_countdown", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Pauses the current flight.", "properties": { "kind": { "const": "pause", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Explicitly resumes the retained flight.", "properties": { "kind": { "const": "resume", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Finalizes the active flight by pilot request.", "properties": { "kind": { "const": "abort", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Reuses the retained flight configuration.", "properties": { "kind": { "const": "retry", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Repeats preparation of the sealed configuration.", "properties": { "kind": { "const": "retry_briefing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Opens replay of the finalized record.", "properties": { "kind": { "const": "enter_replay", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Leaves replay for its Rust-owned return target.", "properties": { "kind": { "const": "leave_replay", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Opens the independent Title demonstration.", "properties": { "kind": { "const": "enter_attract", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns from the demonstration to Title.", "properties": { "kind": { "const": "leave_attract", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Resolves one existing preset.", "properties": { "kind": { "const": "select_preset", "type": "string" }, "preset": { "$ref": "#/$defs/DifficultyPreset", "description": "Named preset; Custom is not a selectable shortcut." } }, "required": ["kind", "preset"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Information axis.", "properties": { "information": { "$ref": "#/$defs/InformationLevel", "description": "Existing information level." }, "kind": { "const": "select_information", "type": "string" } }, "required": ["kind", "information"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Assistance axis.", "properties": { "assistance": { "$ref": "#/$defs/AssistanceLevel", "description": "Existing assistance level." }, "kind": { "const": "select_assistance", "type": "string" } }, "required": ["kind", "assistance"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Weather axis.", "properties": { "kind": { "const": "select_weather", "type": "string" }, "weather": { "$ref": "#/$defs/WeatherClass", "description": "Existing weather class." } }, "required": ["kind", "weather"], "type": "object" }, { "additionalProperties": false, "description": "Changes one Custom information cue.", "properties": { "cue": { "$ref": "#/$defs/HudCue", "description": "Existing cue." }, "kind": { "const": "set_cue", "type": "string" }, "visible": { "description": "Requested visibility.", "type": "boolean" } }, "required": ["kind", "cue", "visible"], "type": "object" }] }, "GameUiShell": { "description": "Shared viewport-relative placement.", "oneOf": [{ "const": "center", "description": "Centered scrollable menu.", "type": "string" }, { "const": "flight_bar", "description": "Bottom-right flight action strip.", "type": "string" }, { "const": "pause_settings", "description": "Top-right pause settings.", "type": "string" }, { "const": "analysis", "description": "Full viewport chart composition.", "type": "string" }, { "const": "cinematic", "description": "Top-right compact scenic replay menu.", "type": "string" }] }, "GameUiState": { "additionalProperties": false, "description": "UI-only selections; physical state and domain phase remain in GameSession.", "properties": { "analysis_chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Selected record plot." }, "analysis_time_seconds": { "description": "Read-only analysis query position in seconds.", "format": "double", "type": "number" }, "pause_overlay": { "$ref": "#/$defs/GameUiPauseOverlay", "description": "Paused menu selection." }, "replay_camera": { "$ref": "#/$defs/GameUiReplayCamera", "description": "Shared replay camera selection; adapters only apply its geometry." }, "replay_view": { "$ref": "#/$defs/GameUiReplayView", "description": "Replay presentation selection." }, "result_tab": { "$ref": "#/$defs/GameUiResultTab", "description": "Result presentation selection." }, "technical_open": { "description": "Expanded preparation diagnostics.", "type": "boolean" } }, "required": ["technical_open", "result_tab", "analysis_chart", "analysis_time_seconds", "pause_overlay", "replay_view", "replay_camera"], "type": "object" }, "GameUiTheme": { "additionalProperties": false, "description": "Engine-independent colors, opacity and minimum hit dimensions.", "properties": { "button_min_height_px": { "description": "Ordinary button minimum height.", "format": "double", "type": "number" }, "choice_background": { "description": "Unselected choice fill.", "type": "string" }, "focus_outline": { "description": "Keyboard focus outline.", "type": "string" }, "hud_opacity": { "description": "Head-relative HUD background opacity, preserving forward visibility.", "format": "double", "type": "number" }, "muted_text": { "description": "Secondary text color.", "type": "string" }, "normal_background": { "description": "Ordinary action fill.", "type": "string" }, "panel_background": { "description": "Panel background color.", "type": "string" }, "panel_opacity": { "description": "Centered menu opacity.", "format": "double", "type": "number" }, "primary_background": { "description": "Primary or selected action fill.", "type": "string" }, "primary_min_height_px": { "description": "Principal button minimum height.", "format": "double", "type": "number" }, "text": { "description": "Main text color.", "type": "string" } }, "required": ["text", "muted_text", "panel_background", "panel_opacity", "hud_opacity", "normal_background", "primary_background", "choice_background", "focus_outline", "button_min_height_px", "primary_min_height_px"], "type": "object" }, "GameUiWaterQuality": { "description": "Rendering quality has no effect on physics or record identity.", "oneOf": [{ "const": "low", "description": "Reduced mesh density.", "type": "string" }, { "const": "medium", "description": "Balanced mesh density.", "type": "string" }, { "const": "high", "description": "Detailed mesh density.", "type": "string" }] }, "HudCue": { "description": "Stable identity for one independently configurable HUD cue.", "oneOf": [{ "const": "telemetry", "description": "Numeric telemetry readouts.", "type": "string" }, { "const": "attitude", "description": "Attitude indicator and heading.", "type": "string" }, { "const": "wind", "description": "Wind vector readout.", "type": "string" }, { "const": "flight_path", "description": "Flight-path marker.", "type": "string" }, { "const": "angle_of_attack", "description": "Angle-of-attack cue.", "type": "string" }, { "const": "warnings", "description": "Warning cues.", "type": "string" }] }, "InformationLevel": { "description": "Information presentation selected for a session.", "oneOf": [{ "const": "full", "description": "Full flight telemetry and warnings.", "type": "string" }, { "const": "standard", "description": "Primary flight instruments.", "type": "string" }, { "const": "minimal", "description": "Altitude, distance, and elapsed time.", "type": "string" }, { "const": "realistic", "description": "Instrumentation configured for a validated aircraft model.", "type": "string" }, { "const": "custom", "description": "Independently configured flight information cues.", "type": "string" }] }, "WeatherClass": { "description": "Weather classification attached to a versioned scenario catalog.", "oneOf": [{ "const": "calm", "description": "Low-variation synthetic conditions.", "type": "string" }, { "const": "mild", "description": "Mild synthetic conditions.", "type": "string" }, { "const": "typical", "description": "Typical-class scenario; no real-world claim is implied.", "type": "string" }, { "const": "challenging", "description": "Challenging synthetic conditions.", "type": "string" }, { "const": "near_limit", "description": "Near-limit game classification.", "type": "string" }] } }, "$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": false, "description": "Pure shared scene and menu projection.", "properties": { "active_overlay": { "anyOf": [{ "$ref": "#/$defs/GameUiOverlay" }, { "type": "null" }], "description": "Shared exclusive overlay name." }, "description": { "description": "Shared explanatory text.", "type": "string" }, "hud": { "anyOf": [{ "$ref": "#/$defs/GameUiHud" }, { "type": "null" }], "description": "Shared telemetry and instrument projection, absent outside a flight or record." }, "layout": { "$ref": "#/$defs/GameUiLayout", "description": "Shared responsive dimensions and scroll policy." }, "panels": { "description": "Ordered semantic panels.", "items": { "$ref": "#/$defs/GameUiPanel" }, "type": "array" }, "scene": { "$ref": "#/$defs/GameUiScene", "description": "Domain-derived scene." }, "schema_version": { "description": "Boundary version.", "format": "uint32", "minimum": 0, "type": "integer" }, "selections": { "$ref": "#/$defs/GameUiState", "description": "Readonly observation of the Rust-owned UI selections." }, "theme": { "$ref": "#/$defs/GameUiTheme", "description": "Shared visual hierarchy." }, "title": { "description": "Shared heading.", "type": "string" }, "view_revision": { "description": "Adapter query-cache revision; pure projections use zero until published.", "format": "uint32", "minimum": 0, "type": "integer" } }, "required": ["schema_version", "view_revision", "selections", "scene", "title", "description", "active_overlay", "panels", "layout", "theme", "hud"], "title": "GameUiView", "type": "object", "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/view" };
+var schema19 = { "$defs": { "AssistanceLevel": { "description": "Controller category resolved from the Assistance axis.", "oneOf": [{ "const": "strong", "description": "Full FBW authority.", "type": "string" }, { "const": "assisted", "description": "Shared pilot and FBW authority.", "type": "string" }, { "const": "light", "description": "Limited FBW authority.", "type": "string" }, { "const": "manual", "description": "Pilot-only surface commands.", "type": "string" }] }, "DifficultyPreset": { "description": "Named preset whose axes are resolved independently.", "oneOf": [{ "const": "beginner", "description": "Full information, strong assistance, mild weather.", "type": "string" }, { "const": "standard", "description": "Standard information, assisted control, typical weather.", "type": "string" }, { "const": "expert", "description": "Minimal information, light assistance, challenging weather.", "type": "string" }, { "const": "realistic", "description": "Realistic information, manual control, typical weather.", "type": "string" }, { "const": "custom", "description": "Individually selected axes.", "type": "string" }] }, "GameUiAction": { "description": "UI message whose handling is shared by native and browser adapters.", "oneOf": [{ "additionalProperties": false, "description": "Produces one canonical domain operation.", "properties": { "command": { "$ref": "#/$defs/GameUiSessionCommand", "description": "Operation admitted by the current view." }, "kind": { "const": "session", "type": "string" } }, "required": ["kind", "command"], "type": "object" }, { "additionalProperties": false, "description": "Produces one platform operation.", "properties": { "command": { "$ref": "#/$defs/GameUiPlatformCommand", "description": "Explicit capability-bound operation." }, "kind": { "const": "platform", "type": "string" } }, "required": ["kind", "command"], "type": "object" }, { "additionalProperties": false, "description": "Toggles preparation diagnostic disclosure.", "properties": { "kind": { "const": "toggle_technical", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Result presentation.", "properties": { "kind": { "const": "set_result_tab", "type": "string" }, "tab": { "$ref": "#/$defs/GameUiResultTab", "description": "Requested tab." } }, "required": ["kind", "tab"], "type": "object" }, { "additionalProperties": false, "description": "Selects a record plot.", "properties": { "chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Requested plot." }, "kind": { "const": "set_analysis_chart", "type": "string" } }, "required": ["kind", "chart"], "type": "object" }, { "additionalProperties": false, "description": "Selects an explicit pause overlay.", "properties": { "kind": { "const": "set_pause_overlay", "type": "string" }, "overlay": { "$ref": "#/$defs/GameUiPauseOverlay", "description": "Requested overlay." } }, "required": ["kind", "overlay"], "type": "object" }, { "additionalProperties": false, "description": "Selects a replay presentation mode.", "properties": { "kind": { "const": "set_replay_view", "type": "string" }, "view": { "$ref": "#/$defs/GameUiReplayView", "description": "Requested view." } }, "required": ["kind", "view"], "type": "object" }, { "additionalProperties": false, "description": "Advances the common ordered camera selection.", "properties": { "kind": { "const": "cycle_replay_camera", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Queries a recorded analysis instant without moving the playback clock.", "properties": { "kind": { "const": "seek_analysis", "type": "string" }, "time_seconds": { "description": "Requested recorded time.", "format": "double", "type": "number" } }, "required": ["kind", "time_seconds"], "type": "object" }, { "additionalProperties": false, "description": "Moves the Rust-owned replay clock.", "properties": { "kind": { "const": "seek_replay", "type": "string" }, "time_seconds": { "description": "Requested recorded time.", "format": "double", "type": "number" } }, "required": ["kind", "time_seconds"], "type": "object" }, { "additionalProperties": false, "description": "Toggles the Rust-owned replay clock.", "properties": { "kind": { "const": "toggle_replay_playing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Changes playback rate by existing stable code.", "properties": { "code": { "description": "Zero is half speed, one normal speed, two double speed.", "format": "uint32", "minimum": 0, "type": "integer" }, "kind": { "const": "set_replay_rate", "type": "string" } }, "required": ["kind", "code"], "type": "object" }] }, "GameUiAnalysisChart": { "description": "Plot generated from the retained record.", "oneOf": [{ "const": "map", "description": "Equal-scale horizontal trajectory.", "type": "string" }, { "const": "altitude", "description": "Altitude over recorded time.", "type": "string" }, { "const": "speed", "description": "Air-relative and ground-relative speed.", "type": "string" }] }, "GameUiAnchor": { "description": "Engine-independent anchor.", "oneOf": [{ "const": "menu", "description": "Retained, recenterable menu frame.", "type": "string" }, { "const": "head", "description": "Camera-relative smart-glasses display.", "type": "string" }, { "const": "cockpit", "description": "Aircraft-relative physical instrumentation.", "type": "string" }, { "const": "world", "description": "Fixed world frame.", "type": "string" }] }, "GameUiButtonPresentation": { "description": "Shared button role and selection state.", "oneOf": [{ "additionalProperties": false, "description": "Navigation or command.", "properties": { "emphasis": { "$ref": "#/$defs/GameUiEmphasis", "description": "Primary or secondary emphasis." }, "kind": { "const": "action", "type": "string" } }, "required": ["kind", "emphasis"], "type": "object" }, { "additionalProperties": false, "description": "Explicit option in a named choice group.", "properties": { "description": { "description": "Shared option explanation.", "type": "string" }, "group": { "description": "Stable group identifier.", "type": "string" }, "group_label": { "description": "Group heading.", "type": "string" }, "kind": { "const": "choice", "type": "string" }, "selected": { "description": "Current selected option.", "type": "boolean" } }, "required": ["kind", "group", "group_label", "selected", "description"], "type": "object" }, { "additionalProperties": false, "description": "Technical-information disclosure.", "properties": { "expanded": { "description": "Current disclosure state.", "type": "boolean" }, "kind": { "const": "disclosure", "type": "string" } }, "required": ["kind", "expanded"], "type": "object" }] }, "GameUiChart": { "additionalProperties": false, "description": "Complete engine-independent recorded chart.", "properties": { "cursor_points": { "description": "Record-interpolated cursor positions.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time cursor; maps use cursor points only.", "format": "double", "type": ["number", "null"] }, "equal_axis_scale": { "description": "Preserves metre-for-metre map scale.", "type": "boolean" }, "markers": { "description": "Launch, terminal and venue markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "reference_lines": { "description": "Horizontal reference lines.", "items": { "$ref": "#/$defs/GameUiChartReferenceLine" }, "type": "array" }, "series": { "description": "Ordered curves including registered venue geometry.", "items": { "$ref": "#/$defs/GameUiChartSeries" }, "type": "array" }, "time_markers": { "description": "Recorded-time map markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "vectors": { "description": "Clipped ambient-wind arrows.", "items": { "$ref": "#/$defs/GameUiChartVector" }, "type": "array" }, "x_axis_label": { "description": "Horizontal axis label and unit.", "type": "string" }, "x_maximum": { "description": "Horizontal upper bound.", "format": "double", "type": "number" }, "x_minimum": { "description": "Horizontal lower bound.", "format": "double", "type": "number" }, "y_axis_label": { "description": "Vertical axis label and unit.", "type": "string" }, "y_maximum": { "description": "Vertical upper bound.", "format": "double", "type": "number" }, "y_minimum": { "description": "Vertical lower bound.", "format": "double", "type": "number" } }, "required": ["x_axis_label", "y_axis_label", "x_minimum", "x_maximum", "y_minimum", "y_maximum", "equal_axis_scale", "series", "vectors", "markers", "time_markers", "reference_lines", "cursor_x", "cursor_points"], "type": "object" }, "GameUiChartMarker": { "additionalProperties": false, "description": "One labelled chart location.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Shared label.", "type": "string" }, "point": { "$ref": "#/$defs/GameUiChartPoint", "description": "Chart coordinates." } }, "required": ["label", "color", "point"], "type": "object" }, "GameUiChartPoint": { "additionalProperties": false, "description": "One chart-space point with units defined by the axes.", "properties": { "x": { "description": "Horizontal component.", "format": "double", "type": "number" }, "y": { "description": "Vertical component.", "format": "double", "type": "number" } }, "required": ["x", "y"], "type": "object" }, "GameUiChartReferenceLine": { "additionalProperties": false, "description": "One horizontal plot reference.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Shared label.", "type": "string" }, "value": { "description": "Vertical-axis coordinate.", "format": "double", "type": "number" } }, "required": ["value", "label", "color"], "type": "object" }, "GameUiChartSeries": { "additionalProperties": false, "description": "One curve and its shared visual identity.", "properties": { "color": { "description": "Shared base colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "points": { "description": "Ordered chart coordinates.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "segment_colors": { "description": "Per-segment colours; empty means the base colour.", "items": { "type": "string" }, "type": "array" } }, "required": ["label", "color", "points", "segment_colors"], "type": "object" }, "GameUiChartVector": { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" }, "GameUiControl": { "additionalProperties": false, "description": "Shared control, including data and admitted semantic action.", "properties": { "content": { "$ref": "#/$defs/GameUiControlContent", "description": "Exclusive control data." }, "enabled": { "description": "Shared admission flag.", "type": "boolean" }, "id": { "description": "Stable current Web control identifier.", "type": "string" }, "label": { "description": "Shared visible label.", "type": "string" }, "rect": { "$ref": "#/$defs/GameUiRect", "description": "Shared spatial or normalized position." }, "section": { "description": "Section identifier.", "type": "string" } }, "required": ["id", "label", "enabled", "section", "rect", "content"], "type": "object" }, "GameUiControlContent": { "description": "Exclusive shared control representation.", "oneOf": [{ "additionalProperties": false, "description": "Action or selection button.", "properties": { "action": { "$ref": "#/$defs/GameUiAction", "description": "Typed semantic action." }, "kind": { "const": "button", "type": "string" }, "presentation": { "$ref": "#/$defs/GameUiButtonPresentation", "description": "Shared visual hierarchy." } }, "required": ["kind", "action", "presentation"], "type": "object" }, { "additionalProperties": false, "description": "Individual Custom information cue.", "properties": { "cue": { "$ref": "#/$defs/HudCue", "description": "Cue identifier from the existing format model." }, "kind": { "const": "toggle", "type": "string" }, "value": { "description": "Current Rust-owned visibility.", "type": "boolean" } }, "required": ["kind", "cue", "value"], "type": "object" }, { "additionalProperties": false, "description": "Record query cursor.", "properties": { "kind": { "const": "range", "type": "string" }, "maximum": { "description": "Last permitted time.", "format": "double", "type": "number" }, "minimum": { "description": "First permitted time.", "format": "double", "type": "number" }, "step": { "description": "Logical range step.", "format": "double", "type": "number" }, "target": { "$ref": "#/$defs/GameUiRangeTarget", "description": "Analysis or playback target." }, "value": { "description": "Current time.", "format": "double", "type": "number" } }, "required": ["kind", "target", "value", "minimum", "maximum", "step"], "type": "object" }, { "additionalProperties": false, "description": "Derived readout.", "properties": { "kind": { "const": "status", "type": "string" }, "value": { "description": "Shared formatted content.", "type": "string" } }, "required": ["kind", "value"], "type": "object" }, { "additionalProperties": false, "description": "Record-derived chart data, not a separately simulated trajectory.", "properties": { "chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Plot selection." }, "kind": { "const": "chart", "type": "string" }, "plot": { "$ref": "#/$defs/GameUiChart", "description": "Fully derived axes, geometry and cursor; adapters render this value." } }, "required": ["kind", "chart", "plot"], "type": "object" }] }, "GameUiEmphasis": { "description": "Shared action emphasis.", "oneOf": [{ "const": "primary", "description": "Principal forward operation.", "type": "string" }, { "const": "secondary", "description": "Back or auxiliary operation.", "type": "string" }, { "const": "normal", "description": "Existing ordinary action styling.", "type": "string" }] }, "GameUiHud": { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "geometry": { "$ref": "#/$defs/GameUiHudGeometry", "description": "Shared Web-baseline instrument projections, independent of engine pixels." }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "geometry", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" }, "GameUiHudAdiGeometry": { "description": "Visible ADI region with an attitude layer or an independent flight path cue.", "oneOf": [{ "additionalProperties": false, "description": "Attitude horizon with an optional flight path marker.", "properties": { "flight_path_y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": ["number", "null"] }, "horizon": { "$ref": "#/$defs/GameUiHudAttitudeGeometry", "description": "Horizon rotation and translation." }, "kind": { "const": "attitude", "type": "string" } }, "required": ["kind", "horizon", "flight_path_y_ratio"], "type": "object" }, { "additionalProperties": false, "description": "Flight path marker without an attitude horizon.", "properties": { "kind": { "const": "flight_path_only", "type": "string" }, "y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": "number" } }, "required": ["kind", "y_ratio"], "type": "object" }] }, "GameUiHudAttitude": { "additionalProperties": false, "description": "Shared ADI orientation input.", "properties": { "pitch_degrees": { "description": "Pitch angle in degrees.", "format": "double", "type": "number" }, "roll_degrees": { "description": "Bank angle in degrees.", "format": "double", "type": "number" } }, "required": ["roll_degrees", "pitch_degrees"], "type": "object" }, "GameUiHudAttitudeGeometry": { "additionalProperties": false, "description": "Web-baseline horizon rotation and translation.", "properties": { "pitch_offset_ratio": { "description": "Pre-rotation pitch translation relative to the ADI height.", "format": "double", "type": "number" }, "rotation_degrees": { "description": "Clockwise horizon rotation in display coordinates.", "format": "double", "type": "number" } }, "required": ["rotation_degrees", "pitch_offset_ratio"], "type": "object" }, "GameUiHudGeometry": { "additionalProperties": false, "description": "Shared instrument geometry derived from the authoritative HUD angles.", "properties": { "adi": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAdiGeometry" }, { "type": "null" }], "description": "Visible ADI layers, absent when both attitude and flight path cues are hidden." }, "angle_of_attack_ratio": { "description": "AoA position between the displayed -10 and +20 degree endpoints.", "format": "double", "type": ["number", "null"] }, "heading_ticks": { "description": "Ordered heading tape marks and compass labels.", "items": { "$ref": "#/$defs/GameUiHudHeadingTick" }, "type": "array" } }, "required": ["adi", "heading_ticks", "angle_of_attack_ratio"], "type": "object" }, "GameUiHudHeadingTick": { "additionalProperties": false, "description": "One heading tape mark in normalized instrument coordinates.", "properties": { "label": { "description": "Compass label, empty for a minor tick.", "type": "string" }, "major": { "description": "Major marks receive the long tick and a compass label.", "type": "boolean" }, "position_ratio": { "description": "Position relative to the complete tape width.", "format": "double", "type": "number" } }, "required": ["position_ratio", "major", "label"], "type": "object" }, "GameUiHudLayout": { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" }, "GameUiLayout": { "additionalProperties": false, "description": "Responsive shell selected using the Web baseline.", "properties": { "choice_columns": { "description": "Responsive choice grid count.", "format": "uint32", "minimum": 0, "type": "integer" }, "clip_x": { "description": "Horizontal overflow is clipped.", "type": "boolean" }, "compact": { "description": "Small-screen branch selected below the Web 600px breakpoint.", "type": "boolean" }, "gap_px": { "description": "Shared control gap.", "format": "double", "type": "number" }, "maximum_height_px": { "description": "Maximum reachable scroll viewport height.", "format": "double", "type": "number" }, "padding_px": { "description": "Shared shell padding.", "format": "double", "type": "number" }, "passthrough": { "description": "Input-transparent forward view outside explicit controls.", "type": "boolean" }, "scroll_y": { "description": "Vertical scrolling is admitted for the shell.", "type": "boolean" }, "shell": { "$ref": "#/$defs/GameUiShell", "description": "Shared shell placement." }, "width_px": { "description": "Shell width in logical pixels.", "format": "double", "type": "number" } }, "required": ["shell", "width_px", "maximum_height_px", "padding_px", "gap_px", "choice_columns", "compact", "scroll_y", "clip_x", "passthrough"], "type": "object" }, "GameUiOverlay": { "description": "Exclusive current overlay names retained by both renderer adapters.", "oneOf": [{ "const": "Pause", "description": "Paused flight navigation.", "type": "string" }, { "const": "PauseSettings", "description": "Paused render settings.", "type": "string" }, { "const": "PauseHelp", "description": "Paused input help.", "type": "string" }] }, "GameUiPanel": { "additionalProperties": false, "description": "Shared ordered menu panel.", "properties": { "anchor": { "$ref": "#/$defs/GameUiAnchor", "description": "Explicit placement anchor." }, "controls": { "description": "Ordered controls and readouts.", "items": { "$ref": "#/$defs/GameUiControl" }, "type": "array" }, "id": { "description": "Stable current Web identifier.", "type": "string" }, "local_position": { "description": "Local offset in metres, with rendering forward on negative Z.", "items": { "format": "double", "type": "number" }, "maxItems": 3, "minItems": 3, "type": "array" }, "sections": { "description": "Shared ordered presentation sections.", "items": { "$ref": "#/$defs/GameUiSection" }, "type": "array" }, "size": { "description": "Spatial width and height in metres.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "title": { "description": "Shared heading.", "type": "string" } }, "required": ["id", "title", "anchor", "local_position", "size", "sections", "controls"], "type": "object" }, "GameUiPauseOverlay": { "description": "Exclusive pause overlay.", "oneOf": [{ "const": "menu", "description": "Pause navigation.", "type": "string" }, { "const": "settings", "description": "Render settings.", "type": "string" }, { "const": "help", "description": "Input instructions.", "type": "string" }] }, "GameUiPlatformCommand": { "description": "Platform-owned operation requested by common UI.", "oneOf": [{ "additionalProperties": false, "description": "Changes render-only mesh quality.", "properties": { "kind": { "const": "set_water_quality", "type": "string" }, "quality": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Requested quality." } }, "required": ["kind", "quality"], "type": "object" }, { "additionalProperties": false, "description": "Requests a supported display mode.", "properties": { "kind": { "const": "set_presentation", "type": "string" }, "mode": { "$ref": "#/$defs/GameUiPresentationMode", "description": "Requested mode." } }, "required": ["kind", "mode"], "type": "object" }, { "additionalProperties": false, "description": "Recalibrates phone heading.", "properties": { "kind": { "const": "recenter_phone_tracking", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Places the retained menu in front of the viewer.", "properties": { "kind": { "const": "recenter_menu", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Downloads the original JSON record.", "properties": { "kind": { "const": "download_record_json", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Downloads record-derived numeric CSV.", "properties": { "kind": { "const": "download_flight_csv", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Loads a stored finalized record.", "properties": { "id": { "description": "Platform persistence key.", "format": "uint32", "minimum": 0, "type": "integer" }, "kind": { "const": "open_stored_record", "type": "string" } }, "required": ["kind", "id"], "type": "object" }, { "additionalProperties": false, "description": "Advances the supported replay camera selection.", "properties": { "camera": { "$ref": "#/$defs/GameUiReplayCamera", "description": "Shared UI selection to apply." }, "kind": { "const": "set_replay_camera", "type": "string" } }, "required": ["kind", "camera"], "type": "object" }] }, "GameUiPresentationMode": { "description": "Presentation mode supported by a platform adapter.", "oneOf": [{ "const": "screen", "description": "Flat native or browser display.", "type": "string" }, { "const": "webxr", "description": "Browser HMD display.", "type": "string" }, { "const": "phone_vr", "description": "Browser phone headset display.", "type": "string" }] }, "GameUiRangeTarget": { "description": "Range action target.", "oneOf": [{ "const": "analysis", "description": "Observational analysis query.", "type": "string" }, { "const": "replay", "description": "Rust-owned playback clock.", "type": "string" }] }, "GameUiRect": { "additionalProperties": false, "description": "Normalized control position for spatial and chart rendering.", "properties": { "height": { "description": "Height.", "format": "double", "type": "number" }, "width": { "description": "Width.", "format": "double", "type": "number" }, "x": { "description": "Left edge.", "format": "double", "type": "number" }, "y": { "description": "Top edge.", "format": "double", "type": "number" } }, "required": ["x", "y", "width", "height"], "type": "object" }, "GameUiReplayCamera": { "description": "Current Web replay camera candidates in their shared selection order.", "oneOf": [{ "const": "auto", "description": "Recorded-event camera director.", "type": "string" }, { "const": "pilot", "description": "Pilot eye view.", "type": "string" }, { "const": "chase", "description": "Aircraft-following view.", "type": "string" }, { "const": "orbit", "description": "Orbiting aircraft view.", "type": "string" }, { "const": "platform", "description": "Launch-platform fixed view.", "type": "string" }, { "const": "shore", "description": "Lake-shore fixed view.", "type": "string" }, { "const": "overhead", "description": "Overhead aircraft view.", "type": "string" }, { "const": "side", "description": "Side-on aircraft view.", "type": "string" }, { "const": "front", "description": "Forward aircraft view.", "type": "string" }, { "const": "telephoto", "description": "Fixed distant telephoto view.", "type": "string" }] }, "GameUiReplayView": { "description": "Replay presentation selection.", "oneOf": [{ "const": "cinematic", "description": "Scenic replay.", "type": "string" }, { "const": "telemetry", "description": "Scenic replay with telemetry.", "type": "string" }, { "const": "analysis", "description": "Record plot and shared cursor.", "type": "string" }] }, "GameUiResultTab": { "description": "Result presentation mode.", "oneOf": [{ "const": "summary", "description": "Condensed result and navigation.", "type": "string" }, { "const": "analysis", "description": "Recorded analysis charts.", "type": "string" }] }, "GameUiScene": { "description": "Shared scene name, preserving current Web spelling.", "oneOf": [{ "const": "Boot", "description": "Initial platform preparation.", "type": "string" }, { "const": "Title", "description": "Flight and demo entry.", "type": "string" }, { "const": "FlightSetup", "description": "Flight settings.", "type": "string" }, { "const": "Briefing", "description": "Prepared flight confirmation.", "type": "string" }, { "const": "Countdown", "description": "Launch countdown.", "type": "string" }, { "const": "Flight", "description": "Active or paused flight.", "type": "string" }, { "const": "Result", "description": "Finalized result.", "type": "string" }, { "const": "Replay", "description": "Saved snapshot playback.", "type": "string" }] }, "GameUiSection": { "additionalProperties": false, "description": "Shared control group and placement mode.", "properties": { "id": { "description": "Stable group identifier.", "type": "string" }, "label": { "description": "Optional visible group heading.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiSectionLayout", "description": "Shared layout mode." } }, "required": ["id", "label", "layout"], "type": "object" }, "GameUiSectionLayout": { "description": "Group placement strategy, selected in shared Rust.", "oneOf": [{ "const": "column", "description": "Vertical flow in declared control order.", "type": "string" }, { "const": "choice_grid", "description": "Responsive choice grid using shared column count.", "type": "string" }, { "const": "row", "description": "Horizontal action row.", "type": "string" }, { "const": "normalized", "description": "Shared normalized chart and control positions.", "type": "string" }] }, "GameUiSessionCommand": { "description": "Existing domain commands emitted by the pure UI update.", "oneOf": [{ "additionalProperties": false, "description": "Opens flight settings.", "properties": { "kind": { "const": "open_setup", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns to Title.", "properties": { "kind": { "const": "return_to_title", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Seals the selected configuration.", "properties": { "kind": { "const": "prepare", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns from Briefing to Setup.", "properties": { "kind": { "const": "cancel_briefing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Starts the existing launch countdown.", "properties": { "kind": { "const": "start_countdown", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Cancels the launch countdown.", "properties": { "kind": { "const": "cancel_countdown", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Pauses the current flight.", "properties": { "kind": { "const": "pause", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Explicitly resumes the retained flight.", "properties": { "kind": { "const": "resume", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Finalizes the active flight by pilot request.", "properties": { "kind": { "const": "abort", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Reuses the retained flight configuration.", "properties": { "kind": { "const": "retry", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Repeats preparation of the sealed configuration.", "properties": { "kind": { "const": "retry_briefing", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Opens replay of the finalized record.", "properties": { "kind": { "const": "enter_replay", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Leaves replay for its Rust-owned return target.", "properties": { "kind": { "const": "leave_replay", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Opens the independent Title demonstration.", "properties": { "kind": { "const": "enter_attract", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Returns from the demonstration to Title.", "properties": { "kind": { "const": "leave_attract", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "Resolves one existing preset.", "properties": { "kind": { "const": "select_preset", "type": "string" }, "preset": { "$ref": "#/$defs/DifficultyPreset", "description": "Named preset; Custom is not a selectable shortcut." } }, "required": ["kind", "preset"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Information axis.", "properties": { "information": { "$ref": "#/$defs/InformationLevel", "description": "Existing information level." }, "kind": { "const": "select_information", "type": "string" } }, "required": ["kind", "information"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Assistance axis.", "properties": { "assistance": { "$ref": "#/$defs/AssistanceLevel", "description": "Existing assistance level." }, "kind": { "const": "select_assistance", "type": "string" } }, "required": ["kind", "assistance"], "type": "object" }, { "additionalProperties": false, "description": "Selects the Weather axis.", "properties": { "kind": { "const": "select_weather", "type": "string" }, "weather": { "$ref": "#/$defs/WeatherClass", "description": "Existing weather class." } }, "required": ["kind", "weather"], "type": "object" }, { "additionalProperties": false, "description": "Changes one Custom information cue.", "properties": { "cue": { "$ref": "#/$defs/HudCue", "description": "Existing cue." }, "kind": { "const": "set_cue", "type": "string" }, "visible": { "description": "Requested visibility.", "type": "boolean" } }, "required": ["kind", "cue", "visible"], "type": "object" }] }, "GameUiShell": { "description": "Shared viewport-relative placement.", "oneOf": [{ "const": "center", "description": "Centered scrollable menu.", "type": "string" }, { "const": "flight_bar", "description": "Bottom-right flight action strip.", "type": "string" }, { "const": "pause_settings", "description": "Top-right pause settings.", "type": "string" }, { "const": "analysis", "description": "Full viewport chart composition.", "type": "string" }, { "const": "cinematic", "description": "Top-right compact scenic replay menu.", "type": "string" }] }, "GameUiState": { "additionalProperties": false, "description": "UI-only selections; physical state and domain phase remain in GameSession.", "properties": { "analysis_chart": { "$ref": "#/$defs/GameUiAnalysisChart", "description": "Selected record plot." }, "analysis_time_seconds": { "description": "Read-only analysis query position in seconds.", "format": "double", "type": "number" }, "pause_overlay": { "$ref": "#/$defs/GameUiPauseOverlay", "description": "Paused menu selection." }, "replay_camera": { "$ref": "#/$defs/GameUiReplayCamera", "description": "Shared replay camera selection; adapters only apply its geometry." }, "replay_view": { "$ref": "#/$defs/GameUiReplayView", "description": "Replay presentation selection." }, "result_tab": { "$ref": "#/$defs/GameUiResultTab", "description": "Result presentation selection." }, "technical_open": { "description": "Expanded preparation diagnostics.", "type": "boolean" } }, "required": ["technical_open", "result_tab", "analysis_chart", "analysis_time_seconds", "pause_overlay", "replay_view", "replay_camera"], "type": "object" }, "GameUiTheme": { "additionalProperties": false, "description": "Engine-independent colors, opacity and minimum hit dimensions.", "properties": { "button_min_height_px": { "description": "Ordinary button minimum height.", "format": "double", "type": "number" }, "choice_background": { "description": "Unselected choice fill.", "type": "string" }, "focus_outline": { "description": "Keyboard focus outline.", "type": "string" }, "hud_opacity": { "description": "Head-relative HUD background opacity, preserving forward visibility.", "format": "double", "type": "number" }, "muted_text": { "description": "Secondary text color.", "type": "string" }, "normal_background": { "description": "Ordinary action fill.", "type": "string" }, "panel_background": { "description": "Panel background color.", "type": "string" }, "panel_opacity": { "description": "Centered menu opacity.", "format": "double", "type": "number" }, "primary_background": { "description": "Primary or selected action fill.", "type": "string" }, "primary_min_height_px": { "description": "Principal button minimum height.", "format": "double", "type": "number" }, "text": { "description": "Main text color.", "type": "string" } }, "required": ["text", "muted_text", "panel_background", "panel_opacity", "hud_opacity", "normal_background", "primary_background", "choice_background", "focus_outline", "button_min_height_px", "primary_min_height_px"], "type": "object" }, "GameUiWaterQuality": { "description": "Rendering quality has no effect on physics or record identity.", "oneOf": [{ "const": "low", "description": "Reduced mesh density.", "type": "string" }, { "const": "medium", "description": "Balanced mesh density.", "type": "string" }, { "const": "high", "description": "Detailed mesh density.", "type": "string" }] }, "HudCue": { "description": "Stable identity for one independently configurable HUD cue.", "oneOf": [{ "const": "telemetry", "description": "Numeric telemetry readouts.", "type": "string" }, { "const": "attitude", "description": "Attitude indicator and heading.", "type": "string" }, { "const": "wind", "description": "Wind vector readout.", "type": "string" }, { "const": "flight_path", "description": "Flight-path marker.", "type": "string" }, { "const": "angle_of_attack", "description": "Angle-of-attack cue.", "type": "string" }, { "const": "warnings", "description": "Warning cues.", "type": "string" }] }, "InformationLevel": { "description": "Information presentation selected for a session.", "oneOf": [{ "const": "full", "description": "Full flight telemetry and warnings.", "type": "string" }, { "const": "standard", "description": "Primary flight instruments.", "type": "string" }, { "const": "minimal", "description": "Altitude, distance, and elapsed time.", "type": "string" }, { "const": "realistic", "description": "Instrumentation configured for a validated aircraft model.", "type": "string" }, { "const": "custom", "description": "Independently configured flight information cues.", "type": "string" }] }, "WeatherClass": { "description": "Weather classification attached to a versioned scenario catalog.", "oneOf": [{ "const": "calm", "description": "Low-variation synthetic conditions.", "type": "string" }, { "const": "mild", "description": "Mild synthetic conditions.", "type": "string" }, { "const": "typical", "description": "Typical-class scenario; no real-world claim is implied.", "type": "string" }, { "const": "challenging", "description": "Challenging synthetic conditions.", "type": "string" }, { "const": "near_limit", "description": "Near-limit game classification.", "type": "string" }] } }, "$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": false, "description": "Pure shared scene and menu projection.", "properties": { "active_overlay": { "anyOf": [{ "$ref": "#/$defs/GameUiOverlay" }, { "type": "null" }], "description": "Shared exclusive overlay name." }, "description": { "description": "Shared explanatory text.", "type": "string" }, "hud": { "anyOf": [{ "$ref": "#/$defs/GameUiHud" }, { "type": "null" }], "description": "Shared telemetry and instrument projection, absent outside a flight or record." }, "layout": { "$ref": "#/$defs/GameUiLayout", "description": "Shared responsive dimensions and scroll policy." }, "panels": { "description": "Ordered semantic panels.", "items": { "$ref": "#/$defs/GameUiPanel" }, "type": "array" }, "scene": { "$ref": "#/$defs/GameUiScene", "description": "Domain-derived scene." }, "schema_version": { "description": "Boundary version.", "format": "uint32", "minimum": 0, "type": "integer" }, "selections": { "$ref": "#/$defs/GameUiState", "description": "Readonly observation of the Rust-owned UI selections." }, "theme": { "$ref": "#/$defs/GameUiTheme", "description": "Shared visual hierarchy." }, "title": { "description": "Shared heading.", "type": "string" }, "view_revision": { "description": "Adapter query-cache revision; pure projections use zero until published.", "format": "uint32", "minimum": 0, "type": "integer" } }, "required": ["schema_version", "view_revision", "selections", "scene", "title", "description", "active_overlay", "panels", "layout", "theme", "hud"], "title": "GameUiView", "type": "object", "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/view" };
 var func1 = Object.prototype.hasOwnProperty;
 function validate53(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
@@ -173,7 +173,7 @@ function validate53(data, { instancePath = "", parentData, parentDataProperty, r
   return errors === 0;
 }
 validate53.evaluated = { "dynamicProps": false, "dynamicItems": false };
-var schema21 = { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" };
+var schema21 = { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "geometry": { "$ref": "#/$defs/GameUiHudGeometry", "description": "Shared Web-baseline instrument projections, independent of engine pixels." }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "geometry", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" };
 var formats0 = (init_numeric_formats(), __toCommonJS(numeric_formats_exports)).numericFormats.double;
 function validate56(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
@@ -272,12 +272,601 @@ function validate56(data, { instancePath = "", parentData, parentDataProperty, r
   return errors === 0;
 }
 validate56.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema23 = { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" };
-var formats16 = (init_numeric_formats(), __toCommonJS(numeric_formats_exports)).numericFormats.uint32;
+var schema23 = { "additionalProperties": false, "description": "Shared instrument geometry derived from the authoritative HUD angles.", "properties": { "adi": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAdiGeometry" }, { "type": "null" }], "description": "Visible ADI layers, absent when both attitude and flight path cues are hidden." }, "angle_of_attack_ratio": { "description": "AoA position between the displayed -10 and +20 degree endpoints.", "format": "double", "type": ["number", "null"] }, "heading_ticks": { "description": "Ordered heading tape marks and compass labels.", "items": { "$ref": "#/$defs/GameUiHudHeadingTick" }, "type": "array" } }, "required": ["adi", "heading_ticks", "angle_of_attack_ratio"], "type": "object" };
+var schema24 = { "description": "Visible ADI region with an attitude layer or an independent flight path cue.", "oneOf": [{ "additionalProperties": false, "description": "Attitude horizon with an optional flight path marker.", "properties": { "flight_path_y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": ["number", "null"] }, "horizon": { "$ref": "#/$defs/GameUiHudAttitudeGeometry", "description": "Horizon rotation and translation." }, "kind": { "const": "attitude", "type": "string" } }, "required": ["kind", "horizon", "flight_path_y_ratio"], "type": "object" }, { "additionalProperties": false, "description": "Flight path marker without an attitude horizon.", "properties": { "kind": { "const": "flight_path_only", "type": "string" }, "y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": "number" } }, "required": ["kind", "y_ratio"], "type": "object" }] };
+function validate60(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate60.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.rotation_degrees === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "rotation_degrees" }, message: "must have required property 'rotation_degrees'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.pitch_offset_ratio === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pitch_offset_ratio" }, message: "must have required property 'pitch_offset_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "pitch_offset_ratio" || key0 === "rotation_degrees")) {
+        const err2 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err2];
+        } else {
+          vErrors.push(err2);
+        }
+        errors++;
+      }
+    }
+    if (data.pitch_offset_ratio !== void 0) {
+      let data0 = data.pitch_offset_ratio;
+      if (typeof data0 == "number" && isFinite(data0)) {
+        if (!formats0.validate(data0)) {
+          const err3 = { instancePath: instancePath + "/pitch_offset_ratio", schemaPath: "#/properties/pitch_offset_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err3];
+          } else {
+            vErrors.push(err3);
+          }
+          errors++;
+        }
+      } else {
+        const err4 = { instancePath: instancePath + "/pitch_offset_ratio", schemaPath: "#/properties/pitch_offset_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+    }
+    if (data.rotation_degrees !== void 0) {
+      let data1 = data.rotation_degrees;
+      if (typeof data1 == "number" && isFinite(data1)) {
+        if (!formats0.validate(data1)) {
+          const err5 = { instancePath: instancePath + "/rotation_degrees", schemaPath: "#/properties/rotation_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err5];
+          } else {
+            vErrors.push(err5);
+          }
+          errors++;
+        }
+      } else {
+        const err6 = { instancePath: instancePath + "/rotation_degrees", schemaPath: "#/properties/rotation_degrees/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err7 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err7];
+    } else {
+      vErrors.push(err7);
+    }
+    errors++;
+  }
+  validate60.errors = vErrors;
+  return errors === 0;
+}
+validate60.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate59(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate59.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  const _errs0 = errors;
+  let valid0 = false;
+  let passing0 = null;
+  const _errs1 = errors;
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.kind === void 0) {
+      const err0 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "kind" }, message: "must have required property 'kind'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.horizon === void 0) {
+      const err1 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "horizon" }, message: "must have required property 'horizon'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.flight_path_y_ratio === void 0) {
+      const err2 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "flight_path_y_ratio" }, message: "must have required property 'flight_path_y_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "flight_path_y_ratio" || key0 === "horizon" || key0 === "kind")) {
+        const err3 = { instancePath, schemaPath: "#/oneOf/0/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.flight_path_y_ratio !== void 0) {
+      let data0 = data.flight_path_y_ratio;
+      if (!(typeof data0 == "number" && isFinite(data0)) && data0 !== null) {
+        const err4 = { instancePath: instancePath + "/flight_path_y_ratio", schemaPath: "#/oneOf/0/properties/flight_path_y_ratio/type", keyword: "type", params: { type: schema24.oneOf[0].properties.flight_path_y_ratio.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+      if (typeof data0 == "number" && isFinite(data0)) {
+        if (!formats0.validate(data0)) {
+          const err5 = { instancePath: instancePath + "/flight_path_y_ratio", schemaPath: "#/oneOf/0/properties/flight_path_y_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err5];
+          } else {
+            vErrors.push(err5);
+          }
+          errors++;
+        }
+      }
+    }
+    if (data.horizon !== void 0) {
+      if (!validate60(data.horizon, { instancePath: instancePath + "/horizon", parentData: data, parentDataProperty: "horizon", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate60.errors : vErrors.concat(validate60.errors);
+        errors = vErrors.length;
+      }
+    }
+    if (data.kind !== void 0) {
+      let data2 = data.kind;
+      if (typeof data2 !== "string") {
+        const err6 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/0/properties/kind/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+      if ("attitude" !== data2) {
+        const err7 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/0/properties/kind/const", keyword: "const", params: { allowedValue: "attitude" }, message: "must be equal to constant" };
+        if (vErrors === null) {
+          vErrors = [err7];
+        } else {
+          vErrors.push(err7);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err8 = { instancePath, schemaPath: "#/oneOf/0/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err8];
+    } else {
+      vErrors.push(err8);
+    }
+    errors++;
+  }
+  var _valid0 = _errs1 === errors;
+  if (_valid0) {
+    valid0 = true;
+    passing0 = 0;
+    var props0 = true;
+  }
+  const _errs9 = errors;
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.kind === void 0) {
+      const err9 = { instancePath, schemaPath: "#/oneOf/1/required", keyword: "required", params: { missingProperty: "kind" }, message: "must have required property 'kind'" };
+      if (vErrors === null) {
+        vErrors = [err9];
+      } else {
+        vErrors.push(err9);
+      }
+      errors++;
+    }
+    if (data.y_ratio === void 0) {
+      const err10 = { instancePath, schemaPath: "#/oneOf/1/required", keyword: "required", params: { missingProperty: "y_ratio" }, message: "must have required property 'y_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err10];
+      } else {
+        vErrors.push(err10);
+      }
+      errors++;
+    }
+    for (const key1 in data) {
+      if (!(key1 === "kind" || key1 === "y_ratio")) {
+        const err11 = { instancePath, schemaPath: "#/oneOf/1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key1 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err11];
+        } else {
+          vErrors.push(err11);
+        }
+        errors++;
+      }
+    }
+    if (data.kind !== void 0) {
+      let data3 = data.kind;
+      if (typeof data3 !== "string") {
+        const err12 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/1/properties/kind/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err12];
+        } else {
+          vErrors.push(err12);
+        }
+        errors++;
+      }
+      if ("flight_path_only" !== data3) {
+        const err13 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/1/properties/kind/const", keyword: "const", params: { allowedValue: "flight_path_only" }, message: "must be equal to constant" };
+        if (vErrors === null) {
+          vErrors = [err13];
+        } else {
+          vErrors.push(err13);
+        }
+        errors++;
+      }
+    }
+    if (data.y_ratio !== void 0) {
+      let data4 = data.y_ratio;
+      if (typeof data4 == "number" && isFinite(data4)) {
+        if (!formats0.validate(data4)) {
+          const err14 = { instancePath: instancePath + "/y_ratio", schemaPath: "#/oneOf/1/properties/y_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err14];
+          } else {
+            vErrors.push(err14);
+          }
+          errors++;
+        }
+      } else {
+        const err15 = { instancePath: instancePath + "/y_ratio", schemaPath: "#/oneOf/1/properties/y_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err15];
+        } else {
+          vErrors.push(err15);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err16 = { instancePath, schemaPath: "#/oneOf/1/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err16];
+    } else {
+      vErrors.push(err16);
+    }
+    errors++;
+  }
+  var _valid0 = _errs9 === errors;
+  if (_valid0 && valid0) {
+    valid0 = false;
+    passing0 = [passing0, 1];
+  } else {
+    if (_valid0) {
+      valid0 = true;
+      passing0 = 1;
+      if (props0 !== true) {
+        props0 = true;
+      }
+    }
+  }
+  if (!valid0) {
+    const err17 = { instancePath, schemaPath: "#/oneOf", keyword: "oneOf", params: { passingSchemas: passing0 }, message: "must match exactly one schema in oneOf" };
+    if (vErrors === null) {
+      vErrors = [err17];
+    } else {
+      vErrors.push(err17);
+    }
+    errors++;
+  } else {
+    errors = _errs0;
+    if (vErrors !== null) {
+      if (_errs0) {
+        vErrors.length = _errs0;
+      } else {
+        vErrors = null;
+      }
+    }
+  }
+  validate59.errors = vErrors;
+  evaluated0.props = props0;
+  return errors === 0;
+}
+validate59.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate63(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate63.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.position_ratio === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "position_ratio" }, message: "must have required property 'position_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.major === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "major" }, message: "must have required property 'major'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.label === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "label" }, message: "must have required property 'label'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "label" || key0 === "major" || key0 === "position_ratio")) {
+        const err3 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.label !== void 0) {
+      if (typeof data.label !== "string") {
+        const err4 = { instancePath: instancePath + "/label", schemaPath: "#/properties/label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+    }
+    if (data.major !== void 0) {
+      if (typeof data.major !== "boolean") {
+        const err5 = { instancePath: instancePath + "/major", schemaPath: "#/properties/major/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" };
+        if (vErrors === null) {
+          vErrors = [err5];
+        } else {
+          vErrors.push(err5);
+        }
+        errors++;
+      }
+    }
+    if (data.position_ratio !== void 0) {
+      let data2 = data.position_ratio;
+      if (typeof data2 == "number" && isFinite(data2)) {
+        if (!formats0.validate(data2)) {
+          const err6 = { instancePath: instancePath + "/position_ratio", schemaPath: "#/properties/position_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err6];
+          } else {
+            vErrors.push(err6);
+          }
+          errors++;
+        }
+      } else {
+        const err7 = { instancePath: instancePath + "/position_ratio", schemaPath: "#/properties/position_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err7];
+        } else {
+          vErrors.push(err7);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err8 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err8];
+    } else {
+      vErrors.push(err8);
+    }
+    errors++;
+  }
+  validate63.errors = vErrors;
+  return errors === 0;
+}
+validate63.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
 function validate58(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
   const evaluated0 = validate58.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.adi === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "adi" }, message: "must have required property 'adi'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.heading_ticks === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_ticks" }, message: "must have required property 'heading_ticks'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.angle_of_attack_ratio === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_ratio" }, message: "must have required property 'angle_of_attack_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "adi" || key0 === "angle_of_attack_ratio" || key0 === "heading_ticks")) {
+        const err3 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.adi !== void 0) {
+      let data0 = data.adi;
+      const _errs3 = errors;
+      let valid1 = false;
+      const _errs4 = errors;
+      if (!validate59(data0, { instancePath: instancePath + "/adi", parentData: data, parentDataProperty: "adi", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate59.errors : vErrors.concat(validate59.errors);
+        errors = vErrors.length;
+      }
+      var _valid0 = _errs4 === errors;
+      valid1 = valid1 || _valid0;
+      const _errs5 = errors;
+      if (data0 !== null) {
+        const err4 = { instancePath: instancePath + "/adi", schemaPath: "#/properties/adi/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+      var _valid0 = _errs5 === errors;
+      valid1 = valid1 || _valid0;
+      if (!valid1) {
+        const err5 = { instancePath: instancePath + "/adi", schemaPath: "#/properties/adi/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
+        if (vErrors === null) {
+          vErrors = [err5];
+        } else {
+          vErrors.push(err5);
+        }
+        errors++;
+      } else {
+        errors = _errs3;
+        if (vErrors !== null) {
+          if (_errs3) {
+            vErrors.length = _errs3;
+          } else {
+            vErrors = null;
+          }
+        }
+      }
+    }
+    if (data.angle_of_attack_ratio !== void 0) {
+      let data1 = data.angle_of_attack_ratio;
+      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
+        const err6 = { instancePath: instancePath + "/angle_of_attack_ratio", schemaPath: "#/properties/angle_of_attack_ratio/type", keyword: "type", params: { type: schema23.properties.angle_of_attack_ratio.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+      if (typeof data1 == "number" && isFinite(data1)) {
+        if (!formats0.validate(data1)) {
+          const err7 = { instancePath: instancePath + "/angle_of_attack_ratio", schemaPath: "#/properties/angle_of_attack_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err7];
+          } else {
+            vErrors.push(err7);
+          }
+          errors++;
+        }
+      }
+    }
+    if (data.heading_ticks !== void 0) {
+      let data2 = data.heading_ticks;
+      if (Array.isArray(data2)) {
+        const len0 = data2.length;
+        for (let i0 = 0; i0 < len0; i0++) {
+          if (!validate63(data2[i0], { instancePath: instancePath + "/heading_ticks/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate63.errors : vErrors.concat(validate63.errors);
+            errors = vErrors.length;
+          }
+        }
+      } else {
+        const err8 = { instancePath: instancePath + "/heading_ticks", schemaPath: "#/properties/heading_ticks/type", keyword: "type", params: { type: "array" }, message: "must be array" };
+        if (vErrors === null) {
+          vErrors = [err8];
+        } else {
+          vErrors.push(err8);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err9 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err9];
+    } else {
+      vErrors.push(err9);
+    }
+    errors++;
+  }
+  validate58.errors = vErrors;
+  return errors === 0;
+}
+validate58.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema27 = { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" };
+var formats28 = (init_numeric_formats(), __toCommonJS(numeric_formats_exports)).numericFormats.uint32;
+function validate66(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate66.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -376,7 +965,7 @@ function validate58(data, { instancePath = "", parentData, parentDataProperty, r
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema23.properties, key0)) {
+      if (!func1.call(schema27.properties, key0)) {
         const err10 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err10];
@@ -548,7 +1137,7 @@ function validate58(data, { instancePath = "", parentData, parentDataProperty, r
           }
           errors++;
         }
-        if (!formats16.validate(data6)) {
+        if (!formats28.validate(data6)) {
           const err26 = { instancePath: instancePath + "/instrument_columns", schemaPath: "#/properties/instrument_columns/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err26];
@@ -742,10 +1331,10 @@ function validate58(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  validate58.errors = vErrors;
+  validate66.errors = vErrors;
   return errors === 0;
 }
-validate58.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+validate66.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
 function validate55(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
@@ -766,8 +1355,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.status === void 0) {
-      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "status" }, message: "must have required property 'status'" };
+    if (data.geometry === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "geometry" }, message: "must have required property 'geometry'" };
       if (vErrors === null) {
         vErrors = [err1];
       } else {
@@ -775,8 +1364,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.attitude === void 0) {
-      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "attitude" }, message: "must have required property 'attitude'" };
+    if (data.status === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "status" }, message: "must have required property 'status'" };
       if (vErrors === null) {
         vErrors = [err2];
       } else {
@@ -784,8 +1373,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.flight_path_angle_degrees === void 0) {
-      const err3 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "flight_path_angle_degrees" }, message: "must have required property 'flight_path_angle_degrees'" };
+    if (data.attitude === void 0) {
+      const err3 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "attitude" }, message: "must have required property 'attitude'" };
       if (vErrors === null) {
         vErrors = [err3];
       } else {
@@ -793,8 +1382,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.warning === void 0) {
-      const err4 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "warning" }, message: "must have required property 'warning'" };
+    if (data.flight_path_angle_degrees === void 0) {
+      const err4 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "flight_path_angle_degrees" }, message: "must have required property 'flight_path_angle_degrees'" };
       if (vErrors === null) {
         vErrors = [err4];
       } else {
@@ -802,8 +1391,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.heading_degrees === void 0) {
-      const err5 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_degrees" }, message: "must have required property 'heading_degrees'" };
+    if (data.warning === void 0) {
+      const err5 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "warning" }, message: "must have required property 'warning'" };
       if (vErrors === null) {
         vErrors = [err5];
       } else {
@@ -811,8 +1400,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.wind_direction_degrees === void 0) {
-      const err6 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_direction_degrees" }, message: "must have required property 'wind_direction_degrees'" };
+    if (data.heading_degrees === void 0) {
+      const err6 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_degrees" }, message: "must have required property 'heading_degrees'" };
       if (vErrors === null) {
         vErrors = [err6];
       } else {
@@ -820,8 +1409,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.angle_of_attack_degrees === void 0) {
-      const err7 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_degrees" }, message: "must have required property 'angle_of_attack_degrees'" };
+    if (data.wind_direction_degrees === void 0) {
+      const err7 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_direction_degrees" }, message: "must have required property 'wind_direction_degrees'" };
       if (vErrors === null) {
         vErrors = [err7];
       } else {
@@ -829,8 +1418,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.readouts === void 0) {
-      const err8 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "readouts" }, message: "must have required property 'readouts'" };
+    if (data.angle_of_attack_degrees === void 0) {
+      const err8 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_degrees" }, message: "must have required property 'angle_of_attack_degrees'" };
       if (vErrors === null) {
         vErrors = [err8];
       } else {
@@ -838,8 +1427,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.heading === void 0) {
-      const err9 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading" }, message: "must have required property 'heading'" };
+    if (data.readouts === void 0) {
+      const err9 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "readouts" }, message: "must have required property 'readouts'" };
       if (vErrors === null) {
         vErrors = [err9];
       } else {
@@ -847,8 +1436,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.heading_label === void 0) {
-      const err10 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_label" }, message: "must have required property 'heading_label'" };
+    if (data.heading === void 0) {
+      const err10 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading" }, message: "must have required property 'heading'" };
       if (vErrors === null) {
         vErrors = [err10];
       } else {
@@ -856,8 +1445,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.pilot_position === void 0) {
-      const err11 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position" }, message: "must have required property 'pilot_position'" };
+    if (data.heading_label === void 0) {
+      const err11 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_label" }, message: "must have required property 'heading_label'" };
       if (vErrors === null) {
         vErrors = [err11];
       } else {
@@ -865,8 +1454,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.pilot_position_label === void 0) {
-      const err12 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position_label" }, message: "must have required property 'pilot_position_label'" };
+    if (data.pilot_position === void 0) {
+      const err12 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position" }, message: "must have required property 'pilot_position'" };
       if (vErrors === null) {
         vErrors = [err12];
       } else {
@@ -874,8 +1463,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.wind === void 0) {
-      const err13 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind" }, message: "must have required property 'wind'" };
+    if (data.pilot_position_label === void 0) {
+      const err13 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position_label" }, message: "must have required property 'pilot_position_label'" };
       if (vErrors === null) {
         vErrors = [err13];
       } else {
@@ -883,8 +1472,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.wind_label === void 0) {
-      const err14 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_label" }, message: "must have required property 'wind_label'" };
+    if (data.wind === void 0) {
+      const err14 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind" }, message: "must have required property 'wind'" };
       if (vErrors === null) {
         vErrors = [err14];
       } else {
@@ -892,8 +1481,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.angle_of_attack === void 0) {
-      const err15 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack" }, message: "must have required property 'angle_of_attack'" };
+    if (data.wind_label === void 0) {
+      const err15 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_label" }, message: "must have required property 'wind_label'" };
       if (vErrors === null) {
         vErrors = [err15];
       } else {
@@ -901,8 +1490,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.angle_of_attack_label === void 0) {
-      const err16 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_label" }, message: "must have required property 'angle_of_attack_label'" };
+    if (data.angle_of_attack === void 0) {
+      const err16 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack" }, message: "must have required property 'angle_of_attack'" };
       if (vErrors === null) {
         vErrors = [err16];
       } else {
@@ -910,8 +1499,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.telemetry === void 0) {
-      const err17 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "telemetry" }, message: "must have required property 'telemetry'" };
+    if (data.angle_of_attack_label === void 0) {
+      const err17 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_label" }, message: "must have required property 'angle_of_attack_label'" };
       if (vErrors === null) {
         vErrors = [err17];
       } else {
@@ -919,8 +1508,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.location === void 0) {
-      const err18 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "location" }, message: "must have required property 'location'" };
+    if (data.telemetry === void 0) {
+      const err18 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "telemetry" }, message: "must have required property 'telemetry'" };
       if (vErrors === null) {
         vErrors = [err18];
       } else {
@@ -928,8 +1517,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.map_attribution === void 0) {
-      const err19 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "map_attribution" }, message: "must have required property 'map_attribution'" };
+    if (data.location === void 0) {
+      const err19 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "location" }, message: "must have required property 'location'" };
       if (vErrors === null) {
         vErrors = [err19];
       } else {
@@ -937,8 +1526,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.supplementary_readouts === void 0) {
-      const err20 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "supplementary_readouts" }, message: "must have required property 'supplementary_readouts'" };
+    if (data.map_attribution === void 0) {
+      const err20 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "map_attribution" }, message: "must have required property 'map_attribution'" };
       if (vErrors === null) {
         vErrors = [err20];
       } else {
@@ -946,8 +1535,8 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if (data.controls_description === void 0) {
-      const err21 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "controls_description" }, message: "must have required property 'controls_description'" };
+    if (data.supplementary_readouts === void 0) {
+      const err21 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "supplementary_readouts" }, message: "must have required property 'supplementary_readouts'" };
       if (vErrors === null) {
         vErrors = [err21];
       } else {
@@ -955,21 +1544,18 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
+    if (data.controls_description === void 0) {
+      const err22 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "controls_description" }, message: "must have required property 'controls_description'" };
+      if (vErrors === null) {
+        vErrors = [err22];
+      } else {
+        vErrors.push(err22);
+      }
+      errors++;
+    }
     for (const key0 in data) {
       if (!func1.call(schema21.properties, key0)) {
-        const err22 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
-        if (vErrors === null) {
-          vErrors = [err22];
-        } else {
-          vErrors.push(err22);
-        }
-        errors++;
-      }
-    }
-    if (data.angle_of_attack !== void 0) {
-      let data0 = data.angle_of_attack;
-      if (typeof data0 !== "string" && data0 !== null) {
-        const err23 = { instancePath: instancePath + "/angle_of_attack", schemaPath: "#/properties/angle_of_attack/type", keyword: "type", params: { type: schema21.properties.angle_of_attack.type }, message: "must be string,null" };
+        const err23 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err23];
         } else {
@@ -978,10 +1564,10 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.angle_of_attack_degrees !== void 0) {
-      let data1 = data.angle_of_attack_degrees;
-      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
-        const err24 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/type", keyword: "type", params: { type: schema21.properties.angle_of_attack_degrees.type }, message: "must be number,null" };
+    if (data.angle_of_attack !== void 0) {
+      let data0 = data.angle_of_attack;
+      if (typeof data0 !== "string" && data0 !== null) {
+        const err24 = { instancePath: instancePath + "/angle_of_attack", schemaPath: "#/properties/angle_of_attack/type", keyword: "type", params: { type: schema21.properties.angle_of_attack.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err24];
         } else {
@@ -989,13 +1575,25 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         }
         errors++;
       }
+    }
+    if (data.angle_of_attack_degrees !== void 0) {
+      let data1 = data.angle_of_attack_degrees;
+      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
+        const err25 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/type", keyword: "type", params: { type: schema21.properties.angle_of_attack_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err25];
+        } else {
+          vErrors.push(err25);
+        }
+        errors++;
+      }
       if (typeof data1 == "number" && isFinite(data1)) {
         if (!formats0.validate(data1)) {
-          const err25 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          const err26 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err25];
+            vErrors = [err26];
           } else {
-            vErrors.push(err25);
+            vErrors.push(err26);
           }
           errors++;
         }
@@ -1003,11 +1601,11 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
     }
     if (data.angle_of_attack_label !== void 0) {
       if (typeof data.angle_of_attack_label !== "string") {
-        const err26 = { instancePath: instancePath + "/angle_of_attack_label", schemaPath: "#/properties/angle_of_attack_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err27 = { instancePath: instancePath + "/angle_of_attack_label", schemaPath: "#/properties/angle_of_attack_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
-          vErrors = [err26];
+          vErrors = [err27];
         } else {
-          vErrors.push(err26);
+          vErrors.push(err27);
         }
         errors++;
       }
@@ -1025,22 +1623,22 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
       valid1 = valid1 || _valid0;
       const _errs11 = errors;
       if (data3 !== null) {
-        const err27 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
+        const err28 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
         if (vErrors === null) {
-          vErrors = [err27];
+          vErrors = [err28];
         } else {
-          vErrors.push(err27);
+          vErrors.push(err28);
         }
         errors++;
       }
       var _valid0 = _errs11 === errors;
       valid1 = valid1 || _valid0;
       if (!valid1) {
-        const err28 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
+        const err29 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
         if (vErrors === null) {
-          vErrors = [err28];
+          vErrors = [err29];
         } else {
-          vErrors.push(err28);
+          vErrors.push(err29);
         }
         errors++;
       } else {
@@ -1056,19 +1654,7 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
     }
     if (data.controls_description !== void 0) {
       if (typeof data.controls_description !== "string") {
-        const err29 = { instancePath: instancePath + "/controls_description", schemaPath: "#/properties/controls_description/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-        if (vErrors === null) {
-          vErrors = [err29];
-        } else {
-          vErrors.push(err29);
-        }
-        errors++;
-      }
-    }
-    if (data.flight_path_angle_degrees !== void 0) {
-      let data5 = data.flight_path_angle_degrees;
-      if (!(typeof data5 == "number" && isFinite(data5)) && data5 !== null) {
-        const err30 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/type", keyword: "type", params: { type: schema21.properties.flight_path_angle_degrees.type }, message: "must be number,null" };
+        const err30 = { instancePath: instancePath + "/controls_description", schemaPath: "#/properties/controls_description/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err30];
         } else {
@@ -1076,34 +1662,40 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         }
         errors++;
       }
+    }
+    if (data.flight_path_angle_degrees !== void 0) {
+      let data5 = data.flight_path_angle_degrees;
+      if (!(typeof data5 == "number" && isFinite(data5)) && data5 !== null) {
+        const err31 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/type", keyword: "type", params: { type: schema21.properties.flight_path_angle_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err31];
+        } else {
+          vErrors.push(err31);
+        }
+        errors++;
+      }
       if (typeof data5 == "number" && isFinite(data5)) {
         if (!formats0.validate(data5)) {
-          const err31 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          const err32 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err31];
+            vErrors = [err32];
           } else {
-            vErrors.push(err31);
+            vErrors.push(err32);
           }
           errors++;
         }
       }
     }
-    if (data.heading !== void 0) {
-      let data6 = data.heading;
-      if (typeof data6 !== "string" && data6 !== null) {
-        const err32 = { instancePath: instancePath + "/heading", schemaPath: "#/properties/heading/type", keyword: "type", params: { type: schema21.properties.heading.type }, message: "must be string,null" };
-        if (vErrors === null) {
-          vErrors = [err32];
-        } else {
-          vErrors.push(err32);
-        }
-        errors++;
+    if (data.geometry !== void 0) {
+      if (!validate58(data.geometry, { instancePath: instancePath + "/geometry", parentData: data, parentDataProperty: "geometry", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
+        errors = vErrors.length;
       }
     }
-    if (data.heading_degrees !== void 0) {
-      let data7 = data.heading_degrees;
-      if (!(typeof data7 == "number" && isFinite(data7)) && data7 !== null) {
-        const err33 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/type", keyword: "type", params: { type: schema21.properties.heading_degrees.type }, message: "must be number,null" };
+    if (data.heading !== void 0) {
+      let data7 = data.heading;
+      if (typeof data7 !== "string" && data7 !== null) {
+        const err33 = { instancePath: instancePath + "/heading", schemaPath: "#/properties/heading/type", keyword: "type", params: { type: schema21.properties.heading.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err33];
         } else {
@@ -1111,13 +1703,25 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         }
         errors++;
       }
-      if (typeof data7 == "number" && isFinite(data7)) {
-        if (!formats0.validate(data7)) {
-          const err34 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+    }
+    if (data.heading_degrees !== void 0) {
+      let data8 = data.heading_degrees;
+      if (!(typeof data8 == "number" && isFinite(data8)) && data8 !== null) {
+        const err34 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/type", keyword: "type", params: { type: schema21.properties.heading_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err34];
+        } else {
+          vErrors.push(err34);
+        }
+        errors++;
+      }
+      if (typeof data8 == "number" && isFinite(data8)) {
+        if (!formats0.validate(data8)) {
+          const err35 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err34];
+            vErrors = [err35];
           } else {
-            vErrors.push(err34);
+            vErrors.push(err35);
           }
           errors++;
         }
@@ -1125,24 +1729,7 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
     }
     if (data.heading_label !== void 0) {
       if (typeof data.heading_label !== "string") {
-        const err35 = { instancePath: instancePath + "/heading_label", schemaPath: "#/properties/heading_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-        if (vErrors === null) {
-          vErrors = [err35];
-        } else {
-          vErrors.push(err35);
-        }
-        errors++;
-      }
-    }
-    if (data.layout !== void 0) {
-      if (!validate58(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate58.errors : vErrors.concat(validate58.errors);
-        errors = vErrors.length;
-      }
-    }
-    if (data.location !== void 0) {
-      if (typeof data.location !== "string") {
-        const err36 = { instancePath: instancePath + "/location", schemaPath: "#/properties/location/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err36 = { instancePath: instancePath + "/heading_label", schemaPath: "#/properties/heading_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err36];
         } else {
@@ -1151,9 +1738,15 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.map_attribution !== void 0) {
-      if (typeof data.map_attribution !== "string") {
-        const err37 = { instancePath: instancePath + "/map_attribution", schemaPath: "#/properties/map_attribution/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.layout !== void 0) {
+      if (!validate66(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate66.errors : vErrors.concat(validate66.errors);
+        errors = vErrors.length;
+      }
+    }
+    if (data.location !== void 0) {
+      if (typeof data.location !== "string") {
+        const err37 = { instancePath: instancePath + "/location", schemaPath: "#/properties/location/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err37];
         } else {
@@ -1162,10 +1755,9 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.pilot_position !== void 0) {
-      let data12 = data.pilot_position;
-      if (typeof data12 !== "string" && data12 !== null) {
-        const err38 = { instancePath: instancePath + "/pilot_position", schemaPath: "#/properties/pilot_position/type", keyword: "type", params: { type: schema21.properties.pilot_position.type }, message: "must be string,null" };
+    if (data.map_attribution !== void 0) {
+      if (typeof data.map_attribution !== "string") {
+        const err38 = { instancePath: instancePath + "/map_attribution", schemaPath: "#/properties/map_attribution/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err38];
         } else {
@@ -1174,9 +1766,10 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.pilot_position_label !== void 0) {
-      if (typeof data.pilot_position_label !== "string") {
-        const err39 = { instancePath: instancePath + "/pilot_position_label", schemaPath: "#/properties/pilot_position_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.pilot_position !== void 0) {
+      let data13 = data.pilot_position;
+      if (typeof data13 !== "string" && data13 !== null) {
+        const err39 = { instancePath: instancePath + "/pilot_position", schemaPath: "#/properties/pilot_position/type", keyword: "type", params: { type: schema21.properties.pilot_position.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err39];
         } else {
@@ -1185,9 +1778,9 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.readouts !== void 0) {
-      if (typeof data.readouts !== "string") {
-        const err40 = { instancePath: instancePath + "/readouts", schemaPath: "#/properties/readouts/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.pilot_position_label !== void 0) {
+      if (typeof data.pilot_position_label !== "string") {
+        const err40 = { instancePath: instancePath + "/pilot_position_label", schemaPath: "#/properties/pilot_position_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err40];
         } else {
@@ -1196,9 +1789,9 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.status !== void 0) {
-      if (typeof data.status !== "string") {
-        const err41 = { instancePath: instancePath + "/status", schemaPath: "#/properties/status/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.readouts !== void 0) {
+      if (typeof data.readouts !== "string") {
+        const err41 = { instancePath: instancePath + "/readouts", schemaPath: "#/properties/readouts/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err41];
         } else {
@@ -1207,34 +1800,34 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
+    if (data.status !== void 0) {
+      if (typeof data.status !== "string") {
+        const err42 = { instancePath: instancePath + "/status", schemaPath: "#/properties/status/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err42];
+        } else {
+          vErrors.push(err42);
+        }
+        errors++;
+      }
+    }
     if (data.supplementary_readouts !== void 0) {
-      let data16 = data.supplementary_readouts;
-      if (Array.isArray(data16)) {
-        const len0 = data16.length;
+      let data17 = data.supplementary_readouts;
+      if (Array.isArray(data17)) {
+        const len0 = data17.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (typeof data16[i0] !== "string") {
-            const err42 = { instancePath: instancePath + "/supplementary_readouts/" + i0, schemaPath: "#/properties/supplementary_readouts/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+          if (typeof data17[i0] !== "string") {
+            const err43 = { instancePath: instancePath + "/supplementary_readouts/" + i0, schemaPath: "#/properties/supplementary_readouts/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
             if (vErrors === null) {
-              vErrors = [err42];
+              vErrors = [err43];
             } else {
-              vErrors.push(err42);
+              vErrors.push(err43);
             }
             errors++;
           }
         }
       } else {
-        const err43 = { instancePath: instancePath + "/supplementary_readouts", schemaPath: "#/properties/supplementary_readouts/type", keyword: "type", params: { type: "array" }, message: "must be array" };
-        if (vErrors === null) {
-          vErrors = [err43];
-        } else {
-          vErrors.push(err43);
-        }
-        errors++;
-      }
-    }
-    if (data.telemetry !== void 0) {
-      if (typeof data.telemetry !== "string") {
-        const err44 = { instancePath: instancePath + "/telemetry", schemaPath: "#/properties/telemetry/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err44 = { instancePath: instancePath + "/supplementary_readouts", schemaPath: "#/properties/supplementary_readouts/type", keyword: "type", params: { type: "array" }, message: "must be array" };
         if (vErrors === null) {
           vErrors = [err44];
         } else {
@@ -1243,10 +1836,9 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.warning !== void 0) {
-      let data19 = data.warning;
-      if (typeof data19 !== "string" && data19 !== null) {
-        const err45 = { instancePath: instancePath + "/warning", schemaPath: "#/properties/warning/type", keyword: "type", params: { type: schema21.properties.warning.type }, message: "must be string,null" };
+    if (data.telemetry !== void 0) {
+      if (typeof data.telemetry !== "string") {
+        const err45 = { instancePath: instancePath + "/telemetry", schemaPath: "#/properties/telemetry/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err45];
         } else {
@@ -1255,10 +1847,10 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.wind !== void 0) {
-      let data20 = data.wind;
+    if (data.warning !== void 0) {
+      let data20 = data.warning;
       if (typeof data20 !== "string" && data20 !== null) {
-        const err46 = { instancePath: instancePath + "/wind", schemaPath: "#/properties/wind/type", keyword: "type", params: { type: schema21.properties.wind.type }, message: "must be string,null" };
+        const err46 = { instancePath: instancePath + "/warning", schemaPath: "#/properties/warning/type", keyword: "type", params: { type: schema21.properties.warning.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err46];
         } else {
@@ -1267,10 +1859,10 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         errors++;
       }
     }
-    if (data.wind_direction_degrees !== void 0) {
-      let data21 = data.wind_direction_degrees;
-      if (!(typeof data21 == "number" && isFinite(data21)) && data21 !== null) {
-        const err47 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/type", keyword: "type", params: { type: schema21.properties.wind_direction_degrees.type }, message: "must be number,null" };
+    if (data.wind !== void 0) {
+      let data21 = data.wind;
+      if (typeof data21 !== "string" && data21 !== null) {
+        const err47 = { instancePath: instancePath + "/wind", schemaPath: "#/properties/wind/type", keyword: "type", params: { type: schema21.properties.wind.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err47];
         } else {
@@ -1278,13 +1870,25 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
         }
         errors++;
       }
-      if (typeof data21 == "number" && isFinite(data21)) {
-        if (!formats0.validate(data21)) {
-          const err48 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+    }
+    if (data.wind_direction_degrees !== void 0) {
+      let data22 = data.wind_direction_degrees;
+      if (!(typeof data22 == "number" && isFinite(data22)) && data22 !== null) {
+        const err48 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/type", keyword: "type", params: { type: schema21.properties.wind_direction_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err48];
+        } else {
+          vErrors.push(err48);
+        }
+        errors++;
+      }
+      if (typeof data22 == "number" && isFinite(data22)) {
+        if (!formats0.validate(data22)) {
+          const err49 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err48];
+            vErrors = [err49];
           } else {
-            vErrors.push(err48);
+            vErrors.push(err49);
           }
           errors++;
         }
@@ -1292,21 +1896,21 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
     }
     if (data.wind_label !== void 0) {
       if (typeof data.wind_label !== "string") {
-        const err49 = { instancePath: instancePath + "/wind_label", schemaPath: "#/properties/wind_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err50 = { instancePath: instancePath + "/wind_label", schemaPath: "#/properties/wind_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
-          vErrors = [err49];
+          vErrors = [err50];
         } else {
-          vErrors.push(err49);
+          vErrors.push(err50);
         }
         errors++;
       }
     }
   } else {
-    const err50 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    const err51 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
     if (vErrors === null) {
-      vErrors = [err50];
+      vErrors = [err51];
     } else {
-      vErrors.push(err50);
+      vErrors.push(err51);
     }
     errors++;
   }
@@ -1314,11 +1918,11 @@ function validate55(data, { instancePath = "", parentData, parentDataProperty, r
   return errors === 0;
 }
 validate55.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema24 = { "additionalProperties": false, "description": "Responsive shell selected using the Web baseline.", "properties": { "choice_columns": { "description": "Responsive choice grid count.", "format": "uint32", "minimum": 0, "type": "integer" }, "clip_x": { "description": "Horizontal overflow is clipped.", "type": "boolean" }, "compact": { "description": "Small-screen branch selected below the Web 600px breakpoint.", "type": "boolean" }, "gap_px": { "description": "Shared control gap.", "format": "double", "type": "number" }, "maximum_height_px": { "description": "Maximum reachable scroll viewport height.", "format": "double", "type": "number" }, "padding_px": { "description": "Shared shell padding.", "format": "double", "type": "number" }, "passthrough": { "description": "Input-transparent forward view outside explicit controls.", "type": "boolean" }, "scroll_y": { "description": "Vertical scrolling is admitted for the shell.", "type": "boolean" }, "shell": { "$ref": "#/$defs/GameUiShell", "description": "Shared shell placement." }, "width_px": { "description": "Shell width in logical pixels.", "format": "double", "type": "number" } }, "required": ["shell", "width_px", "maximum_height_px", "padding_px", "gap_px", "choice_columns", "compact", "scroll_y", "clip_x", "passthrough"], "type": "object" };
-function validate62(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+var schema28 = { "additionalProperties": false, "description": "Responsive shell selected using the Web baseline.", "properties": { "choice_columns": { "description": "Responsive choice grid count.", "format": "uint32", "minimum": 0, "type": "integer" }, "clip_x": { "description": "Horizontal overflow is clipped.", "type": "boolean" }, "compact": { "description": "Small-screen branch selected below the Web 600px breakpoint.", "type": "boolean" }, "gap_px": { "description": "Shared control gap.", "format": "double", "type": "number" }, "maximum_height_px": { "description": "Maximum reachable scroll viewport height.", "format": "double", "type": "number" }, "padding_px": { "description": "Shared shell padding.", "format": "double", "type": "number" }, "passthrough": { "description": "Input-transparent forward view outside explicit controls.", "type": "boolean" }, "scroll_y": { "description": "Vertical scrolling is admitted for the shell.", "type": "boolean" }, "shell": { "$ref": "#/$defs/GameUiShell", "description": "Shared shell placement." }, "width_px": { "description": "Shell width in logical pixels.", "format": "double", "type": "number" } }, "required": ["shell", "width_px", "maximum_height_px", "padding_px", "gap_px", "choice_columns", "compact", "scroll_y", "clip_x", "passthrough"], "type": "object" };
+function validate70(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate62.evaluated;
+  const evaluated0 = validate70.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -1486,14 +2090,14 @@ function validate62(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate62.errors = vErrors;
+  validate70.errors = vErrors;
   return errors === 0;
 }
-validate62.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate61(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate70.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate69(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate61.evaluated;
+  const evaluated0 = validate69.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -1592,7 +2196,7 @@ function validate61(data, { instancePath = "", parentData, parentDataProperty, r
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema24.properties, key0)) {
+      if (!func1.call(schema28.properties, key0)) {
         const err10 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err10];
@@ -1623,7 +2227,7 @@ function validate61(data, { instancePath = "", parentData, parentDataProperty, r
           }
           errors++;
         }
-        if (!formats16.validate(data0)) {
+        if (!formats28.validate(data0)) {
           const err13 = { instancePath: instancePath + "/choice_columns", schemaPath: "#/properties/choice_columns/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err13];
@@ -1745,8 +2349,8 @@ function validate61(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.shell !== void 0) {
-      if (!validate62(data.shell, { instancePath: instancePath + "/shell", parentData: data, parentDataProperty: "shell", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate62.errors : vErrors.concat(validate62.errors);
+      if (!validate70(data.shell, { instancePath: instancePath + "/shell", parentData: data, parentDataProperty: "shell", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate70.errors : vErrors.concat(validate70.errors);
         errors = vErrors.length;
       }
     }
@@ -1781,14 +2385,14 @@ function validate61(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  validate61.errors = vErrors;
+  validate69.errors = vErrors;
   return errors === 0;
 }
-validate61.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate66(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate69.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate74(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate66.evaluated;
+  const evaluated0 = validate74.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -1927,14 +2531,14 @@ function validate66(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate66.errors = vErrors;
+  validate74.errors = vErrors;
   return errors === 0;
 }
-validate66.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate72(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate74.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate80(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate72.evaluated;
+  const evaluated0 = validate80.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2102,14 +2706,14 @@ function validate72(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate72.errors = vErrors;
+  validate80.errors = vErrors;
   return errors === 0;
 }
-validate72.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate74(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate80.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate82(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate74.evaluated;
+  const evaluated0 = validate82.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2277,14 +2881,14 @@ function validate74(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate74.errors = vErrors;
+  validate82.errors = vErrors;
   return errors === 0;
 }
-validate74.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate76(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate82.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate84(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate76.evaluated;
+  const evaluated0 = validate84.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2423,14 +3027,14 @@ function validate76(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate76.errors = vErrors;
+  validate84.errors = vErrors;
   return errors === 0;
 }
-validate76.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate78(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate84.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate86(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate78.evaluated;
+  const evaluated0 = validate86.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2598,14 +3202,14 @@ function validate78(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate78.errors = vErrors;
+  validate86.errors = vErrors;
   return errors === 0;
 }
-validate78.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate80(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate86.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate88(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate80.evaluated;
+  const evaluated0 = validate88.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -2802,14 +3406,14 @@ function validate80(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate80.errors = vErrors;
+  validate88.errors = vErrors;
   return errors === 0;
 }
-validate80.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate71(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate88.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate79(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate71.evaluated;
+  const evaluated0 = validate79.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -3826,8 +4430,8 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
                                   }
                                 }
                                 if (data.preset !== void 0) {
-                                  if (!validate72(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
-                                    vErrors = vErrors === null ? validate72.errors : vErrors.concat(validate72.errors);
+                                  if (!validate80(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
+                                    vErrors = vErrors === null ? validate80.errors : vErrors.concat(validate80.errors);
                                     errors = vErrors.length;
                                   }
                                 }
@@ -3884,8 +4488,8 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
                                     }
                                   }
                                   if (data.information !== void 0) {
-                                    if (!validate74(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
-                                      vErrors = vErrors === null ? validate74.errors : vErrors.concat(validate74.errors);
+                                    if (!validate82(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
+                                      vErrors = vErrors === null ? validate82.errors : vErrors.concat(validate82.errors);
                                       errors = vErrors.length;
                                     }
                                   }
@@ -3963,8 +4567,8 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
                                       }
                                     }
                                     if (data.assistance !== void 0) {
-                                      if (!validate76(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
-                                        vErrors = vErrors === null ? validate76.errors : vErrors.concat(validate76.errors);
+                                      if (!validate84(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
+                                        vErrors = vErrors === null ? validate84.errors : vErrors.concat(validate84.errors);
                                         errors = vErrors.length;
                                       }
                                     }
@@ -4063,8 +4667,8 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
                                         }
                                       }
                                       if (data.weather !== void 0) {
-                                        if (!validate78(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
-                                          vErrors = vErrors === null ? validate78.errors : vErrors.concat(validate78.errors);
+                                        if (!validate86(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
+                                          vErrors = vErrors === null ? validate86.errors : vErrors.concat(validate86.errors);
                                           errors = vErrors.length;
                                         }
                                       }
@@ -4130,8 +4734,8 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
                                           }
                                         }
                                         if (data.cue !== void 0) {
-                                          if (!validate80(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
-                                            vErrors = vErrors === null ? validate80.errors : vErrors.concat(validate80.errors);
+                                          if (!validate88(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
+                                            vErrors = vErrors === null ? validate88.errors : vErrors.concat(validate88.errors);
                                             errors = vErrors.length;
                                           }
                                         }
@@ -4225,15 +4829,15 @@ function validate71(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate71.errors = vErrors;
+  validate79.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate71.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate84(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate79.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate92(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate84.evaluated;
+  const evaluated0 = validate92.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -4343,14 +4947,14 @@ function validate84(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate84.errors = vErrors;
+  validate92.errors = vErrors;
   return errors === 0;
 }
-validate84.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate86(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate92.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate94(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate86.evaluated;
+  const evaluated0 = validate94.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -4460,14 +5064,14 @@ function validate86(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate86.errors = vErrors;
+  validate94.errors = vErrors;
   return errors === 0;
 }
-validate86.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate88(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate94.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate96(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate88.evaluated;
+  const evaluated0 = validate96.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -4780,14 +5384,14 @@ function validate88(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate88.errors = vErrors;
+  validate96.errors = vErrors;
   return errors === 0;
 }
-validate88.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate83(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate96.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate91(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate83.evaluated;
+  const evaluated0 = validate91.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -4850,8 +5454,8 @@ function validate83(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.quality !== void 0) {
-      if (!validate84(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate84.errors : vErrors.concat(validate84.errors);
+      if (!validate92(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate92.errors : vErrors.concat(validate92.errors);
         errors = vErrors.length;
       }
     }
@@ -4923,8 +5527,8 @@ function validate83(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.mode !== void 0) {
-      if (!validate86(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate86.errors : vErrors.concat(validate86.errors);
+      if (!validate94(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate94.errors : vErrors.concat(validate94.errors);
         errors = vErrors.length;
       }
     }
@@ -5257,7 +5861,7 @@ function validate83(data, { instancePath = "", parentData, parentDataProperty, r
                     }
                     errors++;
                   }
-                  if (!formats16.validate(data8)) {
+                  if (!formats28.validate(data8)) {
                     const err37 = { instancePath: instancePath + "/id", schemaPath: "#/oneOf/6/properties/id/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                     if (vErrors === null) {
                       vErrors = [err37];
@@ -5342,8 +5946,8 @@ function validate83(data, { instancePath = "", parentData, parentDataProperty, r
                   }
                 }
                 if (data.camera !== void 0) {
-                  if (!validate88(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
-                    vErrors = vErrors === null ? validate88.errors : vErrors.concat(validate88.errors);
+                  if (!validate96(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
+                    vErrors = vErrors === null ? validate96.errors : vErrors.concat(validate96.errors);
                     errors = vErrors.length;
                   }
                 }
@@ -5414,15 +6018,15 @@ function validate83(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate83.errors = vErrors;
+  validate91.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate83.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate91(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate91.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate99(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate91.evaluated;
+  const evaluated0 = validate99.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -5503,14 +6107,14 @@ function validate91(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate91.errors = vErrors;
+  validate99.errors = vErrors;
   return errors === 0;
 }
-validate91.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate93(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate99.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate101(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate93.evaluated;
+  const evaluated0 = validate101.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -5620,14 +6224,14 @@ function validate93(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate93.errors = vErrors;
+  validate101.errors = vErrors;
   return errors === 0;
 }
-validate93.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate95(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate101.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate103(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate95.evaluated;
+  const evaluated0 = validate103.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -5737,14 +6341,14 @@ function validate95(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate95.errors = vErrors;
+  validate103.errors = vErrors;
   return errors === 0;
 }
-validate95.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate97(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate103.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate105(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate97.evaluated;
+  const evaluated0 = validate105.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -5854,14 +6458,14 @@ function validate97(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate97.errors = vErrors;
+  validate105.errors = vErrors;
   return errors === 0;
 }
-validate97.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate70(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate105.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate78(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate70.evaluated;
+  const evaluated0 = validate78.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -5903,8 +6507,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.command !== void 0) {
-      if (!validate71(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate71.errors : vErrors.concat(validate71.errors);
+      if (!validate79(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate79.errors : vErrors.concat(validate79.errors);
         errors = vErrors.length;
       }
     }
@@ -5976,8 +6580,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.command !== void 0) {
-      if (!validate83(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate83.errors : vErrors.concat(validate83.errors);
+      if (!validate91(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate91.errors : vErrors.concat(validate91.errors);
         errors = vErrors.length;
       }
     }
@@ -6140,8 +6744,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
           }
         }
         if (data.tab !== void 0) {
-          if (!validate91(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate91.errors : vErrors.concat(validate91.errors);
+          if (!validate99(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate99.errors : vErrors.concat(validate99.errors);
             errors = vErrors.length;
           }
         }
@@ -6198,8 +6802,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
             }
           }
           if (data.chart !== void 0) {
-            if (!validate93(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
-              vErrors = vErrors === null ? validate93.errors : vErrors.concat(validate93.errors);
+            if (!validate101(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
+              vErrors = vErrors === null ? validate101.errors : vErrors.concat(validate101.errors);
               errors = vErrors.length;
             }
           }
@@ -6298,8 +6902,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
               }
             }
             if (data.overlay !== void 0) {
-              if (!validate95(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
-                vErrors = vErrors === null ? validate95.errors : vErrors.concat(validate95.errors);
+              if (!validate103(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
+                vErrors = vErrors === null ? validate103.errors : vErrors.concat(validate103.errors);
                 errors = vErrors.length;
               }
             }
@@ -6377,8 +6981,8 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
                 }
               }
               if (data.view !== void 0) {
-                if (!validate97(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
-                  vErrors = vErrors === null ? validate97.errors : vErrors.concat(validate97.errors);
+                if (!validate105(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
+                  vErrors = vErrors === null ? validate105.errors : vErrors.concat(validate105.errors);
                   errors = vErrors.length;
                 }
               }
@@ -6773,7 +7377,7 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
                               }
                               errors++;
                             }
-                            if (!formats16.validate(data19)) {
+                            if (!formats28.validate(data19)) {
                               const err72 = { instancePath: instancePath + "/code", schemaPath: "#/oneOf/11/properties/code/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                               if (vErrors === null) {
                                 vErrors = [err72];
@@ -6855,15 +7459,15 @@ function validate70(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate70.errors = vErrors;
+  validate78.errors = vErrors;
   evaluated0.props = props1;
   return errors === 0;
 }
-validate70.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate101(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate78.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate109(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate101.evaluated;
+  const evaluated0 = validate109.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -6973,14 +7577,14 @@ function validate101(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate101.errors = vErrors;
+  validate109.errors = vErrors;
   return errors === 0;
 }
-validate101.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate100(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate109.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate108(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate100.evaluated;
+  const evaluated0 = validate108.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7022,8 +7626,8 @@ function validate100(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.emphasis !== void 0) {
-      if (!validate101(data.emphasis, { instancePath: instancePath + "/emphasis", parentData: data, parentDataProperty: "emphasis", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate101.errors : vErrors.concat(validate101.errors);
+      if (!validate109(data.emphasis, { instancePath: instancePath + "/emphasis", parentData: data, parentDataProperty: "emphasis", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate109.errors : vErrors.concat(validate109.errors);
         errors = vErrors.length;
       }
     }
@@ -7311,15 +7915,15 @@ function validate100(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate100.errors = vErrors;
+  validate108.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate100.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate105(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate108.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate113(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate105.evaluated;
+  const evaluated0 = validate113.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7400,15 +8004,15 @@ function validate105(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate105.errors = vErrors;
+  validate113.errors = vErrors;
   return errors === 0;
 }
-validate105.evaluated = { "dynamicProps": false, "dynamicItems": false };
-var schema48 = { "additionalProperties": false, "description": "Complete engine-independent recorded chart.", "properties": { "cursor_points": { "description": "Record-interpolated cursor positions.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time cursor; maps use cursor points only.", "format": "double", "type": ["number", "null"] }, "equal_axis_scale": { "description": "Preserves metre-for-metre map scale.", "type": "boolean" }, "markers": { "description": "Launch, terminal and venue markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "reference_lines": { "description": "Horizontal reference lines.", "items": { "$ref": "#/$defs/GameUiChartReferenceLine" }, "type": "array" }, "series": { "description": "Ordered curves including registered venue geometry.", "items": { "$ref": "#/$defs/GameUiChartSeries" }, "type": "array" }, "time_markers": { "description": "Recorded-time map markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "vectors": { "description": "Clipped ambient-wind arrows.", "items": { "$ref": "#/$defs/GameUiChartVector" }, "type": "array" }, "x_axis_label": { "description": "Horizontal axis label and unit.", "type": "string" }, "x_maximum": { "description": "Horizontal upper bound.", "format": "double", "type": "number" }, "x_minimum": { "description": "Horizontal lower bound.", "format": "double", "type": "number" }, "y_axis_label": { "description": "Vertical axis label and unit.", "type": "string" }, "y_maximum": { "description": "Vertical upper bound.", "format": "double", "type": "number" }, "y_minimum": { "description": "Vertical lower bound.", "format": "double", "type": "number" } }, "required": ["x_axis_label", "y_axis_label", "x_minimum", "x_maximum", "y_minimum", "y_maximum", "equal_axis_scale", "series", "vectors", "markers", "time_markers", "reference_lines", "cursor_x", "cursor_points"], "type": "object" };
-function validate109(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate113.evaluated = { "dynamicProps": false, "dynamicItems": false };
+var schema52 = { "additionalProperties": false, "description": "Complete engine-independent recorded chart.", "properties": { "cursor_points": { "description": "Record-interpolated cursor positions.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time cursor; maps use cursor points only.", "format": "double", "type": ["number", "null"] }, "equal_axis_scale": { "description": "Preserves metre-for-metre map scale.", "type": "boolean" }, "markers": { "description": "Launch, terminal and venue markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "reference_lines": { "description": "Horizontal reference lines.", "items": { "$ref": "#/$defs/GameUiChartReferenceLine" }, "type": "array" }, "series": { "description": "Ordered curves including registered venue geometry.", "items": { "$ref": "#/$defs/GameUiChartSeries" }, "type": "array" }, "time_markers": { "description": "Recorded-time map markers.", "items": { "$ref": "#/$defs/GameUiChartMarker" }, "type": "array" }, "vectors": { "description": "Clipped ambient-wind arrows.", "items": { "$ref": "#/$defs/GameUiChartVector" }, "type": "array" }, "x_axis_label": { "description": "Horizontal axis label and unit.", "type": "string" }, "x_maximum": { "description": "Horizontal upper bound.", "format": "double", "type": "number" }, "x_minimum": { "description": "Horizontal lower bound.", "format": "double", "type": "number" }, "y_axis_label": { "description": "Vertical axis label and unit.", "type": "string" }, "y_maximum": { "description": "Vertical upper bound.", "format": "double", "type": "number" }, "y_minimum": { "description": "Vertical lower bound.", "format": "double", "type": "number" } }, "required": ["x_axis_label", "y_axis_label", "x_minimum", "x_maximum", "y_minimum", "y_maximum", "equal_axis_scale", "series", "vectors", "markers", "time_markers", "reference_lines", "cursor_x", "cursor_points"], "type": "object" };
+function validate117(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate109.evaluated;
+  const evaluated0 = validate117.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7498,14 +8102,14 @@ function validate109(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate109.errors = vErrors;
+  validate117.errors = vErrors;
   return errors === 0;
 }
-validate109.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate111(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate117.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate119(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate111.evaluated;
+  const evaluated0 = validate119.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7574,8 +8178,8 @@ function validate111(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.point !== void 0) {
-      if (!validate109(data.point, { instancePath: instancePath + "/point", parentData: data, parentDataProperty: "point", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate109.errors : vErrors.concat(validate109.errors);
+      if (!validate117(data.point, { instancePath: instancePath + "/point", parentData: data, parentDataProperty: "point", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate117.errors : vErrors.concat(validate117.errors);
         errors = vErrors.length;
       }
     }
@@ -7588,14 +8192,14 @@ function validate111(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate111.errors = vErrors;
+  validate119.errors = vErrors;
   return errors === 0;
 }
-validate111.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate114(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate119.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate122(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate114.evaluated;
+  const evaluated0 = validate122.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7694,14 +8298,14 @@ function validate114(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate114.errors = vErrors;
+  validate122.errors = vErrors;
   return errors === 0;
 }
-validate114.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate116(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate122.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate124(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate116.evaluated;
+  const evaluated0 = validate124.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7783,8 +8387,8 @@ function validate116(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data2)) {
         const len0 = data2.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate109(data2[i0], { instancePath: instancePath + "/points/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate109.errors : vErrors.concat(validate109.errors);
+          if (!validate117(data2[i0], { instancePath: instancePath + "/points/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate117.errors : vErrors.concat(validate117.errors);
             errors = vErrors.length;
           }
         }
@@ -7832,15 +8436,15 @@ function validate116(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate116.errors = vErrors;
+  validate124.errors = vErrors;
   return errors === 0;
 }
-validate116.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema53 = { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" };
-function validate120(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate124.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema57 = { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" };
+function validate128(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate120.evaluated;
+  const evaluated0 = validate128.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -7911,7 +8515,7 @@ function validate120(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.segment !== void 0) {
       let data2 = data.segment;
       if (!Array.isArray(data2) && data2 !== null) {
-        const err6 = { instancePath: instancePath + "/segment", schemaPath: "#/properties/segment/type", keyword: "type", params: { type: schema53.properties.segment.type }, message: "must be array,null" };
+        const err6 = { instancePath: instancePath + "/segment", schemaPath: "#/properties/segment/type", keyword: "type", params: { type: schema57.properties.segment.type }, message: "must be array,null" };
         if (vErrors === null) {
           vErrors = [err6];
         } else {
@@ -7940,8 +8544,8 @@ function validate120(data, { instancePath = "", parentData, parentDataProperty, 
         }
         const len0 = data2.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate109(data2[i0], { instancePath: instancePath + "/segment/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate109.errors : vErrors.concat(validate109.errors);
+          if (!validate117(data2[i0], { instancePath: instancePath + "/segment/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate117.errors : vErrors.concat(validate117.errors);
             errors = vErrors.length;
           }
         }
@@ -7956,14 +8560,14 @@ function validate120(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate120.errors = vErrors;
+  validate128.errors = vErrors;
   return errors === 0;
 }
-validate120.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate108(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate128.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate116(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate108.evaluated;
+  const evaluated0 = validate116.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -8098,7 +8702,7 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema48.properties, key0)) {
+      if (!func1.call(schema52.properties, key0)) {
         const err14 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err14];
@@ -8113,8 +8717,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data0)) {
         const len0 = data0.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate109(data0[i0], { instancePath: instancePath + "/cursor_points/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate109.errors : vErrors.concat(validate109.errors);
+          if (!validate117(data0[i0], { instancePath: instancePath + "/cursor_points/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate117.errors : vErrors.concat(validate117.errors);
             errors = vErrors.length;
           }
         }
@@ -8131,7 +8735,7 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.cursor_x !== void 0) {
       let data2 = data.cursor_x;
       if (!(typeof data2 == "number" && isFinite(data2)) && data2 !== null) {
-        const err16 = { instancePath: instancePath + "/cursor_x", schemaPath: "#/properties/cursor_x/type", keyword: "type", params: { type: schema48.properties.cursor_x.type }, message: "must be number,null" };
+        const err16 = { instancePath: instancePath + "/cursor_x", schemaPath: "#/properties/cursor_x/type", keyword: "type", params: { type: schema52.properties.cursor_x.type }, message: "must be number,null" };
         if (vErrors === null) {
           vErrors = [err16];
         } else {
@@ -8167,8 +8771,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data4)) {
         const len1 = data4.length;
         for (let i1 = 0; i1 < len1; i1++) {
-          if (!validate111(data4[i1], { instancePath: instancePath + "/markers/" + i1, parentData: data4, parentDataProperty: i1, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate111.errors : vErrors.concat(validate111.errors);
+          if (!validate119(data4[i1], { instancePath: instancePath + "/markers/" + i1, parentData: data4, parentDataProperty: i1, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate119.errors : vErrors.concat(validate119.errors);
             errors = vErrors.length;
           }
         }
@@ -8187,8 +8791,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data6)) {
         const len2 = data6.length;
         for (let i2 = 0; i2 < len2; i2++) {
-          if (!validate114(data6[i2], { instancePath: instancePath + "/reference_lines/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate114.errors : vErrors.concat(validate114.errors);
+          if (!validate122(data6[i2], { instancePath: instancePath + "/reference_lines/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate122.errors : vErrors.concat(validate122.errors);
             errors = vErrors.length;
           }
         }
@@ -8207,8 +8811,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data8)) {
         const len3 = data8.length;
         for (let i3 = 0; i3 < len3; i3++) {
-          if (!validate116(data8[i3], { instancePath: instancePath + "/series/" + i3, parentData: data8, parentDataProperty: i3, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate116.errors : vErrors.concat(validate116.errors);
+          if (!validate124(data8[i3], { instancePath: instancePath + "/series/" + i3, parentData: data8, parentDataProperty: i3, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate124.errors : vErrors.concat(validate124.errors);
             errors = vErrors.length;
           }
         }
@@ -8227,8 +8831,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data10)) {
         const len4 = data10.length;
         for (let i4 = 0; i4 < len4; i4++) {
-          if (!validate111(data10[i4], { instancePath: instancePath + "/time_markers/" + i4, parentData: data10, parentDataProperty: i4, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate111.errors : vErrors.concat(validate111.errors);
+          if (!validate119(data10[i4], { instancePath: instancePath + "/time_markers/" + i4, parentData: data10, parentDataProperty: i4, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate119.errors : vErrors.concat(validate119.errors);
             errors = vErrors.length;
           }
         }
@@ -8247,8 +8851,8 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data12)) {
         const len5 = data12.length;
         for (let i5 = 0; i5 < len5; i5++) {
-          if (!validate120(data12[i5], { instancePath: instancePath + "/vectors/" + i5, parentData: data12, parentDataProperty: i5, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate120.errors : vErrors.concat(validate120.errors);
+          if (!validate128(data12[i5], { instancePath: instancePath + "/vectors/" + i5, parentData: data12, parentDataProperty: i5, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate128.errors : vErrors.concat(validate128.errors);
             errors = vErrors.length;
           }
         }
@@ -8381,14 +8985,14 @@ function validate108(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate108.errors = vErrors;
+  validate116.errors = vErrors;
   return errors === 0;
 }
-validate108.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate69(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate116.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate77(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate69.evaluated;
+  const evaluated0 = validate77.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -8439,8 +9043,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.action !== void 0) {
-      if (!validate70(data.action, { instancePath: instancePath + "/action", parentData: data, parentDataProperty: "action", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate70.errors : vErrors.concat(validate70.errors);
+      if (!validate78(data.action, { instancePath: instancePath + "/action", parentData: data, parentDataProperty: "action", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate78.errors : vErrors.concat(validate78.errors);
         errors = vErrors.length;
       }
     }
@@ -8466,8 +9070,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.presentation !== void 0) {
-      if (!validate100(data.presentation, { instancePath: instancePath + "/presentation", parentData: data, parentDataProperty: "presentation", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate100.errors : vErrors.concat(validate100.errors);
+      if (!validate108(data.presentation, { instancePath: instancePath + "/presentation", parentData: data, parentDataProperty: "presentation", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
         errors = vErrors.length;
       }
     }
@@ -8527,8 +9131,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.cue !== void 0) {
-      if (!validate80(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate80.errors : vErrors.concat(validate80.errors);
+      if (!validate88(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate88.errors : vErrors.concat(validate88.errors);
         errors = vErrors.length;
       }
     }
@@ -8740,8 +9344,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
         }
       }
       if (data.target !== void 0) {
-        if (!validate105(data.target, { instancePath: instancePath + "/target", parentData: data, parentDataProperty: "target", rootData, dynamicAnchors })) {
-          vErrors = vErrors === null ? validate105.errors : vErrors.concat(validate105.errors);
+        if (!validate113(data.target, { instancePath: instancePath + "/target", parentData: data, parentDataProperty: "target", rootData, dynamicAnchors })) {
+          vErrors = vErrors === null ? validate113.errors : vErrors.concat(validate113.errors);
           errors = vErrors.length;
         }
       }
@@ -8913,8 +9517,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
             }
           }
           if (data.chart !== void 0) {
-            if (!validate93(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
-              vErrors = vErrors === null ? validate93.errors : vErrors.concat(validate93.errors);
+            if (!validate101(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
+              vErrors = vErrors === null ? validate101.errors : vErrors.concat(validate101.errors);
               errors = vErrors.length;
             }
           }
@@ -8940,8 +9544,8 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
             }
           }
           if (data.plot !== void 0) {
-            if (!validate108(data.plot, { instancePath: instancePath + "/plot", parentData: data, parentDataProperty: "plot", rootData, dynamicAnchors })) {
-              vErrors = vErrors === null ? validate108.errors : vErrors.concat(validate108.errors);
+            if (!validate116(data.plot, { instancePath: instancePath + "/plot", parentData: data, parentDataProperty: "plot", rootData, dynamicAnchors })) {
+              vErrors = vErrors === null ? validate116.errors : vErrors.concat(validate116.errors);
               errors = vErrors.length;
             }
           }
@@ -8988,15 +9592,15 @@ function validate69(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
   }
-  validate69.errors = vErrors;
+  validate77.errors = vErrors;
   evaluated0.props = props2;
   return errors === 0;
 }
-validate69.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate125(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate77.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate133(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate125.evaluated;
+  const evaluated0 = validate133.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -9148,14 +9752,14 @@ function validate125(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate125.errors = vErrors;
+  validate133.errors = vErrors;
   return errors === 0;
 }
-validate125.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate68(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate133.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate76(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate68.evaluated;
+  const evaluated0 = validate76.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -9229,8 +9833,8 @@ function validate68(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.content !== void 0) {
-      if (!validate69(data.content, { instancePath: instancePath + "/content", parentData: data, parentDataProperty: "content", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate69.errors : vErrors.concat(validate69.errors);
+      if (!validate77(data.content, { instancePath: instancePath + "/content", parentData: data, parentDataProperty: "content", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate77.errors : vErrors.concat(validate77.errors);
         errors = vErrors.length;
       }
     }
@@ -9268,8 +9872,8 @@ function validate68(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.rect !== void 0) {
-      if (!validate125(data.rect, { instancePath: instancePath + "/rect", parentData: data, parentDataProperty: "rect", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate125.errors : vErrors.concat(validate125.errors);
+      if (!validate133(data.rect, { instancePath: instancePath + "/rect", parentData: data, parentDataProperty: "rect", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate133.errors : vErrors.concat(validate133.errors);
         errors = vErrors.length;
       }
     }
@@ -9293,14 +9897,14 @@ function validate68(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  validate68.errors = vErrors;
+  validate76.errors = vErrors;
   return errors === 0;
 }
-validate68.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate129(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate76.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate137(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate129.evaluated;
+  const evaluated0 = validate137.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -9439,14 +10043,14 @@ function validate129(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate129.errors = vErrors;
+  validate137.errors = vErrors;
   return errors === 0;
 }
-validate129.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate128(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate137.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate136(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate128.evaluated;
+  const evaluated0 = validate136.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -9515,8 +10119,8 @@ function validate128(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.layout !== void 0) {
-      if (!validate129(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate129.errors : vErrors.concat(validate129.errors);
+      if (!validate137(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate137.errors : vErrors.concat(validate137.errors);
         errors = vErrors.length;
       }
     }
@@ -9529,14 +10133,14 @@ function validate128(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate128.errors = vErrors;
+  validate136.errors = vErrors;
   return errors === 0;
 }
-validate128.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate65(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate136.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate73(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate65.evaluated;
+  const evaluated0 = validate73.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -9619,8 +10223,8 @@ function validate65(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.anchor !== void 0) {
-      if (!validate66(data.anchor, { instancePath: instancePath + "/anchor", parentData: data, parentDataProperty: "anchor", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate66.errors : vErrors.concat(validate66.errors);
+      if (!validate74(data.anchor, { instancePath: instancePath + "/anchor", parentData: data, parentDataProperty: "anchor", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate74.errors : vErrors.concat(validate74.errors);
         errors = vErrors.length;
       }
     }
@@ -9629,8 +10233,8 @@ function validate65(data, { instancePath = "", parentData, parentDataProperty, r
       if (Array.isArray(data1)) {
         const len0 = data1.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate68(data1[i0], { instancePath: instancePath + "/controls/" + i0, parentData: data1, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate68.errors : vErrors.concat(validate68.errors);
+          if (!validate76(data1[i0], { instancePath: instancePath + "/controls/" + i0, parentData: data1, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate76.errors : vErrors.concat(validate76.errors);
             errors = vErrors.length;
           }
         }
@@ -9714,8 +10318,8 @@ function validate65(data, { instancePath = "", parentData, parentDataProperty, r
       if (Array.isArray(data6)) {
         const len2 = data6.length;
         for (let i2 = 0; i2 < len2; i2++) {
-          if (!validate128(data6[i2], { instancePath: instancePath + "/sections/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate128.errors : vErrors.concat(validate128.errors);
+          if (!validate136(data6[i2], { instancePath: instancePath + "/sections/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate136.errors : vErrors.concat(validate136.errors);
             errors = vErrors.length;
           }
         }
@@ -9803,14 +10407,14 @@ function validate65(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  validate65.errors = vErrors;
+  validate73.errors = vErrors;
   return errors === 0;
 }
-validate65.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate133(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate73.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate141(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate133.evaluated;
+  const evaluated0 = validate141.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -10065,14 +10669,14 @@ function validate133(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate133.errors = vErrors;
+  validate141.errors = vErrors;
   return errors === 0;
 }
-validate133.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate135(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate141.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate143(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate135.evaluated;
+  const evaluated0 = validate143.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -10155,8 +10759,8 @@ function validate135(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.analysis_chart !== void 0) {
-      if (!validate93(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate93.errors : vErrors.concat(validate93.errors);
+      if (!validate101(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate101.errors : vErrors.concat(validate101.errors);
         errors = vErrors.length;
       }
     }
@@ -10183,26 +10787,26 @@ function validate135(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.pause_overlay !== void 0) {
-      if (!validate95(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate95.errors : vErrors.concat(validate95.errors);
+      if (!validate103(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate103.errors : vErrors.concat(validate103.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_camera !== void 0) {
-      if (!validate88(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate88.errors : vErrors.concat(validate88.errors);
+      if (!validate96(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate96.errors : vErrors.concat(validate96.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_view !== void 0) {
-      if (!validate97(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate97.errors : vErrors.concat(validate97.errors);
+      if (!validate105(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate105.errors : vErrors.concat(validate105.errors);
         errors = vErrors.length;
       }
     }
     if (data.result_tab !== void 0) {
-      if (!validate91(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate91.errors : vErrors.concat(validate91.errors);
+      if (!validate99(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate99.errors : vErrors.concat(validate99.errors);
         errors = vErrors.length;
       }
     }
@@ -10226,15 +10830,15 @@ function validate135(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate135.errors = vErrors;
+  validate143.errors = vErrors;
   return errors === 0;
 }
-validate135.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema59 = { "additionalProperties": false, "description": "Engine-independent colors, opacity and minimum hit dimensions.", "properties": { "button_min_height_px": { "description": "Ordinary button minimum height.", "format": "double", "type": "number" }, "choice_background": { "description": "Unselected choice fill.", "type": "string" }, "focus_outline": { "description": "Keyboard focus outline.", "type": "string" }, "hud_opacity": { "description": "Head-relative HUD background opacity, preserving forward visibility.", "format": "double", "type": "number" }, "muted_text": { "description": "Secondary text color.", "type": "string" }, "normal_background": { "description": "Ordinary action fill.", "type": "string" }, "panel_background": { "description": "Panel background color.", "type": "string" }, "panel_opacity": { "description": "Centered menu opacity.", "format": "double", "type": "number" }, "primary_background": { "description": "Primary or selected action fill.", "type": "string" }, "primary_min_height_px": { "description": "Principal button minimum height.", "format": "double", "type": "number" }, "text": { "description": "Main text color.", "type": "string" } }, "required": ["text", "muted_text", "panel_background", "panel_opacity", "hud_opacity", "normal_background", "primary_background", "choice_background", "focus_outline", "button_min_height_px", "primary_min_height_px"], "type": "object" };
-function validate142(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate143.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema63 = { "additionalProperties": false, "description": "Engine-independent colors, opacity and minimum hit dimensions.", "properties": { "button_min_height_px": { "description": "Ordinary button minimum height.", "format": "double", "type": "number" }, "choice_background": { "description": "Unselected choice fill.", "type": "string" }, "focus_outline": { "description": "Keyboard focus outline.", "type": "string" }, "hud_opacity": { "description": "Head-relative HUD background opacity, preserving forward visibility.", "format": "double", "type": "number" }, "muted_text": { "description": "Secondary text color.", "type": "string" }, "normal_background": { "description": "Ordinary action fill.", "type": "string" }, "panel_background": { "description": "Panel background color.", "type": "string" }, "panel_opacity": { "description": "Centered menu opacity.", "format": "double", "type": "number" }, "primary_background": { "description": "Primary or selected action fill.", "type": "string" }, "primary_min_height_px": { "description": "Principal button minimum height.", "format": "double", "type": "number" }, "text": { "description": "Main text color.", "type": "string" } }, "required": ["text", "muted_text", "panel_background", "panel_opacity", "hud_opacity", "normal_background", "primary_background", "choice_background", "focus_outline", "button_min_height_px", "primary_min_height_px"], "type": "object" };
+function validate150(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate142.evaluated;
+  const evaluated0 = validate150.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -10342,7 +10946,7 @@ function validate142(data, { instancePath = "", parentData, parentDataProperty, 
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema59.properties, key0)) {
+      if (!func1.call(schema63.properties, key0)) {
         const err11 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err11];
@@ -10526,10 +11130,10 @@ function validate142(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate142.errors = vErrors;
+  validate150.errors = vErrors;
   return errors === 0;
 }
-validate142.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+validate150.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
 function validate52(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
@@ -10748,8 +11352,8 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.layout !== void 0) {
-      if (!validate61(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate61.errors : vErrors.concat(validate61.errors);
+      if (!validate69(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate69.errors : vErrors.concat(validate69.errors);
         errors = vErrors.length;
       }
     }
@@ -10758,8 +11362,8 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
       if (Array.isArray(data4)) {
         const len0 = data4.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate65(data4[i0], { instancePath: instancePath + "/panels/" + i0, parentData: data4, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate65.errors : vErrors.concat(validate65.errors);
+          if (!validate73(data4[i0], { instancePath: instancePath + "/panels/" + i0, parentData: data4, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate73.errors : vErrors.concat(validate73.errors);
             errors = vErrors.length;
           }
         }
@@ -10774,8 +11378,8 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.scene !== void 0) {
-      if (!validate133(data.scene, { instancePath: instancePath + "/scene", parentData: data, parentDataProperty: "scene", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate133.errors : vErrors.concat(validate133.errors);
+      if (!validate141(data.scene, { instancePath: instancePath + "/scene", parentData: data, parentDataProperty: "scene", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate141.errors : vErrors.concat(validate141.errors);
         errors = vErrors.length;
       }
     }
@@ -10800,7 +11404,7 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
           }
           errors++;
         }
-        if (!formats16.validate(data7)) {
+        if (!formats28.validate(data7)) {
           const err20 = { instancePath: instancePath + "/schema_version", schemaPath: "#/properties/schema_version/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err20];
@@ -10812,14 +11416,14 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
       }
     }
     if (data.selections !== void 0) {
-      if (!validate135(data.selections, { instancePath: instancePath + "/selections", parentData: data, parentDataProperty: "selections", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate135.errors : vErrors.concat(validate135.errors);
+      if (!validate143(data.selections, { instancePath: instancePath + "/selections", parentData: data, parentDataProperty: "selections", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate143.errors : vErrors.concat(validate143.errors);
         errors = vErrors.length;
       }
     }
     if (data.theme !== void 0) {
-      if (!validate142(data.theme, { instancePath: instancePath + "/theme", parentData: data, parentDataProperty: "theme", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate142.errors : vErrors.concat(validate142.errors);
+      if (!validate150(data.theme, { instancePath: instancePath + "/theme", parentData: data, parentDataProperty: "theme", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate150.errors : vErrors.concat(validate150.errors);
         errors = vErrors.length;
       }
     }
@@ -10855,7 +11459,7 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
           }
           errors++;
         }
-        if (!formats16.validate(data11)) {
+        if (!formats28.validate(data11)) {
           const err24 = { instancePath: instancePath + "/view_revision", schemaPath: "#/properties/view_revision/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err24];
@@ -10879,11 +11483,11 @@ function validate52(data, { instancePath = "", parentData, parentDataProperty, r
   return errors === 0;
 }
 validate52.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var validateGameUiAction = validate144;
-function validate146(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+var validateGameUiAction = validate152;
+function validate154(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate146.evaluated;
+  const evaluated0 = validate154.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -11051,14 +11655,14 @@ function validate146(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate146.errors = vErrors;
+  validate154.errors = vErrors;
   return errors === 0;
 }
-validate146.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate148(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate154.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate156(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate148.evaluated;
+  const evaluated0 = validate156.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -11226,14 +11830,14 @@ function validate148(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate148.errors = vErrors;
+  validate156.errors = vErrors;
   return errors === 0;
 }
-validate148.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate150(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate156.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate158(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate150.evaluated;
+  const evaluated0 = validate158.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -11372,14 +11976,14 @@ function validate150(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate150.errors = vErrors;
+  validate158.errors = vErrors;
   return errors === 0;
 }
-validate150.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate152(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate158.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate160(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate152.evaluated;
+  const evaluated0 = validate160.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -11547,14 +12151,14 @@ function validate152(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate152.errors = vErrors;
+  validate160.errors = vErrors;
   return errors === 0;
 }
-validate152.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate154(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate160.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate162(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate154.evaluated;
+  const evaluated0 = validate162.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -11751,14 +12355,14 @@ function validate154(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate154.errors = vErrors;
+  validate162.errors = vErrors;
   return errors === 0;
 }
-validate154.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate145(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate162.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate153(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate145.evaluated;
+  const evaluated0 = validate153.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -12775,8 +13379,8 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
                                   }
                                 }
                                 if (data.preset !== void 0) {
-                                  if (!validate146(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
-                                    vErrors = vErrors === null ? validate146.errors : vErrors.concat(validate146.errors);
+                                  if (!validate154(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
+                                    vErrors = vErrors === null ? validate154.errors : vErrors.concat(validate154.errors);
                                     errors = vErrors.length;
                                   }
                                 }
@@ -12833,8 +13437,8 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
                                     }
                                   }
                                   if (data.information !== void 0) {
-                                    if (!validate148(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
-                                      vErrors = vErrors === null ? validate148.errors : vErrors.concat(validate148.errors);
+                                    if (!validate156(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
+                                      vErrors = vErrors === null ? validate156.errors : vErrors.concat(validate156.errors);
                                       errors = vErrors.length;
                                     }
                                   }
@@ -12912,8 +13516,8 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
                                       }
                                     }
                                     if (data.assistance !== void 0) {
-                                      if (!validate150(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
-                                        vErrors = vErrors === null ? validate150.errors : vErrors.concat(validate150.errors);
+                                      if (!validate158(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
+                                        vErrors = vErrors === null ? validate158.errors : vErrors.concat(validate158.errors);
                                         errors = vErrors.length;
                                       }
                                     }
@@ -13012,8 +13616,8 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
                                         }
                                       }
                                       if (data.weather !== void 0) {
-                                        if (!validate152(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
-                                          vErrors = vErrors === null ? validate152.errors : vErrors.concat(validate152.errors);
+                                        if (!validate160(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
+                                          vErrors = vErrors === null ? validate160.errors : vErrors.concat(validate160.errors);
                                           errors = vErrors.length;
                                         }
                                       }
@@ -13079,8 +13683,8 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
                                           }
                                         }
                                         if (data.cue !== void 0) {
-                                          if (!validate154(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
-                                            vErrors = vErrors === null ? validate154.errors : vErrors.concat(validate154.errors);
+                                          if (!validate162(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
+                                            vErrors = vErrors === null ? validate162.errors : vErrors.concat(validate162.errors);
                                             errors = vErrors.length;
                                           }
                                         }
@@ -13174,15 +13778,15 @@ function validate145(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate145.errors = vErrors;
+  validate153.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate145.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate158(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate153.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate166(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate158.evaluated;
+  const evaluated0 = validate166.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -13292,14 +13896,14 @@ function validate158(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate158.errors = vErrors;
+  validate166.errors = vErrors;
   return errors === 0;
 }
-validate158.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate160(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate166.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate168(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate160.evaluated;
+  const evaluated0 = validate168.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -13409,14 +14013,14 @@ function validate160(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate160.errors = vErrors;
+  validate168.errors = vErrors;
   return errors === 0;
 }
-validate160.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate162(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate168.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate170(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate162.evaluated;
+  const evaluated0 = validate170.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -13729,14 +14333,14 @@ function validate162(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate162.errors = vErrors;
+  validate170.errors = vErrors;
   return errors === 0;
 }
-validate162.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate157(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate170.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate165(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate157.evaluated;
+  const evaluated0 = validate165.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -13799,8 +14403,8 @@ function validate157(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.quality !== void 0) {
-      if (!validate158(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate158.errors : vErrors.concat(validate158.errors);
+      if (!validate166(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate166.errors : vErrors.concat(validate166.errors);
         errors = vErrors.length;
       }
     }
@@ -13872,8 +14476,8 @@ function validate157(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.mode !== void 0) {
-      if (!validate160(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate160.errors : vErrors.concat(validate160.errors);
+      if (!validate168(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate168.errors : vErrors.concat(validate168.errors);
         errors = vErrors.length;
       }
     }
@@ -14206,7 +14810,7 @@ function validate157(data, { instancePath = "", parentData, parentDataProperty, 
                     }
                     errors++;
                   }
-                  if (!formats16.validate(data8)) {
+                  if (!formats28.validate(data8)) {
                     const err37 = { instancePath: instancePath + "/id", schemaPath: "#/oneOf/6/properties/id/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                     if (vErrors === null) {
                       vErrors = [err37];
@@ -14291,8 +14895,8 @@ function validate157(data, { instancePath = "", parentData, parentDataProperty, 
                   }
                 }
                 if (data.camera !== void 0) {
-                  if (!validate162(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
-                    vErrors = vErrors === null ? validate162.errors : vErrors.concat(validate162.errors);
+                  if (!validate170(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
+                    vErrors = vErrors === null ? validate170.errors : vErrors.concat(validate170.errors);
                     errors = vErrors.length;
                   }
                 }
@@ -14363,15 +14967,15 @@ function validate157(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate157.errors = vErrors;
+  validate165.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate157.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate165(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate165.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate173(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate165.evaluated;
+  const evaluated0 = validate173.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -14452,14 +15056,14 @@ function validate165(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate165.errors = vErrors;
+  validate173.errors = vErrors;
   return errors === 0;
 }
-validate165.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate167(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate173.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate175(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate167.evaluated;
+  const evaluated0 = validate175.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -14569,14 +15173,14 @@ function validate167(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate167.errors = vErrors;
+  validate175.errors = vErrors;
   return errors === 0;
 }
-validate167.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate169(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate175.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate177(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate169.evaluated;
+  const evaluated0 = validate177.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -14686,14 +15290,14 @@ function validate169(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate169.errors = vErrors;
+  validate177.errors = vErrors;
   return errors === 0;
 }
-validate169.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate171(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate177.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate179(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate171.evaluated;
+  const evaluated0 = validate179.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -14803,15 +15407,15 @@ function validate171(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate171.errors = vErrors;
+  validate179.errors = vErrors;
   return errors === 0;
 }
-validate171.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate144(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate179.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate152(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate144.evaluated;
+  const evaluated0 = validate152.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -14853,8 +15457,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate145(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate145.errors : vErrors.concat(validate145.errors);
+      if (!validate153(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate153.errors : vErrors.concat(validate153.errors);
         errors = vErrors.length;
       }
     }
@@ -14926,8 +15530,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate157(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate157.errors : vErrors.concat(validate157.errors);
+      if (!validate165(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate165.errors : vErrors.concat(validate165.errors);
         errors = vErrors.length;
       }
     }
@@ -15090,8 +15694,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
           }
         }
         if (data.tab !== void 0) {
-          if (!validate165(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate165.errors : vErrors.concat(validate165.errors);
+          if (!validate173(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate173.errors : vErrors.concat(validate173.errors);
             errors = vErrors.length;
           }
         }
@@ -15148,8 +15752,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
             }
           }
           if (data.chart !== void 0) {
-            if (!validate167(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
-              vErrors = vErrors === null ? validate167.errors : vErrors.concat(validate167.errors);
+            if (!validate175(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
+              vErrors = vErrors === null ? validate175.errors : vErrors.concat(validate175.errors);
               errors = vErrors.length;
             }
           }
@@ -15248,8 +15852,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
               }
             }
             if (data.overlay !== void 0) {
-              if (!validate169(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
-                vErrors = vErrors === null ? validate169.errors : vErrors.concat(validate169.errors);
+              if (!validate177(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
+                vErrors = vErrors === null ? validate177.errors : vErrors.concat(validate177.errors);
                 errors = vErrors.length;
               }
             }
@@ -15327,8 +15931,8 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
                 }
               }
               if (data.view !== void 0) {
-                if (!validate171(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
-                  vErrors = vErrors === null ? validate171.errors : vErrors.concat(validate171.errors);
+                if (!validate179(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
+                  vErrors = vErrors === null ? validate179.errors : vErrors.concat(validate179.errors);
                   errors = vErrors.length;
                 }
               }
@@ -15723,7 +16327,7 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
                               }
                               errors++;
                             }
-                            if (!formats16.validate(data19)) {
+                            if (!formats28.validate(data19)) {
                               const err72 = { instancePath: instancePath + "/code", schemaPath: "#/oneOf/11/properties/code/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                               if (vErrors === null) {
                                 vErrors = [err72];
@@ -15805,17 +16409,17 @@ function validate144(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate144.errors = vErrors;
+  validate152.errors = vErrors;
   evaluated0.props = props1;
   return errors === 0;
 }
-validate144.evaluated = { "dynamicProps": true, "dynamicItems": false };
-var validateGameUiPlatformInput = validate173;
-var schema75 = { "$defs": { "GameUiPresentationMode": { "description": "Presentation mode supported by a platform adapter.", "oneOf": [{ "const": "screen", "description": "Flat native or browser display.", "type": "string" }, { "const": "webxr", "description": "Browser HMD display.", "type": "string" }, { "const": "phone_vr", "description": "Browser phone headset display.", "type": "string" }] }, "GameUiReplayCamera": { "description": "Current Web replay camera candidates in their shared selection order.", "oneOf": [{ "const": "auto", "description": "Recorded-event camera director.", "type": "string" }, { "const": "pilot", "description": "Pilot eye view.", "type": "string" }, { "const": "chase", "description": "Aircraft-following view.", "type": "string" }, { "const": "orbit", "description": "Orbiting aircraft view.", "type": "string" }, { "const": "platform", "description": "Launch-platform fixed view.", "type": "string" }, { "const": "shore", "description": "Lake-shore fixed view.", "type": "string" }, { "const": "overhead", "description": "Overhead aircraft view.", "type": "string" }, { "const": "side", "description": "Side-on aircraft view.", "type": "string" }, { "const": "front", "description": "Forward aircraft view.", "type": "string" }, { "const": "telephoto", "description": "Fixed distant telephoto view.", "type": "string" }] }, "GameUiStoredRecord": { "additionalProperties": false, "description": "Persistence metadata, not an independent flight record.", "properties": { "id": { "description": "Platform key.", "format": "uint32", "minimum": 0, "type": "integer" }, "personal_best": { "description": "Existing Rust-derived Personal Best membership.", "type": "boolean" }, "saved_at": { "description": "Formatted local save timestamp supplied by the platform.", "type": "string" } }, "required": ["id", "saved_at", "personal_best"], "type": "object" }, "GameUiViewport": { "additionalProperties": false, "description": "Logical pixels and root-font size used by the same responsive calculation.", "properties": { "height": { "description": "Display height in logical pixels.", "format": "double", "type": "number" }, "root_font_size": { "description": "Platform root font size in logical pixels.", "format": "double", "type": "number" }, "width": { "description": "Display width in logical pixels.", "format": "double", "type": "number" } }, "required": ["width", "height", "root_font_size"], "type": "object" }, "GameUiWaterQuality": { "description": "Rendering quality has no effect on physics or record identity.", "oneOf": [{ "const": "low", "description": "Reduced mesh density.", "type": "string" }, { "const": "medium", "description": "Balanced mesh density.", "type": "string" }, { "const": "high", "description": "Detailed mesh density.", "type": "string" }] }, "GameUiWaterQualityOperation": { "description": "Exclusive observation of a platform-owned water resource operation.", "oneOf": [{ "additionalProperties": false, "description": "No resource operation is pending and prior resources were released.", "properties": { "kind": { "const": "idle", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "A replacement has been requested and the confirmed resource remains active.", "properties": { "kind": { "const": "applying", "type": "string" }, "requested": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Requested replacement quality." } }, "required": ["kind", "requested"], "type": "object" }, { "additionalProperties": false, "description": "Replacement failed before commitment; the confirmed resource remains active.", "properties": { "cause": { "description": "Captured resource preparation cause.", "type": "string" }, "kind": { "const": "failed", "type": "string" }, "requested": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Failed replacement quality." } }, "required": ["kind", "requested", "cause"], "type": "object" }, { "additionalProperties": false, "description": "Replacement committed, but release of the superseded resource failed.", "properties": { "cause": { "description": "Captured superseded-resource cleanup cause.", "type": "string" }, "kind": { "const": "cleanup_failed", "type": "string" } }, "required": ["kind", "cause"], "type": "object" }] } }, "$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": false, "description": "Browser or OS observations that never own game physics or phase.", "properties": { "analysis_available": { "description": "Platform supports full record plots.", "type": "boolean" }, "flight_controller_failure": { "description": "Captured flight-controller resource failure; the session retains its last valid state.", "type": ["string", "null"] }, "flight_log_available": { "description": "Platform supports record downloads.", "type": "boolean" }, "flight_log_pending": { "description": "A download request for the current resource owner remains pending.", "type": "boolean" }, "head_hud_failure": { "description": "Captured head-HUD resource failure, separate from the domain and physical state.", "type": ["string", "null"] }, "notification": { "description": "Platform operation feedback.", "type": "string" }, "operation_pending": { "description": "Blocks operations while the owning adapter is transitioning.", "type": "boolean" }, "phone_vr_available": { "description": "Phone sensor headset support.", "type": "boolean" }, "presentation_mode": { "$ref": "#/$defs/GameUiPresentationMode", "description": "Actual active presentation mode." }, "replay_available": { "description": "Platform supports recorded scenic playback.", "type": "boolean" }, "stored_records": { "description": "Persistence results associated with this owner.", "items": { "$ref": "#/$defs/GameUiStoredRecord" }, "type": "array" }, "stored_records_available": { "description": "Platform supports persisted record lookup.", "type": "boolean" }, "supported_replay_cameras": { "description": "Implemented camera rigs; shared ordering remains the Web ordering.", "items": { "$ref": "#/$defs/GameUiReplayCamera" }, "type": "array" }, "viewport": { "$ref": "#/$defs/GameUiViewport", "description": "Current physical display viewport." }, "water_quality": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Confirmed current render quality." }, "water_quality_operation": { "$ref": "#/$defs/GameUiWaterQualityOperation", "description": "Actual resource preparation, commitment and cleanup observation." }, "webxr_available": { "description": "Browser WebXR support.", "type": "boolean" } }, "required": ["viewport", "presentation_mode", "operation_pending", "webxr_available", "phone_vr_available", "analysis_available", "replay_available", "supported_replay_cameras", "stored_records_available", "flight_log_available", "flight_log_pending", "water_quality", "water_quality_operation", "notification", "stored_records"], "title": "GameUiPlatformInput", "type": "object", "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/input" };
-function validate174(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate152.evaluated = { "dynamicProps": true, "dynamicItems": false };
+var validateGameUiPlatformInput = validate181;
+var schema79 = { "$defs": { "GameUiPresentationMode": { "description": "Presentation mode supported by a platform adapter.", "oneOf": [{ "const": "screen", "description": "Flat native or browser display.", "type": "string" }, { "const": "webxr", "description": "Browser HMD display.", "type": "string" }, { "const": "phone_vr", "description": "Browser phone headset display.", "type": "string" }] }, "GameUiReplayCamera": { "description": "Current Web replay camera candidates in their shared selection order.", "oneOf": [{ "const": "auto", "description": "Recorded-event camera director.", "type": "string" }, { "const": "pilot", "description": "Pilot eye view.", "type": "string" }, { "const": "chase", "description": "Aircraft-following view.", "type": "string" }, { "const": "orbit", "description": "Orbiting aircraft view.", "type": "string" }, { "const": "platform", "description": "Launch-platform fixed view.", "type": "string" }, { "const": "shore", "description": "Lake-shore fixed view.", "type": "string" }, { "const": "overhead", "description": "Overhead aircraft view.", "type": "string" }, { "const": "side", "description": "Side-on aircraft view.", "type": "string" }, { "const": "front", "description": "Forward aircraft view.", "type": "string" }, { "const": "telephoto", "description": "Fixed distant telephoto view.", "type": "string" }] }, "GameUiStoredRecord": { "additionalProperties": false, "description": "Persistence metadata, not an independent flight record.", "properties": { "id": { "description": "Platform key.", "format": "uint32", "minimum": 0, "type": "integer" }, "personal_best": { "description": "Existing Rust-derived Personal Best membership.", "type": "boolean" }, "saved_at": { "description": "Formatted local save timestamp supplied by the platform.", "type": "string" } }, "required": ["id", "saved_at", "personal_best"], "type": "object" }, "GameUiViewport": { "additionalProperties": false, "description": "Logical pixels and root-font size used by the same responsive calculation.", "properties": { "height": { "description": "Display height in logical pixels.", "format": "double", "type": "number" }, "root_font_size": { "description": "Platform root font size in logical pixels.", "format": "double", "type": "number" }, "width": { "description": "Display width in logical pixels.", "format": "double", "type": "number" } }, "required": ["width", "height", "root_font_size"], "type": "object" }, "GameUiWaterQuality": { "description": "Rendering quality has no effect on physics or record identity.", "oneOf": [{ "const": "low", "description": "Reduced mesh density.", "type": "string" }, { "const": "medium", "description": "Balanced mesh density.", "type": "string" }, { "const": "high", "description": "Detailed mesh density.", "type": "string" }] }, "GameUiWaterQualityOperation": { "description": "Exclusive observation of a platform-owned water resource operation.", "oneOf": [{ "additionalProperties": false, "description": "No resource operation is pending and prior resources were released.", "properties": { "kind": { "const": "idle", "type": "string" } }, "required": ["kind"], "type": "object" }, { "additionalProperties": false, "description": "A replacement has been requested and the confirmed resource remains active.", "properties": { "kind": { "const": "applying", "type": "string" }, "requested": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Requested replacement quality." } }, "required": ["kind", "requested"], "type": "object" }, { "additionalProperties": false, "description": "Replacement failed before commitment; the confirmed resource remains active.", "properties": { "cause": { "description": "Captured resource preparation cause.", "type": "string" }, "kind": { "const": "failed", "type": "string" }, "requested": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Failed replacement quality." } }, "required": ["kind", "requested", "cause"], "type": "object" }, { "additionalProperties": false, "description": "Replacement committed, but release of the superseded resource failed.", "properties": { "cause": { "description": "Captured superseded-resource cleanup cause.", "type": "string" }, "kind": { "const": "cleanup_failed", "type": "string" } }, "required": ["kind", "cause"], "type": "object" }] } }, "$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": false, "description": "Browser or OS observations that never own game physics or phase.", "properties": { "analysis_available": { "description": "Platform supports full record plots.", "type": "boolean" }, "flight_controller_failure": { "description": "Captured flight-controller resource failure; the session retains its last valid state.", "type": ["string", "null"] }, "flight_log_available": { "description": "Platform supports record downloads.", "type": "boolean" }, "flight_log_pending": { "description": "A download request for the current resource owner remains pending.", "type": "boolean" }, "head_hud_failure": { "description": "Captured head-HUD resource failure, separate from the domain and physical state.", "type": ["string", "null"] }, "notification": { "description": "Platform operation feedback.", "type": "string" }, "operation_pending": { "description": "Blocks operations while the owning adapter is transitioning.", "type": "boolean" }, "phone_vr_available": { "description": "Phone sensor headset support.", "type": "boolean" }, "presentation_mode": { "$ref": "#/$defs/GameUiPresentationMode", "description": "Actual active presentation mode." }, "replay_available": { "description": "Platform supports recorded scenic playback.", "type": "boolean" }, "stored_records": { "description": "Persistence results associated with this owner.", "items": { "$ref": "#/$defs/GameUiStoredRecord" }, "type": "array" }, "stored_records_available": { "description": "Platform supports persisted record lookup.", "type": "boolean" }, "supported_replay_cameras": { "description": "Implemented camera rigs; shared ordering remains the Web ordering.", "items": { "$ref": "#/$defs/GameUiReplayCamera" }, "type": "array" }, "viewport": { "$ref": "#/$defs/GameUiViewport", "description": "Current physical display viewport." }, "water_quality": { "$ref": "#/$defs/GameUiWaterQuality", "description": "Confirmed current render quality." }, "water_quality_operation": { "$ref": "#/$defs/GameUiWaterQualityOperation", "description": "Actual resource preparation, commitment and cleanup observation." }, "webxr_available": { "description": "Browser WebXR support.", "type": "boolean" } }, "required": ["viewport", "presentation_mode", "operation_pending", "webxr_available", "phone_vr_available", "analysis_available", "replay_available", "supported_replay_cameras", "stored_records_available", "flight_log_available", "flight_log_pending", "water_quality", "water_quality_operation", "notification", "stored_records"], "title": "GameUiPlatformInput", "type": "object", "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/input" };
+function validate182(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate174.evaluated;
+  const evaluated0 = validate182.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -15925,14 +16529,14 @@ function validate174(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate174.errors = vErrors;
+  validate182.errors = vErrors;
   return errors === 0;
 }
-validate174.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate176(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate182.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate184(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate176.evaluated;
+  const evaluated0 = validate184.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -15999,7 +16603,7 @@ function validate176(data, { instancePath = "", parentData, parentDataProperty, 
           }
           errors++;
         }
-        if (!formats16.validate(data0)) {
+        if (!formats28.validate(data0)) {
           const err6 = { instancePath: instancePath + "/id", schemaPath: "#/properties/id/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err6];
@@ -16041,14 +16645,14 @@ function validate176(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate176.errors = vErrors;
+  validate184.errors = vErrors;
   return errors === 0;
 }
-validate176.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate178(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate184.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate186(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate178.evaluated;
+  const evaluated0 = validate186.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -16361,14 +16965,14 @@ function validate178(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate178.errors = vErrors;
+  validate186.errors = vErrors;
   return errors === 0;
 }
-validate178.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate180(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate186.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate188(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate180.evaluated;
+  const evaluated0 = validate188.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -16489,14 +17093,14 @@ function validate180(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate180.errors = vErrors;
+  validate188.errors = vErrors;
   return errors === 0;
 }
-validate180.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate182(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate188.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate190(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate182.evaluated;
+  const evaluated0 = validate190.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -16606,14 +17210,14 @@ function validate182(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate182.errors = vErrors;
+  validate190.errors = vErrors;
   return errors === 0;
 }
-validate182.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate184(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate190.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate192(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate184.evaluated;
+  const evaluated0 = validate192.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -16734,8 +17338,8 @@ function validate184(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.requested !== void 0) {
-      if (!validate182(data.requested, { instancePath: instancePath + "/requested", parentData: data, parentDataProperty: "requested", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate182.errors : vErrors.concat(validate182.errors);
+      if (!validate190(data.requested, { instancePath: instancePath + "/requested", parentData: data, parentDataProperty: "requested", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate190.errors : vErrors.concat(validate190.errors);
         errors = vErrors.length;
       }
     }
@@ -16833,8 +17437,8 @@ function validate184(data, { instancePath = "", parentData, parentDataProperty, 
         }
       }
       if (data.requested !== void 0) {
-        if (!validate182(data.requested, { instancePath: instancePath + "/requested", parentData: data, parentDataProperty: "requested", rootData, dynamicAnchors })) {
-          vErrors = vErrors === null ? validate182.errors : vErrors.concat(validate182.errors);
+        if (!validate190(data.requested, { instancePath: instancePath + "/requested", parentData: data, parentDataProperty: "requested", rootData, dynamicAnchors })) {
+          vErrors = vErrors === null ? validate190.errors : vErrors.concat(validate190.errors);
           errors = vErrors.length;
         }
       }
@@ -16964,16 +17568,16 @@ function validate184(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate184.errors = vErrors;
+  validate192.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate184.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate173(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate192.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate181(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate173.evaluated;
+  const evaluated0 = validate181.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -17117,7 +17721,7 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema75.properties, key0)) {
+      if (!func1.call(schema79.properties, key0)) {
         const err15 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err15];
@@ -17141,7 +17745,7 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.flight_controller_failure !== void 0) {
       let data1 = data.flight_controller_failure;
       if (typeof data1 !== "string" && data1 !== null) {
-        const err17 = { instancePath: instancePath + "/flight_controller_failure", schemaPath: "#/properties/flight_controller_failure/type", keyword: "type", params: { type: schema75.properties.flight_controller_failure.type }, message: "must be string,null" };
+        const err17 = { instancePath: instancePath + "/flight_controller_failure", schemaPath: "#/properties/flight_controller_failure/type", keyword: "type", params: { type: schema79.properties.flight_controller_failure.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err17];
         } else {
@@ -17175,7 +17779,7 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.head_hud_failure !== void 0) {
       let data4 = data.head_hud_failure;
       if (typeof data4 !== "string" && data4 !== null) {
-        const err20 = { instancePath: instancePath + "/head_hud_failure", schemaPath: "#/properties/head_hud_failure/type", keyword: "type", params: { type: schema75.properties.head_hud_failure.type }, message: "must be string,null" };
+        const err20 = { instancePath: instancePath + "/head_hud_failure", schemaPath: "#/properties/head_hud_failure/type", keyword: "type", params: { type: schema79.properties.head_hud_failure.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err20];
         } else {
@@ -17218,8 +17822,8 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.presentation_mode !== void 0) {
-      if (!validate174(data.presentation_mode, { instancePath: instancePath + "/presentation_mode", parentData: data, parentDataProperty: "presentation_mode", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate174.errors : vErrors.concat(validate174.errors);
+      if (!validate182(data.presentation_mode, { instancePath: instancePath + "/presentation_mode", parentData: data, parentDataProperty: "presentation_mode", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate182.errors : vErrors.concat(validate182.errors);
         errors = vErrors.length;
       }
     }
@@ -17239,8 +17843,8 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data10)) {
         const len0 = data10.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate176(data10[i0], { instancePath: instancePath + "/stored_records/" + i0, parentData: data10, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate176.errors : vErrors.concat(validate176.errors);
+          if (!validate184(data10[i0], { instancePath: instancePath + "/stored_records/" + i0, parentData: data10, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate184.errors : vErrors.concat(validate184.errors);
             errors = vErrors.length;
           }
         }
@@ -17270,8 +17874,8 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data13)) {
         const len1 = data13.length;
         for (let i1 = 0; i1 < len1; i1++) {
-          if (!validate178(data13[i1], { instancePath: instancePath + "/supported_replay_cameras/" + i1, parentData: data13, parentDataProperty: i1, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate178.errors : vErrors.concat(validate178.errors);
+          if (!validate186(data13[i1], { instancePath: instancePath + "/supported_replay_cameras/" + i1, parentData: data13, parentDataProperty: i1, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate186.errors : vErrors.concat(validate186.errors);
             errors = vErrors.length;
           }
         }
@@ -17286,20 +17890,20 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.viewport !== void 0) {
-      if (!validate180(data.viewport, { instancePath: instancePath + "/viewport", parentData: data, parentDataProperty: "viewport", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate180.errors : vErrors.concat(validate180.errors);
+      if (!validate188(data.viewport, { instancePath: instancePath + "/viewport", parentData: data, parentDataProperty: "viewport", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate188.errors : vErrors.concat(validate188.errors);
         errors = vErrors.length;
       }
     }
     if (data.water_quality !== void 0) {
-      if (!validate182(data.water_quality, { instancePath: instancePath + "/water_quality", parentData: data, parentDataProperty: "water_quality", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate182.errors : vErrors.concat(validate182.errors);
+      if (!validate190(data.water_quality, { instancePath: instancePath + "/water_quality", parentData: data, parentDataProperty: "water_quality", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate190.errors : vErrors.concat(validate190.errors);
         errors = vErrors.length;
       }
     }
     if (data.water_quality_operation !== void 0) {
-      if (!validate184(data.water_quality_operation, { instancePath: instancePath + "/water_quality_operation", parentData: data, parentDataProperty: "water_quality_operation", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate184.errors : vErrors.concat(validate184.errors);
+      if (!validate192(data.water_quality_operation, { instancePath: instancePath + "/water_quality_operation", parentData: data, parentDataProperty: "water_quality_operation", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate192.errors : vErrors.concat(validate192.errors);
         errors = vErrors.length;
       }
     }
@@ -17323,15 +17927,15 @@ function validate173(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate173.errors = vErrors;
+  validate181.errors = vErrors;
   return errors === 0;
 }
-validate173.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var validateGameUiUpdate = validate188;
-function validate191(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate181.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var validateGameUiUpdate = validate196;
+function validate199(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate191.evaluated;
+  const evaluated0 = validate199.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -17499,14 +18103,14 @@ function validate191(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate191.errors = vErrors;
+  validate199.errors = vErrors;
   return errors === 0;
 }
-validate191.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate193(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate199.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate201(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate193.evaluated;
+  const evaluated0 = validate201.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -17674,14 +18278,14 @@ function validate193(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate193.errors = vErrors;
+  validate201.errors = vErrors;
   return errors === 0;
 }
-validate193.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate195(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate201.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate203(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate195.evaluated;
+  const evaluated0 = validate203.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -17820,14 +18424,14 @@ function validate195(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate195.errors = vErrors;
+  validate203.errors = vErrors;
   return errors === 0;
 }
-validate195.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate197(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate203.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate205(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate197.evaluated;
+  const evaluated0 = validate205.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -17995,14 +18599,14 @@ function validate197(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate197.errors = vErrors;
+  validate205.errors = vErrors;
   return errors === 0;
 }
-validate197.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate199(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate205.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate207(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate199.evaluated;
+  const evaluated0 = validate207.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -18199,14 +18803,14 @@ function validate199(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate199.errors = vErrors;
+  validate207.errors = vErrors;
   return errors === 0;
 }
-validate199.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate190(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate207.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate198(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate190.evaluated;
+  const evaluated0 = validate198.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -19223,8 +19827,8 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
                                   }
                                 }
                                 if (data.preset !== void 0) {
-                                  if (!validate191(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
-                                    vErrors = vErrors === null ? validate191.errors : vErrors.concat(validate191.errors);
+                                  if (!validate199(data.preset, { instancePath: instancePath + "/preset", parentData: data, parentDataProperty: "preset", rootData, dynamicAnchors })) {
+                                    vErrors = vErrors === null ? validate199.errors : vErrors.concat(validate199.errors);
                                     errors = vErrors.length;
                                   }
                                 }
@@ -19281,8 +19885,8 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
                                     }
                                   }
                                   if (data.information !== void 0) {
-                                    if (!validate193(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
-                                      vErrors = vErrors === null ? validate193.errors : vErrors.concat(validate193.errors);
+                                    if (!validate201(data.information, { instancePath: instancePath + "/information", parentData: data, parentDataProperty: "information", rootData, dynamicAnchors })) {
+                                      vErrors = vErrors === null ? validate201.errors : vErrors.concat(validate201.errors);
                                       errors = vErrors.length;
                                     }
                                   }
@@ -19360,8 +19964,8 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
                                       }
                                     }
                                     if (data.assistance !== void 0) {
-                                      if (!validate195(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
-                                        vErrors = vErrors === null ? validate195.errors : vErrors.concat(validate195.errors);
+                                      if (!validate203(data.assistance, { instancePath: instancePath + "/assistance", parentData: data, parentDataProperty: "assistance", rootData, dynamicAnchors })) {
+                                        vErrors = vErrors === null ? validate203.errors : vErrors.concat(validate203.errors);
                                         errors = vErrors.length;
                                       }
                                     }
@@ -19460,8 +20064,8 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
                                         }
                                       }
                                       if (data.weather !== void 0) {
-                                        if (!validate197(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
-                                          vErrors = vErrors === null ? validate197.errors : vErrors.concat(validate197.errors);
+                                        if (!validate205(data.weather, { instancePath: instancePath + "/weather", parentData: data, parentDataProperty: "weather", rootData, dynamicAnchors })) {
+                                          vErrors = vErrors === null ? validate205.errors : vErrors.concat(validate205.errors);
                                           errors = vErrors.length;
                                         }
                                       }
@@ -19527,8 +20131,8 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
                                           }
                                         }
                                         if (data.cue !== void 0) {
-                                          if (!validate199(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
-                                            vErrors = vErrors === null ? validate199.errors : vErrors.concat(validate199.errors);
+                                          if (!validate207(data.cue, { instancePath: instancePath + "/cue", parentData: data, parentDataProperty: "cue", rootData, dynamicAnchors })) {
+                                            vErrors = vErrors === null ? validate207.errors : vErrors.concat(validate207.errors);
                                             errors = vErrors.length;
                                           }
                                         }
@@ -19622,15 +20226,15 @@ function validate190(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate190.errors = vErrors;
+  validate198.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate190.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate203(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate198.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate211(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate203.evaluated;
+  const evaluated0 = validate211.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -19740,14 +20344,14 @@ function validate203(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate203.errors = vErrors;
+  validate211.errors = vErrors;
   return errors === 0;
 }
-validate203.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate205(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate211.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate213(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate205.evaluated;
+  const evaluated0 = validate213.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -19857,14 +20461,14 @@ function validate205(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate205.errors = vErrors;
+  validate213.errors = vErrors;
   return errors === 0;
 }
-validate205.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate207(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate213.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate215(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate207.evaluated;
+  const evaluated0 = validate215.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -20177,14 +20781,14 @@ function validate207(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate207.errors = vErrors;
+  validate215.errors = vErrors;
   return errors === 0;
 }
-validate207.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate202(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate215.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate210(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate202.evaluated;
+  const evaluated0 = validate210.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -20247,8 +20851,8 @@ function validate202(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.quality !== void 0) {
-      if (!validate203(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate203.errors : vErrors.concat(validate203.errors);
+      if (!validate211(data.quality, { instancePath: instancePath + "/quality", parentData: data, parentDataProperty: "quality", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate211.errors : vErrors.concat(validate211.errors);
         errors = vErrors.length;
       }
     }
@@ -20320,8 +20924,8 @@ function validate202(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.mode !== void 0) {
-      if (!validate205(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate205.errors : vErrors.concat(validate205.errors);
+      if (!validate213(data.mode, { instancePath: instancePath + "/mode", parentData: data, parentDataProperty: "mode", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate213.errors : vErrors.concat(validate213.errors);
         errors = vErrors.length;
       }
     }
@@ -20654,7 +21258,7 @@ function validate202(data, { instancePath = "", parentData, parentDataProperty, 
                     }
                     errors++;
                   }
-                  if (!formats16.validate(data8)) {
+                  if (!formats28.validate(data8)) {
                     const err37 = { instancePath: instancePath + "/id", schemaPath: "#/oneOf/6/properties/id/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                     if (vErrors === null) {
                       vErrors = [err37];
@@ -20739,8 +21343,8 @@ function validate202(data, { instancePath = "", parentData, parentDataProperty, 
                   }
                 }
                 if (data.camera !== void 0) {
-                  if (!validate207(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
-                    vErrors = vErrors === null ? validate207.errors : vErrors.concat(validate207.errors);
+                  if (!validate215(data.camera, { instancePath: instancePath + "/camera", parentData: data, parentDataProperty: "camera", rootData, dynamicAnchors })) {
+                    vErrors = vErrors === null ? validate215.errors : vErrors.concat(validate215.errors);
                     errors = vErrors.length;
                   }
                 }
@@ -20811,15 +21415,15 @@ function validate202(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate202.errors = vErrors;
+  validate210.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate202.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate213(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate210.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate221(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate213.evaluated;
+  const evaluated0 = validate221.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -20900,14 +21504,14 @@ function validate213(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate213.errors = vErrors;
+  validate221.errors = vErrors;
   return errors === 0;
 }
-validate213.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate215(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate221.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate223(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate215.evaluated;
+  const evaluated0 = validate223.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -21017,14 +21621,14 @@ function validate215(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate215.errors = vErrors;
+  validate223.errors = vErrors;
   return errors === 0;
 }
-validate215.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate217(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate223.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate225(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate217.evaluated;
+  const evaluated0 = validate225.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -21134,14 +21738,14 @@ function validate217(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate217.errors = vErrors;
+  validate225.errors = vErrors;
   return errors === 0;
 }
-validate217.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate219(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate225.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate227(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate219.evaluated;
+  const evaluated0 = validate227.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -21251,14 +21855,14 @@ function validate219(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate219.errors = vErrors;
+  validate227.errors = vErrors;
   return errors === 0;
 }
-validate219.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate210(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate227.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate218(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate210.evaluated;
+  const evaluated0 = validate218.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -21300,8 +21904,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate190(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate190.errors : vErrors.concat(validate190.errors);
+      if (!validate198(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate198.errors : vErrors.concat(validate198.errors);
         errors = vErrors.length;
       }
     }
@@ -21373,8 +21977,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate202(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate202.errors : vErrors.concat(validate202.errors);
+      if (!validate210(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate210.errors : vErrors.concat(validate210.errors);
         errors = vErrors.length;
       }
     }
@@ -21537,8 +22141,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
           }
         }
         if (data.tab !== void 0) {
-          if (!validate213(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate213.errors : vErrors.concat(validate213.errors);
+          if (!validate221(data.tab, { instancePath: instancePath + "/tab", parentData: data, parentDataProperty: "tab", rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate221.errors : vErrors.concat(validate221.errors);
             errors = vErrors.length;
           }
         }
@@ -21595,8 +22199,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
             }
           }
           if (data.chart !== void 0) {
-            if (!validate215(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
-              vErrors = vErrors === null ? validate215.errors : vErrors.concat(validate215.errors);
+            if (!validate223(data.chart, { instancePath: instancePath + "/chart", parentData: data, parentDataProperty: "chart", rootData, dynamicAnchors })) {
+              vErrors = vErrors === null ? validate223.errors : vErrors.concat(validate223.errors);
               errors = vErrors.length;
             }
           }
@@ -21695,8 +22299,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
               }
             }
             if (data.overlay !== void 0) {
-              if (!validate217(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
-                vErrors = vErrors === null ? validate217.errors : vErrors.concat(validate217.errors);
+              if (!validate225(data.overlay, { instancePath: instancePath + "/overlay", parentData: data, parentDataProperty: "overlay", rootData, dynamicAnchors })) {
+                vErrors = vErrors === null ? validate225.errors : vErrors.concat(validate225.errors);
                 errors = vErrors.length;
               }
             }
@@ -21774,8 +22378,8 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
                 }
               }
               if (data.view !== void 0) {
-                if (!validate219(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
-                  vErrors = vErrors === null ? validate219.errors : vErrors.concat(validate219.errors);
+                if (!validate227(data.view, { instancePath: instancePath + "/view", parentData: data, parentDataProperty: "view", rootData, dynamicAnchors })) {
+                  vErrors = vErrors === null ? validate227.errors : vErrors.concat(validate227.errors);
                   errors = vErrors.length;
                 }
               }
@@ -22170,7 +22774,7 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
                               }
                               errors++;
                             }
-                            if (!formats16.validate(data19)) {
+                            if (!formats28.validate(data19)) {
                               const err72 = { instancePath: instancePath + "/code", schemaPath: "#/oneOf/11/properties/code/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
                               if (vErrors === null) {
                                 vErrors = [err72];
@@ -22252,15 +22856,15 @@ function validate210(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate210.errors = vErrors;
+  validate218.errors = vErrors;
   evaluated0.props = props1;
   return errors === 0;
 }
-validate210.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate189(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate218.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate197(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate189.evaluated;
+  const evaluated0 = validate197.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -22302,8 +22906,8 @@ function validate189(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate190(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate190.errors : vErrors.concat(validate190.errors);
+      if (!validate198(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate198.errors : vErrors.concat(validate198.errors);
         errors = vErrors.length;
       }
     }
@@ -22375,8 +22979,8 @@ function validate189(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.command !== void 0) {
-      if (!validate202(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate202.errors : vErrors.concat(validate202.errors);
+      if (!validate210(data.command, { instancePath: instancePath + "/command", parentData: data, parentDataProperty: "command", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate210.errors : vErrors.concat(validate210.errors);
         errors = vErrors.length;
       }
     }
@@ -22454,8 +23058,8 @@ function validate189(data, { instancePath = "", parentData, parentDataProperty, 
         }
       }
       if (data.action !== void 0) {
-        if (!validate210(data.action, { instancePath: instancePath + "/action", parentData: data, parentDataProperty: "action", rootData, dynamicAnchors })) {
-          vErrors = vErrors === null ? validate210.errors : vErrors.concat(validate210.errors);
+        if (!validate218(data.action, { instancePath: instancePath + "/action", parentData: data, parentDataProperty: "action", rootData, dynamicAnchors })) {
+          vErrors = vErrors === null ? validate218.errors : vErrors.concat(validate218.errors);
           errors = vErrors.length;
         }
       }
@@ -22521,15 +23125,15 @@ function validate189(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate189.errors = vErrors;
+  validate197.errors = vErrors;
   evaluated0.props = props1;
   return errors === 0;
 }
-validate189.evaluated = { "dynamicProps": true, "dynamicItems": false };
-function validate223(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate197.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate231(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate223.evaluated;
+  const evaluated0 = validate231.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -22612,8 +23216,8 @@ function validate223(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.analysis_chart !== void 0) {
-      if (!validate215(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate215.errors : vErrors.concat(validate215.errors);
+      if (!validate223(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate223.errors : vErrors.concat(validate223.errors);
         errors = vErrors.length;
       }
     }
@@ -22640,26 +23244,26 @@ function validate223(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.pause_overlay !== void 0) {
-      if (!validate217(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate217.errors : vErrors.concat(validate217.errors);
+      if (!validate225(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate225.errors : vErrors.concat(validate225.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_camera !== void 0) {
-      if (!validate207(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate207.errors : vErrors.concat(validate207.errors);
+      if (!validate215(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate215.errors : vErrors.concat(validate215.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_view !== void 0) {
-      if (!validate219(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate219.errors : vErrors.concat(validate219.errors);
+      if (!validate227(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate227.errors : vErrors.concat(validate227.errors);
         errors = vErrors.length;
       }
     }
     if (data.result_tab !== void 0) {
-      if (!validate213(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate213.errors : vErrors.concat(validate213.errors);
+      if (!validate221(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate221.errors : vErrors.concat(validate221.errors);
         errors = vErrors.length;
       }
     }
@@ -22683,15 +23287,15 @@ function validate223(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate223.errors = vErrors;
+  validate231.errors = vErrors;
   return errors === 0;
 }
-validate223.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate188(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate231.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate196(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate188.evaluated;
+  const evaluated0 = validate196.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -22733,8 +23337,8 @@ function validate188(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data0)) {
         const len0 = data0.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate189(data0[i0], { instancePath: instancePath + "/effects/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate189.errors : vErrors.concat(validate189.errors);
+          if (!validate197(data0[i0], { instancePath: instancePath + "/effects/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate197.errors : vErrors.concat(validate197.errors);
             errors = vErrors.length;
           }
         }
@@ -22749,8 +23353,8 @@ function validate188(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.state !== void 0) {
-      if (!validate223(data.state, { instancePath: instancePath + "/state", parentData: data, parentDataProperty: "state", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate223.errors : vErrors.concat(validate223.errors);
+      if (!validate231(data.state, { instancePath: instancePath + "/state", parentData: data, parentDataProperty: "state", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate231.errors : vErrors.concat(validate231.errors);
         errors = vErrors.length;
       }
     }
@@ -22763,15 +23367,15 @@ function validate188(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate188.errors = vErrors;
+  validate196.errors = vErrors;
   return errors === 0;
 }
-validate188.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var validateGameUiFrame = validate230;
-function validate231(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate196.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var validateGameUiFrame = validate238;
+function validate239(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate231.evaluated;
+  const evaluated0 = validate239.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -22839,15 +23443,15 @@ function validate231(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate231.errors = vErrors;
+  validate239.errors = vErrors;
   return errors === 0;
 }
-validate231.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema102 = { "additionalProperties": false, "description": "Lightweight cursor and selected-sample wind for the retained plot bounds.", "properties": { "cursor_points": { "description": "Shared plot-space sample points.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time-axis cursor, absent for a horizontal map.", "format": "double", "type": ["number", "null"] }, "id": { "description": "Retained chart control identity.", "type": "string" }, "selected_wind_vector": { "anyOf": [{ "$ref": "#/$defs/GameUiChartVector" }, { "type": "null" }], "description": "Selected-sample wind, replacing the first map vector only." } }, "required": ["id", "cursor_x", "cursor_points", "selected_wind_vector"], "type": "object" };
-function validate234(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate239.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema106 = { "additionalProperties": false, "description": "Lightweight cursor and selected-sample wind for the retained plot bounds.", "properties": { "cursor_points": { "description": "Shared plot-space sample points.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "type": "array" }, "cursor_x": { "description": "Time-axis cursor, absent for a horizontal map.", "format": "double", "type": ["number", "null"] }, "id": { "description": "Retained chart control identity.", "type": "string" }, "selected_wind_vector": { "anyOf": [{ "$ref": "#/$defs/GameUiChartVector" }, { "type": "null" }], "description": "Selected-sample wind, replacing the first map vector only." } }, "required": ["id", "cursor_x", "cursor_points", "selected_wind_vector"], "type": "object" };
+function validate242(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate234.evaluated;
+  const evaluated0 = validate242.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -22937,15 +23541,15 @@ function validate234(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate234.errors = vErrors;
+  validate242.errors = vErrors;
   return errors === 0;
 }
-validate234.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema104 = { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" };
-function validate236(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate242.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema108 = { "additionalProperties": false, "description": "Clipped vector with simultaneously present or absent endpoints.", "properties": { "color": { "description": "Shared colour.", "type": "string" }, "label": { "description": "Legend label.", "type": "string" }, "segment": { "description": "Visible segment, absent for zero wind or outside the chart.", "items": { "$ref": "#/$defs/GameUiChartPoint" }, "maxItems": 2, "minItems": 2, "type": ["array", "null"] } }, "required": ["label", "color", "segment"], "type": "object" };
+function validate244(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate236.evaluated;
+  const evaluated0 = validate244.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -23016,7 +23620,7 @@ function validate236(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.segment !== void 0) {
       let data2 = data.segment;
       if (!Array.isArray(data2) && data2 !== null) {
-        const err6 = { instancePath: instancePath + "/segment", schemaPath: "#/properties/segment/type", keyword: "type", params: { type: schema104.properties.segment.type }, message: "must be array,null" };
+        const err6 = { instancePath: instancePath + "/segment", schemaPath: "#/properties/segment/type", keyword: "type", params: { type: schema108.properties.segment.type }, message: "must be array,null" };
         if (vErrors === null) {
           vErrors = [err6];
         } else {
@@ -23045,8 +23649,8 @@ function validate236(data, { instancePath = "", parentData, parentDataProperty, 
         }
         const len0 = data2.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate234(data2[i0], { instancePath: instancePath + "/segment/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate234.errors : vErrors.concat(validate234.errors);
+          if (!validate242(data2[i0], { instancePath: instancePath + "/segment/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate242.errors : vErrors.concat(validate242.errors);
             errors = vErrors.length;
           }
         }
@@ -23061,14 +23665,14 @@ function validate236(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate236.errors = vErrors;
+  validate244.errors = vErrors;
   return errors === 0;
 }
-validate236.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate233(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate244.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate241(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate233.evaluated;
+  const evaluated0 = validate241.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -23128,8 +23732,8 @@ function validate233(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data0)) {
         const len0 = data0.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate234(data0[i0], { instancePath: instancePath + "/cursor_points/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate234.errors : vErrors.concat(validate234.errors);
+          if (!validate242(data0[i0], { instancePath: instancePath + "/cursor_points/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate242.errors : vErrors.concat(validate242.errors);
             errors = vErrors.length;
           }
         }
@@ -23146,7 +23750,7 @@ function validate233(data, { instancePath = "", parentData, parentDataProperty, 
     if (data.cursor_x !== void 0) {
       let data2 = data.cursor_x;
       if (!(typeof data2 == "number" && isFinite(data2)) && data2 !== null) {
-        const err6 = { instancePath: instancePath + "/cursor_x", schemaPath: "#/properties/cursor_x/type", keyword: "type", params: { type: schema102.properties.cursor_x.type }, message: "must be number,null" };
+        const err6 = { instancePath: instancePath + "/cursor_x", schemaPath: "#/properties/cursor_x/type", keyword: "type", params: { type: schema106.properties.cursor_x.type }, message: "must be number,null" };
         if (vErrors === null) {
           vErrors = [err6];
         } else {
@@ -23182,8 +23786,8 @@ function validate233(data, { instancePath = "", parentData, parentDataProperty, 
       const _errs10 = errors;
       let valid3 = false;
       const _errs11 = errors;
-      if (!validate236(data4, { instancePath: instancePath + "/selected_wind_vector", parentData: data, parentDataProperty: "selected_wind_vector", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate236.errors : vErrors.concat(validate236.errors);
+      if (!validate244(data4, { instancePath: instancePath + "/selected_wind_vector", parentData: data, parentDataProperty: "selected_wind_vector", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate244.errors : vErrors.concat(validate244.errors);
         errors = vErrors.length;
       }
       var _valid0 = _errs11 === errors;
@@ -23228,15 +23832,15 @@ function validate233(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate233.errors = vErrors;
+  validate241.errors = vErrors;
   return errors === 0;
 }
-validate233.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema105 = { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" };
-function validate241(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate241.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema109 = { "additionalProperties": false, "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.", "properties": { "angle_of_attack": { "description": "AoA text, including explicit missing-angle marker.", "type": ["string", "null"] }, "angle_of_attack_degrees": { "description": "Defined angle of attack in degrees.", "format": "double", "type": ["number", "null"] }, "angle_of_attack_label": { "description": "AoA instrument label.", "type": "string" }, "attitude": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAttitude" }, { "type": "null" }], "description": "ADI input already converted into display degrees." }, "controls_description": { "description": "Canonical input instructions.", "type": "string" }, "flight_path_angle_degrees": { "description": "Flight path indicator angle.", "format": "double", "type": ["number", "null"] }, "geometry": { "$ref": "#/$defs/GameUiHudGeometry", "description": "Shared Web-baseline instrument projections, independent of engine pixels." }, "heading": { "description": "Heading instrument text.", "type": ["string", "null"] }, "heading_degrees": { "description": "True heading in [0,360).", "format": "double", "type": ["number", "null"] }, "heading_label": { "description": "Heading instrument label.", "type": "string" }, "layout": { "$ref": "#/$defs/GameUiHudLayout", "description": "Shared Web-baseline instrument placement and responsive dimensions." }, "location": { "description": "Local-frame geographic display.", "type": "string" }, "map_attribution": { "description": "Preserved map attribution.", "type": "string" }, "pilot_position": { "description": "Pilot displacement instrument text.", "type": ["string", "null"] }, "pilot_position_label": { "description": "Pilot instrument label.", "type": "string" }, "readouts": { "description": "Primary readouts with shared wording and precision.", "type": "string" }, "status": { "description": "Domain-derived state label.", "type": "string" }, "supplementary_readouts": { "description": "Angular rates, physical incidences and pilot target text.", "items": { "type": "string" }, "type": "array" }, "telemetry": { "description": "Distance, time and ground-speed text.", "type": "string" }, "warning": { "description": "Terminal or model warning.", "type": ["string", "null"] }, "wind": { "description": "NED wind readout.", "type": ["string", "null"] }, "wind_direction_degrees": { "description": "Ambient air movement direction in [0,360).", "format": "double", "type": ["number", "null"] }, "wind_label": { "description": "Wind instrument label.", "type": "string" } }, "required": ["layout", "geometry", "status", "attitude", "flight_path_angle_degrees", "warning", "heading_degrees", "wind_direction_degrees", "angle_of_attack_degrees", "readouts", "heading", "heading_label", "pilot_position", "pilot_position_label", "wind", "wind_label", "angle_of_attack", "angle_of_attack_label", "telemetry", "location", "map_attribution", "supplementary_readouts", "controls_description"], "type": "object" };
+function validate249(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate241.evaluated;
+  const evaluated0 = validate249.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -23326,15 +23930,604 @@ function validate241(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate241.errors = vErrors;
+  validate249.errors = vErrors;
   return errors === 0;
 }
-validate241.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-var schema107 = { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" };
-function validate243(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate249.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema111 = { "additionalProperties": false, "description": "Shared instrument geometry derived from the authoritative HUD angles.", "properties": { "adi": { "anyOf": [{ "$ref": "#/$defs/GameUiHudAdiGeometry" }, { "type": "null" }], "description": "Visible ADI layers, absent when both attitude and flight path cues are hidden." }, "angle_of_attack_ratio": { "description": "AoA position between the displayed -10 and +20 degree endpoints.", "format": "double", "type": ["number", "null"] }, "heading_ticks": { "description": "Ordered heading tape marks and compass labels.", "items": { "$ref": "#/$defs/GameUiHudHeadingTick" }, "type": "array" } }, "required": ["adi", "heading_ticks", "angle_of_attack_ratio"], "type": "object" };
+var schema112 = { "description": "Visible ADI region with an attitude layer or an independent flight path cue.", "oneOf": [{ "additionalProperties": false, "description": "Attitude horizon with an optional flight path marker.", "properties": { "flight_path_y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": ["number", "null"] }, "horizon": { "$ref": "#/$defs/GameUiHudAttitudeGeometry", "description": "Horizon rotation and translation." }, "kind": { "const": "attitude", "type": "string" } }, "required": ["kind", "horizon", "flight_path_y_ratio"], "type": "object" }, { "additionalProperties": false, "description": "Flight path marker without an attitude horizon.", "properties": { "kind": { "const": "flight_path_only", "type": "string" }, "y_ratio": { "description": "Flight path marker position relative to the ADI height.", "format": "double", "type": "number" } }, "required": ["kind", "y_ratio"], "type": "object" }] };
+function validate253(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate243.evaluated;
+  const evaluated0 = validate253.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.rotation_degrees === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "rotation_degrees" }, message: "must have required property 'rotation_degrees'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.pitch_offset_ratio === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pitch_offset_ratio" }, message: "must have required property 'pitch_offset_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "pitch_offset_ratio" || key0 === "rotation_degrees")) {
+        const err2 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err2];
+        } else {
+          vErrors.push(err2);
+        }
+        errors++;
+      }
+    }
+    if (data.pitch_offset_ratio !== void 0) {
+      let data0 = data.pitch_offset_ratio;
+      if (typeof data0 == "number" && isFinite(data0)) {
+        if (!formats0.validate(data0)) {
+          const err3 = { instancePath: instancePath + "/pitch_offset_ratio", schemaPath: "#/properties/pitch_offset_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err3];
+          } else {
+            vErrors.push(err3);
+          }
+          errors++;
+        }
+      } else {
+        const err4 = { instancePath: instancePath + "/pitch_offset_ratio", schemaPath: "#/properties/pitch_offset_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+    }
+    if (data.rotation_degrees !== void 0) {
+      let data1 = data.rotation_degrees;
+      if (typeof data1 == "number" && isFinite(data1)) {
+        if (!formats0.validate(data1)) {
+          const err5 = { instancePath: instancePath + "/rotation_degrees", schemaPath: "#/properties/rotation_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err5];
+          } else {
+            vErrors.push(err5);
+          }
+          errors++;
+        }
+      } else {
+        const err6 = { instancePath: instancePath + "/rotation_degrees", schemaPath: "#/properties/rotation_degrees/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err7 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err7];
+    } else {
+      vErrors.push(err7);
+    }
+    errors++;
+  }
+  validate253.errors = vErrors;
+  return errors === 0;
+}
+validate253.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate252(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate252.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  const _errs0 = errors;
+  let valid0 = false;
+  let passing0 = null;
+  const _errs1 = errors;
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.kind === void 0) {
+      const err0 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "kind" }, message: "must have required property 'kind'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.horizon === void 0) {
+      const err1 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "horizon" }, message: "must have required property 'horizon'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.flight_path_y_ratio === void 0) {
+      const err2 = { instancePath, schemaPath: "#/oneOf/0/required", keyword: "required", params: { missingProperty: "flight_path_y_ratio" }, message: "must have required property 'flight_path_y_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "flight_path_y_ratio" || key0 === "horizon" || key0 === "kind")) {
+        const err3 = { instancePath, schemaPath: "#/oneOf/0/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.flight_path_y_ratio !== void 0) {
+      let data0 = data.flight_path_y_ratio;
+      if (!(typeof data0 == "number" && isFinite(data0)) && data0 !== null) {
+        const err4 = { instancePath: instancePath + "/flight_path_y_ratio", schemaPath: "#/oneOf/0/properties/flight_path_y_ratio/type", keyword: "type", params: { type: schema112.oneOf[0].properties.flight_path_y_ratio.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+      if (typeof data0 == "number" && isFinite(data0)) {
+        if (!formats0.validate(data0)) {
+          const err5 = { instancePath: instancePath + "/flight_path_y_ratio", schemaPath: "#/oneOf/0/properties/flight_path_y_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err5];
+          } else {
+            vErrors.push(err5);
+          }
+          errors++;
+        }
+      }
+    }
+    if (data.horizon !== void 0) {
+      if (!validate253(data.horizon, { instancePath: instancePath + "/horizon", parentData: data, parentDataProperty: "horizon", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate253.errors : vErrors.concat(validate253.errors);
+        errors = vErrors.length;
+      }
+    }
+    if (data.kind !== void 0) {
+      let data2 = data.kind;
+      if (typeof data2 !== "string") {
+        const err6 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/0/properties/kind/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+      if ("attitude" !== data2) {
+        const err7 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/0/properties/kind/const", keyword: "const", params: { allowedValue: "attitude" }, message: "must be equal to constant" };
+        if (vErrors === null) {
+          vErrors = [err7];
+        } else {
+          vErrors.push(err7);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err8 = { instancePath, schemaPath: "#/oneOf/0/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err8];
+    } else {
+      vErrors.push(err8);
+    }
+    errors++;
+  }
+  var _valid0 = _errs1 === errors;
+  if (_valid0) {
+    valid0 = true;
+    passing0 = 0;
+    var props0 = true;
+  }
+  const _errs9 = errors;
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.kind === void 0) {
+      const err9 = { instancePath, schemaPath: "#/oneOf/1/required", keyword: "required", params: { missingProperty: "kind" }, message: "must have required property 'kind'" };
+      if (vErrors === null) {
+        vErrors = [err9];
+      } else {
+        vErrors.push(err9);
+      }
+      errors++;
+    }
+    if (data.y_ratio === void 0) {
+      const err10 = { instancePath, schemaPath: "#/oneOf/1/required", keyword: "required", params: { missingProperty: "y_ratio" }, message: "must have required property 'y_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err10];
+      } else {
+        vErrors.push(err10);
+      }
+      errors++;
+    }
+    for (const key1 in data) {
+      if (!(key1 === "kind" || key1 === "y_ratio")) {
+        const err11 = { instancePath, schemaPath: "#/oneOf/1/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key1 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err11];
+        } else {
+          vErrors.push(err11);
+        }
+        errors++;
+      }
+    }
+    if (data.kind !== void 0) {
+      let data3 = data.kind;
+      if (typeof data3 !== "string") {
+        const err12 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/1/properties/kind/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err12];
+        } else {
+          vErrors.push(err12);
+        }
+        errors++;
+      }
+      if ("flight_path_only" !== data3) {
+        const err13 = { instancePath: instancePath + "/kind", schemaPath: "#/oneOf/1/properties/kind/const", keyword: "const", params: { allowedValue: "flight_path_only" }, message: "must be equal to constant" };
+        if (vErrors === null) {
+          vErrors = [err13];
+        } else {
+          vErrors.push(err13);
+        }
+        errors++;
+      }
+    }
+    if (data.y_ratio !== void 0) {
+      let data4 = data.y_ratio;
+      if (typeof data4 == "number" && isFinite(data4)) {
+        if (!formats0.validate(data4)) {
+          const err14 = { instancePath: instancePath + "/y_ratio", schemaPath: "#/oneOf/1/properties/y_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err14];
+          } else {
+            vErrors.push(err14);
+          }
+          errors++;
+        }
+      } else {
+        const err15 = { instancePath: instancePath + "/y_ratio", schemaPath: "#/oneOf/1/properties/y_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err15];
+        } else {
+          vErrors.push(err15);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err16 = { instancePath, schemaPath: "#/oneOf/1/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err16];
+    } else {
+      vErrors.push(err16);
+    }
+    errors++;
+  }
+  var _valid0 = _errs9 === errors;
+  if (_valid0 && valid0) {
+    valid0 = false;
+    passing0 = [passing0, 1];
+  } else {
+    if (_valid0) {
+      valid0 = true;
+      passing0 = 1;
+      if (props0 !== true) {
+        props0 = true;
+      }
+    }
+  }
+  if (!valid0) {
+    const err17 = { instancePath, schemaPath: "#/oneOf", keyword: "oneOf", params: { passingSchemas: passing0 }, message: "must match exactly one schema in oneOf" };
+    if (vErrors === null) {
+      vErrors = [err17];
+    } else {
+      vErrors.push(err17);
+    }
+    errors++;
+  } else {
+    errors = _errs0;
+    if (vErrors !== null) {
+      if (_errs0) {
+        vErrors.length = _errs0;
+      } else {
+        vErrors = null;
+      }
+    }
+  }
+  validate252.errors = vErrors;
+  evaluated0.props = props0;
+  return errors === 0;
+}
+validate252.evaluated = { "dynamicProps": true, "dynamicItems": false };
+function validate256(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate256.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.position_ratio === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "position_ratio" }, message: "must have required property 'position_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.major === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "major" }, message: "must have required property 'major'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.label === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "label" }, message: "must have required property 'label'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "label" || key0 === "major" || key0 === "position_ratio")) {
+        const err3 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.label !== void 0) {
+      if (typeof data.label !== "string") {
+        const err4 = { instancePath: instancePath + "/label", schemaPath: "#/properties/label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+    }
+    if (data.major !== void 0) {
+      if (typeof data.major !== "boolean") {
+        const err5 = { instancePath: instancePath + "/major", schemaPath: "#/properties/major/type", keyword: "type", params: { type: "boolean" }, message: "must be boolean" };
+        if (vErrors === null) {
+          vErrors = [err5];
+        } else {
+          vErrors.push(err5);
+        }
+        errors++;
+      }
+    }
+    if (data.position_ratio !== void 0) {
+      let data2 = data.position_ratio;
+      if (typeof data2 == "number" && isFinite(data2)) {
+        if (!formats0.validate(data2)) {
+          const err6 = { instancePath: instancePath + "/position_ratio", schemaPath: "#/properties/position_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err6];
+          } else {
+            vErrors.push(err6);
+          }
+          errors++;
+        }
+      } else {
+        const err7 = { instancePath: instancePath + "/position_ratio", schemaPath: "#/properties/position_ratio/type", keyword: "type", params: { type: "number" }, message: "must be number" };
+        if (vErrors === null) {
+          vErrors = [err7];
+        } else {
+          vErrors.push(err7);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err8 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err8];
+    } else {
+      vErrors.push(err8);
+    }
+    errors++;
+  }
+  validate256.errors = vErrors;
+  return errors === 0;
+}
+validate256.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate251(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate251.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = void 0;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = void 0;
+  }
+  if (data && typeof data == "object" && !Array.isArray(data)) {
+    if (data.adi === void 0) {
+      const err0 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "adi" }, message: "must have required property 'adi'" };
+      if (vErrors === null) {
+        vErrors = [err0];
+      } else {
+        vErrors.push(err0);
+      }
+      errors++;
+    }
+    if (data.heading_ticks === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_ticks" }, message: "must have required property 'heading_ticks'" };
+      if (vErrors === null) {
+        vErrors = [err1];
+      } else {
+        vErrors.push(err1);
+      }
+      errors++;
+    }
+    if (data.angle_of_attack_ratio === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_ratio" }, message: "must have required property 'angle_of_attack_ratio'" };
+      if (vErrors === null) {
+        vErrors = [err2];
+      } else {
+        vErrors.push(err2);
+      }
+      errors++;
+    }
+    for (const key0 in data) {
+      if (!(key0 === "adi" || key0 === "angle_of_attack_ratio" || key0 === "heading_ticks")) {
+        const err3 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
+        if (vErrors === null) {
+          vErrors = [err3];
+        } else {
+          vErrors.push(err3);
+        }
+        errors++;
+      }
+    }
+    if (data.adi !== void 0) {
+      let data0 = data.adi;
+      const _errs3 = errors;
+      let valid1 = false;
+      const _errs4 = errors;
+      if (!validate252(data0, { instancePath: instancePath + "/adi", parentData: data, parentDataProperty: "adi", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate252.errors : vErrors.concat(validate252.errors);
+        errors = vErrors.length;
+      }
+      var _valid0 = _errs4 === errors;
+      valid1 = valid1 || _valid0;
+      const _errs5 = errors;
+      if (data0 !== null) {
+        const err4 = { instancePath: instancePath + "/adi", schemaPath: "#/properties/adi/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
+        if (vErrors === null) {
+          vErrors = [err4];
+        } else {
+          vErrors.push(err4);
+        }
+        errors++;
+      }
+      var _valid0 = _errs5 === errors;
+      valid1 = valid1 || _valid0;
+      if (!valid1) {
+        const err5 = { instancePath: instancePath + "/adi", schemaPath: "#/properties/adi/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
+        if (vErrors === null) {
+          vErrors = [err5];
+        } else {
+          vErrors.push(err5);
+        }
+        errors++;
+      } else {
+        errors = _errs3;
+        if (vErrors !== null) {
+          if (_errs3) {
+            vErrors.length = _errs3;
+          } else {
+            vErrors = null;
+          }
+        }
+      }
+    }
+    if (data.angle_of_attack_ratio !== void 0) {
+      let data1 = data.angle_of_attack_ratio;
+      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
+        const err6 = { instancePath: instancePath + "/angle_of_attack_ratio", schemaPath: "#/properties/angle_of_attack_ratio/type", keyword: "type", params: { type: schema111.properties.angle_of_attack_ratio.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+      if (typeof data1 == "number" && isFinite(data1)) {
+        if (!formats0.validate(data1)) {
+          const err7 = { instancePath: instancePath + "/angle_of_attack_ratio", schemaPath: "#/properties/angle_of_attack_ratio/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          if (vErrors === null) {
+            vErrors = [err7];
+          } else {
+            vErrors.push(err7);
+          }
+          errors++;
+        }
+      }
+    }
+    if (data.heading_ticks !== void 0) {
+      let data2 = data.heading_ticks;
+      if (Array.isArray(data2)) {
+        const len0 = data2.length;
+        for (let i0 = 0; i0 < len0; i0++) {
+          if (!validate256(data2[i0], { instancePath: instancePath + "/heading_ticks/" + i0, parentData: data2, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate256.errors : vErrors.concat(validate256.errors);
+            errors = vErrors.length;
+          }
+        }
+      } else {
+        const err8 = { instancePath: instancePath + "/heading_ticks", schemaPath: "#/properties/heading_ticks/type", keyword: "type", params: { type: "array" }, message: "must be array" };
+        if (vErrors === null) {
+          vErrors = [err8];
+        } else {
+          vErrors.push(err8);
+        }
+        errors++;
+      }
+    }
+  } else {
+    const err9 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    if (vErrors === null) {
+      vErrors = [err9];
+    } else {
+      vErrors.push(err9);
+    }
+    errors++;
+  }
+  validate251.errors = vErrors;
+  return errors === 0;
+}
+validate251.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+var schema115 = { "additionalProperties": false, "description": "Instrument placement in logical pixels with platform safe-area insets applied by adapters.", "properties": { "attitude_size_px": { "description": "ADI width and height.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "controls_visible": { "description": "Keyboard description visibility on the selected viewport.", "type": "boolean" }, "font_size_px": { "description": "Readout font size.", "format": "double", "type": "number" }, "gap_px": { "description": "Horizontal and vertical grid gaps.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "instrument_columns": { "description": "Heading, pilot, wind and AoA instrument column count.", "format": "uint32", "minimum": 0, "type": "integer" }, "maximum_height_px": { "description": "Reachable vertical scroll height.", "format": "double", "type": "number" }, "offset_px": { "description": "Left and top viewport offsets.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "opacity": { "description": "Panel background opacity.", "format": "double", "type": "number" }, "padding_px": { "description": "Horizontal and vertical padding.", "items": { "format": "double", "type": "number" }, "maxItems": 2, "minItems": 2, "type": "array" }, "width_px": { "description": "Responsive panel width.", "format": "double", "type": "number" } }, "required": ["offset_px", "width_px", "maximum_height_px", "padding_px", "gap_px", "attitude_size_px", "font_size_px", "opacity", "controls_visible", "instrument_columns"], "type": "object" };
+function validate259(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate259.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -23433,7 +24626,7 @@ function validate243(data, { instancePath = "", parentData, parentDataProperty, 
       errors++;
     }
     for (const key0 in data) {
-      if (!func1.call(schema107.properties, key0)) {
+      if (!func1.call(schema115.properties, key0)) {
         const err10 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err10];
@@ -23605,7 +24798,7 @@ function validate243(data, { instancePath = "", parentData, parentDataProperty, 
           }
           errors++;
         }
-        if (!formats16.validate(data6)) {
+        if (!formats28.validate(data6)) {
           const err26 = { instancePath: instancePath + "/instrument_columns", schemaPath: "#/properties/instrument_columns/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err26];
@@ -23799,14 +24992,14 @@ function validate243(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate243.errors = vErrors;
+  validate259.errors = vErrors;
   return errors === 0;
 }
-validate243.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate240(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate259.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate248(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate240.evaluated;
+  const evaluated0 = validate248.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -23823,8 +25016,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.status === void 0) {
-      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "status" }, message: "must have required property 'status'" };
+    if (data.geometry === void 0) {
+      const err1 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "geometry" }, message: "must have required property 'geometry'" };
       if (vErrors === null) {
         vErrors = [err1];
       } else {
@@ -23832,8 +25025,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.attitude === void 0) {
-      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "attitude" }, message: "must have required property 'attitude'" };
+    if (data.status === void 0) {
+      const err2 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "status" }, message: "must have required property 'status'" };
       if (vErrors === null) {
         vErrors = [err2];
       } else {
@@ -23841,8 +25034,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.flight_path_angle_degrees === void 0) {
-      const err3 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "flight_path_angle_degrees" }, message: "must have required property 'flight_path_angle_degrees'" };
+    if (data.attitude === void 0) {
+      const err3 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "attitude" }, message: "must have required property 'attitude'" };
       if (vErrors === null) {
         vErrors = [err3];
       } else {
@@ -23850,8 +25043,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.warning === void 0) {
-      const err4 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "warning" }, message: "must have required property 'warning'" };
+    if (data.flight_path_angle_degrees === void 0) {
+      const err4 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "flight_path_angle_degrees" }, message: "must have required property 'flight_path_angle_degrees'" };
       if (vErrors === null) {
         vErrors = [err4];
       } else {
@@ -23859,8 +25052,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.heading_degrees === void 0) {
-      const err5 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_degrees" }, message: "must have required property 'heading_degrees'" };
+    if (data.warning === void 0) {
+      const err5 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "warning" }, message: "must have required property 'warning'" };
       if (vErrors === null) {
         vErrors = [err5];
       } else {
@@ -23868,8 +25061,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.wind_direction_degrees === void 0) {
-      const err6 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_direction_degrees" }, message: "must have required property 'wind_direction_degrees'" };
+    if (data.heading_degrees === void 0) {
+      const err6 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_degrees" }, message: "must have required property 'heading_degrees'" };
       if (vErrors === null) {
         vErrors = [err6];
       } else {
@@ -23877,8 +25070,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.angle_of_attack_degrees === void 0) {
-      const err7 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_degrees" }, message: "must have required property 'angle_of_attack_degrees'" };
+    if (data.wind_direction_degrees === void 0) {
+      const err7 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_direction_degrees" }, message: "must have required property 'wind_direction_degrees'" };
       if (vErrors === null) {
         vErrors = [err7];
       } else {
@@ -23886,8 +25079,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.readouts === void 0) {
-      const err8 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "readouts" }, message: "must have required property 'readouts'" };
+    if (data.angle_of_attack_degrees === void 0) {
+      const err8 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_degrees" }, message: "must have required property 'angle_of_attack_degrees'" };
       if (vErrors === null) {
         vErrors = [err8];
       } else {
@@ -23895,8 +25088,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.heading === void 0) {
-      const err9 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading" }, message: "must have required property 'heading'" };
+    if (data.readouts === void 0) {
+      const err9 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "readouts" }, message: "must have required property 'readouts'" };
       if (vErrors === null) {
         vErrors = [err9];
       } else {
@@ -23904,8 +25097,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.heading_label === void 0) {
-      const err10 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_label" }, message: "must have required property 'heading_label'" };
+    if (data.heading === void 0) {
+      const err10 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading" }, message: "must have required property 'heading'" };
       if (vErrors === null) {
         vErrors = [err10];
       } else {
@@ -23913,8 +25106,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.pilot_position === void 0) {
-      const err11 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position" }, message: "must have required property 'pilot_position'" };
+    if (data.heading_label === void 0) {
+      const err11 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "heading_label" }, message: "must have required property 'heading_label'" };
       if (vErrors === null) {
         vErrors = [err11];
       } else {
@@ -23922,8 +25115,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.pilot_position_label === void 0) {
-      const err12 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position_label" }, message: "must have required property 'pilot_position_label'" };
+    if (data.pilot_position === void 0) {
+      const err12 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position" }, message: "must have required property 'pilot_position'" };
       if (vErrors === null) {
         vErrors = [err12];
       } else {
@@ -23931,8 +25124,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.wind === void 0) {
-      const err13 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind" }, message: "must have required property 'wind'" };
+    if (data.pilot_position_label === void 0) {
+      const err13 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "pilot_position_label" }, message: "must have required property 'pilot_position_label'" };
       if (vErrors === null) {
         vErrors = [err13];
       } else {
@@ -23940,8 +25133,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.wind_label === void 0) {
-      const err14 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_label" }, message: "must have required property 'wind_label'" };
+    if (data.wind === void 0) {
+      const err14 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind" }, message: "must have required property 'wind'" };
       if (vErrors === null) {
         vErrors = [err14];
       } else {
@@ -23949,8 +25142,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.angle_of_attack === void 0) {
-      const err15 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack" }, message: "must have required property 'angle_of_attack'" };
+    if (data.wind_label === void 0) {
+      const err15 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "wind_label" }, message: "must have required property 'wind_label'" };
       if (vErrors === null) {
         vErrors = [err15];
       } else {
@@ -23958,8 +25151,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.angle_of_attack_label === void 0) {
-      const err16 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_label" }, message: "must have required property 'angle_of_attack_label'" };
+    if (data.angle_of_attack === void 0) {
+      const err16 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack" }, message: "must have required property 'angle_of_attack'" };
       if (vErrors === null) {
         vErrors = [err16];
       } else {
@@ -23967,8 +25160,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.telemetry === void 0) {
-      const err17 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "telemetry" }, message: "must have required property 'telemetry'" };
+    if (data.angle_of_attack_label === void 0) {
+      const err17 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "angle_of_attack_label" }, message: "must have required property 'angle_of_attack_label'" };
       if (vErrors === null) {
         vErrors = [err17];
       } else {
@@ -23976,8 +25169,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.location === void 0) {
-      const err18 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "location" }, message: "must have required property 'location'" };
+    if (data.telemetry === void 0) {
+      const err18 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "telemetry" }, message: "must have required property 'telemetry'" };
       if (vErrors === null) {
         vErrors = [err18];
       } else {
@@ -23985,8 +25178,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.map_attribution === void 0) {
-      const err19 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "map_attribution" }, message: "must have required property 'map_attribution'" };
+    if (data.location === void 0) {
+      const err19 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "location" }, message: "must have required property 'location'" };
       if (vErrors === null) {
         vErrors = [err19];
       } else {
@@ -23994,8 +25187,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.supplementary_readouts === void 0) {
-      const err20 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "supplementary_readouts" }, message: "must have required property 'supplementary_readouts'" };
+    if (data.map_attribution === void 0) {
+      const err20 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "map_attribution" }, message: "must have required property 'map_attribution'" };
       if (vErrors === null) {
         vErrors = [err20];
       } else {
@@ -24003,8 +25196,8 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    if (data.controls_description === void 0) {
-      const err21 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "controls_description" }, message: "must have required property 'controls_description'" };
+    if (data.supplementary_readouts === void 0) {
+      const err21 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "supplementary_readouts" }, message: "must have required property 'supplementary_readouts'" };
       if (vErrors === null) {
         vErrors = [err21];
       } else {
@@ -24012,21 +25205,18 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       }
       errors++;
     }
-    for (const key0 in data) {
-      if (!func1.call(schema105.properties, key0)) {
-        const err22 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
-        if (vErrors === null) {
-          vErrors = [err22];
-        } else {
-          vErrors.push(err22);
-        }
-        errors++;
+    if (data.controls_description === void 0) {
+      const err22 = { instancePath, schemaPath: "#/required", keyword: "required", params: { missingProperty: "controls_description" }, message: "must have required property 'controls_description'" };
+      if (vErrors === null) {
+        vErrors = [err22];
+      } else {
+        vErrors.push(err22);
       }
+      errors++;
     }
-    if (data.angle_of_attack !== void 0) {
-      let data0 = data.angle_of_attack;
-      if (typeof data0 !== "string" && data0 !== null) {
-        const err23 = { instancePath: instancePath + "/angle_of_attack", schemaPath: "#/properties/angle_of_attack/type", keyword: "type", params: { type: schema105.properties.angle_of_attack.type }, message: "must be string,null" };
+    for (const key0 in data) {
+      if (!func1.call(schema109.properties, key0)) {
+        const err23 = { instancePath, schemaPath: "#/additionalProperties", keyword: "additionalProperties", params: { additionalProperty: key0 }, message: "must NOT have additional properties" };
         if (vErrors === null) {
           vErrors = [err23];
         } else {
@@ -24035,10 +25225,10 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.angle_of_attack_degrees !== void 0) {
-      let data1 = data.angle_of_attack_degrees;
-      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
-        const err24 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/type", keyword: "type", params: { type: schema105.properties.angle_of_attack_degrees.type }, message: "must be number,null" };
+    if (data.angle_of_attack !== void 0) {
+      let data0 = data.angle_of_attack;
+      if (typeof data0 !== "string" && data0 !== null) {
+        const err24 = { instancePath: instancePath + "/angle_of_attack", schemaPath: "#/properties/angle_of_attack/type", keyword: "type", params: { type: schema109.properties.angle_of_attack.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err24];
         } else {
@@ -24046,13 +25236,25 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         }
         errors++;
       }
+    }
+    if (data.angle_of_attack_degrees !== void 0) {
+      let data1 = data.angle_of_attack_degrees;
+      if (!(typeof data1 == "number" && isFinite(data1)) && data1 !== null) {
+        const err25 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/type", keyword: "type", params: { type: schema109.properties.angle_of_attack_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err25];
+        } else {
+          vErrors.push(err25);
+        }
+        errors++;
+      }
       if (typeof data1 == "number" && isFinite(data1)) {
         if (!formats0.validate(data1)) {
-          const err25 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          const err26 = { instancePath: instancePath + "/angle_of_attack_degrees", schemaPath: "#/properties/angle_of_attack_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err25];
+            vErrors = [err26];
           } else {
-            vErrors.push(err25);
+            vErrors.push(err26);
           }
           errors++;
         }
@@ -24060,11 +25262,11 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
     }
     if (data.angle_of_attack_label !== void 0) {
       if (typeof data.angle_of_attack_label !== "string") {
-        const err26 = { instancePath: instancePath + "/angle_of_attack_label", schemaPath: "#/properties/angle_of_attack_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err27 = { instancePath: instancePath + "/angle_of_attack_label", schemaPath: "#/properties/angle_of_attack_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
-          vErrors = [err26];
+          vErrors = [err27];
         } else {
-          vErrors.push(err26);
+          vErrors.push(err27);
         }
         errors++;
       }
@@ -24074,30 +25276,30 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
       const _errs9 = errors;
       let valid1 = false;
       const _errs10 = errors;
-      if (!validate241(data3, { instancePath: instancePath + "/attitude", parentData: data, parentDataProperty: "attitude", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate241.errors : vErrors.concat(validate241.errors);
+      if (!validate249(data3, { instancePath: instancePath + "/attitude", parentData: data, parentDataProperty: "attitude", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate249.errors : vErrors.concat(validate249.errors);
         errors = vErrors.length;
       }
       var _valid0 = _errs10 === errors;
       valid1 = valid1 || _valid0;
       const _errs11 = errors;
       if (data3 !== null) {
-        const err27 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
+        const err28 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf/1/type", keyword: "type", params: { type: "null" }, message: "must be null" };
         if (vErrors === null) {
-          vErrors = [err27];
+          vErrors = [err28];
         } else {
-          vErrors.push(err27);
+          vErrors.push(err28);
         }
         errors++;
       }
       var _valid0 = _errs11 === errors;
       valid1 = valid1 || _valid0;
       if (!valid1) {
-        const err28 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
+        const err29 = { instancePath: instancePath + "/attitude", schemaPath: "#/properties/attitude/anyOf", keyword: "anyOf", params: {}, message: "must match a schema in anyOf" };
         if (vErrors === null) {
-          vErrors = [err28];
+          vErrors = [err29];
         } else {
-          vErrors.push(err28);
+          vErrors.push(err29);
         }
         errors++;
       } else {
@@ -24113,19 +25315,7 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
     }
     if (data.controls_description !== void 0) {
       if (typeof data.controls_description !== "string") {
-        const err29 = { instancePath: instancePath + "/controls_description", schemaPath: "#/properties/controls_description/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-        if (vErrors === null) {
-          vErrors = [err29];
-        } else {
-          vErrors.push(err29);
-        }
-        errors++;
-      }
-    }
-    if (data.flight_path_angle_degrees !== void 0) {
-      let data5 = data.flight_path_angle_degrees;
-      if (!(typeof data5 == "number" && isFinite(data5)) && data5 !== null) {
-        const err30 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/type", keyword: "type", params: { type: schema105.properties.flight_path_angle_degrees.type }, message: "must be number,null" };
+        const err30 = { instancePath: instancePath + "/controls_description", schemaPath: "#/properties/controls_description/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err30];
         } else {
@@ -24133,34 +25323,40 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         }
         errors++;
       }
+    }
+    if (data.flight_path_angle_degrees !== void 0) {
+      let data5 = data.flight_path_angle_degrees;
+      if (!(typeof data5 == "number" && isFinite(data5)) && data5 !== null) {
+        const err31 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/type", keyword: "type", params: { type: schema109.properties.flight_path_angle_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err31];
+        } else {
+          vErrors.push(err31);
+        }
+        errors++;
+      }
       if (typeof data5 == "number" && isFinite(data5)) {
         if (!formats0.validate(data5)) {
-          const err31 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+          const err32 = { instancePath: instancePath + "/flight_path_angle_degrees", schemaPath: "#/properties/flight_path_angle_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err31];
+            vErrors = [err32];
           } else {
-            vErrors.push(err31);
+            vErrors.push(err32);
           }
           errors++;
         }
       }
     }
-    if (data.heading !== void 0) {
-      let data6 = data.heading;
-      if (typeof data6 !== "string" && data6 !== null) {
-        const err32 = { instancePath: instancePath + "/heading", schemaPath: "#/properties/heading/type", keyword: "type", params: { type: schema105.properties.heading.type }, message: "must be string,null" };
-        if (vErrors === null) {
-          vErrors = [err32];
-        } else {
-          vErrors.push(err32);
-        }
-        errors++;
+    if (data.geometry !== void 0) {
+      if (!validate251(data.geometry, { instancePath: instancePath + "/geometry", parentData: data, parentDataProperty: "geometry", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate251.errors : vErrors.concat(validate251.errors);
+        errors = vErrors.length;
       }
     }
-    if (data.heading_degrees !== void 0) {
-      let data7 = data.heading_degrees;
-      if (!(typeof data7 == "number" && isFinite(data7)) && data7 !== null) {
-        const err33 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/type", keyword: "type", params: { type: schema105.properties.heading_degrees.type }, message: "must be number,null" };
+    if (data.heading !== void 0) {
+      let data7 = data.heading;
+      if (typeof data7 !== "string" && data7 !== null) {
+        const err33 = { instancePath: instancePath + "/heading", schemaPath: "#/properties/heading/type", keyword: "type", params: { type: schema109.properties.heading.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err33];
         } else {
@@ -24168,13 +25364,25 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         }
         errors++;
       }
-      if (typeof data7 == "number" && isFinite(data7)) {
-        if (!formats0.validate(data7)) {
-          const err34 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+    }
+    if (data.heading_degrees !== void 0) {
+      let data8 = data.heading_degrees;
+      if (!(typeof data8 == "number" && isFinite(data8)) && data8 !== null) {
+        const err34 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/type", keyword: "type", params: { type: schema109.properties.heading_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err34];
+        } else {
+          vErrors.push(err34);
+        }
+        errors++;
+      }
+      if (typeof data8 == "number" && isFinite(data8)) {
+        if (!formats0.validate(data8)) {
+          const err35 = { instancePath: instancePath + "/heading_degrees", schemaPath: "#/properties/heading_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err34];
+            vErrors = [err35];
           } else {
-            vErrors.push(err34);
+            vErrors.push(err35);
           }
           errors++;
         }
@@ -24182,24 +25390,7 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
     }
     if (data.heading_label !== void 0) {
       if (typeof data.heading_label !== "string") {
-        const err35 = { instancePath: instancePath + "/heading_label", schemaPath: "#/properties/heading_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
-        if (vErrors === null) {
-          vErrors = [err35];
-        } else {
-          vErrors.push(err35);
-        }
-        errors++;
-      }
-    }
-    if (data.layout !== void 0) {
-      if (!validate243(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate243.errors : vErrors.concat(validate243.errors);
-        errors = vErrors.length;
-      }
-    }
-    if (data.location !== void 0) {
-      if (typeof data.location !== "string") {
-        const err36 = { instancePath: instancePath + "/location", schemaPath: "#/properties/location/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err36 = { instancePath: instancePath + "/heading_label", schemaPath: "#/properties/heading_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err36];
         } else {
@@ -24208,9 +25399,15 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.map_attribution !== void 0) {
-      if (typeof data.map_attribution !== "string") {
-        const err37 = { instancePath: instancePath + "/map_attribution", schemaPath: "#/properties/map_attribution/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.layout !== void 0) {
+      if (!validate259(data.layout, { instancePath: instancePath + "/layout", parentData: data, parentDataProperty: "layout", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate259.errors : vErrors.concat(validate259.errors);
+        errors = vErrors.length;
+      }
+    }
+    if (data.location !== void 0) {
+      if (typeof data.location !== "string") {
+        const err37 = { instancePath: instancePath + "/location", schemaPath: "#/properties/location/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err37];
         } else {
@@ -24219,10 +25416,9 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.pilot_position !== void 0) {
-      let data12 = data.pilot_position;
-      if (typeof data12 !== "string" && data12 !== null) {
-        const err38 = { instancePath: instancePath + "/pilot_position", schemaPath: "#/properties/pilot_position/type", keyword: "type", params: { type: schema105.properties.pilot_position.type }, message: "must be string,null" };
+    if (data.map_attribution !== void 0) {
+      if (typeof data.map_attribution !== "string") {
+        const err38 = { instancePath: instancePath + "/map_attribution", schemaPath: "#/properties/map_attribution/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err38];
         } else {
@@ -24231,9 +25427,10 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.pilot_position_label !== void 0) {
-      if (typeof data.pilot_position_label !== "string") {
-        const err39 = { instancePath: instancePath + "/pilot_position_label", schemaPath: "#/properties/pilot_position_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.pilot_position !== void 0) {
+      let data13 = data.pilot_position;
+      if (typeof data13 !== "string" && data13 !== null) {
+        const err39 = { instancePath: instancePath + "/pilot_position", schemaPath: "#/properties/pilot_position/type", keyword: "type", params: { type: schema109.properties.pilot_position.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err39];
         } else {
@@ -24242,9 +25439,9 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.readouts !== void 0) {
-      if (typeof data.readouts !== "string") {
-        const err40 = { instancePath: instancePath + "/readouts", schemaPath: "#/properties/readouts/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.pilot_position_label !== void 0) {
+      if (typeof data.pilot_position_label !== "string") {
+        const err40 = { instancePath: instancePath + "/pilot_position_label", schemaPath: "#/properties/pilot_position_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err40];
         } else {
@@ -24253,9 +25450,9 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.status !== void 0) {
-      if (typeof data.status !== "string") {
-        const err41 = { instancePath: instancePath + "/status", schemaPath: "#/properties/status/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+    if (data.readouts !== void 0) {
+      if (typeof data.readouts !== "string") {
+        const err41 = { instancePath: instancePath + "/readouts", schemaPath: "#/properties/readouts/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err41];
         } else {
@@ -24264,34 +25461,34 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
+    if (data.status !== void 0) {
+      if (typeof data.status !== "string") {
+        const err42 = { instancePath: instancePath + "/status", schemaPath: "#/properties/status/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err42];
+        } else {
+          vErrors.push(err42);
+        }
+        errors++;
+      }
+    }
     if (data.supplementary_readouts !== void 0) {
-      let data16 = data.supplementary_readouts;
-      if (Array.isArray(data16)) {
-        const len0 = data16.length;
+      let data17 = data.supplementary_readouts;
+      if (Array.isArray(data17)) {
+        const len0 = data17.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (typeof data16[i0] !== "string") {
-            const err42 = { instancePath: instancePath + "/supplementary_readouts/" + i0, schemaPath: "#/properties/supplementary_readouts/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+          if (typeof data17[i0] !== "string") {
+            const err43 = { instancePath: instancePath + "/supplementary_readouts/" + i0, schemaPath: "#/properties/supplementary_readouts/items/type", keyword: "type", params: { type: "string" }, message: "must be string" };
             if (vErrors === null) {
-              vErrors = [err42];
+              vErrors = [err43];
             } else {
-              vErrors.push(err42);
+              vErrors.push(err43);
             }
             errors++;
           }
         }
       } else {
-        const err43 = { instancePath: instancePath + "/supplementary_readouts", schemaPath: "#/properties/supplementary_readouts/type", keyword: "type", params: { type: "array" }, message: "must be array" };
-        if (vErrors === null) {
-          vErrors = [err43];
-        } else {
-          vErrors.push(err43);
-        }
-        errors++;
-      }
-    }
-    if (data.telemetry !== void 0) {
-      if (typeof data.telemetry !== "string") {
-        const err44 = { instancePath: instancePath + "/telemetry", schemaPath: "#/properties/telemetry/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err44 = { instancePath: instancePath + "/supplementary_readouts", schemaPath: "#/properties/supplementary_readouts/type", keyword: "type", params: { type: "array" }, message: "must be array" };
         if (vErrors === null) {
           vErrors = [err44];
         } else {
@@ -24300,10 +25497,9 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.warning !== void 0) {
-      let data19 = data.warning;
-      if (typeof data19 !== "string" && data19 !== null) {
-        const err45 = { instancePath: instancePath + "/warning", schemaPath: "#/properties/warning/type", keyword: "type", params: { type: schema105.properties.warning.type }, message: "must be string,null" };
+    if (data.telemetry !== void 0) {
+      if (typeof data.telemetry !== "string") {
+        const err45 = { instancePath: instancePath + "/telemetry", schemaPath: "#/properties/telemetry/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
           vErrors = [err45];
         } else {
@@ -24312,10 +25508,10 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.wind !== void 0) {
-      let data20 = data.wind;
+    if (data.warning !== void 0) {
+      let data20 = data.warning;
       if (typeof data20 !== "string" && data20 !== null) {
-        const err46 = { instancePath: instancePath + "/wind", schemaPath: "#/properties/wind/type", keyword: "type", params: { type: schema105.properties.wind.type }, message: "must be string,null" };
+        const err46 = { instancePath: instancePath + "/warning", schemaPath: "#/properties/warning/type", keyword: "type", params: { type: schema109.properties.warning.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err46];
         } else {
@@ -24324,10 +25520,10 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         errors++;
       }
     }
-    if (data.wind_direction_degrees !== void 0) {
-      let data21 = data.wind_direction_degrees;
-      if (!(typeof data21 == "number" && isFinite(data21)) && data21 !== null) {
-        const err47 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/type", keyword: "type", params: { type: schema105.properties.wind_direction_degrees.type }, message: "must be number,null" };
+    if (data.wind !== void 0) {
+      let data21 = data.wind;
+      if (typeof data21 !== "string" && data21 !== null) {
+        const err47 = { instancePath: instancePath + "/wind", schemaPath: "#/properties/wind/type", keyword: "type", params: { type: schema109.properties.wind.type }, message: "must be string,null" };
         if (vErrors === null) {
           vErrors = [err47];
         } else {
@@ -24335,13 +25531,25 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
         }
         errors++;
       }
-      if (typeof data21 == "number" && isFinite(data21)) {
-        if (!formats0.validate(data21)) {
-          const err48 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
+    }
+    if (data.wind_direction_degrees !== void 0) {
+      let data22 = data.wind_direction_degrees;
+      if (!(typeof data22 == "number" && isFinite(data22)) && data22 !== null) {
+        const err48 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/type", keyword: "type", params: { type: schema109.properties.wind_direction_degrees.type }, message: "must be number,null" };
+        if (vErrors === null) {
+          vErrors = [err48];
+        } else {
+          vErrors.push(err48);
+        }
+        errors++;
+      }
+      if (typeof data22 == "number" && isFinite(data22)) {
+        if (!formats0.validate(data22)) {
+          const err49 = { instancePath: instancePath + "/wind_direction_degrees", schemaPath: "#/properties/wind_direction_degrees/format", keyword: "format", params: { format: "double" }, message: 'must match format "double"' };
           if (vErrors === null) {
-            vErrors = [err48];
+            vErrors = [err49];
           } else {
-            vErrors.push(err48);
+            vErrors.push(err49);
           }
           errors++;
         }
@@ -24349,32 +25557,32 @@ function validate240(data, { instancePath = "", parentData, parentDataProperty, 
     }
     if (data.wind_label !== void 0) {
       if (typeof data.wind_label !== "string") {
-        const err49 = { instancePath: instancePath + "/wind_label", schemaPath: "#/properties/wind_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        const err50 = { instancePath: instancePath + "/wind_label", schemaPath: "#/properties/wind_label/type", keyword: "type", params: { type: "string" }, message: "must be string" };
         if (vErrors === null) {
-          vErrors = [err49];
+          vErrors = [err50];
         } else {
-          vErrors.push(err49);
+          vErrors.push(err50);
         }
         errors++;
       }
     }
   } else {
-    const err50 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
+    const err51 = { instancePath, schemaPath: "#/type", keyword: "type", params: { type: "object" }, message: "must be object" };
     if (vErrors === null) {
-      vErrors = [err50];
+      vErrors = [err51];
     } else {
-      vErrors.push(err50);
+      vErrors.push(err51);
     }
     errors++;
   }
-  validate240.errors = vErrors;
+  validate248.errors = vErrors;
   return errors === 0;
 }
-validate240.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate246(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate248.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate262(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate246.evaluated;
+  const evaluated0 = validate262.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -24453,14 +25661,14 @@ function validate246(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate246.errors = vErrors;
+  validate262.errors = vErrors;
   return errors === 0;
 }
-validate246.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate248(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate262.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate264(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate248.evaluated;
+  const evaluated0 = validate264.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -24528,14 +25736,14 @@ function validate248(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate248.errors = vErrors;
+  validate264.errors = vErrors;
   return errors === 0;
 }
-validate248.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate251(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate264.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate267(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate251.evaluated;
+  const evaluated0 = validate267.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -24645,14 +25853,14 @@ function validate251(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate251.errors = vErrors;
+  validate267.errors = vErrors;
   return errors === 0;
 }
-validate251.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate253(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate267.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate269(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate253.evaluated;
+  const evaluated0 = validate269.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -24762,14 +25970,14 @@ function validate253(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate253.errors = vErrors;
+  validate269.errors = vErrors;
   return errors === 0;
 }
-validate253.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate255(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate269.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate271(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate255.evaluated;
+  const evaluated0 = validate271.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -25082,14 +26290,14 @@ function validate255(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate255.errors = vErrors;
+  validate271.errors = vErrors;
   return errors === 0;
 }
-validate255.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate257(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate271.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate273(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate257.evaluated;
+  const evaluated0 = validate273.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -25199,14 +26407,14 @@ function validate257(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate257.errors = vErrors;
+  validate273.errors = vErrors;
   return errors === 0;
 }
-validate257.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate259(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate273.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate275(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate259.evaluated;
+  const evaluated0 = validate275.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -25287,14 +26495,14 @@ function validate259(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
   }
-  validate259.errors = vErrors;
+  validate275.errors = vErrors;
   return errors === 0;
 }
-validate259.evaluated = { "dynamicProps": false, "dynamicItems": false };
-function validate250(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate275.evaluated = { "dynamicProps": false, "dynamicItems": false };
+function validate266(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate250.evaluated;
+  const evaluated0 = validate266.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -25377,8 +26585,8 @@ function validate250(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.analysis_chart !== void 0) {
-      if (!validate251(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate251.errors : vErrors.concat(validate251.errors);
+      if (!validate267(data.analysis_chart, { instancePath: instancePath + "/analysis_chart", parentData: data, parentDataProperty: "analysis_chart", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate267.errors : vErrors.concat(validate267.errors);
         errors = vErrors.length;
       }
     }
@@ -25405,26 +26613,26 @@ function validate250(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.pause_overlay !== void 0) {
-      if (!validate253(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate253.errors : vErrors.concat(validate253.errors);
+      if (!validate269(data.pause_overlay, { instancePath: instancePath + "/pause_overlay", parentData: data, parentDataProperty: "pause_overlay", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate269.errors : vErrors.concat(validate269.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_camera !== void 0) {
-      if (!validate255(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate255.errors : vErrors.concat(validate255.errors);
+      if (!validate271(data.replay_camera, { instancePath: instancePath + "/replay_camera", parentData: data, parentDataProperty: "replay_camera", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate271.errors : vErrors.concat(validate271.errors);
         errors = vErrors.length;
       }
     }
     if (data.replay_view !== void 0) {
-      if (!validate257(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate257.errors : vErrors.concat(validate257.errors);
+      if (!validate273(data.replay_view, { instancePath: instancePath + "/replay_view", parentData: data, parentDataProperty: "replay_view", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate273.errors : vErrors.concat(validate273.errors);
         errors = vErrors.length;
       }
     }
     if (data.result_tab !== void 0) {
-      if (!validate259(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate259.errors : vErrors.concat(validate259.errors);
+      if (!validate275(data.result_tab, { instancePath: instancePath + "/result_tab", parentData: data, parentDataProperty: "result_tab", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate275.errors : vErrors.concat(validate275.errors);
         errors = vErrors.length;
       }
     }
@@ -25448,15 +26656,15 @@ function validate250(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate250.errors = vErrors;
+  validate266.errors = vErrors;
   return errors === 0;
 }
-validate250.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
-function validate230(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
+validate266.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+function validate238(data, { instancePath = "", parentData, parentDataProperty, rootData = data, dynamicAnchors = {} } = {}) {
   ;
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate230.evaluated;
+  const evaluated0 = validate238.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = void 0;
   }
@@ -25543,8 +26751,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data0)) {
         const len0 = data0.length;
         for (let i0 = 0; i0 < len0; i0++) {
-          if (!validate231(data0[i0], { instancePath: instancePath + "/button_labels/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate231.errors : vErrors.concat(validate231.errors);
+          if (!validate239(data0[i0], { instancePath: instancePath + "/button_labels/" + i0, parentData: data0, parentDataProperty: i0, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate239.errors : vErrors.concat(validate239.errors);
             errors = vErrors.length;
           }
         }
@@ -25563,8 +26771,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       const _errs6 = errors;
       let valid3 = false;
       const _errs7 = errors;
-      if (!validate233(data2, { instancePath: instancePath + "/chart_cursor", parentData: data, parentDataProperty: "chart_cursor", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate233.errors : vErrors.concat(validate233.errors);
+      if (!validate241(data2, { instancePath: instancePath + "/chart_cursor", parentData: data, parentDataProperty: "chart_cursor", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate241.errors : vErrors.concat(validate241.errors);
         errors = vErrors.length;
       }
       var _valid0 = _errs7 === errors;
@@ -25605,8 +26813,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       const _errs11 = errors;
       let valid4 = false;
       const _errs12 = errors;
-      if (!validate240(data3, { instancePath: instancePath + "/hud", parentData: data, parentDataProperty: "hud", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate240.errors : vErrors.concat(validate240.errors);
+      if (!validate248(data3, { instancePath: instancePath + "/hud", parentData: data, parentDataProperty: "hud", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate248.errors : vErrors.concat(validate248.errors);
         errors = vErrors.length;
       }
       var _valid1 = _errs12 === errors;
@@ -25647,8 +26855,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data4)) {
         const len1 = data4.length;
         for (let i1 = 0; i1 < len1; i1++) {
-          if (!validate246(data4[i1], { instancePath: instancePath + "/ranges/" + i1, parentData: data4, parentDataProperty: i1, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate246.errors : vErrors.concat(validate246.errors);
+          if (!validate262(data4[i1], { instancePath: instancePath + "/ranges/" + i1, parentData: data4, parentDataProperty: i1, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate262.errors : vErrors.concat(validate262.errors);
             errors = vErrors.length;
           }
         }
@@ -25667,8 +26875,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       if (Array.isArray(data6)) {
         const len2 = data6.length;
         for (let i2 = 0; i2 < len2; i2++) {
-          if (!validate248(data6[i2], { instancePath: instancePath + "/readouts/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
-            vErrors = vErrors === null ? validate248.errors : vErrors.concat(validate248.errors);
+          if (!validate264(data6[i2], { instancePath: instancePath + "/readouts/" + i2, parentData: data6, parentDataProperty: i2, rootData, dynamicAnchors })) {
+            vErrors = vErrors === null ? validate264.errors : vErrors.concat(validate264.errors);
             errors = vErrors.length;
           }
         }
@@ -25683,8 +26891,8 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
       }
     }
     if (data.selections !== void 0) {
-      if (!validate250(data.selections, { instancePath: instancePath + "/selections", parentData: data, parentDataProperty: "selections", rootData, dynamicAnchors })) {
-        vErrors = vErrors === null ? validate250.errors : vErrors.concat(validate250.errors);
+      if (!validate266(data.selections, { instancePath: instancePath + "/selections", parentData: data, parentDataProperty: "selections", rootData, dynamicAnchors })) {
+        vErrors = vErrors === null ? validate266.errors : vErrors.concat(validate266.errors);
         errors = vErrors.length;
       }
     }
@@ -25709,7 +26917,7 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
           }
           errors++;
         }
-        if (!formats16.validate(data9)) {
+        if (!formats28.validate(data9)) {
           const err17 = { instancePath: instancePath + "/view_revision", schemaPath: "#/properties/view_revision/format", keyword: "format", params: { format: "uint32" }, message: 'must match format "uint32"' };
           if (vErrors === null) {
             vErrors = [err17];
@@ -25729,10 +26937,10 @@ function validate230(data, { instancePath = "", parentData, parentDataProperty, 
     }
     errors++;
   }
-  validate230.errors = vErrors;
+  validate238.errors = vErrors;
   return errors === 0;
 }
-validate230.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
+validate238.evaluated = { "props": true, "dynamicProps": false, "dynamicItems": false };
 export {
   validateGameUiAction,
   validateGameUiFrame,
