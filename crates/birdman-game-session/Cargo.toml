@@ -6,11 +6,15 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+schema = ["dep:schemars", "birdman-game-format/schema"]
+
 [dependencies]
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 sha2.workspace = true

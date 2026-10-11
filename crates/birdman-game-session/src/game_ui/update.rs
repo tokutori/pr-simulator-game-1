@@ -1,0 +1,141 @@
+use super::{game_ui_view, types::*};
+
+/// Admits an action against the actual shared view and returns UI state plus effects.
+pub fn update_game_ui(
+    state: &GameUiState,
+    action: GameUiAction,
+    context: &GameUiContext<'_, '_>,
+) -> Result<GameUiUpdate, GameUiError> {
+    let view = game_ui_view(state, context)?;
+    let admitted = view
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .any(|control| {
+            if !control.enabled {
+                return false;
+            }
+            match (&control.content, &action) {
+                (
+                    GameUiControlContent::Button {
+                        action: published, ..
+                    },
+                    candidate,
+                ) => published == candidate,
+                (
+                    GameUiControlContent::Toggle { cue, .. },
+                    GameUiAction::Session {
+                        command: GameUiSessionCommand::SetCue { cue: candidate, .. },
+                    },
+                ) => cue == candidate,
+                (
+                    GameUiControlContent::Range {
+                        target: GameUiRangeTarget::Analysis,
+                        ..
+                    },
+                    GameUiAction::SeekAnalysis { .. },
+                )
+                | (
+                    GameUiControlContent::Range {
+                        target: GameUiRangeTarget::Replay,
+                        ..
+                    },
+                    GameUiAction::SeekReplay { .. },
+                ) => true,
+                _ => false,
+            }
+        });
+    if !admitted {
+        return Err(GameUiError::ActionUnavailable);
+    }
+    let mut next = state.clone();
+    let mut effects = Vec::new();
+    match action {
+        GameUiAction::Session { command } => {
+            if command == (GameUiSessionCommand::LeaveReplay {}) {
+                next.analysis_time_seconds = context
+                    .session
+                    .playback_clock()
+                    .ok_or(GameUiError::ActionUnavailable)?
+                    .time_seconds();
+            }
+            if command == (GameUiSessionCommand::EnterReplay {}) {
+                next.replay_view = GameUiReplayView::Cinematic;
+                if !context
+                    .platform
+                    .supported_replay_cameras
+                    .contains(&state.replay_camera)
+                {
+                    next.replay_camera = GameUiReplayCamera::ALL
+                        .into_iter()
+                        .find(|camera| context.platform.supported_replay_cameras.contains(camera))
+                        .ok_or(GameUiError::ActionUnavailable)?;
+                }
+            }
+            if matches!(
+                command,
+                GameUiSessionCommand::Prepare {}
+                    | GameUiSessionCommand::Retry {}
+                    | GameUiSessionCommand::OpenSetup {}
+                    | GameUiSessionCommand::ReturnToTitle {}
+            ) {
+                next.technical_open = false;
+                next.result_tab = GameUiResultTab::Summary;
+                next.analysis_time_seconds = 0.0;
+                next.pause_overlay = GameUiPauseOverlay::Menu;
+            }
+            effects.push(GameUiEffect::Session { command });
+            if next.replay_camera != state.replay_camera {
+                effects.push(GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::SetReplayCamera {
+                        camera: next.replay_camera,
+                    },
+                });
+            }
+        }
+        GameUiAction::Platform { command } => effects.push(GameUiEffect::Platform { command }),
+        GameUiAction::ToggleTechnical {} => next.technical_open = !state.technical_open,
+        GameUiAction::SetResultTab { tab } => next.result_tab = tab,
+        GameUiAction::SetAnalysisChart { chart } => next.analysis_chart = chart,
+        GameUiAction::SetPauseOverlay { overlay } => next.pause_overlay = overlay,
+        GameUiAction::SetReplayView { view } => next.replay_view = view,
+        GameUiAction::CycleReplayCamera {} => {
+            let current = GameUiReplayCamera::ALL
+                .iter()
+                .position(|camera| *camera == state.replay_camera)
+                .ok_or(GameUiError::ActionUnavailable)?;
+            next.replay_camera = (1..=GameUiReplayCamera::ALL.len())
+                .map(|offset| {
+                    GameUiReplayCamera::ALL[(current + offset) % GameUiReplayCamera::ALL.len()]
+                })
+                .find(|camera| context.platform.supported_replay_cameras.contains(camera))
+                .ok_or(GameUiError::ActionUnavailable)?;
+            effects.push(GameUiEffect::Platform {
+                command: GameUiPlatformCommand::SetReplayCamera {
+                    camera: next.replay_camera,
+                },
+            });
+        }
+        GameUiAction::SeekAnalysis { time_seconds } | GameUiAction::SeekReplay { time_seconds } => {
+            let duration = context
+                .record
+                .ok_or(GameUiError::ActionUnavailable)?
+                .duration_seconds()
+                .map_err(GameUiError::Record)?;
+            if !time_seconds.is_finite() || time_seconds < 0.0 || time_seconds > duration {
+                return Err(GameUiError::InvalidTime);
+            }
+            if matches!(action, GameUiAction::SeekAnalysis { .. }) {
+                next.analysis_time_seconds = time_seconds;
+            }
+            effects.push(GameUiEffect::Record { action });
+        }
+        GameUiAction::ToggleReplayPlaying {} | GameUiAction::SetReplayRate { .. } => {
+            effects.push(GameUiEffect::Record { action })
+        }
+    }
+    Ok(GameUiUpdate {
+        state: next,
+        effects,
+    })
+}
