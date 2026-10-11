@@ -2295,8 +2295,8 @@ fn spawn_text(
             },
             TextColor(ink),
             Node {
-                min_width: px(0),
                 flex_shrink: 0.0,
+                overflow: Overflow::clip(),
                 ..default()
             },
         ))
@@ -3036,6 +3036,29 @@ mod tests {
         assert!(world.get::<ChartTextBaseline>(text).is_some());
     }
 
+    fn assert_text_ink_within_node(world: &World, entity: Entity) {
+        let node = world.get::<ComputedNode>(entity).unwrap();
+        let layout = world.get::<TextLayoutInfo>(entity).unwrap();
+        let text = &world.get::<Text>(entity).unwrap().0;
+        assert_eq!(
+            world.get::<Node>(entity).unwrap().overflow,
+            Overflow::clip()
+        );
+        assert!(node.size.is_finite() && layout.size.is_finite());
+        let clip = Rect::from_corners(-Vec2::ONE, node.size + Vec2::ONE);
+        for glyph in &layout.glyphs {
+            let ink_size = glyph.atlas_info.rect.size();
+            if ink_size.min_element() > 0.0 {
+                let ink = Rect::from_center_size(glyph.position, ink_size);
+                assert!(
+                    clip.contains(ink.min) && clip.contains(ink.max),
+                    "Text ink exceeds its clip: {text:?}, node={:?}, ink={ink:?}",
+                    node.size
+                );
+            }
+        }
+    }
+
     fn assert_chart_segment(
         world: &World,
         surface: Entity,
@@ -3194,6 +3217,7 @@ mod tests {
                         let text = children[1];
                         let text_bounds = bounds(app.world(), text);
                         let item_bounds = bounds(app.world(), item);
+                        assert_text_ink_within_node(app.world(), text);
                         let layout = app.world().get::<TextLayoutInfo>(text).unwrap();
                         assert_eq!(app.world().get::<Text>(text).unwrap().0, entry.label);
                         assert!(
@@ -3660,8 +3684,22 @@ mod tests {
         let assert_visible = |world: &World, shell: Entity, control: Entity| {
             let shell_bounds = bounds(world, shell);
             let control_bounds = bounds(world, control);
-            assert!(control_bounds.min.y >= shell_bounds.min.y - 1.0);
-            assert!(control_bounds.max.y <= shell_bounds.max.y + 1.0);
+            assert!(
+                control_bounds.min.y >= shell_bounds.min.y - 1.0,
+                "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
+                world.resource::<NativeSession>().game.snapshot().phase(),
+                world.get::<Name>(control),
+                world.resource::<InputFocus>().get(),
+                world.get::<ScrollPosition>(shell)
+            );
+            assert!(
+                control_bounds.max.y <= shell_bounds.max.y + 1.0,
+                "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
+                world.resource::<NativeSession>().game.snapshot().phase(),
+                world.get::<Name>(control),
+                world.resource::<InputFocus>().get(),
+                world.get::<ScrollPosition>(shell)
+            );
         };
         for (width, height) in [(360, 300), (800, 300)] {
             for replay in [false, true] {
@@ -3732,6 +3770,7 @@ mod tests {
                 .node;
                 let minimum_hit = view.theme.button_min_height_px as f32;
                 for widget in retained.widgets.values() {
+                    assert_text_ink_within_node(app.world(), widget.text);
                     if app.world().get::<Button>(widget.node).is_some() {
                         assert!(
                             app.world()
@@ -3761,15 +3800,26 @@ mod tests {
                 let range = (shell_node.content_size.y - shell_node.size.y)
                     * shell_node.inverse_scale_factor;
                 assert!(range > 0.0);
-                for (delta, target) in [
-                    ((seek_bounds.max.y - shell_bounds.max.y).max(0.0), seek),
-                    (10000.0, navigation),
-                ] {
+                for target in [seek, navigation] {
+                    let target_bounds = bounds(app.world(), target);
+                    let viewport = bounds(app.world(), shell);
+                    let delta = (target_bounds.max.y - viewport.max.y).max(0.0);
                     wheel(&mut app, shell, camera, window, delta);
                     assert_visible(app.world(), shell, target);
                     assert_eq!(app.world().resource::<InputFocus>().get(), Some(focused));
                 }
+                wheel(&mut app, shell, camera, window, 10000.0);
+                assert_visible(app.world(), shell, navigation);
+                assert_eq!(app.world().resource::<InputFocus>().get(), Some(focused));
                 assert!((app.world().get::<ScrollPosition>(shell).unwrap().y - range).abs() < 1.0);
+                assert_eq!(
+                    app.world()
+                        .get::<ComputedNode>(shell)
+                        .unwrap()
+                        .scroll_position
+                        .y,
+                    range.floor()
+                );
                 assert_eq!(app.world().get::<ScrollPosition>(chart).unwrap().y, 0.0);
                 for _ in 0..3 {
                     app.update();
