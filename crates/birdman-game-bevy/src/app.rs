@@ -132,6 +132,20 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .init_resource::<water_quality::WaterQualitySelection>()
     .init_resource::<CameraMode>();
     app.init_resource::<frame_rate::FrameRate>();
+    let render_app = app
+        .get_sub_app_mut(bevy::render::RenderApp)
+        .ok_or("Native render app is unavailable")?;
+    render_app
+        .init_resource::<water::LakeDetailMips>()
+        .add_systems(
+            bevy::render::ExtractSchedule,
+            (water::extract_detail_mips, water::report_detail_mip_failure).chain(),
+        )
+        .add_systems(
+            bevy::core_pipeline::schedule::Core3d,
+            water::generate_detail_mips
+                .before(bevy::core_pipeline::schedule::Core3dSystems::MainPass),
+        );
     let font = app
         .world_mut()
         .resource_mut::<Assets<Font>>()

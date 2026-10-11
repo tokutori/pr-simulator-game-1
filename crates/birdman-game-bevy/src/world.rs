@@ -302,6 +302,7 @@ pub(crate) fn setup_world(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut water: ResMut<Assets<WaterMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     commands.init_resource::<RenderHistory>();
     commands.insert_resource(NativeEnvironment::try_default().expect("登録環境が不正"));
@@ -338,7 +339,10 @@ pub(crate) fn setup_world(
             Transform::IDENTITY,
         ));
     }
-    let registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
+    let mut registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
+    registered_water
+        .upload_detail(&mut images)
+        .expect("登録微細波画像が不正");
     let sunlight = sunlight_transform(registered_water.sun_cloud.truncate());
     let mut registered_sky = registered_water.clone();
     registered_sky.waves_sky.w = 1.0;
@@ -1052,6 +1056,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
         app.update();

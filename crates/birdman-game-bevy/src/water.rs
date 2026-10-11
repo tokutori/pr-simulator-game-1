@@ -1,31 +1,49 @@
 use super::{
     environment::{
-        EnvironmentCondition, EnvironmentFailure, EnvironmentSun, EnvironmentSurface,
-        EnvironmentTarget, NativeEnvironment,
+        DetailMipFailure, EnvironmentCondition, EnvironmentFailure, EnvironmentSun,
+        EnvironmentSurface, EnvironmentTarget, NativeEnvironment,
     },
     native_session::NativeSession,
     projection::{sky_sun_direction, sunlight_transform},
     water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection},
 };
-use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
-    asset::RenderAssetUsages,
+    asset as bevy_asset, ecs as bevy_ecs, image as bevy_image, reflect as bevy_reflect,
+    render as bevy_render,
+};
+use bevy::{
+    asset::{AssetId, RenderAssetUsages},
     camera::primitives::Aabb,
-    mesh::Indices,
+    core_pipeline::mip_generation::{
+        DownsampleShaders, MipGenerationJobs, MipGenerationPhaseId, MipGenerationPipelines,
+        generate_mips_for_phase,
+    },
+    image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
+    mesh::{Indices, VertexAttributeValues},
     prelude::*,
     reflect::TypePath,
-    render::render_resource::{AsBindGroup, PrimitiveTopology},
-    shader::ShaderRef,
+    render::{
+        Extract, MainWorld,
+        render_asset::RenderAssets,
+        render_resource::{
+            AsBindGroup, CachedPipelineState, ComputePipelineDescriptor, Extent3d, PipelineCache,
+            PipelineDescriptor, PrimitiveTopology, TextureDimension, TextureFormat, TextureId,
+            TextureUsages,
+        },
+        renderer::RenderContext,
+        texture::GpuImage,
+    },
+    shader::{ShaderCacheError, ShaderRef},
+};
+use birdman_game_session::lake_water::{
+    LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
+    production_lake_detail_configs,
 };
 
-const GEOMETRY_WAVE_COUNT: usize = 4;
-const NEAR_WIDTH_M: f32 = 64.0;
-const NEAR_CELLS: u32 = 256;
-const FADE_START_M: f32 = 24.0;
+const GEOMETRY_WAVE_COUNT: usize = MAX_LAKE_WAVE_COMPONENTS;
+const NEAR_WIDTH_M: f32 = 6000.0;
 const FAR_HALF_WIDTH_M: f32 = 90_000.0;
-const MAX_GEOMETRY_HEIGHT_M: f64 = 0.35;
-const MAX_HORIZONTAL_DERIVATIVE: f64 = 0.45;
-const CHOPPINESS: f64 = 0.75;
+const MIP_PHASE: MipGenerationPhaseId = MipGenerationPhaseId(0x4c414b45);
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub(crate) struct WaterMaterial {
@@ -41,6 +59,16 @@ pub(crate) struct WaterMaterial {
     geometry_waves: [Vec4; GEOMETRY_WAVE_COUNT],
     #[uniform(5)]
     geometry_motion: [Vec4; GEOMETRY_WAVE_COUNT],
+    #[uniform(6)]
+    geometry_parameters: Vec4,
+    #[texture(7)]
+    #[sampler(8)]
+    detail_near: Option<Handle<Image>>,
+    #[texture(9)]
+    #[sampler(10)]
+    detail_far: Option<Handle<Image>>,
+    visual_condition: LakeVisualCondition,
+    displacement_bounds: Vec2,
 }
 
 impl Material for WaterMaterial {
@@ -61,6 +89,18 @@ impl Material for WaterMaterial {
     }
 }
 
+fn visual_condition(condition: EnvironmentCondition) -> Result<LakeVisualCondition, String> {
+    let waves = condition.waves;
+    LakeVisualCondition::try_new(
+        waves.wind_velocity_ne_mps[0],
+        waves.wind_velocity_ne_mps[1],
+        waves.fetch_m,
+        waves.detail_amplitude_scale,
+        u64::from(waves.pattern_seed),
+    )
+    .map_err(|cause| format!("共有水面モデルを準備できない: {cause}"))
+}
+
 impl WaterMaterial {
     pub(crate) fn registered(sky: bool) -> Result<Self, String> {
         let condition = EnvironmentTarget::DefaultExhibition
@@ -74,22 +114,28 @@ impl WaterMaterial {
         condition: EnvironmentCondition,
         sky: bool,
     ) -> Result<Self, String> {
+        let visual_condition = visual_condition(condition)?;
         let waves = condition.waves;
         let sun_cloud = condition.sky.map_or(Vec4::ZERO, |sky| {
             sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
                 .extend(sky.cloud_fraction as f32)
         });
-        let wind = Vec2::new(
-            waves.wind_velocity_ne_mps[1] as f32,
-            -waves.wind_velocity_ne_mps[0] as f32,
-        );
-        let (geometry_waves, geometry_motion) = geometry_components(
-            wind,
-            waves.fetch_m,
-            waves.detail_amplitude_scale,
-            waves.pattern_seed,
-        )?;
-        Ok(Self {
+        let mut displacement_bounds = Vec2::ZERO;
+        for quality in WaterQuality::ALL {
+            let projection = LakeWaveProjection::try_new(visual_condition, quality.shared())
+                .map_err(|cause| format!("共有波投影を準備できない: {cause}"))?;
+            let amplitude = projection
+                .wave_k_amplitude()
+                .iter()
+                .map(|wave| wave[3].abs())
+                .sum::<f32>();
+            displacement_bounds.x = displacement_bounds
+                .x
+                .max(1.5 * projection.choppiness() * amplitude);
+            displacement_bounds.y = displacement_bounds.y.max(2.0625 * amplitude);
+        }
+        displacement_bounds.y += 1.15 * (128.0 / 255.0) * waves.detail_amplitude_scale as f32;
+        let mut material = Self {
             camera_time: Vec4::ZERO,
             sun_cloud,
             waves_sky: Vec4::new(
@@ -101,11 +147,18 @@ impl WaterMaterial {
             geometry_patch: if sky {
                 Vec4::ZERO
             } else {
-                Vec4::new(0.0, 0.0, FADE_START_M, NEAR_WIDTH_M * 0.5)
+                Vec4::new(0.0, 0.0, 0.0, NEAR_WIDTH_M * 0.5)
             },
-            geometry_waves,
-            geometry_motion,
-        })
+            geometry_waves: [Vec4::ZERO; GEOMETRY_WAVE_COUNT],
+            geometry_motion: [Vec4::ZERO; GEOMETRY_WAVE_COUNT],
+            geometry_parameters: Vec4::ZERO,
+            detail_near: None,
+            detail_far: None,
+            visual_condition,
+            displacement_bounds,
+        };
+        material.apply_profile(WaterQuality::High)?;
+        Ok(material)
     }
 
     pub(crate) fn far_surface(&self) -> Self {
@@ -117,37 +170,29 @@ impl WaterMaterial {
     #[cfg(test)]
     pub(crate) fn registered_for_quality(quality: WaterQuality) -> Result<Self, String> {
         let mut material = Self::registered(false)?;
-        material.apply_profile(quality);
+        material.apply_profile(quality)?;
         Ok(material)
     }
 
-    fn apply_profile(&mut self, quality: WaterQuality) {
-        if quality != WaterQuality::High {
-            for wave in &mut self.geometry_waves {
-                let high = geometry_resolution(wave.z, NEAR_CELLS);
-                let selected = geometry_resolution(wave.z, quality.profile().near_cells);
-                let ratio = if high > 0.0 {
-                    (selected / high).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                wave.w *= ratio as f32;
-            }
-        }
+    fn apply_profile(&mut self, quality: WaterQuality) -> Result<(), String> {
+        let projection = LakeWaveProjection::try_new(self.visual_condition, quality.shared())
+            .map_err(|cause| format!("共有波投影を準備できない: {cause}"))?;
+        self.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
+        self.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
+        self.geometry_parameters = Vec4::new(
+            projection.wave_count() as f32,
+            projection.choppiness(),
+            projection.visual_wave_height() as f32,
+            projection.spacing().gradient_magnitude() as f32,
+        );
+        Ok(())
     }
 
     pub(crate) fn near_bounds(&self) -> Aabb {
-        let vertical = self.geometry_waves.iter().map(|wave| wave.w).sum::<f32>();
-        let horizontal = self
-            .geometry_waves
-            .iter()
-            .zip(self.geometry_motion)
-            .map(|(wave, motion)| wave.w * motion.z)
-            .sum::<f32>();
         let extent = Vec3::new(
-            NEAR_WIDTH_M * 0.5 + horizontal,
-            vertical + 0.001,
-            NEAR_WIDTH_M * 0.5 + horizontal,
+            NEAR_WIDTH_M * 0.5 + self.displacement_bounds.x,
+            self.displacement_bounds.y + 0.001,
+            NEAR_WIDTH_M * 0.5 + self.displacement_bounds.x,
         );
         Aabb::from_min_max(-extent, extent)
     }
@@ -160,14 +205,215 @@ impl WaterMaterial {
             self.geometry_patch.y = center.y;
         }
     }
+
+    pub(crate) fn upload_detail(&mut self, images: &mut Assets<Image>) -> Result<(), String> {
+        let [near, far] = prepare_detail_images(self.visual_condition)?;
+        self.detail_near = Some(images.add(near));
+        self.detail_far = Some(images.add(far));
+        Ok(())
+    }
+}
+
+fn prepare_detail_images(condition: LakeVisualCondition) -> Result<[Image; 2], String> {
+    let configs = production_lake_detail_configs(condition)
+        .map_err(|cause| format!("共有微細波条件を準備できない: {cause}"))?;
+    let mut generated = Vec::with_capacity(2);
+    for config in configs {
+        let detail = generate_lake_detail(config)
+            .map_err(|cause| format!("共有微細波画像を準備できない: {cause}"))?;
+        let size = detail.metadata().width as u32;
+        let mut image = Image::new(
+            Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            detail.into_rgba(),
+            TextureFormat::Rgba8Unorm,
+            RenderAssetUsages::default(),
+        );
+        image.texture_descriptor.mip_level_count = size.ilog2() + 1;
+        image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING;
+        let allocated_bytes = (0..image.texture_descriptor.mip_level_count)
+            .map(|level| ((size >> level).max(1) as usize).pow(2) * 4)
+            .sum();
+        image
+            .data
+            .as_mut()
+            .expect("Generated image retains its upload bytes")
+            .resize(allocated_bytes, 0);
+        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            anisotropy_clamp: 8,
+            ..ImageSamplerDescriptor::linear()
+        });
+        generated.push(image);
+    }
+    generated
+        .try_into()
+        .map_err(|_| "共有微細波画像の枚数が不正".into())
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct LakeDetailMips {
+    active: Vec<AssetId<Image>>,
+    recorded: Vec<(AssetId<Image>, TextureId)>,
+    failure: Option<DetailMipFailure>,
+}
+
+impl LakeDetailMips {
+    fn retain_active(&mut self) {
+        self.recorded
+            .retain(|(image, _)| self.active.contains(image));
+        if let Some(failure) = &mut self.failure {
+            failure.images.retain(|image| self.active.contains(image));
+            if failure.images.is_empty() {
+                self.failure = None;
+            }
+        }
+    }
+
+    fn pending(&self, image: AssetId<Image>, texture: TextureId) -> bool {
+        self.failure.is_none() && !self.recorded.contains(&(image, texture))
+    }
+}
+
+fn mip_pipeline_matches(
+    descriptor: &ComputePipelineDescriptor,
+    shader: &Handle<Shader>,
+    entry: &str,
+) -> bool {
+    descriptor.shader == *shader && descriptor.entry_point.as_deref() == Some(entry)
+}
+
+fn mip_pipeline_ready(
+    descriptor: &ComputePipelineDescriptor,
+    state: &CachedPipelineState,
+    shader: &Handle<Shader>,
+    entry: &'static str,
+    images: &[AssetId<Image>],
+) -> Result<bool, DetailMipFailure> {
+    if !mip_pipeline_matches(descriptor, shader, entry) {
+        return Ok(false);
+    }
+    match state {
+        CachedPipelineState::Ok(_) => Ok(true),
+        CachedPipelineState::Queued | CachedPipelineState::Creating(_) => Ok(false),
+        CachedPipelineState::Err(
+            ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable,
+        ) => Ok(false),
+        CachedPipelineState::Err(cause) => Err(DetailMipFailure {
+            images: images.to_vec(),
+            shader: shader.id(),
+            entry,
+            cause: format!("{cause:?}"),
+        }),
+    }
+}
+
+pub(crate) fn report_detail_mip_failure(
+    state: Res<LakeDetailMips>,
+    mut main_world: ResMut<MainWorld>,
+) {
+    let Some(environment) = main_world.get_resource::<NativeEnvironment>() else {
+        return;
+    };
+    if environment.detail_mip_failure() != state.failure.as_ref() {
+        main_world
+            .resource_mut::<NativeEnvironment>()
+            .report_detail_mip_failure(state.failure.clone());
+    }
+}
+
+pub(crate) fn extract_detail_mips(
+    materials: Extract<Res<Assets<WaterMaterial>>>,
+    gpu_images: Res<RenderAssets<GpuImage>>,
+    mut state: ResMut<LakeDetailMips>,
+    mut jobs: ResMut<MipGenerationJobs>,
+) {
+    state.active.clear();
+    for (_, material) in materials.iter() {
+        for handle in [&material.detail_near, &material.detail_far]
+            .into_iter()
+            .flatten()
+        {
+            if !state.active.contains(&handle.id()) {
+                state.active.push(handle.id());
+            }
+        }
+    }
+    state.retain_active();
+    if state.failure.is_some() {
+        return;
+    }
+    for image in &state.active {
+        if gpu_images
+            .get(*image)
+            .is_none_or(|gpu| state.pending(*image, gpu.texture.id()))
+        {
+            jobs.add(MIP_PHASE, *image);
+        }
+    }
+}
+
+pub(crate) fn generate_detail_mips(
+    jobs: Res<MipGenerationJobs>,
+    cache: Res<PipelineCache>,
+    shaders: Res<DownsampleShaders>,
+    pipelines: Option<Res<MipGenerationPipelines>>,
+    images: Res<RenderAssets<GpuImage>>,
+    mut state: ResMut<LakeDetailMips>,
+    mut context: RenderContext,
+) {
+    if state.failure.is_some() {
+        return;
+    }
+    let Some(phase) = jobs.get(&MIP_PHASE).filter(|phase| !phase.is_empty()) else {
+        return;
+    };
+    let Some(pipelines) = pipelines else {
+        return;
+    };
+    let Some(shader) = shaders.general.get(&TextureFormat::Rgba8Unorm) else {
+        return;
+    };
+    let mut all_ready = true;
+    for entry in ["downsample_first", "downsample_second"] {
+        let mut ready = false;
+        for pipeline in cache.pipelines() {
+            let PipelineDescriptor::ComputePipelineDescriptor(descriptor) = &pipeline.descriptor
+            else {
+                continue;
+            };
+            match mip_pipeline_ready(descriptor, &pipeline.state, shader, entry, &state.active) {
+                Ok(available) => ready |= available,
+                Err(cause) => {
+                    state.failure = Some(cause);
+                    return;
+                }
+            }
+        }
+        all_ready &= ready;
+    }
+    if !all_ready {
+        return;
+    }
+    generate_mips_for_phase(MIP_PHASE, &jobs, &cache, &pipelines, &images, &mut context);
+    for image in phase.iter() {
+        if !state.active.contains(image) {
+            continue;
+        }
+        if let Some(gpu) = images.get(*image) {
+            state.recorded.retain(|(recorded, _)| recorded != image);
+            state.recorded.push((*image, gpu.texture.id()));
+        }
+    }
 }
 
 pub(crate) fn patch_center(camera: Vec3) -> Vec2 {
-    let step = NEAR_WIDTH_M / NEAR_CELLS as f32;
-    Vec2::new(
-        (camera.x / step).floor() * step,
-        (camera.z / step).floor() * step,
-    )
+    Vec2::new(camera.x.floor(), camera.z.floor())
 }
 
 pub(crate) fn near_mesh() -> Mesh {
@@ -175,11 +421,44 @@ pub(crate) fn near_mesh() -> Mesh {
 }
 
 pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
-    Plane3d::default()
+    let cells = quality.profile().near_cells;
+    let mut mesh = Plane3d::default()
         .mesh()
         .size(NEAR_WIDTH_M, NEAR_WIDTH_M)
-        .subdivisions(quality.profile().near_cells - 1)
-        .build()
+        .subdivisions(cells - 1)
+        .build();
+    let Some(VertexAttributeValues::Float32x3(positions)) =
+        mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+    else {
+        unreachable!("Plane mesh exposes float3 positions");
+    };
+    let exponent = 7.2_f64;
+    let half_width = f64::from(NEAR_WIDTH_M) * 0.5;
+    let denominator = exponent.exp_m1();
+    let mut spacing = Vec::with_capacity(positions.len());
+    for position in positions {
+        let local_x = f64::from(position[0]);
+        let local_z = f64::from(position[2]);
+        let map = |value: f64| {
+            value.signum() * half_width * (exponent * value.abs() / half_width).exp_m1()
+                / denominator
+        };
+        let step = |value: f64| {
+            f64::from(NEAR_WIDTH_M) / f64::from(cells)
+                * exponent
+                * (exponent * value.abs() / half_width).exp()
+                / denominator
+        };
+        spacing.push([step(local_x).max(step(local_z)) as f32, 0.0]);
+        position[0] = map(local_x) as f32;
+        position[2] = map(local_z) as f32;
+    }
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, spacing);
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        vec![[0.0_f32; 4]; mesh.count_vertices()],
+    );
+    mesh
 }
 
 #[derive(Component)]
@@ -190,6 +469,7 @@ pub(crate) fn apply_environment(
     quality: Res<WaterQualitySelection>,
     mut presentation: ResMut<NativeEnvironment>,
     mut materials: ResMut<Assets<WaterMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     mut surfaces: Query<(
         &EnvironmentSurface,
         &MeshMaterial3d<WaterMaterial>,
@@ -213,11 +493,13 @@ pub(crate) fn apply_environment(
             .map_err(EnvironmentFailure::WavePreparation)?;
         let bounds = high.near_bounds();
         let mut near = high.clone();
-        near.apply_profile(quality.applied());
+        near.apply_profile(quality.applied())
+            .map_err(EnvironmentFailure::WavePreparation)?;
         let mut sky = high.clone();
         sky.waves_sky.w = 1.0;
         sky.geometry_patch = Vec4::ZERO;
-        let mut prepared = [near, high.far_surface(), sky];
+        let far = near.far_surface();
+        let mut prepared = [near, far, sky];
         let mut handles: [Option<Handle<WaterMaterial>>; 3] = std::array::from_fn(|_| None);
         for (role, handle, bounds) in surfaces.iter() {
             if handles[role.index()].replace(handle.0.clone()).is_some() {
@@ -227,6 +509,7 @@ pub(crate) fn apply_environment(
                 return Err(EnvironmentFailure::BoundsUnavailable);
             }
         }
+        let mut previous_images = Vec::with_capacity(2);
         for role in EnvironmentSurface::ALL {
             let handle = handles[role.index()]
                 .as_ref()
@@ -236,6 +519,14 @@ pub(crate) fn apply_environment(
                 .ok_or(EnvironmentFailure::MaterialUnavailable(role))?;
             prepared[role.index()].camera_time = current.camera_time;
             prepared[role.index()].geometry_patch = current.geometry_patch;
+            for image in [&current.detail_near, &current.detail_far]
+                .into_iter()
+                .flatten()
+            {
+                if !previous_images.contains(&image.id()) {
+                    previous_images.push(image.id());
+                }
+            }
         }
         for first in 0..handles.len() {
             for second in (first + 1)..handles.len() {
@@ -247,6 +538,8 @@ pub(crate) fn apply_environment(
         let (mut light, mut transform) = sun
             .single_mut()
             .map_err(|_| EnvironmentFailure::SunUnavailable)?;
+        let [near_image, far_image] = prepare_detail_images(high.visual_condition)
+            .map_err(EnvironmentFailure::WavePreparation)?;
         let direction = prepared[EnvironmentSurface::Sky.index()]
             .sun_cloud
             .truncate();
@@ -255,6 +548,12 @@ pub(crate) fn apply_environment(
         } else {
             Transform::IDENTITY
         };
+        let near_image = images.add(near_image);
+        let far_image = images.add(far_image);
+        for material in &mut prepared {
+            material.detail_near = Some(near_image.clone());
+            material.detail_far = Some(far_image.clone());
+        }
         for (role, handle, current_bounds) in &mut surfaces {
             *materials
                 .get_mut(handle.0.id())
@@ -262,6 +561,9 @@ pub(crate) fn apply_environment(
             if *role == EnvironmentSurface::Near {
                 *current_bounds.expect("Validated near bounds") = bounds;
             }
+        }
+        for image in previous_images {
+            images.remove(image);
         }
         *transform = sunlight;
         light.illuminance = if condition
@@ -287,6 +589,7 @@ pub(crate) fn apply_quality(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<WaterMaterial>>,
     mut near: Query<(&mut Mesh3d, &MeshMaterial3d<WaterMaterial>), With<NearWaterSurface>>,
+    surfaces: Query<(&EnvironmentSurface, &MeshMaterial3d<WaterMaterial>)>,
 ) {
     let Some(requested) = selection.pending() else {
         return;
@@ -299,10 +602,31 @@ pub(crate) fn apply_quality(
         if meshes.get(previous).is_none() {
             return Err(WaterQualityFailure::MeshUnavailable);
         }
-        let mut current_material = materials
-            .get_mut(material_handle.0.id())
+        let current_material = materials
+            .get(material_handle.0.id())
             .ok_or(WaterQualityFailure::MaterialUnavailable)?;
-        let prepared_mesh = near_mesh_for_quality(requested);
+        let mut far_handle = None;
+        for (role, handle) in &surfaces {
+            if *role == EnvironmentSurface::Far && far_handle.replace(handle.0.clone()).is_some() {
+                return Err(WaterQualityFailure::EnvironmentProjection(
+                    EnvironmentFailure::SurfaceDuplicated(EnvironmentSurface::Far),
+                ));
+            }
+        }
+        let far_handle = far_handle.ok_or(WaterQualityFailure::EnvironmentProjection(
+            EnvironmentFailure::SurfaceUnavailable(EnvironmentSurface::Far),
+        ))?;
+        if far_handle == material_handle.0 {
+            return Err(WaterQualityFailure::EnvironmentProjection(
+                EnvironmentFailure::SharedMaterial,
+            ));
+        }
+        let mut prepared_far = materials
+            .get(far_handle.id())
+            .ok_or(WaterQualityFailure::EnvironmentProjection(
+                EnvironmentFailure::MaterialUnavailable(EnvironmentSurface::Far),
+            ))?
+            .clone();
         let target = EnvironmentTarget::project(
             session.game.snapshot().phase(),
             session.game.configuration_identity(),
@@ -310,24 +634,30 @@ pub(crate) fn apply_quality(
         let condition = environment
             .condition_for(target)
             .map_err(WaterQualityFailure::EnvironmentProjection)?;
+        let prepared_mesh = near_mesh_for_quality(requested);
         let mut prepared_material = WaterMaterial::from_environment(condition, false)
             .map_err(WaterQualityFailure::WavePreparation)?;
-        prepared_material.apply_profile(requested);
+        prepared_material
+            .apply_profile(requested)
+            .map_err(WaterQualityFailure::WavePreparation)?;
         prepared_material.camera_time = current_material.camera_time;
         prepared_material.geometry_patch = current_material.geometry_patch;
+        prepared_material.detail_near = current_material.detail_near.clone();
+        prepared_material.detail_far = current_material.detail_far.clone();
+        prepared_far
+            .apply_profile(requested)
+            .map_err(WaterQualityFailure::WavePreparation)?;
         current.0 = meshes.add(prepared_mesh);
-        *current_material = prepared_material;
+        *materials
+            .get_mut(material_handle.0.id())
+            .expect("Validated near material") = prepared_material;
+        *materials
+            .get_mut(far_handle.id())
+            .expect("Validated far material") = prepared_far;
         meshes.remove(previous);
         Ok(())
     })();
     *selection = selection.completed(result);
-}
-
-fn geometry_resolution(wave_number: f32, cells: u32) -> f64 {
-    let maximum_edge = f64::from(NEAR_WIDTH_M / cells as f32) * 2.0_f64.sqrt();
-    let wavelength = std::f64::consts::TAU / f64::from(wave_number);
-    let resolution = ((wavelength - maximum_edge * 2.0) / (maximum_edge * 2.0)).clamp(0.0, 1.0);
-    resolution * resolution * (3.0 - 2.0 * resolution)
 }
 
 pub(crate) fn far_mesh() -> Mesh {
@@ -358,120 +688,9 @@ pub(crate) fn far_mesh() -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; 16])
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0]; 16])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, vec![[1200.0, 0.0]; 16])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0_f32; 4]; 16])
     .with_inserted_indices(Indices::U32(indices))
-}
-
-fn seeded_unit(seed: u32, index: u32) -> f64 {
-    let mut value = seed.wrapping_add(index.wrapping_mul(0x9e37_79b9));
-    value = (value ^ (value >> 16)).wrapping_mul(0x7feb_352d);
-    value = (value ^ (value >> 15)).wrapping_mul(0x846c_a68b);
-    value ^= value >> 16;
-    f64::from(value) / 4_294_967_296.0
-}
-
-fn geometry_components(
-    wind: Vec2,
-    fetch_m: f64,
-    detail_scale: f64,
-    seed: u32,
-) -> Result<([Vec4; GEOMETRY_WAVE_COUNT], [Vec4; GEOMETRY_WAVE_COUNT]), String> {
-    let wind_speed = f64::from(wind.x).hypot(f64::from(wind.y));
-    if !wind.is_finite()
-        || wind_speed > 60.0
-        || !fetch_m.is_finite()
-        || !(0.0..=50_000.0).contains(&fetch_m)
-        || fetch_m == 0.0
-        || !detail_scale.is_finite()
-        || !(0.0..=3.0).contains(&detail_scale)
-        || detail_scale == 0.0
-    {
-        return Err("描画用波浪入力が有限値または対応範囲を満たさない".into());
-    }
-    let mut waves = [Vec4::ZERO; GEOMETRY_WAVE_COUNT];
-    let mut motion = [Vec4::ZERO; GEOMETRY_WAVE_COUNT];
-    if wind_speed < 0.05 {
-        return Ok((waves, motion));
-    }
-    let gravity = 9.80665;
-    let dimensionless_fetch = gravity * fetch_m / wind_speed.powi(2);
-    let significant_height =
-        0.283 * wind_speed.powi(2) / gravity * (0.0125 * dimensionless_fetch.powf(0.42)).tanh();
-    if significant_height < 0.001 {
-        return Ok((waves, motion));
-    }
-    let peak_period =
-        (7.54 * (0.077 * dimensionless_fetch.powf(0.25)).tanh() * wind_speed / gravity).max(0.8);
-    let peak_frequency = std::f64::consts::TAU / peak_period;
-    let mut weights = [0.0_f64; 18];
-    let mut frequencies = [0.0_f64; 18];
-    for index in 0..18 {
-        let band = (index / 3) as f64 / 5.0;
-        let frequency_jitter = (index % 3) as f64 * 0.035 - 0.035;
-        let frequency = peak_frequency * ((band - 0.42) * 1.5 + frequency_jitter).exp();
-        let ratio = peak_frequency / frequency;
-        let sigma: f64 = if frequency <= peak_frequency {
-            0.07
-        } else {
-            0.09
-        };
-        let enhancement = (-(frequency - peak_frequency).powi(2)
-            / (2.0 * sigma.powi(2) * peak_frequency.powi(2)))
-        .exp();
-        let shape = frequency.powi(-5) * (-1.25 * ratio.powi(4)).exp() * 3.3_f64.powf(enhancement);
-        let bandwidth = frequency * (0.3_f64.exp() - 1.0);
-        weights[index] = (shape * bandwidth / 3.0).sqrt();
-        frequencies[index] = frequency;
-    }
-    let normalization = significant_height
-        / (4.0
-            * weights
-                .iter()
-                .map(|weight| weight.powi(2))
-                .sum::<f64>()
-                .sqrt());
-    let direction = wind / wind_speed as f32;
-    let maximum_edge = f64::from(NEAR_WIDTH_M / NEAR_CELLS as f32) * 2.0_f64.sqrt();
-    for (slot, index) in [1_usize, 4, 7, 8].into_iter().enumerate() {
-        let band = (index / 3) as f64 / 5.0;
-        let angle = ((index % 3) as f64 - 1.0) * (0.16 + 0.12 * band)
-            + (seeded_unit(seed, index as u32 + 701) - 0.5) * 0.09;
-        let wave_direction = Vec2::new(
-            direction.x * angle.cos() as f32 - direction.y * angle.sin() as f32,
-            direction.x * angle.sin() as f32 + direction.y * angle.cos() as f32,
-        )
-        .normalize();
-        let frequency = frequencies[index];
-        let wave_number = frequency.powi(2) / gravity;
-        let wavelength = std::f64::consts::TAU / wave_number;
-        let resolution = ((wavelength - maximum_edge * 2.0) / (maximum_edge * 2.0)).clamp(0.0, 1.0);
-        let resolved_weight = resolution * resolution * (3.0 - 2.0 * resolution);
-        let short_weight = ((wave_number - 1.5) / 4.5).clamp(0.0, 1.0);
-        let visual_scale = 0.65 + 1.35 * short_weight.powi(2) * (3.0 - 2.0 * short_weight);
-        let amplitude =
-            weights[index] * normalization * detail_scale * resolved_weight * visual_scale;
-        waves[slot] = wave_direction
-            .extend(wave_number as f32)
-            .extend(amplitude as f32);
-        motion[slot] = Vec4::new(
-            frequency as f32,
-            (seeded_unit(seed, index as u32 + 101) * std::f64::consts::TAU) as f32,
-            CHOPPINESS as f32,
-            0.0,
-        );
-    }
-    let height = waves.iter().map(|wave| f64::from(wave.w)).sum::<f64>();
-    let fade_gradient = 1.5 * 2.0_f64.sqrt() / f64::from(NEAR_WIDTH_M * 0.5 - FADE_START_M);
-    let derivative = waves
-        .iter()
-        .map(|wave| CHOPPINESS * f64::from(wave.w) * (f64::from(wave.z) + fade_gradient))
-        .sum::<f64>();
-    let scale = (MAX_GEOMETRY_HEIGHT_M / height.max(f64::MIN_POSITIVE))
-        .min(MAX_HORIZONTAL_DERIVATIVE / derivative.max(f64::MIN_POSITIVE))
-        .min(1.0) as f32;
-    for wave in &mut waves {
-        wave.w *= scale;
-    }
-    Ok((waves, motion))
 }
 
 #[cfg(test)]
@@ -497,6 +716,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
                 birdman_game_core::PHYSICS_HZ,
@@ -563,6 +783,7 @@ mod tests {
     #[test]
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
+        let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
         app.init_resource::<TechnicalDisclosure>()
             .add_systems(Update, update_ui.after(apply_quality));
         let summary = app.world_mut().spawn((UiText::Session, Text::new(""))).id();
@@ -580,6 +801,13 @@ mod tests {
         let target = EnvironmentTarget::Sealed(identity);
         let condition = target.resolve().unwrap().condition();
         let high = WaterMaterial::from_environment(condition, false).unwrap();
+        let images = app.world().resource::<Assets<Image>>();
+        assert_eq!(images.len(), 2);
+        assert!(
+            original_images
+                .into_iter()
+                .all(|image| images.get(image).is_none())
+        );
         let (near, _) = environment_surface(&mut app, EnvironmentSurface::Near);
         assert_eq!(
             app.world().get::<Aabb>(near).unwrap().half_extents,
@@ -660,7 +888,7 @@ mod tests {
                 quality
             );
             let mut selected = high.clone();
-            selected.apply_profile(quality);
+            selected.apply_profile(quality).unwrap();
             for (role, material) in EnvironmentSurface::ALL
                 .into_iter()
                 .zip(environment_materials(&mut app))
@@ -669,13 +897,30 @@ mod tests {
                 assert_eq!(material.geometry_patch, before[role.index()].geometry_patch);
                 assert_eq!(material.sun_cloud, Vec4::ZERO);
                 assert_eq!(material.waves_sky, before[role.index()].waves_sky);
-                assert_eq!(material.geometry_motion, high.geometry_motion);
+                assert_eq!(material.detail_near, before[role.index()].detail_near);
+                assert_eq!(material.detail_far, before[role.index()].detail_far);
+                assert_eq!(
+                    material.geometry_motion,
+                    if role != EnvironmentSurface::Sky {
+                        selected.geometry_motion
+                    } else {
+                        high.geometry_motion
+                    }
+                );
                 assert_eq!(
                     material.geometry_waves,
-                    if role == EnvironmentSurface::Near {
+                    if role != EnvironmentSurface::Sky {
                         selected.geometry_waves
                     } else {
                         high.geometry_waves
+                    }
+                );
+                assert_eq!(
+                    material.geometry_parameters,
+                    if role != EnvironmentSurface::Sky {
+                        selected.geometry_parameters
+                    } else {
+                        high.geometry_parameters
                     }
                 );
             }
@@ -683,6 +928,7 @@ mod tests {
                 app.world().get::<Aabb>(near).unwrap().half_extents,
                 high.near_bounds().half_extents
             );
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
         }
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
@@ -737,6 +983,15 @@ mod tests {
             WaterMaterial::registered(false).unwrap().sun_cloud
         );
         assert_eq!(environment_light(&mut app).0, 18_000.0);
+        let materials = environment_materials(&mut app);
+        assert_eq!(materials[0].geometry_parameters.x, 6.0);
+        assert_eq!(
+            materials[1].geometry_parameters,
+            materials[0].geometry_parameters
+        );
+        assert_eq!(materials[1].geometry_waves, materials[0].geometry_waves);
+        assert_eq!(materials[1].geometry_motion, materials[0].geometry_motion);
+        assert_eq!(materials[2].geometry_parameters.x, 18.0);
     }
 
     #[test]
@@ -751,6 +1006,7 @@ mod tests {
             let (_, far_handle) = environment_surface(&mut app, EnvironmentSurface::Far);
             let (_, sky_handle) = environment_surface(&mut app, EnvironmentSurface::Sky);
             let initial = environment_materials(&mut app);
+            let initial_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
             let sunlight = environment_light(&mut app);
             let sun = app
                 .world_mut()
@@ -777,6 +1033,13 @@ mod tests {
             let session = app.world().resource::<NativeSession>();
             assert_eq!(session.game.snapshot(), before);
             assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            let images = app.world().resource::<Assets<Image>>();
+            assert_eq!(images.len(), initial_images.len());
+            assert!(
+                initial_images
+                    .into_iter()
+                    .all(|image| images.get(image).is_some())
+            );
             let target = EnvironmentTarget::Sealed(session.game.configuration_identity().unwrap());
             assert_eq!(
                 app.world()
@@ -795,6 +1058,8 @@ mod tests {
                     .unwrap();
                 assert_eq!(retained.sun_cloud, initial[role.index()].sun_cloud);
                 assert_eq!(retained.waves_sky, initial[role.index()].waves_sky);
+                assert_eq!(retained.detail_near, initial[role.index()].detail_near);
+                assert_eq!(retained.detail_far, initial[role.index()].detail_far);
                 assert_eq!(
                     retained.geometry_waves,
                     initial[role.index()].geometry_waves
@@ -874,6 +1139,13 @@ mod tests {
         assert!(
             app.world()
                 .get::<Text>(summary)
+                .unwrap()
+                .0
+                .contains("描画環境の通知がある。")
+        );
+        assert!(
+            app.world()
+                .get::<Text>(details)
                 .unwrap()
                 .0
                 .contains("以前の表示を保持する")
@@ -956,474 +1228,85 @@ mod tests {
         assert!(app.world().get::<Text>(details).unwrap().0.is_empty());
     }
 
-    #[derive(Clone, Copy)]
-    struct WhitecapReference {
-        bands: [Vec4; 8],
-        wind_start: f32,
-        wind_end: f32,
-        crest_start: f32,
-        crest_end: f32,
-        packet_gate_start: f32,
-        packet_gate_end: f32,
-        local_gate_start: f32,
-        local_gate_end: f32,
-        gain: f32,
-        maximum: f32,
-    }
-
-    impl WhitecapReference {
-        fn from_shader() -> Self {
-            let shader = include_str!("../assets/native_water.wgsl");
-            let scalar = |name: &str| {
-                let prefix = format!("const {name}: f32 = ");
-                shader
-                    .lines()
-                    .find_map(|line| line.trim().strip_prefix(&prefix))
-                    .unwrap()
-                    .trim_end_matches(';')
-                    .parse::<f32>()
-                    .unwrap()
-            };
-            let bands = shader
-                .split_once("let bands = array<vec4<f32>, 8>(")
-                .unwrap()
-                .1
-                .split_once(");")
-                .unwrap()
-                .0
-                .lines()
-                .filter_map(|line| line.trim().strip_prefix("vec4<f32>("))
-                .map(|line| {
-                    let values: Vec<f32> = line
-                        .trim_end_matches([',', ')'])
-                        .split(',')
-                        .map(|value| value.trim().parse::<f32>().unwrap())
-                        .collect();
-                    Vec4::from_array(values.try_into().unwrap())
-                })
-                .collect::<Vec<_>>()
-                .try_into()
-                .unwrap();
-            Self {
-                bands,
-                wind_start: scalar("WHITECAP_WIND_START"),
-                wind_end: scalar("WHITECAP_WIND_END"),
-                crest_start: scalar("WHITECAP_CREST_START"),
-                crest_end: scalar("WHITECAP_CREST_END"),
-                packet_gate_start: scalar("WHITECAP_PACKET_GATE_START"),
-                packet_gate_end: scalar("WHITECAP_PACKET_GATE_END"),
-                local_gate_start: scalar("WHITECAP_LOCAL_GATE_START"),
-                local_gate_end: scalar("WHITECAP_LOCAL_GATE_END"),
-                gain: scalar("WHITECAP_GAIN"),
-                maximum: scalar("WHITECAP_MAX_AMOUNT"),
-            }
-        }
-
-        fn gated_packet(&self, packet: f32, gradient: Vec2) -> (f32, Vec2) {
-            let width = self.packet_gate_end - self.packet_gate_start;
-            let progress = ((packet - self.packet_gate_start) / width).clamp(0.0, 1.0);
-            let gate = progress * progress * (3.0 - 2.0 * progress);
-            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
-            (packet * gate, gradient * (gate + packet * gate_slope))
-        }
-
-        fn localized_packet(
-            &self,
-            packet: f32,
-            gradient: Vec2,
-            warp_sine: f32,
-            warp_cosine: f32,
-            warp_gradient: Vec2,
-        ) -> (f32, Vec2) {
-            let (gated_packet, gated_gradient) = self.gated_packet(packet, gradient);
-            let width = self.local_gate_end - self.local_gate_start;
-            let progress = ((warp_cosine - self.local_gate_start) / width).clamp(0.0, 1.0);
-            let gate = progress * progress * (3.0 - 2.0 * progress);
-            let gate_slope = 6.0 * progress * (1.0 - progress) / width;
-            let local_gradient = warp_gradient * (-warp_sine * gate_slope);
-            (
-                gated_packet * gate,
-                gated_gradient * gate + gated_packet * local_gradient,
-            )
-        }
-
-        fn amount(
-            &self,
-            material: &WaterMaterial,
-            position: Vec2,
-            footprint_x: Vec2,
-            footprint_y: Vec2,
-        ) -> f32 {
-            let wind = material.waves_sky.truncate().truncate();
-            let speed = wind.length();
-            let propagation = if speed > 0.001 { wind / speed } else { Vec2::X };
-            let time = material.camera_time.w;
-            let mut energy = 0.0;
-            for band in self.bands {
-                let direction = Vec2::new(
-                    propagation.x * band.x.cos() - propagation.y * band.x.sin(),
-                    propagation.x * band.x.sin() + propagation.y * band.x.cos(),
-                );
-                let transverse = Vec2::new(-direction.y, direction.x);
-                let packet_gradient = transverse * 0.13 + direction * 0.037;
-                let packet_phase = position.dot(packet_gradient) - time * 0.18 + band.w;
-                let packet = 0.72 + 0.28 * packet_phase.sin();
-                let amplitude_gradient = packet_gradient * (0.28 * packet_phase.cos());
-                let warp_gradient = transverse * (band.y * 0.19);
-                let warp_phase = position.dot(warp_gradient) - time * 0.12 + band.w * 1.73;
-                let warp_sine = warp_phase.sin();
-                let warp_cosine = warp_phase.cos();
-                let phase_gradient = direction * band.y + warp_gradient * (0.55 * warp_cosine);
-                let phase = position.dot(direction) * band.y + 0.55 * warp_sine
-                    - (9.80665 * band.y).sqrt() * time
-                    + band.w;
-                let crest = smoothstep(self.crest_start, self.crest_end, phase.sin());
-                let (whitecap_packet, whitecap_packet_gradient) = self.localized_packet(
-                    packet,
-                    amplitude_gradient,
-                    warp_sine,
-                    warp_cosine,
-                    warp_gradient,
-                );
-                let footprint = (phase_gradient.dot(footprint_x).abs()
-                    + phase_gradient.dot(footprint_y).abs())
-                    * (1.5 / (self.crest_end - self.crest_start))
-                    + whitecap_packet_gradient.dot(footprint_x).abs()
-                    + whitecap_packet_gradient.dot(footprint_y).abs();
-                let visibility = 1.0 - smoothstep(0.65, 2.4, footprint);
-                energy += band.z * whitecap_packet * crest * visibility * visibility;
-            }
-            (energy
-                * smoothstep(self.wind_start, self.wind_end, speed)
-                * material.waves_sky.z.clamp(0.0, 3.0)
-                * self.gain)
-                .clamp(0.0, self.maximum)
-        }
-    }
-
-    fn smoothstep(start: f32, end: f32, value: f32) -> f32 {
-        let progress = ((value - start) / (end - start)).clamp(0.0, 1.0);
-        progress * progress * (3.0 - 2.0 * progress)
-    }
-
     #[test]
-    fn whitecaps_reuse_the_filtered_wave_loop_and_opaque_fragment_output() {
-        let shader = include_str!("../assets/native_water.wgsl");
-        let detail = shader
-            .split_once("fn lake_wave_detail(")
-            .unwrap()
-            .1
-            .split_once("@fragment")
-            .unwrap()
-            .0;
-        assert_eq!(detail.matches("for (").count(), 1);
-        assert_eq!(detail.matches("sin(phase)").count(), 1);
-        assert_eq!(detail.matches("cos(phase)").count(), 1);
-        assert_eq!(detail.matches("sin(warp_phase)").count(), 1);
-        assert_eq!(detail.matches("cos(warp_phase)").count(), 1);
-        assert!(!detail.contains("geometry_patch"));
-        assert!(detail.contains("packet * packet_gate"));
-        assert!(detail.contains("amplitude_gradient * (packet_gate + packet * gate_slope)"));
-        assert!(detail.contains("warp_gradient * (-warp_sine * local_slope)"));
-        assert!(detail.contains("gated_packet * local_gate"));
-        assert!(
-            detail.contains("gated_packet_gradient * local_gate + gated_packet * local_gradient")
-        );
-        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_x))"));
-        assert!(detail.contains("abs(dot(whitecap_packet_gradient, footprint_y))"));
-        assert!(detail.contains("1.5 / (WHITECAP_CREST_END - WHITECAP_CREST_START)"));
-        assert!(detail.contains("return vec4<f32>(slope, unresolved_variance, whitecaps)"));
-        assert_eq!(shader.matches("let detail = lake_wave_detail(").count(), 1);
-        assert!(shader.contains("output.uv = base_position.xz;"));
-        assert!(shader.contains("vec4<f32>(mix(color, whitecap_color, detail.w), 1.0)"));
-    }
-
-    #[test]
-    fn whitecaps_are_bounded_and_suppressed_for_calm_or_unresolved_pixels() {
-        let reference = WhitecapReference::from_shader();
-        assert!(reference.wind_end > reference.wind_start && reference.wind_start > 0.0);
-        assert!(reference.crest_end > reference.crest_start && reference.crest_end <= 1.0);
-        assert!(reference.maximum > 0.0 && reference.maximum < 1.0);
-        assert_eq!(
-            smoothstep(reference.crest_start, reference.crest_end, -1.0),
-            0.0
-        );
-        let mut material = WaterMaterial::registered(false).unwrap();
-        for wind_speed in [0.0, 0.5, 1.2, 2.5, 4.5, 12.0, 60.0] {
-            for detail in [0.0, 0.1, 1.0, 3.0] {
-                material.waves_sky = Vec4::new(wind_speed, 0.0, detail, 0.0);
-                for time in [0.0, 0.1, 5.0] {
-                    material.camera_time.w = time;
-                    for index in 0..32 {
-                        let position = Vec2::new(index as f32 * 0.47, index as f32 * -0.23);
-                        let fine =
-                            reference.amount(&material, position, Vec2::X * 0.01, Vec2::Y * 0.01);
-                        let coarse =
-                            reference.amount(&material, position, Vec2::X * 0.2, Vec2::Y * 0.2);
-                        assert!(fine.is_finite() && (0.0..=reference.maximum).contains(&fine));
-                        assert!(coarse.is_finite() && coarse <= fine);
-                        if wind_speed <= reference.wind_start || detail == 0.0 {
-                            assert_eq!(fine, 0.0);
-                        }
-                        assert_eq!(
-                            reference.amount(&material, position, Vec2::X * 100.0, Vec2::Y * 100.0),
-                            0.0
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn whitecap_packet_gate_and_footprint_gradient_are_continuous() {
-        let reference = WhitecapReference::from_shader();
-        assert!(reference.packet_gate_start >= 0.44);
-        assert!(reference.packet_gate_end > reference.packet_gate_start);
-        assert!(reference.packet_gate_end < 1.0);
-        let gradient = Vec2::new(0.07, -0.03);
-        for packet in [
-            0.44,
-            reference.packet_gate_start - 0.001,
-            reference.packet_gate_start,
-        ] {
-            assert_eq!(reference.gated_packet(packet, gradient), (0.0, Vec2::ZERO));
-        }
-        for packet in [
-            reference.packet_gate_end,
-            reference.packet_gate_end + 0.001,
-            1.0,
-        ] {
-            assert_eq!(reference.gated_packet(packet, gradient), (packet, gradient));
-        }
-        for progress in [0.01, 0.25, 0.5, 0.75, 0.99] {
-            let packet = reference.packet_gate_start
-                + progress * (reference.packet_gate_end - reference.packet_gate_start);
-            let (amount, analytic_gradient) = reference.gated_packet(packet, gradient);
-            assert!(amount.is_finite() && (0.0..=packet).contains(&amount));
-            let step = 0.0001;
-            let derivative = (reference.gated_packet(packet + step, Vec2::ZERO).0
-                - reference.gated_packet(packet - step, Vec2::ZERO).0)
-                / (2.0 * step);
-            assert!((analytic_gradient - gradient * derivative).length() < 0.002);
-        }
-        for boundary in [reference.packet_gate_start, reference.packet_gate_end] {
-            let (_, at_boundary) = reference.gated_packet(boundary, gradient);
-            for offset in [-0.00001, 0.00001] {
-                let (_, nearby) = reference.gated_packet(boundary + offset, gradient);
-                assert!((nearby - at_boundary).length() < 0.001);
-            }
-        }
-    }
-
-    #[test]
-    fn every_whitecap_band_limits_crest_patch_support_to_quarter_wavelength() {
-        let reference = WhitecapReference::from_shader();
-        assert!(reference.local_gate_start > 0.0);
-        assert!(reference.local_gate_end > reference.local_gate_start);
-        assert!(reference.local_gate_end < 1.0);
-        let mut material = WaterMaterial::registered(false).unwrap();
-        material.waves_sky = Vec4::new(4.5, 0.0, 1.0, 0.0);
-        material.camera_time.w = 0.0;
-        for band in reference.bands {
-            let mut isolated = reference;
-            isolated.bands = [Vec4::ZERO; 8];
-            isolated.bands[0] = band;
-            let direction = Vec2::new(band.x.cos(), band.x.sin());
-            let transverse = Vec2::new(-direction.y, direction.x);
-            let wavelength = std::f32::consts::TAU / band.y;
-            let half_support = reference.local_gate_start.acos() / (band.y * 0.19);
-            assert!(2.0 * half_support <= 0.25 * wavelength);
-            assert!(2.0 * half_support >= 0.24 * wavelength);
-            assert!(2.0 * half_support < 2.0);
-            let center = (0..256)
-                .find_map(|index| {
-                    let across =
-                        (std::f32::consts::TAU * index as f32 - band.w * 1.73) / (band.y * 0.19);
-                    let along = (std::f32::consts::FRAC_PI_2 - band.w) / band.y;
-                    let packet = 0.72 + 0.28 * (across * 0.13 + along * 0.037 + band.w).sin();
-                    (packet > 0.98).then_some(across)
-                })
-                .expect("every band must retain a resolved crest patch");
-            for offset in [-1.05, -0.5, 0.0, 0.5, 1.05] {
-                let across = center + offset * half_support;
-                let warp_phase = band.y * 0.19 * across + band.w * 1.73;
-                let along =
-                    (std::f32::consts::FRAC_PI_2 - 0.55 * warp_phase.sin() - band.w) / band.y;
-                let position = direction * along + transverse * across;
-                let amount =
-                    isolated.amount(&material, position, Vec2::X * 0.00001, Vec2::Y * 0.00001);
-                assert!(amount.is_finite());
-                if offset.abs() > 1.0 {
-                    assert_eq!(amount, 0.0, "outside local crest support: {band:?}");
-                } else {
-                    assert!(
-                        amount > 0.0,
-                        "resolved local crest must remain visible: {band:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn localized_whitecap_packet_gradient_matches_spatial_differences() {
-        let reference = WhitecapReference::from_shader();
-        let packet_gradient = Vec2::new(0.07, -0.03);
-        let warp_gradient = Vec2::new(0.33, 0.47);
-        let sample = |offset: Vec2| {
-            let packet = 0.9 + packet_gradient.dot(offset);
-            let warp_phase = 0.1 + warp_gradient.dot(offset);
-            reference.localized_packet(
-                packet,
-                packet_gradient,
-                warp_phase.sin(),
-                warp_phase.cos(),
-                warp_gradient,
-            )
-        };
-        let (amount, analytic_gradient) = sample(Vec2::ZERO);
-        assert!(amount > 0.0 && amount < 0.9);
-        let step = 0.001;
-        let difference_gradient = Vec2::new(
-            (sample(Vec2::X * step).0 - sample(-Vec2::X * step).0) / (2.0 * step),
-            (sample(Vec2::Y * step).0 - sample(-Vec2::Y * step).0) / (2.0 * step),
-        );
-        assert!((analytic_gradient - difference_gradient).length() < 0.01);
-    }
-
-    #[test]
-    fn whitecaps_share_world_phase_across_quality_patch_tracking_and_far_surface() {
-        let reference = WhitecapReference::from_shader();
-        let mut baseline = WaterMaterial::registered(false).unwrap();
-        baseline.project_camera(Vec3::new(0.0, 10.0, 0.0), 2.5);
-        let footprint_x = Vec2::new(0.01, 0.002);
-        let footprint_y = Vec2::new(-0.003, 0.01);
-        for quality in WaterQuality::ALL {
-            let mut near = WaterMaterial::registered_for_quality(quality).unwrap();
-            near.project_camera(Vec3::new(0.0, 10.0, 0.0), 2.5);
-            let far = near.far_surface();
-            for position in [Vec2::ZERO, Vec2::new(24.0, 2.0), Vec2::new(32.0, -32.0)] {
-                let expected = reference.amount(&baseline, position, footprint_x, footprint_y);
-                assert_eq!(
-                    reference.amount(&near, position, footprint_x, footprint_y),
-                    expected
-                );
-                assert_eq!(
-                    reference.amount(&far, position, footprint_x, footprint_y),
-                    expected
-                );
-                near.project_camera(Vec3::new(1.01, 20.0, 2.04), 2.5);
-                assert_eq!(
-                    reference.amount(&near, position, footprint_x, footprint_y),
-                    expected
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn registered_whitecap_reference_has_spatial_and_simulation_time_variation() {
-        let reference = WhitecapReference::from_shader();
-        let mut material = WaterMaterial::registered(false).unwrap();
-        let sample = |material: &WaterMaterial, index: i32| {
-            reference.amount(
-                material,
-                Vec2::new(
-                    (index % 64) as f32 * 0.7 - 22.4,
-                    (index / 64) as f32 * 0.7 - 22.4,
-                ),
-                Vec2::X * 0.01,
-                Vec2::Y * 0.01,
-            )
-        };
-        let initial: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
-        assert!(initial.iter().any(|amount| *amount > 0.01));
-        assert!(initial.windows(2).any(|values| values[0] != values[1]));
-        material.camera_time.w = 0.1;
-        let advanced: Vec<_> = (0..4096).map(|index| sample(&material, index)).collect();
-        assert_ne!(initial, advanced);
-        assert_eq!(
-            advanced,
-            (0..4096)
-                .map(|index| sample(&material, index))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn quality_profiles_preserve_registered_waves_and_bound_every_real_mesh_triangle() {
+    fn quality_profiles_use_the_shared_uploads_and_bound_every_real_mesh_triangle() {
         let high = WaterMaterial::registered(false).unwrap();
         let high_bounds = high.near_bounds();
-        assert_eq!(
-            WaterMaterial::registered_for_quality(WaterQuality::High)
-                .unwrap()
-                .geometry_waves,
-            high.geometry_waves
-        );
         for quality in WaterQuality::ALL {
             let material = WaterMaterial::registered_for_quality(quality).unwrap();
+            let shared =
+                LakeWaveProjection::try_new(material.visual_condition, quality.shared()).unwrap();
+            assert_eq!(
+                material.geometry_waves,
+                shared.wave_k_amplitude().map(Vec4::from_array)
+            );
+            assert_eq!(
+                material.geometry_motion,
+                shared.wave_omega_phase().map(Vec4::from_array)
+            );
+            assert_eq!(material.geometry_parameters.x, shared.wave_count() as f32);
+            assert_eq!(material.geometry_parameters.y, shared.choppiness());
+            assert!(f64::from(shared.choppiness()) * shared.horizontal_derivative_bound() < 0.56);
+            assert_eq!(
+                material.near_bounds().half_extents,
+                high_bounds.half_extents
+            );
             assert_eq!(material.camera_time, high.camera_time);
             assert_eq!(material.sun_cloud, high.sun_cloud);
             assert_eq!(material.waves_sky, high.waves_sky);
-            assert_eq!(material.geometry_patch, high.geometry_patch);
-            assert_eq!(material.geometry_motion, high.geometry_motion);
-            for (wave, original) in material.geometry_waves.iter().zip(high.geometry_waves) {
-                assert_eq!(wave.truncate(), original.truncate());
-                assert!(wave.w >= 0.0 && wave.w <= original.w);
-                let cells = quality.profile().near_cells;
-                let edge = NEAR_WIDTH_M / cells as f32 * 2.0_f32.sqrt();
-                if std::f32::consts::TAU / wave.z <= edge * 2.0 {
-                    assert_eq!(wave.w, 0.0);
-                }
-            }
             let mesh = near_mesh_for_quality(quality);
             let cells = quality.profile().near_cells as usize;
             assert_eq!(mesh.count_vertices(), (cells + 1).pow(2));
-            let positions: Vec<_> = mesh_positions(&mesh)
+            let Some(VertexAttributeValues::Float32x2(spacing)) =
+                mesh.attribute(Mesh::ATTRIBUTE_UV_1)
+            else {
+                panic!("Expected spacing upload");
+            };
+            let bound = material
+                .geometry_waves
                 .iter()
-                .map(|position| {
-                    let point = Vec3::from_array(*position);
-                    let (offset, tangent_x, tangent_z) = reference_surface(&material, point.xz());
-                    let normal = tangent_z.cross(tangent_x).normalize();
-                    assert!(normal.is_finite() && normal.y > 0.0);
-                    assert!(offset.y.abs() <= high_bounds.half_extents.y);
-                    assert!(
-                        offset.x.abs() <= high_bounds.half_extents.x - NEAR_WIDTH_M * 0.5 + 1.0e-5
-                    );
-                    assert!(
-                        offset.z.abs() <= high_bounds.half_extents.z - NEAR_WIDTH_M * 0.5 + 1.0e-5
-                    );
-                    point + offset
+                .map(|wave| {
+                    birdman_game_session::lake_water::lake_wave_displacement_derivative_bound(
+                        wave.to_array(),
+                        shared.spacing(),
+                    )
+                    .unwrap()
                 })
-                .collect();
+                .sum::<f64>();
+            assert!(f64::from(material.geometry_parameters.y) * bound < 0.56);
+            for (position, spacing) in mesh_positions(&mesh).iter().zip(spacing) {
+                assert!(Vec3::from_array(*position).is_finite());
+                assert!(spacing[0] >= shared.spacing().minimum() as f32 - 1.0e-6);
+                assert!(spacing[0] <= shared.spacing().maximum() as f32);
+            }
+            let positions = mesh_positions(&mesh);
             let Some(Indices::U32(indices)) = mesh.indices() else {
-                panic!("Expected uint32 quality mesh indices");
+                panic!("Expected mesh indices");
             };
             assert_eq!(indices.len(), cells * cells * 6);
             for triangle in indices.chunks_exact(3) {
-                let first = positions[triangle[0] as usize];
-                let second = positions[triangle[1] as usize];
-                let third = positions[triangle[2] as usize];
+                let first = Vec3::from_array(positions[triangle[0] as usize]);
+                let second = Vec3::from_array(positions[triangle[1] as usize]);
+                let third = Vec3::from_array(positions[triangle[2] as usize]);
                 assert!((second - first).cross(third - first).y > 0.0);
             }
-            assert_eq!(
-                patch_center(Vec3::new(-0.01, 0.0, 0.24)),
-                Vec2::new(-0.25, 0.0)
-            );
         }
     }
 
     #[test]
-    fn quality_exchange_replaces_only_owned_near_resources_and_releases_old_meshes() {
+    fn quality_exchange_updates_near_far_and_releases_only_owned_near_meshes() {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
             .insert_resource(NativeEnvironment::try_default().unwrap())
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Update, apply_quality);
         let mut material = WaterMaterial::registered(false).unwrap();
+        material
+            .upload_detail(&mut app.world_mut().resource_mut::<Assets<Image>>())
+            .unwrap();
         material.project_camera(Vec3::new(1.01, 10.0, 2.04), 12.5);
         let bounds = material.near_bounds();
         let far_material = app
@@ -1451,6 +1334,10 @@ mod tests {
                 bounds,
             ))
             .id();
+        app.world_mut().spawn((
+            EnvironmentSurface::Far,
+            MeshMaterial3d(far_material.clone()),
+        ));
         for quality in [
             WaterQuality::Low,
             WaterQuality::Medium,
@@ -1483,6 +1370,16 @@ mod tests {
             assert_eq!(updated.geometry_patch, material.geometry_patch);
             assert_eq!(updated.sun_cloud, material.sun_cloud);
             assert_eq!(updated.waves_sky, material.waves_sky);
+            assert_eq!(updated.detail_near, material.detail_near);
+            assert_eq!(updated.detail_far, material.detail_far);
+            let far = materials.get(far_material.id()).unwrap();
+            assert_eq!(far.geometry_waves, updated.geometry_waves);
+            assert_eq!(far.geometry_motion, updated.geometry_motion);
+            assert_eq!(far.geometry_parameters, updated.geometry_parameters);
+            assert_eq!(far.camera_time, material.camera_time);
+            assert_eq!(far.detail_near, material.detail_near);
+            assert_eq!(far.detail_far, material.detail_far);
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
             assert_eq!(
                 materials.get(far_material.id()).unwrap().geometry_patch,
                 Vec4::ZERO
@@ -1537,6 +1434,83 @@ mod tests {
     }
 
     #[test]
+    fn far_quality_failure_retains_near_projection_mesh_and_core_state() {
+        for failure in [
+            EnvironmentFailure::SurfaceUnavailable(EnvironmentSurface::Far),
+            EnvironmentFailure::MaterialUnavailable(EnvironmentSurface::Far),
+            EnvironmentFailure::SharedMaterial,
+        ] {
+            let mut app = App::new();
+            app.init_resource::<NativeSession>()
+                .insert_resource(NativeEnvironment::try_default().unwrap())
+                .init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<WaterMaterial>>()
+                .insert_resource(
+                    WaterQualitySelection::default()
+                        .request(
+                            WaterQuality::Low,
+                            birdman_game_core::SessionPhase::FlightSetup,
+                        )
+                        .unwrap(),
+                )
+                .add_systems(Update, apply_quality);
+            let mut initial = WaterMaterial::registered(false).unwrap();
+            initial.project_camera(Vec3::new(1.0, 10.0, 2.0), 12.5);
+            let material = app
+                .world_mut()
+                .resource_mut::<Assets<WaterMaterial>>()
+                .add(initial.clone());
+            let mesh = app
+                .world_mut()
+                .resource_mut::<Assets<Mesh>>()
+                .add(near_mesh());
+            let near = app
+                .world_mut()
+                .spawn((
+                    NearWaterSurface,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(material.clone()),
+                ))
+                .id();
+            match failure {
+                EnvironmentFailure::SurfaceUnavailable(_) => {}
+                EnvironmentFailure::MaterialUnavailable(_) => {
+                    app.world_mut().spawn((
+                        EnvironmentSurface::Far,
+                        MeshMaterial3d::<WaterMaterial>(Handle::default()),
+                    ));
+                }
+                EnvironmentFailure::SharedMaterial => {
+                    app.world_mut()
+                        .spawn((EnvironmentSurface::Far, MeshMaterial3d(material.clone())));
+                }
+                _ => unreachable!(),
+            }
+            let before = app.world().resource::<NativeSession>().game.snapshot();
+            app.update();
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                before
+            );
+            assert_eq!(app.world().get::<Mesh3d>(near).unwrap().0, mesh);
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), 1);
+            let retained = app
+                .world()
+                .resource::<Assets<WaterMaterial>>()
+                .get(material.id())
+                .unwrap();
+            assert_eq!(retained.geometry_waves, initial.geometry_waves);
+            assert_eq!(retained.geometry_motion, initial.geometry_motion);
+            assert_eq!(retained.geometry_parameters, initial.geometry_parameters);
+            assert_eq!(retained.camera_time, initial.camera_time);
+            let selection = app.world().resource::<WaterQualitySelection>();
+            assert_eq!(selection.applied(), WaterQuality::High);
+            assert_eq!(selection.pending(), None);
+            assert!(selection.status().contains(&format!("{failure:?}")));
+        }
+    }
+
+    #[test]
     fn missing_near_surface_or_mesh_rejects_before_allocating_replacement_resources() {
         for has_surface in [false, true] {
             let mut app = App::new();
@@ -1578,47 +1552,6 @@ mod tests {
         }
     }
 
-    fn reference_surface(material: &WaterMaterial, position: Vec2) -> (Vec3, Vec3, Vec3) {
-        let mut displacement = Vec3::ZERO;
-        let mut tangent_x = Vec3::X;
-        let mut tangent_z = Vec3::Z;
-        if material.geometry_patch.w == 0.0 || material.waves_sky.w > 0.5 {
-            return (displacement, tangent_x, tangent_z);
-        }
-        let fade_axis = |coordinate: f32| {
-            let width = material.geometry_patch.w - material.geometry_patch.z;
-            let progress = ((coordinate.abs() - material.geometry_patch.z) / width).clamp(0.0, 1.0);
-            Vec2::new(
-                1.0 - progress * progress * (3.0 - 2.0 * progress),
-                -6.0 * progress * (1.0 - progress) * coordinate.signum() / width,
-            )
-        };
-        let local = position - material.geometry_patch.truncate().truncate();
-        let fade_x = fade_axis(local.x);
-        let fade_z = fade_axis(local.y);
-        let fade = fade_x.x * fade_z.x;
-        let gradient = Vec2::new(fade_x.y * fade_z.x, fade_x.x * fade_z.y);
-        for (wave, motion) in material.geometry_waves.iter().zip(material.geometry_motion) {
-            let direction = wave.truncate().truncate();
-            let phase =
-                wave.z * direction.dot(position) - motion.x * material.camera_time.w + motion.y;
-            let offset = Vec3::new(
-                motion.z * wave.x * phase.cos(),
-                phase.sin(),
-                motion.z * wave.y * phase.cos(),
-            ) * wave.w;
-            let derivative = Vec3::new(
-                -motion.z * wave.x * phase.sin(),
-                phase.cos(),
-                -motion.z * wave.y * phase.sin(),
-            ) * wave.w;
-            displacement += offset * fade;
-            tangent_x += derivative * (wave.z * wave.x * fade) + offset * gradient.x;
-            tangent_z += derivative * (wave.z * wave.y * fade) + offset * gradient.y;
-        }
-        (displacement, tangent_x, tangent_z)
-    }
-
     fn mesh_positions(mesh: &Mesh) -> &[[f32; 3]] {
         let Some(VertexAttributeValues::Float32x3(positions)) =
             mesh.attribute(Mesh::ATTRIBUTE_POSITION)
@@ -1631,13 +1564,13 @@ mod tests {
     #[test]
     fn static_water_meshes_preserve_coverage_budget_and_an_open_far_center() {
         let near = near_mesh();
-        assert_eq!(near.count_vertices(), 66_049);
+        assert_eq!(near.count_vertices(), 50_625);
         let Some(Indices::U32(near_indices)) = near.indices() else {
             panic!("Expected uint32 near mesh indices");
         };
-        assert_eq!(near_indices.len(), 131_072 * 3);
+        assert_eq!(near_indices.len(), 100_352 * 3);
         for [position_x, position_y, position_z] in mesh_positions(&near) {
-            assert!(position_x.abs() <= 32.0 && position_z.abs() <= 32.0);
+            assert!(position_x.abs() <= 3000.0 && position_z.abs() <= 3000.0);
             assert_eq!(*position_y, 0.0);
         }
         let far = far_mesh();
@@ -1671,7 +1604,10 @@ mod tests {
                 .map(|position| position[2])
                 .fold(f32::NEG_INFINITY, f32::max);
             assert!(
-                maximum_x <= -32.0 || minimum_x >= 32.0 || maximum_z <= -32.0 || minimum_z >= 32.0
+                maximum_x <= -3000.0
+                    || minimum_x >= 3000.0
+                    || maximum_z <= -3000.0
+                    || minimum_z >= 3000.0
             );
         }
         assert!(positions.iter().any(|position| position[0] == -90_000.0));
@@ -1679,153 +1615,238 @@ mod tests {
     }
 
     #[test]
-    fn geometry_coefficients_use_fetch_seed_and_registered_wind_direction() {
-        let wind = Vec2::new(2.5, 0.0);
-        let first = geometry_components(wind, 600.0, 1.0, 202607).unwrap();
-        assert_eq!(
-            first,
-            geometry_components(wind, 600.0, 1.0, 202607).unwrap()
-        );
+    fn geometry_phases_are_fixed_and_detail_seed_affects_only_shared_images() {
+        let original = WaterMaterial::registered(false).unwrap();
+        let mut condition = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .unwrap()
+            .condition();
+        condition.waves.pattern_seed += 1;
+        let changed = WaterMaterial::from_environment(condition, false).unwrap();
+        assert_eq!(original.geometry_waves, changed.geometry_waves);
+        assert_eq!(original.geometry_motion, changed.geometry_motion);
         assert_ne!(
-            first,
-            geometry_components(wind, 1200.0, 1.0, 202607).unwrap()
+            original.visual_condition.pattern_seed(),
+            changed.visual_condition.pattern_seed()
         );
+        condition.waves.fetch_m *= 2.0;
         assert_ne!(
-            first,
-            geometry_components(wind, 600.0, 1.0, 202608).unwrap()
-        );
-        assert!(first.0.iter().any(|wave| wave.w > 0.001));
-        for wave in first.0 {
-            assert!(wave.x > 0.9);
-            assert!((wave.truncate().truncate().length() - 1.0).abs() < 1.0e-6);
-        }
-        let northward = geometry_components(Vec2::new(0.0, -2.5), 600.0, 1.0, 202607).unwrap();
-        for wave in northward.0 {
-            assert!(wave.y < -0.9);
-        }
-        assert_eq!(
-            geometry_components(Vec2::ZERO, 600.0, 1.0, 202607)
+            original.geometry_waves,
+            WaterMaterial::from_environment(condition, false)
                 .unwrap()
-                .0,
-            [Vec4::ZERO; 4]
+                .geometry_waves
         );
     }
 
     #[test]
-    fn geometry_rejects_invalid_render_inputs() {
-        for wind in [Vec2::new(f32::NAN, 1.0), Vec2::new(61.0, 0.0)] {
-            assert!(geometry_components(wind, 600.0, 1.0, 1).is_err());
+    fn invalid_shared_condition_is_rejected_without_renderer_fallback() {
+        let original = EnvironmentTarget::DefaultExhibition
+            .resolve()
+            .unwrap()
+            .condition();
+        for wind in [f64::NAN, f64::INFINITY, 61.0] {
+            let mut condition = original;
+            condition.waves.wind_velocity_ne_mps[0] = wind;
+            assert!(WaterMaterial::from_environment(condition, false).is_err());
         }
-        for fetch in [0.0, -1.0, 50_001.0, f64::NAN, f64::INFINITY] {
-            assert!(geometry_components(Vec2::X, fetch, 1.0, 1).is_err());
+        for fetch in [0.0, -1.0, 50_001.0, f64::NAN] {
+            let mut condition = original;
+            condition.waves.fetch_m = fetch;
+            assert!(WaterMaterial::from_environment(condition, false).is_err());
         }
-        for detail in [0.0, -1.0, 3.01, f64::NAN, f64::INFINITY] {
-            assert!(geometry_components(Vec2::X, 600.0, detail, 1).is_err());
-        }
-    }
-
-    #[test]
-    fn geometry_height_and_horizontal_derivative_are_bounded_for_supported_inputs() {
-        let fade_gradient = 1.5 * 2.0_f32.sqrt() / (NEAR_WIDTH_M * 0.5 - FADE_START_M);
-        for wind_speed in [0.0, 0.05, 1.2, 2.5, 12.0, 60.0] {
-            for fetch in [1.0, 600.0, 50_000.0] {
-                for detail in [0.1, 1.0, 3.0] {
-                    let (waves, motion) =
-                        geometry_components(Vec2::new(wind_speed, 0.0), fetch, detail, u32::MAX)
-                            .unwrap();
-                    let height = waves.iter().map(|wave| wave.w).sum::<f32>();
-                    let derivative = waves
-                        .iter()
-                        .zip(motion)
-                        .map(|(wave, motion)| wave.w * motion.z * (wave.z + fade_gradient))
-                        .sum::<f32>();
-                    assert!(height <= MAX_GEOMETRY_HEIGHT_M as f32 + 1.0e-6);
-                    assert!(derivative <= MAX_HORIZONTAL_DERIVATIVE as f32 + 1.0e-6);
-                    for (wave, motion) in waves.iter().zip(motion) {
-                        assert!(wave.is_finite() && motion.is_finite());
-                        assert!(wave.w >= 0.0);
-                        assert!(motion.z >= 0.0);
-                    }
-                }
-            }
+        for amplitude in [0.0, -1.0, 3.01, f64::NAN] {
+            let mut condition = original;
+            condition.waves.detail_amplitude_scale = amplitude;
+            assert!(WaterMaterial::from_environment(condition, false).is_err());
         }
     }
 
     #[test]
-    fn patch_tracking_retains_world_phase_and_displacement_bounds() {
+    fn patch_tracking_preserves_uploads_and_world_time() {
         let mut material = WaterMaterial::registered(false).unwrap();
-        let coefficients = material.geometry_waves;
-        let motion = material.geometry_motion;
+        let waves = material.geometry_waves;
+        let timing = material.geometry_motion;
+        let bounds = material.near_bounds();
         material.project_camera(Vec3::new(-0.01, 10.0, 0.24), 3.0);
         assert_eq!(
             patch_center(material.camera_time.truncate()),
-            Vec2::new(-0.25, 0.0)
+            Vec2::new(-1.0, 0.0)
         );
-        let first = reference_surface(&material, Vec2::new(3.0, 4.0));
+        assert_eq!(
+            material.geometry_patch.truncate().truncate(),
+            Vec2::new(-1.0, 0.0)
+        );
         material.project_camera(Vec3::new(1.01, 20.0, 2.04), 3.0);
-        let second = reference_surface(&material, Vec2::new(3.0, 4.0));
-        assert_eq!(first, second);
-        assert_eq!(material.geometry_waves, coefficients);
-        assert_eq!(material.geometry_motion, motion);
         assert_eq!(
             material.geometry_patch.truncate().truncate(),
             Vec2::new(1.0, 2.0)
         );
-        let bounds = material.near_bounds();
-        assert!(bounds.half_extents.y > 0.0);
-        for position in [Vec2::ZERO, Vec2::new(27.0, 0.0), Vec2::new(30.0, 31.0)] {
-            let (offset, _, _) = reference_surface(&material, position);
-            assert!(offset.y.abs() < bounds.half_extents.y);
-            assert!(offset.x.abs() <= bounds.half_extents.x - 32.0 + 1.0e-5);
-            assert!(offset.z.abs() <= bounds.half_extents.z - 32.0 + 1.0e-5);
+        assert_eq!(material.camera_time.w, 3.0);
+        assert_eq!(material.geometry_waves, waves);
+        assert_eq!(material.geometry_motion, timing);
+        assert_eq!(material.near_bounds().half_extents, bounds.half_extents);
+        assert_eq!(material.far_surface().geometry_patch, Vec4::ZERO);
+    }
+
+    #[test]
+    fn native_detail_uploads_keep_shared_rgba_and_linear_periodic_sampling() {
+        let material = WaterMaterial::registered(false).unwrap();
+        let configs = production_lake_detail_configs(material.visual_condition).unwrap();
+        let images = prepare_detail_images(material.visual_condition).unwrap();
+        for (image, config) in images.iter().zip(configs) {
+            let reference = generate_lake_detail(config).unwrap();
+            assert_eq!(
+                &image.data.as_ref().unwrap()[..reference.rgba().len()],
+                reference.rgba()
+            );
+            assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
+            assert_eq!(image.texture_descriptor.mip_level_count, 10);
+            assert!(
+                image
+                    .texture_descriptor
+                    .usage
+                    .contains(TextureUsages::STORAGE_BINDING)
+            );
+            let ImageSampler::Descriptor(sampler) = &image.sampler else {
+                panic!("Expected explicit sampler");
+            };
+            assert_eq!(sampler.address_mode_u, ImageAddressMode::Repeat);
+            assert_eq!(sampler.address_mode_v, ImageAddressMode::Repeat);
+            assert_eq!(sampler.anisotropy_clamp, 8);
+            assert_eq!(sampler.min_filter, bevy::image::ImageFilterMode::Linear);
+            assert_eq!(sampler.mipmap_filter, bevy::image::ImageFilterMode::Linear);
         }
     }
 
     #[test]
-    fn boundary_fade_derivatives_match_finite_differences_and_remain_single_valued() {
-        let mut material = WaterMaterial::registered(false).unwrap();
-        material.project_camera(Vec3::new(0.0, 10.0, 0.0), 2.5);
-        for position in [
-            Vec2::new(1.0, 2.0),
-            Vec2::new(26.0, 2.0),
-            Vec2::new(-29.0, 28.0),
-            Vec2::new(31.5, -30.0),
-        ] {
-            let (_, tangent_x, tangent_z) = reference_surface(&material, position);
-            let delta = 0.005;
-            let numeric_tangent = |direction: Vec2, base: Vec3| {
-                let forward = reference_surface(&material, position + direction * delta).0;
-                let backward = reference_surface(&material, position - direction * delta).0;
-                base + (forward - backward) / (2.0 * delta)
-            };
-            assert!(tangent_x.distance(numeric_tangent(Vec2::X, Vec3::X)) < 0.002);
-            assert!(tangent_z.distance(numeric_tangent(Vec2::Y, Vec3::Z)) < 0.002);
-            let normal = tangent_z.cross(tangent_x).normalize();
-            assert!(normal.is_finite() && normal.y > 0.0);
-            let determinant = tangent_x.x * tangent_z.z - tangent_z.x * tangent_x.z;
-            assert!(determinant >= (1.0 - MAX_HORIZONTAL_DERIVATIVE as f32).powi(2));
-        }
-        for position in [
-            Vec2::new(32.0, 0.0),
-            Vec2::new(-32.0, 10.0),
-            Vec2::new(0.0, 32.0),
-            Vec2::new(32.0, -32.0),
+    fn detail_mip_admission_tracks_gpu_texture_generation_and_discards_retired_images() {
+        let mut images = Assets::<Image>::default();
+        let near = images.add(Image::default());
+        let far = images.add(Image::default());
+        let first_texture = TextureId::new();
+        let replacement_texture = TextureId::new();
+        let mut state = LakeDetailMips {
+            active: vec![near.id(), far.id()],
+            recorded: Vec::new(),
+            failure: None,
+        };
+        assert!(state.pending(near.id(), first_texture));
+        state.recorded.push((near.id(), first_texture));
+        assert!(!state.pending(near.id(), first_texture));
+        assert!(state.pending(near.id(), replacement_texture));
+        state.active = vec![far.id()];
+        state.retain_active();
+        assert!(state.recorded.is_empty());
+    }
+
+    #[test]
+    fn detail_mips_match_only_the_official_shader_and_pass_entry_points() {
+        let mut shaders = Assets::<Shader>::default();
+        let official = shaders.add(Shader::from_wgsl("", "official"));
+        let other = shaders.add(Shader::from_wgsl("", "other"));
+        let mut descriptor = ComputePipelineDescriptor {
+            shader: official.clone(),
+            entry_point: Some("downsample_first".into()),
+            ..default()
+        };
+        assert!(mip_pipeline_matches(
+            &descriptor,
+            &official,
+            "downsample_first"
+        ));
+        assert!(!mip_pipeline_matches(
+            &descriptor,
+            &official,
+            "downsample_second"
+        ));
+        assert!(!mip_pipeline_matches(
+            &descriptor,
+            &other,
+            "downsample_first"
+        ));
+        descriptor.entry_point = None;
+        assert!(!mip_pipeline_matches(
+            &descriptor,
+            &official,
+            "downsample_first"
+        ));
+    }
+
+    #[test]
+    fn detail_mip_pipeline_waits_for_imports_but_stops_queueing_confirmed_failure() {
+        let mut shaders = Assets::<Shader>::default();
+        let official = shaders.add(Shader::from_wgsl("", "official"));
+        let other = shaders.add(Shader::from_wgsl("", "other"));
+        let mut images = Assets::<Image>::default();
+        let near = images.add(Image::default());
+        let replacement = images.add(Image::default());
+        let descriptor = ComputePipelineDescriptor {
+            shader: official.clone(),
+            entry_point: Some("downsample_first".into()),
+            ..default()
+        };
+        let active = [near.id()];
+        for pending in [
+            CachedPipelineState::Queued,
+            CachedPipelineState::Err(ShaderCacheError::ShaderNotLoaded(official.id())),
+            CachedPipelineState::Err(ShaderCacheError::ShaderImportNotYetAvailable),
         ] {
             assert_eq!(
-                reference_surface(&material, position),
-                (Vec3::ZERO, Vec3::X, Vec3::Z)
+                mip_pipeline_ready(
+                    &descriptor,
+                    &pending,
+                    &official,
+                    "downsample_first",
+                    &active
+                ),
+                Ok(false)
             );
         }
+        let failed = CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
+            "original GPU validation cause".into(),
+        ));
         assert_eq!(
-            reference_surface(&material.far_surface(), Vec2::ZERO),
-            (Vec3::ZERO, Vec3::X, Vec3::Z)
+            mip_pipeline_ready(&descriptor, &failed, &other, "downsample_first", &active),
+            Ok(false)
         );
-        assert_eq!(
-            reference_surface(&WaterMaterial::registered(true).unwrap(), Vec2::ZERO),
-            (Vec3::ZERO, Vec3::X, Vec3::Z)
-        );
-        assert!(!WaterMaterial::enable_prepass());
-        assert!(!WaterMaterial::enable_shadows());
+        let cause =
+            mip_pipeline_ready(&descriptor, &failed, &official, "downsample_first", &active)
+                .unwrap_err();
+        assert_eq!(cause.shader, official.id());
+        assert_eq!(cause.entry, "downsample_first");
+        assert_eq!(cause.images, active);
+        assert!(cause.cause.contains("CreateShaderModule"));
+        assert!(cause.cause.contains("original GPU validation cause"));
+        let mut state = LakeDetailMips {
+            active: active.to_vec(),
+            recorded: Vec::new(),
+            failure: Some(cause),
+        };
+        assert!(!state.pending(near.id(), TextureId::new()));
+        state.retain_active();
+        assert!(state.failure.is_some());
+        state.active = vec![replacement.id()];
+        state.retain_active();
+        assert!(state.failure.is_none());
+        assert!(state.pending(replacement.id(), TextureId::new()));
+    }
+
+    #[test]
+    fn wgsl_uses_shared_packet_gradients_and_unresolved_wave_transfer() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        assert_eq!(shader.matches("array<vec4<f32>, 24>").count(), 2);
+        assert!(shader.contains("component < u32(geometry_parameters.x)"));
+        assert!(shader.contains("packet.yz + packet.x * visibility_gradient"));
+        assert!(shader.contains("wave.z * wave.xy + warp.yz"));
+        assert!(shader.contains("horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient)"));
+        assert!(shader.contains("surface.represented_slope"));
+        assert!(shader.contains("(1.0 - geometric_visibility) * pixel_visibility * 0.65"));
+        assert!(shader.contains("textureSampleGrad(detail_near"));
+        assert!(shader.contains("textureSampleGrad(detail_far"));
+        assert!(shader.contains("textureSampleLevel(detail_near"));
+        assert!(!shader.contains("patch_fade"));
+        assert!(!shader.contains("array<vec4<f32>, 8>"));
+        assert!(shader.contains("vec4<f32>(mix(color, whitecap_color, detail.w), 1.0)"));
     }
 
     #[test]

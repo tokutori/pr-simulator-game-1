@@ -976,9 +976,7 @@ pub(crate) fn update_ui(
         title.push_str("\n通知がある。技術情報で詳細を確認できる。");
     }
     if environment_notice.is_some() {
-        title.push_str(
-            "\n描画環境の適用に失敗した。以前の表示を保持する。技術情報で原因を確認できる。",
-        );
+        title.push_str("\n描画環境の通知がある。技術情報で原因を確認できる。");
     }
     let mut readout = String::new();
     if visible_hud(phase, details_open)
@@ -1084,6 +1082,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<Assets<super::super::water::WaterMaterial>>()
             .insert_resource(NativeFont(Handle::default()))
             .add_systems(Startup, (super::super::world::setup_world, setup_ui))
@@ -1279,6 +1278,41 @@ mod tests {
         assert_eq!(initial[7].0, "FPS —");
         app.update();
         assert_eq!(observe(&app), initial);
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
+    }
+
+    #[test]
+    fn gpu_mip_notice_retains_the_cause_without_claiming_the_previous_display_is_preserved() {
+        let mut app = App::new();
+        app.init_resource::<NativeSession>()
+            .init_resource::<CameraMode>()
+            .init_resource::<TechnicalDisclosure>()
+            .init_resource::<WaterQualitySelection>()
+            .insert_resource(NativeEnvironment::try_default().unwrap())
+            .add_systems(Update, update_ui);
+        let [summary, details] = [UiText::Session, UiText::TechnicalDetails]
+            .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
+        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        app.world_mut()
+            .resource_mut::<NativeEnvironment>()
+            .report_detail_mip_failure(Some(super::super::environment::DetailMipFailure {
+                images: vec![AssetId::<Image>::default()],
+                shader: AssetId::<Shader>::default(),
+                entry: "downsample_second",
+                cause: "CreateShaderModule(original GPU validation cause)".into(),
+            }));
+        app.update();
+        let summary = &app.world().get::<Text>(summary).unwrap().0;
+        assert!(summary.contains("描画環境の通知がある。"));
+        assert!(!summary.contains("以前の表示を保持"));
+        let details = &app.world().get::<Text>(details).unwrap().0;
+        assert!(details.contains("GPU mipmap"));
+        assert!(details.contains("downsample_second"));
+        assert!(details.contains("CreateShaderModule(original GPU validation cause)"));
+        assert!(!details.contains("以前の表示を保持"));
         assert_eq!(
             app.world().resource::<NativeSession>().game.snapshot(),
             snapshot

@@ -50,6 +50,9 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 既定のTypical環境を維持し、nativeで未提供の気象選択を表示しない。
 
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
+波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。
+近景水面は6 kmの非均一格子と96/144/224分割を使用する。GPUへの投影、mesh、WGSLはBevy adapterが所有する。
+水面のfinite wave packetと解析的勾配はWeb基準へ移行した。fine/ripple、反射pass、shadow、Fresnel、glitter、haze等の完全移植と実描画比較はIssue #311の後続である。
 現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
 Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
 

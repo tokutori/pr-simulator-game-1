@@ -1,5 +1,5 @@
 use bevy::ecs as bevy_ecs;
-use bevy::prelude::{Component, Resource};
+use bevy::prelude::{AssetId, Component, Image, Resource, Shader};
 use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
 use birdman_game_format::{
     EnvironmentFormatError, SkyStateDocument, WaveStateDocument, WeatherClass,
@@ -141,12 +141,22 @@ enum EnvironmentState {
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub(crate) struct NativeEnvironment {
     state: EnvironmentState,
+    detail_mip_failure: Option<DetailMipFailure>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DetailMipFailure {
+    pub(crate) images: Vec<AssetId<Image>>,
+    pub(crate) shader: AssetId<Shader>,
+    pub(crate) entry: &'static str,
+    pub(crate) cause: String,
 }
 
 impl NativeEnvironment {
     pub(crate) fn try_default() -> Result<Self, EnvironmentFailure> {
         Ok(Self {
             state: EnvironmentState::Applied(EnvironmentTarget::DefaultExhibition.resolve()?),
+            detail_mip_failure: None,
         })
     }
 
@@ -178,6 +188,7 @@ impl NativeEnvironment {
 
     pub(crate) fn commit(&mut self, resolved: ResolvedEnvironment) {
         self.state = EnvironmentState::Applied(resolved);
+        self.detail_mip_failure = None;
     }
 
     pub(crate) fn failed(&mut self, requested: EnvironmentTarget, cause: EnvironmentFailure) {
@@ -188,8 +199,16 @@ impl NativeEnvironment {
         };
     }
 
+    pub(crate) fn detail_mip_failure(&self) -> Option<&DetailMipFailure> {
+        self.detail_mip_failure.as_ref()
+    }
+
+    pub(crate) fn report_detail_mip_failure(&mut self, cause: Option<DetailMipFailure>) {
+        self.detail_mip_failure = cause;
+    }
+
     pub(crate) fn failure_notice(&self) -> Option<String> {
-        match &self.state {
+        let environment = match &self.state {
             EnvironmentState::Applied(_) => None,
             EnvironmentState::Failed {
                 applied,
@@ -199,6 +218,15 @@ impl NativeEnvironment {
                 "描画環境の適用に失敗した。以前の表示を保持する。\n要求: {requested:?}\n表示中のidentity: {:?}\n原因: {cause:?}",
                 applied.condition.identity,
             )),
+        };
+        let mip = self.detail_mip_failure.as_ref().map(|failure| format!(
+            "水面微細波のGPU mipmap生成に失敗した。対象画像の再queueを停止した。\nimages: {:?}\nshader: {:?}\nentry point: {}\n原因: {}",
+            failure.images, failure.shader, failure.entry, failure.cause,
+        ));
+        match (environment, mip) {
+            (Some(environment), Some(mip)) => Some(format!("{environment}\n{mip}")),
+            (Some(notice), None) | (None, Some(notice)) => Some(notice),
+            (None, None) => None,
         }
     }
 }
@@ -303,6 +331,36 @@ mod tests {
         }
         presentation.commit(initial);
         assert_eq!(presentation.applied(), initial);
+        assert!(presentation.failure_notice().is_none());
+    }
+
+    #[test]
+    fn gpu_mip_diagnostic_is_separate_from_cpu_exchange_and_clears_on_new_environment() {
+        let mut presentation = NativeEnvironment::try_default().unwrap();
+        let initial = presentation.applied();
+        let failure = DetailMipFailure {
+            images: vec![AssetId::<Image>::default()],
+            shader: AssetId::<Shader>::default(),
+            entry: "downsample_second",
+            cause: "CreateShaderModule(original GPU validation cause)".into(),
+        };
+        presentation.report_detail_mip_failure(Some(failure.clone()));
+        assert_eq!(
+            presentation.condition_for(initial.target),
+            Ok(initial.condition)
+        );
+        let notice = presentation.failure_notice().unwrap();
+        assert!(notice.contains("GPU mipmap"));
+        assert!(notice.contains("downsample_second"));
+        assert!(notice.contains("original GPU validation cause"));
+        assert!(!notice.contains("以前の表示を保持"));
+        assert_eq!(presentation.detail_mip_failure(), Some(&failure));
+        presentation.failed(initial.target, EnvironmentFailure::BoundsUnavailable);
+        let notice = presentation.failure_notice().unwrap();
+        assert!(notice.contains("BoundsUnavailable"));
+        assert!(notice.contains("original GPU validation cause"));
+        presentation.commit(initial);
+        assert!(presentation.detail_mip_failure().is_none());
         assert!(presentation.failure_notice().is_none());
     }
 }

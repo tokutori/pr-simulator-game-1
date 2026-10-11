@@ -55,7 +55,26 @@ Three.js adapterにはDataTexture、sampler、GLSL、反射pass、mesh生成とG
 
 ## 残作業
 
-Web consumerのbuild・回帰と実描画の検査、およびBevy consumerの移行が残る。
+Bevy consumerは同じ24-slot uploadと6/10/18成分を直接使用する。
+近景meshはWeb基準の6 km非均一格子、96/144/224分割を採用し、頂点のUV1へgrid spacingを格納する。
+WGSLは有限wave packet、位相warp、visibility勾配、horizontal Jacobianとheight勾配を移植し、共有choppiness reserveを使用する。
+独自JONSWAP、seeded geometry phase、4成分選択、0.35 mの独自高さ上限は撤去した。
+
+近景・遠景の512×512 RGBAは共通Rustから生成し、線形RGBA、periodic wrapping、anisotropy 8でBevy Imageへ投影する。
+mipmapはBevy 0.19.1の公式 `generate_mips_for_phase` を使用し、自作downsamplingを追加しない。
+正規downsample shaderの2 entry pointが準備済みであることを確認し、active画像のAssetIdとGPU TextureIdに対してcommand記録を管理する。
+未準備の画像は再queueし、command記録後は同じ画像を恒常dispatchしない。環境変更による画像交換は再queueし、retired画像は追跡対象から除去する。
+この状態はordered commandの記録を表し、GPU完了の同期保証を表さない。
+detail画像はadapterが所有するimmutable assetである。環境交換は新しいAssetIdを使用し、quality変更は同じ画像を再利用する。
+pending中の同一AssetId hot-reloadは対応範囲に含めない。公式bind group cacheは、queueから除外された画像を退役させる。
+環境更新は既存resourceを全て確認した後に画像・material・bounds・sunを一括交換する。
+quality変更はnear/farへ同一の6/10/18成分投影を原子的に適用し、skyと既存detail画像を保持する。physics、record、simulation timeを変更しない。
+shader未読込み・import待機はpendingとして扱う。正規downsampleの確定pipeline失敗は対象画像・shader・entry point・元原因を既存NativeEnvironmentの診断へ伝達し、対象画像の再queueを停止する。
+新環境で退役した画像のGPU診断を除去する。非同期GPU失敗はCPU交換失敗と分離し、以前の表示を保持したという保証を付与しない。
+
+Bevy consumerはcompile・Clippy、Native 100試験・共有session 21試験が合格した。Windows 11/AMD Radeon 860M/VulkanでWGSLを起動し、開始・Pilot/Chase・pause・画質変更・Result・Retryのscripted GPU検査が合格した。
+Web consumerも同じWindows環境のChromium/WebGL2で起動・Flight・pause・Result・Retryを確認した。物理キー・マウスの受入、同一条件の移植前後比較、release性能計測は未完了である。
 Issue #306全体の完了にはWeb移植前後の実描画検査も必要である。
-Issue #311のWGSL、finite wave packet、micro-normal、天空・機体反射、shadow、Fresnel、glitter、白波、haze、LODは後続である。
+Issue #311の後続phaseでは、fine/rippleを含む4層micro-normal、subpixel filtering、天空・機体反射、shadow、Fresnel、glitter、crest/compressionの白波shading、hazeをWeb基準へ揃える。
+phase 1のnear/far detailとcrest/compression入力だけで描画品質の移植完了を扱わない。
 共通スペクトルの完成をnativeの描画品質改善の完了へ読み替えない。
