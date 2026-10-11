@@ -1218,7 +1218,9 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Abort).unwrap();
-            session.action(MenuAction::Retry).unwrap();
+            session
+                .execute_ui_command(GameUiSessionCommand::Retry {})
+                .unwrap();
         }
         app.update();
         assert_eq!(

@@ -735,6 +735,15 @@ pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<Fl
     };
 }
 
+type VerificationUiLabel = (
+    Entity,
+    &'static Text,
+    &'static ComputedNode,
+    &'static bevy::text::TextLayoutInfo,
+    &'static UiGlobalTransform,
+    Option<&'static UiText>,
+);
+
 #[derive(SystemParam)]
 pub(crate) struct VerificationUiHierarchy<'w, 's> {
     clipping: Query<
@@ -747,20 +756,14 @@ pub(crate) struct VerificationUiHierarchy<'w, 's> {
         ),
     >,
     parents: Query<'w, 's, &'static ChildOf, Without<OverrideClip>>,
+    windows: Query<'w, 's, &'static Window>,
 }
 
 pub(crate) fn verify_ui_layout(
     mut verification: ResMut<Verification>,
     session: Res<NativeSession>,
     buttons: Query<(Entity, &ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
-    labels: Query<(
-        Entity,
-        &Text,
-        &ComputedNode,
-        &bevy::text::TextLayoutInfo,
-        &UiGlobalTransform,
-        Option<&UiText>,
-    )>,
+    labels: Query<VerificationUiLabel>,
     panels: Query<(
         Entity,
         &UiPanel,
@@ -769,7 +772,6 @@ pub(crate) fn verify_ui_layout(
         &UiGlobalTransform,
         &ScrollPosition,
     )>,
-    windows: Query<&Window>,
     hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -777,7 +779,11 @@ pub(crate) fn verify_ui_layout(
         return;
     }
     let result = (|| {
-        let window = windows.iter().next().ok_or("UI viewport is unavailable")?;
+        let window = hierarchy
+            .windows
+            .iter()
+            .next()
+            .ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
         if verification.stage == VerificationStage::InputTrialDetails {
             require_phase(session.game.snapshot().phase(), SessionPhase::Result)?;

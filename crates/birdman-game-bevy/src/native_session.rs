@@ -49,7 +49,6 @@ pub(crate) enum MenuAction {
     Pause,
     Resume,
     Abort,
-    Retry,
 }
 
 impl NativeSession {
@@ -110,7 +109,6 @@ impl NativeSession {
             MenuAction::Pause => GameUiSessionCommand::Pause {},
             MenuAction::Resume => GameUiSessionCommand::Resume {},
             MenuAction::Abort => GameUiSessionCommand::Abort {},
-            MenuAction::Retry => GameUiSessionCommand::Retry {},
         };
         self.execute_ui_command(command)
     }
@@ -441,7 +439,9 @@ mod tests {
         assert_eq!(launched.tick, 0.0);
         session.tick(FlightInput::default());
         session.action(MenuAction::Abort).unwrap();
-        session.action(MenuAction::Retry).unwrap();
+        session
+            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .unwrap();
         let retry = session.prepared_display_state().unwrap();
         assert_eq!(retry.state, initial.state);
         assert_eq!(retry.incidence, initial.incidence);
@@ -537,7 +537,9 @@ mod tests {
                 assert_eq!(retained_record.sample_count(), sample_count);
                 assert_eq!(retained_record.finalization(), Some(finalization));
                 assert_eq!(retained_record.samples().last(), Some(&last_sample));
-                session.action(MenuAction::Retry).unwrap();
+                session
+                    .execute_ui_command(GameUiSessionCommand::Retry {})
+                    .unwrap();
                 assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
                 assert_eq!(session.game.configuration_identity(), Some(sealed_identity));
                 let retry_record = session.game.flight_record().unwrap();
@@ -601,7 +603,9 @@ mod tests {
                 .finalization()
                 .is_some()
         );
-        session.action(MenuAction::Retry).unwrap();
+        session
+            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .unwrap();
         assert!(matches!(
             session.game.snapshot(),
             SessionSnapshot::BriefingReady { .. }
