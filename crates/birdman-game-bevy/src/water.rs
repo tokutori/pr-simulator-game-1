@@ -2177,6 +2177,14 @@ mod tests {
         assert!(shader.contains("horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient)"));
         assert!(shader.contains("surface.represented_slope"));
         assert!(shader.contains("(1.0 - geometric_visibility) * pixel_visibility * 0.65"));
+        assert!(shader.contains("1.0 - smoothstep(2.0, 5.0, fwidth(phase))"));
+        assert!(!shader.contains("phase_footprint"));
+        assert_eq!(shader.matches("lake_wave_slope(").count(), 2);
+        let vertex_stage = shader.split_once("@vertex").unwrap().1;
+        let vertex_stage = vertex_stage.split_once("fn lake_sky_radiance").unwrap().0;
+        for fragment_only in ["lake_wave_slope(", "fwidth(", "dpdx(", "dpdy("] {
+            assert!(!vertex_stage.contains(fragment_only));
+        }
         assert!(shader.contains("textureSampleGrad(detail_near"));
         assert!(shader.contains("textureSampleGrad(detail_far"));
         assert!(shader.contains("textureSampleLevel(detail_near"));
