@@ -132,7 +132,7 @@ impl<F: Frame> Vector3<F> {
             self.components[1] / scale,
             self.components[2] / scale,
         ];
-        let norm = scale * sqrt(normalized.iter().map(|value| value * value).sum());
+        let norm = scale * libm::sqrt(normalized.iter().map(|value| value * value).sum());
         if norm.is_finite() {
             Ok(norm)
         } else {
@@ -671,7 +671,7 @@ fn norm4(components: [f64; 4]) -> f64 {
         return 0.0;
     }
     let normalized = scale4(components, 1.0 / scale);
-    scale * sqrt(normalized.iter().map(|value| value * value).sum())
+    scale * libm::sqrt(normalized.iter().map(|value| value * value).sum())
 }
 
 fn scale4(components: [f64; 4], scale: f64) -> [f64; 4] {
@@ -683,17 +683,6 @@ fn scale4(components: [f64; 4], scale: f64) -> [f64; 4] {
     ]
 }
 
-fn sqrt(value: f64) -> f64 {
-    if value == 0.0 || !value.is_finite() {
-        return value;
-    }
-    let mut estimate = f64::from_bits((value.to_bits() >> 1) + 0x1ff8_0000_0000_0000);
-    for _ in 0..8 {
-        estimate = 0.5 * (estimate + value / estimate);
-    }
-    estimate
-}
-
 pub(crate) fn hypot2(first: f64, second: f64) -> f64 {
     let scale = first.abs().max(second.abs());
     if scale == 0.0 {
@@ -701,7 +690,7 @@ pub(crate) fn hypot2(first: f64, second: f64) -> f64 {
     }
     let normalized_first = first / scale;
     let normalized_second = second / scale;
-    scale * sqrt(normalized_first * normalized_first + normalized_second * normalized_second)
+    scale * libm::sqrt(normalized_first * normalized_first + normalized_second * normalized_second)
 }
 
 pub(crate) fn atan2(y: f64, x: f64) -> f64 {
