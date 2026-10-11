@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -340,6 +340,166 @@ describe("presentation runtime", () => {
     expect(webxr.startCount).toBe(1);
     expect(renderer.startCount).toBe(1);
     await runtime.dispose();
+  });
+
+  it.each([
+    ["stop-loop"], ["stop-backend"], ["dispose-renderer"],
+    ["stop-loop", "stop-backend"], ["stop-loop", "dispose-renderer"], ["stop-backend", "dispose-renderer"],
+    ["stop-loop", "stop-backend", "dispose-renderer"]
+  ] as const)("attempts every independent cleanup and preserves each cause for %j", async (...failedOperations) => {
+    for (const mode of ["screen", "webxr", "phone-vr"] as const) {
+      const active = new Set<PresentationMode>();
+      const renderer = new FakeRenderer();
+      const backend = new FakeBackend(mode, active);
+      const calls: string[] = [];
+      const causes = {
+        "stop-loop": new Error("Injected loop stop failure"),
+        "stop-backend": new Error("Injected backend stop failure"),
+        "dispose-renderer": new Error("Injected renderer disposal failure")
+      };
+      const failed: readonly string[] = failedOperations;
+      const stopLoop = renderer.stopLoop.bind(renderer);
+      vi.spyOn(renderer, "stopLoop").mockImplementation(() => {
+        calls.push("stop-loop");
+        if (failed.includes("stop-loop")) throw causes["stop-loop"];
+        stopLoop();
+      });
+      const stopBackend = backend.stop.bind(backend);
+      vi.spyOn(backend, "stop").mockImplementation(async () => {
+        calls.push("stop-backend");
+        await stopBackend();
+        if (failed.includes("stop-backend")) throw causes["stop-backend"];
+      });
+      const disposeRenderer = renderer.dispose.bind(renderer);
+      vi.spyOn(renderer, "dispose").mockImplementation(() => {
+        calls.push("dispose-renderer");
+        disposeRenderer();
+        if (failed.includes("dispose-renderer")) throw causes["dispose-renderer"];
+      });
+      const runtime = new PresentationRuntime(renderer, [backend], () => fixturePresentation(createSceneFixture("Title")));
+      expect(await runtime.start(mode)).toEqual({ ok: true });
+      renderer.tick(0);
+      const disposal = runtime.dispose();
+      const result = await disposal;
+      expect(calls).toEqual(["stop-loop", "stop-backend", "dispose-renderer"]);
+      expect(result).toEqual({ ok: false, error: { type: "cleanup-failed", failures: failedOperations.map((operation) => ({
+        type: operation === "stop-backend" ? "backend-failed" : "renderer-failed",
+        operation,
+        ...(operation === "stop-backend" ? { mode } : {}),
+        message: causes[operation].message,
+        cause: causes[operation]
+      })) } });
+      if (result.ok || result.error.type !== "cleanup-failed") throw new Error("Expected retained cleanup causes");
+      result.error.failures.forEach((failure, index) => {
+        const operation = failedOperations[index];
+        if (operation === undefined) throw new Error("Unexpected cleanup failure index");
+        expect(failure.cause).toBe(causes[operation]);
+      });
+      expect(runtime.currentMode).toBeNull();
+      expect(runtime.framesPerSecond).toBeNull();
+      renderer.tick(1_000);
+      expect(renderer.frames).toHaveLength(1);
+      expect(await runtime.start(mode)).toEqual({ ok: false, error: { type: "disposed" } });
+      expect(await runtime.switchTo(mode)).toEqual({ ok: false, error: { type: "disposed" } });
+      expect(runtime.resize({ x: 800, y: 600, pixelRatio: 1 })).toEqual({ ok: false, error: { type: "disposed" } });
+      expect(runtime.dispose()).toBe(disposal);
+      expect(await runtime.dispose()).toBe(result);
+      expect(calls).toEqual(["stop-loop", "stop-backend", "dispose-renderer"]);
+      expect(renderer.disposeCount).toBe(1);
+      expect(active.size).toBe(0);
+    }
+  });
+
+  it("shares the disposal result before synchronous reentry and while backend cleanup is pending", async () => {
+    const renderer = new FakeRenderer();
+    const backend = new FakeBackend("phone-vr", new Set());
+    const runtime = new PresentationRuntime(renderer, [backend], () => fixturePresentation(createSceneFixture("Title")));
+    await runtime.start("phone-vr");
+    let reentrantDisposal: ReturnType<PresentationRuntime["dispose"]> | null = null;
+    let completeStop: () => void = () => { throw new Error("Backend stop gate is not initialized"); };
+    const stopGate = new Promise<void>((resolve) => { completeStop = resolve; });
+    const originalStopLoop = renderer.stopLoop.bind(renderer);
+    vi.spyOn(renderer, "stopLoop").mockImplementation(() => {
+      reentrantDisposal = runtime.dispose();
+      originalStopLoop();
+    });
+    const stopBackend = vi.spyOn(backend, "stop").mockImplementation(() => stopGate);
+    const disposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(disposal);
+    const pendingStart = runtime.start("screen");
+    await Promise.resolve();
+    expect(reentrantDisposal).toBe(disposal);
+    expect(runtime.currentMode).toBeNull();
+    expect(renderer.disposeCount).toBe(0);
+    expect(stopBackend).toHaveBeenCalledTimes(1);
+    completeStop();
+    expect(await disposal).toEqual({ ok: true });
+    expect(await pendingStart).toEqual({ ok: false, error: { type: "disposed" } });
+    expect(runtime.dispose()).toBe(disposal);
+    expect(renderer.stopCount).toBe(1);
+    expect(renderer.disposeCount).toBe(1);
+    expect(stopBackend).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains an unprintable backend cause and continues renderer disposal", async () => {
+    const renderer = new FakeRenderer();
+    const backend = new FakeBackend("webxr", new Set());
+    const runtime = new PresentationRuntime(renderer, [backend], () => fixturePresentation(createSceneFixture("Title")));
+    await runtime.start("webxr");
+    const cause: unknown = Object.create(null);
+    vi.spyOn(backend, "stop").mockImplementation(() => { throw cause; });
+    const result = await runtime.dispose();
+    expect(result).toEqual({ ok: false, error: { type: "cleanup-failed", failures: [{ type: "backend-failed", operation: "stop-backend", mode: "webxr",
+      message: "Presentation operation failed with an unprintable cause", cause }] } });
+    expect(renderer.disposeCount).toBe(1);
+    if (result.ok || result.error.type !== "cleanup-failed") throw new Error("Expected retained backend cause");
+    expect(result.error.failures[0].cause).toBe(cause);
+  });
+
+  it("preserves both backend and loop-stop causes when a failed switch requires cleanup", async () => {
+    const renderer = new FakeRenderer();
+    const active = new Set<PresentationMode>();
+    const screen = new FakeBackend("screen", active);
+    const webxr = new FakeBackend("webxr", active);
+    const runtime = new PresentationRuntime(renderer, [screen, webxr], () => fixturePresentation(createSceneFixture("Title")));
+    await runtime.start("webxr");
+    const backendCause = new Error("Session end failed");
+    const loopCause = new Error("Loop stop failed");
+    vi.spyOn(webxr, "stop").mockRejectedValue(backendCause);
+    const stopLoop = vi.spyOn(renderer, "stopLoop").mockImplementation(() => { throw loopCause; });
+    const result = await runtime.switchTo("screen");
+    expect(result).toEqual({ ok: false, error: { type: "cleanup-failed", failures: [
+      { type: "backend-failed", operation: "stop-backend", mode: "webxr", message: backendCause.message, cause: backendCause },
+      { type: "renderer-failed", operation: "stop-loop", message: loopCause.message, cause: loopCause }
+    ] } });
+    expect(runtime.currentMode).toBeNull();
+    renderer.tick(1_000);
+    expect(renderer.frames).toHaveLength(0);
+    expect(screen.startCount).toBe(0);
+    await runtime.dispose();
+    expect(stopLoop).toHaveBeenCalledTimes(1);
+    expect(renderer.disposeCount).toBe(1);
+  });
+
+  it("retains startup and backend-cleanup causes before stopping a failed target switch", async () => {
+    const renderer = new FakeRenderer();
+    const screen = new FakeBackend("screen", new Set());
+    const phoneVr = new FakeBackend("phone-vr", new Set());
+    const runtime = new PresentationRuntime(renderer, [screen, phoneVr], () => fixturePresentation(createSceneFixture("Title")));
+    await runtime.start("screen");
+    const startCause = new Error("Phone VR tracking startup failed");
+    const cleanupCause = new Error("Phone VR sensor cleanup failed");
+    vi.spyOn(phoneVr, "start").mockRejectedValue(startCause);
+    vi.spyOn(phoneVr, "stop").mockRejectedValue(cleanupCause);
+    const result = await runtime.switchTo("phone-vr");
+    expect(result).toEqual({ ok: false, error: { type: "cleanup-failed", failures: [
+      { type: "backend-failed", operation: "start-backend", mode: "phone-vr", message: startCause.message, cause: startCause },
+      { type: "backend-failed", operation: "stop-backend", mode: "phone-vr", message: cleanupCause.message, cause: cleanupCause }
+    ] } });
+    expect(runtime.currentMode).toBeNull();
+    expect(renderer.stopCount).toBe(1);
+    await runtime.dispose();
+    expect(renderer.disposeCount).toBe(1);
   });
 
   it("falls back to Screen instead of restarting a stopped WebXR backend", async () => {

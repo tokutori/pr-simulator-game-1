@@ -195,10 +195,22 @@ export class TailFlightController {
     if (this.execution === "disposed") return;
     this.generation = Symbol("disposed tail controller generation");
     this.execution = "disposed";
-    this.input.dispose();
-    this.session.free();
-    this.renderer.setFlightPose(null);
-    this.hud.setVisible(false);
+    this.clock.suspend();
+    const failures: unknown[] = [];
+    for (const cleanup of [
+      () => { this.input.dispose(); },
+      () => { this.session.free(); },
+      () => { this.renderer.setFlightPose(null); },
+      () => { this.hud.setVisible(false); },
+    ]) {
+      try {
+        cleanup();
+      } catch (error: unknown) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Tail controller cleanup failed", { cause: failures[0] });
   }
 
   private decodeSnapshot(json: string): TailControllerSnapshot {

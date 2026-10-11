@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js";
+import type { RendererAdapter, RuntimeResult } from "../../web/src/render/contracts/runtime.js";
+import type { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 
 const teardowns: (() => Promise<void>)[] = [];
 
@@ -13,7 +14,7 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
 });
 
-async function fixture(options: { readonly deferScreenStart?: boolean; readonly failStart?: boolean; readonly failCleanup?: boolean } = {}) {
+async function fixture(options: { readonly deferScreenStart?: boolean; readonly failStart?: boolean; readonly failCleanup?: boolean; readonly failStopLoop?: boolean } = {}) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
@@ -33,7 +34,9 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     startLoop: vi.fn<RendererAdapter["startLoop"]>(() => {
       if (options.failStart === true) throw new Error("Injected renderer start failure");
     }),
-    beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
+    beginViewFrame: vi.fn(), stopLoop: vi.fn(() => {
+      if (options.failStopLoop === true) throw new Error("Injected renderer loop stop failure");
+    }), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
@@ -55,11 +58,12 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
   const facadeDispose = vi.spyOn(TailAppSessionFacade.prototype, "dispose");
   const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
   const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
+  const { ScreenPresentationBackend } = await import("../../web/src/presentation/screen-backend.js");
+  const backendStop = vi.spyOn(ScreenPresentationBackend.prototype, "stop");
   let releaseInitialization: () => void = () => undefined;
   let initializationPaused = false;
   if (options.deferScreenStart === true) {
     const gate = new Promise<void>((resolve) => { releaseInitialization = resolve; });
-    const { ScreenPresentationBackend } = await import("../../web/src/presentation/screen-backend.js");
     vi.spyOn(ScreenPresentationBackend.prototype, "start").mockImplementation(() => {
       initializationPaused = true;
       return gate;
@@ -77,7 +81,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     await browser.happyDOM.abort();
   });
   await import("../../web/src/main.js");
-  return { browser, renderer, free, facadeDispose, runtimeDispose, pageHide, releaseInitialization,
+  return { browser, renderer, free, facadeDispose, runtimeDispose, backendStop, pageHide, releaseInitialization,
     initializationPaused: () => initializationPaused,
     scene: () => browser.document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") };
 }
@@ -122,5 +126,50 @@ describe("Tail main startup resource ownership", () => {
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
     expect(trial.free).toHaveBeenCalledTimes(1);
     expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["loop", "backend", "renderer", "all"] as const)("reports %s cleanup failure after pagehide while attempting every release once", async (failure) => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const trial = await fixture({ failStopLoop: failure === "loop" || failure === "all", failCleanup: failure === "renderer" || failure === "all" });
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    const backendCause = new Error("Injected Screen backend stop failure");
+    if (failure === "backend" || failure === "all") trial.backendStop.mockRejectedValueOnce(backendCause);
+    trial.pageHide(false);
+    await vi.waitFor(() => { expect(diagnostic).toHaveBeenCalledTimes(1); });
+    expect(trial.runtimeDispose).toHaveBeenCalledTimes(1);
+    const disposalCall = trial.runtimeDispose.mock.results[0];
+    if (disposalCall === undefined) throw new Error("Runtime disposal was not invoked");
+    const result = await disposalCall.value as RuntimeResult;
+    if (result.ok || result.error.type !== "cleanup-failed") throw new Error("Expected a reported typed cleanup result");
+    expect(diagnostic).toHaveBeenCalledWith("Presentation cleanup failed", result.error);
+    expect(result.error.failures.map((entry) => entry.operation)).toEqual(failure === "all"
+      ? ["stop-loop", "stop-backend", "dispose-renderer"]
+      : [failure === "loop" ? "stop-loop" : failure === "backend" ? "stop-backend" : "dispose-renderer"]);
+    if (failure === "backend" || failure === "all") expect(result.error.failures.find((entry) => entry.operation === "stop-backend")?.cause).toBe(backendCause);
+    trial.pageHide(false);
+    expect(trial.renderer.stopLoop).toHaveBeenCalledTimes(1);
+    expect(trial.backendStop).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
+    expect(trial.runtimeDispose).toHaveBeenCalledTimes(1);
+    expect(diagnostic).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers the pagehide disposal rejection at the effect boundary", async () => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    const cause = new Error("Injected disposal rejection");
+    trial.runtimeDispose.mockRejectedValueOnce(cause);
+    trial.pageHide(false);
+    await vi.waitFor(() => { expect(diagnostic).toHaveBeenCalledWith("Presentation cleanup failed", cause); });
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
+    const receiver = trial.runtimeDispose.mock.contexts[0] as PresentationRuntime | undefined;
+    if (receiver === undefined) throw new Error("Runtime disposal owner is missing");
+    trial.runtimeDispose.mockRestore();
+    await receiver.dispose();
+    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
   });
 });
