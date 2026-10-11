@@ -8,7 +8,9 @@ import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-sn
 import { parseNamedRecordSample, parseNamedReplayContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
-import { createFlightDisplayHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
+import { currentSharedHudFixture, sharedGameUiPlatform, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 
@@ -35,6 +37,12 @@ function advance(session: HybridGameSessionBridge): void {
     pilotPositionCommand: { kind: "set", normalized: 0.1 } }));
 }
 
+function sharedHud(session: HybridGameSessionBridge) {
+  const view = parseGameUiView(session.game_ui_view_json(JSON.stringify(sharedGameUiPlatform())));
+  if (view.hud === null) throw new Error("Missing shared Rust HUD");
+  return projectSharedFlightHudModel(view.hud, view.theme);
+}
+
 describe("tail-aware shared Flight HUD", () => {
   it("displays Rust attitude, body rates, physical tails, held target and signed live progress", () => {
     const session = new HybridGameSessionBridge(0, 21, 22);
@@ -45,22 +53,18 @@ describe("tail-aware shared Flight HUD", () => {
       if (snapshot.kind !== "tail_flight") {
         throw new Error("Expected Rust two-tail fields");
       }
-      const model = createFlightDisplayHudModel(snapshot, 0);
+      const model = sharedHud(session);
       const rate = snapshot.angularRateBodyRadiansPerSecond.value;
       const degrees = (value: number): string => (value * 180 / Math.PI).toFixed(1);
-      expect(model.attitude).toEqual({ rollDegrees: snapshot.telemetry.value.rollRadians * 180 / Math.PI,
-        pitchDegrees: snapshot.telemetry.value.pitchRadians * 180 / Math.PI });
+      expect(model.attitude?.rollDegrees).toBeCloseTo(snapshot.telemetry.value.rollRadians * 180 / Math.PI, 12);
+      expect(model.attitude?.pitchDegrees).toBeCloseTo(snapshot.telemetry.value.pitchRadians * 180 / Math.PI, 12);
       expect(model.supplementaryReadouts).toEqual([
         `p ${degrees(rate.roll)}  q ${degrees(rate.pitch)}  r ${degrees(rate.yaw)} °/s`,
         `水平尾翼 ${degrees(snapshot.controls.physicalIncidence.horizontalTailRadians)}°  垂直尾翼 ${degrees(snapshot.controls.physicalIncidence.verticalTailRadians)}°`,
-        `PILOT TARGET ${snapshot.pilotPositionTargetMeters.value.toFixed(2)} m [u=${snapshot.pilotPositionTargetNormalized.value.toFixed(2)}]`
+        `PILOT TARGET ${snapshot.pilotPositionTargetMeters.value.toFixed(2)} m`
       ]);
       expect(model.telemetry).toContain(`距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`);
       expect(model.telemetry).not.toContain("確定距離");
-      const reverse = { ...snapshot, progressMeters: { kind: "available" as const, value: {
-        courseParallelMeters: -12.3, crossTrackMeters: 4.5, netHorizontalMeters: Math.hypot(12.3, 4.5)
-      } } };
-      expect(createFlightDisplayHudModel(reverse, 0).telemetry).toContain("距離 -12.3 m");
       expect(model.pilotPosition).toContain(snapshot.pilotPositionMeters.toFixed(2));
       expect(model.controlsDescription).toContain("nose-up/down intent");
       expect(model.controlsDescription).toContain("←/→ left/right intent");
@@ -68,29 +72,31 @@ describe("tail-aware shared Flight HUD", () => {
       expect(model.controlsDescription).not.toContain("A/D roll");
       expect(Object.isFrozen(model.supplementaryReadouts)).toBe(true);
       session.pause(0);
-      expect(createFlightDisplayHudModel(display(session), 0).status).toBe("一時停止");
+      expect(sharedHud(session).status).toBe("一時停止");
     } finally {
       session.free();
     }
   });
 
   it("keeps Information and Custom visibility independent from the physical controls", () => {
-    const session = new HybridGameSessionBridge(0, 21, 22);
-    try {
-      launch(session);
-      const snapshot = display(session);
-      expect(createFlightDisplayHudModel(snapshot, 2).supplementaryReadouts).toEqual([]);
-      const attitudeOnly = createFlightDisplayHudModel(snapshot, 4, { telemetry: false, attitude: true,
-        wind: false, flightPath: false, angleOfAttack: false, warnings: false });
+      const controls = withSharedGameUiSession(5, { ticks: 0 }, (owner) => owner.readSnapshot());
+      expect(currentSharedHudFixture({ informationCode: 2, ticks: 0 }).supplementaryReadouts).toEqual([]);
+      const attitudeProfile = { telemetry: false, attitude: true,
+        wind: false, flightPath: false, angleOfAttack: false, warnings: false };
+      const attitudeOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: attitudeProfile, ticks: 0 });
       expect(attitudeOnly.supplementaryReadouts).toHaveLength(1);
       expect(attitudeOnly.supplementaryReadouts[0]).toMatch(/^p /);
-      const telemetryOnly = createFlightDisplayHudModel(snapshot, 4, { telemetry: true, attitude: false,
-        wind: false, flightPath: false, angleOfAttack: false, warnings: false });
+      const telemetryProfile = { telemetry: true, attitude: false,
+        wind: false, flightPath: false, angleOfAttack: false, warnings: false };
+      const telemetryOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: telemetryProfile, ticks: 0 });
       expect(telemetryOnly.supplementaryReadouts).toHaveLength(2);
       expect(telemetryOnly.supplementaryReadouts[0]).toMatch(/^水平尾翼 /);
-    } finally {
-      session.free();
-    }
+      for (const options of [{ informationCode: 2 as const }, { informationCode: 4 as const, hudProfile: attitudeProfile },
+        { informationCode: 4 as const, hudProfile: telemetryProfile }]) {
+        withSharedGameUiSession(5, { ...options, ticks: 0 }, (owner) => {
+          expect(owner.readSnapshot()).toEqual(controls);
+        });
+      }
   });
 
   it.each([1280 / 720, 720 / 1280])("uses the same tail model for DOM and camera-anchored Head HUD at aspect %s", async (aspect) => {
@@ -100,7 +106,7 @@ describe("tail-aware shared Flight HUD", () => {
       launch(session);
       advance(session);
       const snapshot = display(session);
-      const model = createFlightDisplayHudModel(snapshot, 0);
+      const model = sharedHud(session);
       const root = window.document.createElement("section") as unknown as HTMLElement;
       const adapter = new FlightHudAdapter(root);
       const nodes = [...root.children];
@@ -110,7 +116,7 @@ describe("tail-aware shared Flight HUD", () => {
       expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe(model.pilotPosition);
       expect(root.querySelector('[data-instrument="pilot-position"]')).toBeNull();
       adapter.setVisible(false);
-      adapter.renderDisplaySnapshot(snapshot, createFlightDisplayHudModel(snapshot, 2));
+      adapter.renderDisplaySnapshot(snapshot, currentSharedHudFixture({ informationCode: 2 }));
       expect(root.querySelector(".flight-hud-readouts")?.textContent).not.toContain("水平尾翼");
       adapter.setVisible(true);
       adapter.renderDisplaySnapshot(snapshot, model);
@@ -142,12 +148,15 @@ describe("tail-aware shared Flight HUD", () => {
       advance(source);
       source.abort();
       const result = display(source);
-      expect(createFlightDisplayHudModel(result, 0).status).toBe("手動終了");
+      expect(sharedHud(source).status).toBe("手動終了");
+      expect(result.kind).toBe("tail_result");
       replay.open_archived_flight_record(source.export_flight_record_json());
       const context = parseNamedReplayContext(replay.playback_context_json());
       const sample = parseNamedRecordSample(replay.flight_record_sample_at_seconds(0.005), physics_hz(), context);
       const snapshot = projectRecordedFlightSnapshot(sample, context);
-      const model = createFlightDisplayHudModel(snapshot, 0);
+      replay.game_ui_action_json(JSON.stringify({ kind: "set_replay_view", view: "telemetry" }), JSON.stringify(sharedGameUiPlatform()));
+      replay.seek_playback(0.005);
+      const model = sharedHud(replay);
       expect(model.status).toBe("記録再生");
       expect(model.telemetry).toContain("保存標本");
       expect(model.telemetry).not.toContain("確定距離");

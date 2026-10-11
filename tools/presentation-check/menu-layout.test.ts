@@ -45,13 +45,13 @@ function documentFor(request: MenuLayoutRequest): MenuDocument {
 }
 
 function chart(): UiChart {
-  return Object.freeze({ kind: "chart", id: "chart", label: "Altitude", xAxisLabel: "Time (s)", yAxisLabel: "Height (m)",
-    xMinimum: 0, xMaximum: 20, yMinimum: 0, yMaximum: 20, equalAxisScale: true, enabled: false,
-    rect: normalizedRect(0.04, 0.12, 0.92, 0.5), series: [{ label: "Recorded altitude", color: "#ffffff", points: [{ x: 0, y: 10 }, { x: 20, y: 0 }] }],
-    vectors: [{ label: "Wind", color: "#ffffff", start: { x: 2, y: 3 }, end: { x: 4, y: 3 } }],
+  return Object.freeze({ kind: "chart", id: "chart", label: "Altitude", x_axis_label: "Time (s)", y_axis_label: "Height (m)",
+    x_minimum: 0, x_maximum: 20, y_minimum: 0, y_maximum: 20, equal_axis_scale: true, enabled: false,
+    rect: normalizedRect(0.04, 0.12, 0.92, 0.5), series: [{ label: "Recorded altitude", color: "#ffffff", points: [{ x: 0, y: 10 }, { x: 20, y: 0 }], segment_colors: [] }],
+    vectors: [{ label: "Wind", color: "#ffffff", segment: [{ x: 2, y: 3 }, { x: 4, y: 3 }] as const }],
     markers: [{ label: "Launch", color: "#ffffff", point: { x: 0, y: 10 } }],
-    timeMarkers: [{ label: "5 seconds", color: "#ffffff", point: { x: 5, y: 7 } }],
-    referenceLines: [{ value: 0, label: "Water", color: "#ffffff" }], cursorX: 5, cursorPoints: [{ x: 5, y: 7 }] });
+    time_markers: [{ label: "5 seconds", color: "#ffffff", point: { x: 5, y: 7 } }],
+    reference_lines: [{ value: 0, label: "Water", color: "#ffffff" }], cursor_x: 5, cursor_points: [{ x: 5, y: 7 }] });
 }
 
 describe("Pure measured Menu document and shared viewport", () => {
@@ -193,7 +193,7 @@ describe("Pure measured Menu document and shared viewport", () => {
     if (layout?.kind !== "chart") throw new Error("Missing chart");
     expect(layout.control).toBe(original);
     expect(layout.control.series).toBe(original.series);
-    expect(layout.control.cursorPoints).toBe(original.cursorPoints);
+    expect(layout.control.cursor_points).toBe(original.cursor_points);
     expect(layout.plot.width).toBe(layout.plot.height);
     for (const text of layout.texts) {
       expect(text.bounds.x).toBeGreaterThanOrEqual(layout.bounds.x);

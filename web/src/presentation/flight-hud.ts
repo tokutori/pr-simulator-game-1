@@ -1,10 +1,8 @@
-import type { TailFlightHudPort } from "../game/tail-flight-controller.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import { createFlightDisplayHudModel } from "./flight-hud-model.js";
-import type { FlightHudModel, InformationLevelCode } from "./flight-hud-model.js";
-import type { HudProfileUiState } from "../app/app-state.js";
+import type { FlightHudModel } from "./flight-hud-model.js";
+import { gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
-export class FlightHudAdapter implements TailFlightHudPort {
+export class FlightHudAdapter {
   private readonly status: HTMLOutputElement;
   private readonly warning: HTMLOutputElement;
   private readonly telemetry: HTMLOutputElement;
@@ -29,8 +27,8 @@ export class FlightHudAdapter implements TailFlightHudPort {
   private readonly angleIndicator: SVGPolygonElement;
   private readonly flightPathIndicator: SVGCircleElement;
   private readonly controls: HTMLParagraphElement;
-  private informationCode: InformationLevelCode = 0;
-  private informationProfile: HudProfileUiState = fullProfile;
+  private readonly instruments: HTMLDivElement;
+  private readonly instrumentLabels: readonly HTMLSpanElement[];
 
   constructor(
     private readonly root: HTMLElement,
@@ -123,6 +121,7 @@ export class FlightHudAdapter implements TailFlightHudPort {
     this.adi.append(defs, this.horizon, frame, aircraft, this.flightPathIndicator);
     const instruments = documentRef.createElement("div");
     instruments.className = "flight-hud-instruments";
+    this.instruments = instruments;
     const headingInstrument = instrumentOutput(documentRef, instruments, "HDG", "heading");
     this.headingInstrument = headingInstrument.cell;
     this.headingReadout = headingInstrument.output;
@@ -151,6 +150,7 @@ export class FlightHudAdapter implements TailFlightHudPort {
     const angleInstrument = instrumentOutput(documentRef, instruments, "ANGLE OF ATTACK", "angle");
     this.angleInstrument = angleInstrument.cell;
     this.angleReadout = angleInstrument.output;
+    this.instrumentLabels = [headingInstrument.caption, pilotPositionInstrument.caption, windInstrument.caption, angleInstrument.caption];
     const angleGauge = svgGauge(documentRef, angleInstrument.cell, "angle-of-attack", "0 0 200 34", "迎角目盛");
     angleGauge.append(svgElement(documentRef, "path", { d: "M 10 16 H 190", stroke: "#b9c9c2", "stroke-width": "3" }));
     for (let index = 0; index <= 6; index += 1) {
@@ -165,50 +165,70 @@ export class FlightHudAdapter implements TailFlightHudPort {
     this.controls.className = "flight-hud-controls";
     const attributions = documentRef.createElement("div");
     attributions.className = "flight-hud-attributions";
-    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice);
+    const validatorLicense = documentRef.createElement("a");
+    validatorLicense.className = "flight-hud-attribution-link";
+    validatorLicense.href = gameUiValidatorLicenseUrl;
+    validatorLicense.target = "_blank";
+    validatorLicense.rel = "noopener noreferrer";
+    validatorLicense.textContent = "Game UI validator 利用条件";
+    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense);
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
     root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, this.controls);
     this.setVisible(false);
   }
 
-  setInformationProfile(code: number, profile: HudProfileUiState): void {
-    if (!Number.isInteger(code) || code < 0 || code > 4) {
-      throw new RangeError("Information code must lie in [0, 4]");
-    }
-    this.informationCode = code as InformationLevelCode;
-    this.informationProfile = profile;
-  }
-
-  render(snapshot: FlightDisplaySnapshot, model: FlightHudModel = createFlightDisplayHudModel(snapshot, this.informationCode, this.informationProfile)): void {
+  render(snapshot: FlightDisplaySnapshot, model: FlightHudModel): void {
     this.applyModel(model);
     this.onRender(snapshot);
   }
 
-  renderDisplaySnapshot(snapshot: FlightDisplaySnapshot, model: FlightHudModel = createFlightDisplayHudModel(snapshot, this.informationCode, this.informationProfile)): void {
+  renderDisplaySnapshot(_snapshot: FlightDisplaySnapshot, model: FlightHudModel): void {
     this.applyModel(model);
   }
 
   private applyModel(model: FlightHudModel): void {
+    const layout = model.layout;
+    this.root.dataset.shared = "true";
+    this.root.style.left = `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`;
+    this.root.style.top = `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`;
+    this.root.style.width = `${String(layout.width_px)}px`;
+    this.root.style.maxHeight = `${String(layout.maximum_height_px)}px`;
+    this.root.style.padding = `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`;
+    this.root.style.gap = `${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px`;
+    this.root.style.gridTemplateColumns = `${String(layout.attitude_size_px[0])}px minmax(0, 1fr)`;
+    this.root.style.fontSize = `${String(layout.font_size_px)}px`;
+    this.root.style.color = model.theme.text;
+    this.root.style.background = `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`;
+    this.adi.style.width = `${String(layout.attitude_size_px[0])}px`;
+    this.adi.style.height = `${String(layout.attitude_size_px[1])}px`;
+    this.instruments.style.gridTemplateColumns = `repeat(${String(layout.instrument_columns)}, minmax(0, 1fr))`;
+    this.controls.hidden = !layout.controls_visible;
+    const labels = [model.labels.heading, model.labels.pilotPosition, model.labels.wind, model.labels.angleOfAttack];
+    labels.forEach((label, index) => { const caption = this.instrumentLabels[index]; if (caption !== undefined) caption.textContent = label; });
     this.status.textContent = model.status;
     this.warning.textContent = model.warning ?? "";
     this.warning.hidden = model.warning === null;
-    if (model.attitude === null) {
+    const adi = model.geometry.adi;
+    const horizon = adi?.kind === "attitude" ? adi.horizon : null;
+    const flightPathYRatio = adi === null ? null : adi.kind === "attitude" ? adi.flight_path_y_ratio : adi.y_ratio;
+    if (adi === null) {
       this.adi.classList.add("is-hidden");
     } else {
       this.adi.classList.remove("is-hidden");
     }
     this.readouts.textContent = [model.readouts, ...model.supplementaryReadouts].filter((line) => line !== "").join("\n");
     this.controls.textContent = model.controlsDescription;
-    this.flightPathIndicator.setAttribute("visibility", model.flightPathAngleDegrees === null ? "hidden" : "visible");
-    if (model.flightPathAngleDegrees !== null) {
-      const y = 90 - Math.max(-30, Math.min(30, model.flightPathAngleDegrees)) * 2.2;
+    this.horizon.setAttribute("visibility", horizon === null ? "hidden" : "visible");
+    this.flightPathIndicator.setAttribute("visibility", flightPathYRatio === null ? "hidden" : "visible");
+    if (flightPathYRatio !== null) {
+      const y = flightPathYRatio * 180;
       this.flightPathIndicator.setAttribute("cx", "120");
       this.flightPathIndicator.setAttribute("cy", String(y));
     }
     this.headingInstrument.hidden = model.heading === null;
     this.headingReadout.textContent = model.heading ?? "";
-    if (model.headingDegrees !== null) renderHeadingScale(this.headingScale, model.headingDegrees);
+    renderHeadingScale(this.headingScale, model.geometry.heading_ticks);
     this.pilotPositionInstrument.hidden = model.pilotPosition === null;
     this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
     this.windInstrument.hidden = model.wind === null;
@@ -217,18 +237,16 @@ export class FlightHudAdapter implements TailFlightHudPort {
     if (model.windDirectionDegrees !== null) this.windNeedle.setAttribute("transform", `rotate(${String(model.windDirectionDegrees)} 36 36)`);
     this.angleInstrument.hidden = model.angleOfAttack === null;
     this.angleReadout.textContent = model.angleOfAttack ?? "";
-    this.angleIndicator.setAttribute("visibility", model.angleOfAttackDegrees === null ? "hidden" : "visible");
-    if (model.angleOfAttackDegrees !== null) {
-      const ratio = (Math.max(-10, Math.min(20, model.angleOfAttackDegrees)) + 10) / 30;
-      const x = 10 + ratio * 180;
+    this.angleIndicator.setAttribute("visibility", model.geometry.angle_of_attack_ratio === null ? "hidden" : "visible");
+    if (model.geometry.angle_of_attack_ratio !== null) {
+      const x = 10 + model.geometry.angle_of_attack_ratio * 180;
       this.angleIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
     }
     this.telemetry.textContent = model.telemetry;
     this.location.textContent = model.location;
     this.mapAttribution.textContent = model.mapAttribution;
-    if (model.attitude !== null) {
-      const pitchShift = Math.max(-55, Math.min(55, model.attitude.pitchDegrees * 2.2));
-      this.horizon.setAttribute("transform", `rotate(${String(-model.attitude.rollDegrees)} 120 90) translate(0 ${String(90 + pitchShift)})`);
+    if (horizon !== null) {
+      this.horizon.setAttribute("transform", `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})`);
     }
   }
 
@@ -242,16 +260,7 @@ export class FlightHudAdapter implements TailFlightHudPort {
   }
 }
 
-const fullProfile: HudProfileUiState = Object.freeze({
-  telemetry: true,
-  attitude: true,
-  wind: true,
-  flightPath: true,
-  angleOfAttack: true,
-  warnings: true
-});
-
-function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement } {
+function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement; readonly caption: HTMLSpanElement } {
   const cell = documentRef.createElement("div");
   cell.className = `flight-hud-instrument flight-hud-instrument-${name}`;
   const caption = documentRef.createElement("span");
@@ -260,7 +269,7 @@ function instrumentOutput(documentRef: Document, root: HTMLElement, label: strin
   output.setAttribute("aria-label", label);
   cell.append(caption, output);
   root.append(cell);
-  return Object.freeze({ cell, output });
+  return Object.freeze({ cell, output, caption });
 }
 
 function svgGauge(documentRef: Document, cell: HTMLElement, name: string, viewBox: string, label: string): SVGSVGElement {
@@ -273,38 +282,25 @@ function svgGauge(documentRef: Document, cell: HTMLElement, name: string, viewBo
   return svg;
 }
 
-function renderHeadingScale(group: SVGGElement, headingDegrees: number): void {
+function renderHeadingScale(group: SVGGElement, ticks: FlightHudModel["geometry"]["heading_ticks"]): void {
   const documentRef = group.ownerDocument;
   group.replaceChildren();
-  for (let offset = -60; offset <= 60; offset += 10) {
-    const x = 110 + offset * 1.2;
-    const major = offset % 30 === 0;
+  for (const tick of ticks) {
+    const x = tick.position_ratio * 220;
+    const major = tick.major;
     group.append(svgElement(documentRef, "path", {
       d: `M ${String(x)} ${major ? "28" : "33"} V 40`,
       stroke: major ? "#f3f4e8" : "#b9c9c2",
       "stroke-width": major ? "1.5" : "1"
     }));
     if (major) {
-      const bearing = normalizeDegrees(Math.round(headingDegrees + offset));
       const label = svgElement(documentRef, "text", {
         x: String(x), y: "22", "text-anchor": "middle", fill: "#f3f4e8", "font-size": "8"
       });
-      label.textContent = compassLabel(bearing);
+      label.textContent = tick.label;
       group.append(label);
     }
   }
-}
-
-function compassLabel(degrees: number): string {
-  if (degrees === 0) return "N";
-  if (degrees === 90) return "E";
-  if (degrees === 180) return "S";
-  if (degrees === 270) return "W";
-  return String(degrees).padStart(3, "0");
-}
-
-function normalizeDegrees(degrees: number): number {
-  return ((degrees % 360) + 360) % 360;
 }
 
 function svgElement<K extends keyof SVGElementTagNameMap>(

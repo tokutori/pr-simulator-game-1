@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import type { AppModel } from "../../web/src/app/app-state.js";
+import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { analysisScenarioId, projectAnalysisCursor, projectAnalysisView } from "../../web/src/game/flight-analysis-view.js";
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../../web/src/game/flight-analysis-view.js";
@@ -35,6 +38,39 @@ function dataset(session: TailAppSessionFacade, request: NamedWindGridRequest = 
 
 function cursor(session: TailAppSessionFacade, data: NamedAnalysisDataset, time = 0): NamedAnalysisCursor {
   return session.queryAnalysisCursor(time, data);
+}
+
+function observeUi(model: AppModel, session: TailAppSessionFacade): AppModel {
+  return updateApp(model, { type: "shared-game-ui-observed", view: session.readSharedUi(sharedGameUiPlatform()) }).model;
+}
+
+function selectAnalysisCursor(session: TailAppSessionFacade, timeSeconds: number): void {
+  const platform = sharedGameUiPlatform();
+  session.updateSharedUi({ kind: "set_result_tab", tab: "analysis" }, platform);
+  session.updateSharedUi({ kind: "seek_analysis", time_seconds: timeSeconds }, platform);
+}
+
+function enterReplayAtCursor(session: TailAppSessionFacade, timeSeconds: number): void {
+  const platform = sharedGameUiPlatform();
+  session.updateSharedUi({ kind: "session", command: { kind: "enter_replay" } }, platform);
+  session.executeSharedSessionCommand({ kind: "enter_replay" });
+  selectSharedReplayView(session, platform, "telemetry");
+  session.updateSharedUi({ kind: "seek_replay", time_seconds: timeSeconds }, platform);
+  session.executeSharedRecordAction({ kind: "seek_replay", time_seconds: timeSeconds });
+}
+
+function observeReplayClock(model: AppModel, session: TailAppSessionFacade): AppModel {
+  const requestId = model.pendingReplayClockRequestId;
+  if (requestId === null) throw new Error("Expected the runtime playback clock observation request");
+  return updateApp(observeUi(model, session), {
+    type: "replay-clock-command-completed", requestId, generation: model.replayClockGeneration,
+    state: projectRuntimePlaybackClock(session.readPlaybackClock())
+  }).model;
+}
+
+function leaveReplay(session: TailAppSessionFacade): void {
+  session.updateSharedUi({ kind: "session", command: { kind: "leave_replay" } }, sharedGameUiPlatform());
+  session.executeSharedSessionCommand({ kind: "leave_replay" });
 }
 
 describe("pure saved Analysis view projection", () => {
@@ -135,15 +171,15 @@ describe("pure saved Analysis view projection", () => {
       expect(view.windGrid).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
       expect(view.origin).toMatchObject({ context: { finalization: { failure: { kind: "dynamics" } } } });
       expect(analysisScenarioId(data, 1)).toBe(999);
-      const gameSession = gameSessionState(9, 0, session.queryRecordDisplay(0), false, null, "tail_incidence", session.readReplayReturnTarget());
+      const gameSession = gameSessionState(9, 0, session.queryRecordDisplay(0), false, "tail_incidence", session.readReplayReturnTarget());
       if (gameSession === null) throw new Error("Expected the Rust Replay display");
       for (const mode of ["screen", "phone-vr", "webxr"] as const) {
-        const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode } as const,
-          flightAnalysis: data, analysisCursorSample: cursor(session, data), replayViewMode: "analysis" as const };
-        const ui = createGameViewModel(model, null);
+        const platform = sharedGameUiPlatform({ presentation_mode: mode === "phone-vr" ? "phone_vr" : mode });
+        selectSharedReplayView(session, platform, "analysis");
+        const ui = createGameViewModel(session.readSharedUi(platform));
         validateUiViewModel(ui);
         const controls = ui.panels.flatMap((panel) => panel.controls);
-        const readout = controls.find((control) => control.id === "game-replay-analysis-cursor-values");
+        const readout = controls.find((control) => control.id === "game-analysis-cursor-values");
         if (readout?.kind !== "status") throw new Error("Expected the saved cursor and wind readout");
         expect(readout.value).toContain("unregistered_environment_identity");
         const chart = controls.find((control) => control.kind === "chart");
@@ -159,10 +195,10 @@ describe("pure saved Analysis view projection", () => {
       session.executeOperation("enter-attract");
       const data = dataset(session);
       const cursorSample = cursor(session, data);
-      const gameSession = gameSessionState(10, 0, session.queryRecordDisplay(0), false, null, "tail_incidence");
+      const gameSession = gameSessionState(10, 0, session.queryRecordDisplay(0), false, "tail_incidence");
       if (gameSession === null) throw new Error("Expected the Rust Attract display");
       const model = { ...createInitialAppModel(), gameSession, flightAnalysis: data, analysisCursorSample: cursorSample };
-      const distance = createGameViewModel(model, null).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-attract-distance");
+      const distance = createGameViewModel(session.readSharedUi(sharedGameUiPlatform())).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-attract-distance");
       const expected = data.summary.scoreMeters.kind === "available" ? `${data.summary.scoreMeters.value.courseParallelMeters.toFixed(1)} m` : "距離未記録";
       expect(distance).toMatchObject({ label: "確定距離 / 保存時刻", value: `${expected} · t 0.00 s` });
       expect(resolveAttractCameraMode(data, 0, "screen")).toBe("platform");
@@ -183,15 +219,11 @@ describe("pure saved Analysis view projection", () => {
     try {
       const data = dataset(session);
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
-      model = { ...model, flightAnalysis: data, analysisCursorTimeSeconds: 0.015, analysisCursorSample: cursor(session, data, 0.015), pendingGameRequestId: 5 };
-      session.executeOperation("enter-replay");
-      const display = session.queryRecordDisplay(0.015);
-      if (display.kind !== "tail_record") throw new Error("Expected the current two-tail record");
-      const projection = { controlLayout: "tail_incidence" as const, phaseCode: 9 as const, countdownRemaining: 0,
-        returnTarget: session.readReplayReturnTarget(),
-        controlModeCode: 0, difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, canResume: false,
-        display: { kind: "available" as const, value: display } };
-      const replay = updateApp(model, { type: "game-operation-completed", requestId: 5, ...projection });
+      selectAnalysisCursor(session, 0.015);
+      model = observeUi({ ...model, flightAnalysis: data, analysisCursorSample: cursor(session, data, 0.015), pendingGameRequestId: 5 }, session);
+      enterReplayAtCursor(session, 0.015);
+      const replayTransition = updateApp(model, { type: "game-operation-completed", requestId: 5, ...readRuntimeSessionProjection(session) });
+      const replay = { ...replayTransition, model: observeReplayClock(replayTransition.model, session) };
       expect(replay.model.flightAnalysis).toBeNull();
       expect(replay.model.analysisCursorSample).toBeNull();
       expect(replay.model.analysisCursorTimeSeconds).toBe(0.015);
@@ -200,10 +232,11 @@ describe("pure saved Analysis view projection", () => {
       const replayData = dataset(session);
       const loaded = updateApp(replay.model, { type: "flight-analysis-loaded", requestId: model.nextAnalysisRequestId, data: replayData });
       expect(loaded.model.flightAnalysis).toBe(replayData);
-      session.executeOperation("leave-replay");
-      const returned = updateApp({ ...loaded.model, pendingGameRequestId: 6 }, {
+      leaveReplay(session);
+      const returnedTransition = updateApp({ ...loaded.model, pendingGameRequestId: 6 }, {
         type: "game-operation-completed", requestId: 6, ...session.readGameSessionProjection()
       });
+      const returned = { ...returnedTransition, model: observeUi(returnedTransition.model, session) };
       expect(returned.model.flightAnalysis).toBeNull();
       expect(returned.model.analysisCursorTimeSeconds).toBe(0.015);
       expect(returned.effects.some((effect) => effect.type === "persist-flight-record")).toBe(false);
@@ -216,25 +249,22 @@ describe("pure saved Analysis view projection", () => {
     try {
       const data = dataset(session);
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
-      model = { ...model, flightAnalysis: data, analysisCursorTimeSeconds: 0.015, pendingGameRequestId: 5 };
-      session.executeOperation("enter-replay");
-      const display = session.queryRecordDisplay(0.015);
-      if (display.kind !== "tail_record") throw new Error("Expected the current two-tail record");
-      let replay = updateApp(model, { type: "game-operation-completed", requestId: 5,
-        controlLayout: "tail_incidence", phaseCode: 9, countdownRemaining: 0, controlModeCode: 0,
-        returnTarget: session.readReplayReturnTarget(),
-        difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, canResume: false,
-        display: { kind: "available", value: display } }).model;
+      selectAnalysisCursor(session, 0.015);
+      model = observeUi({ ...model, flightAnalysis: data, pendingGameRequestId: 5 }, session);
+      enterReplayAtCursor(session, 0.015);
+      let replay = observeReplayClock(updateApp(model, { type: "game-operation-completed", requestId: 5,
+        ...readRuntimeSessionProjection(session) }).model, session);
       const oldRequestId = replay.pendingAnalysisRequestId;
       if (oldRequestId === null) throw new Error("Expected the named Replay load request");
       const replayData = dataset(session);
       if (loadingState === "failed") replay = updateApp(replay, {
         type: "flight-analysis-failed", requestId: oldRequestId, message: "injected query failure"
       }).model;
-      session.executeOperation("leave-replay");
-      const returned = updateApp({ ...replay, pendingGameRequestId: 6 }, {
+      leaveReplay(session);
+      const returnedTransition = updateApp({ ...replay, pendingGameRequestId: 6 }, {
         type: "game-operation-completed", requestId: 6, ...session.readGameSessionProjection()
       });
+      const returned = { ...returnedTransition, model: observeUi(returnedTransition.model, session) };
       const freshRequestId = returned.model.pendingAnalysisRequestId;
       expect(freshRequestId).not.toBeNull();
       expect(freshRequestId).not.toBe(oldRequestId);

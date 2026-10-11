@@ -18,6 +18,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
   const browser = new BrowserWindow({ url: "http://localhost/" });
   browser.document.body.innerHTML = '<main id="app"></main>';
   browser.document.documentElement.lang = "ja";
+  browser.document.documentElement.style.fontSize = "16px";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);

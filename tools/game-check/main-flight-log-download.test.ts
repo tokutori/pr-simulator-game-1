@@ -17,6 +17,7 @@ afterEach(async () => {
 async function fixture(archive = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
+  browser.document.documentElement.style.fontSize = "16px";
   browser.document.body.innerHTML = '<main id="app"></main>';
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);

@@ -3,7 +3,7 @@ import type { HeadHudElement, VisibleHeadHud } from "../render/contracts/head-hu
 import { browserPanelContext } from "./browser-canvas.js";
 import { HEAD_HUD_CARD_PADDING, HEAD_HUD_LINE_HEIGHT, headHudElementValue, headHudInstrumentHeight } from "./head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "./head-hud-view.js";
-import type { PanelDrawingContext } from "./vr-panel-canvas.js";
+import type { PanelDrawingContext } from "./browser-canvas.js";
 import { inversePose, transformPoint, vec3 } from "../render/contracts/math.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";

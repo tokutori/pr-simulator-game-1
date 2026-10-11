@@ -11,11 +11,11 @@ import {
   h,
   init,
   propsModule,
-  vnode
+  styleModule
 } from "snabbdom";
-import type { VNode } from "snabbdom";
+import type { VNode, VNodeData } from "snabbdom";
 
-const patch = init([attributesModule, classModule, datasetModule, propsModule]);
+const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
 
 interface RetainedScreenDom {
   readonly focus: HTMLElement | null;
@@ -41,7 +41,7 @@ export class ScreenUiAdapter {
     this.mount = root.ownerDocument.createElement("div");
     this.mount.className = "screen-ui-mount";
     this.root.append(this.mount);
-    this.currentVNode = keyDomTree(this.mount, true);
+    this.currentVNode = patch(this.mount, h("div.screen-ui-mount", []));
     this.root.addEventListener("click", this.onClick);
     this.root.addEventListener("change", this.onChange);
     this.root.addEventListener("input", this.onInput);
@@ -51,34 +51,25 @@ export class ScreenUiAdapter {
 
   render(viewModel: UiViewModel, visible = true): void {
     this.currentViewModel = viewModel;
-    const documentRef = this.root.ownerDocument;
     if (this.visible && !visible) this.retainDom();
     this.visible = visible;
     this.controls = new Map(viewModel.panels.flatMap((panel) => panel.controls.map((control) => [control.id, control])));
-    const shell = documentRef.createElement("section");
-    shell.className = "screen-ui-shell";
-    shell.dataset.vnodeKey = "screen-shell";
-    shell.dataset.scene = viewModel.scene;
-    if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) {
-      shell.dataset.mode = "analysis";
-    } else if (viewModel.presentationStyle === "cinematic") {
-      shell.dataset.mode = "cinematic";
+    const data = viewModel.sharedPresentation === undefined ? {} : sharedPresentationData(viewModel.sharedPresentation);
+    const dataset: NonNullable<VNodeData["dataset"]> = { ...data.dataset, scene: viewModel.scene };
+    if (viewModel.sharedPresentation === undefined) {
+      if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) dataset.mode = "analysis";
+      else if (viewModel.presentationStyle === "cinematic") dataset.mode = "cinematic";
     }
-    if (viewModel.activeOverlay !== null) shell.dataset.overlay = viewModel.activeOverlay;
-    const heading = documentRef.createElement("h1");
-    heading.textContent = viewModel.title;
-    const description = documentRef.createElement("p");
-    description.className = "screen-ui-description";
-    description.textContent = viewModel.description;
-    shell.append(heading, description);
-    for (const panel of viewModel.panels) shell.append(this.createPanel(documentRef, panel));
-    const build = documentRef.createElement("small");
-    build.className = "build-version";
-    build.textContent = APP_BUILD_LABEL;
-    shell.append(build);
+    if (viewModel.activeOverlay !== null) dataset.overlay = viewModel.activeOverlay;
+    const shell = h("section.screen-ui-shell", { ...data, key: "screen-shell", dataset }, [
+      h("h1", viewModel.title),
+      h("p.screen-ui-description", viewModel.description),
+      ...viewModel.panels.map((panel) => this.createPanel(panel)),
+      h("small.build-version", APP_BUILD_LABEL)
+    ]);
     const nextVNode = h("div.screen-ui-mount", {
       attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
-    }, [keyDomTree(shell)]);
+    }, [shell]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
     if (visible) this.restoreDom();
     this.observeCharts();
@@ -187,143 +178,104 @@ export class ScreenUiAdapter {
     if (Number.isFinite(value)) this.dispatch({ type: "set-range", controlId: control.id, value });
   };
 
-  private createPanel(documentRef: Document, panel: UiPanel): HTMLElement {
-    const section = documentRef.createElement("section");
-    section.className = "screen-ui-panel";
-    section.dataset.vnodeKey = panel.id;
-    section.dataset.anchor = panel.anchor;
+  private createPanel(panel: UiPanel): VNode {
     const usesNormalizedLayout = panel.controls.some((control) => control.kind === "chart");
-    if (usesNormalizedLayout) section.dataset.layout = "normalized";
-    section.setAttribute("aria-label", panel.title);
-    const title = documentRef.createElement("h2");
-    title.textContent = panel.title;
-    const controls = documentRef.createElement("div");
-    controls.className = "screen-ui-controls";
-    let choiceGroup: HTMLElement | null = null;
-    let previousChoiceGroup = "";
-    for (const control of panel.controls) {
-      const element = this.createControl(documentRef, control);
-      if (usesNormalizedLayout) applyNormalizedRect(element, control.rect);
-      if (usesNormalizedLayout && control.kind === "status") element.tabIndex = 0;
-      if (control.kind === "button" && control.presentation?.kind === "choice" && !usesNormalizedLayout) {
-        if (choiceGroup === null || previousChoiceGroup !== control.presentation.group) {
-          const fieldset = documentRef.createElement("fieldset");
-          fieldset.className = "screen-ui-choice-group";
-          fieldset.dataset.vnodeKey = `${panel.id}-choices-${control.presentation.group}`;
-          const legend = documentRef.createElement("legend");
-          legend.textContent = control.presentation.groupLabel;
-          choiceGroup = documentRef.createElement("div");
-          choiceGroup.className = "screen-ui-choice-options";
-          fieldset.append(legend, choiceGroup);
-          controls.append(fieldset);
-          previousChoiceGroup = control.presentation.group;
+    const data: VNodeData = { key: panel.id, dataset: { anchor: panel.anchor }, attrs: { "aria-label": panel.title } };
+    if (usesNormalizedLayout) data.dataset = { ...data.dataset, layout: "normalized" };
+    const children: VNode[] = [];
+    if (panel.sections !== undefined && !usesNormalizedLayout) {
+      for (const section of panel.sections) {
+        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
+        children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
+          key: `${panel.id}-section-${section.id}`, dataset: { layout: section.layout }
+        }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
+      }
+    } else {
+      let choices: VNode[] | null = null;
+      let previousChoiceGroup = "";
+      for (const control of panel.controls) {
+        const node = this.createControl(control);
+        if (usesNormalizedLayout) {
+          node.data = { ...node.data, style: normalizedStyle(control.rect), attrs: { ...node.data?.attrs, ...(control.kind === "status" ? { tabindex: 0 } : {}) } };
         }
-        choiceGroup.append(element);
-      } else {
-        choiceGroup = null;
-        previousChoiceGroup = "";
-        controls.append(element);
+        if (control.kind === "button" && control.presentation?.kind === "choice" && !usesNormalizedLayout) {
+          if (choices === null || previousChoiceGroup !== control.presentation.group) {
+            choices = [];
+            children.push(h("fieldset.screen-ui-choice-group", { key: `${panel.id}-choices-${control.presentation.group}` }, [
+              h("legend", control.presentation.groupLabel), h("div.screen-ui-choice-options", choices)
+            ]));
+            previousChoiceGroup = control.presentation.group;
+          }
+          choices.push(node);
+        } else {
+          choices = null;
+          previousChoiceGroup = "";
+          children.push(node);
+        }
       }
     }
-    section.append(title, controls);
-    return section;
+    return h("section.screen-ui-panel", data, [h("h2", panel.title), h("div.screen-ui-controls", children)]);
   }
 
-  private createControl(documentRef: Document, control: UiControl): HTMLElement {
+  private createControl(control: UiControl): VNode {
     if (control.kind === "button") {
-      const button = documentRef.createElement("button");
-      button.type = "button";
-      button.dataset.vnodeKey = control.id;
-      button.dataset.controlId = control.id;
-      if (control.id === "game-result-configuration") button.className = "screen-ui-multiline";
-      button.disabled = !control.enabled;
-      button.textContent = control.label;
+      const data: VNodeData = { key: control.id, attrs: { type: "button" }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
       const presentation = control.presentation;
-      if (presentation?.kind === "action") button.dataset.emphasis = presentation.emphasis;
+      let selector = control.id === "game-result-configuration" ? "button.screen-ui-multiline" : "button";
+      let children: string | VNode[] = control.label;
+      if (presentation?.kind === "action") data.dataset = { ...data.dataset, emphasis: presentation.emphasis };
       if (presentation?.kind === "choice") {
-        button.className = "screen-ui-choice";
-        button.setAttribute("aria-pressed", String(presentation.selected));
-        const label = documentRef.createElement("span");
-        label.className = "screen-ui-choice-label";
-        label.textContent = `${presentation.selected ? "● " : ""}${control.label}`;
-        const description = documentRef.createElement("small");
-        description.textContent = presentation.description;
-        button.replaceChildren(label, description);
+        selector = "button.screen-ui-choice";
+        data.attrs = { ...data.attrs, "aria-pressed": String(presentation.selected) };
+        children = [
+          h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${control.label}`),
+          h("small", presentation.description)
+        ];
       }
       if (presentation?.kind === "disclosure") {
-        button.dataset.emphasis = "secondary";
-        button.setAttribute("aria-expanded", String(presentation.expanded));
-        button.setAttribute("aria-controls", "game-briefing-technical-content");
-        button.textContent = `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
+        data.dataset = { ...data.dataset, emphasis: "secondary" };
+        data.attrs = { ...data.attrs, "aria-expanded": String(presentation.expanded), "aria-controls": `${control.id}-content` };
+        children = `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
       }
-      return button;
+      return h(selector, data, children);
     }
     if (control.kind === "toggle") {
-      const label = documentRef.createElement("label");
-      label.className = "screen-ui-toggle";
-      label.dataset.vnodeKey = control.id;
-      const input = documentRef.createElement("input");
-      input.type = "checkbox";
-      input.dataset.vnodeKey = `${control.id}-input`;
-      input.dataset.controlId = control.id;
-      input.checked = control.value;
-      input.disabled = !control.enabled;
-      const text = documentRef.createElement("span");
-      text.textContent = control.label;
-      label.append(input, text);
-      return label;
+      return h("label.screen-ui-toggle", { key: control.id }, [
+        h("input", { key: `${control.id}-input`, attrs: { type: "checkbox" }, dataset: { controlId: control.id }, props: { checked: control.value, disabled: !control.enabled } }),
+        h("span", control.label)
+      ]);
     }
     if (control.kind === "range") {
-      const label = documentRef.createElement("label");
-      label.className = "screen-ui-range";
-      label.dataset.vnodeKey = control.id;
-      const text = documentRef.createElement("span");
-      text.textContent = `${control.label}: ${control.value.toFixed(1)}`;
-      const input = documentRef.createElement("input");
-      input.type = "range";
-      input.dataset.vnodeKey = `${control.id}-input`;
-      input.dataset.controlId = control.id;
-      input.min = String(control.minimum);
-      input.max = String(control.maximum);
-      input.step = String(control.step);
-      input.value = String(control.value);
-      input.disabled = !control.enabled;
-      label.append(text, input);
-      return label;
+      return h("label.screen-ui-range", { key: control.id }, [
+        h("span", `${control.label}: ${control.value.toFixed(1)}`),
+        h("input", { key: `${control.id}-input`, attrs: { type: "range", min: String(control.minimum), max: String(control.maximum), step: String(control.step) }, dataset: { controlId: control.id }, props: { value: String(control.value), disabled: !control.enabled } })
+      ]);
     }
-    if (control.kind === "chart") return this.createChart(documentRef, control);
-    const output = documentRef.createElement("output");
-    output.className = "screen-ui-status";
-    output.id = control.id;
-    output.dataset.vnodeKey = control.id;
-    output.setAttribute("aria-live", "polite");
-    output.textContent = `${control.label}: ${control.value}`;
-    return output;
+    if (control.kind === "chart") return this.createChart(control);
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, `${control.label}: ${control.value}`);
   }
 
-  private createChart(documentRef: Document, control: Extract<UiControl, { readonly kind: "chart" }>): HTMLElement {
-    const figure = documentRef.createElement("figure");
-    figure.className = "screen-ui-chart";
-    figure.dataset.vnodeKey = control.id;
-    const caption = documentRef.createElement("figcaption");
-    caption.textContent = control.label;
-    const svg = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
-    const layout = deriveScreenChartLayout(this.chartViewports.get(control.id) ?? INITIAL_SCREEN_CHART_VIEWPORT, control.equalAxisScale);
-    svg.setAttribute("viewBox", `0 0 ${String(layout.viewport.width)} ${String(layout.viewport.height)}`);
-    svg.style.setProperty("--screen-chart-tick-font", `${String(layout.tickFontSize)}px`);
-    svg.style.setProperty("--screen-chart-axis-font", `${String(layout.axisFontSize)}px`);
-    svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", `${control.label}; ${control.xAxisLabel}; ${control.yAxisLabel}`);
-    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  private createChart(control: Extract<UiControl, { readonly kind: "chart" }>): VNode {
+    const caption = h("figcaption", control.label);
+    const svg: VNode[] = [];
+    const svgAttributes: Record<string, string> = {};
+    const svgStyle: NonNullable<VNodeData["style"]> = {};
+    const layout = deriveScreenChartLayout(this.chartViewports.get(control.id) ?? INITIAL_SCREEN_CHART_VIEWPORT, control.equal_axis_scale);
+    svgAttributes["viewBox"] = `0 0 ${String(layout.viewport.width)} ${String(layout.viewport.height)}`;
+    svgStyle["--screen-chart-tick-font"] = `${String(layout.tickFontSize)}px`;
+    svgStyle["--screen-chart-axis-font"] = `${String(layout.axisFontSize)}px`;
+    svgAttributes["role"] = "img";
+    svgAttributes["aria-label"] = `${control.label}; ${control.x_axis_label}; ${control.y_axis_label}`;
+    svgAttributes["preserveAspectRatio"] = "xMidYMid meet";
     const plot = layout.plot;
     const plotTop = plot.top;
     const plotBottom = plot.bottom;
     const plotWidth = plot.right - plot.left;
     const plotLeft = plot.left;
     const plotRight = plot.right;
-    const plotX = (value: number): number => plotLeft + (value - control.xMinimum) / (control.xMaximum - control.xMinimum) * plotWidth;
-    const plotY = (value: number): number => plotBottom - (value - control.yMinimum) / (control.yMaximum - control.yMinimum) * (plotBottom - plotTop);
-    svg.append(createSvgElement(documentRef, "path", {
+    const plotX = (value: number): number => plotLeft + (value - control.x_minimum) / (control.x_maximum - control.x_minimum) * plotWidth;
+    const plotY = (value: number): number => plotBottom - (value - control.y_minimum) / (control.y_maximum - control.y_minimum) * (plotBottom - plotTop);
+    svg.push(svgElement("path", {
       d: `M ${String(plotLeft)} ${String(plotTop)} V ${String(plotBottom)} H ${String(plotRight)}`,
       fill: "none",
       stroke: "#9db8b8",
@@ -331,7 +283,7 @@ export class ScreenUiAdapter {
     }));
     for (let index = 1; index <= 3; index += 1) {
       const y = plotTop + ((plotBottom - plotTop) * index) / 4;
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
         fill: "none",
         stroke: "#456168",
@@ -341,41 +293,41 @@ export class ScreenUiAdapter {
     for (let index = 0; index <= layout.xTickIntervals; index += 1) {
       const ratio = index / layout.xTickIntervals;
       const x = plotLeft + ratio * plotWidth;
-      const xTick = createSvgElement(documentRef, "text", {
+      const xTick = svgElement("text", {
         x: String(x), y: String(plotBottom + 20), class: "screen-ui-chart-tick"
       });
-      xTick.textContent = formatChartTick(control.xMinimum + ratio * (control.xMaximum - control.xMinimum));
-      svg.append(xTick);
+      xTick.text = formatChartTick(control.x_minimum + ratio * (control.x_maximum - control.x_minimum));
+      svg.push(xTick);
     }
     for (let index = 0; index <= layout.yTickIntervals; index += 1) {
       const ratio = index / layout.yTickIntervals;
       const y = plotBottom - ratio * (plotBottom - plotTop);
-      const yTick = createSvgElement(documentRef, "text", {
+      const yTick = svgElement("text", {
         x: String(plotLeft - 10), y: String(y + 5), class: "screen-ui-chart-tick screen-ui-chart-y-tick"
       });
-      yTick.textContent = formatChartTick(control.yMinimum + ratio * (control.yMaximum - control.yMinimum));
-      svg.append(yTick);
+      yTick.text = formatChartTick(control.y_minimum + ratio * (control.y_maximum - control.y_minimum));
+      svg.push(yTick);
     }
-    control.referenceLines.forEach((line) => {
+    control.reference_lines.forEach((line) => {
       const y = plotY(line.value);
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
         fill: "none",
         stroke: line.color,
         "stroke-width": "2",
         "stroke-dasharray": "8 6"
       }));
-      const text = createSvgElement(documentRef, "text", { x: String(plotLeft + 8), y: String(y - 7), class: "screen-ui-chart-reference" });
-      text.textContent = line.label;
-      svg.append(text);
+      const text = svgElement("text", { x: String(plotLeft + 8), y: String(y - 7), class: "screen-ui-chart-reference" });
+      text.text = line.label;
+      svg.push(text);
     });
     control.series.forEach((series) => {
-      if (series.segmentColors !== undefined && series.points.length > 1) {
-        series.segmentColors.forEach((color, index) => {
+      if (series.segment_colors.length > 0 && series.points.length > 1) {
+        series.segment_colors.forEach((color, index) => {
           const first = series.points[index];
           const second = series.points[index + 1];
           if (first === undefined || second === undefined) return;
-          svg.append(createSvgElement(documentRef, "path", {
+          svg.push(svgElement("path", {
             d: `M ${String(plotX(first.x))} ${String(plotY(first.y))} L ${String(plotX(second.x))} ${String(plotY(second.y))}`,
             fill: "none",
             stroke: color,
@@ -390,7 +342,7 @@ export class ScreenUiAdapter {
         const y = plotY(point.y);
         return `${index === 0 ? "M" : "L"} ${String(x)} ${String(y)}`;
       }).join(" ");
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: points,
         fill: "none",
         stroke: series.color,
@@ -399,9 +351,9 @@ export class ScreenUiAdapter {
         "stroke-linecap": "round"
       }));
     });
-    if (control.cursorX !== null) {
-      const x = plotX(control.cursorX);
-      svg.append(createSvgElement(documentRef, "path", {
+    if (control.cursor_x !== null) {
+      const x = plotX(control.cursor_x);
+      svg.push(svgElement("path", {
         d: `M ${String(x)} ${String(plotTop)} V ${String(plotBottom)}`,
         fill: "none",
         stroke: "#f3f4e8",
@@ -409,44 +361,45 @@ export class ScreenUiAdapter {
         "stroke-dasharray": "7 6"
       }));
     }
-    control.cursorPoints.forEach((point, index) => {
+    control.cursor_points.forEach((point, index) => {
       const x = plotX(point.x);
       const y = plotY(point.y);
-      svg.append(createSvgElement(documentRef, "circle", {
+      svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "4", fill: control.series[index]?.color ?? "#f3f4e8"
       }));
     });
     control.markers.forEach((marker) => {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
-      svg.append(createSvgElement(documentRef, "circle", {
+      svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "4", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
       const label = chartTextPosition(x + 10, y - 8, marker.label, layout);
-      const text = createSvgElement(documentRef, "text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-marker" });
-      text.textContent = marker.label;
-      svg.append(text);
+      const text = svgElement("text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-marker" });
+      text.text = marker.label;
+      svg.push(text);
     });
-    control.timeMarkers.forEach((marker) => {
+    control.time_markers.forEach((marker) => {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
-      svg.append(createSvgElement(documentRef, "circle", {
+      svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "2.5", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
       const label = chartTextPosition(x + 7, y + 18, marker.label, layout);
-      const text = createSvgElement(documentRef, "text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-time-marker" });
-      text.textContent = marker.label;
-      svg.append(text);
+      const text = svgElement("text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-time-marker" });
+      text.text = marker.label;
+      svg.push(text);
     });
     control.vectors.forEach((vector) => {
-      if (vector.start === null || vector.end === null) return;
-      const startX = plotX(vector.start.x);
-      const startY = plotY(vector.start.y);
-      const endX = plotX(vector.end.x);
-      const endY = plotY(vector.end.y);
+      if (vector.segment === null) return;
+      const [start, end] = vector.segment;
+      const startX = plotX(start.x);
+      const startY = plotY(start.y);
+      const endX = plotX(end.x);
+      const endY = plotY(end.y);
       const angle = Math.atan2(endY - startY, endX - startX);
       const arrowLength = 12;
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: `M ${String(startX)} ${String(startY)} L ${String(endX)} ${String(endY)} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle - Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle - Math.PI / 6))} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle + Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle + Math.PI / 6))}`,
         fill: "none",
         stroke: vector.color,
@@ -454,112 +407,110 @@ export class ScreenUiAdapter {
         "stroke-linecap": "round"
       }));
     });
-    if (control.equalAxisScale) {
-      const scaleDistance = chartScaleBarDistance(control.xMaximum - control.xMinimum);
-      const scaleWidth = scaleDistance / (control.xMaximum - control.xMinimum) * plotWidth;
+    if (control.equal_axis_scale) {
+      const scaleDistance = chartScaleBarDistance(control.x_maximum - control.x_minimum);
+      const scaleWidth = scaleDistance / (control.x_maximum - control.x_minimum) * plotWidth;
       const scaleX = plotRight - scaleWidth - 14;
       const scaleY = plotBottom - 18;
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: `M ${String(scaleX)} ${String(scaleY)} H ${String(scaleX + scaleWidth)} M ${String(scaleX)} ${String(scaleY - 6)} V ${String(scaleY + 3)} M ${String(scaleX + scaleWidth)} ${String(scaleY - 6)} V ${String(scaleY + 3)}`,
         fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
       }));
-      const scaleLabel = createSvgElement(documentRef, "text", { x: String(scaleX + scaleWidth / 2), y: String(scaleY - 8), class: "screen-ui-chart-map-label" });
-      scaleLabel.textContent = `${formatChartTick(scaleDistance)} m`;
-      svg.append(scaleLabel);
+      const scaleLabel = svgElement("text", { x: String(scaleX + scaleWidth / 2), y: String(scaleY - 8), class: "screen-ui-chart-map-label" });
+      scaleLabel.text = `${formatChartTick(scaleDistance)} m`;
+      svg.push(scaleLabel);
       const northX = plotRight - 22;
       const northTop = plotTop + 18;
       const northBottom = northTop + 34;
-      svg.append(createSvgElement(documentRef, "path", {
+      svg.push(svgElement("path", {
         d: `M ${String(northX)} ${String(northBottom)} V ${String(northTop)} M ${String(northX)} ${String(northTop)} L ${String(northX - 6)} ${String(northTop + 10)} M ${String(northX)} ${String(northTop)} L ${String(northX + 6)} ${String(northTop + 10)}`,
         fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
       }));
-      const northLabel = createSvgElement(documentRef, "text", { x: String(northX), y: String(northTop - 6), class: "screen-ui-chart-map-label" });
-      northLabel.textContent = "N";
-      svg.append(northLabel);
+      const northLabel = svgElement("text", { x: String(northX), y: String(northTop - 6), class: "screen-ui-chart-map-label" });
+      northLabel.text = "N";
+      svg.push(northLabel);
     }
-    const xLabel = createSvgElement(documentRef, "text", { x: String((plotLeft + plotRight) / 2), y: String(layout.xAxisY), class: "screen-ui-chart-axis" });
-    xLabel.textContent = control.xAxisLabel;
-    const yLabel = createSvgElement(documentRef, "text", {
+    const xLabel = svgElement("text", { x: String((plotLeft + plotRight) / 2), y: String(layout.xAxisY), class: "screen-ui-chart-axis" });
+    xLabel.text = control.x_axis_label;
+    const yLabel = svgElement("text", {
       x: String(layout.yAxisX), y: String(layout.yAxisY),
       transform: `rotate(-90 ${String(layout.yAxisX)} ${String(layout.yAxisY)})`,
       class: "screen-ui-chart-axis screen-ui-chart-y-axis"
     });
-    yLabel.textContent = control.yAxisLabel;
-    svg.append(xLabel, yLabel);
-    const legend = documentRef.createElement("div");
-    legend.className = "screen-ui-chart-legend";
+    yLabel.text = control.y_axis_label;
+    svg.push(xLabel, yLabel);
+    const legend: VNode[] = [];
     control.series.forEach((series) => {
-      const item = documentRef.createElement("span");
-      item.textContent = series.label;
-      item.style.setProperty("--chart-series-color", series.color);
-      if (series.segmentColors !== undefined && series.segmentColors.length > 0) {
-        item.dataset.progressScale = "true";
-        item.style.setProperty("--chart-series-start", series.segmentColors[0] ?? series.color);
-        item.style.setProperty("--chart-series-end", series.segmentColors[series.segmentColors.length - 1] ?? series.color);
+      const item = h("span", { style: {}, dataset: {} }, "");
+      item.text = series.label;
+      setNodeStyle(item, "--chart-series-color", series.color);
+      if (series.segment_colors.length > 0) {
+        setNodeDataset(item, "progressScale", "true");
+        setNodeStyle(item, "--chart-series-start", series.segment_colors[0] ?? series.color);
+        setNodeStyle(item, "--chart-series-end", series.segment_colors[series.segment_colors.length - 1] ?? series.color);
       }
-      legend.append(item);
+      legend.push(item);
     });
     control.markers.forEach((marker) => {
-      const item = documentRef.createElement("span");
-      item.textContent = marker.label;
-      item.style.setProperty("--chart-series-color", marker.color);
-      legend.append(item);
+      const item = h("span", { style: {}, dataset: {} }, "");
+      item.text = marker.label;
+      setNodeStyle(item, "--chart-series-color", marker.color);
+      legend.push(item);
     });
     control.vectors.forEach((vector) => {
       if (vector.label.length === 0) return;
-      const item = documentRef.createElement("span");
-      item.textContent = vector.label;
-      item.style.setProperty("--chart-series-color", vector.color);
-      legend.append(item);
+      const item = h("span", { style: {}, dataset: {} }, "");
+      item.text = vector.label;
+      setNodeStyle(item, "--chart-series-color", vector.color);
+      legend.push(item);
     });
-    const viewport = documentRef.createElement("div");
-    viewport.className = "screen-ui-chart-viewport";
-    viewport.dataset.chartControlId = control.id;
-    viewport.append(svg);
-    figure.append(caption, viewport, legend);
-    return figure;
+    return h("figure.screen-ui-chart", { key: control.id }, [
+      caption,
+      h("div.screen-ui-chart-viewport", { dataset: { chartControlId: control.id } }, [
+        h("svg", { attrs: svgAttributes, style: svgStyle }, svg)
+      ]),
+      h("div.screen-ui-chart-legend", legend)
+    ]);
   }
 }
 
-function applyNormalizedRect(element: HTMLElement, rect: UiControl["rect"]): void {
-  element.style.position = "absolute";
-  element.style.left = `${String(rect.x * 100)}%`;
-  element.style.top = `${String(rect.y * 100)}%`;
-  element.style.width = `${String(rect.width * 100)}%`;
-  element.style.height = `${String(rect.height * 100)}%`;
-}
-
-function keyDomTree(element: HTMLElement, attachExisting = false): VNode {
-  const data: NonNullable<VNode["data"]> = {};
-  const namespace = element.namespaceURI;
-  if (namespace !== null && namespace !== "http://www.w3.org/1999/xhtml") data.ns = namespace;
-  const attributes: Record<string, string> = {};
-  const dataset: Record<string, string> = {};
-  for (const attribute of Array.from(element.attributes)) {
-    if (attribute.name.length === 0) continue;
-    if (attribute.name === "class") continue;
-    if (attribute.name.startsWith("data-")) {
-      const key = attribute.name.slice(5).replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
-      dataset[key] = attribute.value;
-    } else {
-      attributes[attribute.name] = attribute.value;
+function sharedPresentationData(presentation: NonNullable<UiViewModel["sharedPresentation"]>): VNodeData {
+  const { layout, theme } = presentation;
+  return {
+    dataset: {
+      shared: "true", shell: layout.shell, compact: String(layout.compact), passthrough: String(layout.passthrough),
+      ...(layout.shell === "analysis" || layout.shell === "cinematic" ? { mode: layout.shell } : {})
+    },
+    style: {
+      width: `${String(layout.width_px)}px`,
+      maxHeight: `${String(layout.maximum_height_px)}px`,
+      padding: `${String(layout.padding_px)}px`,
+      overflowX: layout.clip_x ? "hidden" : "auto",
+      overflowY: layout.scroll_y ? "auto" : "hidden",
+      background: layout.passthrough ? "transparent" : `color-mix(in srgb, ${theme.panel_background} ${String(theme.panel_opacity * 100)}%, transparent)`,
+      ...(layout.shell === "analysis" ? { height: `${String(layout.maximum_height_px)}px` } : {}),
+      "--game-ui-gap": `${String(layout.gap_px)}px`,
+      "--game-ui-columns": String(layout.choice_columns),
+      "--game-ui-text": theme.text,
+      "--game-ui-muted-text": theme.muted_text,
+      "--game-ui-panel": theme.panel_background,
+      "--game-ui-opacity": String(theme.panel_opacity),
+      "--game-ui-hud-opacity": String(theme.hud_opacity),
+      "--game-ui-normal": theme.normal_background,
+      "--game-ui-primary": theme.primary_background,
+      "--game-ui-choice": theme.choice_background,
+      "--game-ui-focus": theme.focus_outline,
+      "--game-ui-button-height": `${String(theme.button_min_height_px)}px`,
+      "--game-ui-primary-height": `${String(theme.primary_min_height_px)}px`
     }
-  }
-  if (Object.keys(attributes).length > 0) data.attrs = attributes;
-  if (Object.keys(dataset).length > 0) data.dataset = dataset;
-  const classes = Array.from(element.classList);
-  const key = element.dataset.vnodeKey;
-  if (key !== undefined) data.key = key;
-  if (element.tagName === "INPUT") {
-    const input = element as HTMLInputElement;
-    data.props = { ...data.props, checked: input.checked, value: input.value };
-  }
-  const children = Array.from(element.childNodes).map((child): VNode => {
-    if (child.nodeType === 1) return keyDomTree(child as HTMLElement, attachExisting);
-    if (child.nodeType === 3) return vnode(undefined, undefined, undefined, child.textContent ?? "", undefined);
-    return vnode("!", {}, [], child.textContent ?? "", undefined);
-  });
-  return vnode(`${element.tagName.toLowerCase()}${classes.map((name) => `.${name}`).join("")}`, data, children, undefined, attachExisting ? element : undefined);
+  };
+}
+
+function normalizedStyle(rect: UiControl["rect"]): NonNullable<VNodeData["style"]> {
+  return {
+    position: "absolute", left: `${String(rect.x * 100)}%`, top: `${String(rect.y * 100)}%`,
+    width: `${String(rect.width * 100)}%`, height: `${String(rect.height * 100)}%`
+  };
 }
 
 function eventElement(event: Event, root: HTMLElement): Element | null {
@@ -568,12 +519,17 @@ function eventElement(event: Event, root: HTMLElement): Element | null {
   return event.target;
 }
 
-function createSvgElement(
-  documentRef: Document,
-  name: string,
-  attributes: Readonly<Record<string, string>>
-): SVGElement {
-  const element = documentRef.createElementNS("http://www.w3.org/2000/svg", name);
-  for (const [attribute, value] of Object.entries(attributes)) element.setAttribute(attribute, value);
-  return element;
+function svgElement(name: string, attributes: Readonly<Record<string, string>>): VNode {
+  return h(name, { ns: "http://www.w3.org/2000/svg", attrs: { ...attributes } }, "");
+}
+
+function setNodeStyle(node: VNode, name: string, value: string): void {
+  const data = node.data ?? {};
+  const style = data.style ?? {};
+  style[name] = value;
+  node.data = { ...data, style };
+}
+
+function setNodeDataset(node: VNode, name: string, value: string): void {
+  node.data = { ...node.data, dataset: { ...node.data?.dataset, [name]: value } };
 }

@@ -5,6 +5,7 @@ import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppSessionFacade, TailAppSessionPort } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const neutralTail = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
@@ -493,6 +494,72 @@ describe("layout-discriminated application session facade", () => {
       facade.dispose();
       other.dispose();
     }
+  });
+
+  it("retains record series while frame queries update the analysis cursor and invalidate only query generations", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const full = vi.spyOn(bridge, "game_ui_view_json");
+    const frame = vi.spyOn(bridge, "game_ui_frame_json");
+    const platform = sharedGameUiPlatform();
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const record = facade.exportRecordJson();
+      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      facade.updateSharedUi({ kind: "set_result_tab", tab: "analysis" }, platform);
+      const retained = facade.readSharedUi(platform);
+      const originalChart = retained.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "chart");
+      if (originalChart?.content.kind !== "chart") throw new Error("Missing record chart");
+      const query = facade.captureQueryToken();
+      facade.updateSharedUi({ kind: "seek_analysis", time_seconds: 0.005 }, platform);
+      facade.executeSharedRecordAction({ kind: "seek_analysis", time_seconds: 0.005 });
+      const observed = facade.readSharedUi(platform);
+      const chart = observed.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "chart");
+      if (chart?.content.kind !== "chart") throw new Error("Missing updated chart");
+      expect(observed.view_revision).toBe(retained.view_revision);
+      expect(chart.content.plot.series).toBe(originalChart.content.plot.series);
+      expect(observed.selections.analysis_time_seconds).toBe(0.005);
+      expect(full).toHaveBeenCalledTimes(1);
+      expect(frame).toHaveBeenCalledTimes(1);
+      expect(facade.acceptQuery(query, observed).kind).toBe("stale");
+      expect(facade.queryAnalysisCursor(0.005, dataset).timeSeconds).toBe(0.005);
+      expect(facade.exportRecordJson()).toBe(record);
+    } finally { facade.dispose(); }
+  });
+
+  it("updates each selected Replay clock rate through lightweight frame observations", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const full = vi.spyOn(bridge, "game_ui_view_json");
+    const frame = vi.spyOn(bridge, "game_ui_frame_json");
+    const platform = sharedGameUiPlatform();
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      facade.updateSharedUi({ kind: "session", command: { kind: "enter_replay" } }, platform);
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
+      facade.updateSharedUi({ kind: "set_replay_view", view: "telemetry" }, platform);
+      const retained = facade.readSharedUi(platform);
+      const record = facade.exportRecordJson();
+      for (const code of [0, 1, 2] as const) {
+        const update = facade.updateSharedUi({ kind: "set_replay_rate", code }, platform);
+        expect(update.effects).toEqual([{ kind: "record", action: { kind: "set_replay_rate", code } }]);
+        facade.executeSharedRecordAction({ kind: "set_replay_rate", code });
+        const observed = facade.readSharedUi(platform);
+        const suffix = (["0_5", "1", "2"] as const)[code];
+        const speeds = observed.panels.flatMap((panel) => panel.controls).filter((control) => control.id.startsWith("game-replay-speed-"));
+        expect(speeds.find((control) => control.id === `game-replay-speed-${suffix}`)?.label).toMatch(/^● /u);
+        expect(speeds.filter((control) => control.label.startsWith("● "))).toHaveLength(1);
+        expect(observed.view_revision).toBe(retained.view_revision);
+        expect(facade.readPlaybackClock().rateCode).toBe(code);
+      }
+      expect(full).toHaveBeenCalledTimes(1);
+      expect(frame).toHaveBeenCalledTimes(3);
+      expect(facade.exportRecordJson()).toBe(record);
+    } finally { facade.dispose(); }
   });
 
   it("rejects a malformed tail Result instead of interpreting it as a legacy snapshot", () => {

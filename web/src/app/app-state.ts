@@ -7,6 +7,11 @@ import { attractSessionProjection, isPlaybackSessionSnapshot, isRetainedLiveSnap
 import type { AttractSessionProjection, FlightSnapshotInput, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, SessionControlLayout, TerminalSessionProjection, TerminalSessionSnapshot } from "./session-snapshot.js";
 import type { FlightAnalysisInput, FlightAnalysisCursorInput } from "../game/flight-analysis-view.js";
 import { analysisCursorMatches, validateAnalysisInput } from "../game/flight-analysis-view.js";
+import type { GameUiView } from "../generated/game-ui-view.js";
+import type { GameUiAction } from "../generated/game-ui-action.js";
+import type { GameUiEffect } from "../generated/game-ui-effects.js";
+import type { GameUiSessionCommand } from "./game-ui-types.js";
+import { sharedGameUiAction } from "./game-view.js";
 
 export interface StoredFlightRecordUiEntry {
   readonly id: number;
@@ -91,14 +96,9 @@ export type GameSessionUiState = { readonly kind: "boot"; readonly phaseCode: -1
   | { readonly kind: "replay"; readonly phaseCode: 9; readonly returnTarget: ReplayReturnTarget; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
 ))
   | (Readonly<{ kind: "flight"; phaseCode: 5 }> & LiveSessionProjection<5>)
-  | (Readonly<{ kind: "paused-flight"; phaseCode: 6; canResume: boolean; overlay: PauseOverlayState }> & LiveSessionProjection<6>)
+  | (Readonly<{ kind: "paused-flight"; phaseCode: 6; canResume: boolean }> & LiveSessionProjection<6>)
   | (Readonly<{ kind: "result"; phaseCode: 7 }> & TerminalSessionProjection)
   | (Readonly<{ kind: "attract"; phaseCode: 10 }> & AttractSessionProjection);
-
-export type PauseOverlayState =
-  | { readonly kind: "menu" }
-  | { readonly kind: "settings" }
-  | { readonly kind: "help" };
 
 export type MenuFocusState =
   | { readonly kind: "none" }
@@ -125,6 +125,7 @@ export type LakeWaterQualityUiState =
   | { readonly kind: "failed"; readonly applied: LakeWaterQuality; readonly requested: LakeWaterQuality; readonly message: string };
 
 export interface AppModel {
+  readonly sharedGameUi: GameUiView | null;
   readonly lakeWaterQuality: LakeWaterQualityUiState;
   readonly flightLogDownload: FlightLogDownloadState;
   readonly nextFlightLogDownloadRequestId: number;
@@ -146,6 +147,7 @@ export interface AppModel {
   readonly resultTab: "summary" | "analysis";
   readonly analysisChart: "map" | "altitude" | "speed";
   readonly analysisCursorTimeSeconds: number;
+  readonly playbackTimeSeconds: number;
   readonly analysisCursorSample: FlightAnalysisCursorInput | null;
   readonly pendingAnalysisCursorRequestId: number | null;
   readonly nextAnalysisCursorRequestId: number;
@@ -232,6 +234,8 @@ export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ 
 export type GameSessionProjection = TailGameSessionProjection;
 
 export type AppMessage =
+  | { readonly type: "shared-game-ui-observed"; readonly view: GameUiView }
+  | { readonly type: "shared-game-ui-effect"; readonly effect: GameUiEffect }
   | { readonly type: "lake-water-quality-applied"; readonly requestId: number; readonly quality: LakeWaterQuality; readonly cleanup: LakeWaterQualityCleanupResult }
   | { readonly type: "lake-water-quality-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "flight-log-download-requested"; readonly requestId: number; readonly source: FlightLogSource }
@@ -319,6 +323,10 @@ export type AppMessage =
     };
 
 export type AppEffect =
+  | { readonly type: "update-shared-game-ui"; readonly action: GameUiAction }
+  | { readonly type: "shared-game-session-command"; readonly command: GameUiSessionCommand; readonly requestId: number }
+  | { readonly type: "shared-record-action"; readonly action: Extract<GameUiEffect, { kind: "record" }>["action"] }
+  | { readonly type: "shared-replay-action"; readonly action: Extract<GameUiEffect, { kind: "record" }>["action"]; readonly requestId: number; readonly generation: number }
   | { readonly type: "apply-lake-water-quality"; readonly requestId: number; readonly quality: LakeWaterQuality }
   | { readonly type: "download-flight-log"; readonly requestId: number; readonly source: FlightLogSource; readonly format: "csv" | "json" }
   | { readonly type: "initialize-presentation"; readonly requestId: number }
@@ -343,7 +351,7 @@ export type AppEffect =
       readonly generation: number;
       readonly command: ReplayClockCommand;
     }
-  | { readonly type: "game-session-operation"; readonly operation: GameSessionOperation; readonly requestId: number };
+  ;
 
 export interface AppTransition {
   readonly model: AppModel;
@@ -353,7 +361,7 @@ export interface AppTransition {
 export function canSelectLakeWaterQuality(model: AppModel): boolean {
   return model.presentation.type === "ready" && model.pendingGameRequestId === null && model.lakeWaterQuality.kind !== "applying"
     && (model.gameSession.kind === "setup" || (model.gameSession.kind === "paused-flight"
-      && model.gameSession.overlay.kind === "settings" && model.flightExecution.kind !== "stopped"));
+      && model.sharedGameUi?.selections.pause_overlay === "settings" && model.flightExecution.kind !== "stopped"));
 }
 
 export function gameSessionPhaseCode(session: GameSessionUiState): number {
@@ -385,7 +393,6 @@ export function gameSessionState(
   countdownRemaining: number,
   snapshotInput: FlightSnapshotInput | null,
   canResume = false,
-  previous: GameSessionUiState | null = null,
   controlLayout: SessionControlLayout = "tail_incidence",
   returnTarget?: ReplayReturnTarget
 ): GameSessionUiState | null {
@@ -412,8 +419,7 @@ export function gameSessionState(
         ...live,
         kind: "paused-flight",
         phaseCode,
-        canResume,
-        overlay: previous?.kind === "paused-flight" ? previous.overlay : { kind: "menu" }
+        canResume
       };
     }
     case 7: {
@@ -435,7 +441,8 @@ export function gameSessionState(
 }
 
 export function createInitialAppModel(): AppModel {
-  return Object.freeze({
+  return freezeAppModel({
+    sharedGameUi: null,
     lakeWaterQuality: Object.freeze({ kind: "ready", applied: "high", cleanup: Object.freeze({ kind: "complete" }) }),
     flightLogDownload: Object.freeze({ kind: "idle" }),
     nextFlightLogDownloadRequestId: 1,
@@ -456,13 +463,10 @@ export function createInitialAppModel(): AppModel {
       weatherCode: 0
     }),
     configurationMetadata: null,
-    briefingDetailsOpen: false,
     flightAnalysis: null,
     pendingAnalysisRequestId: null,
     nextAnalysisRequestId: 1,
-    resultTab: "summary",
-    analysisChart: "map",
-    analysisCursorTimeSeconds: 0,
+    playbackTimeSeconds: 0,
     analysisCursorSample: null,
     pendingAnalysisCursorRequestId: null,
     nextAnalysisCursorRequestId: 1,
@@ -470,12 +474,10 @@ export function createInitialAppModel(): AppModel {
     pendingReplayPoseRequestId: null,
     nextReplayPoseRequestId: 1,
     replayPlaying: false,
-    replayViewMode: "cinematic",
     replaySpeed: 1,
     replayClockGeneration: 0,
     pendingReplayClockRequestId: null,
     nextReplayClockRequestId: 1,
-    replayCameraMode: "auto",
     storedFlightRecords: Object.freeze([]),
     storedFlightRecordsStatus: "保存記録を読み込んでいる",
     pendingRecordListRequestId: null,
@@ -522,6 +524,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "shared-game-ui-observed":
+      return transition(withModel(model, { sharedGameUi: message.view }));
+    case "shared-game-ui-effect":
+      return updateSharedUiEffect(model, message.effect);
     case "lake-water-quality-applied": {
       const quality = model.lakeWaterQuality;
       if (quality.kind !== "applying" || quality.requestId !== message.requestId || quality.requested !== message.quality) return transition(model);
@@ -679,7 +685,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, model.gameSession, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -696,12 +702,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
-        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
-        resultTab: enteringResult ? "summary" : model.resultTab,
-        analysisChart: enteringResult ? "map" : model.analysisChart,
-        analysisCursorTimeSeconds: enteringResult ? 0 : model.analysisCursorTimeSeconds,
         analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
         pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.pendingAnalysisCursorRequestId
@@ -713,7 +715,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, model.gameSession, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,
@@ -762,14 +764,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
         status: "",
-        briefingDetailsOpen: nextPhaseCode === previousPhaseCode ? model.briefingDetailsOpen : false,
         flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
         pendingAnalysisRequestId: analysisRequestId,
-        resultTab: enteringResult ? "summary" : model.resultTab,
-        analysisChart: enteringResult ? "map" : model.analysisChart,
-        analysisCursorTimeSeconds: enteringResult || enteringAttract || (enteringReplay && previousPhaseCode !== 7)
-          ? 0
-          : model.analysisCursorTimeSeconds,
         analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
         pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.pendingAnalysisCursorRequestId
@@ -778,7 +774,6 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         replayPose: enteringPlayback ? null : [9, 10].includes(nextPhaseCode) ? model.replayPose : null,
         pendingReplayPoseRequestId: enteringPlayback ? null : model.pendingReplayPoseRequestId,
         replayPlaying: enteringPlayback ? false : [9, 10].includes(nextPhaseCode) ? model.replayPlaying : false,
-        replayViewMode: enteringReplay ? "cinematic" : model.replayViewMode,
         replayClockGeneration,
         pendingReplayClockRequestId: enteringPlayback
           ? playbackClockRequestId
@@ -879,7 +874,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }
       const next = withModel(model, {
         pendingReplayClockRequestId: null,
-        analysisCursorTimeSeconds: message.state.timeSeconds,
+        playbackTimeSeconds: message.state.timeSeconds,
         replaySpeed: speed,
         replayPlaying: message.state.playing
       });
@@ -902,7 +897,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         pendingReplayClockRequestId: null,
         replayPlaying: message.state?.playing ?? false,
         replaySpeed: message.state === undefined ? model.replaySpeed : playbackRateForCode(message.state.rateCode) ?? model.replaySpeed,
-        analysisCursorTimeSeconds: message.state?.timeSeconds ?? model.analysisCursorTimeSeconds,
+        playbackTimeSeconds: message.state?.timeSeconds ?? model.playbackTimeSeconds,
         replayClockGeneration: model.replayClockGeneration + 1,
         status: `Replay clock operation failed: ${message.message}`
       }));
@@ -1028,171 +1023,88 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
-  if (action.type === "activate" && action.controlId.startsWith("presentation-water-quality-")) {
-    if (!canSelectLakeWaterQuality(model)) return transition(model);
-    const quality = action.controlId.slice("presentation-water-quality-".length);
-    if (quality !== "low" && quality !== "medium" && quality !== "high") return transition(model);
-    if (quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready") return transition(model);
-    const requestId = model.nextRequestId;
-    if (!Number.isSafeInteger(requestId) || requestId < 1 || requestId >= Number.MAX_SAFE_INTEGER) return transition(model);
-    return transition(withModel(model, {
-      lakeWaterQuality: Object.freeze({ kind: "applying", applied: model.lakeWaterQuality.applied, requested: quality, requestId }),
-      nextRequestId: requestId + 1
-    }), [{ type: "apply-lake-water-quality", requestId, quality }]);
-  }
-  if (action.type === "activate" && action.controlId === "game-briefing-technical") {
-    if (model.pendingGameRequestId !== null || ![2, 3, 8].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
-    return transition(withModel(model, { briefingDetailsOpen: !model.briefingDetailsOpen }));
-  }
-  if (action.type === "activate" && action.controlId.startsWith("game-setup-select-")) {
-    if (model.gameSession.kind !== "setup") return transition(model);
-    const selection = /^game-setup-select-(preset|information|assistance|weather)-([0-4])$/.exec(action.controlId);
-    if (selection === null) return transition(model);
-    const axis = selection[1];
-    const code = Number(selection[2]);
-    if (axis !== "preset" && axis !== "information" && axis !== "assistance" && axis !== "weather") return transition(model);
-    if ((axis === "preset" || axis === "assistance") && code > 3) return transition(model);
-    const currentCode = axis === "preset" ? model.difficulty.presetCode : axis === "information"
-      ? model.difficulty.informationCode : axis === "assistance" ? model.difficulty.assistanceCode : model.difficulty.weatherCode;
-    if (code === currentCode) return transition(model);
-    return beginGameOperation(model, { kind: "set-difficulty-option", axis, code });
-  }
-  if (action.type === "activate" && (action.controlId === "game-flight-log-csv" || action.controlId === "game-flight-log-json")) {
-    const phaseCode = gameSessionPhaseCode(model.gameSession);
-    if ((phaseCode !== 7 && phaseCode !== 9) || model.pendingGameRequestId !== null
-        || model.presentation.type !== "ready" || model.flightLogDownload.kind === "pending") return transition(model);
-    const requestId = model.nextFlightLogDownloadRequestId;
-    const source: FlightLogSource = Object.freeze({ phaseCode, revision: model.flightRecordSourceRevision });
-    const format = action.controlId === "game-flight-log-csv" ? "csv" : "json";
-    return transition(withModel(model, {
-      flightLogDownload: Object.freeze({ kind: "pending", requestId, source, format }),
-      nextFlightLogDownloadRequestId: requestId + 1
-    }), [{ type: "download-flight-log", requestId, source, format }]);
-  }
-  if (action.type === "activate" && action.controlId === "game-flight-resume"
-      && (model.gameSession.kind !== "paused-flight" || !model.gameSession.canResume)) {
-    return transition(model);
-  }
-  if (action.type === "activate" && model.pendingGameRequestId === null && model.gameSession.kind === "paused-flight") {
-    const overlays: Readonly<Record<string, PauseOverlayState>> = {
-      "game-pause-open-settings": { kind: "settings" },
-      "game-pause-open-help": { kind: "help" },
-      "game-pause-settings-back": { kind: "menu" },
-      "game-pause-help-back": { kind: "menu" }
-    };
-    const overlay = overlays[action.controlId];
-    if (overlay !== undefined) {
-      return transition(withModel(model, {
-        gameSession: { ...model.gameSession, overlay },
-        status: ""
-      }));
-    }
-  }
-  if (action.type === "activate" && action.controlId.startsWith("game-title-open-record-")
-      && model.pendingGameRequestId !== null) return transition(model);
-  if (action.type === "set-toggle") {
-    const cueCode = informationCueCode(action.controlId);
-    if (cueCode === null || gameSessionPhaseCode(model.gameSession) !== 1) return transition(model);
-    return beginGameOperation(model, { kind: "set-information-cue", cueCode, visible: action.value });
-  }
-  if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 0 && model.pendingGameRequestId === null) {
-    const match = /^game-title-open-record-(\d+)$/.exec(action.controlId);
-    const id = match === null ? null : Number(match[1]);
-    if (id !== null && Number.isSafeInteger(id) && model.storedFlightRecords.some((record) => record.id === id)) {
-      const requestId = model.nextRequestId;
-      return transition(withModel(model, {
-        pendingGameRequestId: requestId,
-        nextRequestId: requestId + 1,
-        status: `FlightRecord ${String(id)}を開いている`
-      }), [{ type: "open-stored-flight-record", id, requestId }]);
-    }
-  }
-  if (action.type === "set-range" && action.controlId === "game-replay-cursor"
-      && gameSessionPhaseCode(model.gameSession) === 9 && model.flightAnalysis !== null && Number.isFinite(action.value)) {
-    const timeSeconds = Math.min(model.flightAnalysis.summary.durationSeconds, Math.max(0, action.value));
-    return beginReplayClockCommand(model, { kind: "seek", timeSeconds }, true);
-  }
-  if (action.type === "set-range" && action.controlId === "game-analysis-cursor"
-      && gameSessionPhaseCode(model.gameSession) === 7 && model.flightAnalysis !== null && Number.isFinite(action.value)) {
-    const timeSeconds = Math.min(model.flightAnalysis.summary.durationSeconds, Math.max(0, action.value));
-    const requestId = model.nextAnalysisCursorRequestId;
-    return transition(withModel(model, {
-      analysisCursorTimeSeconds: timeSeconds,
-      analysisCursorSample: null,
-      pendingAnalysisCursorRequestId: requestId,
-      nextAnalysisCursorRequestId: requestId + 1
-    }), [{ type: "load-flight-analysis-cursor", requestId, timeSeconds }]);
-  }
-  if (action.type === "activate" && [7, 9].includes(gameSessionPhaseCode(model.gameSession))) {
-    if (action.controlId === "game-result-open-analysis") {
-      return transition(withModel(model, { resultTab: "analysis" }));
-    }
-    if (action.controlId === "game-result-open-summary") {
-      return transition(withModel(model, { resultTab: "summary" }));
-    }
-    if (action.controlId === "game-analysis-map" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
-      return transition(withModel(model, { analysisChart: "map" }));
-    }
-    if (action.controlId === "game-analysis-altitude" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
-      return transition(withModel(model, { analysisChart: "altitude" }));
-    }
-    if (action.controlId === "game-analysis-speed" && (gameSessionPhaseCode(model.gameSession) === 7 || model.replayViewMode === "analysis")) {
-      return transition(withModel(model, { analysisChart: "speed" }));
-    }
-  }
-  if (action.type === "activate" && gameSessionPhaseCode(model.gameSession) === 9) {
-    if (action.controlId === "game-replay-view-mode") {
-      const nextMode = model.replayViewMode === "cinematic"
-        ? "telemetry"
-        : model.replayViewMode === "telemetry" ? "analysis" : "cinematic";
-      return transition(withModel(model, { replayViewMode: nextMode }));
-    }
-    if (action.controlId === "game-replay-camera") {
-      if (model.presentation.type !== "ready") return transition(model);
-      const cameraModes: readonly AppModel["replayCameraMode"][] = [
-        "auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"
-      ];
-      const nextCameraMode = cameraModes[(cameraModes.indexOf(model.replayCameraMode) + 1) % cameraModes.length] ?? "auto";
-      return transition(withModel(model, { replayCameraMode: nextCameraMode }));
-    }
-    if (action.controlId === "game-replay-play-pause") {
-      if (model.flightAnalysis === null) return transition(model);
-      return beginReplayClockCommand(model, { kind: model.replayPlaying ? "pause" : "play" }, true);
-    }
-    if (action.controlId === "game-replay-speed-0_5") return beginReplayClockCommand(model, { kind: "rate", rateCode: 0 }, true);
-    if (action.controlId === "game-replay-speed-1") return beginReplayClockCommand(model, { kind: "rate", rateCode: 1 }, true);
-    if (action.controlId === "game-replay-speed-2") return beginReplayClockCommand(model, { kind: "rate", rateCode: 2 }, true);
-  }
   if (action.type === "focus" || action.type === "back" || action.type === "scroll") return transition(model);
   if (action.type === "recenter-menu") {
-    if (isInVr(model.presentation)) {
-      return transition(withModel(model, { status: "Menu placement updated" }), [{ type: "recenter-menu" }]);
+    return isInVr(model.presentation) ? transition(model, [{ type: "recenter-menu" }]) : transition(model);
+  }
+  if (model.sharedGameUi !== null) {
+    const semantic = sharedGameUiAction(model.sharedGameUi, action);
+    return semantic === null ? transition(model) : transition(model, [{ type: "update-shared-game-ui", action: semantic }]);
+  }
+  if (action.type !== "activate" || model.gameSession.kind !== "boot") return transition(model);
+  switch (action.controlId) {
+    case "boot-enter-webxr": return beginPermissionRequest(model, "webxr");
+    case "boot-enter-phone-vr": return beginPermissionRequest(model, "phone-vr");
+    case "boot-exit-vr": return beginBackendSwitch(model, "screen", "Ending presentation session");
+    case "boot-recenter-phone-tracking":
+      return model.presentation.type === "ready" && model.presentation.mode === "phone-vr"
+        ? transition(model, [{ type: "recenter-tracking" }]) : transition(model);
+    case "boot-recenter-menu": return isInVr(model.presentation) ? transition(model, [{ type: "recenter-menu" }]) : transition(model);
+    default: return transition(model);
+  }
+}
+
+function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransition {
+  if (effect.kind === "session") {
+    if (model.pendingGameRequestId !== null || model.presentation.type !== "ready") return transition(model);
+    if (effect.command.kind === "resume" && model.flightExecution.kind === "stopped") return transition(model);
+    const requestId = model.nextRequestId;
+    return transition(withModel(model, { pendingGameRequestId: requestId, nextRequestId: requestId + 1, status: "ゲーム状態を更新している" }),
+      [{ type: "shared-game-session-command", command: effect.command, requestId }]);
+  }
+  if (effect.kind === "record") {
+    const action = effect.action;
+    if (action.kind === "seek_analysis") {
+      const requestId = model.nextAnalysisCursorRequestId;
+      return transition(withModel(model, { analysisCursorSample: null, pendingAnalysisCursorRequestId: requestId,
+        nextAnalysisCursorRequestId: requestId + 1 }), [
+        { type: "shared-record-action", action },
+        { type: "load-flight-analysis-cursor", requestId, timeSeconds: action.time_seconds }
+      ]);
     }
-    return transition(model);
+    if (model.pendingReplayClockRequestId !== null) return transition(model);
+    const requestId = model.nextReplayClockRequestId;
+    const generation = model.replayClockGeneration + 1;
+    return transition(withModel(model, { pendingReplayClockRequestId: requestId,
+      nextReplayClockRequestId: requestId + 1, replayClockGeneration: generation }),
+      [{ type: "shared-replay-action", action, requestId, generation }]);
   }
-  if (action.type !== "activate") {
-    return transition(withModel(model, { status: `Action ${action.type} is unavailable in ${model.gameSession.kind}` }));
+  const command = effect.command;
+  switch (command.kind) {
+    case "set_water_quality": {
+      if (!canSelectLakeWaterQuality(model)
+          || command.quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready"
+          || !Number.isSafeInteger(model.nextRequestId) || model.nextRequestId >= Number.MAX_SAFE_INTEGER) return transition(model);
+      const requestId = model.nextRequestId;
+      return transition(withModel(model, { lakeWaterQuality: Object.freeze({ kind: "applying", applied: model.lakeWaterQuality.applied,
+        requested: command.quality, requestId }), nextRequestId: requestId + 1 }),
+        [{ type: "apply-lake-water-quality", requestId, quality: command.quality }]);
+    }
+    case "set_presentation": {
+      const mode = command.mode === "phone_vr" ? "phone-vr" : command.mode;
+      return mode === "screen" ? beginBackendSwitch(model, mode, "Ending presentation session") : beginPermissionRequest(model, mode);
+    }
+    case "recenter_phone_tracking": return transition(model, [{ type: "recenter-tracking" }]);
+    case "recenter_menu": return transition(model, [{ type: "recenter-menu" }]);
+    case "download_flight_csv":
+    case "download_record_json": {
+      const phaseCode = gameSessionPhaseCode(model.gameSession);
+      if ((phaseCode !== 7 && phaseCode !== 9) || model.flightLogDownload.kind === "pending" || model.presentation.type !== "ready") return transition(model);
+      const requestId = model.nextFlightLogDownloadRequestId;
+      const source: FlightLogSource = Object.freeze({ phaseCode, revision: model.flightRecordSourceRevision });
+      const format = command.kind === "download_flight_csv" ? "csv" : "json";
+      return transition(withModel(model, { flightLogDownload: Object.freeze({ kind: "pending", requestId, source, format }),
+        nextFlightLogDownloadRequestId: requestId + 1 }), [{ type: "download-flight-log", requestId, source, format }]);
+    }
+    case "open_stored_record": {
+      if (model.pendingGameRequestId !== null) return transition(model);
+      const requestId = model.nextRequestId;
+      return transition(withModel(model, { pendingGameRequestId: requestId, nextRequestId: requestId + 1,
+        status: `FlightRecord ${String(command.id)}を開いている` }), [{ type: "open-stored-flight-record", id: command.id, requestId }]);
+    }
+    case "set_replay_camera": return transition(model);
+    default: return assertNever(command);
   }
-  const gameOperation = operationForGameAction(gameSessionPhaseCode(model.gameSession), action.controlId);
-  if (gameOperation !== null) return beginGameOperation(model, gameOperation);
-  if (action.controlId === "boot-enter-webxr") {
-    return beginPermissionRequest(model, "webxr");
-  }
-  if (action.controlId === "boot-enter-phone-vr") {
-    return beginPermissionRequest(model, "phone-vr");
-  }
-  if (action.controlId === "boot-exit-vr") {
-    return beginBackendSwitch(model, "screen", "Ending presentation session");
-  }
-  if (action.controlId === "boot-recenter-phone-tracking") {
-    if (model.presentation.type !== "ready" || model.presentation.mode !== "phone-vr") return transition(model);
-    return transition(withModel(model, { status: "Phone VR tracking reference updated" }), [{ type: "recenter-tracking" }]);
-  }
-  if (action.controlId === "boot-recenter-menu") {
-    if (!isInVr(model.presentation)) return transition(model);
-    return transition(withModel(model, { status: "Menu placement updated" }), [{ type: "recenter-menu" }]);
-  }
-  return transition(withModel(model, { status: `Action ${action.controlId} is unavailable in ${model.gameSession.kind}` }));
 }
 
 function updateReplayClock(
@@ -1249,59 +1161,6 @@ function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model
   };
 }
 
-function operationForGameAction(phaseCode: number, controlId: string): NamedGameSessionOperation | null {
-  if (controlId === "game-briefing-cancel" && (phaseCode === 2 || phaseCode === 3)) {
-    return "cancel-briefing";
-  }
-  const operations: Readonly<Record<string, readonly [number, NamedGameSessionOperation]>> = {
-    "game-title-start": [0, "open-setup"],
-    "game-setup-start": [1, "prepare"],
-    "game-setup-mode-manual": [1, "set-control-manual"],
-    "game-setup-mode-shared": [1, "set-control-shared"],
-    "game-setup-mode-automatic": [1, "set-control-automatic"],
-    "game-setup-back": [1, "return-to-title"],
-    "game-briefing-start": [3, "start-flight"],
-    "game-countdown-cancel": [4, "cancel-countdown"],
-    "game-flight-pause": [5, "pause"],
-    "game-flight-abort": [5, "abort"],
-    "game-flight-resume": [6, "resume"],
-    "game-paused-abort": [6, "abort"],
-    "game-result-retry": [7, "retry"],
-    "game-result-replay": [7, "enter-replay"],
-    "game-replay-return": [9, "leave-replay"],
-    "game-title-demo": [0, "enter-attract"],
-    "game-attract-return": [10, "leave-attract"],
-    "game-result-setup": [7, "open-setup"],
-    "game-result-title": [7, "return-to-title"],
-    "game-briefing-retry": [8, "retry-briefing"],
-    "game-failed-setup": [8, "cancel-briefing"]
-  };
-  const entry = operations[controlId];
-  return entry !== undefined && entry[0] === phaseCode ? entry[1] : null;
-}
-
-function informationCueCode(controlId: string): number | null {
-  const cueCodes: Readonly<Record<string, number>> = {
-    "game-setup-information-telemetry": 0,
-    "game-setup-information-attitude": 1,
-    "game-setup-information-wind": 2,
-    "game-setup-information-flight-path": 3,
-    "game-setup-information-angle-of-attack": 4,
-    "game-setup-information-warnings": 5
-  };
-  return cueCodes[controlId] ?? null;
-}
-
-function beginGameOperation(model: AppModel, operation: GameSessionOperation): AppTransition {
-  if (operation === "resume" && model.flightExecution.kind === "stopped") return transition(model);
-  if (model.pendingGameRequestId !== null) return transition(model);
-  const requestId = model.nextRequestId;
-  return transition(withModel(model, {
-    pendingGameRequestId: requestId,
-    nextRequestId: requestId + 1,
-    status: "ゲーム状態を更新している"
-  }), [{ type: "game-session-operation", operation, requestId }]);
-}
 
 function validFlightControllerIdentity(identity: FlightControllerIdentity): boolean {
   return Number.isSafeInteger(identity.sessionId) && identity.sessionId > 0
@@ -1438,11 +1297,25 @@ function withModel(model: AppModel, changes: Partial<AppModel>): AppModel {
   const sourceChanged = changes.gameSession !== undefined && changes.gameSession.phaseCode !== model.gameSession.phaseCode
     || changes.pendingGameRequestId !== undefined && changes.pendingGameRequestId !== null && changes.pendingGameRequestId !== model.pendingGameRequestId;
   const unavailable = changes.presentation?.type === "hidden" || changes.presentation?.type === "cached";
-  return Object.freeze({
+  return freezeAppModel({
     ...model,
     ...changes,
     ...(sourceChanged ? { flightRecordSourceRevision: model.flightRecordSourceRevision + 1 } : {}),
     ...(sourceChanged || unavailable ? { flightLogDownload: Object.freeze({ kind: "idle" as const }) } : {})
+  });
+}
+
+type AppModelSource = Omit<AppModel, "briefingDetailsOpen" | "resultTab" | "analysisChart" | "analysisCursorTimeSeconds" | "replayViewMode" | "replayCameraMode">;
+
+function freezeAppModel(source: AppModelSource): AppModel {
+  return Object.freeze({ ...source,
+    get briefingDetailsOpen() { return source.sharedGameUi?.selections.technical_open ?? false; },
+    get resultTab() { return source.sharedGameUi?.selections.result_tab ?? "summary"; },
+    get analysisChart() { return source.sharedGameUi?.selections.analysis_chart ?? "map"; },
+    get analysisCursorTimeSeconds() { return [9, 10].includes(source.gameSession.phaseCode)
+      ? source.playbackTimeSeconds : source.sharedGameUi?.selections.analysis_time_seconds ?? 0; },
+    get replayViewMode() { return source.sharedGameUi?.selections.replay_view ?? "cinematic"; },
+    get replayCameraMode() { return source.sharedGameUi?.selections.replay_camera ?? "auto"; }
   });
 }
 

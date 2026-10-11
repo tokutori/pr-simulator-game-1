@@ -51,18 +51,18 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
       case "range": addControlText("value", 0, String(control.value)); break;
       case "status": addControlText("value", 0, control.value); break;
       case "chart": {
-        addControlText("x-axis", 0, control.xAxisLabel);
-        addControlText("y-axis", 0, control.yAxisLabel);
-        if (control.equalAxisScale) {
+        addControlText("x-axis", 0, control.x_axis_label);
+        addControlText("y-axis", 0, control.y_axis_label);
+        if (control.equal_axis_scale) {
           addControlText("north", 0, "N ↑");
-          addControlText("scale", 0, `${formatChartTick(chartScaleBarDistance(control.xMaximum - control.xMinimum))} m`);
+          addControlText("scale", 0, `${formatChartTick(chartScaleBarDistance(control.x_maximum - control.x_minimum))} m`);
         }
         for (let tickIndex = 0; tickIndex <= 4; tickIndex++) {
-          addControlText("x-tick", tickIndex, formatChartTick(control.xMinimum + (control.xMaximum - control.xMinimum) * tickIndex / 4), width / 5);
-          addControlText("y-tick", tickIndex, formatChartTick(control.yMinimum + (control.yMaximum - control.yMinimum) * tickIndex / 4), width / 5);
+          addControlText("x-tick", tickIndex, formatChartTick(control.x_minimum + (control.x_maximum - control.x_minimum) * tickIndex / 4), width / 5);
+          addControlText("y-tick", tickIndex, formatChartTick(control.y_minimum + (control.y_maximum - control.y_minimum) * tickIndex / 4), width / 5);
         }
         control.series.forEach((series, index) => { addControlText("legend", index, series.label); });
-        [...control.vectors, ...control.markers, ...control.timeMarkers, ...control.referenceLines]
+        [...control.vectors, ...control.markers, ...control.time_markers, ...control.reference_lines]
           .forEach((annotation, index) => { addControlText("annotation", index, annotation.label); });
         break;
       }
@@ -139,7 +139,7 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
       const tickHeight = Math.max(request.lineHeightMeters, ...ticks.map((text) => text.bounds.height));
       const tickWidth = (item.width - request.paddingMeters * 2) / 5;
       const plotWidth = item.width - request.paddingMeters * 2 - tickWidth * 1.5 - request.gapMeters;
-      const plotHeight = item.control.equalAxisScale ? plotWidth : Math.max(request.lineHeightMeters * 5, plotWidth * 0.55);
+      const plotHeight = item.control.equal_axis_scale ? plotWidth : Math.max(request.lineHeightMeters * 5, plotWidth * 0.55);
       const plot = Object.freeze({ x: item.left + request.paddingMeters + tickWidth + request.gapMeters,
         y: textTop + tickHeight / 2, width: plotWidth, height: plotHeight });
       for (const tick of ticks) {

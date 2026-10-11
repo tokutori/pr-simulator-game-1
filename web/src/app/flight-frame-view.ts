@@ -6,8 +6,8 @@ import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
 import type { EnvironmentBriefingProjection } from "../game/environment-briefing.js";
-import { createFlightDisplayHudModel } from "../presentation/flight-hud-model.js";
-import type { FlightHudModel, InformationLevelCode } from "../presentation/flight-hud-model.js";
+import type { FlightHudModel } from "../presentation/flight-hud-model.js";
+import { projectSharedFlightHudModel } from "../presentation/flight-hud-model.js";
 import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, NO_HEAD_HUD_VIEW } from "../presentation/head-hud-view.js";
 import type { HeadHudView } from "../presentation/head-hud-view.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
@@ -37,7 +37,7 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   let snapshot = snapshotInput;
   if (model.flightExecution.kind === "stopped" && (phase === 5 || phase === 6)) snapshot = model.flightExecution.snapshot;
   const hud = snapshot !== null && (phase === 5 || phase === 6)
-    ? createFlightUiHudModel(model, snapshot)
+    ? createFlightUiHudModel(model)
     : null;
   const headHud = model.presentation.type === "ready" && model.presentation.mode !== "screen" && ((hud !== null && phase === 5) || framesPerSecond !== undefined)
     ? createHeadHudView(phase === 5 ? hud : null, viewer, locale, DEFAULT_HEAD_HUD_PROFILE, framesPerSecond)
@@ -45,24 +45,19 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment, venue, frameRateEnabled: framesPerSecond !== undefined });
 }
 
-export function createFlightUiHudModel(model: AppModel, snapshot: FlightSnapshotInput): FlightHudModel {
-  const code = model.difficulty.informationCode;
-  if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
-  const stopped = model.flightExecution;
-  const failure = stopped.kind === "stopped" && [5, 6].includes(gameSessionPhaseCode(model.gameSession));
-  const retained = failure ? stopped.snapshot : snapshot;
-  const hud = createFlightDisplayHudModel(retained, code as InformationLevelCode, model.difficulty.hudProfile);
-  return failure ? Object.freeze({ ...hud,
-    status: "飛行処理停止",
-    warning: `停止理由: ${stopped.message}`,
-    telemetry: `Last valid · tick ${String(retained.stamp.tick)} · ${retained.stamp.timeSeconds.toFixed(2)} s`
-  }) : hud;
+export function createFlightUiHudModel(model: AppModel): FlightHudModel {
+  const view = model.sharedGameUi;
+  const shared = view?.hud;
+  if (shared === undefined || shared === null) throw new RangeError("Shared Rust HUD observation is unavailable");
+  if (view === null) throw new RangeError("Shared Rust UI observation is unavailable");
+  return projectSharedFlightHudModel(shared, view.theme);
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {
   const view = gameSessionPhaseCode(draft.model.gameSession) < 0
     ? createBootViewModel(draft.model)
-    : createGameViewModel(draft.model, draft.snapshot, draft.analysis, headHud, draft.environment, draft.venue);
+    : draft.model.sharedGameUi === null ? createBootViewModel(draft.model)
+    : createGameViewModel(draft.model.sharedGameUi, headHud.kind === "visible" ? headHud.layer : NO_HEAD_HUD);
   return draft.frameRateEnabled && headHud.kind === "visible" ? Object.freeze({ ...view, headHud: headHud.layer }) : view;
 }
 

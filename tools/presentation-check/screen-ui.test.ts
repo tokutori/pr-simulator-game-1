@@ -173,20 +173,20 @@ describe("screen UI DOM patching", () => {
       kind: "chart",
       id: "analysis-chart",
       label: "Altitude",
-      xAxisLabel: "Time (s)",
-      yAxisLabel: "Altitude (m)",
-      xMinimum: 0,
-      xMaximum: 1,
-      yMinimum: 0,
-      yMaximum: 1,
-      equalAxisScale: false,
-      series: [{ label: "Altitude", color: "#70d6c8", points: [{ x: 0, y: 1 }] }],
+      x_axis_label: "Time (s)",
+      y_axis_label: "Altitude (m)",
+      x_minimum: 0,
+      x_maximum: 1,
+      y_minimum: 0,
+      y_maximum: 1,
+      equal_axis_scale: false,
+      series: [{ label: "Altitude", color: "#70d6c8", points: [{ x: 0, y: 1 }], segment_colors: [] }],
       vectors: [],
       markers: [],
-      timeMarkers: [],
-      referenceLines: [],
-      cursorX: null,
-      cursorPoints: [],
+      time_markers: [],
+      reference_lines: [],
+      cursor_x: null,
+      cursor_points: [],
       enabled: false,
       rect: normalizedRect(0.08, 0.22, 0.84, 0.3)
     };
@@ -226,7 +226,7 @@ describe("screen UI DOM patching", () => {
     expect(figure?.style.top).toBe("22%");
     expect(figure?.style.height).toBe("30%");
     const updated: UiViewModel = { ...view, panels: view.panels.map((entry) => ({
-      ...entry, controls: entry.controls.map((control) => control.kind === "chart" ? { ...control, cursorX: 0.5 } : control)
+      ...entry, controls: entry.controls.map((control) => control.kind === "chart" ? { ...control, cursor_x: 0.5 } : control)
     })) };
     adapter.render(updated, false);
     expect(required(root, ".screen-ui-mount").hidden).toBe(true);
@@ -274,10 +274,10 @@ describe("screen UI DOM patching", () => {
         ...panel.controls,
         { kind: "status", id: "long-notice", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: normalizedRect(0.04, 0.72, 0.92, 0.085) },
         {
-          kind: "chart", id: "measured-chart", label: "Altitude", xAxisLabel: "Time (s)", yAxisLabel: "Altitude (m)",
-          xMinimum: 0, xMaximum: 10, yMinimum: 0, yMaximum: 15, equalAxisScale: false,
-          series: [{ label: "Altitude", color: "#70d6c8", points: [{ x: 0, y: 15 }, { x: 10, y: 0 }] }],
-          vectors: [], markers: [], timeMarkers: [], referenceLines: [], cursorX: 5, cursorPoints: [{ x: 5, y: 7.5 }],
+          kind: "chart", id: "measured-chart", label: "Altitude", x_axis_label: "Time (s)", y_axis_label: "Altitude (m)",
+          x_minimum: 0, x_maximum: 10, y_minimum: 0, y_maximum: 15, equal_axis_scale: false,
+          series: [{ label: "Altitude", color: "#70d6c8", points: [{ x: 0, y: 15 }, { x: 10, y: 0 }], segment_colors: [] }],
+          vectors: [], markers: [], time_markers: [], reference_lines: [], cursor_x: 5, cursor_points: [{ x: 5, y: 7.5 }],
           enabled: false, rect: normalizedRect(0.04, 0.105, 0.92, 0.49)
         }
       ] }))

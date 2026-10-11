@@ -2,13 +2,14 @@ import type { AnchorKind } from "../anchors.js";
 import type { Pose } from "./math.js";
 import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
+import type { GameUiView } from "../../generated/game-ui-view.js";
 
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];
 
 export const FLIGHT_MENU_GEOMETRY = Object.freeze({ distanceMeters: 2.4, centerY: -1.12, width: 0.62, height: 0.25 });
 
-export type UiControl = UiButton | UiToggle | UiRange | UiStatus | UiChart;
+export type UiControl = (UiButton | UiToggle | UiRange | UiStatus | UiChart) & Readonly<{ section?: string }>;
 
 export interface UiButton {
   readonly kind: "button";
@@ -72,53 +73,20 @@ export interface UiStatus {
   readonly rect: NormalizedRect;
 }
 
-export interface UiChart {
+type SharedChart = Extract<GameUiView["panels"][number]["controls"][number]["content"], { kind: "chart" }>["plot"];
+
+export type UiChart = Readonly<{
   readonly kind: "chart";
   readonly id: string;
   readonly label: string;
-  readonly xAxisLabel: string;
-  readonly yAxisLabel: string;
-  readonly xMinimum: number;
-  readonly xMaximum: number;
-  readonly yMinimum: number;
-  readonly yMaximum: number;
-  readonly equalAxisScale: boolean;
-  readonly series: readonly UiChartSeries[];
-  readonly vectors: readonly UiChartVector[];
-  readonly markers: readonly UiChartMarker[];
-  readonly timeMarkers: readonly UiChartMarker[];
-  readonly referenceLines: readonly UiChartReferenceLine[];
-  readonly cursorX: number | null;
-  readonly cursorPoints: readonly Readonly<{ x: number; y: number }>[];
   readonly enabled: false;
   readonly rect: NormalizedRect;
-}
+}> & SharedChart;
 
-export interface UiChartSeries {
-  readonly label: string;
-  readonly color: string;
-  readonly points: readonly Readonly<{ x: number; y: number }>[];
-  readonly segmentColors?: readonly string[];
-}
-
-export interface UiChartVector {
-  readonly label: string;
-  readonly color: string;
-  readonly start: Readonly<{ x: number; y: number }> | null;
-  readonly end: Readonly<{ x: number; y: number }> | null;
-}
-
-export interface UiChartMarker {
-  readonly label: string;
-  readonly color: string;
-  readonly point: Readonly<{ x: number; y: number }>;
-}
-
-export interface UiChartReferenceLine {
-  readonly value: number;
-  readonly label: string;
-  readonly color: string;
-}
+export type UiChartSeries = SharedChart["series"][number];
+export type UiChartVector = SharedChart["vectors"][number];
+export type UiChartMarker = SharedChart["markers"][number];
+export type UiChartReferenceLine = SharedChart["reference_lines"][number];
 
 export interface NormalizedRect {
   readonly x: number;
@@ -152,6 +120,7 @@ export interface UiPanel {
   readonly localPose: Pose;
   readonly size: PanelSize;
   readonly controls: readonly UiControl[];
+  readonly sections?: GameUiView["panels"][number]["sections"];
 }
 
 export type UiPanelComposition = "physical" | "overlay";
@@ -175,6 +144,7 @@ export interface UiViewModel {
   readonly activeOverlay: string | null;
   readonly panels: readonly UiPanel[];
   readonly headHud: HeadHudLayer;
+  readonly sharedPresentation?: Readonly<{ layout: GameUiView["layout"]; theme: GameUiView["theme"] }>;
 }
 
 export type UiAction =
@@ -270,34 +240,33 @@ export function validateUiViewModel(viewModel: UiViewModel): void {
         throw new RangeError(`Invalid range control: ${control.id}`);
       }
       if (control.kind === "chart") {
-        if (![control.xMinimum, control.xMaximum, control.yMinimum, control.yMaximum].every(Number.isFinite)
-            || control.xMinimum >= control.xMaximum || control.yMinimum >= control.yMaximum
-            || (control.equalAxisScale && Math.abs((control.xMaximum - control.xMinimum) - (control.yMaximum - control.yMinimum)) > 1.0e-9)
+        if (![control.x_minimum, control.x_maximum, control.y_minimum, control.y_maximum].every(Number.isFinite)
+            || control.x_minimum >= control.x_maximum || control.y_minimum >= control.y_maximum
+            || (control.equal_axis_scale && Math.abs((control.x_maximum - control.x_minimum) - (control.y_maximum - control.y_minimum)) > 1.0e-9)
             || control.series.length === 0) {
           throw new RangeError(`Invalid chart scale or series: ${control.id}`);
         }
-        if ((control.cursorX !== null && (!Number.isFinite(control.cursorX)
-              || control.cursorX < control.xMinimum || control.cursorX > control.xMaximum))
-            || control.cursorPoints.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))
-            || control.vectors.some((vector) => (vector.start === null) !== (vector.end === null)
-              || (vector.start !== null && vector.end !== null
-                && ![vector.start.x, vector.start.y, vector.end.x, vector.end.y].every(Number.isFinite)))
+        if ((control.cursor_x !== null && (!Number.isFinite(control.cursor_x)
+              || control.cursor_x < control.x_minimum || control.cursor_x > control.x_maximum))
+            || control.cursor_points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))
+            || control.vectors.some((vector) => vector.segment !== null
+              && vector.segment.some((point) => ![point.x, point.y].every(Number.isFinite)))
             || control.markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
           throw new RangeError(`Invalid chart cursor: ${control.id}`);
         }
-        if (control.timeMarkers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
+        if (control.time_markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
           throw new RangeError(`Invalid chart time marker: ${control.id}`);
         }
-        if (control.referenceLines.some((line) => !Number.isFinite(line.value))) {
+        if (control.reference_lines.some((line) => !Number.isFinite(line.value))) {
           throw new RangeError(`Invalid chart reference line: ${control.id}`);
         }
         for (const series of control.series) {
           if (series.points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
             throw new RangeError(`Chart series has non-finite points: ${control.id}`);
           }
-          if (series.segmentColors !== undefined && (
-            series.segmentColors.length !== Math.max(0, series.points.length - 1)
-            || series.segmentColors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))
+          if (series.segment_colors.length > 0 && (
+            series.segment_colors.length !== Math.max(0, series.points.length - 1)
+            || series.segment_colors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))
           )) throw new RangeError(`Chart series has invalid segment colors: ${control.id}`);
         }
       }

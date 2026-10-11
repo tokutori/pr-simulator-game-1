@@ -1,4 +1,25 @@
-import type { PanelDrawingContext } from "./vr-panel-canvas.js";
+export interface PanelDrawingContext {
+  clearRect(x: number, y: number, width: number, height: number): void;
+  fillRect(x: number, y: number, width: number, height: number): void;
+  fillText(text: string, x: number, y: number, maxWidth: number): void;
+  strokeRect(x: number, y: number, width: number, height: number): void;
+  beginPath(): void;
+  closePath(): void;
+  rect(x: number, y: number, width: number, height: number): void;
+  clip(): void;
+  save(): void;
+  restore(): void;
+  fill(): void;
+  moveTo(x: number, y: number): void;
+  lineTo(x: number, y: number): void;
+  stroke(): void;
+  setFillStyle(value: string): void;
+  setStrokeStyle(value: string): void;
+  setFont(value: string): void;
+  setTextBaseline(value: "middle"): void;
+  setLineWidth(value: number): void;
+  setGlobalAlpha(value: number): void;
+}
 
 export function browserPanelContext(context: CanvasRenderingContext2D): PanelDrawingContext {
   return {

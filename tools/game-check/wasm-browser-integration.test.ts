@@ -14,6 +14,7 @@ import type { AppEffect, AppMessage } from "../../web/src/app/app-state.js";
 import { projectTailFlightSnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 beforeAll(() => {
   const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
@@ -107,7 +108,9 @@ describe("current WebAssembly browser binding", () => {
       expect(effects).toEqual(expect.arrayContaining([expect.objectContaining({ type: "persist-flight-record" })]));
       expect(terminalRecords).toEqual([session.exportRecordJson()]);
       for (const mode of ["screen", "phone-vr", "webxr"] as const) {
-        const view = createGameViewModel({ ...model, presentation: { type: "ready", mode } }, controller.currentDisplaySnapshot);
+        const view = createGameViewModel(session.readSharedUi(sharedGameUiPlatform({
+          presentation_mode: mode === "phone-vr" ? "phone_vr" : mode
+        })));
         expect(view.scene).toBe("Result");
         for (const controlId of ["game-flight-pause", "game-flight-abort", "game-flight-resume", "game-paused-abort"]) {
           expect(viewExposesAction(view, { type: "activate", controlId })).toBe(false);

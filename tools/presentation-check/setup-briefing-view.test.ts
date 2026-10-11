@@ -1,31 +1,11 @@
-import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel } from "../../web/src/app/app-state.js";
-import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
-import { NO_HEAD_HUD_VIEW } from "../../web/src/presentation/head-hud-view.js";
-import { NO_ENVIRONMENT_BRIEFING } from "../../web/src/game/environment-briefing.js";
-import type { EnvironmentBriefingProjection } from "../../web/src/game/environment-briefing.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
 import { requestMenuLayout, layoutMeasuredMenu, menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import type { MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
 import { uiButtonLabel, uiControlBackground, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { configuredViewerFixture } from "./viewer-fixture.js";
-
-const environment: EnvironmentBriefingProjection = Object.freeze({ kind: "available", name: "Declared weather",
-  representativePositionNedMeters: [1, 2, -10.5] as const, representativeAltitudeMeters: 10.5,
-  representativeWindNedMetersPerSecond: [-0.25, 0.5, -0.1] as const, spatialVariation: "uniform", windBasis: "assumed" });
-
-function preparationModel(phaseCode: number): AppModel {
-  const base = createInitialAppModel();
-  const gameSession = gameSessionState(phaseCode, 3, null);
-  if (gameSession === null) throw new Error("Invalid phase fixture");
-  return { ...base, status: "", presentation: { type: "ready", mode: "screen" }, gameSession,
-    configurationMetadata: { ...base.difficulty, catalogVersion: 3, scenarioId: 1, scenarioVersion: 3,
-      aircraftModelVersion: 2, environmentVersion: 1, controllerProfileVersion: 3, seedHigh: 21930, seedLow: 24472 } };
-}
 
 function statusValue(view: UiViewModel, id: string): string {
   const control = view.panels.flatMap((panel) => panel.controls).find((entry) => entry.id === id);
@@ -39,7 +19,7 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
   const lines = request.value.split("\n").flatMap((paragraph, paragraphIndex) => {
     const characters = Array.from(paragraph);
     const chunks = characters.length === 0 ? [""] : Array.from({ length: Math.ceil(characters.length / columns) },
-      (_textChunkSlot, index) => characters.slice(index * columns, (index + 1) * columns).join(""));
+      (_slot, index) => characters.slice(index * columns, (index + 1) * columns).join(""));
     return chunks.map((value) => ({ value, paragraphIndex, advanceMeters: Array.from(value).length * characterWidth,
       leftMeters: 0, rightMeters: Array.from(value).length * characterWidth,
       ascentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.65,
@@ -48,201 +28,56 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
   return { identity: request.identity, lines };
 }
 
-describe("Flight Setup and Briefing presentation", () => {
-  it.each(["screen", "phone-vr", "webxr"] as const)("exposes the same direct candidates and selected values in %s", (mode) => {
-    const model: AppModel = { ...preparationModel(1), presentation: { type: "ready", mode } };
-    const view = createGameViewModel(model, null, null, NO_HEAD_HUD_VIEW, environment);
+describe("Shared Flight Setup and Briefing presentation", () => {
+  it.each(["screen", "phone_vr", "webxr"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
+    const shared = currentSharedGameUiFixture(1, { platform: { presentation_mode } });
+    const view = createGameViewModel(shared);
     validateUiViewModel(view);
-    const controls = view.panels[0]?.controls ?? [];
-    const choices = controls.filter((control) => control.kind === "button" && control.presentation?.kind === "choice");
-    const setupChoices = choices.filter((choice) => choice.id.startsWith("game-setup-select-"));
-    expect(setupChoices).toHaveLength(18);
-    expect(setupChoices.map((choice) => choice.id)).toEqual(
-      ([["preset", 4], ["information", 5], ["assistance", 4], ["weather", 5]] as const)
-        .flatMap(([axis, count]) => Array.from({ length: count }, (_candidateSlot, code) => `game-setup-select-${axis}-${String(code)}`))
-    );
-    expect(choices).toHaveLength(21);
-    expect(choices.filter((choice) => choice.id.startsWith("presentation-water-quality-"))).toMatchObject([
-      { id: "presentation-water-quality-low", label: "Low", enabled: true,
-        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: false, description: "描画負荷を抑える" } },
-      { id: "presentation-water-quality-medium", label: "Medium", enabled: true,
-        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: false, description: "描画負荷と波面密度の均衡" } },
-      { id: "presentation-water-quality-high", label: "High", enabled: true,
-        presentation: { kind: "choice", group: "water-quality", groupLabel: "水面画質", selected: true, description: "波面の描画密度を優先する" } }
-    ]);
-    expect(statusValue(view, "presentation-water-quality-status"))
-      .toBe("High · 水面の描画密度を選択する。飛行物理と記録条件は維持する。");
-    expect(choices.map((choice) => choice.id)).not.toContain("game-setup-select-preset-4");
-    expect(controls.map((control) => control.id)).not.toContain("game-state");
-    expect(controls.map((control) => control.id)).not.toContain("game-setup-weather");
-    expect(statusValue(view, "game-weather-conditions")).toContain("代表水平風速: 0.56 m/s · 風向: 北西から（296.6°）");
-    expect(statusValue(view, "game-weather-conditions")).toContain("鉛直流: 上昇 0.10 m/s");
-    expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({ label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" } });
-    expect(view.panels[0]?.anchor).toBe("menu");
-  });
-
-  it("keeps version and seed in a closed Model-owned disclosure", () => {
-    const model = preparationModel(3);
-    const closed = createGameViewModel(model, null);
-    expect(JSON.stringify(closed)).not.toContain("Catalog:");
-    expect(JSON.stringify(closed)).not.toContain("Seed:");
-    expect(closed.panels[0]?.controls.find((control) => control.id === "game-briefing-technical")).toMatchObject({ presentation: { expanded: false } });
-    const open = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-technical" } });
-    expect(open.effects).toEqual([]);
-    const view = createGameViewModel(open.model, null);
-    expect(statusValue(view, "game-briefing-technical-content")).toContain("Seed: 21930:24472");
-    expect(view.panels[0]?.controls.find((control) => control.id === "game-briefing-start")).toMatchObject({ label: "発進カウントダウンを開始" });
-    expect(updateApp(open.model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-technical" } }).model.briefingDetailsOpen).toBe(false);
-    const pending = { ...model, pendingGameRequestId: 1 };
-    expect(updateApp(pending, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-technical" } }).model).toBe(pending);
-    const setup = preparationModel(1);
-    expect(updateApp(setup, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-technical" } }).model).toBe(setup);
-  });
-
-  it("closes technical information on phase changes and retains it during redraw", () => {
-    const model = { ...preparationModel(3), briefingDetailsOpen: true };
-    for (const phaseCode of [1, 3, 4] as const) {
-      const synced = updateApp(model, { type: "game-session-synced", phaseCode, controlModeCode: 0,
-        difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3, display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false });
-      expect(synced.model.briefingDetailsOpen).toBe(phaseCode === 3);
-    }
-  });
-
-  it.each([
-    [1, "game-setup-select-weather-1", 1],
-    [3, "game-briefing-start", 4],
-    [4, "game-countdown-cancel", 1]
-  ] as const)("retains operation feedback after pending is cleared in phase %i", (phaseCode, controlId, successPhaseCode) => {
-    const model = preparationModel(phaseCode);
-    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId } });
-    const requestId = requested.model.pendingGameRequestId;
-    if (requestId === null) throw new Error("Missing operation request");
-    for (const message of ["条件を確認する必要がある。", "Operation completed", ""]) {
-      for (const includeProjection of [false, true]) {
-        const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message,
-          ...(includeProjection ? { currentSession: { phaseCode, controlModeCode: model.controlModeCode,
-            difficulty: model.difficulty, configurationMetadata: model.configurationMetadata, countdownRemaining: 3,
-            display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false } } : {}) });
-        expect(failed.model.pendingGameRequestId).toBeNull();
-        expect(failed.model.gameSession.phaseCode).toBe(phaseCode);
-        for (const mode of ["screen", "phone-vr", "webxr"] as const) {
-          const failedView = createGameViewModel({ ...failed.model, presentation: { type: "ready", mode } }, null);
-          const feedback = failedView.panels[0]?.controls.find((control) => control.id === "game-preparation-feedback");
-          if (message === "") expect(feedback).toBeUndefined();
-          else {
-            expect(feedback).toMatchObject({ kind: "status", label: "通知", value: message });
-            expect(failedView.panels[0]?.controls.map((control) => control.id)).not.toContain("game-state");
-          }
-        }
-        const retry = updateApp(failed.model, { type: "ui-action", action: { type: "activate", controlId } });
-        const retryId = retry.model.pendingGameRequestId;
-        if (retryId === null) throw new Error("Missing retry request");
-        const completed = updateApp(retry.model, { type: "game-operation-completed", requestId: retryId,
-          phaseCode: successPhaseCode, controlModeCode: model.controlModeCode, difficulty: model.difficulty,
-          configurationMetadata: model.configurationMetadata, countdownRemaining: 3, display: { kind: "unavailable", reason: "menu_phase" }, controlLayout: "tail_incidence", canResume: false });
-        expect(completed.model.status).toBe("");
-        expect(createGameViewModel(completed.model, null).panels[0]?.controls.map((control) => control.id))
-          .not.toContain("game-preparation-feedback");
-      }
-    }
-  });
-
-  it("preserves current feedback when an old operation failure arrives", () => {
-    const model = preparationModel(3);
-    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-start" } });
-    const requestId = requested.model.pendingGameRequestId;
-    if (requestId === null) throw new Error("Missing operation request");
-    const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message: "開始操作を受理できない。" }).model;
-    const stale = updateApp(failed, { type: "game-operation-failed", requestId: requestId - 1, message: "古い失敗" });
-    expect(stale.model).toBe(failed);
-    expect(statusValue(createGameViewModel(stale.model, null), "game-preparation-feedback")).toBe("開始操作を受理できない。");
-  });
-
-  it("displays failed Briefing feedback once in its preparation result", () => {
-    const model = preparationModel(8);
-    const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-retry" } });
-    const requestId = requested.model.pendingGameRequestId;
-    if (requestId === null) throw new Error("Missing operation request");
-    const message = "準備に必要な条件を取得できない。";
-    const failed = updateApp(requested.model, { type: "game-operation-failed", requestId, message });
-    const view = createGameViewModel(failed.model, null);
-    expect(statusValue(view, "game-briefing-readiness")).toBe(message);
-    expect(view.panels.flatMap((panel) => panel.controls).filter((control) => control.kind === "status" && control.value === message)).toHaveLength(1);
-    expect(view.panels[0]?.controls.map((control) => control.id)).not.toContain("game-preparation-feedback");
-  });
-
-  it.each(["screen", "phone-vr", "webxr"] as const)("distinguishes failed Briefing recovery actions in %s", (mode) => {
-    const model: AppModel = { ...preparationModel(8), presentation: { type: "ready", mode } };
-    const view = createGameViewModel(model, null);
     const controls = view.panels.flatMap((panel) => panel.controls);
-    expect(controls.find((control) => control.id === "game-briefing-retry")).toMatchObject({
-      kind: "button", label: "準備を再試行", enabled: true, presentation: { kind: "action", emphasis: "primary" }
+    const choices = controls.filter((control) => control.kind === "button" && control.presentation?.kind === "choice");
+    expect(choices.filter((control) => control.id.startsWith("game-setup-select-"))).toHaveLength(18);
+    expect(choices.filter((control) => control.id.startsWith("presentation-water-quality-")).map((control) => control.label)).toEqual(["Low", "Medium", "High"]);
+    expect(controls.map((control) => control.id)).not.toContain("game-state");
+    expect(view.panels.flatMap((panel) => panel.sections?.map((section) => section.label) ?? []).filter(Boolean))
+      .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
+    expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({
+      label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" }
     });
-    expect(controls.find((control) => control.id === "game-failed-setup")).toMatchObject({
-      kind: "button", label: "設定へ戻る", enabled: true, presentation: { kind: "action", emphasis: "secondary" }
-    });
-    validateUiViewModel(view);
+    expect(controls.find((control) => control.id === "game-setup-back")).toMatchObject({ presentation: { emphasis: "secondary" } });
+    const source = shared.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-weather-conditions");
+    if (source?.content.kind !== "status") throw new Error("Missing Rust Weather");
+    expect(statusValue(view, source.id)).toBe(source.content.value);
+    expect(source.content.value).toContain("代表水平風速");
+    expect(source.content.value).toContain("鉛直流");
   });
 
-  it("disables every Setup interaction while a Rust operation is pending", () => {
-    const base = preparationModel(1);
-    const model = { ...base, pendingGameRequestId: 1, difficulty: { ...base.difficulty, informationCode: 4 } };
-    const view = createGameViewModel(model, null);
-    expect(view.panels.flatMap((panel) => panel.controls).filter((control) => control.kind !== "status").every((control) => !control.enabled)).toBe(true);
+  it("projects the Rust-owned closed and expanded technical disclosure", () => {
+    const closed = currentSharedGameUiFixture(3);
+    const open = currentSharedGameUiFixture(3, { actions: [{ kind: "toggle_technical" }] });
+    const closedView = createGameViewModel(closed);
+    const openView = createGameViewModel(open);
+    expect(JSON.stringify(closedView)).not.toContain("Seed:");
+    expect(statusValue(openView, "game-briefing-technical-content")).toContain("Seed:");
+    expect(sharedGameUiAction(closed, { type: "activate", controlId: "game-briefing-technical" })).toEqual({ kind: "toggle_technical" });
+    expect(openView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-briefing-start"))
+      .toMatchObject({ label: "発進カウントダウンを開始", presentation: { emphasis: "primary" } });
+    expect(closed.selections.technical_open).toBe(false);
+    expect(open.selections.technical_open).toBe(true);
   });
 
-  it.each([1, 2, 3, 4, 8])("projects preparation progress without a debug-state output in phase %i", (phaseCode) => {
-    const model = preparationModel(phaseCode);
-    const view = createGameViewModel(model, null);
-    expect(view.panels[0]?.controls.map((control) => control.id)).not.toContain("game-state");
-    expect(view.panels[0]?.controls.find((control) => control.id === "game-preparation-progress")).toMatchObject({ kind: "status" });
-    validateUiViewModel(view);
+  it.each([1, 2, 3, 4, 8])("preserves preparation phase %i and explicit operation admission", (phase) => {
+    const shared = currentSharedGameUiFixture(phase);
+    const view = createGameViewModel(shared);
+    expect(view.panels.flatMap((panel) => panel.controls.map((control) => control.id))).not.toContain("game-state");
+    const pending = currentSharedGameUiFixture(phase, { platform: { operation_pending: true, notification: "準備条件を確認する。" } });
+    expect(createGameViewModel(pending).panels.flatMap((panel) => panel.controls).filter((control) => control.kind !== "status").every((control) => !control.enabled)).toBe(true);
+    expect(shared.scene).toBe(phase === 1 ? "FlightSetup" : phase === 4 ? "Countdown" : "Briefing");
   });
 
-  it("uses the same immutable Weather projection for the VR frame path", () => {
-    const model: AppModel = { ...preparationModel(3), presentation: { type: "ready", mode: "phone-vr" } };
-    const draft = createFlightFrameViewDraft(model, null, configuredViewerFixture(), "ja", environment);
-    const view = finalizeFlightFrameView(draft, NO_HEAD_HUD_VIEW);
-    const direct = createGameViewModel(model, null, null, NO_HEAD_HUD_VIEW, environment);
-    expect(view).toEqual(direct);
-    expect(statusValue(createGameViewModel(model, null, null, NO_HEAD_HUD_VIEW, NO_ENVIRONMENT_BRIEFING), "game-weather-conditions"))
-      .toContain("代表風情報を取得できない");
-  });
-
-  it.each([1, 2, 3, 8])("states undefined launch-wind thresholds and preserves Rust preparation phase %i", (phaseCode) => {
-    for (const metadata of [environment, NO_ENVIRONMENT_BRIEFING]) {
-      const view = createGameViewModel(preparationModel(phaseCode), null, null, NO_HEAD_HUD_VIEW, metadata);
-      const weather = statusValue(view, "game-weather-conditions");
-      expect(weather).toContain("気象による発進風速の上限・下限: 未定義。");
-      expect(weather).not.toContain("準備処理で開始可能かを確認する");
-      if (phaseCode === 1) {
-        expect(view.panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-briefing-readiness")).toBe(false);
-      } else {
-        const readiness = statusValue(view, "game-briefing-readiness");
-        if (phaseCode === 3) expect(readiness).toBe("✓ 発進準備完了");
-        else expect(readiness).not.toContain("発進準備完了");
-      }
-    }
-  });
-
-  it.each([
-    [[-1, 0, 0], "北から（0.0°）", "鉛直流なし"],
-    [[0, -1, 0.2], "東から（90.0°）", "下降 0.20 m/s"],
-    [[1, 0, -0.2], "南から（180.0°）", "上昇 0.20 m/s"],
-    [[0, 1, 0], "西から（270.0°）", "鉛直流なし"],
-    [[0, 0, -0.2], "方向なし（水平風は無風）", "上昇 0.20 m/s"]
-  ] as const)("derives the meteorological origin and vertical direction from %o", (wind, from, vertical) => {
-    const view = createGameViewModel(preparationModel(3), null, null, NO_HEAD_HUD_VIEW, {
-      ...environment, representativeWindNedMetersPerSecond: wind
-    });
-    const weather = statusValue(view, "game-weather-conditions");
-    expect(weather).toContain(from);
-    expect(weather).toContain(vertical);
-  });
-
-  it.each([1, 3])("keeps CTA, back and disclosure reachable in a short portrait VR menu in phase %i", (phaseCode) => {
-    const model = { ...preparationModel(phaseCode), briefingDetailsOpen: true };
-    const view = createGameViewModel(model, null, null, NO_HEAD_HUD_VIEW, environment);
+  it.each([1, 3])("keeps primary, back and disclosure reachable in a short portrait VR menu in phase %i", (phase) => {
+    const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode: "phone_vr" },
+      actions: phase === 3 ? [{ kind: "toggle_technical" }] : [] });
+    const view = createGameViewModel(shared);
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
     const request = requestMenuLayout(panel, { width: 0.5, height: 0.6 }, {
@@ -251,101 +86,112 @@ describe("Flight Setup and Briefing presentation", () => {
     });
     const result = layoutMeasuredMenu(request, request.texts.map(measurementFor));
     if (result.kind !== "ready") throw new Error(result.reason);
-    const document = result.document;
-    const initial = menuViewport(document, 0);
+    const initial = menuViewport(result.document, 0);
     expect(initial.maximumOffsetMeters).toBeGreaterThan(0);
-    const ids = phaseCode === 1 ? ["game-setup-start", "game-setup-back"]
+    const ids = phase === 1 ? ["game-setup-start", "game-setup-back"]
       : ["game-briefing-start", "game-briefing-cancel", "game-briefing-technical"];
     for (const id of ids) {
-      const layout = document.controls.find((control) => control.control.id === id);
-      if (layout === undefined) throw new Error(`Missing control ${id}`);
-      const progress = Math.min(1, Math.max(0, layout.bounds.y / initial.maximumOffsetMeters));
-      expect(menuRectInViewport(menuViewport(document, progress), layout.bounds).kind, id).toBe("visible");
+      const control = result.document.controls.find((control) => control.control.id === id);
+      if (control === undefined) throw new Error(`Missing control ${id}`);
+      const progress = Math.min(1, Math.max(0, control.bounds.y / initial.maximumOffsetMeters));
+      expect(menuRectInViewport(menuViewport(result.document, progress), control.bounds).kind, id).toBe("visible");
     }
-    expect(request.texts.some((text) => text.value.includes("● Full\n利用可能な計器"))).toBe(phaseCode === 1);
   });
 
-  it("projects selection, emphasis and disclosure semantics into the DOM while preserving focus and scroll", async () => {
+  it("applies shared layout, selection and disclosure while preserving keyed DOM, focus and scroll", async () => {
     const window = new Window({ width: 320, height: 240 });
     Object.assign(globalThis, { window, document: window.document });
-    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
-    const documentRef = window.document as unknown as Document;
-    const root = documentRef.createElement("main");
-    documentRef.body.append(root);
-    let model = preparationModel(1);
-    const actions: unknown[] = [];
-    const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
     try {
-      adapter.render(createGameViewModel(model, null));
-      expect(root.querySelectorAll("fieldset")).toHaveLength(5);
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const root = documentRef.createElement("main");
+      documentRef.body.append(root);
+      const actions: unknown[] = [];
+      const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
+      const platform = { viewport: { width: 320, height: 240, root_font_size: 16 } };
+      const initial = currentSharedGameUiFixture(1, { platform });
+      adapter.render(createGameViewModel(initial));
       expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
         .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
       const selected = root.querySelector<HTMLButtonElement>('[data-control-id="game-setup-select-information-0"]');
       const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
       if (selected === null || shell === null) throw new Error("Missing Setup DOM");
-      expect(selected.getAttribute("aria-pressed")).toBe("true");
-      expect(selected.textContent).toContain("利用可能な計器");
-      selected.focus();
-      shell.scrollTop = 40;
-      model = { ...model, difficulty: { ...model.difficulty, informationCode: 2 } };
-      adapter.render(createGameViewModel(model, null));
+      selected.focus(); shell.scrollTop = 40;
+      const updated = currentSharedGameUiFixture(1, { platform, informationCode: 2 });
+      adapter.render(createGameViewModel(updated));
       expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
       expect(documentRef.activeElement).toBe(selected);
       expect(shell.scrollTop).toBe(40);
-      expect(root.querySelector('[data-control-id="game-setup-start"]')?.getAttribute("data-emphasis")).toBe("primary");
-      expect(root.querySelector('[data-control-id="game-setup-back"]')?.getAttribute("data-emphasis")).toBe("secondary");
-      selected.click();
-      expect(actions).toEqual([{ type: "activate", controlId: "game-setup-select-information-0" }]);
-      const difficulty = model.difficulty;
-      const requested = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "presentation-water-quality-low" } });
-      if (requested.model.lakeWaterQuality.kind !== "applying") throw new Error("Missing quality request");
-      adapter.render(createGameViewModel(requested.model, null));
-      expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
-      expect(documentRef.activeElement).toBe(selected);
-      expect(shell.scrollTop).toBe(40);
-      expect(root.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Lowを適用中");
-      model = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: requested.model.lakeWaterQuality.requestId,
-        quality: "low", cleanup: { kind: "complete" } }).model;
-      adapter.render(createGameViewModel(model, null));
-      expect(model.difficulty).toBe(difficulty);
-      expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
-      expect(documentRef.activeElement).toBe(selected);
-      expect(shell.scrollTop).toBe(40);
+      expect(shell.style.width).toBe(`${String(updated.layout.width_px)}px`);
+      expect(shell.style.maxHeight).toBe(`${String(updated.layout.maximum_height_px)}px`);
+      expect(shell.style.overflowY).toBe(updated.layout.scroll_y ? "auto" : "hidden");
+      expect(shell.style.getPropertyValue("--game-ui-columns")).toBe(String(updated.layout.choice_columns));
       expect(selected.getAttribute("aria-pressed")).toBe("false");
       expect(root.querySelector('[data-control-id="game-setup-select-information-2"]')?.getAttribute("aria-pressed")).toBe("true");
-      expect(root.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
-      expect(root.querySelector('[data-control-id="presentation-water-quality-high"]')?.getAttribute("aria-pressed")).toBe("false");
-      model = preparationModel(3);
-      adapter.render(createGameViewModel(model, null));
+      selected.click();
+      expect(actions).toEqual([{ type: "activate", controlId: selected.dataset.controlId }]);
+      expect(root.querySelector('[data-control-id="game-setup-start"]')?.getAttribute("data-emphasis")).toBe("primary");
+      expect(root.querySelector('[data-control-id="game-setup-back"]')?.getAttribute("data-emphasis")).toBe("secondary");
+      adapter.render(createGameViewModel(currentSharedGameUiFixture(3)));
       const disclosure = root.querySelector<HTMLButtonElement>('[data-control-id="game-briefing-technical"]');
       if (disclosure === null) throw new Error("Missing disclosure");
       disclosure.focus();
-      expect(disclosure.getAttribute("aria-expanded")).toBe("false");
-      expect(root.textContent).not.toContain("Seed:");
-      model = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-briefing-technical" } }).model;
-      adapter.render(createGameViewModel(model, null));
+      adapter.render(createGameViewModel(currentSharedGameUiFixture(3, { actions: [{ kind: "toggle_technical" }] })));
       expect(root.querySelector('[data-control-id="game-briefing-technical"]')).toBe(disclosure);
       expect(documentRef.activeElement).toBe(disclosure);
       expect(disclosure.getAttribute("aria-expanded")).toBe("true");
-      expect(root.querySelector("#game-briefing-technical-content")?.textContent).toContain("Seed: 21930:24472");
-      const stylesheet = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
-      expect(stylesheet).toContain("max-height: calc(100dvh - 2rem)");
-      expect(stylesheet).toContain("overflow-y: auto");
-      expect(stylesheet).toContain("repeat(auto-fit, minmax(min(100%, 12rem), 1fr))");
+      expect(root.querySelector("#game-briefing-technical-content")?.textContent).toContain("Seed:");
     } finally {
       await window.happyDOM.abort();
-      Reflect.deleteProperty(globalThis, "window");
-      Reflect.deleteProperty(globalThis, "document");
+      Reflect.deleteProperty(globalThis, "window"); Reflect.deleteProperty(globalThis, "document");
     }
   });
 
-  it("uses a common selected marker and visual hierarchy for VR painting", () => {
-    const controls = createGameViewModel(preparationModel(1), null).panels[0]?.controls ?? [];
+  it.each([
+    { phase: 3, disclosureId: "game-briefing-technical" },
+    { phase: 7, disclosureId: "game-result-technical" }
+  ])("links $disclosureId to its rendered content and preserves focus across disclosure updates", async ({ phase, disclosureId }) => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    try {
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const root = documentRef.createElement("main");
+      documentRef.body.append(root);
+      const adapter = new ScreenUiAdapter(root, () => undefined);
+      const contentId = `${disclosureId}-content`;
+      adapter.render(createGameViewModel(currentSharedGameUiFixture(phase)));
+      const disclosure = root.querySelector<HTMLButtonElement>(`[data-control-id="${disclosureId}"]`);
+      if (disclosure === null) throw new Error(`Missing disclosure ${disclosureId}`);
+      expect(disclosure.getAttribute("aria-controls")).toBe(contentId);
+      expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+      expect(documentRef.getElementById(contentId)).toBeNull();
+      disclosure.focus();
+      for (const expanded of [true, false]) {
+        adapter.render(createGameViewModel(currentSharedGameUiFixture(phase, {
+          actions: expanded ? [{ kind: "toggle_technical" }] : []
+        })));
+        expect(root.querySelector(`[data-control-id="${disclosureId}"]`)).toBe(disclosure);
+        expect(documentRef.activeElement).toBe(disclosure);
+        expect(disclosure.getAttribute("aria-controls")).toBe(contentId);
+        expect(disclosure.getAttribute("aria-expanded")).toBe(String(expanded));
+        const content = documentRef.getElementById(contentId);
+        if (expanded) expect(content?.textContent).toContain("Seed:");
+        else expect(content).toBeNull();
+      }
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window"); Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  it("uses common selected markers and primary/secondary emphasis for VR painting", () => {
+    const controls = createGameViewModel(currentSharedGameUiFixture(1)).panels.flatMap((panel) => panel.controls);
     const choice = controls.find((control) => control.id === "game-setup-select-information-0");
     const primary = controls.find((control) => control.id === "game-setup-start");
     const secondary = controls.find((control) => control.id === "game-setup-back");
     if (choice?.kind !== "button" || primary === undefined || secondary === undefined) throw new Error("Missing controls");
-    expect(uiButtonLabel(choice)).toContain("● Full\n利用可能な計器");
+    expect(uiButtonLabel(choice)).toContain("● Full");
     expect(uiControlBackground(primary)).not.toBe(uiControlBackground(secondary));
   });
 });

@@ -191,17 +191,17 @@ function instrumentElements(model: FlightHudModel): readonly HeadHudElement[] {
     ...model.attitude, flightPathAngleDegrees: model.flightPathAngleDegrees
   }));
   if (model.headingDegrees !== null) elements.push(Object.freeze({
-    kind: "heading", id: "head-heading", label: "HDG", bounds: unitRect, degrees: model.headingDegrees
+    kind: "heading", id: "head-heading", label: model.labels.heading, bounds: unitRect, degrees: model.headingDegrees
   }));
   if (model.pilotPosition !== null) elements.push(Object.freeze({
-    kind: "text", id: "head-pilot", label: "PILOT POSITION", bounds: unitRect, value: model.pilotPosition, tone: "normal"
+    kind: "text", id: "head-pilot", label: model.labels.pilotPosition, bounds: unitRect, value: model.pilotPosition, tone: "normal"
   }));
   if (model.wind !== null) elements.push(model.windDirectionDegrees === null
-    ? Object.freeze({ kind: "text", id: "head-wind", label: "WIND", bounds: unitRect, value: model.wind, tone: "normal" })
-    : Object.freeze({ kind: "wind", id: "head-wind", label: "WIND", bounds: unitRect, degrees: model.windDirectionDegrees, value: model.wind }));
+    ? Object.freeze({ kind: "text", id: "head-wind", label: model.labels.wind, bounds: unitRect, value: model.wind, tone: "normal" })
+    : Object.freeze({ kind: "wind", id: "head-wind", label: model.labels.wind, bounds: unitRect, degrees: model.windDirectionDegrees, value: model.wind }));
   if (model.angleOfAttack !== null) elements.push(model.angleOfAttackDegrees === null
-    ? Object.freeze({ kind: "text", id: "head-aoa", label: "AOA", bounds: unitRect, value: "unavailable", tone: "normal" })
-    : Object.freeze({ kind: "angle-of-attack", id: "head-aoa", label: "AOA", bounds: unitRect, degrees: model.angleOfAttackDegrees, value: model.angleOfAttack }));
+    ? Object.freeze({ kind: "text", id: "head-aoa", label: model.labels.angleOfAttack, bounds: unitRect, value: model.angleOfAttack, tone: "normal" })
+    : Object.freeze({ kind: "angle-of-attack", id: "head-aoa", label: model.labels.angleOfAttack, bounds: unitRect, degrees: model.angleOfAttackDegrees, value: model.angleOfAttack }));
   if (model.attitude === null && model.flightPathAngleDegrees !== null) elements.push(Object.freeze({
     kind: "flight-path", id: "head-flight-path", label: "FLIGHT PATH", bounds: unitRect,
     degrees: model.flightPathAngleDegrees, value: `${model.flightPathAngleDegrees.toFixed(1)}°`

@@ -26,6 +26,7 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
@@ -303,9 +304,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     if (session === null) throw new Error("Missing quality selection session");
     const initial: AppModel = {
       ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" }, gameSession: session,
-      lakeWaterQuality: { kind: "ready", applied: "low", cleanup: { kind: "complete" } }
+      lakeWaterQuality: { kind: "ready", applied: "low", cleanup: { kind: "complete" } },
+      sharedGameUi: currentSharedGameUiFixture(1, { platform: { water_quality: "low" } })
     };
-    const requested = updateApp(initial, { type: "ui-action", action: { type: "activate", controlId: "presentation-water-quality-high" } });
+    const requested = updateApp(initial, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_water_quality", quality: "high" } } });
     try {
       const cleanup = await bundle.renderer.setLakeWaterQuality("high");
       expect(cleanup).toEqual({ kind: "failed", message: failure.message });
@@ -314,7 +316,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       expect(foreground.material.uniforms.uWaveCount?.value).toBe(18);
       const completed = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "high", cleanup }).model;
       expect(completed.lakeWaterQuality).toEqual({ kind: "ready", applied: "high", cleanup });
-      const controls = createGameViewModel(completed, null).panels[0]?.controls ?? [];
+      const controls = createGameViewModel(currentSharedGameUiFixture(1, { platform: { water_quality: "high",
+        water_quality_operation: { kind: "cleanup_failed", cause: failure.message } } })).panels[0]?.controls ?? [];
       expect(controls.find((control) => control.id === "presentation-water-quality-high")).toMatchObject({ presentation: { selected: true } });
       expect(controls.find((control) => control.id === "presentation-water-quality-status")).toMatchObject({ value: `Highを適用した。旧geometryの解放に失敗した: ${failure.message}` });
     } finally {
@@ -584,7 +587,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Flight fixture");
-    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };
+    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
+      sharedGameUi: currentSharedGameUiFixture(5, { platform: { presentation_mode: "phone_vr" } }) };
     let currentFlight: FlightRenderPose = { datumPositionNed: { north: 100, east: 25, down: -8 },
       attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.resize(viewport);
@@ -921,7 +925,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(6, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Pause domain fixture");
-    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const };
+    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
+      sharedGameUi: currentSharedGameUiFixture(6, { platform: { presentation_mode: "phone_vr" } }) };
     for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
       bundle.renderer.resize(size);
       bundle.renderer.setFlightPose(null);
@@ -947,7 +952,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         const viewer = observed.viewer;
         if (current === null || viewer?.source !== "configured") throw new Error("Missing same-frame Menu evidence");
         const visible = visiblePanelFrame(current);
-        expect(visible.panel.title).toBe("Pause");
+        expect(model.sharedGameUi.active_overlay).toBe("Pause");
+        expect(visible.panel.title).toBe(model.sharedGameUi.panels[0]?.title);
         expect(visible.panel.size).toEqual({ width: 2.4, height: 1.8 });
         expect(driver.draws).toHaveLength(2);
         for (const [eyeIndex, draw] of driver.draws.entries()) {

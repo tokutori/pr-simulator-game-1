@@ -8,6 +8,7 @@ import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js
 import type { AppModel, GameSessionOperation, GameSessionProjection } from "../../web/src/app/app-state.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
 import { GamepadUiSelector } from "../../web/src/presentation/gamepad-ui-selector.js";
@@ -409,17 +410,30 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   const operations: GameSessionOperation[] = [];
   let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "phone-vr" } };
   const projection = (): GameSessionProjection => session.readGameSessionProjection();
+  const platform = sharedGameUiPlatform({ presentation_mode: "phone_vr" });
+  const observe = (): void => {
+    model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
+    model = updateApp(model, { type: "shared-game-ui-observed", view: session.readSharedUi(platform) }).model;
+  };
   const dispatch = (action: UiAction): void => {
     const semantic = fixtureSemanticAction(action);
     actions.push(semantic);
-    model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
+    observe();
     const update = updateApp(model, { type: "ui-action", action: semantic });
     model = update.model;
     for (const effect of update.effects) {
-      if (effect.type !== "game-session-operation") continue;
-      operations.push(effect.operation);
-      session.executeOperation(effect.operation);
-      model = updateApp(model, { type: "game-operation-completed", requestId: effect.requestId, ...projection() }).model;
+      if (effect.type !== "update-shared-game-ui") continue;
+      for (const sharedEffect of session.updateSharedUi(effect.action, platform).effects) {
+        const transition = updateApp(model, { type: "shared-game-ui-effect", effect: sharedEffect });
+        model = transition.model;
+        for (const command of transition.effects) {
+          if (command.type !== "shared-game-session-command") continue;
+          if (command.command.kind === "start_countdown") operations.push("start-flight");
+          session.executeSharedSessionCommand(command.command);
+          model = updateApp(model, { type: "game-operation-completed", requestId: command.requestId, ...projection() }).model;
+        }
+      }
+      observe();
     }
   };
   const sensorCallbacks: { readonly reading: (reading: PhoneVrSensorReading) => void; readonly rotation: (angle: number | null) => void }[] = [];
@@ -450,8 +464,9 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   let timestamp = 100;
   const frame = () => {
     timestamp += 16;
-    model = updateApp(model, { type: "game-session-synced", ...projection() }).model;
-    return fixtureBackendFrame(backend, timestamp, createGameViewModel(model, null), configuredViewerFixture());
+    observe();
+    if (model.sharedGameUi === null) throw new Error("Missing shared game UI");
+    return fixtureBackendFrame(backend, timestamp, createGameViewModel(model.sharedGameUi), configuredViewerFixture());
   };
   return { session, backend, input, actions, operations, frame, sensorCallbacks, sensors, renderer, unavailable };
 }

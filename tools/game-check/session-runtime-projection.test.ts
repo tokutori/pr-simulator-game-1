@@ -8,10 +8,8 @@ import { venueMapForEnvironment } from "../../web/src/game/biwa-venue-map.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import { NO_ENVIRONMENT_BRIEFING } from "../../web/src/game/environment-briefing.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
-import { NO_HEAD_HUD_VIEW } from "../../web/src/presentation/head-hud-view.js";
+import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -210,10 +208,11 @@ describe("registered environment and venue projection", () => {
         expect(venue.kind).toBe(unknown ? "unavailable" : "available");
         expect(projectRuntimeVenue(environment, 9)).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
           : { kind: "visible", basis: "recorded_origin" });
-        const state = updateApp(createInitialAppModel(), { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
+        const platform = sharedGameUiPlatform();
+        selectSharedReplayView(session, platform, "analysis");
         for (const mode of ["screen", "phone-vr", "webxr"] as const) {
-          const view = createGameViewModel({ ...state, presentation: { type: "ready", mode }, flightAnalysis: data, replayViewMode: "analysis" },
-            null, data, NO_HEAD_HUD_VIEW, NO_ENVIRONMENT_BRIEFING, venue);
+          const view = createGameViewModel(session.readSharedUi({ ...platform,
+            presentation_mode: mode === "phone-vr" ? "phone_vr" : mode }));
           const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
           if (chart?.kind !== "chart") throw new Error("Expected the recorded trajectory chart");
           if (unknown) expect(chart.series).toHaveLength(1);

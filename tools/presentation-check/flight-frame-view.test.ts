@@ -3,7 +3,8 @@ import { fixturePresentation } from "./menu-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
-import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
+import { createFlightFrameViewDraft, createFlightUiHudModel, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -23,12 +24,14 @@ import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js"
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
-function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5): AppModel {
+function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5, headFailure: string | null = null): AppModel {
   const snapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase)
     : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
-  const session = gameSessionState(phase, 0, snapshot, true, null, "tail_incidence", phase === 9 ? "result" : undefined);
+  const session = gameSessionState(phase, 0, snapshot, true, "tail_incidence", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Missing session fixture");
-  return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: session };
+  return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: session,
+    sharedGameUi: currentSharedGameUiFixture(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
+      head_hud_failure: headFailure } }) };
 }
 
 function configuredViewer() {
@@ -86,13 +89,13 @@ describe("Immutable same-frame Flight view finalization", () => {
     initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     launchCurrentSession(session);
+    const model = flightModel("screen");
     const controller = new TailFlightController({ ...session.flightPort,
       advance_tick_json: () => { throw new Error("Rust tick failed"); } }, {
       readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
-    }, renderer, { render: (snapshot) => { hud.renderDisplaySnapshot(snapshot); },
+    }, renderer, { render: (snapshot) => { hud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model)); },
       fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, () => []);
-    const model = flightModel("screen");
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
       (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentDisplaySnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });
@@ -126,27 +129,33 @@ describe("Immutable same-frame Flight view finalization", () => {
     expect(view.headHud).toBe(draft.headHud.layer);
     expect(view.activeOverlay).toBeNull();
     expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-flight-pause"]);
-    expect(draft.hud?.readouts).toContain("ALT 10.0 m");
+    expect(draft.hud?.readouts).toBe(captured.sharedGameUi?.hud?.readouts);
   });
 
   it.each(["invalid-view-geometry", "viewer-unavailable"] as const)("keeps %s local to the HUD and explains it in the same Menu", (reason) => {
-    const model = flightModel("webxr");
+    const model = flightModel("webxr", 5, reason);
     const snapshot = model.gameSession.kind === "flight" ? model.gameSession.snapshot : null;
     const before = JSON.stringify(model);
     const draft = createFlightFrameViewDraft(model, snapshot, unavailableViewerFrame(reason), "ja");
     const view = finalizeFlightFrameView(draft, draft.headHud);
     expect(view.headHud.kind).toBe("absent");
-    expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-head-hud-unavailable", "game-flight-pause"]);
+    expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-flight-pause", "game-head-hud-unavailable"]);
+    const status = view.panels[0]?.controls.find((control) => control.id === "game-head-hud-unavailable");
+    if (status?.kind !== "status") throw new Error("Missing Head HUD failure explanation");
+    expect(status.value).toContain(reason);
     expect(JSON.stringify(model)).toBe(before);
     expect(model.presentation).toEqual({ type: "ready", mode: "webxr" });
   });
 
   it("keeps a normal Pause action and same-frame explanation when Head text cannot fit", () => {
-    const model = flightModel("phone-vr");
+    const model = flightModel("phone-vr", 5, "text-overflow");
     const draft = createFlightFrameViewDraft(model, model.gameSession.kind === "flight" ? model.gameSession.snapshot : null, configuredViewer(), "ja");
     const view = finalizeFlightFrameView(draft, { kind: "unavailable", reason: "text-overflow" });
     expect(view.headHud).toEqual({ kind: "absent" });
-    expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-head-hud-unavailable", "game-flight-pause"]);
+    expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-flight-pause", "game-head-hud-unavailable"]);
+    const status = view.panels[0]?.controls.find((control) => control.id === "game-head-hud-unavailable");
+    if (status?.kind !== "status") throw new Error("Missing Head HUD failure explanation");
+    expect(status.value).toContain("text-overflow");
     expect(model.presentation).toEqual({ type: "ready", mode: "phone-vr" });
   });
 
@@ -162,9 +171,13 @@ describe("Immutable same-frame Flight view finalization", () => {
     expect(() => { validateUiViewModel(view); }).not.toThrow();
     const absent = finalizeFlightFrameView(draft, { kind: "absent" });
     expect(absent.panels[0]?.controls.some((control) => control.id === "game-head-hud-unavailable")).toBe(false);
-    expect(createGameViewModel(flightModel("screen"), snapshot, null, draft.headHud).headHud).toEqual({ kind: "absent" });
+    const screen = flightModel("screen");
+    if (screen.sharedGameUi === null) throw new Error("Missing shared Screen view");
+    expect(createGameViewModel(screen.sharedGameUi).headHud).toEqual({ kind: "absent" });
     for (const phase of [0, 1, 3, 4, 6, 7, 8, 10]) {
-      const projected = createGameViewModel(flightModel("phone-vr", phase), snapshot, null, draft.headHud);
+      const phaseModel = flightModel("phone-vr", phase);
+      if (phaseModel.sharedGameUi === null) throw new Error("Missing shared phase view");
+      const projected = createGameViewModel(phaseModel.sharedGameUi);
       expect(projected.headHud).toEqual({ kind: "absent" });
       expect(projected.panels[0]?.anchor).toBe("menu");
     }

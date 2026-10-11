@@ -173,8 +173,8 @@ function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRec
   const clip = menuRectInViewport(viewport, plot);
   if (clip.kind === "outside") return;
   const transform = (point: Readonly<{ x: number; y: number }>) => ({
-    x: (plot.x + (point.x - chart.xMinimum) / (chart.xMaximum - chart.xMinimum) * plot.width + viewport.contentClip.x) * scaleX,
-    y: (plot.y + (chart.yMaximum - point.y) / (chart.yMaximum - chart.yMinimum) * plot.height + viewport.contentClip.y - viewport.offsetMeters) * scaleY
+    x: (plot.x + (point.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum) * plot.width + viewport.contentClip.x) * scaleX,
+    y: (plot.y + (chart.y_maximum - point.y) / (chart.y_maximum - chart.y_minimum) * plot.height + viewport.contentClip.y - viewport.offsetMeters) * scaleY
   });
   const segment = (start: Readonly<{ x: number; y: number }>, end: Readonly<{ x: number; y: number }>, color: string, lineWidth: number): void => {
     const first = transform(start);
@@ -192,20 +192,20 @@ function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRec
     context.rect(clip.rect.x * scaleX, clip.rect.y * scaleY, clip.rect.width * scaleX, clip.rect.height * scaleY);
     context.clip();
     for (let index = 0; index <= 4; index++) {
-      const horizontal = chart.xMinimum + (chart.xMaximum - chart.xMinimum) * index / 4;
-      const vertical = chart.yMinimum + (chart.yMaximum - chart.yMinimum) * index / 4;
-      segment({ x: horizontal, y: chart.yMinimum }, { x: horizontal, y: chart.yMaximum }, "#456168", 1);
-      segment({ x: chart.xMinimum, y: vertical }, { x: chart.xMaximum, y: vertical }, "#456168", 1);
+      const horizontal = chart.x_minimum + (chart.x_maximum - chart.x_minimum) * index / 4;
+      const vertical = chart.y_minimum + (chart.y_maximum - chart.y_minimum) * index / 4;
+      segment({ x: horizontal, y: chart.y_minimum }, { x: horizontal, y: chart.y_maximum }, "#456168", 1);
+      segment({ x: chart.x_minimum, y: vertical }, { x: chart.x_maximum, y: vertical }, "#456168", 1);
     }
-    for (const reference of chart.referenceLines) segment({ x: chart.xMinimum, y: reference.value }, { x: chart.xMaximum, y: reference.value }, reference.color, 2);
-    if (chart.equalAxisScale) {
-      const spanX = chart.xMaximum - chart.xMinimum;
-      const spanY = chart.yMaximum - chart.yMinimum;
+    for (const reference of chart.reference_lines) segment({ x: chart.x_minimum, y: reference.value }, { x: chart.x_maximum, y: reference.value }, reference.color, 2);
+    if (chart.equal_axis_scale) {
+      const spanX = chart.x_maximum - chart.x_minimum;
+      const spanY = chart.y_maximum - chart.y_minimum;
       const scaleDistance = chartScaleBarDistance(spanX);
-      segment({ x: chart.xMaximum - spanX * 0.05 - scaleDistance, y: chart.yMinimum + spanY * 0.05 },
-        { x: chart.xMaximum - spanX * 0.05, y: chart.yMinimum + spanY * 0.05 }, "#f3fff9", 3);
-      const northBase = { x: chart.xMaximum - spanX * 0.05, y: chart.yMaximum - spanY * 0.2 };
-      const northTip = { x: northBase.x, y: chart.yMaximum - spanY * 0.05 };
+      segment({ x: chart.x_maximum - spanX * 0.05 - scaleDistance, y: chart.y_minimum + spanY * 0.05 },
+        { x: chart.x_maximum - spanX * 0.05, y: chart.y_minimum + spanY * 0.05 }, "#f3fff9", 3);
+      const northBase = { x: chart.x_maximum - spanX * 0.05, y: chart.y_maximum - spanY * 0.2 };
+      const northTip = { x: northBase.x, y: chart.y_maximum - spanY * 0.05 };
       segment(northBase, northTip, "#f3fff9", 2);
       segment(northTip, { x: northTip.x - spanX * 0.03, y: northTip.y - spanY * 0.04 }, "#f3fff9", 2);
       segment(northTip, { x: northTip.x + spanX * 0.03, y: northTip.y - spanY * 0.04 }, "#f3fff9", 2);
@@ -213,22 +213,23 @@ function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRec
     for (const series of chart.series) for (let index = 1; index < series.points.length; index++) {
       const first = series.points[index - 1];
       const second = series.points[index];
-      if (first !== undefined && second !== undefined) segment(first, second, series.segmentColors?.[index - 1] ?? series.color, 3);
+      if (first !== undefined && second !== undefined) segment(first, second, series.segment_colors[index - 1] ?? series.color, 3);
     }
-    for (const vector of chart.vectors) if (vector.start !== null && vector.end !== null) {
-      segment(vector.start, vector.end, vector.color, 2);
-      const deltaX = vector.end.x - vector.start.x;
-      const deltaY = vector.end.y - vector.start.y;
-      segment(vector.end, { x: vector.end.x - deltaX * 0.25 - deltaY * 0.15, y: vector.end.y - deltaY * 0.25 + deltaX * 0.15 }, vector.color, 2);
-      segment(vector.end, { x: vector.end.x - deltaX * 0.25 + deltaY * 0.15, y: vector.end.y - deltaY * 0.25 - deltaX * 0.15 }, vector.color, 2);
+    for (const vector of chart.vectors) if (vector.segment !== null) {
+      const [start, end] = vector.segment;
+      segment(start, end, vector.color, 2);
+      const deltaX = end.x - start.x;
+      const deltaY = end.y - start.y;
+      segment(end, { x: end.x - deltaX * 0.25 - deltaY * 0.15, y: end.y - deltaY * 0.25 + deltaX * 0.15 }, vector.color, 2);
+      segment(end, { x: end.x - deltaX * 0.25 + deltaY * 0.15, y: end.y - deltaY * 0.25 - deltaX * 0.15 }, vector.color, 2);
     }
-    for (const marker of [...chart.markers, ...chart.timeMarkers]) {
+    for (const marker of [...chart.markers, ...chart.time_markers]) {
       const point = transform(marker.point);
       context.setFillStyle(marker.color);
       context.fillRect(point.x - 3, point.y - 3, 6, 6);
     }
-    if (chart.cursorX !== null) segment({ x: chart.cursorX, y: chart.yMinimum }, { x: chart.cursorX, y: chart.yMaximum }, "#ffd45c", 2);
-    for (const cursor of chart.cursorPoints) {
+    if (chart.cursor_x !== null) segment({ x: chart.cursor_x, y: chart.y_minimum }, { x: chart.cursor_x, y: chart.y_maximum }, "#ffd45c", 2);
+    for (const cursor of chart.cursor_points) {
       const point = transform(cursor);
       context.setFillStyle("#ffd45c");
       context.fillRect(point.x - 4, point.y - 4, 8, 8);

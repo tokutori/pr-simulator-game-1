@@ -1,105 +1,127 @@
+import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
+import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
-
-class TestElement {
-  readonly attributes = new Map<string, string>();
-  readonly children: TestElement[] = [];
-  readonly classes = new Set<string>();
-  className = "";
-  hidden = false;
-  textContent: string | null = "";
-  id = "";
-  readonly classList = {
-    add: (value: string): void => { this.classes.add(value); },
-    remove: (value: string): void => { this.classes.delete(value); }
-  };
-
-  constructor(readonly ownerDocument: TestDocument) {}
-
-  setAttribute(name: string, value: string): void {
-    this.attributes.set(name, value);
-  }
-
-  append(...nodes: TestElement[]): void {
-    this.children.push(...nodes);
-  }
-
-  replaceChildren(...nodes: TestElement[]): void {
-    this.children.splice(0, this.children.length, ...nodes);
-  }
-}
-
-class TestDocument {
-  createElement(): TestElement {
-    return new TestElement(this);
-  }
-
-  createElementNS(): TestElement {
-    return new TestElement(this);
-  }
-}
+import { gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
 describe("Flight HUD DOM lifecycle", () => {
-  it("preserves HUD nodes while hidden and updates them before showing again", () => {
-    const root = new TestElement(new TestDocument());
-    const hud = new FlightHudAdapter(root as unknown as HTMLElement);
-    const nodes = [...root.children];
-
-    expect(root.children).toHaveLength(10);
-    hud.setVisible(true);
-    const firstValuesSnapshot = {
-    ...currentFlightDisplayFixture(5),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 0, airspeedMetersPerSecond: 0, groundspeedMetersPerSecond: 0,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const }, sideslipAngleRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-    const firstSnapshot = firstValuesSnapshot;
-    hud.renderDisplaySnapshot(firstSnapshot);
-    expect(root.hidden).toBe(false);
-
-    hud.setVisible(false);
-    const secondValuesSnapshot = {
-    ...currentFlightDisplayFixture(7),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 1, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 10, groundspeedMetersPerSecond: 9,
-      windVelocityNedMetersPerSecond: { north: 2, east: -1, down: 0.5 }, angleOfAttackRadians: { kind: "available" as const, value: 0.1 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
-      rollRadians: 0.2, pitchRadians: 0.05, headingRadians: 0.3 } },
-    finalization: { reason: "time_limit" as const, disposition: "complete" as const, terminalTick: 1, terminalFraction: 0, scoreMeters: [0, 0, 0] as const, failure: null }
-  };
-    const secondSnapshot = secondValuesSnapshot;
-    hud.renderDisplaySnapshot(secondSnapshot);
-
-    expect(root.hidden).toBe(true);
-    expect(root.attributes.get("aria-hidden")).toBe("true");
-    expect(root.children).toEqual(nodes);
-    hud.setVisible(true);
-    expect(root.hidden).toBe(false);
-    expect(root.attributes.get("aria-hidden")).toBe("false");
-    expect(root.children).toEqual(nodes);
-    expect(nodes[1]?.textContent).toBe("時間制限");
-    const instruments = nodes.find((node) => node.className === "flight-hud-instruments")?.children;
-    expect(instruments?.[0]?.children[1]?.textContent).toBe("17°");
-    expect(instruments?.[1]?.children[1]?.textContent).toBe("+0.00 m");
-    expect(instruments?.[2]?.children[1]?.textContent).toBe("N 2.0 · E -1.0 · D 0.5 m/s");
-    expect(instruments?.[3]?.children[1]?.textContent).toBe("5.7°");
+  it("preserves connected HUD nodes while hidden and applies shared readouts before showing again", async () => {
+    const window = new Window();
+    const nativeRoot = window.document.createElement("section");
+    const root = nativeRoot as unknown as HTMLElement;
+    window.document.body.append(nativeRoot);
+    const hud = new FlightHudAdapter(root);
+    const nodes = Array.from(root.childNodes);
+    const initial = currentSharedHudFixture();
+    try {
+      expect(root.children).toHaveLength(10);
+      hud.setVisible(true);
+      hud.renderDisplaySnapshot(currentFlightDisplayFixture(5), initial);
+      expect(root.hidden).toBe(false);
+      hud.setVisible(false);
+      const updated = { ...initial, status: "時間制限", heading: "17°", pilotPosition: "+0.00 m",
+        wind: "N 2.0 · E -1.0 · D 0.5 m/s", angleOfAttack: "5.7°", headingDegrees: 17,
+        angleOfAttackDegrees: 5.7, windDirectionDegrees: 90, attitude: { rollDegrees: 11, pitchDegrees: 2 },
+        layout: { ...initial.layout, width_px: 280, instrument_columns: 2, controls_visible: false } };
+      hud.renderDisplaySnapshot(currentFlightDisplayFixture(7), updated);
+      expect(root.hidden).toBe(true);
+      expect(root.getAttribute("aria-hidden")).toBe("true");
+      expect(Array.from(root.childNodes)).toEqual(nodes);
+      hud.setVisible(true);
+      expect(root.hidden).toBe(false);
+      expect(root.getAttribute("aria-hidden")).toBe("false");
+      expect(Array.from(root.childNodes)).toEqual(nodes);
+      expect(nodes.every((node) => node.isConnected)).toBe(true);
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe(updated.status);
+      const instruments = Array.from(root.querySelectorAll(".flight-hud-instruments output"));
+      expect(instruments.map((node) => node.textContent)).toEqual([updated.heading, updated.pilotPosition, updated.wind, updated.angleOfAttack]);
+      expect(root.style.width).toBe("280px");
+      expect(root.querySelector<HTMLElement>(".flight-hud-controls")?.hidden).toBe(true);
+      expect(Array.from(root.querySelectorAll(".flight-hud-instruments span")).map((node) => node.textContent))
+        .toEqual([updated.labels.heading, updated.labels.pilotPosition, updated.labels.wind, updated.labels.angleOfAttack]);
+    } finally {
+      await window.happyDOM.abort();
+    }
   });
 
-  it("shows Copernicus source and processing notices by default", () => {
-    const root = new TestElement(new TestDocument());
-    new FlightHudAdapter(root as unknown as HTMLElement);
-    const attribution = root.children.find((node) => node.className === "flight-hud-attributions");
-    const sourceNotice = attribution?.children.find((node) => node.className === "flight-hud-attribution-link" && node.textContent?.startsWith("© DLR e.V."));
-    const licenseNotice = attribution?.children.find((node) => node.className === "flight-hud-attribution-notice");
+  it("shows Copernicus source and processing notices by default", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    try {
+      new FlightHudAdapter(root);
+      const source = Array.from(root.querySelectorAll(".flight-hud-attribution-link")).find((node) => node.textContent.startsWith("© DLR e.V."));
+      const notice = root.querySelector<HTMLDetailsElement>(".flight-hud-attribution-notice");
+      expect(source?.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
+      expect(notice?.open).toBe(true);
+      expect(notice?.children[1]?.textContent).toBe("produced using Copernicus WorldDEM-30.");
+      expect(notice?.children[2]?.textContent).toContain("do not incur any liability");
+      const validatorLicense = Array.from(root.querySelectorAll<HTMLAnchorElement>(".flight-hud-attribution-link"))
+        .find((node) => node.textContent === "Game UI validator 利用条件");
+      expect(validatorLicense?.href).toBe(gameUiValidatorLicenseUrl);
+      expect(validatorLicense?.target).toBe("_blank");
+      expect(validatorLicense?.rel).toBe("noopener noreferrer");
+    } finally {
+      await window.happyDOM.abort();
+    }
+  });
 
-    expect(sourceNotice?.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
-    expect(licenseNotice?.attributes.get("open")).toBeUndefined();
-    expect(licenseNotice?.children[1]?.textContent).toBe("produced using Copernicus WorldDEM-30.");
-    expect(licenseNotice?.children[2]?.textContent).toContain("do not incur any liability");
+  it("projects shared instrument geometry without deriving angles or compass labels", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const hud = new FlightHudAdapter(root);
+    const model = currentSharedHudFixture();
+    const geometry = { adi: { kind: "attitude" as const, horizon: { rotation_degrees: -11, pitch_offset_ratio: 0.025 },
+      flight_path_y_ratio: 0.6 }, angle_of_attack_ratio: 0.75,
+      heading_ticks: [{ position_ratio: 0.5, major: true, label: "N" }, { position_ratio: 0.75, major: false, label: "" }] };
+    try {
+      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), { ...model, geometry, windDirectionDegrees: 90 });
+      expect(root.querySelector(".flight-hud-adi > g")?.getAttribute("transform")).toBe("rotate(-11 120 90) translate(0 94.5)");
+      expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("cy")).toBe("108");
+      const heading = root.querySelector('svg[aria-label="方位目盛"]');
+      expect(heading?.querySelectorAll("g > path")).toHaveLength(2);
+      expect(heading?.querySelector("g > text")?.textContent).toBe("N");
+      expect(root.querySelector('svg[aria-label="迎角目盛"] > polygon')?.getAttribute("points")).toBe("145,5 139,1 151,1");
+      const needle = root.querySelector('svg[aria-label="風向計。矢印は風の流れる方向を示す"] > g');
+      expect(needle?.getAttribute("transform")).toBe("rotate(90 36 36)");
+      const retained = Array.from(root.childNodes);
+      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), { ...model,
+        geometry: { adi: null, angle_of_attack_ratio: null, heading_ticks: [] },
+        windDirectionDegrees: null });
+      expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("visibility")).toBe("hidden");
+      expect(root.querySelector(".flight-hud-adi")?.classList.contains("is-hidden")).toBe(true);
+      expect(root.querySelector('svg[aria-label="迎角目盛"] > polygon')?.getAttribute("visibility")).toBe("hidden");
+      expect(needle?.getAttribute("visibility")).toBe("hidden");
+      expect(heading?.querySelectorAll("g > path")).toHaveLength(0);
+      expect(Array.from(root.childNodes)).toEqual(retained);
+    } finally {
+      await window.happyDOM.abort();
+    }
+  });
+
+  it("shows the real shared Custom flight path cue through its visible ADI ancestors", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const hud = new FlightHudAdapter(root);
+    const model = currentSharedHudFixture({ informationCode: 4,
+      hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
+    try {
+      expect(model.attitude).toBeNull();
+      const geometry = model.geometry.adi;
+      expect(geometry?.kind).toBe("flight_path_only");
+      if (geometry?.kind !== "flight_path_only") throw new Error("Expected shared flight-path-only geometry");
+      hud.setVisible(true);
+      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), model);
+      const adi = root.querySelector(".flight-hud-adi");
+      const marker = adi?.querySelector("circle");
+      expect(root.hidden).toBe(false);
+      expect(adi?.classList.contains("is-hidden")).toBe(false);
+      expect(adi?.querySelector("g")?.getAttribute("visibility")).toBe("hidden");
+      expect(marker?.parentElement).toBe(adi);
+      expect(marker?.getAttribute("visibility")).toBe("visible");
+      expect(marker?.getAttribute("cy")).toBe(String(geometry.y_ratio * 180));
+    } finally {
+      await window.happyDOM.abort();
+    }
   });
 });

@@ -19,6 +19,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const documentRef = browser.document as unknown as Document;
   browser.document.body.innerHTML = '<main id="app"></main>';
   browser.document.documentElement.lang = "ja";
+  browser.document.documentElement.style.fontSize = "16px";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);
@@ -86,7 +87,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
-  const abort = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "abort");
+  const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
   const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
   const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
@@ -122,7 +123,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     while (countdown.length > 0 && count < 10) { countdown.shift()?.(); count += 1; }
     expect(scene()).toBe("Flight");
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, abort, tick,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, tick,
     countdownTick: () => { countdown.shift()?.(); },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
@@ -130,7 +131,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
 
 function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTimestampMilliseconds: number,
   maximumElapsedMilliseconds: number): void {
-  const frameMilliseconds = 1_000 / 30;
+  const frameMilliseconds = 200;
   for (let elapsed = frameMilliseconds; elapsed < maximumElapsedMilliseconds && trial.scene() === "Flight"; elapsed += frameMilliseconds) {
     trial.frame(initialTimestampMilliseconds + elapsed);
   }
@@ -364,7 +365,10 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     let injected = false;
     trial.renderer.setLakeVisualCondition.mockImplementation(() => {
-      const terminal = reason === "manual_abort" ? trial.abort.mock.results.length > 0
+      const terminal = reason === "manual_abort" ? trial.sharedCommand.mock.calls.some(([json], index) => {
+        const command = JSON.parse(json) as { readonly kind: string };
+        return command.kind === "abort" && trial.sharedCommand.mock.results[index]?.type === "return";
+      })
         : trial.tick.mock.results.some((result) => {
           const snapshot: unknown = JSON.parse(result.value as string);
           return typeof snapshot === "object" && snapshot !== null && "phase_code" in snapshot && snapshot.phase_code === 7;

@@ -19,6 +19,7 @@ import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
@@ -290,7 +291,14 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
         difficulty: { ...initial.difficulty, informationCode: information === "flight-path-only" ? 4 : information,
           hudProfile: information === "flight-path-only"
             ? { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false }
-            : initial.difficulty.hudProfile } };
+            : initial.difficulty.hudProfile },
+        sharedGameUi: currentSharedGameUiFixture(5, {
+          informationCode: information === "flight-path-only" ? 4 : information,
+          ...(information === "flight-path-only" ? { hudProfile: {
+            telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false
+          } } : information === 4 ? { hudProfile: initial.difficulty.hudProfile } : {}),
+          platform: { presentation_mode: "webxr" }
+        }) };
       const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Head HUD");
       const dimensions = headHudCanvasSize(draft.headHud.layer);
@@ -402,7 +410,10 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
         difficulty: { ...initial.difficulty, informationCode: 4, hudProfile: {
           telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
           flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
-        } } };
+        } }, sharedGameUi: currentSharedGameUiFixture(5, { informationCode: 4, hudProfile: {
+          telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
+          flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
+        }, platform: { presentation_mode: "webxr" } }) };
       const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
       if (mask === 0 || mask === 32) {
         expect(draft.headHud.kind).toBe("absent");
@@ -551,7 +562,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const snapshot = valuesSnapshot;
     const gameSession = gameSessionState(5, 0, snapshot, true);
     if (gameSession === null) throw new Error("Missing Flight fixture");
-    let model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "webxr" } as const } as ReturnType<typeof createInitialAppModel>;
+    let model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "webxr" } as const,
+      sharedGameUi: currentSharedGameUiFixture(5, { platform: { presentation_mode: "webxr" } }) } as ReturnType<typeof createInitialAppModel>;
     const draft = createFlightFrameViewDraft(model, snapshot, { source: "unavailable", reason: "invalid-view-geometry", trackingFromHead: head }, "ja");
     const failure = failFlightMenuFrame(draft, view, "context-unavailable");
     onUiAction = (action) => { model = updateApp(model, { type: "ui-action", action }).model; };

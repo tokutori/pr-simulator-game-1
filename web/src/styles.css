@@ -74,6 +74,144 @@ body {
   display: none;
 }
 
+.screen-ui-shell[data-shared="true"] {
+  color: var(--game-ui-text);
+  background: color-mix(in srgb, var(--game-ui-panel) calc(var(--game-ui-opacity) * 100%), transparent);
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-description,
+.screen-ui-shell[data-shared="true"] .screen-ui-choice small {
+  color: var(--game-ui-muted-text);
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls,
+.screen-ui-section-controls {
+  gap: var(--game-ui-gap);
+}
+
+.screen-ui-section {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-section > legend {
+  padding: 0 0 0.5rem;
+  font-weight: 700;
+}
+
+.screen-ui-section-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.screen-ui-section[data-layout="choice_grid"] > .screen-ui-section-controls {
+  grid-template-columns: repeat(var(--game-ui-columns), minmax(0, 1fr));
+}
+
+.screen-ui-section[data-layout="row"] > .screen-ui-section-controls {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button {
+  min-height: var(--game-ui-button-height);
+  color: var(--game-ui-text);
+  background: var(--game-ui-normal);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button.screen-ui-choice {
+  background: var(--game-ui-choice);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="primary"],
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button.screen-ui-choice[aria-pressed="true"] {
+  background: var(--game-ui-primary);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="primary"] {
+  min-height: var(--game-ui-primary-height);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="secondary"] {
+  background: transparent;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls button:focus-visible,
+.screen-ui-shell[data-shared="true"] .screen-ui-controls input:focus-visible {
+  outline-color: var(--game-ui-focus);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="center"] {
+  position: fixed;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] {
+  inset: auto;
+  bottom: 0;
+  right: 0;
+  display: block;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"],
+.screen-ui-shell[data-shared="true"][data-shell="cinematic"] {
+  inset: auto;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  display: block;
+  border: 1px solid rgb(185 214 207 / 45%);
+  border-radius: 0.75rem;
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > h1,
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > .screen-ui-description {
+  display: block;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] > h1,
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] > .screen-ui-description,
+.screen-ui-shell[data-shared="true"] .screen-ui-panel > h2 {
+  display: none;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-panel {
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  margin: 0;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="analysis"] .screen-ui-controls {
+  display: block;
+}
+
+.screen-ui-shell[data-shared="true"][data-passthrough="true"] {
+  pointer-events: none;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls button,
+.screen-ui-shell[data-shared="true"] .screen-ui-controls input {
+  pointer-events: auto;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] .screen-ui-section-controls {
+  justify-content: flex-end;
+}
+
 .screen-ui-shell {
   width: min(42rem, 100%);
   max-height: calc(100dvh - 2rem);
@@ -347,6 +485,9 @@ body {
 .flight-hud-attribution-notice summary { cursor: pointer; }
 .flight-hud-attribution-notice p { margin: 0.25rem 0 0; }
 .flight-hud-controls { grid-area: controls; color: #b9c9c2; font-size: 0.65rem; }
+
+.flight-hud[data-shared="true"] .flight-hud-controls:not([hidden]) { display: block; }
+.flight-hud[data-shared="true"] .flight-hud-controls[hidden] { display: none; }
 
 .screen-ui-shell h1,
 .screen-ui-panel h2 {
