@@ -297,67 +297,26 @@
         }
       ]
     },
-    "GameUiEffect": {
-      "description": "Side-effect request produced after pure action admission.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Existing session command.",
-          "properties": {
-            "command": {
-              "$ref": "#/$defs/GameUiSessionCommand",
-              "description": "Operation to execute through the shared session owner."
-            },
-            "kind": {
-              "const": "session",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "command"
-          ],
-          "type": "object"
+    "GameUiChartExtent": {
+      "additionalProperties": false,
+      "description": "Measured or initially assumed chart content dimensions in logical pixels.",
+      "properties": {
+        "height": {
+          "description": "Content height.",
+          "format": "double",
+          "type": "number"
         },
-        {
-          "additionalProperties": false,
-          "description": "Platform operation.",
-          "properties": {
-            "command": {
-              "$ref": "#/$defs/GameUiPlatformCommand",
-              "description": "Operation to interpret at the platform boundary."
-            },
-            "kind": {
-              "const": "platform",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "command"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Queries existing record or clock APIs.",
-          "properties": {
-            "action": {
-              "$ref": "#/$defs/GameUiAction",
-              "description": "Admitted seek, clock toggle or rate action."
-            },
-            "kind": {
-              "const": "record",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "action"
-          ],
-          "type": "object"
+        "width": {
+          "description": "Content width.",
+          "format": "double",
+          "type": "number"
         }
-      ]
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
     },
     "GameUiPauseOverlay": {
       "description": "Exclusive pause overlay.",
@@ -517,6 +476,121 @@
           "type": "object"
         }
       ]
+    },
+    "GameUiPlatformInput": {
+      "additionalProperties": false,
+      "description": "Browser or OS observations that never own game physics or phase.",
+      "properties": {
+        "analysis_available": {
+          "description": "Platform supports full record plots.",
+          "type": "boolean"
+        },
+        "chart_extent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartExtent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Measured chart content extent; absent before the platform has measured it."
+        },
+        "flight_controller_failure": {
+          "description": "Captured flight-controller resource failure; the session retains its last valid state.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flight_log_available": {
+          "description": "Platform supports record downloads.",
+          "type": "boolean"
+        },
+        "flight_log_pending": {
+          "description": "A download request for the current resource owner remains pending.",
+          "type": "boolean"
+        },
+        "head_hud_failure": {
+          "description": "Captured head-HUD resource failure, separate from the domain and physical state.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notification": {
+          "description": "Platform operation feedback.",
+          "type": "string"
+        },
+        "operation_pending": {
+          "description": "Blocks operations while the owning adapter is transitioning.",
+          "type": "boolean"
+        },
+        "phone_vr_available": {
+          "description": "Phone sensor headset support.",
+          "type": "boolean"
+        },
+        "presentation_mode": {
+          "$ref": "#/$defs/GameUiPresentationMode",
+          "description": "Actual active presentation mode."
+        },
+        "replay_available": {
+          "description": "Platform supports recorded scenic playback.",
+          "type": "boolean"
+        },
+        "stored_records": {
+          "description": "Persistence results associated with this owner.",
+          "items": {
+            "$ref": "#/$defs/GameUiStoredRecord"
+          },
+          "type": "array"
+        },
+        "stored_records_available": {
+          "description": "Platform supports persisted record lookup.",
+          "type": "boolean"
+        },
+        "supported_replay_cameras": {
+          "description": "Implemented camera rigs; shared ordering remains the Web ordering.",
+          "items": {
+            "$ref": "#/$defs/GameUiReplayCamera"
+          },
+          "type": "array"
+        },
+        "viewport": {
+          "$ref": "#/$defs/GameUiViewport",
+          "description": "Current physical display viewport."
+        },
+        "water_quality": {
+          "$ref": "#/$defs/GameUiWaterQuality",
+          "description": "Confirmed current render quality."
+        },
+        "water_quality_operation": {
+          "$ref": "#/$defs/GameUiWaterQualityOperation",
+          "description": "Actual resource preparation, commitment and cleanup observation."
+        },
+        "webxr_available": {
+          "description": "Browser WebXR support.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "viewport",
+        "presentation_mode",
+        "operation_pending",
+        "webxr_available",
+        "phone_vr_available",
+        "analysis_available",
+        "replay_available",
+        "supported_replay_cameras",
+        "stored_records_available",
+        "flight_log_available",
+        "flight_log_pending",
+        "water_quality",
+        "water_quality_operation",
+        "notification",
+        "stored_records"
+      ],
+      "type": "object"
     },
     "GameUiPresentationMode": {
       "description": "Presentation mode supported by a platform adapter.",
@@ -943,48 +1017,56 @@
         }
       ]
     },
-    "GameUiState": {
+    "GameUiStoredRecord": {
       "additionalProperties": false,
-      "description": "UI-only selections; physical state and domain phase remain in GameSession.",
+      "description": "Persistence metadata, not an independent flight record.",
       "properties": {
-        "analysis_chart": {
-          "$ref": "#/$defs/GameUiAnalysisChart",
-          "description": "Selected record plot."
+        "id": {
+          "description": "Platform key.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
-        "analysis_time_seconds": {
-          "description": "Read-only analysis query position in seconds.",
-          "format": "double",
-          "type": "number"
-        },
-        "pause_overlay": {
-          "$ref": "#/$defs/GameUiPauseOverlay",
-          "description": "Paused menu selection."
-        },
-        "replay_camera": {
-          "$ref": "#/$defs/GameUiReplayCamera",
-          "description": "Shared replay camera selection; adapters only apply its geometry."
-        },
-        "replay_view": {
-          "$ref": "#/$defs/GameUiReplayView",
-          "description": "Replay presentation selection."
-        },
-        "result_tab": {
-          "$ref": "#/$defs/GameUiResultTab",
-          "description": "Result presentation selection."
-        },
-        "technical_open": {
-          "description": "Expanded preparation diagnostics.",
+        "personal_best": {
+          "description": "Existing Rust-derived Personal Best membership.",
           "type": "boolean"
+        },
+        "saved_at": {
+          "description": "Formatted local save timestamp supplied by the platform.",
+          "type": "string"
         }
       },
       "required": [
-        "technical_open",
-        "result_tab",
-        "analysis_chart",
-        "analysis_time_seconds",
-        "pause_overlay",
-        "replay_view",
-        "replay_camera"
+        "id",
+        "saved_at",
+        "personal_best"
+      ],
+      "type": "object"
+    },
+    "GameUiViewport": {
+      "additionalProperties": false,
+      "description": "Logical pixels and root-font size used by the same responsive calculation.",
+      "properties": {
+        "height": {
+          "description": "Display height in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "root_font_size": {
+          "description": "Platform root font size in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Display width in logical pixels.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "root_font_size"
       ],
       "type": "object"
     },
@@ -1005,6 +1087,87 @@
           "const": "high",
           "description": "Detailed mesh density.",
           "type": "string"
+        }
+      ]
+    },
+    "GameUiWaterQualityOperation": {
+      "description": "Exclusive observation of a platform-owned water resource operation.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No resource operation is pending and prior resources were released.",
+          "properties": {
+            "kind": {
+              "const": "idle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A replacement has been requested and the confirmed resource remains active.",
+          "properties": {
+            "kind": {
+              "const": "applying",
+              "type": "string"
+            },
+            "requested": {
+              "$ref": "#/$defs/GameUiWaterQuality",
+              "description": "Requested replacement quality."
+            }
+          },
+          "required": [
+            "kind",
+            "requested"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Replacement failed before commitment; the confirmed resource remains active.",
+          "properties": {
+            "cause": {
+              "description": "Captured resource preparation cause.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "requested": {
+              "$ref": "#/$defs/GameUiWaterQuality",
+              "description": "Failed replacement quality."
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "cause"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Replacement committed, but release of the superseded resource failed.",
+          "properties": {
+            "cause": {
+              "description": "Captured superseded-resource cleanup cause.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "cleanup_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cause"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1105,26 +1268,5 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "description": "Pure update output.",
-  "properties": {
-    "effects": {
-      "description": "Ordered operations to interpret.",
-      "items": {
-        "$ref": "#/$defs/GameUiEffect"
-      },
-      "type": "array"
-    },
-    "state": {
-      "$ref": "#/$defs/GameUiState",
-      "description": "Next UI-only selections."
-    }
-  },
-  "required": [
-    "state",
-    "effects"
-  ],
-  "title": "GameUiUpdate",
-  "type": "object",
-  "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/effects"
+  "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/deserialize"
 }

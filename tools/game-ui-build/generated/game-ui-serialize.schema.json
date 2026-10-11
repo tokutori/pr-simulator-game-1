@@ -322,6 +322,25 @@
         }
       ]
     },
+    "GameUiButtonLabel": {
+      "additionalProperties": false,
+      "description": "Label of the retained replay play/pause action.",
+      "properties": {
+        "id": {
+          "description": "Retained control identity.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Shared clock-derived label.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
     "GameUiButtonPresentation": {
       "description": "Shared button role and selection state.",
       "oneOf": [
@@ -506,6 +525,49 @@
         "reference_lines",
         "cursor_x",
         "cursor_points"
+      ],
+      "type": "object"
+    },
+    "GameUiChartCursor": {
+      "additionalProperties": false,
+      "description": "Lightweight cursor and selected-sample wind for the retained plot bounds.",
+      "properties": {
+        "cursor_points": {
+          "description": "Shared plot-space sample points.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartCursorPoint"
+          },
+          "type": "array"
+        },
+        "cursor_x": {
+          "description": "Time-axis cursor, absent for a horizontal map.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Retained chart control identity.",
+          "type": "string"
+        },
+        "selected_wind_vector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartVector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Selected-sample wind, replacing the first map vector only."
+        }
+      },
+      "required": [
+        "id",
+        "cursor_x",
+        "cursor_points",
+        "selected_wind_vector"
       ],
       "type": "object"
     },
@@ -1254,6 +1316,68 @@
         }
       ]
     },
+    "GameUiEffect": {
+      "description": "Side-effect request produced after pure action admission.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Existing session command.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiSessionCommand",
+              "description": "Operation to execute through the shared session owner."
+            },
+            "kind": {
+              "const": "session",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Platform operation.",
+          "properties": {
+            "command": {
+              "$ref": "#/$defs/GameUiPlatformCommand",
+              "description": "Operation to interpret at the platform boundary."
+            },
+            "kind": {
+              "const": "platform",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Queries existing record or clock APIs.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/GameUiAction",
+              "description": "Admitted seek, clock toggle or rate action."
+            },
+            "kind": {
+              "const": "record",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "action"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "GameUiEmphasis": {
       "description": "Shared action emphasis.",
       "oneOf": [
@@ -1273,6 +1397,75 @@
           "type": "string"
         }
       ]
+    },
+    "GameUiFrame": {
+      "additionalProperties": false,
+      "description": "Lightweight per-frame UI observation associated with one published structural view.",
+      "properties": {
+        "button_labels": {
+          "description": "Replay clock play/pause label.",
+          "items": {
+            "$ref": "#/$defs/GameUiButtonLabel"
+          },
+          "type": "array"
+        },
+        "chart_cursor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartCursor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Cursor-only chart observation; plotted series and bounds remain in the view."
+        },
+        "hud": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiHud"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shared HUD projection, never a second physical state."
+        },
+        "ranges": {
+          "description": "Existing range values that advance without a structural change.",
+          "items": {
+            "$ref": "#/$defs/GameUiRangeValue"
+          },
+          "type": "array"
+        },
+        "readouts": {
+          "description": "Fixed record-clock and analysis-cursor readouts.",
+          "items": {
+            "$ref": "#/$defs/GameUiReadoutValue"
+          },
+          "type": "array"
+        },
+        "selections": {
+          "$ref": "#/$defs/GameUiState",
+          "description": "Readonly observation of the Rust-owned UI selections."
+        },
+        "view_revision": {
+          "description": "Structural view revision retained by the query adapter.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "view_revision",
+        "selections",
+        "hud",
+        "ranges",
+        "readouts",
+        "button_labels",
+        "chart_cursor"
+      ],
+      "type": "object"
     },
     "GameUiHud": {
       "additionalProperties": false,
@@ -2027,6 +2220,50 @@
         }
       ]
     },
+    "GameUiRangeValue": {
+      "additionalProperties": false,
+      "description": "Value of a retained typed range control.",
+      "properties": {
+        "display_value": {
+          "description": "Shared one-decimal display text.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Retained control identity.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Shared finite range value.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "value",
+        "display_value"
+      ],
+      "type": "object"
+    },
+    "GameUiReadoutValue": {
+      "additionalProperties": false,
+      "description": "Text of a retained record readout.",
+      "properties": {
+        "id": {
+          "description": "Retained control identity.",
+          "type": "string"
+        },
+        "value": {
+          "description": "Shared formatted record or clock observation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "value"
+      ],
+      "type": "object"
+    },
     "GameUiRect": {
       "additionalProperties": false,
       "description": "Normalized control position for spatial and chart rendering.",
@@ -2702,6 +2939,113 @@
       ],
       "type": "object"
     },
+    "GameUiUpdate": {
+      "additionalProperties": false,
+      "description": "Pure update output.",
+      "properties": {
+        "effects": {
+          "description": "Ordered operations to interpret.",
+          "items": {
+            "$ref": "#/$defs/GameUiEffect"
+          },
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/GameUiState",
+          "description": "Next UI-only selections."
+        }
+      },
+      "required": [
+        "state",
+        "effects"
+      ],
+      "type": "object"
+    },
+    "GameUiView": {
+      "additionalProperties": false,
+      "description": "Pure shared scene and menu projection.",
+      "properties": {
+        "active_overlay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiOverlay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shared exclusive overlay name."
+        },
+        "description": {
+          "description": "Shared explanatory text.",
+          "type": "string"
+        },
+        "hud": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiHud"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shared telemetry and instrument projection, absent outside a flight or record."
+        },
+        "layout": {
+          "$ref": "#/$defs/GameUiLayout",
+          "description": "Shared responsive dimensions and scroll policy."
+        },
+        "panels": {
+          "description": "Ordered semantic panels.",
+          "items": {
+            "$ref": "#/$defs/GameUiPanel"
+          },
+          "type": "array"
+        },
+        "scene": {
+          "$ref": "#/$defs/GameUiScene",
+          "description": "Domain-derived scene."
+        },
+        "schema_version": {
+          "description": "Boundary version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "selections": {
+          "$ref": "#/$defs/GameUiState",
+          "description": "Readonly observation of the Rust-owned UI selections."
+        },
+        "theme": {
+          "$ref": "#/$defs/GameUiTheme",
+          "description": "Shared visual hierarchy."
+        },
+        "title": {
+          "description": "Shared heading.",
+          "type": "string"
+        },
+        "view_revision": {
+          "description": "Adapter query-cache revision; pure projections use zero until published.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "view_revision",
+        "selections",
+        "scene",
+        "title",
+        "description",
+        "active_overlay",
+        "panels",
+        "layout",
+        "theme",
+        "hud"
+      ],
+      "type": "object"
+    },
     "GameUiWaterQuality": {
       "description": "Rendering quality has no effect on physics or record identity.",
       "oneOf": [
@@ -2819,89 +3163,5 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "description": "Pure shared scene and menu projection.",
-  "properties": {
-    "active_overlay": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/GameUiOverlay"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Shared exclusive overlay name."
-    },
-    "description": {
-      "description": "Shared explanatory text.",
-      "type": "string"
-    },
-    "hud": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/GameUiHud"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Shared telemetry and instrument projection, absent outside a flight or record."
-    },
-    "layout": {
-      "$ref": "#/$defs/GameUiLayout",
-      "description": "Shared responsive dimensions and scroll policy."
-    },
-    "panels": {
-      "description": "Ordered semantic panels.",
-      "items": {
-        "$ref": "#/$defs/GameUiPanel"
-      },
-      "type": "array"
-    },
-    "scene": {
-      "$ref": "#/$defs/GameUiScene",
-      "description": "Domain-derived scene."
-    },
-    "schema_version": {
-      "description": "Boundary version.",
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    },
-    "selections": {
-      "$ref": "#/$defs/GameUiState",
-      "description": "Readonly observation of the Rust-owned UI selections."
-    },
-    "theme": {
-      "$ref": "#/$defs/GameUiTheme",
-      "description": "Shared visual hierarchy."
-    },
-    "title": {
-      "description": "Shared heading.",
-      "type": "string"
-    },
-    "view_revision": {
-      "description": "Adapter query-cache revision; pure projections use zero until published.",
-      "format": "uint32",
-      "minimum": 0,
-      "type": "integer"
-    }
-  },
-  "required": [
-    "schema_version",
-    "view_revision",
-    "selections",
-    "scene",
-    "title",
-    "description",
-    "active_overlay",
-    "panels",
-    "layout",
-    "theme",
-    "hud"
-  ],
-  "title": "GameUiView",
-  "type": "object",
-  "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/view"
+  "$id": "https://tokutori.github.io/pr-simulator-game-1/game-ui/serialize"
 }

@@ -2212,15 +2212,17 @@ fn output_schema_requires_serialized_nullable_fields_while_input_accepts_omissio
     let bundle: serde_json::Value =
         serde_json::from_str(&export_game_ui_schema("bundle").unwrap()).unwrap();
     for (root, fields) in [
-        ("view", &["active_overlay", "hud"][..]),
-        ("frame", &["hud", "chart_cursor"][..]),
+        ("GameUiView", &["active_overlay", "hud"][..]),
+        ("GameUiFrame", &["hud", "chart_cursor"][..]),
     ] {
-        let required = bundle[root]["required"].as_array().unwrap();
+        let required = bundle["serialize"]["$defs"][root]["required"]
+            .as_array()
+            .unwrap();
         for field in fields {
             assert!(required.iter().any(|value| value.as_str() == Some(*field)));
         }
     }
-    let hud_required = bundle["view"]["$defs"]["GameUiHud"]["required"]
+    let hud_required = bundle["serialize"]["$defs"]["GameUiHud"]["required"]
         .as_array()
         .unwrap();
     assert!(
@@ -2228,7 +2230,9 @@ fn output_schema_requires_serialized_nullable_fields_while_input_accepts_omissio
             .iter()
             .any(|value| value == "angle_of_attack_degrees")
     );
-    let input_required = bundle["input"]["required"].as_array().unwrap();
+    let input_required = bundle["deserialize"]["$defs"]["GameUiPlatformInput"]["required"]
+        .as_array()
+        .unwrap();
     assert!(
         !input_required
             .iter()
@@ -2239,4 +2243,39 @@ fn output_schema_requires_serialized_nullable_fields_while_input_accepts_omissio
             .iter()
             .any(|value| value == "head_hud_failure")
     );
+}
+
+#[cfg(feature = "schema")]
+#[test]
+fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
+    let bundle: serde_json::Value =
+        serde_json::from_str(&export_game_ui_schema("bundle").unwrap()).unwrap();
+    assert_eq!(bundle.as_object().unwrap().len(), 2);
+    for (name, group, root) in [
+        ("view", "serialize", "GameUiView"),
+        ("effects", "serialize", "GameUiUpdate"),
+        ("frame", "serialize", "GameUiFrame"),
+        ("action", "deserialize", "GameUiAction"),
+        ("input", "deserialize", "GameUiPlatformInput"),
+    ] {
+        let schema: serde_json::Value =
+            serde_json::from_str(&export_game_ui_schema(name).unwrap()).unwrap();
+        assert_eq!(schema["title"], root);
+        assert_eq!(schema["$defs"], bundle[group]["$defs"]);
+        let mut definition = schema.as_object().unwrap().clone();
+        definition.remove("title");
+        definition.remove("$schema");
+        definition.remove("$defs");
+        assert_eq!(
+            serde_json::Value::Object(definition),
+            bundle[group]["$defs"][root]
+        );
+    }
+    for root in ["GameUiView", "GameUiFrame"] {
+        assert_eq!(
+            bundle["serialize"]["$defs"][root]["properties"]["hud"]["anyOf"][0]["$ref"],
+            "#/$defs/GameUiHud"
+        );
+    }
+    assert!(bundle["deserialize"]["$defs"].get("GameUiHud").is_none());
 }

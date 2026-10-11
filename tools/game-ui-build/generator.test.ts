@@ -1,25 +1,27 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import type { ValidateFunction } from "ajv";
 import { generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries } from "./generator.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 function schemaBundle(): string {
-  return JSON.stringify(Object.fromEntries(schemaEntries.map((entry) => [entry.key, {
+  return JSON.stringify(Object.fromEntries(["serialize", "deserialize"].map((group) => [group, {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    title: entry.name,
-    type: "object",
-    additionalProperties: false,
-    required: ["kind", "id", "coordinates"],
     $defs: {
       identifier: { type: "integer", format: "uint32", minimum: 0 },
-      coordinates: { type: "array", minItems: 3, maxItems: 3, items: { type: "number", format: "double" } }
-    },
-    properties: {
-      kind: { const: "fixture", type: "string" },
-      id: { $ref: "#/$defs/identifier" },
-      coordinates: { $ref: "#/$defs/coordinates" }
+      coordinates: { type: "array", minItems: 3, maxItems: 3, items: { type: "number", format: "double" } },
+      ...Object.fromEntries(schemaEntries.filter((entry) => entry.group === group).map((entry) => [entry.name, {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "coordinates", ...(group === "serialize" ? ["id"] : [])],
+        properties: {
+          kind: { const: "fixture", type: "string" },
+          id: { $ref: "#/$defs/identifier" },
+          coordinates: { $ref: "#/$defs/coordinates" }
+        }
+      }]))
     }
   }])));
 }
@@ -52,7 +54,8 @@ describe("Rust game UI schema generation", () => {
       "web/src/generated/game-ui-validators.d.ts"
     ]);
     expect(files.filter((file) => file.path.startsWith("tools/game-ui-build/generated/")).map((file) => file.path)).toEqual([
-      ...schemaEntries.map((entry) => `tools/game-ui-build/generated/${entry.filename}.schema.json`),
+      "tools/game-ui-build/generated/game-ui-serialize.schema.json",
+      "tools/game-ui-build/generated/game-ui-deserialize.schema.json",
       "tools/game-ui-build/generated/game-ui-generation.json"
     ]);
     const javascript = files.find((file) => file.path === "web/src/generated/game-ui-validators.js");
@@ -62,10 +65,8 @@ describe("Rust game UI schema generation", () => {
     if (typeof module !== "object" || module === null || !("validateGameUiView" in module) || typeof module.validateGameUiView !== "function") {
       throw new Error("Missing generated view validator");
     }
-    const validate = module.validateGameUiView as (value: unknown) => boolean;
     const valid = { kind: "fixture", id: 4294967295, coordinates: [1, 2, 3] };
-    expect(validate(valid)).toBe(true);
-    for (const invalid of [
+    const invalidDocuments = [
       { ...valid, id: 4294967296 },
       { ...valid, id: 0.5 },
       { ...valid, id: -1 },
@@ -75,7 +76,19 @@ describe("Rust game UI schema generation", () => {
       { ...valid, coordinates: [1, 2, 3, 4] },
       { ...valid, coordinates: [1, Number.NaN, 3] },
       { ...valid, coordinates: [1, Number.POSITIVE_INFINITY, 3] }
-    ]) expect(validate(invalid)).toBe(false);
+    ];
+    for (const entry of schemaEntries) {
+      const name = `validate${entry.name}`;
+      const validate = (module as Readonly<Record<string, unknown>>)[name] as ValidateFunction;
+      expect(typeof validate).toBe("function");
+      expect(validate(valid)).toBe(true);
+      for (const invalid of invalidDocuments) expect(validate(invalid)).toBe(false);
+      expect(validate({ kind: "fixture", coordinates: [1, 2, 3] })).toBe(entry.group === "deserialize");
+      expect(validate({ ...valid, kind: "unknown", id: -1, extra: true })).toBe(false);
+      expect(validate.errors?.map((error) => error.instancePath)).toEqual(expect.arrayContaining(["/kind", "/id", ""]));
+    }
+    expect(javascript.content.match(/^function validate\d+\(/gm))
+      .toHaveLength(schemaEntries.length + new Set(schemaEntries.map((entry) => entry.group)).size * 2);
     const license = files.find((file) => file.path === "assets/game-ui-validators.LICENSE.txt");
     expect(license?.content).toContain("Copyright (c) 2015-2021 Evgeny Poberezkin");
     expect(license?.content).toContain("Copyright (c) 2020 Evan Wallace");

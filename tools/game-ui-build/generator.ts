@@ -10,15 +10,15 @@ import ts from "typescript";
 import { numericFormats } from "./numeric-formats.js";
 
 export const schemaEntries = [
-  { key: "view", name: "GameUiView", filename: "game-ui-view" },
-  { key: "action", name: "GameUiAction", filename: "game-ui-action" },
-  { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input" },
-  { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects" },
-  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame" }
+  { key: "view", name: "GameUiView", filename: "game-ui-view", group: "serialize" },
+  { key: "action", name: "GameUiAction", filename: "game-ui-action", group: "deserialize" },
+  { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
+  { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
+  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" }
 ] as const;
 
-export type SchemaKey = typeof schemaEntries[number]["key"];
-export type GameUiSchemas = Readonly<Record<SchemaKey, Readonly<Record<string, unknown>>>>;
+const schemaGroups = ["serialize", "deserialize"] as const;
+export type GameUiSchemas = Readonly<Record<typeof schemaGroups[number], Readonly<Record<string, unknown>>>>;
 export type GeneratedFile = Readonly<{ path: string; content: string }>;
 
 const generatedBanner = "Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate.";
@@ -27,15 +27,18 @@ export function parseSchemaBundle(text: string): GameUiSchemas {
   const document: unknown = JSON.parse(text);
   if (!isObject(document)) throw new Error("Game UI schema exporter must return an object");
   const keys = Object.keys(document);
-  if (keys.length !== schemaEntries.length || keys.some((key) => !schemaEntries.some((entry) => entry.key === key))) {
+  if (keys.length !== schemaGroups.length || keys.some((key) => !schemaGroups.some((group) => group === key))) {
     throw new Error("Game UI schema exporter returned unexpected schema roots");
   }
-  const schemas = Object.fromEntries(schemaEntries.map((entry) => {
-    const schema = document[entry.key];
-    if (!isObject(schema) || schema["$schema"] !== "https://json-schema.org/draft/2020-12/schema" || schema["title"] !== entry.name) {
-      throw new Error(`Invalid ${entry.name} schema root`);
+  const schemas = Object.fromEntries(schemaGroups.map((group) => {
+    const schema = document[group];
+    if (!isObject(schema) || schema["$schema"] !== "https://json-schema.org/draft/2020-12/schema" || !isObject(schema["$defs"])) {
+      throw new Error(`Invalid ${group} schema group`);
     }
-    return [entry.key, schema];
+    for (const entry of schemaEntries.filter((entry) => entry.group === group)) {
+      if (!isObject(schema["$defs"][entry.name])) throw new Error(`Invalid ${entry.name} schema root`);
+    }
+    return [group, schema];
   }));
   return schemas as GameUiSchemas;
 }
@@ -54,13 +57,21 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
   const files: GeneratedFile[] = [];
   const validatorRoots: Record<string, string> = {};
   const sourceHashes: Record<string, string> = {};
-  for (const entry of schemaEntries) {
-    const schema = { ...schemas[entry.key], $id: `https://tokutori.github.io/pr-simulator-game-1/game-ui/${entry.key}` };
+  for (const group of schemaGroups) {
+    const schema = { ...schemas[group], $id: `https://tokutori.github.io/pr-simulator-game-1/game-ui/${group}` };
     ajv.addSchema(schema);
-    validatorRoots[`validate${entry.name}`] = schema.$id;
     const canonical = `${JSON.stringify(schema, null, 2)}\n`;
-    sourceHashes[entry.key] = createHash("sha256").update(canonical).digest("hex");
-    files.push({ path: `tools/game-ui-build/generated/${entry.filename}.schema.json`, content: canonical });
+    sourceHashes[group] = createHash("sha256").update(canonical).digest("hex");
+    files.push({ path: `tools/game-ui-build/generated/game-ui-${group}.schema.json`, content: canonical });
+  }
+  for (const entry of schemaEntries) {
+    const group = schemas[entry.group];
+    const definitions = group["$defs"];
+    if (!isObject(definitions)) throw new Error(`Invalid ${entry.group} schema group`);
+    const definition = definitions[entry.name];
+    if (!isObject(definition)) throw new Error(`Invalid ${entry.name} schema root`);
+    validatorRoots[`validate${entry.name}`] = `https://tokutori.github.io/pr-simulator-game-1/game-ui/${entry.group}#/$defs/${entry.name}`;
+    const schema: Record<string, unknown> = { ...definition, $defs: definitions, $schema: group["$schema"], title: entry.name };
     const declarations = await compile(schema, entry.name, {
       bannerComment: "",
       unknownAny: true,
@@ -102,7 +113,7 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
       if (!isObject(metadata) || typeof metadata["version"] !== "string") throw new Error(`Missing ${name} generator version`);
       return [key, metadata["version"]];
     })));
-  files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 1, generators, sources: sourceHashes }, null, 2)}\n` });
+  files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 2, generators, sources: sourceHashes }, null, 2)}\n` });
   return files;
 }
 
