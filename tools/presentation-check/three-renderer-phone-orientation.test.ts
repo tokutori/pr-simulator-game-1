@@ -310,3 +310,4 @@ function createBrowser(initialScreenAngle: number) {
     listenerCount(): number { return orientationListeners.size + screenListeners.size; }
   };
 }
+import "./lake-model-fixture.js";

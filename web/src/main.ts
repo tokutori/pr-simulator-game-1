@@ -9,6 +9,7 @@ import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
+import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -554,6 +555,8 @@ async function initializePresentation(requestId: number): Promise<void> {
   try {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
+    await initializeWasmRuntime();
+    if (isPageHidden()) return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });

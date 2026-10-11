@@ -9,9 +9,11 @@ mod environment_snapshot;
 mod hybrid_bridge;
 mod hybrid_record;
 mod hybrid_session;
+mod lake_water;
 
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
+pub use lake_water::{LakeDetailImageBridge, LakeWaveProjectionBridge};
 
 mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));

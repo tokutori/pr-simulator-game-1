@@ -1,3 +1,4 @@
+import "./lake-model-fixture.js";
 import { panelFrameCursor } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

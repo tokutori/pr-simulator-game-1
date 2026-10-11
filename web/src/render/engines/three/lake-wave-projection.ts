@@ -1,4 +1,6 @@
-import { createLakeWaveSpectrum, lakeWaterQualityProfile, selectLakeWaveComponentsForQuality } from "../../contracts/lake-water.js";
+import { LakeWaveProjectionBridge, lake_mesh_spacing_domain, lake_wave_visibility_values,
+  lake_grid_spacing_gradient_values, lake_wave_derivative_bound } from "../../../../pkg/birdman_game_wasm.js";
+import { lakeWaterQualityCode } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 
 export type LakeWaveUpload = readonly [number, number, number, number];
@@ -19,92 +21,62 @@ export interface LakeWaveProjectionInputs {
   readonly choppiness: number;
 }
 
-const FLOAT32_RESERVE = 2 ** -12;
-const NOISE_DERIVATIVE_FACTOR = 48.861639589;
+function requiredNumber(values: Float32Array | Float64Array, index: number): number {
+  const value = values[index];
+  if (value === undefined) throw new RangeError("Incomplete shared lake bulk output");
+  return value;
+}
+
+function sharedModelCall<Value>(operation: () => Value): Value {
+  try { return operation(); }
+  catch (error: unknown) {
+    if (typeof error === "string") throw new RangeError(error, { cause: error });
+    throw error;
+  }
+}
+
+function spacingDomain(values: Float64Array): LakeMeshSpacingDomain {
+  if (values.length !== 3) throw new RangeError("Invalid shared lake spacing output");
+  return Object.freeze({ minimum: requiredNumber(values, 0), maximum: requiredNumber(values, 1),
+    gradientMagnitude: requiredNumber(values, 2) });
+}
 
 export function lakeMeshSpacingDomain(segments: number): LakeMeshSpacingDomain {
-  if (!Number.isSafeInteger(segments) || segments < 1) throw new RangeError("Invalid lake mesh segments");
-  const minimum = 6000 * 7.2 / (segments * Math.expm1(7.2));
-  return Object.freeze({ minimum: Math.fround(minimum), maximum: Math.fround(minimum + 3000 * 14.4 / segments),
-    gradientMagnitude: Math.fround(14.4 / segments) });
+  return spacingDomain(sharedModelCall(() => lake_mesh_spacing_domain(segments)));
 }
 
 export function lakeWaveVisibility(waveNumber: number, spacing: number): Readonly<{ value: number; derivative: number }> {
-  const transition = Math.max(0, Math.min(1, (waveNumber * spacing - 1.3) / 1.2));
-  return Object.freeze({ value: 1 - transition * transition * (3 - 2 * transition),
-    derivative: -6 * waveNumber * transition * (1 - transition) / 1.2 });
+  const values = lake_wave_visibility_values(waveNumber, spacing);
+  return Object.freeze({ value: requiredNumber(values, 0), derivative: requiredNumber(values, 1) });
 }
 
 export function lakeGridSpacingGradient(localX: number, localZ: number, magnitude: number): readonly [number, number] {
-  const absoluteX = Math.abs(localX);
-  const absoluteZ = Math.abs(localZ);
-  const gradient: [number, number] = absoluteX > absoluteZ ? [Math.sign(localX) * magnitude, 0]
-    : absoluteZ > absoluteX ? [0, Math.sign(localZ) * magnitude]
-    : [Math.sign(localX) * magnitude * 0.5, Math.sign(localZ) * magnitude * 0.5];
-  return Object.freeze(gradient);
+  const values = lake_grid_spacing_gradient_values(localX, localZ, magnitude);
+  return Object.freeze([requiredNumber(values, 0), requiredNumber(values, 1)]);
 }
 
 export function lakeWaveDisplacementDerivativeBound(wave: LakeWaveUpload, domain: LakeMeshSpacingDomain): number {
-  const [directionX, directionZ, waveNumber, amplitude] = wave;
-  if (![...wave, domain.minimum, domain.maximum, domain.gradientMagnitude].every(Number.isFinite)
-      || waveNumber < 0 || domain.minimum < 0 || domain.maximum < domain.minimum || domain.gradientMagnitude < 0) {
-    throw new RangeError("Invalid lake wave derivative inputs");
-  }
-  if (waveNumber * domain.minimum >= 2.5 || amplitude === 0) return 0;
-  const directionNorm = Math.hypot(directionX, directionZ);
-  const frequency = Math.max(0.11, 0.055 * waveNumber);
-  const phaseAndPacketBound = directionNorm * (1.5 * waveNumber + NOISE_DERIVATIVE_FACTOR * frequency);
-  const evaluate = (spacing: number): number => {
-    const visibility = lakeWaveVisibility(waveNumber, spacing);
-    return visibility.value * phaseAndPacketBound + 1.5 * Math.abs(visibility.derivative) * domain.gradientMagnitude;
-  };
-  let maximum = Math.max(evaluate(domain.minimum), evaluate(domain.maximum));
-  if (waveNumber > 0 && phaseAndPacketBound > 0) {
-    const derivativeTerm = 7.5 * waveNumber * domain.gradientMagnitude;
-    const stationary = derivativeTerm / (3 * phaseAndPacketBound + derivativeTerm
-      + Math.hypot(3 * phaseAndPacketBound, derivativeTerm));
-    const spacing = (1.3 + 1.2 * stationary) / waveNumber;
-    if (spacing >= domain.minimum && spacing <= domain.maximum) maximum = Math.max(maximum, evaluate(spacing));
-    const start = 1.3 / waveNumber;
-    if (start >= domain.minimum && start <= domain.maximum) maximum = Math.max(maximum, evaluate(start));
-  }
-  const bound = directionNorm * Math.abs(amplitude) * maximum * (1 + 2 ** -20);
-  if (!Number.isFinite(bound)) throw new RangeError("Lake wave derivative bound overflowed");
-  return bound;
+  return sharedModelCall(() => lake_wave_derivative_bound(new Float32Array(wave),
+    new Float64Array([domain.minimum, domain.maximum, domain.gradientMagnitude])));
+}
+
+function waveUploads(values: Float32Array): readonly LakeWaveUpload[] {
+  if (values.length !== 96) throw new RangeError("Invalid shared lake wave upload output");
+  return Object.freeze(Array.from({ length: 24 }, (_, index): LakeWaveUpload => Object.freeze([
+    requiredNumber(values, index * 4), requiredNumber(values, index * 4 + 1),
+    requiredNumber(values, index * 4 + 2), requiredNumber(values, index * 4 + 3)
+  ])));
 }
 
 export function createLakeWaveProjection(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeWaveProjectionInputs {
-  const spectrum = createLakeWaveSpectrum(condition.windNorthMetersPerSecond, condition.windEastMetersPerSecond, condition.fetchMeters, 18);
-  const waves = selectLakeWaveComponentsForQuality(spectrum, quality);
-  const bands = waves.map((wave) => Math.floor(spectrum.components.indexOf(wave) / 3));
-  const directionCounts = new Array<number>(6).fill(0);
-  for (const band of bands) {
-    if (band >= 0 && band < directionCounts.length) directionCounts[band] = (directionCounts[band] ?? 0) + 1;
-  }
-  const waveKAmplitude = Array.from({ length: 24 }, (_waveSlot, index): LakeWaveUpload => {
-    const wave = waves[index];
-    if (wave === undefined) return Object.freeze([0, 0, 0, 0]);
-    const directionCount = directionCounts[bands[index] ?? -1] ?? 0;
-    const directionScale = directionCount > 0 ? Math.sqrt(3 / directionCount) : 1;
-    const shortWeight = Math.max(0, Math.min(1, (wave.waveNumberRadiansPerMeter - 1.5) / 4.5));
-    const smoothWeight = shortWeight * shortWeight * (3 - 2 * shortWeight);
-    const visualScale = 0.65 + 1.35 * smoothWeight;
-    return Object.freeze([Math.fround(wave.directionEast), Math.fround(-wave.directionNorth),
-      Math.fround(wave.waveNumberRadiansPerMeter), Math.fround(wave.amplitudeMeters * directionScale * visualScale)]);
-  });
-  const waveOmegaPhase = Array.from({ length: 24 }, (_waveSlot, index): LakeWaveUpload => {
-    const wave = waves[index];
-    return Object.freeze(wave === undefined ? [0, 0, 0, 0]
-      : [Math.fround(wave.angularFrequencyRadiansPerSecond), Math.fround(wave.phaseRadians), 0, 0]);
-  });
-  const spacing = lakeMeshSpacingDomain(lakeWaterQualityProfile(quality).meshSegments);
-  const horizontalDerivativeBound = waveKAmplitude.slice(0, waves.length)
-    .reduce((sum, wave) => sum + lakeWaveDisplacementDerivativeBound(wave, spacing), 0) * (1 + 2 ** -20);
-  const choppiness = horizontalDerivativeBound === 0 ? 4.5
-    : Math.fround(Math.min(4.5, 0.56 / horizontalDerivativeBound * (1 - FLOAT32_RESERVE)));
-  return Object.freeze({ waveKAmplitude: Object.freeze(waveKAmplitude), waveOmegaPhase: Object.freeze(waveOmegaPhase),
-    waveCount: waves.length, visualWaveHeight: spectrum.significantWaveHeightMeters * 8,
-    spacing, horizontalDerivativeBound, choppiness });
+  const projection = sharedModelCall(() => new LakeWaveProjectionBridge(condition.windNorthMetersPerSecond,
+    condition.windEastMetersPerSecond, condition.fetchMeters, lakeWaterQualityCode(quality)));
+  try {
+    return Object.freeze({ waveKAmplitude: waveUploads(projection.wave_k_amplitude()),
+      waveOmegaPhase: waveUploads(projection.wave_omega_phase()), waveCount: projection.wave_count,
+      visualWaveHeight: projection.visual_wave_height, spacing: spacingDomain(projection.spacing()),
+      horizontalDerivativeBound: projection.horizontal_derivative_bound, choppiness: projection.choppiness });
+  } finally { projection.free(); }
 }
 
 export const LAKE_WAVE_PACKET_GLSL = /* glsl */ `

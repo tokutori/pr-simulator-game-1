@@ -1,3 +1,4 @@
+import "../presentation-check/lake-model-fixture.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,8 +24,8 @@ for (const [index, detail] of reference.details.entries()) {
   try {
     const expected = layer.texture.image.data;
     if (!(expected instanceof Uint8Array)) throw new Error("Web detail texture must expose Uint8Array data");
-    const actual = readFileSync(join(output, `detail-${index}.rgba`));
-    if (actual.length !== expected.length) throw new Error(`Detail ${index} byte length differs`);
+    const actual = readFileSync(join(output, `detail-${String(index)}.rgba`));
+    if (actual.length !== expected.length) throw new Error(`Detail ${String(index)} byte length differs`);
     let changedBytes = 0;
     let maximumByteDifference = 0;
     for (let offset = 0; offset < expected.length; offset++) {
@@ -32,7 +33,7 @@ for (const [index, detail] of reference.details.entries()) {
       if (difference > 0) changedBytes++;
       maximumByteDifference = Math.max(maximumByteDifference, difference);
     }
-    if (maximumByteDifference > 1) throw new Error(`Detail ${index} exceeds one-byte quantization parity: ${maximumByteDifference}`);
+    if (maximumByteDifference > 1) throw new Error(`Detail ${String(index)} exceeds one-byte quantization parity: ${String(maximumByteDifference)}`);
     console.log(JSON.stringify({ index, seed: configuration.seed, extentMeters: configuration.extentMeters,
       changedBytes, maximumByteDifference,
       nativeSha256: createHash("sha256").update(actual).digest("hex"), webSha256: createHash("sha256").update(expected).digest("hex") }));

@@ -1,3 +1,4 @@
+import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { lakeWaterQualityProfile } from "../../web/src/render/contracts/lake-water.js";
 import type { LakeVisualCondition } from "../../web/src/render/contracts/lake-water.js";
