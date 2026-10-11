@@ -1,34 +1,72 @@
 use super::*;
 use crate::{
-    FlightState, HybridAerodynamicLoad, NedPoint, NedVector, PilotPositionTarget,
-    SyntheticPlayableFlight, TailIncidence, UnitQuaternion, WindField,
+    FlightState, HybridAerodynamicLoad, NedPoint, NedVector, PilotPositionTarget, TailIncidence,
+    UnitQuaternion, WindField,
 };
 
-const EXPECTED_ROWS: [[f64; 4]; 5] = [
+const EXPECTED_ROWS: [[f64; 5]; 9] = [
+    [
+        -0.18,
+        -0.340_902_207_353_556_8,
+        0.010547475238408472,
+        0.926_949_165_939_633,
+        0.051_6,
+    ],
+    [
+        -0.15,
+        -0.172_626_839_461_297_3,
+        0.007_497_291_174_666_386,
+        0.801_604_701_978_066_8,
+        0.042_15,
+    ],
     [
         -0.12,
         -0.004_351_471_569_037_854,
         0.005_573_957_331_678_338,
-        0.16835824150626733,
+        0.676_003_099_099_147_2,
+        0.035_4,
     ],
     [
         -0.06,
         0.29219926421548104,
         0.004_570_250_277_965_041,
-        0.10224676602880195,
+        0.424_314_403_598_941,
+        0.03,
     ],
-    [0.0, 0.66875, 0.009149124167266454, 0.036_201_597_828_995_89],
+    [
+        0.0,
+        0.668_75,
+        0.009_149_124_167_266_454,
+        0.17245159782899588,
+        0.03,
+    ],
     [
         0.06,
-        1.005300735784519,
+        1.005_300_735_784_519,
         0.017_697_808_909_584_71,
-        -0.029495263115655954,
+        -0.079_020_921_438_412_87,
+        0.03,
     ],
     [
         0.12,
         1.2218514715690378,
         0.025_491_171_083_347_08,
-        -0.094_563_147_115_829_94,
+        -0.32954111844181644,
+        0.035_4,
+    ],
+    [
+        0.15,
+        1.3001268394612973,
+        0.028982587417316033,
+        -0.454_268_670_525_674_1,
+        0.042_15,
+    ],
+    [
+        0.18,
+        1.3384022073535569,
+        0.031_121_573_636_318_6,
+        -0.578_547_552_739_441_9,
+        0.051_6,
     ],
 ];
 
@@ -50,7 +88,7 @@ fn orientation(right: [f64; 3], down: [f64; 3]) -> ElementOrientation {
 
 #[test]
 fn rectangular_geometry_has_complete_area_mac_and_whole_surface_slopes() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let expected = [
         (
@@ -116,7 +154,7 @@ fn rectangular_geometry_has_complete_area_mac_and_whole_surface_slopes() {
 
 #[test]
 fn strip_midpoints_frames_and_geometric_anchors_follow_the_declared_body_axes() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let cosine = 0.9961946980917455;
     let sine = 0.08715574274765817;
@@ -139,7 +177,7 @@ fn strip_midpoints_frames_and_geometric_anchors_follow_the_declared_body_axes() 
     }
     for (index, proxy) in surfaces[1].proxies().iter().enumerate() {
         let [forward, right, down] = proxy.point().components();
-        near(forward, -1.8);
+        near(forward, -3.6);
         near(right, -1.7 + (index as f64 + 0.5) * 0.425);
         near(down, 0.1);
         near(proxy.area_m2(), 2.5 / 8.0);
@@ -165,7 +203,7 @@ fn strip_midpoints_frames_and_geometric_anchors_follow_the_declared_body_axes() 
 
 #[test]
 fn static_knots_match_independent_full_aircraft_values_in_all_seven_columns() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let polar = definition.polar().unwrap();
     assert_eq!(polar.moment_axes(), PolarMomentAxes::WindAtBetaZero);
     assert_eq!(polar.moment_point_from_datum(), BodyPoint::origin());
@@ -175,25 +213,25 @@ fn static_knots_match_independent_full_aircraft_values_in_all_seven_columns() {
         assert_eq!(coefficients, row.coefficients());
         near(coefficients.lift(), expected[1]);
         near(coefficients.induced_drag(), expected[2]);
-        near(coefficients.profile_drag(), 0.03);
+        near(coefficients.profile_drag(), expected[4]);
         near(coefficients.pitch_moment(), expected[3]);
         assert_eq!(coefficients.side_force(), 0.0);
         assert_eq!(coefficients.roll_moment(), 0.0);
         assert_eq!(coefficients.yaw_moment(), 0.0);
     }
     assert_eq!(
-        polar.coefficients_at(-0.121),
+        polar.coefficients_at(-0.181),
         Err(AeroError::OutsideEnvelope)
     );
     assert_eq!(
-        polar.coefficients_at(0.121),
+        polar.coefficients_at(0.181),
         Err(AeroError::OutsideEnvelope)
     );
 }
 
 #[test]
 fn interpolation_uses_precomputed_columns_and_preserves_distinct_segment_slopes() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let polar = definition.polar().unwrap();
     for interval in EXPECTED_ROWS.windows(2) {
         let alpha = (interval[0][0] + interval[1][0]) * 0.5;
@@ -207,7 +245,10 @@ fn interpolation_uses_precomputed_columns_and_preserves_distinct_segment_slopes(
             coefficients.pitch_moment(),
             (interval[0][3] + interval[1][3]) * 0.5,
         );
-        near(coefficients.profile_drag(), 0.03);
+        near(
+            coefficients.profile_drag(),
+            (interval[0][4] + interval[1][4]) * 0.5,
+        );
         assert_eq!(coefficients.side_force(), 0.0);
         assert_eq!(coefficients.roll_moment(), 0.0);
         assert_eq!(coefficients.yaw_moment(), 0.0);
@@ -226,50 +267,43 @@ fn interpolation_uses_precomputed_columns_and_preserves_distinct_segment_slopes(
 }
 
 #[test]
-fn uniform_neutral_loads_use_only_the_static_table_for_both_complete_definitions() {
-    for configuration in [
-        HybridMockConfiguration::Standard,
-        HybridMockConfiguration::ZeroDihedralOracle,
-        HybridMockConfiguration::Playable,
-    ] {
-        let definition = HybridMockDefinition::try_new(configuration).unwrap();
-        let surfaces = definition.surfaces().unwrap();
-        let polar = definition.polar().unwrap();
-        let model = HybridModel::try_new(polar, &surfaces).unwrap();
-        let load =
-            HybridAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
-                .unwrap();
-        for alpha in [-0.09, -0.03, 0.0, 0.03, 0.09] {
-            let velocity =
-                NedVector::try_new(9.7 * libm::cos(alpha), 0.0, 9.7 * libm::sin(alpha)).unwrap();
-            let state = FlightState::try_new(
-                NedPoint::origin(),
-                velocity,
-                UnitQuaternion::IDENTITY,
-                BodyVector::zero(),
-                0.0,
-                0.0,
-            )
+fn uniform_neutral_loads_use_only_the_current_static_table() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let polar = definition.polar().unwrap();
+    let model = HybridModel::try_new(polar, &surfaces).unwrap();
+    let load = HybridAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
+        .unwrap();
+    for alpha in [-0.09, -0.03, 0.0, 0.03, 0.09] {
+        let velocity =
+            NedVector::try_new(9.7 * libm::cos(alpha), 0.0, 9.7 * libm::sin(alpha)).unwrap();
+        let state = FlightState::try_new(
+            NedPoint::origin(),
+            velocity,
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        let evaluation = load
+            .evaluate_hybrid(&state, TailIncidence::neutral())
             .unwrap();
-            let evaluation = load
-                .evaluate_hybrid(&state, TailIncidence::neutral())
-                .unwrap();
-            assert_eq!(
-                evaluation.increment().force_body_newtons(),
-                BodyVector::zero()
-            );
-            assert_eq!(
-                evaluation.increment().moment_about_datum_newton_meters(),
-                BodyVector::zero()
-            );
-            assert_eq!(evaluation.total_wrench(), evaluation.static_wrench());
-        }
+        assert_eq!(
+            evaluation.increment().force_body_newtons(),
+            BodyVector::zero()
+        );
+        assert_eq!(
+            evaluation.increment().moment_about_datum_newton_meters(),
+            BodyVector::zero()
+        );
+        assert_eq!(evaluation.total_wrench(), evaluation.static_wrench());
     }
 }
 
 #[test]
 fn playable_polar_has_versioned_closed_domain_and_consistent_synthetic_coefficients() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let polar = definition.polar().unwrap();
     assert_eq!(
         polar.metadata().configuration_id(),
@@ -349,67 +383,50 @@ fn playable_polar_has_versioned_closed_domain_and_consistent_synthetic_coefficie
 }
 
 #[test]
-fn playable_geometry_changes_only_horizontal_tail_arm_and_preserves_version_one_data() {
-    let standard = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
-    let playable = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
-    let original_surfaces = standard.surfaces().unwrap();
-    let playable_surfaces = playable.surfaces().unwrap();
-    assert_eq!(standard.aircraft(), playable.aircraft());
-    assert_eq!(original_surfaces[0], playable_surfaces[0]);
-    assert_eq!(original_surfaces[2], playable_surfaces[2]);
-    for (original, updated) in original_surfaces[1]
-        .proxies()
-        .iter()
-        .zip(playable_surfaces[1].proxies())
-    {
-        let original_point = original.point().components();
-        let updated_point = updated.point().components();
-        assert!((original_point[0] + 1.8).abs() <= 4.0 * f64::EPSILON * 1.8);
-        assert!((updated_point[0] + 3.6).abs() <= 4.0 * f64::EPSILON * 3.6);
-        assert_eq!(original_point[1..], updated_point[1..]);
-        assert_eq!(original.projected_area_m2(), updated.projected_area_m2());
-        assert_eq!(original.area_m2(), updated.area_m2());
-        assert_eq!(original.orientation(), updated.orientation());
-        assert_eq!(original.anchor(), updated.anchor());
-    }
-    assert_eq!(standard.polar().unwrap().rows().len(), 5);
-    assert_eq!(
-        standard.polar().unwrap().alpha_interval_rad(),
-        [-0.12, 0.12]
-    );
-    assert_eq!(standard.polar().unwrap().metadata().model_version(), 1);
-}
-
-#[test]
-fn zero_dihedral_oracle_has_a_separate_identity_and_equal_projected_static_data() {
-    let standard = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
-    let oracle =
-        HybridMockDefinition::try_new(HybridMockConfiguration::ZeroDihedralOracle).unwrap();
-    let standard_polar = standard.polar().unwrap();
-    let oracle_polar = oracle.polar().unwrap();
-    assert_ne!(
-        standard_polar.metadata().configuration_id(),
-        oracle_polar.metadata().configuration_id()
-    );
-    assert_eq!(standard_polar.rows(), oracle_polar.rows());
-    assert_eq!(
-        oracle_polar.metadata().analysis_method(),
-        PolarAnalysisMethod::SoftwareFixture
-    );
-    assert_eq!(oracle_polar.metadata().model_version(), 1);
-    let wing = oracle.surfaces().unwrap()[0];
-    near(wing.geometry().surface_area_m2(), 18.0);
-    for proxy in wing.proxies() {
+fn zero_dihedral_geometry_is_a_test_local_math_oracle() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let sections = [
+        section([0.0, -9.0, 0.0], 1.0).unwrap(),
+        section([0.0, 0.0, 0.0], 1.0).unwrap(),
+        section([0.0, 9.0, 0.0], 1.0).unwrap(),
+    ];
+    let geometry = geometry(HybridSurfaceRole::MainWing, &sections).unwrap();
+    let proxies = partition::<16>(
+        geometry,
+        [-9.0, 9.0],
+        [frame_and_anchor(0.0, 0.70).unwrap(); 2],
+    )
+    .unwrap();
+    let flat_wing = HybridSurface::try_new(geometry, &proxies).unwrap();
+    let mut surfaces = definition.surfaces().unwrap();
+    surfaces[0] = flat_wing;
+    near(flat_wing.geometry().surface_area_m2(), 18.0);
+    for proxy in flat_wing.proxies() {
         near(proxy.point().components()[2], 0.0);
         near(proxy.area_m2(), 1.125);
         assert_eq!(proxy.orientation(), ElementOrientation::IDENTITY);
     }
-    assert_eq!(SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION, 2);
+    let model = HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap();
+    let load = HybridAerodynamicLoad::try_new(model, 1.225, WindField::uniform(NedVector::zero()))
+        .unwrap();
+    let state = FlightState::try_new(
+        NedPoint::origin(),
+        NedVector::try_new(9.7, 0.0, 0.0).unwrap(),
+        UnitQuaternion::IDENTITY,
+        BodyVector::zero(),
+        0.0,
+        0.0,
+    )
+    .unwrap();
+    let evaluation = load
+        .evaluate_hybrid(&state, TailIncidence::neutral())
+        .unwrap();
+    assert_eq!(evaluation.total_wrench(), evaluation.static_wrench());
 }
 
 #[test]
 fn fictional_mass_and_pilot_limits_preserve_the_existing_physical_contract() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     assert_eq!(aircraft.airframe_mass_kg(), 24.0);
     assert_eq!(aircraft.pilot_mass_kg(), 70.0);

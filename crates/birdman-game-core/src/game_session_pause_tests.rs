@@ -12,9 +12,9 @@ fn every_pause_set_preserves_other_causes_and_requires_explicit_resume() {
         current.advance_countdown().unwrap();
         current.launch().unwrap();
         current
-            .advance_flight_tick(neutral_input(&current))
+            .advance_tail_flight_tick(neutral_input(&current))
             .unwrap();
-        let previous_state = current.snapshot().flight_state().unwrap();
+        let previous_state = current.snapshot().tail_flight_state().unwrap();
         let previous_count = current.flight_record().unwrap().sample_count();
         for (index, cause) in causes.into_iter().enumerate() {
             if selected_bits & (1u8 << index) != 0 {
@@ -36,10 +36,10 @@ fn every_pause_set_preserves_other_causes_and_requires_explicit_resume() {
         for (index, cause) in causes.into_iter().enumerate() {
             assert_eq!(reasons.contains(cause), selected_bits & (1u8 << index) != 0);
         }
-        assert_eq!(current.snapshot().flight_state(), Some(previous_state));
+        assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));
         assert_eq!(current.flight_record().unwrap().sample_count(), previous_count);
         assert_eq!(
-            current.advance_flight_tick(neutral_input(&current)),
+            current.advance_tail_flight_tick(neutral_input(&current)),
             Err(GameSessionError::InvalidTransition)
         );
         let mut remaining_external = selected_bits & 14;
@@ -63,7 +63,7 @@ fn every_pause_set_preserves_other_causes_and_requires_explicit_resume() {
                 remaining_external &= !(1u8 << index);
                 assert!(matches!(current.snapshot().phase(), SessionPhase::FlightPaused { .. }));
                 assert_eq!(current.can_resume(), remaining_external == 0);
-                assert_eq!(current.snapshot().flight_state(), Some(previous_state));
+                assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));
                 assert_eq!(current.flight_record().unwrap().sample_count(), previous_count);
                 if remaining_external != 0 {
                     assert_eq!(current.resume(), Err(GameSessionError::PauseConditionsRemain));
@@ -72,7 +72,7 @@ fn every_pause_set_preserves_other_causes_and_requires_explicit_resume() {
             current.resume().unwrap();
         }
         assert_eq!(current.snapshot().phase(), SessionPhase::FlightRunning);
-        assert_eq!(current.snapshot().flight_state(), Some(previous_state));
+        assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));
         assert_eq!(current.flight_record().unwrap().sample_count(), previous_count);
     }
 }

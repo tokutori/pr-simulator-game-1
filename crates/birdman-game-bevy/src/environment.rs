@@ -6,7 +6,7 @@ use birdman_game_format::{
 };
 use birdman_game_session::{
     DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation, HybridSessionPreparationError,
-    bundled_environment, identity_for_selection, legacy_environment_for_version,
+    bundled_environment, identity_for_selection, preset_environment_for_version,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl EnvironmentTarget {
                     .document();
                 (document.waves, Some(document.sky))
             } else {
-                let environment = legacy_environment_for_version(selection.environment_version)
+                let environment = preset_environment_for_version(selection.environment_version)
                     .ok_or(EnvironmentFailure::UnknownIdentity(identity))?;
                 (environment.waves, None)
             };
@@ -258,7 +258,7 @@ mod tests {
             assert_eq!(condition.identity, identity);
             assert_eq!(condition.weather, weather);
             if weather == WeatherClass::Calm {
-                let registered = legacy_environment_for_version(1).unwrap();
+                let registered = preset_environment_for_version(1).unwrap();
                 assert_eq!(condition.waves, registered.waves);
                 assert_eq!(registered.wind_velocity_ned_mps, [0.0; 3]);
                 assert_ne!(condition.waves.wind_velocity_ne_mps, [0.0; 2]);

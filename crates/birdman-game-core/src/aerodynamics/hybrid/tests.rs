@@ -1,6 +1,5 @@
 use super::*;
 mod envelope;
-mod scenario;
 mod tail_tick;
 use crate::{
     BodyPoint, ElementOrientation, ElementReference, NedPoint, PolarAnalysisMethod,
@@ -435,14 +434,6 @@ fn physical_tail_incidence_bounds_and_missing_tail_adapter_are_explicit() {
     assert_eq!(
         TailIncidence::try_new(f64::NAN, 0.0).unwrap_err().cause(),
         AeroError::NonFinite
-    );
-    assert_eq!(
-        TailIncidence::try_from_surface_deflections(
-            SurfaceDeflections::try_new(0.01, 0.0, 0.0).unwrap()
-        )
-        .unwrap_err()
-        .cause(),
-        AeroError::UnsupportedControl
     );
     let fixture = Fixture::new(2);
     let surfaces = fixture.surfaces();

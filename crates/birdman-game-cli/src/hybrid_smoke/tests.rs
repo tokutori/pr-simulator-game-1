@@ -1,5 +1,5 @@
 use super::*;
-use birdman_game_core::{FlightRecordActuators, PHYSICS_HZ, SessionEndReason};
+use birdman_game_core::{PHYSICS_HZ, SessionEndReason};
 use birdman_game_format::{FlightRecordEndReasonDocument, TailFlightRecordControlsDocument};
 use serde_json::{Value, json};
 
@@ -78,9 +78,7 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     );
     let record = document.to_finalized_core_record().unwrap();
     let queried = record.sample_at_seconds(0.005).unwrap();
-    let FlightRecordActuators::TailIncidence(incidence) = queried.actuators else {
-        panic!("query must retain the two-tail layout");
-    };
+    let incidence = queried.actuators;
     let TailFlightRecordControlsDocument::TailIncidence {
         physical_incidence, ..
     } = &document.samples[1].controls;

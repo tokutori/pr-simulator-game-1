@@ -1,10 +1,9 @@
 use super::*;
 use crate::{
     BodyPoint, BodyVector, ControlMode, FbwAuthority, FlightState, Gravity, HybridAerodynamicLoad,
-    HybridMockConfiguration, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint,
-    NedVector, TailControlProfile, TailFlightTickConfig, TailFlightTickInput,
-    TailPilotPositionIntent, WaterContactGeometry, WindField,
-    advance_tail_flight_tick_with_contact_report,
+    HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint, NedVector, TailControlProfile,
+    TailFlightTickConfig, TailFlightTickInput, TailPilotPositionIntent, WaterContactGeometry,
+    WindField, advance_tail_flight_tick_with_contact_report,
 };
 
 fn input(command: TailPilotPositionCommand) -> TailFlightTickInput {
@@ -16,7 +15,7 @@ fn input(command: TailPilotPositionCommand) -> TailFlightTickInput {
 }
 
 fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let launch = trim
@@ -63,7 +62,7 @@ fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
 }
 
 fn initial(down: f64) -> TailFlightTickState {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let launch = trim
@@ -173,10 +172,10 @@ fn tail_record_uses_existing_query_and_restores_without_control_reintegration() 
         record.samples()[0].controls,
         FlightRecordControls::initial_tail(initial)
     );
-    let held = FlightRecordActuators::TailIncidence(next.incidence());
+    let held = next.incidence();
     assert_eq!(
         record.sample_at_time(0, 0.0).unwrap().actuators,
-        FlightRecordActuators::TailIncidence(initial.incidence())
+        initial.incidence()
     );
     for fraction in [0.0001, 0.25, 0.75, 1.0] {
         let (tick, tick_fraction) = if fraction == 1.0 {
@@ -209,10 +208,6 @@ fn tail_record_uses_existing_query_and_restores_without_control_reintegration() 
         record.sample_at_seconds(0.005).unwrap()
     );
     assert_eq!(restored.header(), record.header());
-    assert_eq!(
-        held.legacy_three_axis(),
-        Err(FlightRecordControlError::IncompatibleControlLayout)
-    );
 }
 
 #[test]
@@ -243,10 +238,7 @@ fn tail_record_positive_and_zero_contact_follow_the_same_terminal_sampling_contr
         let final_query = record
             .sample_at_seconds(record.duration_seconds().unwrap())
             .unwrap();
-        assert_eq!(
-            final_query.actuators,
-            FlightRecordActuators::TailIncidence(terminal.incidence())
-        );
+        assert_eq!(final_query.actuators, terminal.incidence());
         if terminal.fraction() > 0.0 {
             assert!(record.samples()[1].controls.has_input());
             assert_eq!(
@@ -261,7 +253,7 @@ fn tail_record_positive_and_zero_contact_follow_the_same_terminal_sampling_contr
 }
 
 #[test]
-fn mismatched_layout_and_duplicate_tail_reports_leave_record_unchanged() {
+fn missing_input_and_duplicate_tail_reports_leave_record_unchanged() {
     let mut record = crate::FlightRecord::try_new(header()).unwrap();
     let initial = initial(-10.5);
     record
@@ -284,10 +276,7 @@ fn mismatched_layout_and_duplicate_tail_reports_leave_record_unchanged() {
         .finalize(crate::SessionEndReason::TimeLimit, 1, 0.0, None)
         .unwrap();
     let mut mixed = previous;
-    mixed[1].controls = FlightRecordControls::LegacyThreeAxis {
-        actuator_state: ActuatorState::neutral(),
-        input_from_previous: None,
-    };
+    mixed[1].controls.input_from_previous = None;
     assert!(matches!(
         crate::FlightRecord::try_from_finalized_samples(header(), mixed, finalized),
         Err(crate::FlightRecordError::InvalidArchive)
@@ -299,7 +288,7 @@ fn failure_finalization_preserves_original_stage_site_and_last_valid_sample() {
     use crate::{
         AerodynamicEvaluationError, AerodynamicStage, DynamicsError, FlightRecord, HybridError,
         HybridLimit, HybridSite, HybridSurfaceRole, LoadError, SessionEndReason,
-        SessionSimulationFailure, TailFlightTickError,
+        TailFlightTickError,
     };
     let mut record = FlightRecord::try_new(header()).unwrap();
     let initial = initial(-10.5);
@@ -312,11 +301,9 @@ fn failure_finalization_preserves_original_stage_site_and_last_valid_sample() {
     };
     let cause =
         HybridError::outside(site, HybridLimit::LocalSpeed).with_stage(AerodynamicStage::Second);
-    let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
-        DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
-            cause,
-        ))),
-    ));
+    let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+        AerodynamicEvaluationError::Hybrid(cause),
+    )));
     let previous = record.samples().to_vec();
     let finalized = record
         .finalize_with_failure(SessionEndReason::OutOfValidEnvelope, 0, 0.0, None, failure)
@@ -331,16 +318,13 @@ fn failure_finalization_preserves_original_stage_site_and_last_valid_sample() {
 
 #[test]
 fn incompatible_failure_reason_layout_and_stamp_leave_record_unfinalized() {
-    use crate::{
-        FlightRecord, FlightRecordError, FlightTickError, SessionEndReason,
-        SessionSimulationFailure, TailFlightTickError,
-    };
+    use crate::{FlightRecord, FlightRecordError, SessionEndReason, TailFlightTickError};
     let mut record = FlightRecord::try_new(header()).unwrap();
     let initial = initial(-10.5);
     record
         .begin_tail(initial, telemetry(initial.flight_state()))
         .unwrap();
-    let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::TickOverflow);
+    let failure = TailFlightTickError::TickOverflow;
     for (reason, tick, cause, expected) in [
         (
             SessionEndReason::WaterContact,
@@ -352,12 +336,6 @@ fn incompatible_failure_reason_layout_and_stamp_leave_record_unfinalized() {
             SessionEndReason::OutOfValidEnvelope,
             0,
             failure,
-            FlightRecordError::IncompatibleFailure,
-        ),
-        (
-            SessionEndReason::FatalSimulationError,
-            0,
-            SessionSimulationFailure::LegacyThreeAxis(FlightTickError::TickOverflow),
             FlightRecordError::IncompatibleFailure,
         ),
         (
@@ -390,14 +368,6 @@ fn incompatible_failure_reason_layout_and_stamp_leave_record_unfinalized() {
         FlightRecord::try_from_finalized_samples(header(), record.samples().to_vec(), invalid,),
         Err(FlightRecordError::InvalidArchive)
     ));
-    let mut invalid = finalized;
-    invalid.failure = Some(SessionSimulationFailure::LegacyThreeAxis(
-        FlightTickError::TickOverflow,
-    ));
-    assert!(matches!(
-        FlightRecord::try_from_finalized_samples(header(), record.samples().to_vec(), invalid,),
-        Err(FlightRecordError::InvalidArchive)
-    ));
 }
 
 fn close(actual: f64, expected: f64) {
@@ -423,8 +393,7 @@ fn capture_preserves_manual_feedback_mixed_and_held_incidence_in_all_modes() {
         else {
             panic!("expected elapsed interval");
         };
-        assert_eq!(controls.kind(), FlightRecordControlKind::TailIncidence);
-        let FlightRecordControls::TailIncidence {
+        let FlightRecordControls {
             incidence,
             input_from_previous: Some(recorded),
         } = controls
@@ -457,10 +426,7 @@ fn capture_preserves_manual_feedback_mixed_and_held_incidence_in_all_modes() {
         );
         close(incidence.elevator_rad(), -0.01);
         close(incidence.rudder_rad(), 0.01);
-        assert_eq!(
-            controls.actuators(),
-            FlightRecordActuators::TailIncidence(incidence)
-        );
+        assert_eq!(controls.actuators(), incidence);
         let TailFlightTickOutcome::Advanced(state) = report.outcome() else {
             panic!("expected airborne tick");
         };
@@ -487,7 +453,7 @@ fn fractional_contact_captures_held_values_and_zero_fraction_adds_no_input() {
         panic!("expected fractional contact");
     };
     assert!(terminal.fraction() > 0.0 && terminal.fraction() < 1.0);
-    let FlightRecordControlCapture::Applied(FlightRecordControls::TailIncidence {
+    let FlightRecordControlCapture::Applied(FlightRecordControls {
         incidence,
         input_from_previous: Some(recorded),
     }) = FlightRecordControls::from_tail_report(report)
@@ -532,20 +498,6 @@ fn archive_restoration_preserves_saved_commands_without_feedback_reevaluation() 
 }
 
 #[test]
-fn legacy_controls_preserve_original_three_axes_without_tail_conversion() {
-    let actuator = ActuatorState::try_from_recorded(0.03, -0.12, 0.08).unwrap();
-    let controls = FlightRecordControls::LegacyThreeAxis {
-        actuator_state: actuator,
-        input_from_previous: None,
-    };
-    assert_eq!(controls.kind(), FlightRecordControlKind::LegacyThreeAxis);
-    assert_eq!(
-        controls.actuators(),
-        FlightRecordActuators::LegacyThreeAxis(actuator)
-    );
-}
-
-#[test]
 fn initial_tail_controls_have_no_interval_input() {
     let report = report(ControlMode::Manual, -10.5);
     let TailFlightTickOutcome::Advanced(state) = report.outcome() else {
@@ -553,7 +505,7 @@ fn initial_tail_controls_have_no_interval_input() {
     };
     assert_eq!(
         FlightRecordControls::initial_tail(state),
-        FlightRecordControls::TailIncidence {
+        FlightRecordControls {
             incidence: state.incidence(),
             input_from_previous: None,
         }

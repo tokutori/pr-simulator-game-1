@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    Gravity, HybridAerodynamicLoad, HybridMockConfiguration, HybridModel, PilotAcceleration,
-    TailIncidence, TailPilotPositionCommand, TailPilotPositionIntent, WindField, advance,
+    Gravity, HybridAerodynamicLoad, HybridModel, PilotAcceleration, TailIncidence,
+    TailPilotPositionCommand, TailPilotPositionIntent, WindField, advance,
     pilot_target_acceleration,
 };
 
@@ -13,36 +13,31 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 }
 
 #[test]
-fn pwl_trim_matches_the_independent_issue_reference_for_both_identities() {
-    for configuration in [
-        HybridMockConfiguration::Standard,
-        HybridMockConfiguration::ZeroDihedralOracle,
-    ] {
-        let definition = HybridMockDefinition::try_new(configuration).unwrap();
-        let trim = HybridMockTrim::try_new(&definition).unwrap();
-        near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
-        near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
-        near(trim.theta_rad(), -0.0113280532861, 1.0e-7);
-        near(trim.pilot_position_m(), -0.00982742971072, 1.0e-7);
-        near(trim.coefficients().lift(), 0.887515985045, 1.0e-10);
-        near(trim.coefficients().induced_drag(), 0.0147059726292, 1.0e-10);
-        near(trim.coefficients().profile_drag(), 0.03, 1.0e-14);
-        near(
-            trim.coefficients().pitch_moment(),
-            -0.00650292476076,
-            1.0e-10,
-        );
-    }
+fn pwl_trim_matches_the_independent_current_model_reference() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
+    near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
+    near(trim.theta_rad(), -0.0113280532861, 1.0e-7);
+    near(trim.pilot_position_m(), 0.0135836773446, 1.0e-7);
+    near(trim.coefficients().lift(), 0.887515985045, 1.0e-10);
+    near(trim.coefficients().induced_drag(), 0.0147059726292, 1.0e-10);
+    near(trim.coefficients().profile_drag(), 0.03, 1.0e-14);
+    near(
+        trim.coefficients().pitch_moment(),
+        0.00898847759247,
+        1.0e-10,
+    );
 }
 
 #[test]
 fn actual_hybrid_wrench_and_coupled_core_preserve_steady_glide_balance() {
-    assert_steady_glide_balance(HybridMockConfiguration::Standard);
+    assert_steady_glide_balance();
 }
 
 #[test]
 fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or_mapping_limits() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
     near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
@@ -59,11 +54,11 @@ fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or
             .unwrap();
         assert_eq!(target.position_m(), expected);
     }
-    assert_steady_glide_balance(HybridMockConfiguration::Playable);
+    assert_steady_glide_balance();
 }
 
-fn assert_steady_glide_balance(configuration: HybridMockConfiguration) {
-    let definition = HybridMockDefinition::try_new(configuration).unwrap();
+fn assert_steady_glide_balance() {
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let state = trim
@@ -130,7 +125,7 @@ fn assert_steady_glide_balance(configuration: HybridMockConfiguration) {
 
 #[test]
 fn nonzero_heading_restores_the_supplied_composite_cg_pose_and_ground_velocity() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let position = NedPoint::try_new(12.0, -8.0, -10.5).unwrap();
     for heading in [-core::f64::consts::FRAC_PI_4, 0.63] {
@@ -200,7 +195,7 @@ fn nonzero_heading_restores_the_supplied_composite_cg_pose_and_ground_velocity()
 
 #[test]
 fn neutral_and_missing_position_intents_preserve_trim_instead_of_zeroing_the_pilot() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let mapping = trim.pilot_mapping().unwrap();

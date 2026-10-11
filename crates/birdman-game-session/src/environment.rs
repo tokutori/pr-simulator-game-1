@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use birdman_game_core::{NedPoint, NedVector, SyntheticPlayableFlight, WindField};
+use birdman_game_core::{HybridMockDefinition, NedPoint, NedVector, WindField};
 use birdman_game_format::{
     EnvironmentDocument, EnvironmentFormatError, EnvironmentWindGrid, ScenarioCatalogEntry,
     WaveStateDocument, WeatherClass,
@@ -11,7 +11,7 @@ const BUNDLED_ENVIRONMENT_BYTES: &[u8] =
 const BUNDLED_ENVIRONMENT_ENTRY: ScenarioCatalogEntry = ScenarioCatalogEntry {
     scenario_id: 6,
     scenario_version: 1,
-    aircraft_model_version: SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION,
+    aircraft_model_version: HybridMockDefinition::MODEL_VERSION,
     environment_version: 6,
     weather: WeatherClass::Typical,
 };
@@ -79,8 +79,8 @@ pub fn initialize_bundled_environment() -> Result<(), EnvironmentFormatError> {
     Ok(())
 }
 
-/// One registered legacy environment, retaining physical wind and render-only wave metadata.
-pub struct LegacyEnvironment {
+/// One current synthetic weather preset with physical wind and render-only wave metadata.
+pub struct PresetEnvironment {
     /// Registered environment version.
     pub version: u32,
     /// Stable scenario display name.
@@ -91,8 +91,8 @@ pub struct LegacyEnvironment {
     pub waves: WaveStateDocument,
 }
 
-const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
-    LegacyEnvironment {
+const PRESET_ENVIRONMENTS: [PresetEnvironment; 4] = [
+    PresetEnvironment {
         version: 1,
         name: "Synthetic calm",
         wind_velocity_ned_mps: [0.0, 0.0, 0.0],
@@ -103,7 +103,7 @@ const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
             pattern_seed: 0,
         },
     },
-    LegacyEnvironment {
+    PresetEnvironment {
         version: 2,
         name: "Synthetic mild",
         wind_velocity_ned_mps: [0.0, 0.25, 0.0],
@@ -114,18 +114,7 @@ const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
             pattern_seed: 1,
         },
     },
-    LegacyEnvironment {
-        version: 3,
-        name: "Synthetic typical",
-        wind_velocity_ned_mps: [-0.25, 0.5, 0.0],
-        waves: WaveStateDocument {
-            wind_velocity_ne_mps: [-0.35, 1.42],
-            fetch_m: 600.0,
-            detail_amplitude_scale: 1.20,
-            pattern_seed: 2,
-        },
-    },
-    LegacyEnvironment {
+    PresetEnvironment {
         version: 4,
         name: "Synthetic challenging",
         wind_velocity_ned_mps: [-0.5, 0.75, 0.0],
@@ -136,7 +125,7 @@ const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
             pattern_seed: 3,
         },
     },
-    LegacyEnvironment {
+    PresetEnvironment {
         version: 5,
         name: "Synthetic near-limit",
         wind_velocity_ned_mps: [-0.75, 1.0, 0.0],
@@ -149,21 +138,14 @@ const LEGACY_ENVIRONMENTS: [LegacyEnvironment; 5] = [
     },
 ];
 
-/// Returns all registered legacy physical winds for compatibility scenario construction.
-pub fn legacy_winds() -> impl Iterator<Item = [f64; 3]> {
-    LEGACY_ENVIRONMENTS
-        .iter()
-        .map(|environment| environment.wind_velocity_ned_mps)
+/// Returns registered preset wind without changing the environment identity.
+pub fn preset_wind_for_version(version: u32) -> Option<[f64; 3]> {
+    preset_environment_for_version(version).map(|environment| environment.wind_velocity_ned_mps)
 }
 
-/// Returns registered legacy physical wind without changing the environment identity.
-pub fn legacy_wind_for_version(version: u32) -> Option<[f64; 3]> {
-    legacy_environment_for_version(version).map(|environment| environment.wind_velocity_ned_mps)
-}
-
-/// Returns the immutable legacy environment matching an explicit version.
-pub fn legacy_environment_for_version(version: u32) -> Option<&'static LegacyEnvironment> {
-    LEGACY_ENVIRONMENTS
+/// Returns the immutable current preset matching an explicit environment version.
+pub fn preset_environment_for_version(version: u32) -> Option<&'static PresetEnvironment> {
+    PRESET_ENVIRONMENTS
         .iter()
         .find(|environment| environment.version == version)
 }

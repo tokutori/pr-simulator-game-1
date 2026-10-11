@@ -15,8 +15,7 @@ use bevy::{
 };
 use birdman_game_core::{
     ControlMode, FlightRecordFinalization, FlightRecordHeader, PauseReason, PauseReasons,
-    SessionEndReason, SessionPhase, SessionScenarioIdentity, SessionSimulationFailure,
-    SessionSnapshot,
+    SessionEndReason, SessionPhase, SessionScenarioIdentity, SessionSnapshot,
 };
 use std::borrow::Cow;
 
@@ -775,7 +774,7 @@ fn format_result_context(
 fn format_result_summary(
     reason: SessionEndReason,
     distance_m: Option<f64>,
-    failure: Option<SessionSimulationFailure>,
+    failure: Option<birdman_game_core::TailFlightTickError>,
 ) -> String {
     let distance =
         distance_m.map_or_else(|| "取得不能".into(), |value| format!("{value:.2}\u{00a0}m"));
@@ -793,7 +792,7 @@ fn format_result_summary(
 
 fn format_technical_details(
     reason: Option<SessionEndReason>,
-    failure: Option<SessionSimulationFailure>,
+    failure: Option<birdman_game_core::TailFlightTickError>,
     notice: Option<&str>,
 ) -> String {
     let mut details = String::new();
@@ -1925,11 +1924,9 @@ mod tests {
             Some(AerodynamicStage::First),
         )
         .unwrap();
-        let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
-            DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
-                error,
-            ))),
-        ));
+        let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(error),
+        )));
         let summary = format_result_summary(failure.end_reason(), Some(123.456), Some(failure));
         assert!(summary.contains("水平尾翼の局所迎角差と取付角"));
         assert!(summary.contains("確定距離: 123.46\u{00a0}m"));

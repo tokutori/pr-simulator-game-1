@@ -32,21 +32,11 @@ pub enum SessionEndReason {
     TimeLimit,
 }
 
-/// Original simulation failure shared by the session and record without a dependency cycle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SessionSimulationFailure {
-    /// Failure from a legacy three-axis fixture.
-    LegacyThreeAxis(FlightTickError),
-    /// Hybrid failure with its unmodified load stage, site, limit and original cause.
-    TailIncidence(TailFlightTickError),
-}
-
-impl SessionSimulationFailure {
+impl TailFlightTickError {
     /// Classifies envelope and finite wind-domain failures separately from numerical failures.
     pub const fn end_reason(self) -> SessionEndReason {
         let dynamics = match self {
-            Self::LegacyThreeAxis(FlightTickError::Dynamics(error))
-            | Self::TailIncidence(TailFlightTickError::Dynamics(error)) => Some(error),
+            Self::Dynamics(error) => Some(error),
             _ => None,
         };
         match dynamics {
@@ -62,6 +52,5 @@ impl SessionSimulationFailure {
 }
 use crate::aerodynamics_contract::AeroError;
 use crate::dynamics::{DynamicsError, LoadError};
-use crate::simulation::FlightTickError;
 use crate::tail_simulation::TailFlightTickError;
 use crate::wind_field::WindError;

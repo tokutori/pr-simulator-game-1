@@ -1,5 +1,4 @@
 use super::*;
-use birdman_game_core::FlightRecordActuators;
 use serde_json::{Value, json};
 
 fn context(bridge: &HybridGameSessionBridge) -> Value {
@@ -85,9 +84,7 @@ fn saved_queries_preserve_terminal_cause_and_share_only_the_demo_record() {
         TailFlightRecordFinalizationDocument::try_from_core(finalization).unwrap();
     let duration = record.duration_seconds().unwrap();
     let last = record.samples().last().unwrap();
-    let FlightRecordActuators::TailIncidence(incidence) = last.controls.actuators() else {
-        panic!("demo must retain physical two-tail controls");
-    };
+    let incidence = last.controls.actuators();
     let queried: Value = serde_json::from_str(
         &crate::hybrid_record::playback_sample_json(&bridge.session, duration).unwrap(),
     )

@@ -3,9 +3,7 @@ use crate::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass}
 use alloc::vec;
 
 fn tail_csv_rows(document: &TailFlightRecordDocument) -> Vec<Vec<String>> {
-    let encoded = FlightRecordArchiveDocument::Tail(document.clone())
-        .encode_csv()
-        .unwrap();
+    let encoded = document.clone().encode_csv().unwrap();
     String::from_utf8(encoded)
         .unwrap()
         .lines()
@@ -233,11 +231,7 @@ fn tail_csv_preserves_original_identity_and_full_failure_as_safe_json_cells() {
         .control_identity
         .aircraft_configuration_id
         .push('\n');
-    assert!(
-        FlightRecordArchiveDocument::Tail(document)
-            .encode_csv()
-            .is_err()
-    );
+    assert!(document.encode_csv().is_err());
 }
 
 fn polynomial_tail_document() -> TailFlightRecordDocument {
@@ -348,59 +342,19 @@ fn tail_csv_keeps_fractional_stamps_when_acceleration_is_unrepresentable() {
     );
     let mut invalid = document();
     invalid.samples[1].state.datum_velocity_ned_mps[0] = f64::NAN;
-    assert!(
-        FlightRecordArchiveDocument::Tail(invalid)
-            .encode_csv()
-            .is_err()
-    );
-}
-
-#[test]
-fn archive_csv_dispatch_preserves_every_legacy_version_without_new_tail_columns() {
-    for version in 1..=5 {
-        let mut document = super::super::tests::completed_record();
-        document.schema_version = version;
-        if version < 3 {
-            document.header.score_definition_version = None;
-        }
-        if version < 4 {
-            document.header.physics_model_version = None;
-        }
-        if version < 5 {
-            document.header.personal_best_key = None;
-        }
-        let original = document.encode_csv().unwrap();
-        let archive = FlightRecordArchiveDocument::Legacy(document);
-        assert_eq!(archive.encode_csv().unwrap(), original);
-        let csv = String::from_utf8(original).unwrap();
-        assert!(
-            csv.lines()
-                .nth(1)
-                .unwrap()
-                .starts_with(&alloc::format!("1,{version},legacy_three_axis,"))
-        );
-        assert!(
-            !csv.lines()
-                .next()
-                .unwrap()
-                .contains("physical_horizontal_tail_incidence_rad")
-        );
-    }
+    assert!(invalid.encode_csv().is_err());
 }
 
 fn identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
-        aircraft_configuration_id: "bpg041-rectangular-hybrid-mock".into(),
+        aircraft_configuration_id: "bpg041-playable-hybrid-mock".into(),
         controller_profile_id: "bpg040-tail-rate-feedback".into(),
     }
 }
 
 #[test]
 fn terminal_converter_preserves_typed_rejection_without_a_record_copy() {
-    use birdman_game_core::{
-        FlightRecordDisposition, FlightTickError, SessionEndReason, SessionSimulationFailure,
-        TailFlightTickError,
-    };
+    use birdman_game_core::{FlightRecordDisposition, SessionEndReason, TailFlightTickError};
     let original = document()
         .to_finalized_core_record()
         .unwrap()
@@ -426,16 +380,7 @@ fn terminal_converter_preserves_typed_rejection_without_a_record_copy() {
         Err(FlightRecordFormatError::InvalidRecord)
     );
     invalid.reason = SessionEndReason::FatalSimulationError;
-    invalid.failure = Some(SessionSimulationFailure::LegacyThreeAxis(
-        FlightTickError::TickOverflow,
-    ));
-    assert_eq!(
-        TailFlightRecordFinalizationDocument::try_from_core(invalid),
-        Err(FlightRecordFormatError::IncompatibleTerminalCause)
-    );
-    invalid.failure = Some(SessionSimulationFailure::TailIncidence(
-        TailFlightTickError::TickOverflow,
-    ));
+    invalid.failure = Some(TailFlightTickError::TickOverflow);
     let converted = TailFlightRecordFinalizationDocument::try_from_core(invalid).unwrap();
     assert_eq!(
         converted.failure,
@@ -451,7 +396,6 @@ fn terminal_converter_preserves_typed_rejection_without_a_record_copy() {
 }
 
 fn document() -> TailFlightRecordDocument {
-    let source = super::super::tests::completed_record();
     let telemetry = FlightRecordTelemetryDocument {
         composite_cg_position_ned_m: [0.0, 0.0, -0.1],
         altitude_m: 0.1,
@@ -513,7 +457,26 @@ fn document() -> TailFlightRecordDocument {
     };
     TailFlightRecordDocument {
         schema_version: TAIL_FLIGHT_RECORD_SCHEMA_VERSION,
-        header: source.header,
+        header: FlightRecordHeaderDocument {
+            catalog_version: 1,
+            scenario_id: 1,
+            scenario_version: 1,
+            aircraft_model_version: 1,
+            environment_version: 1,
+            controller_profile_version: 1,
+            difficulty: DifficultySettings::custom(
+                InformationLevel::Full,
+                AssistanceLevel::Manual,
+                WeatherClass::Calm,
+            )
+            .into(),
+            seed: 17,
+            maximum_flight_ticks: 100,
+            physics_hz: birdman_game_core::PHYSICS_HZ,
+            score_definition_version: birdman_game_core::COURSE_DISTANCE_SCORE_VERSION,
+            physics_model_version: birdman_game_core::PHYSICS_MODEL_VERSION,
+            personal_best_key: None,
+        },
         control_identity: identity(),
         samples: vec![initial, terminal],
         finalization: TailFlightRecordFinalizationDocument {
@@ -528,59 +491,35 @@ fn document() -> TailFlightRecordDocument {
 }
 
 #[test]
-fn legacy_codec_rejects_terminal_causes_and_tail_codec_preserves_them() {
-    use birdman_game_core::{
-        FlightTickError, SessionEndReason, SessionSimulationFailure, TailFlightTickError,
-    };
-    let settings = DifficultySettings::custom(
-        InformationLevel::Full,
-        AssistanceLevel::Manual,
-        WeatherClass::Calm,
-    );
-    for (record, failure) in [
-        (
-            super::super::tests::completed_record()
-                .to_finalized_core_record()
-                .unwrap(),
-            SessionSimulationFailure::LegacyThreeAxis(FlightTickError::TickOverflow),
+fn current_codec_preserves_terminal_causes() {
+    use birdman_game_core::{SessionEndReason, TailFlightTickError};
+    let source = document().to_finalized_core_record().unwrap();
+    let mut finalization = source.finalization().unwrap();
+    finalization.reason = SessionEndReason::FatalSimulationError;
+    finalization.disposition = birdman_game_core::FlightRecordDisposition::Failed;
+    finalization.failure = Some(TailFlightTickError::TickOverflow);
+    let record = FlightRecord::try_from_finalized_samples(
+        source.header(),
+        source.samples().to_vec(),
+        finalization,
+    )
+    .unwrap();
+    let document = TailFlightRecordDocument::from_record(
+        &record,
+        DifficultySettings::custom(
+            InformationLevel::Full,
+            AssistanceLevel::Manual,
+            WeatherClass::Calm,
         ),
-        (
-            document().to_finalized_core_record().unwrap(),
-            SessionSimulationFailure::TailIncidence(TailFlightTickError::TickOverflow),
-        ),
-    ] {
-        let mut finalization = record.finalization().unwrap();
-        finalization.reason = SessionEndReason::FatalSimulationError;
-        finalization.disposition = birdman_game_core::FlightRecordDisposition::Failed;
-        finalization.failure = Some(failure);
-        let record = FlightRecord::try_from_finalized_samples(
-            record.header(),
-            record.samples().to_vec(),
-            finalization,
-        )
+        identity(),
+    )
+    .unwrap();
+    let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
+        .unwrap()
+        .to_finalized_core_record()
         .unwrap();
-        assert_eq!(
-            FlightRecordDocument::from_record(&record, settings),
-            Err(FlightRecordFormatError::IncompatibleTerminalCause)
-        );
-        match failure {
-            SessionSimulationFailure::LegacyThreeAxis(_) => assert_eq!(
-                TailFlightRecordDocument::from_record(&record, settings, identity()),
-                Err(FlightRecordFormatError::IncompatibleTerminalCause)
-            ),
-            SessionSimulationFailure::TailIncidence(_) => {
-                let document =
-                    TailFlightRecordDocument::from_record(&record, settings, identity()).unwrap();
-                let restored =
-                    FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap())
-                        .unwrap()
-                        .to_finalized_core_record()
-                        .unwrap();
-                assert_eq!(restored.finalization(), record.finalization());
-                assert_eq!(restored.samples(), record.samples());
-            }
-        }
-    }
+    assert_eq!(restored.finalization(), record.finalization());
+    assert_eq!(restored.samples(), record.samples());
 }
 
 #[test]
@@ -588,7 +527,7 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
     use birdman_game_core::{
         AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError,
         FlightRecordDisposition, HybridError, HybridLimit, HybridSite, HybridSurfaceRole,
-        LoadError, SessionSimulationFailure, TailFlightTickError, WindError,
+        LoadError, TailFlightTickError, WindError,
     };
     for (cause, limit) in [
         (AeroError::OutsideEnvelope, Some(HybridLimit::LocalSpeed)),
@@ -607,11 +546,9 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
             Some(AerodynamicStage::Second),
         )
         .unwrap();
-        let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
-            DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
-                hybrid,
-            ))),
-        ));
+        let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(hybrid),
+        )));
         let mut finalization = source.finalization().unwrap();
         finalization.reason = failure.end_reason();
         finalization.disposition = FlightRecordDisposition::Failed;
@@ -632,7 +569,7 @@ fn envelope_wind_and_numerical_causes_keep_last_valid_snapshot_and_query() {
             identity(),
         )
         .unwrap();
-        let restored = FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap())
+        let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
             .unwrap()
             .to_finalized_core_record()
             .unwrap();
@@ -660,7 +597,7 @@ fn v6_requires_explicit_failure_field_and_consistent_reason() {
         .unwrap()
         .remove("failure");
     assert_eq!(
-        FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&json).unwrap()),
+        TailFlightRecordDocument::decode_json(&serde_json::to_vec(&json).unwrap()),
         Err(FlightRecordFormatError::InvalidJson)
     );
     let mut invalid = document();
@@ -701,7 +638,7 @@ fn archive_rejects_impossible_control_incidence_diagnostics() {
         value["finalization"]["disposition"] = "failed".into();
         value["finalization"]["failure"] = serde_json::json!({"control":{"incidence":diagnostic}});
         assert_eq!(
-            FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
+            TailFlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
             Err(FlightRecordFormatError::InvalidRecord)
         );
     }
@@ -710,9 +647,8 @@ fn archive_rejects_impossible_control_incidence_diagnostics() {
 #[test]
 fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
     let document = document();
-    let archive =
-        FlightRecordArchiveDocument::decode_json(&document.encode_json().unwrap()).unwrap();
-    assert_eq!(archive, FlightRecordArchiveDocument::Tail(document.clone()));
+    let archive = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap();
+    assert_eq!(archive, document.clone());
     let restored = archive.to_finalized_core_record().unwrap();
     assert_eq!(
         TailFlightRecordFinalizationDocument::try_from_core(restored.finalization().unwrap())
@@ -731,7 +667,7 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
     .unwrap();
     assert_eq!(rebuilt, document);
     let saved = restored.samples()[1].controls;
-    let FlightRecordControls::TailIncidence {
+    let FlightRecordControls {
         incidence,
         input_from_previous: Some(input),
     } = saved
@@ -769,38 +705,12 @@ fn v6_archive_round_trip_keeps_named_physical_controls_and_saved_outputs() {
 }
 
 #[test]
-fn legacy_versions_keep_snapshot_identity_and_reject_tail_reintegration() {
+fn obsolete_versions_are_rejected_before_deserializing_their_payload() {
     for version in 1..=5 {
-        let mut legacy = super::super::tests::completed_record();
-        legacy.schema_version = version;
-        if version < 3 {
-            legacy.header.score_definition_version = None;
-        }
-        if version < 4 {
-            legacy.header.physics_model_version = None;
-        }
-        let reference = legacy.to_finalized_core_record().unwrap();
-        let archive =
-            FlightRecordArchiveDocument::decode_json(&legacy.encode_json().unwrap()).unwrap();
-        assert_eq!(archive, FlightRecordArchiveDocument::Legacy(legacy.clone()));
-        let restored = archive.to_finalized_core_record().unwrap();
-        assert_eq!(restored.header(), reference.header());
-        assert_eq!(restored.samples(), reference.samples());
+        let json = serde_json::json!({"schema_version": version});
         assert_eq!(
-            restored.sample_at_seconds(0.005).unwrap(),
-            reference.sample_at_seconds(0.005).unwrap()
-        );
-        assert_eq!(
-            archive.encode_json().unwrap(),
-            legacy.encode_json().unwrap()
-        );
-        assert_eq!(
-            archive.require_tail_reintegration_compatibility(
-                &identity(),
-                reference.header().scenario,
-                birdman_game_core::PHYSICS_MODEL_VERSION
-            ),
-            Err(FlightRecordFormatError::IncompatibleReintegration)
+            TailFlightRecordDocument::decode_json(&serde_json::to_vec(&json).unwrap()),
+            Err(FlightRecordFormatError::UnsupportedSchemaVersion)
         );
     }
 }
@@ -811,7 +721,7 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
         let mut value = serde_json::to_value(document()).unwrap();
         value["schema_version"] = version.into();
         assert_eq!(
-            FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
+            TailFlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
             Err(FlightRecordFormatError::UnsupportedSchemaVersion)
         );
     }
@@ -834,7 +744,7 @@ fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
             _ => unreachable!(),
         }
         assert_eq!(
-            FlightRecordArchiveDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
+            TailFlightRecordDocument::decode_json(&serde_json::to_vec(&value).unwrap()),
             Err(FlightRecordFormatError::InvalidJson)
         );
     }
@@ -863,7 +773,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
         .unwrap()
         .header()
         .scenario;
-    let archive = FlightRecordArchiveDocument::Tail(document.clone());
+    let archive = document.clone();
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
             &identity(),
@@ -873,7 +783,7 @@ fn model_controller_and_physics_identity_gate_reintegration() {
         Ok(())
     );
     let mut other = identity();
-    other.aircraft_configuration_id = "bpg041-zero-dihedral-oracle".into();
+    other.aircraft_configuration_id = "different-aircraft-configuration".into();
     assert_eq!(
         archive.require_tail_reintegration_compatibility(
             &other,
@@ -903,26 +813,21 @@ fn model_controller_and_physics_identity_gate_reintegration() {
 }
 
 #[test]
-fn personal_best_does_not_mix_legacy_or_distinct_model_controller_identity() {
+fn personal_best_does_not_mix_distinct_model_controller_identity() {
     let candidate = document()
         .with_personal_best_key(Some(PersonalBestKey::from_digest([7; 32])))
         .unwrap();
-    let candidate_archive = FlightRecordArchiveDocument::Tail(candidate.clone());
+    let candidate_archive = candidate.clone();
     assert_eq!(
-        compare_archive_personal_best_records(&candidate_archive, &candidate_archive).unwrap(),
+        compare_tail_personal_best_records(&candidate_archive, &candidate_archive).unwrap(),
         Some(PersonalBestComparison::EqualScore)
-    );
-    let legacy = FlightRecordArchiveDocument::Legacy(super::super::tests::water_contact_record());
-    assert_eq!(
-        compare_archive_personal_best_records(&candidate_archive, &legacy).unwrap(),
-        None
     );
     for change in 0..4 {
         let mut existing = candidate.clone();
         match change {
             0 => {
                 existing.control_identity.aircraft_configuration_id =
-                    "bpg041-zero-dihedral-oracle".into()
+                    "different-aircraft-configuration".into()
             }
             1 => existing.control_identity.controller_profile_id = "other-tail-feedback".into(),
             2 => existing.header.aircraft_model_version += 1,
@@ -930,11 +835,7 @@ fn personal_best_does_not_mix_legacy_or_distinct_model_controller_identity() {
             _ => unreachable!(),
         }
         assert_eq!(
-            compare_archive_personal_best_records(
-                &candidate_archive,
-                &FlightRecordArchiveDocument::Tail(existing)
-            )
-            .unwrap(),
+            compare_tail_personal_best_records(&candidate_archive, &existing).unwrap(),
             Some(PersonalBestComparison::DifferentConfiguration)
         );
     }
@@ -1062,10 +963,10 @@ fn tail_canonical_key_tracks_two_axis_profile_content_and_initial_snapshot() {
         );
     }
     let mut incompatible = source.clone();
-    incompatible.header.physics_model_version = Some(birdman_game_core::PHYSICS_MODEL_VERSION - 1);
+    incompatible.header.physics_model_version = birdman_game_core::PHYSICS_MODEL_VERSION - 1;
     assert_eq!(
-        tail_key(&incompatible, profile, ControlMode::Manual, hashes).unwrap(),
-        None
+        tail_key(&incompatible, profile, ControlMode::Manual, hashes),
+        Err(FlightRecordFormatError::InvalidRecord)
     );
     assert_eq!(
         tail_key(&source, profile, ControlMode::Automatic, hashes),
@@ -1120,7 +1021,7 @@ fn tail_canonical_key_distinguishes_guard_presence_and_every_policy_value() {
 }
 
 #[test]
-fn tail_key_ignores_preset_name_and_selected_key_and_selection_excludes_legacy() {
+fn tail_key_ignores_preset_name_and_selected_key_and_selection_uses_identity() {
     use birdman_game_core::{ControlMode, TailControlProfile};
     let mut source = document();
     let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
@@ -1155,28 +1056,19 @@ fn tail_key_ignores_preset_name_and_selected_key_and_selection_excludes_legacy()
     let mut selection = crate::TailPersonalBestSelection::try_new(&candidate)
         .unwrap()
         .unwrap();
-    let legacy = FlightRecordArchiveDocument::Legacy(super::super::tests::water_contact_record());
-    selection.consider_existing(1, &legacy).unwrap();
-    assert_eq!(selection.selected_existing_id(), None);
     let mut other_identity = candidate.clone();
     other_identity
         .control_identity
         .aircraft_configuration_id
         .push_str("-oracle");
-    selection
-        .consider_existing(2, &FlightRecordArchiveDocument::Tail(other_identity))
-        .unwrap();
+    selection.consider_existing(2, &other_identity).unwrap();
     assert_eq!(selection.selected_existing_id(), None);
-    selection
-        .consider_existing(3, &FlightRecordArchiveDocument::Tail(candidate.clone()))
-        .unwrap();
-    selection
-        .consider_existing(4, &FlightRecordArchiveDocument::Tail(candidate.clone()))
-        .unwrap();
+    selection.consider_existing(3, &candidate.clone()).unwrap();
+    selection.consider_existing(4, &candidate.clone()).unwrap();
     assert_eq!(selection.selected_existing_id(), Some(3));
     assert_eq!(selection.key(), key);
     assert_eq!(
-        selection.consider_existing(0, &FlightRecordArchiveDocument::Tail(candidate)),
+        selection.consider_existing(0, &candidate),
         Err(FlightRecordFormatError::InvalidRecord)
     );
 }

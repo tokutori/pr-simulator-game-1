@@ -23,13 +23,10 @@ fn every_nested_failure_preserves_its_typed_leaf() {
         ActuatorError::InvalidFeedbackGain,
         ActuatorError::InvalidLimit,
         ActuatorError::InvalidTimeStep,
-        ActuatorError::InvalidInterpolationFraction,
-        ActuatorError::DeflectionOutOfRange,
     ] {
         round_trip(TailFlightTickError::Control(TailControlError::Actuator(
             cause,
         )));
-        round_trip(TailFlightTickError::Contact(ContactError::Actuator(cause)));
     }
     for cause in [
         MathError::NonFinite,
@@ -69,9 +66,7 @@ fn every_nested_failure_preserves_its_typed_leaf() {
         AeroError::InvalidReferenceGeometry,
         AeroError::InvalidOrientation,
         AeroError::InvalidEnvelope,
-        AeroError::IncompatibleControlEnvelope,
         AeroError::NegativeDragCoefficient,
-        AeroError::InvalidElementSet,
         AeroError::InvalidPolarTable,
         AeroError::InvalidPolarMetadata,
         AeroError::InvalidHybridGeometry,
@@ -81,25 +76,9 @@ fn every_nested_failure_preserves_its_typed_leaf() {
         AeroError::UndefinedFlowAngle,
         AeroError::OutsideEnvelope,
     ] {
-        for evaluation in [
-            AerodynamicEvaluationError::StaticPolar { cause },
-            AerodynamicEvaluationError::Aggregate { cause },
-        ] {
-            round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
-                LoadError::Aerodynamic(evaluation),
-            )));
-        }
-        for role in [
-            AerodynamicRole::LeftWing,
-            AerodynamicRole::RightWing,
-            AerodynamicRole::HorizontalTail,
-            AerodynamicRole::VerticalTail,
-            AerodynamicRole::Fuselage,
-        ] {
-            round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
-                LoadError::Aerodynamic(AerodynamicEvaluationError::Element { role, cause }),
-            )));
-        }
+        round_trip(TailFlightTickError::Dynamics(DynamicsError::Load(
+            LoadError::Aerodynamic(AerodynamicEvaluationError::StaticPolar { cause }),
+        )));
     }
     for cause in [
         WindError::NonFinite,

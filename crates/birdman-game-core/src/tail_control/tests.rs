@@ -355,9 +355,7 @@ fn invalid_profile_and_timestep_preserve_previous_incidence() {
 
 #[test]
 fn pilot_position_mapping_preserves_trim_endpoints_and_explicit_hold() {
-    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
-        .unwrap()
-        .aircraft();
+    let aircraft = crate::HybridMockDefinition::try_new().unwrap().aircraft();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
     let mut held = mapping.trim_target();
     assert_eq!(held.position_m(), 0.12);
@@ -398,9 +396,7 @@ fn pilot_position_mapping_preserves_trim_endpoints_and_explicit_hold() {
 
 #[test]
 fn pilot_position_mapping_rejects_invalid_intent_and_trim_without_changing_the_target() {
-    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
-        .unwrap()
-        .aircraft();
+    let aircraft = crate::HybridMockDefinition::try_new().unwrap().aircraft();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.12).unwrap();
     let previous = mapping.trim_target();
     for invalid in [-1.0000000000000002, 1.0000000000000002] {
@@ -426,9 +422,7 @@ fn pilot_position_mapping_rejects_invalid_intent_and_trim_without_changing_the_t
 
 #[test]
 fn pilot_position_inverse_preserves_trim_endpoints_and_round_trips_held_targets() {
-    let aircraft = crate::SyntheticPlayableFlight::try_new(10.5)
-        .unwrap()
-        .aircraft();
+    let aircraft = crate::HybridMockDefinition::try_new().unwrap().aircraft();
     for trim in [-0.4, 0.12, 0.4] {
         let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
         for normalized in [-1.0, -0.5, 0.0, 0.5, 1.0] {

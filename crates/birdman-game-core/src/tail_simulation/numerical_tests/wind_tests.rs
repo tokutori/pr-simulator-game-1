@@ -8,6 +8,7 @@ const UPPER_ALPHA_MARGIN_RAD: f64 = 0.002;
 const OUTSIDE_ALPHA_INCREMENT_RAD: f64 = 1.0e-6;
 const NEAR_BOUND_OBSERVATION_INTERVALS: usize = 5;
 const AIRSPEED_MPS: f64 = 9.7;
+const NEAR_BOUND_PITCH_GAIN_SECONDS: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug)]
 enum WindCase {
@@ -17,6 +18,14 @@ enum WindCase {
 }
 
 impl WindCase {
+    fn control_profile(self) -> TailControlProfile {
+        let pitch_gain = match self {
+            Self::Uniform | Self::SpatialShear => 0.2,
+            Self::UpperStaticAlpha => NEAR_BOUND_PITCH_GAIN_SECONDS,
+        };
+        TailControlProfile::try_new(pitch_gain, 0.2, 1.0).unwrap()
+    }
+
     fn wind(self) -> WindField<'static> {
         let base = NedVector::try_new(
             UNIFORM_WIND_MPS[0],
@@ -91,7 +100,7 @@ fn state_at_static_alpha(
 }
 
 fn check_wind_step_halving(cadence: Cadence) {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let aircraft = definition.aircraft();
@@ -114,7 +123,7 @@ fn check_wind_step_halving(cadence: Cadence) {
         ] {
             let config = TailFlightTickConfig::new(
                 mode,
-                TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+                wind_case.control_profile(),
                 trim.pilot_mapping().unwrap(),
                 Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
             );
@@ -148,7 +157,7 @@ fn uniform_shear_and_upper_alpha_use_coupled_step_halving_gates() {
 
 #[test]
 fn outside_static_alpha_is_a_typed_atomic_first_stage_refusal() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let loads = HybridAerodynamicLoad::try_new(

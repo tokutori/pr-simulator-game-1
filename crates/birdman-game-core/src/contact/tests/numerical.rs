@@ -1,8 +1,8 @@
-use super::{aircraft, contact_point, geometry, limits};
+use super::{aircraft, contact_point, geometry};
+use crate::contact::detect_flight_state_water_contact;
 use crate::{
-    ActuatorState, BodyVector, ConstantLoad, CourseAxis, DistanceScore, FlightState,
-    FlightTickState, Gravity, NedPoint, NedVector, PilotAcceleration, UnitQuaternion, Wrench,
-    advance, course_distance_score, detect_water_contact,
+    BodyVector, ConstantLoad, CourseAxis, DistanceScore, FlightState, Gravity, NedPoint, NedVector,
+    PilotAcceleration, UnitQuaternion, Wrench, advance, course_distance_score,
 };
 
 const GRAVITY_MPS2: f64 = 9.81;
@@ -210,8 +210,7 @@ fn observe_contact(
         contact_point(0.0, CONTACT_OFFSET_DOWN_M),
     ];
     let contact_geometry = geometry(&contact_points);
-    let mut previous =
-        FlightTickState::try_new(&model, limits(), 0, initial, ActuatorState::neutral()).unwrap();
+    let mut previous = initial;
     let expected_time = case.contact_time();
     near(
         expected_time,
@@ -225,7 +224,7 @@ fn observe_contact(
             EndpointSource::Analytical => case.analytical_state(seconds),
             EndpointSource::Integrated => advance(
                 &model,
-                &previous.flight_state(),
+                &previous,
                 PilotAcceleration::try_new(0.0).unwrap(),
                 Gravity::try_new(GRAVITY_MPS2).unwrap(),
                 &ConstantLoad::new(Wrench::zero()),
@@ -234,23 +233,22 @@ fn observe_contact(
             .unwrap(),
         };
         check_endpoint(next_flight, case, seconds, rounding);
-        let next = FlightTickState::try_new(
+        let next = next_flight;
+        if let Some(sample) = detect_flight_state_water_contact(
             &model,
-            limits(),
+            u64::from(interval_end - 1),
+            previous,
             u64::from(interval_end),
-            next_flight,
-            ActuatorState::neutral(),
+            next,
+            contact_geometry,
         )
-        .unwrap();
-        if let Some(sample) =
-            detect_water_contact(&model, previous, next, limits(), contact_geometry).unwrap()
+        .unwrap()
         {
-            assert_eq!(sample.interval_start_tick(), u64::from(interval_end - 1));
-            assert_eq!(sample.contact_point_index(), 1);
-            assert!(sample.fraction() > 0.0 && sample.fraction() < 1.0);
-            let time_s = (sample.interval_start_tick() as f64 + sample.fraction()) * timestep;
-            let state = sample.state().flight_state();
-            assert_eq!(sample.state().actuator_state(), ActuatorState::neutral());
+            assert_eq!(sample.interval_start_tick, u64::from(interval_end - 1));
+            assert_eq!(sample.contact_point_index, 1);
+            assert!(sample.fraction > 0.0 && sample.fraction < 1.0);
+            let time_s = (sample.interval_start_tick as f64 + sample.fraction) * timestep;
+            let state = sample.flight_state;
             check_static_state(state, rounding);
             let analytical_at_sample = case.analytical_state(time_s);
             for axis in 0..2 {

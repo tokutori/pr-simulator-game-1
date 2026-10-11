@@ -18,29 +18,24 @@ pub use environment::{
 
 pub use flight_record::{
     ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
-    AerodynamicRoleDocument, AerodynamicStageDocument, ContactFailureDocument,
-    DynamicsFailureDocument, FLIGHT_RECORD_SCHEMA_VERSION, FlightRecordArchiveDocument,
+    AerodynamicStageDocument, ContactFailureDocument, DynamicsFailureDocument,
     FlightRecordAssistanceDocument, FlightRecordDifficultyDocument,
-    FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
-    FlightRecordFinalizationDocument, FlightRecordFormatError, FlightRecordHeaderDocument,
-    FlightRecordHudProfileDocument, FlightRecordInformationDocument, FlightRecordInputDocument,
-    FlightRecordPresetDocument, FlightRecordSampleDocument, FlightRecordStateDocument,
-    FlightRecordTailIdentityDocument, FlightRecordTelemetryDocument, FlightRecordWeatherDocument,
-    HybridFailureDocument, HybridFlowDocument, HybridLimitDocument, HybridSiteDocument,
-    HybridSurfaceDocument, LoadFailureDocument, MAX_FLIGHT_RECORD_JSON_BYTES, MathFailureDocument,
+    FlightRecordDispositionDocument, FlightRecordEndReasonDocument, FlightRecordFormatError,
+    FlightRecordHeaderDocument, FlightRecordHudProfileDocument, FlightRecordInformationDocument,
+    FlightRecordPresetDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
+    FlightRecordTelemetryDocument, FlightRecordWeatherDocument, HybridFailureDocument,
+    HybridFlowDocument, HybridLimitDocument, HybridSiteDocument, HybridSurfaceDocument,
+    LoadFailureDocument, MAX_FLIGHT_RECORD_JSON_BYTES, MathFailureDocument,
     TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailControlFailureDocument,
     TailFlightRecordControlsDocument, TailFlightRecordDocument,
     TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, WindFailureDocument, compare_archive_personal_best_records,
+    TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
 };
 pub use personal_best::{
-    PersonalBestContentHashes, PersonalBestSelection, TailPersonalBestConfiguration,
-    TailPersonalBestSelection, canonical_personal_best_key, canonical_tail_personal_best_key,
-    compare_personal_best_records,
+    PersonalBestContentHashes, TailPersonalBestConfiguration, TailPersonalBestSelection,
+    canonical_tail_personal_best_key,
 };
-
-use birdman_game_core::{BodyRateFeedbackConfig, ControlMode, FbwAuthority, FlightScenario};
 
 /// Information presentation selected for a session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -369,58 +364,6 @@ pub enum AssistanceLevel {
     Manual,
 }
 
-/// Controller configuration supplied by a versioned validated profile catalog.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ControllerProfile {
-    level: AssistanceLevel,
-    mode: ControlMode,
-    feedback: BodyRateFeedbackConfig,
-    version: u32,
-}
-
-impl ControllerProfile {
-    /// Creates a profile from validated core control types and a nonzero version.
-    pub const fn try_new(
-        level: AssistanceLevel,
-        mode: ControlMode,
-        feedback: BodyRateFeedbackConfig,
-        version: u32,
-    ) -> Result<Self, ConfigurationError> {
-        if version == 0 {
-            return Err(ConfigurationError::InvalidVersion);
-        }
-        if matches!(level, AssistanceLevel::Manual) != matches!(mode, ControlMode::Manual) {
-            return Err(ConfigurationError::ControllerModeMismatch);
-        }
-        Ok(Self {
-            level,
-            mode,
-            feedback,
-            version,
-        })
-    }
-
-    /// Returns the assistance category.
-    pub const fn level(self) -> AssistanceLevel {
-        self.level
-    }
-
-    /// Returns the validated authority mode.
-    pub const fn mode(self) -> ControlMode {
-        self.mode
-    }
-
-    /// Returns the validated feedback parameters.
-    pub const fn feedback(self) -> BodyRateFeedbackConfig {
-        self.feedback
-    }
-
-    /// Returns the controller profile version.
-    pub const fn version(self) -> u32 {
-        self.version
-    }
-}
-
 /// Scenario identity selected from a catalog without clock or implicit randomness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScenarioSelection {
@@ -520,97 +463,6 @@ impl<'a> ScenarioCatalog<'a> {
     }
 }
 
-/// A validated scenario model paired with its catalog metadata.
-#[derive(Clone, Copy)]
-pub struct ScenarioModel<'a> {
-    /// Versioned selection metadata.
-    pub metadata: ScenarioCatalogEntry,
-    /// Immutable physical scenario used by the game session.
-    pub model: FlightScenario<'a>,
-}
-
-/// Versioned catalog mapping scenario identities to validated core models.
-pub struct ScenarioModelCatalog<'models, 'scenario> {
-    version: u32,
-    models: &'models [ScenarioModel<'scenario>],
-}
-
-impl<'models, 'scenario> ScenarioModelCatalog<'models, 'scenario> {
-    /// Creates a model catalog sorted by unique scenario ID with valid versions.
-    pub const fn try_new(
-        version: u32,
-        models: &'models [ScenarioModel<'scenario>],
-    ) -> Result<Self, ConfigurationError> {
-        if version == 0 {
-            return Err(ConfigurationError::InvalidVersion);
-        }
-        let mut index = 0;
-        while index < models.len() {
-            let metadata = models[index].metadata;
-            if metadata.scenario_version == 0
-                || metadata.aircraft_model_version == 0
-                || metadata.environment_version == 0
-            {
-                return Err(ConfigurationError::InvalidVersion);
-            }
-            if index > 0 && models[index - 1].metadata.scenario_id >= metadata.scenario_id {
-                return Err(ConfigurationError::UnorderedScenarioCatalog);
-            }
-            index += 1;
-        }
-        Ok(Self { version, models })
-    }
-
-    /// Resolves the selected identity to exactly matching physical model metadata.
-    pub fn resolve(
-        &self,
-        selection: ScenarioSelection,
-    ) -> Result<FlightScenario<'scenario>, ConfigurationError> {
-        if selection.catalog_version != self.version {
-            return Err(ConfigurationError::ScenarioModelUnavailable);
-        }
-        self.models
-            .iter()
-            .find(|candidate| {
-                candidate.metadata.scenario_id == selection.scenario_id
-                    && candidate.metadata.scenario_version == selection.scenario_version
-                    && candidate.metadata.aircraft_model_version == selection.aircraft_model_version
-                    && candidate.metadata.environment_version == selection.environment_version
-                    && candidate.metadata.weather == selection.weather
-            })
-            .map(|candidate| candidate.model)
-            .ok_or(ConfigurationError::ScenarioModelUnavailable)
-    }
-}
-
-/// Resolved, versioned configuration metadata for a session.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ResolvedConfiguration {
-    /// Complete difficulty selection, including all three independent axes.
-    pub difficulty: DifficultySettings,
-    /// Resolved controller profile.
-    pub controller: ControllerProfile,
-    /// Deterministically selected scenario identity.
-    pub scenario: ScenarioSelection,
-}
-
-impl ResolvedConfiguration {
-    /// Returns the Information axis for presentation.
-    pub const fn information(self) -> InformationLevel {
-        self.difficulty.information()
-    }
-
-    /// Returns the Assistance axis represented by the selected profile.
-    pub const fn assistance(self) -> AssistanceLevel {
-        self.controller.level()
-    }
-
-    /// Returns the Weather axis represented by the selected scenario.
-    pub const fn weather(self) -> WeatherClass {
-        self.scenario.weather
-    }
-}
-
 /// Typed configuration resolution failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigurationError {
@@ -620,53 +472,8 @@ pub enum ConfigurationError {
     UnorderedScenarioCatalog,
     /// No scenario or controller profile matches the requested axis.
     ScenarioUnavailable,
-    /// The selected scenario identity has no exact physical model entry.
-    ScenarioModelUnavailable,
-    /// No controller profile matches the requested Assistance level.
-    ControllerUnavailable,
-    /// More than one profile matches the requested Assistance level.
-    DuplicateControllerProfile,
     /// Custom settings require all three explicit axis values.
     CustomRequiresExplicitAxes,
-    /// Manual profiles must use Manual mode and assisted profiles must not.
-    ControllerModeMismatch,
-}
-
-/// Resolves independent axes against explicit controller and scenario catalogs.
-pub fn resolve_configuration(
-    settings: DifficultySettings,
-    seed: u64,
-    controller_profiles: &[ControllerProfile],
-    scenarios: &ScenarioCatalog<'_>,
-) -> Result<ResolvedConfiguration, ConfigurationError> {
-    let mut matching_profiles = controller_profiles
-        .iter()
-        .filter(|profile| profile.level == settings.assistance);
-    let controller = matching_profiles
-        .next()
-        .copied()
-        .ok_or(ConfigurationError::ControllerUnavailable)?;
-    if matching_profiles.next().is_some() {
-        return Err(ConfigurationError::DuplicateControllerProfile);
-    }
-    let scenario = scenarios.select(settings.weather, seed)?;
-    Ok(ResolvedConfiguration {
-        difficulty: settings,
-        controller,
-        scenario,
-    })
-}
-
-/// Creates the manual controller mode for a validated profile catalog.
-pub fn manual_control_mode() -> ControlMode {
-    ControlMode::Manual
-}
-
-/// Creates a shared controller mode from a validated authority fraction.
-pub fn shared_control_mode(
-    authority: f64,
-) -> Result<ControlMode, birdman_game_core::ActuatorError> {
-    FbwAuthority::try_new(authority).map(ControlMode::Shared)
 }
 
 #[cfg(test)]
@@ -703,10 +510,6 @@ mod tests {
             weather: WeatherClass::Typical,
         },
     ];
-
-    fn feedback() -> BodyRateFeedbackConfig {
-        BodyRateFeedbackConfig::try_new([0.2; 3], [0.2; 3]).unwrap()
-    }
 
     #[test]
     fn axis_edits_mark_custom_and_preserve_other_axes() {
@@ -769,168 +572,6 @@ mod tests {
         assert_eq!(first.environment_version, 1);
         assert_eq!(first.catalog_version, 4);
         assert_eq!(other_seed.scenario_id, 11);
-    }
-
-    #[test]
-    fn information_edit_does_not_change_controller_or_weather_resolution() {
-        let profile = ControllerProfile::try_new(
-            AssistanceLevel::Assisted,
-            shared_control_mode(0.5).unwrap(),
-            feedback(),
-            2,
-        )
-        .unwrap();
-        let catalog = ScenarioCatalog::try_new(1, &ENTRIES).unwrap();
-        let settings = DifficultySettings::preset(DifficultyPreset::Standard).unwrap();
-        let original = resolve_configuration(settings, 8, &[profile], &catalog).unwrap();
-        let edited = resolve_configuration(
-            settings.with_information(InformationLevel::Minimal),
-            8,
-            &[profile],
-            &catalog,
-        )
-        .unwrap();
-
-        assert_ne!(original.information(), edited.information());
-        assert_eq!(original.controller, edited.controller);
-        assert_eq!(original.scenario, edited.scenario);
-    }
-
-    #[test]
-    fn information_only_edit_preserves_fixed_input_physical_trajectory() {
-        let fixture = birdman_game_core::SyntheticPlayableFlight::try_new(10.5).unwrap();
-        let (aircraft, scenario, feedback, _) = fixture.into_parts();
-        let profile =
-            ControllerProfile::try_new(AssistanceLevel::Manual, manual_control_mode(), feedback, 1)
-                .unwrap();
-        let catalog = ScenarioCatalog::try_new(1, &ENTRIES).unwrap();
-        let settings = DifficultySettings::custom(
-            InformationLevel::Full,
-            AssistanceLevel::Manual,
-            WeatherClass::Mild,
-        );
-        let original = resolve_configuration(settings, 0, &[profile], &catalog).unwrap();
-        let edited = resolve_configuration(
-            settings.with_information(InformationLevel::Minimal),
-            0,
-            &[profile],
-            &catalog,
-        )
-        .unwrap();
-        let run = |mode| {
-            let mut state = scenario.initial_state();
-            for _ in 0..40 {
-                let input = birdman_game_core::FlightFeedbackInput::new(
-                    birdman_game_core::SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
-                    birdman_game_core::BodyVector::zero(),
-                    birdman_game_core::PilotPositionTarget::try_new(&aircraft, 0.0).unwrap(),
-                );
-                match scenario
-                    .advance_feedback_tick_with_contact(state, mode, feedback, input)
-                    .unwrap()
-                {
-                    birdman_game_core::FlightTickOutcome::Advanced(next) => state = next,
-                    birdman_game_core::FlightTickOutcome::WaterContact(_) => break,
-                }
-            }
-            state
-        };
-
-        assert_eq!(
-            run(original.controller.mode()),
-            run(edited.controller.mode())
-        );
-        assert_eq!(original.scenario, edited.scenario);
-    }
-
-    #[test]
-    fn assistance_edit_changes_only_controller_profile_resolution() {
-        let assisted = ControllerProfile::try_new(
-            AssistanceLevel::Assisted,
-            shared_control_mode(0.5).unwrap(),
-            feedback(),
-            2,
-        )
-        .unwrap();
-        let manual = ControllerProfile::try_new(
-            AssistanceLevel::Manual,
-            manual_control_mode(),
-            feedback(),
-            1,
-        )
-        .unwrap();
-        let catalog = ScenarioCatalog::try_new(1, &ENTRIES).unwrap();
-        let settings = DifficultySettings::preset(DifficultyPreset::Standard).unwrap();
-        let original = resolve_configuration(settings, 3, &[assisted, manual], &catalog).unwrap();
-        let edited = resolve_configuration(
-            settings.with_assistance(AssistanceLevel::Manual),
-            3,
-            &[assisted, manual],
-            &catalog,
-        )
-        .unwrap();
-
-        assert_ne!(original.controller, edited.controller);
-        assert_eq!(original.information(), edited.information());
-        assert_eq!(original.scenario, edited.scenario);
-    }
-
-    #[test]
-    fn weather_edit_changes_only_scenario_resolution() {
-        let profile = ControllerProfile::try_new(
-            AssistanceLevel::Assisted,
-            shared_control_mode(0.5).unwrap(),
-            feedback(),
-            2,
-        )
-        .unwrap();
-        let catalog = ScenarioCatalog::try_new(1, &ENTRIES).unwrap();
-        let settings = DifficultySettings::preset(DifficultyPreset::Standard).unwrap();
-        let original = resolve_configuration(settings, 3, &[profile], &catalog).unwrap();
-        let edited = resolve_configuration(
-            settings.with_weather(WeatherClass::Mild),
-            3,
-            &[profile],
-            &catalog,
-        )
-        .unwrap();
-
-        assert_eq!(original.information(), edited.information());
-        assert_eq!(original.controller, edited.controller);
-        assert_ne!(original.scenario, edited.scenario);
-    }
-
-    #[test]
-    fn selected_identity_must_resolve_to_the_exact_versioned_model() {
-        let fixture = birdman_game_core::SyntheticPlayableFlight::try_new(10.5).unwrap();
-        let (_, scenario, _, _) = fixture.into_parts();
-        let metadata = ScenarioCatalogEntry {
-            scenario_id: 3,
-            scenario_version: 1,
-            aircraft_model_version: 2,
-            environment_version: 1,
-            weather: WeatherClass::Mild,
-        };
-        let models = [ScenarioModel {
-            metadata,
-            model: scenario,
-        }];
-        let definitions = [metadata];
-        let model_catalog = ScenarioModelCatalog::try_new(4, &models).unwrap();
-        let selection_catalog = ScenarioCatalog::try_new(4, &definitions).unwrap();
-        let selection = selection_catalog.select(WeatherClass::Mild, 0).unwrap();
-        let resolved = model_catalog.resolve(selection).unwrap();
-
-        assert_eq!(resolved.initial_state(), scenario.initial_state());
-
-        let mismatched = ScenarioSelection {
-            scenario_version: 2,
-            ..selection
-        };
-        assert_eq!(
-            model_catalog.resolve(mismatched),
-            Err(ConfigurationError::ScenarioModelUnavailable)
-        );
     }
 
     #[test]

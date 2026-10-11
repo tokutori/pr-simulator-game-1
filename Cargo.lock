@@ -1412,6 +1412,7 @@ version = "0.1.0"
 dependencies = [
  "birdman-game-core",
  "birdman-game-format",
+ "birdman-game-session",
  "serde",
  "serde_json",
 ]

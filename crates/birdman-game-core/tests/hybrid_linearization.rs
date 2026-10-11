@@ -5,12 +5,12 @@ use std::cell::Cell;
 
 use birdman_game_core::{
     AerodynamicEvaluationError, AircraftModel, BodyPoint, BodyVector, ControlMode,
-    ExternalLoadProvider, FlightState, Gravity, HybridAerodynamicLoad, HybridMockConfiguration,
-    HybridMockDefinition, HybridMockTrim, HybridModel, LoadError, NedPoint, NedVector,
-    PHYSICS_DT_SECONDS, PilotAcceleration, TailControlProfile, TailFlightTickConfig,
-    TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, UnitQuaternion,
-    WaterContactGeometry, WindField, Wrench, advance, advance_tail_flight_tick_with_contact_report,
+    ExternalLoadProvider, FlightState, Gravity, HybridAerodynamicLoad, HybridMockDefinition,
+    HybridMockTrim, HybridModel, LoadError, NedPoint, NedVector, PHYSICS_DT_SECONDS,
+    PilotAcceleration, TailControlProfile, TailFlightTickConfig, TailFlightTickInput,
+    TailFlightTickOutcome, TailFlightTickState, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindField,
+    Wrench, advance, advance_tail_flight_tick_with_contact_report,
 };
 use nalgebra::{Quaternion, SMatrix, SVector, UnitQuaternion as Rotation, Vector3, linalg::Schur};
 
@@ -174,7 +174,7 @@ impl TickMap<'_> {
 }
 
 fn with_map(mode: ControlMode, verify: impl FnOnce(&TickMap<'_>)) {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let initial_flight = trim

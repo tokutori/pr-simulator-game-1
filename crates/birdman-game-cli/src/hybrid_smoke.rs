@@ -1,22 +1,19 @@
 use birdman_game_core::{
-    BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis, FbwAuthority,
-    GameSession, GameSessionConfiguration, GameSessionError, Gravity, HybridAerodynamicLoad,
-    HybridMockConfiguration, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint,
-    NedVector, SessionPhase, SessionScenarioIdentity, TailControlProfile, TailFlightScenario,
-    TailFlightScenarioParameters, TailFlightTickInput, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, WindField,
+    ControlMode, FbwAuthority, GameSession, GameSessionConfiguration, GameSessionError,
+    SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailRateTarget,
 };
 use birdman_game_format::{
-    AssistanceLevel, DifficultySettings, FlightRecordArchiveDocument, FlightRecordHeaderDocument,
-    FlightRecordStateDocument, FlightRecordTailIdentityDocument, InformationLevel,
-    TailFlightRecordControlsDocument, TailFlightRecordDocument,
-    TailFlightRecordFinalizationDocument, WeatherClass,
+    AssistanceLevel, DifficultySettings, FlightRecordHeaderDocument, FlightRecordStateDocument,
+    FlightRecordTailIdentityDocument, InformationLevel, TailFlightRecordControlsDocument,
+    TailFlightRecordDocument, TailFlightRecordFinalizationDocument, WeatherClass,
 };
+use birdman_game_session::HybridSessionPreparation;
 use serde::Serialize;
 
 const TICK_LIMIT: u64 = 8;
-const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
-const CONTROLLER_ID: &str = "bpg042-native-tail-smoke";
+#[cfg(test)]
+const CONTROLLER_ID: &str = "bpg040-tail-rate-feedback";
 
 pub(super) fn run_verification(requested_mode: &str) -> Result<(), String> {
     let modes = [
@@ -59,67 +56,18 @@ fn input(tick: u64) -> Result<TailFlightTickInput, String> {
 }
 
 fn verify_mode(mode: ControlMode) -> Result<TailFlightRecordDocument, String> {
-    verify_mode_at_speed(mode, HybridMockTrim::AIRSPEED_MPS)
+    let preparation =
+        HybridSessionPreparation::try_new_for_weather(mode, TICK_LIMIT, 0, WeatherClass::Calm)
+            .map_err(super::display_error)?;
+    let (configuration, identity) = preparation.into_parts();
+    run_configuration(mode, configuration, identity)
 }
 
-fn verify_mode_at_speed(
+fn run_configuration(
     mode: ControlMode,
-    speed_mps: f64,
+    configuration: GameSessionConfiguration<'_>,
+    record_identity: FlightRecordTailIdentityDocument,
 ) -> Result<TailFlightRecordDocument, String> {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard)
-        .map_err(super::display_error)?;
-    let surfaces = definition.surfaces().map_err(super::display_error)?;
-    let trim = HybridMockTrim::try_new(&definition).map_err(super::display_error)?;
-    let cg_position = NedPoint::try_new(0.0, 0.0, -10.5).map_err(super::display_error)?;
-    let initial = trim
-        .initial_state_for_ground_launch(cg_position, 0.0)
-        .map_err(super::display_error)?;
-    let launch = CompositeCgLaunchConditions::try_new(
-        cg_position,
-        initial
-            .datum_velocity_ned()
-            .scaled(speed_mps / HybridMockTrim::AIRSPEED_MPS)
-            .map_err(super::display_error)?,
-        initial.attitude_body_to_ned(),
-        BodyVector::zero(),
-        trim.pilot_position_m(),
-        0.0,
-    )
-    .map_err(super::display_error)?;
-    let parameters = TailFlightScenarioParameters::try_new(
-        definition.aircraft(),
-        launch,
-        TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).map_err(super::display_error)?,
-        &CONTACT_POINTS,
-        CourseAxis::try_new(1.0, 0.0).map_err(super::display_error)?,
-    )
-    .map_err(super::display_error)?;
-    let load = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(definition.polar().map_err(super::display_error)?, &surfaces)
-            .map_err(super::display_error)?,
-        HybridMockTrim::AIR_DENSITY_KG_M3,
-        WindField::uniform(NedVector::zero()),
-    )
-    .map_err(super::display_error)?;
-    let scenario = TailFlightScenario::try_new(
-        parameters,
-        load,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).map_err(super::display_error)?,
-    )
-    .map_err(super::display_error)?;
-    let identity = SessionScenarioIdentity {
-        catalog_version: 2,
-        scenario_id: 42,
-        scenario_version: 1,
-        aircraft_model_version: definition.configuration().model_version(),
-        environment_version: 1,
-        controller_profile_version: 1,
-        seed: 0,
-    };
-    let configuration =
-        GameSessionConfiguration::try_new_tail(scenario, mode, TICK_LIMIT, identity)
-            .map_err(super::display_error)?;
     let mut session = GameSession::new();
     session.open_setup().map_err(super::display_error)?;
     session
@@ -157,16 +105,9 @@ fn verify_mode_at_speed(
         },
         WeatherClass::Calm,
     );
-    let document = TailFlightRecordDocument::from_record(
-        record,
-        settings,
-        FlightRecordTailIdentityDocument {
-            aircraft_configuration_id: definition.configuration().configuration_id().to_owned(),
-            controller_profile_id: CONTROLLER_ID.to_owned(),
-        },
-    )
-    .map_err(super::display_error)?;
-    let archive = FlightRecordArchiveDocument::decode_json(
+    let document = TailFlightRecordDocument::from_record(record, settings, record_identity)
+        .map_err(super::display_error)?;
+    let archive = TailFlightRecordDocument::decode_json(
         &document.encode_json().map_err(super::display_error)?,
     )
     .map_err(super::display_error)?;
@@ -218,6 +159,81 @@ fn named_terminal_json(mode: &str, document: &TailFlightRecordDocument) -> Resul
         finalization: document.finalization,
     })
     .map_err(super::display_error)
+}
+
+#[cfg(test)]
+fn verify_mode_at_speed(
+    mode: ControlMode,
+    speed_mps: f64,
+) -> Result<TailFlightRecordDocument, String> {
+    use birdman_game_core::{
+        BodyPoint, BodyVector, CompositeCgLaunchConditions, CourseAxis, Gravity,
+        HybridAerodynamicLoad, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint,
+        NedVector, SessionScenarioIdentity, TailControlProfile, TailFlightScenario,
+        TailFlightScenarioParameters, TailIncidence, WindField,
+    };
+    const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
+    let definition = HybridMockDefinition::try_new().map_err(super::display_error)?;
+    let surfaces = definition.surfaces().map_err(super::display_error)?;
+    let trim = HybridMockTrim::try_new(&definition).map_err(super::display_error)?;
+    let cg_position = NedPoint::try_new(0.0, 0.0, -10.5).map_err(super::display_error)?;
+    let initial = trim
+        .initial_state_for_ground_launch(cg_position, 0.0)
+        .map_err(super::display_error)?;
+    let launch = CompositeCgLaunchConditions::try_new(
+        cg_position,
+        initial
+            .datum_velocity_ned()
+            .scaled(speed_mps / HybridMockTrim::AIRSPEED_MPS)
+            .map_err(super::display_error)?,
+        initial.attitude_body_to_ned(),
+        BodyVector::zero(),
+        trim.pilot_position_m(),
+        0.0,
+    )
+    .map_err(super::display_error)?;
+    let parameters = TailFlightScenarioParameters::try_new(
+        definition.aircraft(),
+        launch,
+        TailIncidence::neutral(),
+        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).map_err(super::display_error)?,
+        &CONTACT_POINTS,
+        CourseAxis::try_new(1.0, 0.0).map_err(super::display_error)?,
+    )
+    .map_err(super::display_error)?;
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().map_err(super::display_error)?, &surfaces)
+            .map_err(super::display_error)?,
+        HybridMockTrim::AIR_DENSITY_KG_M3,
+        WindField::uniform(NedVector::zero()),
+    )
+    .map_err(super::display_error)?;
+    let scenario = TailFlightScenario::try_new(
+        parameters,
+        load,
+        TailControlProfile::try_new(0.2, 0.2, 1.0).map_err(super::display_error)?,
+    )
+    .map_err(super::display_error)?;
+    let identity = SessionScenarioIdentity {
+        catalog_version: 3,
+        scenario_id: 1,
+        scenario_version: 3,
+        aircraft_model_version: HybridMockDefinition::MODEL_VERSION,
+        environment_version: 1,
+        controller_profile_version: 3,
+        seed: 0,
+    };
+    let configuration =
+        GameSessionConfiguration::try_new_tail(scenario, mode, TICK_LIMIT, identity)
+            .map_err(super::display_error)?;
+    run_configuration(
+        mode,
+        configuration,
+        FlightRecordTailIdentityDocument {
+            aircraft_configuration_id: HybridMockDefinition::CONFIGURATION_ID.to_owned(),
+            controller_profile_id: CONTROLLER_ID.to_owned(),
+        },
+    )
 }
 
 #[cfg(test)]

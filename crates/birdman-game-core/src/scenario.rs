@@ -1,23 +1,6 @@
-use crate::aerodynamics::{AerodynamicLoadProvider, AerodynamicModel, WindFieldAerodynamicLoad};
-use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
 use crate::contact::{ContactError, WaterContactGeometry};
-use crate::dynamics::{
-    AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, LoadError, Wrench,
-    total_momentum,
-};
-use crate::flight_control::{
-    ActuatorConfig, ActuatorState, BodyRateFeedbackConfig, ControlMode, SurfaceDeflections,
-};
+use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
 use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector, UnitQuaternion};
-use crate::scoring::CourseAxis;
-use crate::simulation::{
-    FlightFeedbackInput, FlightFeedbackRunConfig, FlightRunError, FlightRunOutcome,
-    FlightTickConfig, FlightTickError, FlightTickInput, FlightTickOutcome, FlightTickState,
-    advance_feedback_flight_tick_with_contact, advance_flight_tick_with_contact,
-    run_feedback_flight, run_flight,
-};
-use crate::wind_field::WindField;
-
 /// Immutable launch inputs expressed at the composite center of mass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CompositeCgLaunchConditions {
@@ -114,76 +97,6 @@ pub fn flight_state_from_composite_cg_launch(
     Ok(state)
 }
 
-/// Validated model and initial-condition inputs for one reproducible flight scenario.
-pub struct FlightScenarioDefinition<'a> {
-    /// Airframe and moving-pilot mass properties.
-    pub aircraft: AircraftModel,
-    /// Launch pose and ground velocity expressed at composite center of mass.
-    pub launch: CompositeCgLaunchConditions,
-    /// Five-element aerodynamic model.
-    pub aerodynamics: AerodynamicModel,
-    /// Positive ambient air density in kg/m³.
-    pub air_density_kg_m3: f64,
-    /// Stationary spatial wind field sampled at every element and RK stage.
-    pub wind_field: WindField<'a>,
-    /// Per-axis physical actuator limits.
-    pub actuator_limits: [ActuatorConfig; 3],
-    /// Initial physical actuator deflections, validated against `actuator_limits`.
-    pub initial_actuator_state: ActuatorState,
-    /// Gravitational acceleration for every tick in this scenario.
-    pub gravity: crate::dynamics::Gravity,
-    /// Fixed structural contact points in datum body coordinates.
-    pub contact_points_body: &'a [BodyPoint],
-    /// Horizontal course direction used to score this flight.
-    pub course_axis: CourseAxis,
-}
-
-/// Validated provider-independent launch, tick, and contact parameters.
-///
-/// The three-axis actuator configuration belongs to the generic tick boundary.
-/// It does not establish three-axis aerodynamic authority for a selected provider.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FlightScenarioParameters<'a> {
-    aircraft: AircraftModel,
-    initial_state: FlightTickState,
-    actuator_limits: [ActuatorConfig; 3],
-    gravity: crate::dynamics::Gravity,
-    contact_geometry: WaterContactGeometry<'a>,
-    course_axis: CourseAxis,
-}
-
-impl<'a> FlightScenarioParameters<'a> {
-    /// Validates launch, initial actuator state, and contact geometry exactly once.
-    pub fn try_new(
-        aircraft: AircraftModel,
-        launch: CompositeCgLaunchConditions,
-        actuator_limits: [ActuatorConfig; 3],
-        initial_actuator_state: ActuatorState,
-        gravity: crate::dynamics::Gravity,
-        contact_points_body: &'a [BodyPoint],
-        course_axis: CourseAxis,
-    ) -> Result<Self, FlightScenarioError> {
-        let initial_flight = prepare_scenario_launch(&aircraft, launch)?;
-        let initial_state = FlightTickState::try_new(
-            &aircraft,
-            actuator_limits,
-            0,
-            initial_flight,
-            initial_actuator_state,
-        )
-        .map_err(FlightScenarioError::InitialState)?;
-        let contact_geometry = prepare_scenario_contact(contact_points_body)?;
-        Ok(Self {
-            aircraft,
-            initial_state,
-            actuator_limits,
-            gravity,
-            contact_geometry,
-            course_axis,
-        })
-    }
-}
-
 pub(crate) fn prepare_scenario_launch(
     aircraft: &AircraftModel,
     launch: CompositeCgLaunchConditions,
@@ -195,53 +108,6 @@ pub(crate) fn prepare_scenario_contact(
     contact_points_body: &[BodyPoint],
 ) -> Result<WaterContactGeometry<'_>, FlightScenarioError> {
     WaterContactGeometry::try_new(contact_points_body).map_err(FlightScenarioError::Contact)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "The roughly 2.8 KiB legacy owned load must share an allocation-free Copy enum with borrowed providers"
-)]
-enum ScenarioAerodynamicLoads<'a> {
-    OwnedElement(WindFieldAerodynamicLoad<'a>),
-    Selected(AerodynamicLoadProvider<'a>),
-}
-
-impl ScenarioAerodynamicLoads<'_> {
-    fn wind_velocity_at(
-        &self,
-        position_ned: NedPoint,
-    ) -> Result<NedVector, crate::wind_field::WindError> {
-        match self {
-            Self::OwnedElement(load) => load.wind_velocity_at(position_ned),
-            Self::Selected(load) => load.wind_velocity_at(position_ned),
-        }
-    }
-}
-
-impl ExternalLoadProvider for ScenarioAerodynamicLoads<'_> {
-    fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
-        match self {
-            Self::OwnedElement(load) => load.evaluate(model, state),
-            Self::Selected(load) => load.evaluate(model, state),
-        }
-    }
-
-    fn evaluate_with_surface_deflections(
-        &self,
-        model: &AircraftModel,
-        state: &FlightState,
-        deflections: SurfaceDeflections,
-    ) -> Result<Wrench, LoadError> {
-        match self {
-            Self::OwnedElement(load) => {
-                load.evaluate_with_surface_deflections(model, state, deflections)
-            }
-            Self::Selected(load) => {
-                load.evaluate_with_surface_deflections(model, state, deflections)
-            }
-        }
-    }
 }
 
 /// Core-derived telemetry at the composite center of mass.
@@ -281,206 +147,10 @@ pub enum FlightTelemetryError {
 /// Errors while validating scenario-wide model and initial-state boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightScenarioError {
-    /// The aerodynamic provider rejected density or environment input.
-    Aerodynamic(AeroError),
-    /// The selected provider rejects configured travel or initial controls.
-    ControlEnvelope(AerodynamicEvaluationError),
     /// Launch inputs could not be converted to a valid flight state.
     Launch(DynamicsError),
-    /// The initial tick state or actuator state is invalid.
-    InitialState(FlightTickError),
     /// Contact geometry is invalid.
     Contact(ContactError),
-}
-
-/// Immutable validated launch, model, environment, and termination conditions.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FlightScenario<'a> {
-    aircraft: AircraftModel,
-    initial_state: FlightTickState,
-    actuator_limits: [ActuatorConfig; 3],
-    gravity: crate::dynamics::Gravity,
-    loads: ScenarioAerodynamicLoads<'a>,
-    contact_geometry: WaterContactGeometry<'a>,
-    course_axis: CourseAxis,
-}
-
-impl<'a> FlightScenario<'a> {
-    /// Validates and assembles one reusable flight scenario without allocation.
-    pub fn try_new(definition: FlightScenarioDefinition<'a>) -> Result<Self, FlightScenarioError> {
-        definition
-            .aerodynamics
-            .validate_actuator_limits(definition.actuator_limits)
-            .map_err(FlightScenarioError::ControlEnvelope)?;
-        let loads = WindFieldAerodynamicLoad::try_new(
-            definition.aerodynamics,
-            definition.air_density_kg_m3,
-            definition.wind_field,
-        )
-        .map_err(FlightScenarioError::Aerodynamic)?;
-        let parameters = FlightScenarioParameters::try_new(
-            definition.aircraft,
-            definition.launch,
-            definition.actuator_limits,
-            definition.initial_actuator_state,
-            definition.gravity,
-            definition.contact_points_body,
-            definition.course_axis,
-        )?;
-        Ok(Self::from_parameters(
-            parameters,
-            ScenarioAerodynamicLoads::OwnedElement(loads),
-        ))
-    }
-
-    /// Selects one borrowed aerodynamic provider at the generic tick boundary.
-    ///
-    /// ElementOnly validates all three actuator travels. StaticPolar requires
-    /// neutral initial controls and rejects every later nonneutral evaluation.
-    /// Hybrid requires both tails, zero initial roll, and pitch/yaw travel at
-    /// most 0.2 rad. Its generic roll travel is not an aerodynamic authority:
-    /// any later nonzero roll is a typed UnsupportedControl failure. Pitch/yaw
-    /// map explicitly to physical tail incidence, not legacy command semantics.
-    /// No provider promises that all dynamic states stay inside its envelope.
-    pub fn try_new_with_aerodynamic_provider(
-        parameters: FlightScenarioParameters<'a>,
-        provider: AerodynamicLoadProvider<'a>,
-    ) -> Result<Self, FlightScenarioError> {
-        provider
-            .validate_scenario_control_boundary(
-                parameters.actuator_limits,
-                parameters.initial_state.actuator_state(),
-            )
-            .map_err(FlightScenarioError::ControlEnvelope)?;
-        Ok(Self::from_parameters(
-            parameters,
-            ScenarioAerodynamicLoads::Selected(provider),
-        ))
-    }
-
-    fn from_parameters(
-        parameters: FlightScenarioParameters<'a>,
-        loads: ScenarioAerodynamicLoads<'a>,
-    ) -> Self {
-        Self {
-            aircraft: parameters.aircraft,
-            initial_state: parameters.initial_state,
-            actuator_limits: parameters.actuator_limits,
-            gravity: parameters.gravity,
-            loads,
-            contact_geometry: parameters.contact_geometry,
-            course_axis: parameters.course_axis,
-        }
-    }
-
-    /// Returns the validated tick-zero state.
-    pub const fn initial_state(&self) -> FlightTickState {
-        self.initial_state
-    }
-
-    /// Returns the aircraft model validated with this scenario.
-    pub const fn aircraft(&self) -> AircraftModel {
-        self.aircraft
-    }
-
-    /// Returns the course axis used to score this scenario.
-    pub const fn course_axis(&self) -> CourseAxis {
-        self.course_axis
-    }
-
-    /// Returns the validated scenario wind at an arbitrary finite NED point.
-    pub fn wind_velocity_at(
-        &self,
-        position_ned: NedPoint,
-    ) -> Result<NedVector, crate::wind_field::WindError> {
-        self.loads.wind_velocity_at(position_ned)
-    }
-
-    /// Derives telemetry at the composite center of mass.
-    pub fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
-        derive_flight_telemetry(&self.aircraft, state, |position| {
-            self.loads.wind_velocity_at(position)
-        })
-    }
-
-    /// Creates the fixed physics configuration for the requested control mode.
-    pub const fn tick_config(&self, control_mode: ControlMode) -> FlightTickConfig {
-        FlightTickConfig::new(control_mode, self.actuator_limits, self.gravity)
-    }
-
-    /// Advances one controlled tick and terminates at the first water contact.
-    pub fn advance_tick_with_contact(
-        &self,
-        previous: FlightTickState,
-        control_mode: ControlMode,
-        input: FlightTickInput,
-    ) -> Result<FlightTickOutcome, FlightTickError> {
-        advance_flight_tick_with_contact(
-            &self.aircraft,
-            previous,
-            self.tick_config(control_mode),
-            input,
-            &self.loads,
-            self.contact_geometry,
-        )
-    }
-
-    /// Advances one tick with FBW commands derived from the previous core state.
-    pub fn advance_feedback_tick_with_contact(
-        &self,
-        previous: FlightTickState,
-        control_mode: ControlMode,
-        feedback: BodyRateFeedbackConfig,
-        input: FlightFeedbackInput,
-    ) -> Result<FlightTickOutcome, FlightTickError> {
-        advance_feedback_flight_tick_with_contact(
-            &self.aircraft,
-            previous,
-            self.tick_config(control_mode),
-            feedback,
-            input,
-            &self.loads,
-            self.contact_geometry,
-        )
-    }
-
-    /// Replays a fixed input sequence until contact or its tick limit.
-    pub fn run(
-        &self,
-        control_mode: ControlMode,
-        inputs: &[FlightTickInput],
-    ) -> Result<FlightRunOutcome, FlightRunError> {
-        run_flight(
-            &self.aircraft,
-            self.initial_state,
-            self.tick_config(control_mode),
-            inputs,
-            &self.loads,
-            self.contact_geometry,
-            self.course_axis,
-        )
-    }
-
-    /// Replays pilot intents while deriving FBW commands from each preceding core state.
-    pub fn run_feedback(
-        &self,
-        control_mode: ControlMode,
-        feedback: BodyRateFeedbackConfig,
-        inputs: &[FlightFeedbackInput],
-    ) -> Result<FlightRunOutcome, FlightRunError> {
-        run_feedback_flight(
-            &self.aircraft,
-            self.initial_state,
-            FlightFeedbackRunConfig::new(
-                self.tick_config(control_mode),
-                feedback,
-                self.course_axis,
-            ),
-            inputs,
-            &self.loads,
-            self.contact_geometry,
-        )
-    }
 }
 
 pub(crate) fn derive_flight_telemetry(
@@ -569,20 +239,10 @@ fn map_math_error(error: MathError) -> DynamicsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompositeCgLaunchConditions, FlightScenario, FlightScenarioDefinition, FlightScenarioError,
-        flight_state_from_composite_cg_launch,
+        CompositeCgLaunchConditions, derive_flight_telemetry, flight_state_from_composite_cg_launch,
     };
-    use crate::aerodynamics::{
-        AeroCoefficients, AerodynamicElement, AerodynamicModel, CoefficientLaw,
-        ControlCoefficientDerivatives, ElementEnvelope, ElementOrientation, ElementReference,
-    };
-    use crate::aerodynamics_contract::{AeroError, AerodynamicRole};
-    use crate::contact::ContactError;
-    use crate::dynamics::{AircraftModel, DynamicsError, FlightState, Gravity};
-    use crate::flight_control::{ActuatorConfig, ActuatorState};
-    use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
-    use crate::scoring::CourseAxis;
-    use crate::wind_field::WindField;
+    use crate::dynamics::{AircraftModel, DynamicsError, FlightState};
+    use crate::math::{BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
 
     fn aircraft() -> AircraftModel {
         AircraftModel::try_new(
@@ -596,199 +256,6 @@ mod tests {
             2.0,
         )
         .unwrap()
-    }
-
-    fn aerodynamics() -> AerodynamicModel {
-        aerodynamics_with_control_domain(
-            crate::ControlEnvelope::try_new([-0.35; 3], [0.35; 3]).unwrap(),
-        )
-    }
-
-    fn aerodynamics_with_control_domain(controls: crate::ControlEnvelope) -> AerodynamicModel {
-        let law = CoefficientLaw::try_new(0.0, 0.0, 0.0).unwrap();
-        let coefficients = AeroCoefficients::new(law, law, law, law, law, law)
-            .with_control_derivatives(
-                ControlCoefficientDerivatives::try_new(
-                    [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3],
-                )
-                .unwrap(),
-            );
-        let envelope =
-            ElementEnvelope::try_new(-1.0, 1.0, -1.0, 1.0, 0.0, 100_000.0, controls).unwrap();
-        let reference = ElementReference::try_new(1.0, 1.0, 1.0).unwrap();
-        let roles = [
-            AerodynamicRole::LeftWing,
-            AerodynamicRole::RightWing,
-            AerodynamicRole::HorizontalTail,
-            AerodynamicRole::VerticalTail,
-            AerodynamicRole::Fuselage,
-        ];
-        AerodynamicModel::try_new(roles.map(|role| {
-            AerodynamicElement::try_new(
-                role,
-                BodyPoint::try_new(0.0, 0.0, 0.0).unwrap(),
-                BodyPoint::try_new(0.0, 0.0, 0.0).unwrap(),
-                ElementOrientation::IDENTITY,
-                reference,
-                coefficients,
-                envelope,
-            )
-            .unwrap()
-        }))
-        .unwrap()
-    }
-
-    fn scenario_definition<'a>(
-        air_density_kg_m3: f64,
-        contact_points_body: &'a [BodyPoint],
-    ) -> FlightScenarioDefinition<'a> {
-        FlightScenarioDefinition {
-            aircraft: aircraft(),
-            launch: CompositeCgLaunchConditions::try_new(
-                NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
-                NedVector::try_new(10.0, 0.0, 0.0).unwrap(),
-                UnitQuaternion::IDENTITY,
-                BodyVector::zero(),
-                0.0,
-                0.0,
-            )
-            .unwrap(),
-            aerodynamics: aerodynamics(),
-            air_density_kg_m3,
-            wind_field: WindField::uniform(NedVector::zero()),
-            actuator_limits: [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
-            initial_actuator_state: ActuatorState::neutral(),
-            gravity: Gravity::try_new(9.80665).unwrap(),
-            contact_points_body,
-            course_axis: CourseAxis::try_new(1.0, 0.0).unwrap(),
-        }
-    }
-
-    #[test]
-    fn scenario_rejects_actuator_travel_outside_any_control_domain() {
-        let points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
-        assert!(FlightScenario::try_new(scenario_definition(1.225, &points)).is_ok());
-        for axis in 0..3 {
-            for direction in [-1.0, 1.0] {
-                let mut minimum = [-0.35; 3];
-                let mut maximum = [0.35; 3];
-                if direction < 0.0 {
-                    minimum[axis] = -0.349;
-                } else {
-                    maximum[axis] = 0.349;
-                }
-                let mut definition = scenario_definition(1.225, &points);
-                definition.aerodynamics = aerodynamics_with_control_domain(
-                    crate::ControlEnvelope::try_new(minimum, maximum).unwrap(),
-                );
-                assert_eq!(
-                    FlightScenario::try_new(definition).err(),
-                    Some(FlightScenarioError::ControlEnvelope(
-                        crate::AerodynamicEvaluationError::Element {
-                            role: AerodynamicRole::LeftWing,
-                            cause: AeroError::IncompatibleControlEnvelope
-                        }
-                    ))
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn scenario_preserves_aerodynamic_validation_error() {
-        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
-
-        assert_eq!(
-            FlightScenario::try_new(scenario_definition(0.0, &contact_points)).err(),
-            Some(FlightScenarioError::Aerodynamic(
-                AeroError::InvalidAirDensity
-            ))
-        );
-    }
-
-    #[test]
-    fn legacy_constructor_preserves_control_density_and_common_validation_order() {
-        let mut definition = scenario_definition(0.0, &[]);
-        definition.aerodynamics = aerodynamics_with_control_domain(crate::ControlEnvelope::NEUTRAL);
-        assert!(matches!(
-            FlightScenario::try_new(definition),
-            Err(FlightScenarioError::ControlEnvelope(_))
-        ));
-        assert_eq!(
-            FlightScenario::try_new(scenario_definition(0.0, &[])).unwrap_err(),
-            FlightScenarioError::Aerodynamic(AeroError::InvalidAirDensity)
-        );
-        assert_eq!(
-            super::FlightScenarioParameters::try_new(
-                aircraft(),
-                scenario_definition(1.225, &[]).launch,
-                [ActuatorConfig::try_new(0.35, 1.0).unwrap(); 3],
-                ActuatorState::neutral(),
-                Gravity::try_new(9.80665).unwrap(),
-                &[],
-                CourseAxis::try_new(1.0, 0.0).unwrap(),
-            )
-            .unwrap_err(),
-            FlightScenarioError::Contact(ContactError::EmptyGeometry)
-        );
-    }
-
-    #[test]
-    fn selected_element_provider_retains_all_axis_full_travel_and_wind_contract() {
-        let contacts = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
-        let definition = scenario_definition(1.225, &contacts);
-        let parameters = super::FlightScenarioParameters::try_new(
-            definition.aircraft,
-            definition.launch,
-            definition.actuator_limits,
-            definition.initial_actuator_state,
-            definition.gravity,
-            definition.contact_points_body,
-            definition.course_axis,
-        )
-        .unwrap();
-        let wind = WindField::uniform(NedVector::try_new(2.0, 0.0, 0.0).unwrap());
-        let load = crate::WindFieldAerodynamicLoad::try_new(aerodynamics(), 1.225, wind).unwrap();
-        let scenario = FlightScenario::try_new_with_aerodynamic_provider(
-            parameters,
-            crate::AerodynamicLoadProvider::ElementOnly(&load),
-        )
-        .unwrap();
-        assert_eq!(
-            scenario.wind_velocity_at(NedPoint::origin()),
-            wind.velocity_at(NedPoint::origin())
-        );
-        for axis in 0..3 {
-            let mut maximum = [0.35; 3];
-            maximum[axis] = 0.349;
-            let load = crate::WindFieldAerodynamicLoad::try_new(
-                aerodynamics_with_control_domain(
-                    crate::ControlEnvelope::try_new([-0.35; 3], maximum).unwrap(),
-                ),
-                1.225,
-                wind,
-            )
-            .unwrap();
-            assert_eq!(
-                FlightScenario::try_new_with_aerodynamic_provider(
-                    parameters,
-                    crate::AerodynamicLoadProvider::ElementOnly(&load)
-                )
-                .unwrap_err(),
-                FlightScenarioError::ControlEnvelope(crate::AerodynamicEvaluationError::Element {
-                    role: AerodynamicRole::LeftWing,
-                    cause: AeroError::IncompatibleControlEnvelope
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn scenario_preserves_contact_geometry_validation_error() {
-        assert_eq!(
-            FlightScenario::try_new(scenario_definition(1.225, &[])).err(),
-            Some(FlightScenarioError::Contact(ContactError::EmptyGeometry))
-        );
     }
 
     fn assert_vector_close(actual: [f64; 3], expected: [f64; 3], tolerance: f64) {
@@ -982,16 +449,27 @@ mod tests {
 
     #[test]
     fn telemetry_reports_composite_cg_altitude_and_three_dimensional_speeds() {
-        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
-        let scenario =
-            FlightScenario::try_new(scenario_definition(1.225, &contact_points)).unwrap();
-        let state = scenario.initial_state().flight_state();
-        let telemetry = scenario.telemetry(state).unwrap();
+        let aircraft = aircraft();
+        let state = flight_state_from_composite_cg_launch(
+            &aircraft,
+            CompositeCgLaunchConditions::try_new(
+                NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+                NedVector::try_new(10.0, 0.0, 0.0).unwrap(),
+                UnitQuaternion::IDENTITY,
+                BodyVector::zero(),
+                0.0,
+                0.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let telemetry =
+            derive_flight_telemetry(&aircraft, state, |_| Ok(NedVector::zero())).unwrap();
 
         assert!((telemetry.altitude_m - 10.0).abs() < 1.0e-12);
         assert_eq!(
             telemetry.composite_cg_position_ned_m,
-            composite_cg_position(&scenario.aircraft(), state)
+            composite_cg_position(&aircraft, state)
         );
         assert!((telemetry.groundspeed_mps - 10.0).abs() < 1.0e-12);
         assert!((telemetry.airspeed_mps - 10.0).abs() < 1.0e-12);
@@ -1010,13 +488,24 @@ mod tests {
 
     #[test]
     fn telemetry_subtracts_local_wind_from_composite_ground_velocity() {
-        let contact_points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
-        let mut definition = scenario_definition(1.225, &contact_points);
-        definition.wind_field = WindField::uniform(NedVector::try_new(2.0, 0.0, 0.0).unwrap());
-        let scenario = FlightScenario::try_new(definition).unwrap();
-        let telemetry = scenario
-            .telemetry(scenario.initial_state().flight_state())
-            .unwrap();
+        let aircraft = aircraft();
+        let state = flight_state_from_composite_cg_launch(
+            &aircraft,
+            CompositeCgLaunchConditions::try_new(
+                NedPoint::try_new(0.0, 0.0, -10.0).unwrap(),
+                NedVector::try_new(10.0, 0.0, 0.0).unwrap(),
+                UnitQuaternion::IDENTITY,
+                BodyVector::zero(),
+                0.0,
+                0.0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let telemetry = derive_flight_telemetry(&aircraft, state, |_| {
+            Ok(NedVector::try_new(2.0, 0.0, 0.0).unwrap())
+        })
+        .unwrap();
 
         assert!((telemetry.airspeed_mps - 8.0).abs() < 1.0e-12);
         assert!((telemetry.groundspeed_mps - 10.0).abs() < 1.0e-12);

@@ -1,6 +1,4 @@
-use birdman_game_core::{
-    NedPoint, NedVector, SessionScenarioIdentity, SyntheticPlayableFlight, WindField,
-};
+use birdman_game_core::{NedPoint, NedVector, SessionScenarioIdentity, WindField};
 use birdman_game_format::{
     EnvironmentBasisDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
     EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument, SkyStateDocument,
@@ -12,8 +10,8 @@ use crate::{environment::bundled_environment, personal_best_fingerprints};
 
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
-use birdman_game_session::{LegacyEnvironment, legacy_environment_for_version};
-pub(crate) use birdman_game_session::{legacy_wind_for_version, legacy_winds};
+pub(crate) use birdman_game_session::preset_wind_for_version;
+use birdman_game_session::{PresetEnvironment, preset_environment_for_version};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EnvironmentSnapshotError {
@@ -177,41 +175,21 @@ pub(crate) fn for_identity(
     source: EnvironmentSource,
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
-    let registered_version = identity.scenario_version == 1
-        || (identity.scenario_version == 2
-            && identity.catalog_version == 2
-            && identity.aircraft_model_version == 1
-            && matches!(identity.controller_profile_version, 1 | 2))
-        || (identity.scenario_version == 3
-            && identity.catalog_version == 3
-            && identity.aircraft_model_version == 2
-            && matches!(identity.controller_profile_version, 2 | 3));
-    let registered = registered_version
-        && matches!(
-            identity.aircraft_model_version,
-            1 | SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION
-        )
-        && (1..=4).contains(&identity.controller_profile_version)
+    let registered = identity.catalog_version == 3
+        && identity.scenario_version == 3
+        && identity.aircraft_model_version == 2
+        && identity.controller_profile_version == 3
         && identity.scenario_id == identity.environment_version
-        && match identity.catalog_version {
-            1 => (1..=5).contains(&identity.scenario_id),
-            2 => matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6),
-            3 => {
-                identity.scenario_version == 3
-                    && identity.aircraft_model_version == 2
-                    && matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6)
-            }
-            _ => false,
-        };
+        && matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6);
     if !registered {
         return Ok(EnvironmentProjection::Unavailable { source, identity });
     }
     let metadata = if identity.environment_version == 6 {
         bundled_metadata()?
     } else {
-        let environment = legacy_environment_for_version(identity.environment_version)
+        let environment = preset_environment_for_version(identity.environment_version)
             .ok_or(EnvironmentSnapshotError::InvalidIdentity)?;
-        legacy_metadata(environment)?
+        preset_metadata(environment)?
     };
     Ok(EnvironmentProjection::Available {
         source,
@@ -251,8 +229,8 @@ fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
     })
 }
 
-fn legacy_metadata(
-    environment: &LegacyEnvironment,
+fn preset_metadata(
+    environment: &PresetEnvironment,
 ) -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
     let [north, east, down] = environment.wind_velocity_ned_mps;
     let velocity = NedVector::try_new(north, east, down).map_err(|_| {
@@ -278,16 +256,16 @@ fn legacy_metadata(
         ground_wind_normals: Vec::new(),
         provenance: EnvironmentProvenanceDocument {
             local_frame: EnvironmentBasisDocument::Assumed {
-                rationale: "Legacy synthetic NED has no versioned geographic origin metadata.".into(),
+                rationale: "Synthetic preset NED has no versioned geographic origin metadata.".into(),
             },
             wind_grid: EnvironmentBasisDocument::Assumed {
                 rationale: "Stationary uniform synthetic wind; no observed weather claim.".into(),
             },
             waves: EnvironmentBasisDocument::GameTuned {
-                rationale: "Legacy render-only wind history, fetch and detail; preserved independently of instantaneous flight wind.".into(),
+                rationale: "Render-only preset wind history, fetch and detail are independent of instantaneous flight wind.".into(),
             },
             sky: EnvironmentBasisDocument::Assumed {
-                rationale: "Legacy environment defines no sky inputs; sky metadata is unavailable.".into(),
+                rationale: "Synthetic preset defines no sky inputs; sky metadata is unavailable.".into(),
             },
         },
     })
@@ -315,12 +293,12 @@ mod tests {
 
     fn identity(version: u32) -> EnvironmentIdentity {
         SessionScenarioIdentity {
-            catalog_version: if version == 6 { 2 } else { 1 },
+            catalog_version: 3,
             scenario_id: version,
-            scenario_version: 1,
-            aircraft_model_version: 1,
+            scenario_version: 3,
+            aircraft_model_version: 2,
             environment_version: version,
-            controller_profile_version: 4,
+            controller_profile_version: 3,
             seed: u64::MAX,
         }
         .into()
@@ -332,45 +310,23 @@ mod tests {
     }
 
     #[test]
-    fn playable_model_two_controller_three_preserves_registered_environment_and_old_model_one_archives()
-     {
+    fn only_current_model_and_controller_identities_resolve_registered_metadata() {
         for version in [1, 2, 4, 5, 6] {
-            let mut previous = identity(version);
-            previous.catalog_version = 2;
-            previous.scenario_version = 2;
-            previous.controller_profile_version = 2;
-            let mut current = previous;
-            current.catalog_version = 3;
-            current.scenario_version = 3;
-            current.aircraft_model_version = 2;
-            current.controller_profile_version = 3;
-            let old_snapshot = query(previous);
-            let snapshot = query(current);
-            assert_eq!(old_snapshot["projection"]["kind"], "available");
-            assert_eq!(snapshot["projection"]["kind"], "available");
-            assert_eq!(
-                snapshot["projection"]["metadata"],
-                old_snapshot["projection"]["metadata"]
-            );
-            let mut unguarded = current;
-            unguarded.controller_profile_version = 2;
-            assert_eq!(query(unguarded)["projection"]["kind"], "available");
+            let current = identity(version);
+            assert_eq!(query(current)["projection"]["kind"], "available");
             for component in 0..4 {
-                let mut unknown = current;
+                let mut retired = current;
                 match component {
-                    0 => unknown.catalog_version = 2,
-                    1 => unknown.scenario_version = 2,
-                    2 => unknown.aircraft_model_version = 1,
-                    3 => unknown.controller_profile_version = 1,
+                    0 => retired.catalog_version = 2,
+                    1 => retired.scenario_version = 2,
+                    2 => retired.aircraft_model_version = 1,
+                    3 => retired.controller_profile_version = 2,
                     _ => unreachable!(),
                 }
-                assert_eq!(query(unknown)["projection"]["kind"], "unavailable");
+                assert_eq!(query(retired)["projection"]["kind"], "unavailable");
             }
-            let mut removed = current;
-            removed.scenario_id = 3;
-            removed.environment_version = 3;
-            assert_eq!(query(removed)["projection"]["kind"], "unavailable");
         }
+        assert_eq!(query(identity(3))["projection"]["kind"], "unavailable");
     }
 
     #[test]
@@ -418,16 +374,15 @@ mod tests {
     }
 
     #[test]
-    fn legacy_metadata_preserves_physics_and_wave_history_without_fake_sky() {
+    fn preset_metadata_preserves_physics_and_wave_history_without_fake_sky() {
         let expected = [
             ([0.0, 0.0, 0.0], [0.54, 1.07], 1.0, 0),
             ([0.0, 0.25, 0.0], [0.0, 1.32], 1.10, 1),
-            ([-0.25, 0.5, 0.0], [-0.35, 1.42], 1.20, 2),
             ([-0.5, 0.75, 0.0], [-0.65, 1.54], 1.32, 3),
             ([-0.75, 1.0, 0.0], [-0.93, 1.67], 1.45, 4),
         ];
-        for (index, (wind, history, detail, seed)) in expected.into_iter().enumerate() {
-            let snapshot = query(identity(index as u32 + 1));
+        for (version, (wind, history, detail, seed)) in [1, 2, 4, 5].into_iter().zip(expected) {
+            let snapshot = query(identity(version));
             let metadata = &snapshot["projection"]["metadata"];
             assert_eq!(metadata["wind_domain"]["kind"], "uniform");
             assert_eq!(metadata["representative_velocity_ned_mps"], json!(wind));
@@ -439,80 +394,6 @@ mod tests {
             assert_eq!(metadata["local_frame"]["kind"], "unavailable");
             assert_eq!(metadata["content_hash"]["kind"], "source_fingerprint");
             assert_eq!(metadata["provenance"]["waves"]["kind"], "game_tuned");
-        }
-    }
-
-    #[test]
-    fn current_playable_aircraft_and_legacy_archive_identities_preserve_environment_metadata() {
-        for version in 1..=6 {
-            let legacy = identity(version);
-            let mut current = legacy;
-            current.aircraft_model_version =
-                birdman_game_core::SyntheticPlayableFlight::AIRCRAFT_MODEL_VERSION;
-            let legacy_snapshot = query(legacy);
-            let current_snapshot = query(current);
-            assert_eq!(current_snapshot["projection"]["kind"], "available");
-            assert_eq!(
-                current_snapshot["projection"]["identity"]["aircraft_model_version"],
-                2
-            );
-            assert_eq!(
-                legacy_snapshot["projection"]["identity"]["aircraft_model_version"],
-                1
-            );
-            assert_eq!(
-                current_snapshot["projection"]["metadata"],
-                legacy_snapshot["projection"]["metadata"]
-            );
-        }
-    }
-
-    #[test]
-    fn northwest_scenario_two_and_saved_scenario_one_share_only_environment_metadata() {
-        for version in [1, 2, 4, 5, 6] {
-            let mut previous = identity(version);
-            previous.catalog_version = 2;
-            previous.controller_profile_version = 1;
-            let mut current = previous;
-            current.scenario_version = 2;
-            let previous_snapshot = query(previous);
-            let current_snapshot = query(current);
-            assert_eq!(current_snapshot["projection"]["kind"], "available");
-            assert_eq!(
-                current_snapshot["projection"]["identity"]["scenario_version"],
-                2
-            );
-            assert_eq!(
-                previous_snapshot["projection"]["identity"]["scenario_version"],
-                1
-            );
-            assert_eq!(
-                current_snapshot["projection"]["metadata"],
-                previous_snapshot["projection"]["metadata"]
-            );
-            let mut protected = current;
-            protected.controller_profile_version = 2;
-            let protected_snapshot = query(protected);
-            assert_eq!(protected_snapshot["projection"]["kind"], "available");
-            assert_eq!(
-                protected_snapshot["projection"]["identity"]["controller_profile_version"],
-                2
-            );
-            assert_eq!(
-                protected_snapshot["projection"]["metadata"],
-                current_snapshot["projection"]["metadata"]
-            );
-            for component in 0..4 {
-                let mut unknown = current;
-                match component {
-                    0 => unknown.catalog_version = 1,
-                    1 => unknown.aircraft_model_version = 2,
-                    2 => unknown.controller_profile_version = 3,
-                    3 => unknown.scenario_version = 3,
-                    _ => unreachable!(),
-                }
-                assert_eq!(query(unknown)["projection"]["kind"], "unavailable");
-            }
         }
     }
 
@@ -542,9 +423,11 @@ mod tests {
         removed.catalog_version = 2;
         assert_eq!(query(removed)["projection"]["kind"], "unavailable");
         for version in [1, 2, 4, 5] {
-            let mut retained = identity(version);
-            retained.catalog_version = 2;
-            assert_eq!(query(retained)["projection"]["kind"], "available");
+            let current = identity(version);
+            assert_eq!(query(current)["projection"]["kind"], "available");
+            let mut unsupported = current;
+            unsupported.catalog_version = 2;
+            assert_eq!(query(unsupported)["projection"]["kind"], "unavailable");
         }
     }
 

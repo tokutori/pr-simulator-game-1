@@ -11,8 +11,7 @@ use bevy::{
     render::render_resource::PrimitiveTopology,
 };
 use birdman_game_core::{
-    HybridMockConfiguration, HybridMockDefinition, HybridSection, HybridSurfaceGeometry,
-    HybridSurfaceRole,
+    HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
 };
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
@@ -405,8 +404,7 @@ pub(crate) fn setup_world(
         ..default()
     });
     let frame = materials.add(Color::srgb(0.13, 0.15, 0.18));
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Playable)
-        .expect("登録機体geometryが不正");
+    let definition = HybridMockDefinition::try_new().expect("登録機体geometryが不正");
     let surfaces = definition.surfaces().expect("登録surface geometryが不正");
     let tail_projection = |role| {
         let geometry = surfaces
@@ -1209,52 +1207,46 @@ mod tests {
         let (configuration, record_identity) = preparation.into_parts();
         assert_eq!(
             configuration.identity().aircraft_model_version,
-            HybridMockConfiguration::Playable.model_version()
+            HybridMockDefinition::MODEL_VERSION
         );
         assert_eq!(
             record_identity.aircraft_configuration_id,
-            HybridMockConfiguration::Playable.configuration_id()
+            HybridMockDefinition::CONFIGURATION_ID
         );
     }
 
     #[test]
     fn tail_surface_projection_uses_versioned_core_geometry_without_changing_incidence() {
-        for (configuration, horizontal_arm) in [
-            (HybridMockConfiguration::Standard, 1.8),
-            (HybridMockConfiguration::ZeroDihedralOracle, 1.8),
-            (HybridMockConfiguration::Playable, 3.6),
-        ] {
-            let definition = HybridMockDefinition::try_new(configuration).unwrap();
-            for surface in definition.surfaces().unwrap() {
-                let geometry = surface.geometry();
-                if geometry.role() == HybridSurfaceRole::MainWing {
-                    assert!(project_tail_surface(geometry).is_err());
-                    continue;
-                }
-                let projected = project_tail_surface(geometry).unwrap();
-                let expected = match geometry.role() {
-                    HybridSurfaceRole::HorizontalTail => Vec3::new(0.0, -0.1, horizontal_arm),
-                    HybridSurfaceRole::VerticalTail => Vec3::new(0.0, 0.1, 1.8),
-                    HybridSurfaceRole::MainWing => unreachable!(),
-                };
-                assert!(projected.transform.translation.distance(expected) < 1.0e-6);
-                assert_eq!(projected.transform.rotation, Quat::IDENTITY);
-                for (section_index, leading_index, trailing_index) in [(0, 0, 3), (1, 1, 2)] {
-                    let section = geometry.sections()[section_index];
-                    let point = section.quarter_chord().components();
-                    for (vertex_index, chord_fraction) in
-                        [(leading_index, -0.25), (trailing_index, 0.75)]
-                    {
-                        let expected = Vec3::new(
-                            point[1] as f32,
-                            -point[2] as f32,
-                            (-point[0] + chord_fraction * section.chord_m()) as f32,
-                        );
-                        let actual = projected
-                            .transform
-                            .transform_point(Vec3::from_array(projected.vertices[vertex_index]));
-                        assert!(actual.distance(expected) < 1.0e-6);
-                    }
+        let definition = HybridMockDefinition::try_new().unwrap();
+        for surface in definition.surfaces().unwrap() {
+            let geometry = surface.geometry();
+            if geometry.role() == HybridSurfaceRole::MainWing {
+                assert!(project_tail_surface(geometry).is_err());
+                continue;
+            }
+            let projected = project_tail_surface(geometry).unwrap();
+            let expected = match geometry.role() {
+                HybridSurfaceRole::HorizontalTail => Vec3::new(0.0, -0.1, 3.6),
+                HybridSurfaceRole::VerticalTail => Vec3::new(0.0, 0.1, 1.8),
+                HybridSurfaceRole::MainWing => unreachable!(),
+            };
+            assert!(projected.transform.translation.distance(expected) < 1.0e-6);
+            assert_eq!(projected.transform.rotation, Quat::IDENTITY);
+            for (section_index, leading_index, trailing_index) in [(0, 0, 3), (1, 1, 2)] {
+                let section = geometry.sections()[section_index];
+                let point = section.quarter_chord().components();
+                for (vertex_index, chord_fraction) in
+                    [(leading_index, -0.25), (trailing_index, 0.75)]
+                {
+                    let expected = Vec3::new(
+                        point[1] as f32,
+                        -point[2] as f32,
+                        (-point[0] + chord_fraction * section.chord_m()) as f32,
+                    );
+                    let actual = projected
+                        .transform
+                        .transform_point(Vec3::from_array(projected.vertices[vertex_index]));
+                    assert!(actual.distance(expected) < 1.0e-6);
                 }
             }
         }

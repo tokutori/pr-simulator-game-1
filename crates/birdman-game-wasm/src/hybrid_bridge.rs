@@ -1,7 +1,7 @@
 use birdman_game_core::{
     ControlMode, CourseAxis, DistanceScore, DistanceScoreError, DynamicsError, FlightState,
-    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionFlightState,
-    SessionPhase, SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
+    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionPhase,
+    SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
     TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
     TailPilotPositionMapping, TailRateTarget,
 };
@@ -240,7 +240,6 @@ impl From<FlightTelemetry> for TelemetryDocument {
 enum BoundaryError {
     InputTooLarge,
     UnsupportedSchema,
-    IncompatibleControlLayout,
     UnsupportedPhase,
     Preparation(HybridSessionPreparationError),
     Session(GameSessionError),
@@ -278,7 +277,7 @@ impl BoundaryError {
     }
 }
 
-/// Explicit version-two factory; the existing browser factory and legacy ABI remain unchanged.
+/// Owns the current two-tail game session and its versioned browser boundary.
 #[wasm_bindgen]
 pub struct HybridGameSessionBridge {
     session: GameSession<'static>,
@@ -431,7 +430,7 @@ impl HybridGameSessionBridge {
 impl HybridGameSessionBridge {
     fn prepared_launch_internal(&self) -> Result<String, BoundaryError> {
         let preview = match self.session.prepared_launch_state() {
-            Some(SessionFlightState::TailIncidence(state)) => {
+            Some(state) => {
                 let prepared = self
                     .prepared
                     .as_ref()
@@ -448,9 +447,6 @@ impl HybridGameSessionBridge {
                         self.required_pilot_mapping()?,
                     )?),
                 }
-            }
-            Some(SessionFlightState::LegacyThreeAxis(_)) => {
-                return Err(BoundaryError::IncompatibleControlLayout);
             }
             None => PreparedLaunchFrame::Unavailable,
         };
@@ -532,9 +528,6 @@ impl HybridGameSessionBridge {
                         sample.pilot_position_target(),
                         self.required_pilot_mapping()?,
                     )?,
-                    SessionTerminalState::Tick(_) | SessionTerminalState::WaterContact(_) => {
-                        return Err(BoundaryError::IncompatibleControlLayout);
-                    }
                 };
                 let finalization = self
                     .session
@@ -547,9 +540,6 @@ impl HybridGameSessionBridge {
                     finalization: TailFlightRecordFinalizationDocument::try_from_core(finalization)
                         .map_err(BoundaryError::Format)?,
                 }
-            }
-            SessionSnapshot::FlightRunning { .. } | SessionSnapshot::FlightPaused { .. } => {
-                return Err(BoundaryError::IncompatibleControlLayout);
             }
             SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
                 return Err(BoundaryError::UnsupportedPhase);
@@ -582,9 +572,7 @@ impl HybridGameSessionBridge {
     fn required_pilot_mapping(&self) -> Result<TailPilotPositionMapping, BoundaryError> {
         self.session
             .tail_pilot_position_mapping()
-            .ok_or(BoundaryError::Session(
-                GameSessionError::InvalidControlLayout,
-            ))
+            .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
     }
 
     fn required_telemetry(&self) -> Result<TelemetryDocument, BoundaryError> {

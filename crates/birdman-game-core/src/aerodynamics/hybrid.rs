@@ -10,7 +10,6 @@ use crate::aerodynamics_contract::{
     HybridSurfaceRole,
 };
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
-use crate::flight_control::{ActuatorConfig, ActuatorState, SurfaceDeflections};
 use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
@@ -21,7 +20,7 @@ const MAXIMUM_ANGLE_RAD: f64 = 0.2;
 /// Positive elevator incidence creates negative body pitch moment on an aft
 /// horizontal tail. Positive rudder incidence creates negative body yaw moment
 /// when the fin's local down normal is negative body y. These are physical
-/// angles, independent of manual intent and the legacy coefficient law.
+/// angles, independent of normalized manual intent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailIncidence {
     elevator_rad: f64,
@@ -55,18 +54,6 @@ impl TailIncidence {
         })
     }
 
-    /// Explicit legacy load boundary: pitch/yaw are physical incidences, roll is unsupported.
-    pub fn try_from_surface_deflections(
-        deflections: SurfaceDeflections,
-    ) -> Result<Self, HybridError> {
-        if deflections.roll_rad() != 0.0 {
-            return Err(HybridError::new(
-                HybridSite::TailIncidence,
-                AeroError::UnsupportedControl,
-            ));
-        }
-        Self::try_new(deflections.pitch_rad(), deflections.yaw_rad())
-    }
     /// Returns neutral physical tail incidences.
     pub const fn neutral() -> Self {
         Self {
@@ -198,37 +185,6 @@ impl<'a> HybridAerodynamicLoad<'a> {
         position_ned: NedPoint,
     ) -> Result<NedVector, crate::wind_field::WindError> {
         self.wind_field.velocity_at(position_ned)
-    }
-
-    pub(crate) fn validate_scenario_control_boundary(
-        &self,
-        limits: [ActuatorConfig; 3],
-        initial: ActuatorState,
-    ) -> Result<(), HybridError> {
-        TailIncidence::try_from_surface_deflections(initial.deflections())?;
-        for (axis, role) in [
-            (1, HybridSurfaceRole::HorizontalTail),
-            (2, HybridSurfaceRole::VerticalTail),
-        ] {
-            if !self
-                .model
-                .surfaces
-                .iter()
-                .any(|surface| surface.geometry().role() == role)
-            {
-                return Err(HybridError::new(
-                    HybridSite::Surface(role),
-                    AeroError::UnsupportedControl,
-                ));
-            }
-            if limits[axis].maximum_deflection_rad() > MAXIMUM_ANGLE_RAD {
-                return Err(HybridError::new(
-                    HybridSite::Surface(role),
-                    AeroError::IncompatibleControlEnvelope,
-                ));
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn tail_incidence_intervals(
@@ -477,23 +433,6 @@ fn intersect_tail_incidence_interval(interval: &mut [f64; 2], alpha_difference: 
 impl ExternalLoadProvider for HybridAerodynamicLoad<'_> {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         self.evaluate_hybrid(state, TailIncidence::neutral())
-            .map(|evaluation| evaluation.total_wrench())
-            .map_err(|error| LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)))
-    }
-
-    fn evaluate_with_surface_deflections(
-        &self,
-        _model: &AircraftModel,
-        state: &FlightState,
-        deflections: SurfaceDeflections,
-    ) -> Result<Wrench, LoadError> {
-        let evaluate = || {
-            self.evaluate_hybrid(
-                state,
-                TailIncidence::try_from_surface_deflections(deflections)?,
-            )
-        };
-        evaluate()
             .map(|evaluation| evaluation.total_wrench())
             .map_err(|error| LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)))
     }

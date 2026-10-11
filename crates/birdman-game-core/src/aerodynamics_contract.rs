@@ -1,33 +1,6 @@
 use crate::math::MathError;
 use crate::wind_field::WindError;
 
-/// The five fixed aerodynamic elements used by the initial aircraft model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AerodynamicRole {
-    /// Left half of the main wing.
-    LeftWing,
-    /// Right half of the main wing.
-    RightWing,
-    /// Horizontal tail.
-    HorizontalTail,
-    /// Vertical tail.
-    VerticalTail,
-    /// Fuselage.
-    Fuselage,
-}
-
-impl AerodynamicRole {
-    pub(crate) const fn index(self) -> usize {
-        match self {
-            Self::LeftWing => 0,
-            Self::RightWing => 1,
-            Self::HorizontalTail => 2,
-            Self::VerticalTail => 3,
-            Self::Fuselage => 4,
-        }
-    }
-}
-
 /// Failures returned by aerodynamic model validation and evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AeroError {
@@ -43,12 +16,8 @@ pub enum AeroError {
     InvalidOrientation,
     /// An angle or dynamic-pressure interval is invalid.
     InvalidEnvelope,
-    /// Actuator travel extends outside an element's control-deflection domain.
-    IncompatibleControlEnvelope,
     /// A coefficient would imply negative drag within its declared envelope.
     NegativeDragCoefficient,
-    /// The model does not contain exactly one of each required element role.
-    InvalidElementSet,
     /// A static polar has fewer than two rows or non-increasing alpha knots.
     InvalidPolarTable,
     /// A polar has an empty configuration ID or a zero model version.
@@ -79,41 +48,19 @@ pub enum AerodynamicEvaluationError {
         /// The original validation, flow, sampling, or load failure.
         cause: AeroError,
     },
-    /// Evaluation failed while processing the identified element.
-    Element {
-        /// The aerodynamic element being evaluated.
-        role: AerodynamicRole,
-        /// The original evaluation failure.
-        cause: AeroError,
-    },
-    /// Evaluation failed while combining element results.
-    Aggregate {
-        /// The original aggregation failure.
-        cause: AeroError,
-    },
 }
 
 impl AerodynamicEvaluationError {
-    /// Returns the affected element, or `None` for static or aggregate failures.
-    pub const fn role(self) -> Option<AerodynamicRole> {
-        match self {
-            Self::Element { role, .. } => Some(role),
-            Self::StaticPolar { .. } | Self::Aggregate { .. } | Self::Hybrid(_) => None,
-        }
-    }
-
     /// Returns the original aerodynamic cause.
     pub const fn cause(self) -> AeroError {
         match self {
-            Self::StaticPolar { cause }
-            | Self::Element { cause, .. }
-            | Self::Aggregate { cause } => cause,
+            Self::StaticPolar { cause } => cause,
             Self::Hybrid(error) => error.cause(),
         }
     }
 }
 
-/// One complete aerodynamic surface, distinct from legacy five-element roles.
+/// One complete aerodynamic surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridSurfaceRole {
     /// The complete main wing, including both sides.
@@ -140,7 +87,7 @@ pub enum HybridSite {
         /// The index in that surface's validated proxy slice.
         index: usize,
     },
-    /// Physical tail incidence or its explicit legacy boundary adapter.
+    /// Physical tail incidence.
     TailIncidence,
     /// Addition of static and incremental wrenches.
     Aggregate,

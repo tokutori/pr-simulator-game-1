@@ -1,7 +1,6 @@
 use birdman_game_core::{
-    AeroError, AerodynamicEvaluationError, DynamicsError, FlightTickError, HybridError,
-    HybridLimit, HybridSite, HybridSurfaceRole, LoadError, SessionEndReason,
-    SessionSimulationFailure, TailFlightTickError, WindError,
+    AeroError, AerodynamicEvaluationError, DynamicsError, HybridError, HybridLimit, HybridSite,
+    HybridSurfaceRole, LoadError, SessionEndReason, TailFlightTickError, WindError,
 };
 
 pub(crate) fn result_reason_label(reason: SessionEndReason) -> &'static str {
@@ -14,12 +13,9 @@ pub(crate) fn result_reason_label(reason: SessionEndReason) -> &'static str {
     }
 }
 
-pub(crate) fn failure_summary(failure: Option<SessionSimulationFailure>) -> &'static str {
+pub(crate) fn failure_summary(failure: Option<TailFlightTickError>) -> &'static str {
     let dynamics = match failure {
-        Some(SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(error)))
-        | Some(SessionSimulationFailure::LegacyThreeAxis(FlightTickError::Dynamics(error))) => {
-            error
-        }
+        Some(TailFlightTickError::Dynamics(error)) => error,
         Some(_) => return "計算処理を継続できなかった。詳細は技術情報で確認できる。",
         None => return "",
     };
@@ -98,10 +94,8 @@ mod tests {
                 Some(AerodynamicStage::First),
             )
             .unwrap();
-            let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::Dynamics(
-                DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
-                    error,
-                ))),
+            let failure = TailFlightTickError::Dynamics(DynamicsError::Load(
+                LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)),
             ));
             let summary = failure_summary(Some(failure));
             assert!(summary.contains(expected));

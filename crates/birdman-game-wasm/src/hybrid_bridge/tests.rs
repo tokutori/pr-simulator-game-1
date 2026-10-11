@@ -256,7 +256,7 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
 }
 
 #[test]
-fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default() {
+fn factory_and_snapshot_expose_the_current_tail_layout() {
     let bridge = HybridGameSessionBridge::new(0, u32::MAX, u32::MAX).unwrap();
     assert_eq!(bridge.seed, u64::MAX);
     let title = snapshot(&bridge);
@@ -297,14 +297,6 @@ fn explicit_factory_and_snapshot_keep_tail_layout_separate_from_legacy_default()
         initial["frame"]["telemetry"]["wind_at_cg_ned_mps"],
         json!(core_telemetry.wind_velocity_ned_mps.components())
     );
-    let legacy = crate::GameSessionBridge::new(0).unwrap();
-    assert_eq!(legacy.snapshot().len(), 33);
-    assert_eq!(
-        crate::GameSessionBridge::snapshot_layout()
-            .split(',')
-            .count(),
-        33
-    );
 }
 
 #[test]
@@ -344,7 +336,7 @@ fn versioned_input_preserves_signs_and_independent_hold_set_position() {
         1.0
     );
     let previous_input = bridge.session.flight_record().unwrap().samples()[1].controls;
-    let birdman_game_core::FlightRecordControls::TailIncidence {
+    let birdman_game_core::FlightRecordControls {
         input_from_previous: Some(recorded),
         ..
     } = previous_input
@@ -728,85 +720,4 @@ fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explici
         json!({"pitch":0.2,"yaw":0.2})
     );
     assert_eq!(profile["maximum_slew_rad_s"], 1.0);
-}
-
-#[test]
-fn north_launch_archive_keeps_saved_state_and_identity_without_reintegration() {
-    use birdman_game_core::{
-        HybridMockConfiguration, HybridMockDefinition, HybridMockTrim, NedPoint,
-    };
-    use birdman_game_format::{FlightRecordArchiveDocument, TailFlightRecordDocument};
-
-    let mut current = launch(ControlMode::Manual, 2);
-    let current_identity = current.session.configuration_identity().unwrap();
-    assert_eq!(current_identity.scenario_version, 3);
-    current.abort().unwrap();
-    let mut document: TailFlightRecordDocument =
-        serde_json::from_str(&current.export_record_internal().unwrap()).unwrap();
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
-    let old_air = HybridMockTrim::try_new(&definition)
-        .unwrap()
-        .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
-        .unwrap();
-    let saved = &mut document.samples[0].state;
-    let air_velocity = old_air.datum_velocity_ned().components();
-    saved.datum_position_ned_m = old_air.datum_position_ned().components();
-    saved.datum_velocity_ned_mps =
-        core::array::from_fn(|index| air_velocity[index] + saved.wind_at_cg_ned_mps[index]);
-    saved.attitude_body_to_ned = old_air.attitude_body_to_ned().components();
-    saved.pilot_position_m = old_air.pilot_position_m();
-    saved.pilot_velocity_mps = old_air.pilot_velocity_mps();
-    saved.telemetry.attitude_euler_rad[2] = 0.0;
-    saved.telemetry.groundspeed_mps =
-        saved.datum_velocity_ned_mps[0].hypot(saved.datum_velocity_ned_mps[1]);
-    document.header.catalog_version = 2;
-    document.header.scenario_version = 1;
-    document.header.aircraft_model_version = 1;
-    document.header.controller_profile_version = 1;
-    document.control_identity.aircraft_configuration_id = HybridMockConfiguration::Standard
-        .configuration_id()
-        .to_owned();
-    let archive = FlightRecordArchiveDocument::Tail(document.clone());
-    let expected_record = archive.to_finalized_core_record().unwrap();
-    assert_eq!(
-        archive.require_tail_reintegration_compatibility(
-            &document.control_identity,
-            current_identity,
-            birdman_game_core::PHYSICS_MODEL_VERSION,
-        ),
-        Err(FlightRecordFormatError::IncompatibleReintegration)
-    );
-    let json = String::from_utf8(archive.encode_json().unwrap()).unwrap();
-    let mut viewer = HybridGameSessionBridge::new(0, 0, 0).unwrap();
-    viewer.open_archived_flight_record(&json).unwrap();
-    let before = viewer.session.snapshot();
-    assert_eq!(viewer.export_current_flight_record_json().unwrap(), json);
-    assert_eq!(
-        viewer.session.flight_record().unwrap().samples(),
-        expected_record.samples()
-    );
-    assert_eq!(
-        viewer.session.flight_record().unwrap().finalization(),
-        expected_record.finalization()
-    );
-    let query: Value =
-        serde_json::from_str(&viewer.flight_record_sample_at_seconds(0.0).unwrap()).unwrap();
-    assert_eq!(
-        query["state"]["datum_velocity_ned_mps"],
-        json!(document.samples[0].state.datum_velocity_ned_mps)
-    );
-    assert_eq!(query["state"]["telemetry"]["attitude_euler_rad"][2], 0.0);
-    let environment: Value =
-        serde_json::from_str(&viewer.environment_snapshot_json().unwrap()).unwrap();
-    assert_eq!(environment["projection"]["kind"], "available");
-    assert_eq!(environment["projection"]["identity"]["scenario_version"], 1);
-    assert_eq!(
-        environment["projection"]["identity"]["aircraft_model_version"],
-        1
-    );
-    assert_eq!(
-        environment["projection"]["identity"]["controller_profile_version"],
-        1
-    );
-    assert_eq!(viewer.session.snapshot(), before);
 }

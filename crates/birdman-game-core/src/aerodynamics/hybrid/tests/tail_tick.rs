@@ -1,13 +1,12 @@
 use super::envelope::aircraft;
 use super::*;
 use crate::{
-    AerodynamicLoadProvider, AerodynamicStage, ControlMode, DynamicsError, FbwAuthority, Gravity,
-    PHYSICS_DT_SECONDS, TailControlProfile, TailFlightTickConfig, TailFlightTickError,
-    TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
-    WaterContactGeometry, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
-    advance_tail_flight_tick_with_contact_report, advance_with_surface_deflections,
-    pilot_target_acceleration,
+    AerodynamicStage, ControlMode, DynamicsError, FbwAuthority, Gravity, PHYSICS_DT_SECONDS,
+    TailControlProfile, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
+    TailFlightTickOutcome, TailFlightTickState, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget, WaterContactGeometry,
+    advance, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    advance_tail_flight_tick_with_contact_report, pilot_target_acceleration,
 };
 
 fn initial_state(down: f64, velocity: [f64; 3], rate: [f64; 3]) -> TailFlightTickState {
@@ -80,13 +79,33 @@ fn tail_tick_feedback_uses_previous_qr_once_and_holds_incidence_at_every_rk_stag
         PHYSICS_DT_SECONDS,
     )
     .unwrap();
-    let expected = advance_with_surface_deflections(
+    struct HeldLoad<'a> {
+        load: &'a HybridAerodynamicLoad<'a>,
+        incidence: TailIncidence,
+    }
+    impl crate::ExternalLoadProvider for HeldLoad<'_> {
+        fn evaluate(
+            &self,
+            _aircraft: &crate::AircraftModel,
+            state: &FlightState,
+        ) -> Result<crate::Wrench, crate::LoadError> {
+            self.load
+                .evaluate_hybrid(state, self.incidence)
+                .map(|evaluation| evaluation.total_wrench())
+                .map_err(|cause| {
+                    crate::LoadError::Aerodynamic(crate::AerodynamicEvaluationError::Hybrid(cause))
+                })
+        }
+    }
+    let expected = advance(
         &aircraft(),
         &previous_body,
         acceleration,
         Gravity::try_new(0.0).unwrap(),
-        &AerodynamicLoadProvider::Hybrid(&load),
-        SurfaceDeflections::try_new(0.0, held.elevator_rad(), held.rudder_rad()).unwrap(),
+        &HeldLoad {
+            load: &load,
+            incidence: held,
+        },
         PHYSICS_DT_SECONDS,
     )
     .unwrap();

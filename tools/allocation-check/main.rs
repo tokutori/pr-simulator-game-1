@@ -1,14 +1,15 @@
 use birdman_game_core::{
-    ActuatorConfig, ActuatorState, AeroError, AerodynamicEvaluationError, AerodynamicLoadProvider,
-    AerodynamicStage, AircraftModel, BodyPoint, BodyVector, ControlMode, DynamicsError,
-    ElementOrientation, ElementReference, ExternalLoadProvider, FlightState, FlightTickConfig,
-    FlightTickError, FlightTickInput, FlightTickState, Gravity, HybridAerodynamicLoad,
+    AeroError, AerodynamicEvaluationError, AerodynamicLoadProvider, AerodynamicStage,
+    AircraftModel, BodyPoint, BodyVector, ControlMode, DynamicsError, ElementOrientation,
+    ElementReference, ExternalLoadProvider, FlightState, Gravity, HybridAerodynamicLoad,
     HybridAnchor, HybridLimit, HybridModel, HybridProxy, HybridSection, HybridSite, HybridSurface,
     HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, LoadError, NedPoint, NedVector,
     PHYSICS_DT_SECONDS, PilotAcceleration, PilotPositionTarget, PlanformSymmetry,
     PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarMetadata, StaticPolarRow, SurfaceCommands, SurfaceDeflections, UnitQuaternion,
-    WindField, advance_flight_tick, advance_with_surface_deflections,
+    StaticPolarMetadata, StaticPolarRow, TailControlProfile, TailFlightTickConfig,
+    TailFlightTickError, TailFlightTickInput, TailFlightTickState, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    UnitQuaternion, WindField, advance, advance_tail_flight_tick,
 };
 use std::alloc::{GlobalAlloc, Layout, System, alloc, alloc_zeroed, dealloc, realloc};
 use std::hint::black_box;
@@ -277,55 +278,56 @@ fn main() {
     .unwrap();
     let valid = state([11.0, 0.2, 0.4]);
     let invalid = state([11.0, 3.0, 0.4]);
-    let controls = SurfaceDeflections::try_new(0.0, 0.01, -0.01).unwrap();
     let gravity = Gravity::try_new(9.80665).unwrap();
     let pilot_acceleration = PilotAcceleration::try_new(0.1).unwrap();
-    let limits = [ActuatorConfig::try_new(0.2, 1.0).unwrap(); 3];
-    let actuator = ActuatorState::try_new(limits, SurfaceDeflections::neutral()).unwrap();
-    let tick_config = FlightTickConfig::new(ControlMode::Manual, limits, gravity);
-    let input = FlightTickInput::new(
-        SurfaceCommands::try_new(0.0, 0.1, -0.1).unwrap(),
-        SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
-        PilotPositionTarget::try_new(&aircraft, 0.1).unwrap(),
+    let pilot_target = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
+    let tick_config = TailFlightTickConfig::new(ControlMode::Manual, profile, mapping, gravity);
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.1, -0.1).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(0.2).unwrap()),
     );
-    let previous = FlightTickState::try_new(&aircraft, limits, 7, valid, actuator).unwrap();
-    let failed_previous =
-        FlightTickState::try_new(&aircraft, limits, 7, invalid, actuator).unwrap();
+    let previous =
+        TailFlightTickState::try_new(&aircraft, 7, valid, TailIncidence::neutral(), pilot_target)
+            .unwrap();
+    let failed_previous = TailFlightTickState::try_new(
+        &aircraft,
+        7,
+        invalid,
+        TailIncidence::neutral(),
+        pilot_target,
+    )
+    .unwrap();
     let before = failed_previous;
-    let expected = provider
-        .evaluate_with_surface_deflections(&aircraft, &valid, controls)
-        .unwrap();
+    let expected = provider.evaluate(&aircraft, &valid).unwrap();
     assert_eq!(
         measure("hybrid provider success", || {
-            provider.evaluate_with_surface_deflections(
-                black_box(&aircraft),
-                black_box(&valid),
-                black_box(controls),
-            )
+            provider.evaluate(black_box(&aircraft), black_box(&valid))
         }),
         Ok(expected)
     );
     let rk = |current: &FlightState| {
-        advance_with_surface_deflections(
+        advance(
             black_box(&aircraft),
             black_box(current),
             black_box(pilot_acceleration),
             black_box(gravity),
             black_box(&provider),
-            black_box(controls),
             black_box(PHYSICS_DT_SECONDS),
         )
     };
     let expected = rk(&valid).unwrap();
     assert_ne!(expected, valid);
     assert_eq!(measure("hybrid RK4 success", || rk(&valid)), Ok(expected));
-    let tick = |current: FlightTickState| {
-        advance_flight_tick(
+    let tick = |current: TailFlightTickState| {
+        advance_tail_flight_tick(
             black_box(&aircraft),
             black_box(current),
             black_box(tick_config),
             black_box(input),
-            black_box(&provider),
+            black_box(&load),
         )
     };
     let expected = tick(previous).unwrap();
@@ -337,17 +339,13 @@ fn main() {
     );
     outside(
         measure("hybrid provider outside", || {
-            provider.evaluate_with_surface_deflections(
-                black_box(&aircraft),
-                black_box(&invalid),
-                black_box(controls),
-            )
+            provider.evaluate(black_box(&aircraft), black_box(&invalid))
         })
         .unwrap_err(),
         None,
     );
     outside_dynamics(measure("hybrid RK4 outside", || rk(&invalid)).unwrap_err());
-    let FlightTickError::Dynamics(error) =
+    let TailFlightTickError::Dynamics(error) =
         measure("hybrid tick outside", || tick(failed_previous)).unwrap_err()
     else {
         panic!("expected a typed dynamics error");
@@ -355,6 +353,6 @@ fn main() {
     outside_dynamics(error);
     assert_eq!(failed_previous, before);
     assert_eq!(failed_previous.tick_index(), 7);
-    assert_eq!(failed_previous.actuator_state(), actuator);
+    assert_eq!(failed_previous.incidence(), TailIncidence::neutral());
     assert_eq!(failed_previous.flight_state(), invalid);
 }

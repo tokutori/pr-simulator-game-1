@@ -1,7 +1,6 @@
 use super::*;
 use birdman_game_core::{
-    FlightRecordActuators, FlightRecordDisposition, FlightRecordFinalization, SessionEndReason,
-    SessionSimulationFailure, TailFlightTickError,
+    FlightRecordDisposition, FlightRecordFinalization, SessionEndReason, TailFlightTickError,
 };
 use birdman_game_format::{FlightRecordEndReasonDocument, TailFlightRecordDocument};
 use serde_json::{Value, json};
@@ -33,27 +32,8 @@ fn complete() -> HybridGameSessionBridge {
     bridge
 }
 
-fn legacy_document() -> Value {
-    let mut bridge = crate::GameSessionBridge::new(0).unwrap();
-    bridge.open_setup().unwrap();
-    bridge.set_difficulty_preset(1).unwrap();
-    bridge.prepare().unwrap();
-    bridge.mark_briefing_ready().unwrap();
-    bridge.start_countdown(1).unwrap();
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
-    bridge.advance_tick(0.5, -0.5, 0.25, 0.0).unwrap();
-    bridge.abort().unwrap();
-    serde_json::from_str(&bridge.export_flight_record_json().unwrap()).unwrap()
-}
-
 fn tail_document(json: &str) -> TailFlightRecordDocument {
-    let FlightRecordArchiveDocument::Tail(document) =
-        FlightRecordArchiveDocument::decode_json(json.as_bytes()).unwrap()
-    else {
-        panic!("tail archive must retain schema six");
-    };
-    document
+    TailFlightRecordDocument::decode_json(json.as_bytes()).unwrap()
 }
 
 #[test]
@@ -68,7 +48,7 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
     let csv = bridge.export_flight_log_csv().unwrap();
     assert_eq!(
         csv.as_bytes(),
-        FlightRecordArchiveDocument::decode_json(original.as_bytes())
+        TailFlightRecordDocument::decode_json(original.as_bytes())
             .unwrap()
             .encode_csv()
             .unwrap()
@@ -110,13 +90,10 @@ fn imported_tail_log_keeps_exact_original_text_unknown_identity_and_failed_open_
     let source = complete();
     let mut document = tail_document(&source.export_record_internal().unwrap());
     document.header.environment_version = 99;
-    document.header.physics_model_version = Some(1);
     document.control_identity.aircraft_configuration_id = "=unknown,\"saved\"".into();
     document.control_identity.controller_profile_id = "@original-controller".into();
     let raw = format!("\n{}\n ", serde_json::to_string_pretty(&document).unwrap());
-    let expected_csv = FlightRecordArchiveDocument::Tail(document.clone())
-        .encode_csv()
-        .unwrap();
+    let expected_csv = document.clone().encode_csv().unwrap();
     let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Automatic, 2, 19);
     bridge.open_archive_internal(&raw).unwrap();
     bridge.seek_playback(0.005).unwrap();
@@ -235,13 +212,9 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     assert_eq!(bridge.seek_playback(0.005).unwrap(), [0.005, 1.0, 0.0]);
     let queried: Value =
         serde_json::from_str(&bridge.flight_record_sample_at_seconds(0.005).unwrap()).unwrap();
-    let FlightRecordActuators::TailIncidence(incidence) =
-        bridge.session.flight_record().unwrap().samples()[1]
-            .controls
-            .actuators()
-    else {
-        panic!("saved tail query must retain tail controls");
-    };
+    let incidence = bridge.session.flight_record().unwrap().samples()[1]
+        .controls
+        .actuators();
     assert_eq!(queried["controls"]["layout"], "tail_incidence");
     assert_eq!(
         queried["controls"]["physical_incidence"]["horizontal_tail_rad"],
@@ -263,96 +236,6 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     assert_eq!(environment["projection"]["source"], "record");
     bridge.leave_replay().unwrap();
     assert_eq!(bridge.snapshot_internal().unwrap(), before);
-}
-
-#[test]
-fn all_legacy_archive_versions_preserve_three_axis_controls_and_selection_on_close() {
-    let original = legacy_document();
-    for version in 1..=5 {
-        let mut saved = original.clone();
-        saved["schema_version"] = json!(version);
-        let header = saved["header"].as_object_mut().unwrap();
-        if version < 5 {
-            header.remove("personal_best_key");
-        }
-        if version < 4 {
-            header.remove("physics_model_version");
-        }
-        if version < 3 {
-            header.remove("score_definition_version");
-        }
-        if version < 2 {
-            header["difficulty"]
-                .as_object_mut()
-                .unwrap()
-                .remove("hud_profile");
-        }
-        let mut bridge = HybridGameSessionBridge::new(0, 19, 0).unwrap();
-        let selection = bridge.difficulty;
-        let original_json = format!("\n{}\n ", serde_json::to_string_pretty(&saved).unwrap());
-        bridge.open_archive_internal(&original_json).unwrap();
-        assert_eq!(
-            bridge.export_current_record_internal().unwrap(),
-            original_json
-        );
-        let csv = bridge.export_csv_internal().unwrap();
-        assert!(
-            csv.lines()
-                .nth(1)
-                .unwrap()
-                .starts_with(&format!("1,{version},legacy_three_axis,"))
-        );
-        assert_eq!(
-            csv.as_bytes(),
-            FlightRecordArchiveDocument::decode_json(original_json.as_bytes())
-                .unwrap()
-                .encode_csv()
-                .unwrap()
-        );
-        assert!(bridge.is_archived_replay());
-        let context: Value =
-            serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap();
-        assert_eq!(context["control_layout"], "legacy_three_axis");
-        assert_eq!(context["control_identity"], Value::Null);
-        assert_eq!(context["finalization"]["layout"], "legacy_three_axis");
-        assert_eq!(context["finalization"]["value"], saved["finalization"]);
-        assert_eq!(bridge.difficulty_preset_code(), 1);
-        assert_eq!(bridge.difficulty, selection);
-        let metadata = bridge.configuration_metadata().unwrap();
-        assert_eq!(
-            metadata[4],
-            saved["header"]["catalog_version"].as_u64().unwrap() as u32
-        );
-        let sample: Value =
-            serde_json::from_str(&bridge.flight_record_sample_at_seconds(0.005).unwrap()).unwrap();
-        assert_eq!(sample["controls"]["layout"], "legacy_three_axis");
-        assert_eq!(
-            sample["controls"]["roll_rad"],
-            saved["samples"][1]["actuator_deflections_rad"][0]
-        );
-        assert_eq!(
-            sample["controls"]["pitch_rad"],
-            saved["samples"][1]["actuator_deflections_rad"][1]
-        );
-        assert_eq!(
-            sample["controls"]["yaw_rad"],
-            saved["samples"][1]["actuator_deflections_rad"][2]
-        );
-        assert!(sample["controls"].get("physical_incidence").is_none());
-        let environment: Value =
-            serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
-        assert_eq!(environment["projection"]["source"], "archive");
-        assert!(bridge.sealed_record_configuration().is_none());
-        assert!(bridge.control_profile_internal().is_err());
-        assert!(bridge.export_record_internal().is_err());
-        bridge.leave_replay().unwrap();
-        assert_eq!(bridge.phase_code(), 0);
-        assert_eq!(bridge.difficulty, selection);
-        assert_eq!(
-            bridge.difficulty_preset_code(),
-            crate::preset_code(selection.preset_label())
-        );
-    }
 }
 
 #[test]
@@ -424,9 +307,7 @@ fn archived_failure_context_preserves_the_original_cause_and_last_saved_state() 
             reason: SessionEndReason::FatalSimulationError,
             disposition: FlightRecordDisposition::Failed,
             score: None,
-            failure: Some(SessionSimulationFailure::TailIncidence(
-                TailFlightTickError::Control(TailControlError::NonFinite),
-            )),
+            failure: Some(TailFlightTickError::Control(TailControlError::NonFinite)),
             ..original
         })
         .unwrap();
@@ -436,9 +317,7 @@ fn archived_failure_context_preserves_the_original_cause_and_last_saved_state() 
     assert_eq!(bridge.export_current_record_internal().unwrap(), json);
     assert_eq!(
         bridge.export_csv_internal().unwrap().as_bytes(),
-        FlightRecordArchiveDocument::Tail(document.clone())
-            .encode_csv()
-            .unwrap()
+        document.clone().encode_csv().unwrap()
     );
     let context: Value = serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap();
     assert_eq!(
@@ -469,10 +348,20 @@ fn personal_best_binding_validates_layout_identity_and_integer_ids() {
     assert!(selection.is_eligible());
     assert!(selection.candidate_is_best());
     assert_eq!(selection.key_hex(), "09".repeat(32));
-    let legacy = legacy_document().to_string();
-    selection.consider_existing(1.0, &legacy).unwrap();
+    let mut retired: Value = serde_json::from_str(&candidate_json).unwrap();
+    retired["schema_version"] = json!(5);
+    let retired = retired.to_string();
+    selection.consider_internal(1.0, &retired).unwrap();
     assert!(selection.candidate_is_best());
-    assert!(TailPersonalBestSelectionBridge::new_internal(&legacy).is_err());
+    assert!(TailPersonalBestSelectionBridge::new_internal(&retired).is_err());
+    let mut malformed: Value = serde_json::from_str(&candidate_json).unwrap();
+    malformed["samples"][0]["state"]["pilot_position_m"] = json!("invalid");
+    assert!(
+        selection
+            .consider_internal(1.0, &malformed.to_string())
+            .is_err()
+    );
+    assert!(selection.candidate_is_best());
     let mut mismatch = candidate.clone();
     mismatch
         .control_identity

@@ -1,8 +1,8 @@
 use super::FlightRecordFormatError;
 use birdman_game_core::{
-    ActuatorError, AeroError, AerodynamicEvaluationError, AerodynamicRole, AerodynamicStage,
-    ContactError, DynamicsError, HybridError, HybridFlowKind, HybridLimit, HybridSite,
-    HybridSurfaceRole, LoadError, MathError, TailControlError, TailFlightTickError, WindError,
+    ActuatorError, AeroError, AerodynamicEvaluationError, AerodynamicStage, ContactError,
+    DynamicsError, HybridError, HybridFlowKind, HybridLimit, HybridSite, HybridSurfaceRole,
+    LoadError, MathError, TailControlError, TailFlightTickError, WindError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -76,7 +76,7 @@ pub enum LoadFailureDocument {
     Aerodynamic(AerodynamicFailureDocument),
 }
 
-/// Original aerodynamic failure, preserving hybrid or element scope.
+/// Original aerodynamic failure, preserving the current provider scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum AerodynamicFailureDocument {
@@ -84,18 +84,6 @@ pub enum AerodynamicFailureDocument {
     Hybrid(HybridFailureDocument),
     /// Static polar diagnostic.
     StaticPolar {
-        /// Original cause.
-        cause: AeroFailureDocument,
-    },
-    /// Legacy element diagnostic retained if emitted by a provider.
-    Element {
-        /// Element role.
-        role: AerodynamicRoleDocument,
-        /// Original cause.
-        cause: AeroFailureDocument,
-    },
-    /// Aggregate-load diagnostic.
-    Aggregate {
         /// Original cause.
         cause: AeroFailureDocument,
     },
@@ -131,12 +119,8 @@ pub enum AeroFailureDocument {
     InvalidOrientation,
     /// Invalid declared envelope.
     InvalidEnvelope,
-    /// Incompatible actuator envelope.
-    IncompatibleControlEnvelope,
     /// Negative drag coefficient.
     NegativeDragCoefficient,
-    /// Invalid legacy element set.
-    InvalidElementSet,
     /// Invalid polar knots.
     InvalidPolarTable,
     /// Invalid polar identity.
@@ -205,8 +189,6 @@ pub enum ContactFailureDocument {
     Math(MathFailureDocument),
     /// Original dynamics cause.
     Dynamics(DynamicsFailureDocument),
-    /// Original actuator cause.
-    Actuator(ActuatorFailureDocument),
 }
 
 /// Original software actuator failure.
@@ -223,26 +205,6 @@ pub enum ActuatorFailureDocument {
     InvalidLimit,
     /// Invalid timestep.
     InvalidTimeStep,
-    /// Invalid interpolation fraction.
-    InvalidInterpolationFraction,
-    /// Physical deflection outside configured travel.
-    DeflectionOutOfRange,
-}
-
-/// Original element identifier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AerodynamicRoleDocument {
-    /// Left main-wing half.
-    LeftWing,
-    /// Right main-wing half.
-    RightWing,
-    /// Horizontal tail.
-    HorizontalTail,
-    /// Vertical tail.
-    VerticalTail,
-    /// Fuselage.
-    Fuselage,
 }
 
 /// Original complete hybrid surface identifier.
@@ -372,18 +334,7 @@ unit_conversions!(
     InvalidAuthority,
     InvalidFeedbackGain,
     InvalidLimit,
-    InvalidTimeStep,
-    InvalidInterpolationFraction,
-    DeflectionOutOfRange
-);
-unit_conversions!(
-    AerodynamicRoleDocument,
-    AerodynamicRole,
-    LeftWing,
-    RightWing,
-    HorizontalTail,
-    VerticalTail,
-    Fuselage
+    InvalidTimeStep
 );
 unit_conversions!(
     HybridSurfaceDocument,
@@ -537,13 +488,6 @@ impl AerodynamicFailureDocument {
             AerodynamicEvaluationError::StaticPolar { cause } => Self::StaticPolar {
                 cause: cause.into(),
             },
-            AerodynamicEvaluationError::Element { role, cause } => Self::Element {
-                role: role.into(),
-                cause: cause.into(),
-            },
-            AerodynamicEvaluationError::Aggregate { cause } => Self::Aggregate {
-                cause: cause.into(),
-            },
         })
     }
 
@@ -551,13 +495,6 @@ impl AerodynamicFailureDocument {
         Ok(match self {
             Self::Hybrid(cause) => AerodynamicEvaluationError::Hybrid(cause.to_core()?),
             Self::StaticPolar { cause } => AerodynamicEvaluationError::StaticPolar {
-                cause: cause.into(),
-            },
-            Self::Element { role, cause } => AerodynamicEvaluationError::Element {
-                role: role.into(),
-                cause: cause.into(),
-            },
-            Self::Aggregate { cause } => AerodynamicEvaluationError::Aggregate {
                 cause: cause.into(),
             },
         })
@@ -619,9 +556,7 @@ impl From<AeroError> for AeroFailureDocument {
             AeroError::InvalidReferenceGeometry => Self::InvalidReferenceGeometry,
             AeroError::InvalidOrientation => Self::InvalidOrientation,
             AeroError::InvalidEnvelope => Self::InvalidEnvelope,
-            AeroError::IncompatibleControlEnvelope => Self::IncompatibleControlEnvelope,
             AeroError::NegativeDragCoefficient => Self::NegativeDragCoefficient,
-            AeroError::InvalidElementSet => Self::InvalidElementSet,
             AeroError::InvalidPolarTable => Self::InvalidPolarTable,
             AeroError::InvalidPolarMetadata => Self::InvalidPolarMetadata,
             AeroError::InvalidHybridGeometry => Self::InvalidHybridGeometry,
@@ -644,9 +579,7 @@ impl From<AeroFailureDocument> for AeroError {
             AeroFailureDocument::InvalidReferenceGeometry => Self::InvalidReferenceGeometry,
             AeroFailureDocument::InvalidOrientation => Self::InvalidOrientation,
             AeroFailureDocument::InvalidEnvelope => Self::InvalidEnvelope,
-            AeroFailureDocument::IncompatibleControlEnvelope => Self::IncompatibleControlEnvelope,
             AeroFailureDocument::NegativeDragCoefficient => Self::NegativeDragCoefficient,
-            AeroFailureDocument::InvalidElementSet => Self::InvalidElementSet,
             AeroFailureDocument::InvalidPolarTable => Self::InvalidPolarTable,
             AeroFailureDocument::InvalidPolarMetadata => Self::InvalidPolarMetadata,
             AeroFailureDocument::InvalidHybridGeometry => Self::InvalidHybridGeometry,
@@ -703,7 +636,6 @@ impl ContactFailureDocument {
             ContactError::Dynamics(cause) => {
                 Self::Dynamics(DynamicsFailureDocument::from_core(cause)?)
             }
-            ContactError::Actuator(cause) => Self::Actuator(cause.into()),
         })
     }
 
@@ -713,7 +645,6 @@ impl ContactFailureDocument {
             Self::NonAdjacentTicks => ContactError::NonAdjacentTicks,
             Self::Math(cause) => ContactError::Math(cause.into()),
             Self::Dynamics(cause) => ContactError::Dynamics(cause.to_core()?),
-            Self::Actuator(cause) => ContactError::Actuator(cause.into()),
         })
     }
 }

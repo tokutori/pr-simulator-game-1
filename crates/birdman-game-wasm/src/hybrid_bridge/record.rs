@@ -1,28 +1,19 @@
 use super::*;
 use crate::hybrid_record::{HybridRecordError, HybridRecordMetadata};
 use birdman_game_format::{
-    FlightRecordArchiveDocument, FlightRecordDifficultyDocument, FlightRecordFinalizationDocument,
-    FlightRecordPresetDocument, HudProfile, PersonalBestContentHashes, TailPersonalBestSelection,
+    FlightRecordDifficultyDocument, FlightRecordPresetDocument, HudProfile,
+    PersonalBestContentHashes, TailFlightRecordDocument, TailPersonalBestSelection,
 };
 
-pub(super) enum ArchiveMetadata {
-    Legacy {
-        difficulty: FlightRecordDifficultyDocument,
-        finalization: FlightRecordFinalizationDocument,
-        original_json: String,
-    },
-    Tail {
-        difficulty: FlightRecordDifficultyDocument,
-        control_identity: FlightRecordTailIdentityDocument,
-        original_json: String,
-    },
+pub(super) struct ArchiveMetadata {
+    difficulty: FlightRecordDifficultyDocument,
+    control_identity: FlightRecordTailIdentityDocument,
+    original_json: String,
 }
 
 impl ArchiveMetadata {
     fn difficulty(&self) -> FlightRecordDifficultyDocument {
-        match self {
-            Self::Legacy { difficulty, .. } | Self::Tail { difficulty, .. } => *difficulty,
-        }
+        self.difficulty
     }
 
     pub(super) fn preset_code(&self) -> u32 {
@@ -59,14 +50,12 @@ impl ArchiveMetadata {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 enum PlaybackLayout {
-    LegacyThreeAxis,
     TailIncidence,
 }
 
 #[derive(Serialize)]
 #[serde(tag = "layout", content = "value", rename_all = "snake_case")]
 enum PlaybackFinalization {
-    LegacyThreeAxis(FlightRecordFinalizationDocument),
     TailIncidence(TailFlightRecordFinalizationDocument),
 }
 
@@ -119,7 +108,7 @@ impl HybridGameSessionBridge {
             .map_err(crate::game_session_error)
     }
 
-    /// Opens validated schema-one through schema-six snapshots without reinterpreting controls.
+    /// Opens a validated schema-six record without reinterpreting its physical state.
     pub fn open_archived_flight_record(&mut self, json: &str) -> Result<(), JsValue> {
         self.open_archive_internal(json)
             .map_err(BoundaryError::into_js)
@@ -190,10 +179,7 @@ impl HybridGameSessionBridge {
         match self.session.snapshot().phase() {
             SessionPhase::Result => self.export_record_internal(),
             SessionPhase::Replay => match &self.archived {
-                Some(
-                    ArchiveMetadata::Legacy { original_json, .. }
-                    | ArchiveMetadata::Tail { original_json, .. },
-                ) => Ok(original_json.clone()),
+                Some(ArchiveMetadata { original_json, .. }) => Ok(original_json.clone()),
                 None => self.export_record_internal(),
             },
             _ => Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
@@ -202,7 +188,7 @@ impl HybridGameSessionBridge {
 
     fn export_csv_internal(&self) -> Result<String, BoundaryError> {
         let json = self.export_current_record_internal()?;
-        let document = FlightRecordArchiveDocument::decode_json(json.as_bytes())
+        let document = TailFlightRecordDocument::decode_json(json.as_bytes())
             .map_err(BoundaryError::Format)?;
         let bytes = document.encode_csv().map_err(BoundaryError::Format)?;
         String::from_utf8(bytes)
@@ -263,21 +249,12 @@ impl HybridGameSessionBridge {
     }
 
     fn open_archive_internal(&mut self, json: &str) -> Result<(), BoundaryError> {
-        let document = FlightRecordArchiveDocument::decode_json(json.as_bytes())
+        let document = TailFlightRecordDocument::decode_json(json.as_bytes())
             .map_err(BoundaryError::Format)?;
-        let metadata = match &document {
-            FlightRecordArchiveDocument::Legacy(record) => ArchiveMetadata::Legacy {
-                difficulty: record.header.difficulty,
-                original_json: json.to_owned(),
-                finalization: record.finalization.clone().ok_or(BoundaryError::Format(
-                    FlightRecordFormatError::InvalidRecord,
-                ))?,
-            },
-            FlightRecordArchiveDocument::Tail(record) => ArchiveMetadata::Tail {
-                difficulty: record.header.difficulty,
-                control_identity: record.control_identity.clone(),
-                original_json: json.to_owned(),
-            },
+        let metadata = ArchiveMetadata {
+            difficulty: document.header.difficulty,
+            control_identity: document.control_identity.clone(),
+            original_json: json.to_owned(),
         };
         let record = document
             .to_finalized_core_record()
@@ -322,10 +299,7 @@ impl HybridGameSessionBridge {
             )
         } else {
             match &self.archived {
-                Some(ArchiveMetadata::Legacy { difficulty, .. }) => {
-                    (PlaybackLayout::LegacyThreeAxis, None, *difficulty)
-                }
-                Some(ArchiveMetadata::Tail {
+                Some(ArchiveMetadata {
                     difficulty,
                     control_identity,
                     ..
@@ -347,20 +321,13 @@ impl HybridGameSessionBridge {
                 ),
             }
         };
-        let finalization = match (&self.archived, phase) {
-            (Some(ArchiveMetadata::Legacy { finalization, .. }), SessionPhase::Replay) => {
-                PlaybackFinalization::LegacyThreeAxis(finalization.clone())
-            }
-            _ => {
-                let finalization = record
-                    .finalization()
-                    .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
-                PlaybackFinalization::TailIncidence(
-                    TailFlightRecordFinalizationDocument::try_from_core(finalization)
-                        .map_err(BoundaryError::Format)?,
-                )
-            }
-        };
+        let finalization = record
+            .finalization()
+            .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
+        let finalization = PlaybackFinalization::TailIncidence(
+            TailFlightRecordFinalizationDocument::try_from_core(finalization)
+                .map_err(BoundaryError::Format)?,
+        );
         Ok(PlaybackContext {
             schema_version: SCHEMA_VERSION,
             phase: phase_name,
@@ -385,7 +352,7 @@ impl HybridGameSessionBridge {
     }
 }
 
-/// Rust-owned schema-six Personal Best selection; legacy snapshots remain independently readable.
+/// Rust-owned schema-six Personal Best selection.
 #[wasm_bindgen]
 pub struct TailPersonalBestSelectionBridge {
     selection: Option<TailPersonalBestSelection>,
@@ -442,10 +409,7 @@ impl TailPersonalBestSelectionBridge {
 
 impl TailPersonalBestSelectionBridge {
     fn new_internal(candidate_json: &str) -> Result<Self, FlightRecordFormatError> {
-        let candidate = FlightRecordArchiveDocument::decode_json(candidate_json.as_bytes())?;
-        let FlightRecordArchiveDocument::Tail(document) = candidate else {
-            return Err(FlightRecordFormatError::IncompatibleControlLayout);
-        };
+        let document = TailFlightRecordDocument::decode_json(candidate_json.as_bytes())?;
         Ok(Self {
             selection: TailPersonalBestSelection::try_new(&document)?,
         })
@@ -459,7 +423,11 @@ impl TailPersonalBestSelectionBridge {
         if !id.is_finite() || id.fract() != 0.0 || !(1.0..=9_007_199_254_740_991.0).contains(&id) {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
-        let existing = FlightRecordArchiveDocument::decode_json(existing_json.as_bytes())?;
+        let existing = match TailFlightRecordDocument::decode_json(existing_json.as_bytes()) {
+            Ok(document) => document,
+            Err(FlightRecordFormatError::UnsupportedSchemaVersion) => return Ok(()),
+            Err(error) => return Err(error),
+        };
         if let Some(selection) = &mut self.selection {
             selection.consider_existing(id as u64, &existing)?;
         }

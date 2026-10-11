@@ -1,12 +1,8 @@
 //! Borrowed full-aircraft static polars and exclusive aerodynamic providers.
 
-use super::{
-    ElementReference, ElementalFlow, FlowAngles, UniformAir, WindFieldAerodynamicLoad,
-    map_math_error,
-};
+use super::{ElementReference, ElementalFlow, FlowAngles, UniformAir, map_math_error};
 use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError};
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
-use crate::flight_control::SurfaceDeflections;
 use crate::math::{BodyPoint, BodyVector, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
@@ -491,22 +487,6 @@ impl ExternalLoadProvider for StaticPolarLoad<'_> {
             .map(|result| result.wrench())
             .map_err(LoadError::Aerodynamic)
     }
-
-    fn evaluate_with_surface_deflections(
-        &self,
-        model: &AircraftModel,
-        state: &FlightState,
-        deflections: SurfaceDeflections,
-    ) -> Result<Wrench, LoadError> {
-        if deflections != SurfaceDeflections::neutral() {
-            return Err(LoadError::Aerodynamic(
-                AerodynamicEvaluationError::StaticPolar {
-                    cause: AeroError::UnsupportedControl,
-                },
-            ));
-        }
-        self.evaluate(model, state)
-    }
 }
 
 /// Borrows exactly one load provider; full-aircraft static loads are never added to element loads.
@@ -514,8 +494,6 @@ impl ExternalLoadProvider for StaticPolarLoad<'_> {
 pub enum AerodynamicLoadProvider<'a> {
     /// Full-aircraft static plus exclusive current-reference normal-force increments.
     Hybrid(&'a super::hybrid::HybridAerodynamicLoad<'a>),
-    /// Independent five-element model, retained for generic software fixtures.
-    ElementOnly(&'a WindFieldAerodynamicLoad<'a>),
     /// Full-aircraft static polar with neutral controls.
     StaticPolar(&'a StaticPolarLoad<'a>),
 }
@@ -528,29 +506,7 @@ impl AerodynamicLoadProvider<'_> {
     ) -> Result<NedVector, crate::wind_field::WindError> {
         match self {
             Self::Hybrid(load) => load.wind_velocity_at(position_ned),
-            Self::ElementOnly(load) => load.wind_velocity_at(position_ned),
             Self::StaticPolar(load) => load.wind_field.velocity_at(position_ned),
-        }
-    }
-
-    pub(crate) fn validate_scenario_control_boundary(
-        &self,
-        limits: [crate::flight_control::ActuatorConfig; 3],
-        initial: crate::flight_control::ActuatorState,
-    ) -> Result<(), AerodynamicEvaluationError> {
-        match self {
-            Self::Hybrid(load) => load
-                .validate_scenario_control_boundary(limits, initial)
-                .map_err(AerodynamicEvaluationError::Hybrid),
-            Self::ElementOnly(load) => load.aerodynamics.validate_actuator_limits(limits),
-            Self::StaticPolar(_) => {
-                if initial.deflections() != SurfaceDeflections::neutral() {
-                    return Err(AerodynamicEvaluationError::StaticPolar {
-                        cause: AeroError::UnsupportedControl,
-                    });
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -559,25 +515,7 @@ impl ExternalLoadProvider for AerodynamicLoadProvider<'_> {
     fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         match self {
             Self::Hybrid(load) => load.evaluate(model, state),
-            Self::ElementOnly(load) => load.evaluate(model, state),
             Self::StaticPolar(load) => load.evaluate(model, state),
-        }
-    }
-
-    fn evaluate_with_surface_deflections(
-        &self,
-        model: &AircraftModel,
-        state: &FlightState,
-        deflections: SurfaceDeflections,
-    ) -> Result<Wrench, LoadError> {
-        match self {
-            Self::Hybrid(load) => load.evaluate_with_surface_deflections(model, state, deflections),
-            Self::ElementOnly(load) => {
-                load.evaluate_with_surface_deflections(model, state, deflections)
-            }
-            Self::StaticPolar(load) => {
-                load.evaluate_with_surface_deflections(model, state, deflections)
-            }
         }
     }
 }

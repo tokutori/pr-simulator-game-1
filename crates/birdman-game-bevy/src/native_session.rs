@@ -2,9 +2,8 @@ use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{
     ControlMode, FbwAuthority, FlightState, GameSession, GameSessionError, PauseReason,
-    SessionFlightState, SessionPhase, SessionSnapshot, SessionTerminalState, TailFlightTickInput,
-    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailRateTarget,
+    SessionPhase, SessionSnapshot, SessionTerminalState, TailFlightTickInput, TailIncidence,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
 };
 use birdman_game_session::{
     DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
@@ -160,15 +159,13 @@ impl NativeSession {
     }
 
     pub(crate) fn prepared_display_state(&self) -> Option<TailDisplay> {
-        match self.game.prepared_launch_state()? {
-            SessionFlightState::TailIncidence(state) => Some(TailDisplay {
-                state: state.flight_state(),
-                incidence: state.incidence(),
-                tick: state.tick_index() as f64,
-                held_target_m: state.pilot_position_target().position_m(),
-            }),
-            SessionFlightState::LegacyThreeAxis(_) => None,
-        }
+        let state = self.game.prepared_launch_state()?;
+        Some(TailDisplay {
+            state: state.flight_state(),
+            incidence: state.incidence(),
+            tick: state.tick_index() as f64,
+            held_target_m: state.pilot_position_target().position_m(),
+        })
     }
 
     pub(crate) fn display_state(&self) -> Option<TailDisplay> {
@@ -193,7 +190,6 @@ impl NativeSession {
                     tick: sample.interval_start_tick() as f64 + sample.fraction(),
                     held_target_m: sample.pilot_position_target().position_m(),
                 }),
-                _ => None,
             },
             _ => None,
         }
@@ -395,10 +391,7 @@ mod tests {
                     display.tick,
                     finalization.terminal_tick as f64 + finalization.terminal_fraction
                 );
-                assert_eq!(
-                    last_sample.controls.actuators(),
-                    birdman_game_core::FlightRecordActuators::TailIncidence(display.incidence)
-                );
+                assert_eq!(last_sample.controls.actuators(), display.incidence);
                 if let Some(target) = last_sample.controls.pilot_position_target_m() {
                     assert_eq!(target, display.held_target_m);
                 }

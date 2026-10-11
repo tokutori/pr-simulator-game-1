@@ -8,8 +8,8 @@ mod hybrid_session;
 mod launch_venue;
 
 pub use environment::{
-    LegacyEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,
-    legacy_environment_for_version, legacy_wind_for_version, legacy_winds,
+    PresetEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,
+    preset_environment_for_version, preset_wind_for_version,
 };
 pub use hybrid_session::{
     HybridSessionPreparation, HybridSessionPreparationError, identity_for_selection,

@@ -1,45 +1,13 @@
-use super::FlightRecordInput;
 use crate::{
-    ActuatorState, PilotPositionTarget, TailAppliedControls, TailFlightTickOutcome,
-    TailFlightTickReport, TailFlightTickState, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailRateTarget,
+    PilotPositionTarget, TailAppliedControls, TailFlightTickOutcome, TailFlightTickReport,
+    TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
 };
-
-/// Semantic control layout, independent of archive, model and controller versions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlightRecordControlKind {
-    /// Original roll/pitch/yaw surface controls retained for saved-snapshot playback.
-    LegacyThreeAxis,
-    /// Horizontal/vertical tail effective incidences, without an independent roll command.
-    TailIncidence,
-}
-
-/// Physical actuator values retained without fabricating axes across control layouts.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum FlightRecordActuators {
-    /// Original recorded roll, pitch and yaw deflections in radians.
-    LegacyThreeAxis(ActuatorState),
-    /// Horizontal and vertical tail effective incidences in radians.
-    TailIncidence(TailIncidence),
-}
-
-impl FlightRecordActuators {
-    /// Returns legacy physical values only when the stored layout is explicitly compatible.
-    pub const fn legacy_three_axis(self) -> Result<ActuatorState, FlightRecordControlError> {
-        match self {
-            Self::LegacyThreeAxis(state) => Ok(state),
-            Self::TailIncidence(_) => Err(FlightRecordControlError::IncompatibleControlLayout),
-        }
-    }
-}
 
 /// Invalid externally restored control data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightRecordControlError {
     /// The recorded resolved pilot-position target is non-finite.
     NonFinitePilotPositionTarget,
-    /// The requested operation belongs to a different semantic control layout.
-    IncompatibleControlLayout,
 }
 
 /// One tail interval's intent and core-computed command targets, distinct from its actuator.
@@ -131,82 +99,38 @@ impl FlightRecordTailInput {
     }
 }
 
-/// Paired physical actuator and transition input from exactly one semantic control layout.
+/// Physical tail incidences and the input committed over the same elapsed interval.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum FlightRecordControls {
-    /// Legacy saved controls, preserving all three original axes and command values.
-    LegacyThreeAxis {
-        /// Physical deflections held over the interval ending at this sample.
-        actuator_state: ActuatorState,
-        /// Transition input, absent only for the initial state sample.
-        input_from_previous: Option<FlightRecordInput>,
-    },
-    /// Two physical tail incidences and their matching core-computed interval input.
-    TailIncidence {
-        /// Horizontal/vertical effective incidences held over the elapsed interval.
-        incidence: TailIncidence,
-        /// Transition input, absent only for the initial state sample.
-        input_from_previous: Option<FlightRecordTailInput>,
-    },
+pub struct FlightRecordControls {
+    /// Horizontal and vertical effective incidences held over the elapsed interval.
+    pub incidence: TailIncidence,
+    /// Applied interval input, absent only at the initial state sample.
+    pub input_from_previous: Option<FlightRecordTailInput>,
 }
 
 impl FlightRecordControls {
-    /// Returns legacy physical/input values without interpreting tail data as three axes.
-    pub const fn legacy_three_axis(
-        self,
-    ) -> Result<(ActuatorState, Option<FlightRecordInput>), FlightRecordControlError> {
-        match self {
-            Self::LegacyThreeAxis {
-                actuator_state,
-                input_from_previous,
-            } => Ok((actuator_state, input_from_previous)),
-            Self::TailIncidence { .. } => Err(FlightRecordControlError::IncompatibleControlLayout),
-        }
-    }
-
-    /// Returns whether this sample carries a transition input of its own control layout.
+    /// Returns whether this sample carries a transition input.
     pub const fn has_input(self) -> bool {
-        match self {
-            Self::LegacyThreeAxis {
-                input_from_previous,
-                ..
-            } => input_from_previous.is_some(),
-            Self::TailIncidence {
-                input_from_previous,
-                ..
-            } => input_from_previous.is_some(),
-        }
+        self.input_from_previous.is_some()
     }
 
     /// Returns the interval's saved resolved pilot target, absent for the initial sample.
     pub const fn pilot_position_target_m(self) -> Option<f64> {
-        match self {
-            Self::LegacyThreeAxis {
-                input_from_previous,
-                ..
-            } => match input_from_previous {
-                Some(input) => Some(input.pilot_position_target_m),
-                None => None,
-            },
-            Self::TailIncidence {
-                input_from_previous,
-                ..
-            } => match input_from_previous {
-                Some(input) => Some(input.resolved_pilot_position_target_m()),
-                None => None,
-            },
+        match self.input_from_previous {
+            Some(input) => Some(input.resolved_pilot_position_target_m()),
+            None => None,
         }
     }
 
-    /// Creates the initial tail sample with no newly applied interval input.
+    /// Creates the initial sample with no newly applied interval input.
     pub const fn initial_tail(state: TailFlightTickState) -> Self {
-        Self::TailIncidence {
+        Self {
             incidence: state.incidence(),
             input_from_previous: None,
         }
     }
 
-    /// Captures only controls that were committed by one successfully elapsed tail interval.
+    /// Captures only controls committed by one successfully elapsed interval.
     pub const fn from_tail_report(report: TailFlightTickReport) -> FlightRecordControlCapture {
         let Some(applied) = report.applied_controls() else {
             return FlightRecordControlCapture::NoElapsedInterval;
@@ -219,30 +143,15 @@ impl FlightRecordControls {
                 (sample.incidence(), sample.pilot_position_target())
             }
         };
-        FlightRecordControlCapture::Applied(Self::TailIncidence {
+        FlightRecordControlCapture::Applied(Self {
             incidence,
             input_from_previous: Some(FlightRecordTailInput::from_applied(applied, target)),
         })
     }
 
-    /// Returns the semantic control layout carried by this complete pair.
-    pub const fn kind(self) -> FlightRecordControlKind {
-        match self {
-            Self::LegacyThreeAxis { .. } => FlightRecordControlKind::LegacyThreeAxis,
-            Self::TailIncidence { .. } => FlightRecordControlKind::TailIncidence,
-        }
-    }
-
-    /// Returns the physical values without converting one control layout into another.
-    pub const fn actuators(self) -> FlightRecordActuators {
-        match self {
-            Self::LegacyThreeAxis { actuator_state, .. } => {
-                FlightRecordActuators::LegacyThreeAxis(actuator_state)
-            }
-            Self::TailIncidence { incidence, .. } => {
-                FlightRecordActuators::TailIncidence(incidence)
-            }
-        }
+    /// Returns physical tail incidences without re-evaluating controls.
+    pub const fn actuators(self) -> TailIncidence {
+        self.incidence
     }
 }
 

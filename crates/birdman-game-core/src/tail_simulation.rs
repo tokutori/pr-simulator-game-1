@@ -529,7 +529,7 @@ fn datum_alpha_for_guard(state: FlightState, loads: &HybridAerodynamicLoad<'_>) 
     }
 }
 
-/// Applies the same shared contact geometry and slerp as the legacy tick without legacy axes.
+/// Applies shared contact geometry and same-time state interpolation with quaternion slerp.
 pub fn advance_tail_flight_tick_with_contact(
     aircraft: &AircraftModel,
     previous: TailFlightTickState,

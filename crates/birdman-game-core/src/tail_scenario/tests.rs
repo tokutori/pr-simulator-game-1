@@ -1,10 +1,8 @@
 use super::*;
 use crate::{
-    ActuatorConfig, ActuatorState, AerodynamicEvaluationError, AerodynamicLoadProvider,
-    AerodynamicStage, BodyVector, ContactError, DynamicsError, FbwAuthority, FlightScenario,
-    FlightScenarioParameters, HybridMockConfiguration, HybridMockDefinition, HybridMockTrim,
-    HybridModel, HybridSite, LoadError, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailRateTarget, WindField,
+    AerodynamicEvaluationError, AerodynamicStage, BodyVector, ContactError, DynamicsError,
+    FbwAuthority, HybridMockDefinition, HybridMockTrim, HybridModel, HybridSite, LoadError,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, WindField,
 };
 
 fn near(actual: f64, expected: f64, tolerance: f64) {
@@ -69,8 +67,8 @@ fn profile() -> TailControlProfile {
 }
 
 #[test]
-fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry_without_legacy_axes() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let contacts = [BodyPoint::origin()];
     let wind = WindField::uniform(NedVector::try_new(0.2, -0.1, 0.0).unwrap());
@@ -113,21 +111,6 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry_without_leg
         wind.velocity_at(telemetry.composite_cg_position_ned_m)
             .unwrap()
     );
-    let legacy_parameters = FlightScenarioParameters::try_new(
-        definition.aircraft(),
-        launch(trim, 10.5, 0.37),
-        [ActuatorConfig::try_new(0.2, 1.0).unwrap(); 3],
-        ActuatorState::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
-        &contacts,
-        scenario.course_axis(),
-    )
-    .unwrap();
-    let legacy = FlightScenario::try_new_with_aerodynamic_provider(
-        legacy_parameters,
-        AerodynamicLoadProvider::Hybrid(&load),
-    )
-    .unwrap();
     let command = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.3, 0.4).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
@@ -141,7 +124,9 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry_without_leg
     };
     assert_eq!(
         scenario.telemetry(next.flight_state()).unwrap(),
-        legacy.telemetry(next.flight_state()).unwrap()
+        derive_flight_telemetry(&scenario.aircraft(), next.flight_state(), |point| wind
+            .velocity_at(point))
+        .unwrap()
     );
     assert!(next.incidence().elevator_rad() < 0.0 && next.incidence().rudder_rad() < 0.0);
     let rate = next.flight_state().angular_velocity_body().components();
@@ -164,7 +149,7 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry_without_leg
 
 #[test]
 fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_states() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let contacts = [BodyPoint::origin()];
     let load = HybridAerodynamicLoad::try_new(
@@ -239,7 +224,7 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
 
 #[test]
 fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let contacts = [BodyPoint::origin()];
     let winds = [NedVector::zero(); 8];
@@ -294,29 +279,21 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
         cause.cause(),
         crate::AeroError::Wind(WindError::OutsideGrid)
     );
-    assert_eq!(cause.site(), HybridSite::Datum);
+    assert_eq!(
+        cause.site(),
+        HybridSite::Proxy {
+            surface: crate::HybridSurfaceRole::MainWing,
+            index: 0
+        }
+    );
     assert_eq!(cause.stage(), Some(AerodynamicStage::Second));
     assert_eq!(scenario.initial_state().tick_index(), 0);
 }
 
 #[test]
 fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_ready_model() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
-    let invalid_legacy = FlightScenarioParameters::try_new(
-        definition.aircraft(),
-        launch(trim, 10.5, 0.0),
-        [ActuatorConfig::try_new(0.2, 1.0).unwrap(); 3],
-        ActuatorState::try_from_recorded(0.3, 0.0, 0.0).unwrap(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
-        &[],
-        CourseAxis::try_new(1.0, 0.0).unwrap(),
-    )
-    .unwrap_err();
-    assert!(matches!(
-        invalid_legacy,
-        FlightScenarioError::InitialState(_)
-    ));
     let parameters = TailFlightScenarioParameters::try_new(
         definition.aircraft(),
         launch(trim, 10.5, 0.0),

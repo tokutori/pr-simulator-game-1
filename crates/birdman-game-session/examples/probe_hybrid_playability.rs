@@ -1,9 +1,9 @@
 #![doc = "Deterministic public synthetic-hybrid input diagnostics with separate datum and CG alpha."]
 
 use birdman_game_core::{
-    ControlMode, FbwAuthority, FlightRecordActuators, FlightRecordSample, FlightState, GameSession,
-    SessionPhase, SessionTerminalState, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, WindField,
+    ControlMode, FbwAuthority, FlightRecordSample, FlightState, GameSession, SessionPhase,
+    SessionTerminalState, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailRateTarget, WindField,
 };
 use birdman_game_session::{
     DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation,
@@ -107,9 +107,7 @@ fn print_sample(
     sample: &FlightRecordSample,
     wind: WindField<'_>,
 ) {
-    let FlightRecordActuators::TailIncidence(incidence) = sample.controls.actuators() else {
-        panic!("the diagnostic must remain on the public two-tail model");
-    };
+    let incidence = sample.controls.actuators();
     let datum_alpha = datum_alpha(sample.flight_state, wind);
     println!(
         "sample,{mode},{sequence:?},{},{:.9},{datum_alpha:?},{:?},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:?}",

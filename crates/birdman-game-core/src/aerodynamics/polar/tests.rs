@@ -711,7 +711,6 @@ fn stage_wind_is_sampled_at_o_and_failure_preserves_input_state_and_static_cause
     let error = AerodynamicEvaluationError::StaticPolar {
         cause: AeroError::OutsideEnvelope,
     };
-    assert_eq!(error.role(), None);
     assert_eq!(error.cause(), AeroError::OutsideEnvelope);
 }
 
@@ -737,66 +736,5 @@ fn exclusive_provider_delegates_one_model_and_rejects_unmodeled_controls() {
     assert_eq!(
         selected.evaluate(&aircraft(), &initial),
         load.evaluate(&aircraft(), &initial)
-    );
-    for controls in [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]] {
-        let deflections =
-            SurfaceDeflections::try_new(controls[0], controls[1], controls[2]).unwrap();
-        assert_eq!(
-            selected.evaluate_with_surface_deflections(&aircraft(), &initial, deflections),
-            Err(LoadError::Aerodynamic(
-                AerodynamicEvaluationError::StaticPolar {
-                    cause: AeroError::UnsupportedControl
-                }
-            ))
-        );
-    }
-    let roles = [
-        crate::AerodynamicRole::LeftWing,
-        crate::AerodynamicRole::RightWing,
-        crate::AerodynamicRole::HorizontalTail,
-        crate::AerodynamicRole::VerticalTail,
-        crate::AerodynamicRole::Fuselage,
-    ];
-    let law = |value| crate::CoefficientLaw::try_new(value, 0.0, 0.0).unwrap();
-    let elements = crate::AerodynamicModel::try_new(roles.map(|role| {
-        let active = role == crate::AerodynamicRole::LeftWing;
-        crate::AerodynamicElement::try_new(
-            role,
-            BodyPoint::origin(),
-            BodyPoint::origin(),
-            crate::ElementOrientation::IDENTITY,
-            ElementReference::try_new(2.0, 4.0, 0.5).unwrap(),
-            crate::AeroCoefficients::new(
-                law(if active { 0.2 } else { 0.0 }),
-                law(if active { 0.01 } else { 0.0 }),
-                law(0.0),
-                law(0.0),
-                law(0.0),
-                law(0.0),
-            ),
-            crate::ElementEnvelope::try_new(
-                -1.0,
-                1.0,
-                -1.0,
-                1.0,
-                0.0,
-                100_000.0,
-                crate::ControlEnvelope::NEUTRAL,
-            )
-            .unwrap(),
-        )
-        .unwrap()
-    }))
-    .unwrap();
-    let old =
-        WindFieldAerodynamicLoad::try_new(elements, 1.0, WindField::uniform(NedVector::zero()))
-            .unwrap();
-    assert_eq!(
-        AerodynamicLoadProvider::ElementOnly(&old).evaluate(&aircraft(), &initial),
-        old.evaluate(&aircraft(), &initial)
-    );
-    assert_ne!(
-        old.evaluate(&aircraft(), &initial),
-        selected.evaluate(&aircraft(), &initial)
     );
 }

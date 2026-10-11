@@ -3,10 +3,10 @@ use std::sync::OnceLock;
 use birdman_game_core::{
     ActuatorError, BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis,
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridMockConfiguration, HybridMockDefinition,
-    HybridMockError, HybridMockTrim, HybridModel, HybridSurface, MathError, NedPoint, NedVector,
-    SessionScenarioIdentity, TailAngleOfAttackGuard, TailControlProfile, TailFlightScenario,
-    TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence, WindField,
+    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridMockError, HybridMockTrim,
+    HybridModel, HybridSurface, MathError, NedPoint, NedVector, SessionScenarioIdentity,
+    TailAngleOfAttackGuard, TailControlProfile, TailFlightScenario, TailFlightScenarioError,
+    TailFlightScenarioParameters, TailIncidence, WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
@@ -16,7 +16,7 @@ use birdman_game_format::{
 use crate::{
     DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
     LaunchVenueError,
-    environment::{bundled_environment, legacy_wind_for_version},
+    environment::{bundled_environment, preset_wind_for_version},
     launch_venue,
 };
 
@@ -112,7 +112,7 @@ impl HybridSessionPreparation {
                 .wind_field()
                 .map_err(HybridSessionPreparationError::Environment)?
         } else {
-            let velocity = legacy_wind_for_version(selection.environment_version).ok_or(
+            let velocity = preset_wind_for_version(selection.environment_version).ok_or(
                 HybridSessionPreparationError::Configuration(
                     ConfigurationError::ScenarioUnavailable,
                 ),
@@ -196,7 +196,7 @@ impl HybridSessionPreparation {
         )
         .map_err(HybridSessionPreparationError::Session)?;
         let record_identity = FlightRecordTailIdentityDocument {
-            aircraft_configuration_id: definition.configuration().configuration_id().to_owned(),
+            aircraft_configuration_id: HybridMockDefinition::CONFIGURATION_ID.to_owned(),
             controller_profile_id: CONTROLLER_PROFILE_ID.to_owned(),
         };
         Ok(Self {
@@ -242,7 +242,7 @@ const fn entry(version: u32, weather: WeatherClass) -> ScenarioCatalogEntry {
     ScenarioCatalogEntry {
         scenario_id: version,
         scenario_version: SCENARIO_VERSION,
-        aircraft_model_version: HybridMockConfiguration::Playable.model_version(),
+        aircraft_model_version: HybridMockDefinition::MODEL_VERSION,
         environment_version: version,
         weather,
     }
@@ -263,7 +263,7 @@ pub fn identity_for_selection(selection: ScenarioSelection) -> SessionScenarioId
 
 fn cached_definition() -> Result<&'static HybridMockDefinition, HybridSessionPreparationError> {
     HYBRID_DEFINITION
-        .get_or_init(|| HybridMockDefinition::try_new(HybridMockConfiguration::Playable))
+        .get_or_init(HybridMockDefinition::try_new)
         .as_ref()
         .map_err(|error| HybridSessionPreparationError::Mock(*error))
 }

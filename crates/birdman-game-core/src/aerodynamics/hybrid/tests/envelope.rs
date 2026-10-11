@@ -1,8 +1,7 @@
 use super::*;
 use crate::{
-    ActuatorConfig, ActuatorState, AerodynamicLoadProvider, AerodynamicStage, ControlMode,
-    DynamicsError, FlightTickConfig, FlightTickError, FlightTickInput, FlightTickState, Gravity,
-    InertiaTensor, PilotPositionTarget, SurfaceCommands, advance_flight_tick,
+    AerodynamicLoadProvider, AerodynamicStage, DynamicsError, Gravity, InertiaTensor,
+    PilotAcceleration, advance,
 };
 use core::cell::{Cell, RefCell};
 
@@ -534,31 +533,19 @@ struct StageRecorder<'a> {
     fail_on: Option<usize>,
     failure: HybridError,
     states: RefCell<Vec<FlightState>>,
-    deflections: RefCell<Vec<SurfaceDeflections>>,
     calls: Cell<usize>,
 }
 
 impl ExternalLoadProvider for StageRecorder<'_> {
     fn evaluate(&self, model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
-        self.evaluate_with_surface_deflections(model, state, SurfaceDeflections::neutral())
-    }
-
-    fn evaluate_with_surface_deflections(
-        &self,
-        model: &AircraftModel,
-        state: &FlightState,
-        deflections: SurfaceDeflections,
-    ) -> Result<Wrench, LoadError> {
         self.states.borrow_mut().push(*state);
-        self.deflections.borrow_mut().push(deflections);
         self.calls.set(self.calls.get() + 1);
         if self.fail_on == Some(self.calls.get()) {
             return Err(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
                 self.failure,
             )));
         }
-        self.provider
-            .evaluate_with_surface_deflections(model, state, deflections)
+        self.provider.evaluate(model, state)
     }
 }
 
@@ -573,21 +560,7 @@ fn all_rk_stages_preserve_cause_site_limit_and_noncommitted_tick_state() {
     )
     .unwrap();
     let aircraft = aircraft();
-    let limits = [ActuatorConfig::try_new(0.2, 1.0).unwrap(); 3];
-    let previous = FlightTickState::try_new(
-        &aircraft,
-        limits,
-        7,
-        state([10.0, 0.0, 0.0], [0.0; 3]),
-        ActuatorState::try_new(limits, SurfaceDeflections::neutral()).unwrap(),
-    )
-    .unwrap();
-    let config = FlightTickConfig::new(ControlMode::Manual, limits, Gravity::try_new(0.0).unwrap());
-    let input = FlightTickInput::new(
-        SurfaceCommands::try_new(0.0, 0.1, -0.1).unwrap(),
-        SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
-        PilotPositionTarget::try_new(&aircraft, 0.1).unwrap(),
-    );
+    let previous = state([10.0, 0.0, 0.0], [0.0; 3]);
     let site = HybridSite::Proxy {
         surface: HybridSurfaceRole::VerticalTail,
         index: 1,
@@ -611,33 +584,26 @@ fn all_rk_stages_preserve_cause_site_limit_and_noncommitted_tick_state() {
                 fail_on: Some(index + 1),
                 failure,
                 states: RefCell::new(Vec::new()),
-                deflections: RefCell::new(Vec::new()),
                 calls: Cell::new(0),
             };
             let before = previous;
-            let error =
-                advance_flight_tick(&aircraft, previous, config, input, &recorder).unwrap_err();
+            let error = advance(
+                &aircraft,
+                &previous,
+                PilotAcceleration::try_new(0.0).unwrap(),
+                Gravity::try_new(0.0).unwrap(),
+                &recorder,
+                crate::PHYSICS_DT_SECONDS,
+            )
+            .unwrap_err();
             assert_eq!(
                 error,
-                FlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
-                    AerodynamicEvaluationError::Hybrid(failure.with_stage(stage))
+                DynamicsError::Load(LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(
+                    failure.with_stage(stage)
                 )))
             );
             assert_eq!(previous, before);
-            assert_eq!(previous.tick_index(), 7);
-            assert_eq!(
-                previous.actuator_state().deflections(),
-                SurfaceDeflections::neutral()
-            );
             assert_eq!(recorder.calls.get(), index + 1);
-            assert!(
-                recorder
-                    .deflections
-                    .borrow()
-                    .iter()
-                    .all(|deflections| *deflections
-                        == SurfaceDeflections::try_new(0.0, 0.01, -0.01).unwrap())
-            );
         }
     }
     let recorder = StageRecorder {
@@ -645,46 +611,19 @@ fn all_rk_stages_preserve_cause_site_limit_and_noncommitted_tick_state() {
         fail_on: None,
         failure: HybridError::new(site, AeroError::NonFinite),
         states: RefCell::new(Vec::new()),
-        deflections: RefCell::new(Vec::new()),
         calls: Cell::new(0),
     };
-    let next = advance_flight_tick(&aircraft, previous, config, input, &recorder).unwrap();
-    assert_eq!(recorder.calls.get(), 4);
-    assert_eq!(next.tick_index(), 8);
-    assert_ne!(next.flight_state(), previous.flight_state());
-    let states = recorder.states.borrow();
-    assert!(states.windows(2).all(|pair| pair[0] != pair[1]));
-}
-
-#[test]
-fn exclusive_provider_rejects_legacy_roll_without_adding_old_element_loads() {
-    let fixture = Fixture::new(4);
-    let surfaces = fixture.surfaces();
-    let load = HybridAerodynamicLoad::try_new(
-        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
-        1.2,
-        WindField::uniform(NedVector::zero()),
+    let next = advance(
+        &aircraft,
+        &previous,
+        PilotAcceleration::try_new(0.0).unwrap(),
+        Gravity::try_new(0.0).unwrap(),
+        &recorder,
+        crate::PHYSICS_DT_SECONDS,
     )
     .unwrap();
-    let provider = AerodynamicLoadProvider::Hybrid(&load);
-    let state = state([10.0, 0.0, 0.0], [0.0; 3]);
-    assert_eq!(
-        provider.evaluate(&aircraft(), &state).unwrap(),
-        load.evaluate_hybrid(&state, TailIncidence::neutral())
-            .unwrap()
-            .total_wrench()
-    );
-    let error = provider
-        .evaluate_with_surface_deflections(
-            &aircraft(),
-            &state,
-            SurfaceDeflections::try_new(0.01, 0.0, 0.0).unwrap(),
-        )
-        .unwrap_err();
-    let LoadError::Aerodynamic(AerodynamicEvaluationError::Hybrid(error)) = error else {
-        panic!("expected hybrid cause");
-    };
-    assert_eq!(error.cause(), AeroError::UnsupportedControl);
-    assert_eq!(error.site(), HybridSite::TailIncidence);
-    assert_eq!(error.stage(), None);
+    assert_eq!(recorder.calls.get(), 4);
+    assert_ne!(next, previous);
+    let states = recorder.states.borrow();
+    assert!(states.windows(2).all(|pair| pair[0] != pair[1]));
 }

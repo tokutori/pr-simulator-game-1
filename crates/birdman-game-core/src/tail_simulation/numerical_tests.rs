@@ -1,8 +1,7 @@
 use super::*;
 use crate::{
-    BodyVector, FbwAuthority, HybridMockConfiguration, HybridMockDefinition, HybridMockTrim,
-    HybridModel, NedPoint, NedVector, TailPilotPositionIntent, UnitQuaternion, WindField,
-    advance_tail_control,
+    BodyVector, FbwAuthority, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint,
+    NedVector, TailPilotPositionIntent, UnitQuaternion, WindField, advance_tail_control,
 };
 
 mod wind_tests;
@@ -416,7 +415,7 @@ fn verify_step_halving(
 }
 
 fn check_step_halving(cadence: Cadence) {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),

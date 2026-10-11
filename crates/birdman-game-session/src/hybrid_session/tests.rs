@@ -39,7 +39,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
             .into_parts();
     assert_eq!(
         control_identity.aircraft_configuration_id,
-        HybridMockConfiguration::Playable.configuration_id()
+        HybridMockDefinition::CONFIGURATION_ID
     );
     assert_eq!(
         control_identity.controller_profile_id,
@@ -80,10 +80,14 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     session.advance_tail_flight_tick(neutral_input()).unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     let record = session.flight_record().unwrap();
-    assert!(matches!(
-        record.sample(0).unwrap().controls,
-        FlightRecordControls::TailIncidence { .. }
-    ));
+    assert!(
+        record
+            .sample(0)
+            .unwrap()
+            .controls
+            .input_from_previous
+            .is_none()
+    );
     let document = TailFlightRecordDocument::from_record(
         record,
         DifficultySettings::custom(
@@ -186,7 +190,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
                 .unwrap()
                 .components()
         } else {
-            legacy_wind_for_version(selection.environment_version).unwrap()
+            preset_wind_for_version(selection.environment_version).unwrap()
         };
         assert_eq!(telemetry.wind_velocity_ned_mps.components(), expected);
         assert!((telemetry.airspeed_mps - HybridMockTrim::AIRSPEED_MPS).abs() < 1.0e-12);
@@ -245,7 +249,7 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
                     .unwrap()
                     .components()
             } else {
-                legacy_wind_for_version(
+                preset_wind_for_version(
                     session
                         .configuration_identity()
                         .unwrap()
@@ -439,13 +443,10 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
             result.state.flight_state()
         );
         for sample in record.samples() {
-            let FlightRecordControls::TailIncidence {
+            let FlightRecordControls {
                 incidence,
                 input_from_previous,
-            } = sample.controls
-            else {
-                panic!("expected the public two-tail record layout");
-            };
+            } = sample.controls;
             loads
                 .evaluate_hybrid(&sample.flight_state, incidence)
                 .unwrap();

@@ -236,7 +236,7 @@ impl HybridGameSessionBridge {
                             )
                         })?
                 } else {
-                    let components = crate::environment_snapshot::legacy_wind_for_version(
+                    let components = crate::environment_snapshot::preset_wind_for_version(
                         identity.environment_version,
                     )
                     .ok_or(BoundaryError::Environment(

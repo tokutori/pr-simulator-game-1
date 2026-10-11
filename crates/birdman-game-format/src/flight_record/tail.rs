@@ -1,7 +1,7 @@
 use super::{
-    FlightRecordDispositionDocument, FlightRecordDocument, FlightRecordEndReasonDocument,
-    FlightRecordFormatError, FlightRecordHeaderDocument, FlightRecordInformationDocument,
-    FlightRecordTelemetryDocument, MAX_FLIGHT_RECORD_JSON_BYTES,
+    FlightRecordDispositionDocument, FlightRecordEndReasonDocument, FlightRecordFormatError,
+    FlightRecordHeaderDocument, FlightRecordInformationDocument, FlightRecordTelemetryDocument,
+    MAX_FLIGHT_RECORD_JSON_BYTES,
 };
 use crate::DifficultySettings;
 use alloc::{string::String, vec::Vec};
@@ -18,10 +18,10 @@ mod csv;
 mod failure;
 pub use failure::{
     ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
-    AerodynamicRoleDocument, AerodynamicStageDocument, ContactFailureDocument,
-    DynamicsFailureDocument, HybridFailureDocument, HybridFlowDocument, HybridLimitDocument,
-    HybridSiteDocument, HybridSurfaceDocument, LoadFailureDocument, MathFailureDocument,
-    TailControlFailureDocument, TailTickFailureDocument, WindFailureDocument,
+    AerodynamicStageDocument, ContactFailureDocument, DynamicsFailureDocument,
+    HybridFailureDocument, HybridFlowDocument, HybridLimitDocument, HybridSiteDocument,
+    HybridSurfaceDocument, LoadFailureDocument, MathFailureDocument, TailControlFailureDocument,
+    TailTickFailureDocument, WindFailureDocument,
 };
 
 /// Schema-six terminal metadata with the original typed simulation cause.
@@ -64,14 +64,7 @@ impl TailFlightRecordFinalizationDocument {
         }
         let failure = finalization
             .failure
-            .map(|failure| match failure {
-                birdman_game_core::SessionSimulationFailure::TailIncidence(cause) => {
-                    TailTickFailureDocument::from_core(cause)
-                }
-                birdman_game_core::SessionSimulationFailure::LegacyThreeAxis(_) => {
-                    Err(FlightRecordFormatError::IncompatibleTerminalCause)
-                }
-            })
+            .map(TailTickFailureDocument::from_core)
             .transpose()?;
         Ok(Self {
             reason,
@@ -96,14 +89,14 @@ fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
     Option::<TailTickFailureDocument>::deserialize(decoder)
 }
 
-/// Archive schema with named two-tail controls, distinct from legacy schemas 1 through 5.
+/// Current archive schema with named two-tail controls.
 pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 6;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordTailIdentityDocument {
-    /// Immutable aircraft configuration name, including the distinct zero-dihedral oracle name.
+    /// Immutable aircraft configuration name.
     pub aircraft_configuration_id: String,
     /// Software tail-controller profile name, independent of aircraft data.
     pub controller_profile_id: String,
@@ -219,11 +212,11 @@ pub struct TailFlightRecordSampleDocument {
     pub controls: TailFlightRecordControlsDocument,
 }
 
-/// Finalized v6 archive, independent of the current public legacy writer/default model.
+/// Finalized current archive with saved two-tail input and physical state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TailFlightRecordDocument {
-    /// Exactly schema version 6, never interpreted as a legacy three-axis schema.
+    /// Exactly the supported current schema version.
     pub schema_version: u32,
     /// Scenario, model/controller versions, bounds, difficulty and comparison metadata.
     pub header: FlightRecordHeaderDocument,
@@ -233,15 +226,6 @@ pub struct TailFlightRecordDocument {
     pub samples: Vec<TailFlightRecordSampleDocument>,
     /// Immutable exact terminal time, disposition and score.
     pub finalization: TailFlightRecordFinalizationDocument,
-}
-
-/// Version-specific archive interpretation, preserving all legacy saved-snapshot meanings.
-#[derive(Clone, Debug, PartialEq)]
-pub enum FlightRecordArchiveDocument {
-    /// Saved three-axis snapshots from schemas 1 through 5.
-    Legacy(FlightRecordDocument),
-    /// Saved two-tail snapshots from schema 6.
-    Tail(TailFlightRecordDocument),
 }
 
 impl TailFlightRecordDocument {
@@ -270,8 +254,8 @@ impl TailFlightRecordDocument {
                 seed: scenario.seed,
                 maximum_flight_ticks: core_header.maximum_flight_ticks,
                 physics_hz: core_header.physics_hz,
-                score_definition_version: Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION),
-                physics_model_version: Some(birdman_game_core::PHYSICS_MODEL_VERSION),
+                score_definition_version: birdman_game_core::COURSE_DISTANCE_SCORE_VERSION,
+                physics_model_version: birdman_game_core::PHYSICS_MODEL_VERSION,
                 personal_best_key: None,
             },
             control_identity: identity,
@@ -310,10 +294,8 @@ impl TailFlightRecordDocument {
             || !valid_id(&self.control_identity.controller_profile_id)
             || self.header.physics_hz != birdman_game_core::PHYSICS_HZ
             || self.header.score_definition_version
-                != Some(birdman_game_core::COURSE_DISTANCE_SCORE_VERSION)
-            || !self.header.physics_model_version.is_some_and(|version| {
-                (1..=birdman_game_core::PHYSICS_MODEL_VERSION).contains(&version)
-            })
+                != birdman_game_core::COURSE_DISTANCE_SCORE_VERSION
+            || self.header.physics_model_version != birdman_game_core::PHYSICS_MODEL_VERSION
             || matches!(
                 self.header.difficulty.information,
                 FlightRecordInformationDocument::Custom
@@ -373,11 +355,7 @@ impl TailFlightRecordDocument {
             failure: self
                 .finalization
                 .failure
-                .map(|cause| {
-                    cause
-                        .to_core()
-                        .map(birdman_game_core::SessionSimulationFailure::TailIncidence)
-                })
+                .map(|cause| cause.to_core())
                 .transpose()?,
         };
         if finalization.reason == birdman_game_core::SessionEndReason::OutOfValidEnvelope
@@ -416,9 +394,6 @@ impl TailFlightRecordDocument {
         &self,
     ) -> Result<Option<DistanceScore>, FlightRecordFormatError> {
         let record = self.to_finalized_core_record()?;
-        if self.header.physics_model_version != Some(birdman_game_core::PHYSICS_MODEL_VERSION) {
-            return Ok(None);
-        }
         Ok(record.personal_best_candidate_score())
     }
 
@@ -434,16 +409,13 @@ impl TailFlightRecordDocument {
     }
 }
 
-impl FlightRecordArchiveDocument {
-    /// Exports saved legacy or tail samples with the layout-specific CSV contract.
+impl TailFlightRecordDocument {
+    /// Exports the saved state and input with the current CSV contract.
     pub fn encode_csv(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
-        match self {
-            Self::Legacy(document) => document.encode_csv(),
-            Self::Tail(document) => csv::encode(document),
-        }
+        csv::encode(self)
     }
 
-    /// Uses the exact version-specific decoder without reinterpreting legacy field meanings.
+    /// Rejects unsupported schemas before decoding the current document structure.
     pub fn decode_json(input: &[u8]) -> Result<Self, FlightRecordFormatError> {
         if input.len() > MAX_FLIGHT_RECORD_JSON_BYTES {
             return Err(FlightRecordFormatError::InputTooLarge);
@@ -454,49 +426,26 @@ impl FlightRecordArchiveDocument {
         }
         let version: SchemaVersion =
             serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
-        match version.schema_version {
-            1..=5 => FlightRecordDocument::decode_json(input).map(Self::Legacy),
-            TAIL_FLIGHT_RECORD_SCHEMA_VERSION => {
-                let document: TailFlightRecordDocument = serde_json::from_slice(input)
-                    .map_err(|_| FlightRecordFormatError::InvalidJson)?;
-                document.validate()?;
-                Ok(Self::Tail(document))
-            }
-            _ => Err(FlightRecordFormatError::UnsupportedSchemaVersion),
+        if version.schema_version != TAIL_FLIGHT_RECORD_SCHEMA_VERSION {
+            return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
+        let document: Self =
+            serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
+        document.validate()?;
+        Ok(document)
     }
 
-    /// Re-encodes the original schema and values, retaining old model/controller identity.
-    pub fn encode_json(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
-        match self {
-            Self::Legacy(document) => document.encode_json(),
-            Self::Tail(document) => document.encode_json(),
-        }
-    }
-
-    /// Restores saved states for the existing Analysis/Replay query; no model is evaluated.
-    pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
-        match self {
-            Self::Legacy(document) => document.to_finalized_core_record(),
-            Self::Tail(document) => document.to_finalized_core_record(),
-        }
-    }
-
-    /// Explicitly rejects old controls or mismatched model/controller/scenario/physics identity.
+    /// Checks that saved inputs belong to the same current model, controller and scenario.
     pub fn require_tail_reintegration_compatibility(
         &self,
         identity: &FlightRecordTailIdentityDocument,
         scenario: SessionScenarioIdentity,
         physics_model_version: u32,
     ) -> Result<(), FlightRecordFormatError> {
-        let Self::Tail(document) = self else {
-            self.to_finalized_core_record()?;
-            return Err(FlightRecordFormatError::IncompatibleReintegration);
-        };
-        document.validate()?;
-        if document.control_identity != *identity
-            || document.scenario_identity() != scenario
-            || document.header.physics_model_version != Some(physics_model_version)
+        self.validate()?;
+        if self.control_identity != *identity
+            || self.scenario_identity() != scenario
+            || self.header.physics_model_version != physics_model_version
         {
             return Err(FlightRecordFormatError::IncompatibleReintegration);
         }
@@ -505,17 +454,12 @@ impl FlightRecordArchiveDocument {
 }
 
 /// Compares only eligible v6 records with matching explicit model/controller identity and keys.
-pub fn compare_archive_personal_best_records(
-    candidate: &FlightRecordArchiveDocument,
-    existing: &FlightRecordArchiveDocument,
+pub fn compare_tail_personal_best_records(
+    candidate: &TailFlightRecordDocument,
+    existing: &TailFlightRecordDocument,
 ) -> Result<Option<PersonalBestComparison>, FlightRecordFormatError> {
     candidate.to_finalized_core_record()?;
     existing.to_finalized_core_record()?;
-    let (FlightRecordArchiveDocument::Tail(candidate), FlightRecordArchiveDocument::Tail(existing)) =
-        (candidate, existing)
-    else {
-        return Ok(None);
-    };
     let (Some(candidate_score), Some(existing_score)) = (
         candidate.personal_best_candidate_score()?,
         existing.personal_best_candidate_score()?,
@@ -544,13 +488,10 @@ pub fn compare_archive_personal_best_records(
 
 impl TailFlightRecordSampleDocument {
     fn from_core(sample: &FlightRecordSample) -> Result<Self, FlightRecordFormatError> {
-        let FlightRecordControls::TailIncidence {
+        let FlightRecordControls {
             incidence,
             input_from_previous,
-        } = sample.controls
-        else {
-            return Err(FlightRecordFormatError::IncompatibleControlLayout);
-        };
+        } = sample.controls;
         let state = sample.flight_state;
         let telemetry = sample.telemetry;
         Ok(Self {
@@ -621,7 +562,7 @@ impl TailFlightRecordSampleDocument {
                 state.pilot_velocity_mps,
             )
             .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
-            controls: FlightRecordControls::TailIncidence {
+            controls: FlightRecordControls {
                 incidence: physical_incidence.to_core()?,
                 input_from_previous: input_from_previous
                     .as_ref()

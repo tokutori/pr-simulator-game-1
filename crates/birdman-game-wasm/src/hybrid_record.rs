@@ -1,6 +1,6 @@
 use birdman_game_core::{
-    CourseAxis, FlightRecord, FlightRecordActuators, FlightRecordPlaybackSample,
-    FlightRecordQueryError, FlightState, FlightTelemetry, GameSession, GameSessionError,
+    CourseAxis, FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightState,
+    FlightTelemetry, GameSession, GameSessionError, TailIncidence,
 };
 use birdman_game_format::{
     AssistanceLevel, FlightRecordFormatError, FlightRecordStateDocument,
@@ -84,32 +84,17 @@ pub(crate) fn export_record_json(
 #[derive(Serialize)]
 #[serde(tag = "layout", rename_all = "snake_case")]
 enum PhysicalControlsDocument {
-    LegacyThreeAxis {
-        roll_rad: f64,
-        pitch_rad: f64,
-        yaw_rad: f64,
-    },
     TailIncidence {
         physical_incidence: TailIncidenceDocument,
     },
 }
 
-impl From<FlightRecordActuators> for PhysicalControlsDocument {
-    fn from(actuators: FlightRecordActuators) -> Self {
-        match actuators {
-            FlightRecordActuators::LegacyThreeAxis(state) => {
-                let deflections = state.deflections();
-                Self::LegacyThreeAxis {
-                    roll_rad: deflections.roll_rad(),
-                    pitch_rad: deflections.pitch_rad(),
-                    yaw_rad: deflections.yaw_rad(),
-                }
-            }
-            FlightRecordActuators::TailIncidence(incidence) => Self::TailIncidence {
-                physical_incidence: TailIncidenceDocument {
-                    horizontal_tail_rad: incidence.elevator_rad(),
-                    vertical_tail_rad: incidence.rudder_rad(),
-                },
+impl From<TailIncidence> for PhysicalControlsDocument {
+    fn from(incidence: TailIncidence) -> Self {
+        Self::TailIncidence {
+            physical_incidence: TailIncidenceDocument {
+                horizontal_tail_rad: incidence.elevator_rad(),
+                vertical_tail_rad: incidence.rudder_rad(),
             },
         }
     }

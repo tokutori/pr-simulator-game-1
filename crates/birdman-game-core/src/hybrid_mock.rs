@@ -9,13 +9,6 @@ use crate::{
 mod trim;
 pub use trim::HybridMockTrim;
 
-const POLAR_KNOTS: [(f64, f64); 5] = [
-    (-0.12, 0.10),
-    (-0.06, 0.36),
-    (0.0, 0.70),
-    (0.06, 1.00),
-    (0.12, 1.18),
-];
 const PLAYABLE_POLAR_KNOTS: [(f64, f64); 9] = [
     (-0.18, -0.20),
     (-0.15, -0.05),
@@ -31,7 +24,6 @@ const PLAYABLE_PITCH_STIFFNESS_PER_RAD: f64 = 2.0;
 const PLAYABLE_PITCH_REFERENCE_ALPHA_RAD: f64 = 0.04;
 const PLAYABLE_DRAG_ONSET_RAD: f64 = 0.06;
 const PLAYABLE_DRAG_RISE_PER_RAD_SQUARED: f64 = 1.5;
-const VERSION_ONE_TAIL_ARM_M: f64 = 1.8;
 const PLAYABLE_TAIL_ARM_M: f64 = 3.6;
 const WING_AREA_M2: f64 = 18.0;
 const WING_SPAN_M: f64 = 18.0;
@@ -39,44 +31,6 @@ const TAIL_AREA_M2: f64 = 2.5;
 const TAIL_SPAN_M: f64 = 3.4;
 const FIN_AREA_M2: f64 = 0.5;
 const FIN_SPAN_M: f64 = 0.7;
-
-/// Separate identities for the public fictional definition and its dynamic oracle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HybridMockConfiguration {
-    /// Rectangular main wing with five-degree dihedral and no twist.
-    Standard,
-    #[doc = "Version-two playable software polar with an extended horizontal-tail arm."]
-    Playable,
-    /// Identical projected geometry and static polar with zero wing dihedral.
-    ZeroDihedralOracle,
-}
-
-impl HybridMockConfiguration {
-    /// Identifies this complete fictional geometry and static table.
-    pub const fn configuration_id(self) -> &'static str {
-        match self {
-            Self::Standard => "bpg041-rectangular-hybrid-mock",
-            Self::Playable => "bpg041-playable-hybrid-mock",
-            Self::ZeroDihedralOracle => "bpg041-zero-dihedral-oracle",
-        }
-    }
-
-    /// Version within the configuration identity, independent of the old element-only model.
-    pub const fn model_version(self) -> u32 {
-        match self {
-            Self::Playable => 2,
-            Self::Standard | Self::ZeroDihedralOracle => 1,
-        }
-    }
-
-    /// Returns the main wing's dihedral angle in radians.
-    pub fn wing_dihedral_rad(self) -> f64 {
-        match self {
-            Self::Standard | Self::Playable => 5.0 * core::f64::consts::PI / 180.0,
-            Self::ZeroDihedralOracle => 0.0,
-        }
-    }
-}
 
 /// Original constructor failures from the math, mass and aerodynamic boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +54,6 @@ pub enum HybridMockError {
 /// This definition does not select the application's default aircraft or controller.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HybridMockDefinition {
-    configuration: HybridMockConfiguration,
     aircraft: AircraftModel,
     wing_sections: [HybridSection; 3],
     tail_sections: [HybridSection; 2],
@@ -108,39 +61,32 @@ pub struct HybridMockDefinition {
     wing_proxies: [HybridProxy; 16],
     tail_proxies: [HybridProxy; 8],
     fin_proxies: [HybridProxy; 4],
-    rows: HybridMockPolarRows,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct HybridMockPolarRows {
-    storage: [StaticPolarRow; PLAYABLE_POLAR_KNOTS.len()],
-    row_count: usize,
-}
-
-impl HybridMockPolarRows {
-    fn as_slice(&self) -> &[StaticPolarRow] {
-        &self.storage[..self.row_count]
-    }
+    rows: [StaticPolarRow; PLAYABLE_POLAR_KNOTS.len()],
 }
 
 impl HybridMockDefinition {
+    /// Identifies the current fictional geometry and static table.
+    pub const CONFIGURATION_ID: &'static str = "bpg041-playable-hybrid-mock";
+    /// Version of the current complete-aircraft software model.
+    pub const MODEL_VERSION: u32 = 2;
+    /// Main-wing dihedral in radians.
+    pub const WING_DIHEDRAL_RAD: f64 = 5.0 * core::f64::consts::PI / 180.0;
+
     /// Builds and validates one complete rectangular mock, without I/O or allocation.
-    pub fn try_new(configuration: HybridMockConfiguration) -> Result<Self, HybridMockError> {
-        let dihedral = configuration.wing_dihedral_rad();
+    pub fn try_new() -> Result<Self, HybridMockError> {
+        let dihedral = Self::WING_DIHEDRAL_RAD;
         let wing_tip_down = -9.0 * libm::tan(dihedral);
         let wing_sections = [
             section([0.0, -9.0, wing_tip_down], 1.0)?,
             section([0.0, 0.0, 0.0], 1.0)?,
             section([0.0, 9.0, wing_tip_down], 1.0)?,
         ];
-        let tail_arm_m = if configuration == HybridMockConfiguration::Playable {
-            PLAYABLE_TAIL_ARM_M
-        } else {
-            VERSION_ONE_TAIL_ARM_M
-        };
         let tail_sections = [
-            section([-tail_arm_m, -1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
-            section([-tail_arm_m, 1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
+            section(
+                [-PLAYABLE_TAIL_ARM_M, -1.7, 0.1],
+                TAIL_AREA_M2 / TAIL_SPAN_M,
+            )?,
+            section([-PLAYABLE_TAIL_ARM_M, 1.7, 0.1], TAIL_AREA_M2 / TAIL_SPAN_M)?,
         ];
         let fin_sections = [
             section([-1.8, 0.0, -0.45], FIN_AREA_M2 / FIN_SPAN_M)?,
@@ -156,30 +102,11 @@ impl HybridMockDefinition {
         let wing_proxies = partition(wing, [-9.0, 9.0], [left_frame, right_frame])?;
         let tail_proxies = partition(tail, [-1.7, 1.7], [tail_frame; 2])?;
         let fin_proxies = partition(fin, [-0.45, 0.25], [fin_frame; 2])?;
-        let rows = if configuration == HybridMockConfiguration::Playable {
-            let mut rows = [playable_polar_row(PLAYABLE_POLAR_KNOTS[0], tail.lift_slope_per_rad())?;
-                PLAYABLE_POLAR_KNOTS.len()];
-            for (row, knot) in rows.iter_mut().zip(PLAYABLE_POLAR_KNOTS) {
-                *row = playable_polar_row(knot, tail.lift_slope_per_rad())?;
-            }
-            HybridMockPolarRows {
-                storage: rows,
-                row_count: PLAYABLE_POLAR_KNOTS.len(),
-            }
-        } else {
-            let mut rows = [polar_row(
-                POLAR_KNOTS[0],
-                tail.lift_slope_per_rad(),
-                VERSION_ONE_TAIL_ARM_M,
-            )?; PLAYABLE_POLAR_KNOTS.len()];
-            for (row, knot) in rows.iter_mut().zip(POLAR_KNOTS) {
-                *row = polar_row(knot, tail.lift_slope_per_rad(), VERSION_ONE_TAIL_ARM_M)?;
-            }
-            HybridMockPolarRows {
-                storage: rows,
-                row_count: POLAR_KNOTS.len(),
-            }
-        };
+        let mut rows = [playable_polar_row(PLAYABLE_POLAR_KNOTS[0], tail.lift_slope_per_rad())?;
+            PLAYABLE_POLAR_KNOTS.len()];
+        for (row, knot) in rows.iter_mut().zip(PLAYABLE_POLAR_KNOTS) {
+            *row = playable_polar_row(knot, tail.lift_slope_per_rad())?;
+        }
         let aircraft = AircraftModel::try_new(
             24.0,
             InertiaTensor::diagonal(900.0, 1000.0, 980.0).map_err(HybridMockError::Math)?,
@@ -192,7 +119,6 @@ impl HybridMockDefinition {
         )
         .map_err(HybridMockError::Dynamics)?;
         let definition = Self {
-            configuration,
             aircraft,
             wing_sections,
             tail_sections,
@@ -207,11 +133,6 @@ impl HybridMockDefinition {
         Ok(definition)
     }
 
-    /// Returns the selected versioned fictional configuration identity.
-    pub const fn configuration(&self) -> HybridMockConfiguration {
-        self.configuration
-    }
-
     /// Returns the fictional mass, datum inertia and pilot motion limits.
     pub const fn aircraft(&self) -> AircraftModel {
         self.aircraft
@@ -220,15 +141,15 @@ impl HybridMockDefinition {
     /// Borrows the precomputed complete-aircraft table, referenced to datum O.
     pub fn polar(&self) -> Result<StaticPolar<'_>, HybridMockError> {
         StaticPolar::try_new(
-            self.rows.as_slice(),
+            &self.rows,
             ElementReference::try_new(WING_AREA_M2, WING_SPAN_M, 1.0)
                 .map_err(HybridMockError::Aerodynamics)?,
             BodyPoint::origin(),
             PolarMomentAxes::WindAtBetaZero,
             StaticPolarMetadata::try_new(
                 PolarAnalysisMethod::SoftwareFixture,
-                self.configuration.configuration_id(),
-                self.configuration.model_version(),
+                Self::CONFIGURATION_ID,
+                Self::MODEL_VERSION,
             )
             .map_err(HybridMockError::Aerodynamics)?,
         )

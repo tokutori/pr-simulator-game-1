@@ -2,10 +2,10 @@ use super::*;
 use crate::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, BodyPoint, BodyVector,
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridMockConfiguration, HybridMockDefinition,
-    HybridMockTrim, HybridModel, HybridSite, HybridSurface, LoadError, NedPoint, NedVector,
-    PilotPositionTarget, SurfaceCommands, TailControlProfile, TailFlightScenarioParameters,
-    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget, WindField,
+    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridMockTrim, HybridModel,
+    HybridSite, HybridSurface, LoadError, NedPoint, NedVector, TailControlProfile,
+    TailFlightScenarioParameters, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
+    TailRateTarget, WindField,
 };
 
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
@@ -113,7 +113,7 @@ fn input() -> TailFlightTickInput {
 
 #[test]
 fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let heading_rad = 0.37;
     let mut session = launch(configuration_for_heading(
@@ -156,12 +156,7 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
         initial.pilot_position_target(),
     )
     .unwrap();
-    session
-        .configuration
-        .as_mut()
-        .unwrap()
-        .set_state(SessionFlightState::TailIncidence(current))
-        .unwrap();
+    session.configuration.as_mut().unwrap().set_state(current);
     let progress = session.flight_progress().unwrap().unwrap();
     assert!((progress.course_parallel_m() + 4.0).abs() < 1.0e-12);
     assert!((progress.cross_track_m() - 3.0).abs() < 1.0e-12);
@@ -185,8 +180,8 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
 }
 
 #[test]
-fn tail_session_shares_lifecycle_retry_and_rejects_legacy_inputs_without_mutation() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,
@@ -198,18 +193,6 @@ fn tail_session_shares_lifecycle_retry_and_rejects_legacy_inputs_without_mutatio
     ));
     let initial = session.snapshot();
     let state = initial.tail_flight_state().unwrap();
-    assert!(initial.flight_state().is_none());
-    let legacy_input = FlightFeedbackInput::new(
-        SurfaceCommands::try_new(0.0, 0.0, 0.0).unwrap(),
-        BodyVector::zero(),
-        PilotPositionTarget::try_new(&definition.aircraft(), 0.0).unwrap(),
-    );
-    assert_eq!(
-        session.advance_flight_tick(legacy_input),
-        Err(GameSessionError::InvalidControlLayout)
-    );
-    assert_eq!(session.snapshot(), initial);
-    assert_eq!(session.flight_record().unwrap().sample_count(), 1);
     session.pause(PauseReason::TrackingSuspended).unwrap();
     assert_eq!(
         session.advance_tail_flight_tick(input()),
@@ -248,7 +231,7 @@ fn tail_session_shares_lifecycle_retry_and_rejects_legacy_inputs_without_mutatio
 
 #[test]
 fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     for mode in [
         ControlMode::Manual,
@@ -277,10 +260,7 @@ fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time(
         assert_eq!(terminal.flight_state, contact.flight_state());
         assert_eq!(terminal.tick_index, contact.interval_start_tick());
         assert_eq!(terminal.fraction, contact.fraction());
-        assert_eq!(
-            terminal.controls.actuators(),
-            crate::FlightRecordActuators::TailIncidence(contact.incidence())
-        );
+        assert_eq!(terminal.controls.actuators(), contact.incidence());
         assert_eq!(record.finalization().unwrap().score, result.score);
         assert_eq!(record.personal_best_candidate_score(), result.score);
         assert_eq!(
@@ -309,7 +289,7 @@ fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time(
 
 #[test]
 fn tail_session_failed_stage_retains_last_successful_state_record_and_original_cause() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let winds = [NedVector::zero(); 8];
     let wind = WindField::grid(
@@ -333,18 +313,21 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
     let error = session.advance_tail_flight_tick(input()).unwrap_err();
     let expected = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
         AerodynamicEvaluationError::Hybrid(
-            HybridError::new(HybridSite::Datum, AeroError::Wind(WindError::OutsideGrid))
-                .with_stage(AerodynamicStage::Second),
+            HybridError::new(
+                HybridSite::Proxy {
+                    surface: crate::HybridSurfaceRole::MainWing,
+                    index: 0,
+                },
+                AeroError::Wind(WindError::OutsideGrid),
+            )
+            .with_stage(AerodynamicStage::Second),
         ),
     )));
     assert_eq!(error, GameSessionError::TailTick(expected));
     let result = session.snapshot().result().unwrap();
     assert_eq!(result.reason, SessionEndReason::OutOfValidEnvelope);
     assert_eq!(result.state, SessionTerminalState::TailTick(previous));
-    assert_eq!(
-        result.failure,
-        Some(SessionSimulationFailure::TailIncidence(expected))
-    );
+    assert_eq!(result.failure, Some(expected));
     let record = session.flight_record().unwrap();
     assert_eq!(record.samples(), retained.as_slice());
     assert_eq!(record.finalization().unwrap().failure, result.failure);
@@ -362,7 +345,7 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
 
 #[test]
 fn tail_session_contact_at_start_does_not_record_unelapsed_input() {
-    let definition = HybridMockDefinition::try_new(HybridMockConfiguration::Standard).unwrap();
+    let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
     let probe = trim
@@ -424,9 +407,6 @@ fn envelope_classification_preserves_numerical_failure_distinction() {
                 HybridError::new(HybridSite::Datum, cause).with_stage(AerodynamicStage::Fourth),
             ),
         )));
-        assert_eq!(
-            SessionSimulationFailure::TailIncidence(error).end_reason(),
-            reason
-        );
+        assert_eq!(error.end_reason(), reason);
     }
 }

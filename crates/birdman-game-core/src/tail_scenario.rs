@@ -42,7 +42,7 @@ pub struct TailFlightScenarioParameters<'a> {
 }
 
 impl<'a> TailFlightScenarioParameters<'a> {
-    /// Uses the shared composite-CG conversion and contact validation, without legacy axes.
+    /// Uses the shared composite-CG launch conversion and contact validation.
     pub fn try_new(
         aircraft: AircraftModel,
         launch: CompositeCgLaunchConditions,

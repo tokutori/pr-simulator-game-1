@@ -5,13 +5,12 @@ mod hybrid_record;
 
 use birdman_game_core::{
     ControlMode, CourseAxis, FlightRecord, FlightRecordDisposition, GameSession, GameSessionError,
-    SessionEndReason, SessionPhase, SessionSimulationFailure, TailControlProfile,
-    TailFlightTickError, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
-    TailRateTarget,
+    SessionEndReason, SessionPhase, TailControlProfile, TailFlightTickError, TailFlightTickInput,
+    TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
 };
 use birdman_game_format::{
-    AssistanceLevel, DifficultySettings, FlightRecordArchiveDocument, FlightRecordFormatError,
-    FlightRecordTailIdentityDocument, InformationLevel, PersonalBestContentHashes,
+    AssistanceLevel, DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
+    InformationLevel, PersonalBestContentHashes, TailFlightRecordDocument,
     TailPersonalBestConfiguration, TailPersonalBestSelection, WeatherClass,
 };
 use birdman_game_wasm::HybridSessionPreparation;
@@ -86,10 +85,8 @@ fn export_preserves_v6_saved_outputs_and_never_mutates_the_session() {
     let second = export_record_json(&session, metadata(&session, &identity)).unwrap();
     assert_eq!(first, second);
     assert_eq!(session.snapshot(), before);
-    let archive = FlightRecordArchiveDocument::decode_json(first.as_bytes()).unwrap();
-    let FlightRecordArchiveDocument::Tail(document) = &archive else {
-        panic!("v6 export must retain the two-tail layout");
-    };
+    let archive = TailFlightRecordDocument::decode_json(first.as_bytes()).unwrap();
+    let document = &archive;
     assert_eq!(document.schema_version, 6);
     assert_eq!(document.control_identity, identity);
     assert_eq!(document.header.seed, u64::MAX);
@@ -153,10 +150,7 @@ fn playback_and_analysis_project_the_same_saved_core_query_with_held_tail_values
             json!(saved.flight_state.angular_velocity_body().components())
         );
         assert_eq!(projection["controls"]["layout"], "tail_incidence");
-        let birdman_game_core::FlightRecordActuators::TailIncidence(incidence) = saved.actuators
-        else {
-            panic!("tail playback must retain its physical incidence");
-        };
+        let incidence = saved.actuators;
         assert_eq!(
             projection["controls"]["physical_incidence"],
             json!({"horizontal_tail_rad":incidence.elevator_rad(),
@@ -239,7 +233,7 @@ fn helpers_reject_unavailable_stale_metadata_and_invalid_query_inputs() {
 fn archived_with_terminal(
     source: &GameSession<'_>,
     reason: SessionEndReason,
-    failure: Option<SessionSimulationFailure>,
+    failure: Option<TailFlightTickError>,
 ) -> GameSession<'static> {
     let original = source.flight_record().unwrap();
     let mut terminal = original.finalization().unwrap();
@@ -264,14 +258,14 @@ fn archived_with_terminal(
 #[test]
 fn saved_terminal_cause_uses_the_shared_codec_and_ineligible_records_have_no_key() {
     let (source, identity) = complete();
-    let failure = SessionSimulationFailure::TailIncidence(TailFlightTickError::TickOverflow);
+    let failure = TailFlightTickError::TickOverflow;
     let session = archived_with_terminal(
         &source,
         SessionEndReason::FatalSimulationError,
         Some(failure),
     );
     let encoded = export_record_json(&session, metadata(&session, &identity)).unwrap();
-    let archive = FlightRecordArchiveDocument::decode_json(encoded.as_bytes()).unwrap();
+    let archive = TailFlightRecordDocument::decode_json(encoded.as_bytes()).unwrap();
     assert_eq!(
         archive
             .to_finalized_core_record()
@@ -281,9 +275,7 @@ fn saved_terminal_cause_uses_the_shared_codec_and_ineligible_records_have_no_key
             .failure,
         Some(failure)
     );
-    let FlightRecordArchiveDocument::Tail(document) = archive else {
-        panic!("tail export must retain schema six");
-    };
+    let document = archive;
     assert_eq!(document.header.personal_best_key, None);
     assert!(
         TailPersonalBestSelection::try_new(&document)
@@ -298,11 +290,7 @@ fn saved_contact_candidate_uses_the_tail_key_and_tracks_sealed_profile_and_conte
     let (source, identity) = complete();
     let session = archived_with_terminal(&source, SessionEndReason::WaterContact, None);
     let first = export_record_json(&session, metadata(&session, &identity)).unwrap();
-    let FlightRecordArchiveDocument::Tail(first) =
-        FlightRecordArchiveDocument::decode_json(first.as_bytes()).unwrap()
-    else {
-        panic!("tail export must retain schema six");
-    };
+    let first = TailFlightRecordDocument::decode_json(first.as_bytes()).unwrap();
     assert!(first.header.personal_best_key.is_some());
     assert!(
         TailPersonalBestSelection::try_new(&first)
@@ -311,100 +299,22 @@ fn saved_contact_candidate_uses_the_tail_key_and_tracks_sealed_profile_and_conte
     );
     let mut changed = metadata(&session, &identity);
     changed.configuration.controller_profile = TailControlProfile::try_new(0.3, 0.2, 1.0).unwrap();
-    let FlightRecordArchiveDocument::Tail(profile) = FlightRecordArchiveDocument::decode_json(
+    let profile = TailFlightRecordDocument::decode_json(
         export_record_json(&session, changed).unwrap().as_bytes(),
     )
-    .unwrap() else {
-        panic!("tail export must retain schema six");
-    };
+    .unwrap();
     assert_ne!(
         first.header.personal_best_key,
         profile.header.personal_best_key
     );
     changed = metadata(&session, &identity);
     changed.content_hashes.aircraft = [7; 32];
-    let FlightRecordArchiveDocument::Tail(content) = FlightRecordArchiveDocument::decode_json(
+    let content = TailFlightRecordDocument::decode_json(
         export_record_json(&session, changed).unwrap().as_bytes(),
     )
-    .unwrap() else {
-        panic!("tail export must retain schema six");
-    };
+    .unwrap();
     assert_ne!(
         first.header.personal_best_key,
         content.header.personal_best_key
     );
-}
-
-#[test]
-fn legacy_versions_replay_their_saved_controls_without_a_tail_conversion() {
-    let mut bridge = birdman_game_wasm::GameSessionBridge::new(0).unwrap();
-    bridge.open_setup().unwrap();
-    bridge.prepare().unwrap();
-    bridge.mark_briefing_ready().unwrap();
-    bridge.start_countdown(1).unwrap();
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
-    bridge.abort().unwrap();
-    let original: Value =
-        serde_json::from_str(&bridge.export_flight_record_json().unwrap()).unwrap();
-    for version in 1..=5 {
-        let mut saved = original.clone();
-        saved["schema_version"] = json!(version);
-        let header = saved["header"].as_object_mut().unwrap();
-        if version < 5 {
-            header.remove("personal_best_key");
-        }
-        if version < 4 {
-            header.remove("physics_model_version");
-        }
-        if version < 3 {
-            header.remove("score_definition_version");
-        }
-        if version < 2 {
-            header["difficulty"]
-                .as_object_mut()
-                .unwrap()
-                .remove("hud_profile");
-        }
-        let archive =
-            FlightRecordArchiveDocument::decode_json(saved.to_string().as_bytes()).unwrap();
-        let FlightRecordArchiveDocument::Legacy(document) = &archive else {
-            panic!("legacy schema must retain its original control layout");
-        };
-        assert_eq!(document.schema_version, version);
-        assert_eq!(
-            document.header.aircraft_model_version,
-            saved["header"]["aircraft_model_version"].as_u64().unwrap() as u32
-        );
-        let record = archive.to_finalized_core_record().unwrap();
-        let expected = record.sample_at_seconds(0.0).unwrap();
-        let mut session = GameSession::new();
-        session.open_archived_replay(record).unwrap();
-        let projection: Value =
-            serde_json::from_str(&playback_sample_json(&session, 0.0).unwrap()).unwrap();
-        assert_eq!(projection["controls"]["layout"], "legacy_three_axis");
-        assert!(projection["controls"].get("physical_incidence").is_none());
-        let controls = expected
-            .actuators
-            .legacy_three_axis()
-            .unwrap()
-            .deflections();
-        assert_eq!(projection["controls"]["roll_rad"], controls.roll_rad());
-        assert_eq!(projection["controls"]["pitch_rad"], controls.pitch_rad());
-        assert_eq!(projection["controls"]["yaw_rad"], controls.yaw_rad());
-        assert_eq!(
-            projection["state"]["datum_position_ned_m"],
-            json!(expected.flight_state.datum_position_ned().components())
-        );
-        let tail_identity = FlightRecordTailIdentityDocument {
-            aircraft_configuration_id: "bpg041-rectangular-hybrid-mock".to_owned(),
-            controller_profile_id: "bpg040-tail-rate-feedback".to_owned(),
-        };
-        assert!(matches!(
-            export_record_json(&session, metadata(&session, &tail_identity)),
-            Err(HybridRecordError::Format(
-                FlightRecordFormatError::IncompatibleControlLayout
-            ))
-        ));
-    }
 }

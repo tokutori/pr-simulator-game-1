@@ -16,7 +16,6 @@ fn main() {
     let environment_snapshot_source =
         workspace_dir.join("crates/birdman-game-wasm/src/environment_snapshot.rs");
     let environment_asset = workspace_dir.join("assets/biwa-typical-july-environment-v6.json");
-    let synthetic_source = core_source.join("synthetic_flight.rs");
     let hybrid_source = workspace_dir.join("crates/birdman-game-wasm/src/hybrid_session.rs");
     let shared_defaults_source = workspace_dir.join("crates/birdman-game-session/src/lib.rs");
     let shared_hybrid_source =
@@ -34,7 +33,6 @@ fn main() {
     let core_files = rust_sources(&workspace_dir, &core_source);
     let aircraft_files = vec![
         wasm_source.clone(),
-        synthetic_source.clone(),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
         hybrid_source.clone(),
@@ -47,7 +45,6 @@ fn main() {
         wasm_source.clone(),
         runtime_environment_source.clone(),
         environment_snapshot_source.clone(),
-        synthetic_source,
         aerodynamics_source,
         wind_source,
         environment_asset.clone(),
