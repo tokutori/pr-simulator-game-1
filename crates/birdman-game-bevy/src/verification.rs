@@ -12,7 +12,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     diagnostic::DiagnosticsStore,
-    input_focus::{FocusCause, InputFocus},
+    input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex},
     material::descriptor::PipelineDescriptor,
     prelude::*,
     render::{
@@ -978,7 +978,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     >,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     focus: Res<'w, InputFocus>,
-    ui_controls: Query<'w, 's, (Entity, &'static Name)>,
+    ui_controls: Query<'w, 's, (Entity, &'static Name), With<TabIndex>>,
 }
 
 impl VerificationPresentation<'_, '_> {
@@ -1886,12 +1886,12 @@ fn advance_step(
                 let nodes = presentation
                     .ui_controls
                     .iter()
-                    .filter(|(_, name)| name.as_str() == "game-result-technical-content")
+                    .filter(|(_, name)| name.as_str() == "game-result-replay")
                     .map(|(entity, _)| entity)
                     .collect::<Vec<_>>();
                 let [node] = nodes.as_slice() else {
                     return Err(format!(
-                        "Published technical content has {} native nodes",
+                        "Published Result Replay CTA has {} enabled native nodes",
                         nodes.len()
                     ));
                 };
@@ -2116,10 +2116,11 @@ mod tests {
         within_ancestor_clip,
     };
     use bevy::ecs::system::SystemState;
-    use bevy::input_focus::InputFocus;
+    use bevy::input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex};
     use bevy::prelude::{
-        App, ChildOf, ComputedNode, Handle, Image, MinimalPlugins, Node, Overflow, Quat, Rect,
-        Startup, Transform, UiGlobalTransform, UiScale, Update, Vec2, Vec3, Window, World,
+        App, ChildOf, ComputedNode, Entity, Handle, Image, MinimalPlugins, Name, Node, Overflow,
+        Quat, Rect, Startup, Transform, UiGlobalTransform, UiScale, Update, Vec2, Vec3, Window,
+        With, World,
     };
     use bevy::shader::ShaderCacheError;
     use bevy::tasks::TaskPoolBuilder;
@@ -2325,6 +2326,25 @@ mod tests {
                 .query::<&bevy::prelude::Text>()
                 .iter(app.world())
                 .any(|text| text.0.starts_with("技術情報: ") && text.0.contains(&expected))
+        );
+        let replay = app
+            .world_mut()
+            .query_filtered::<(Entity, &Name), With<TabIndex>>()
+            .iter(app.world())
+            .find(|(_, name)| name.as_str() == "game-result-replay")
+            .map(|(entity, _)| entity)
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(replay, FocusCause::Navigated);
+        app.update();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(replay));
+        let session = app.world().resource::<NativeSession>();
+        assert!(session.ui.technical_open);
+        assert_eq!(session.game.snapshot().result(), Some(terminal));
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            samples
         );
     }
 
