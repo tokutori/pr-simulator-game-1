@@ -199,15 +199,48 @@ fn sky_color(direction: vec3<f32>) -> vec3<f32> {
     return sky_background(direction) + vec3<f32>(1.0, 0.84, 0.58) * pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0);
 }
 
-fn lake_wave_detail(position: vec2<f32>, spacing: f32, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec4<f32> {
+fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
+    let fine_amplitude = 0.4;
+    let ripple_amplitude = 0.1;
     let drift = waves_sky.xy * camera_time.w;
     let near_sample = textureSampleGrad(detail_near, detail_near_sampler,
         (position - drift * 0.42) / 64.0, footprint_x / 64.0, footprint_y / 64.0);
     let far_sample = textureSampleGrad(detail_far, detail_far_sampler,
         (position - drift * 0.89) / 288.0, footprint_x / 288.0, footprint_y / 288.0);
+    let fine_rotation = mat2x2<f32>(vec2<f32>(0.6, 0.8), vec2<f32>(-0.8, 0.6));
+    let ripple_rotation = mat2x2<f32>(vec2<f32>(0.8, 0.6), vec2<f32>(-0.6, 0.8));
+    let fine_drift = transpose(fine_rotation) * drift * 0.26;
+    let ripple_drift = transpose(ripple_rotation) * drift * 0.18;
+    let fine_point = fine_rotation * ((position - fine_drift) * 2.6);
+    let ripple_point = ripple_rotation * ((position - ripple_drift) * 5.2);
+    let fine_sample = textureSampleGrad(detail_near, detail_near_sampler,
+        fine_point / 64.0 + vec2<f32>(0.217, 0.631),
+        fine_rotation * footprint_x * (2.6 / 64.0), fine_rotation * footprint_y * (2.6 / 64.0));
+    let ripple_sample = textureSampleGrad(detail_near, detail_near_sampler,
+        ripple_point / 64.0 + vec2<f32>(0.683, 0.173),
+        ripple_rotation * footprint_x * (5.2 / 64.0), ripple_rotation * footprint_y * (5.2 / 64.0));
     let near_slope = (near_sample.xy * 255.0 - 128.0) / 127.0;
     let far_slope = (far_sample.xy * 255.0 - 128.0) / 127.0;
-    var slope = (near_slope * 0.6 + far_slope * 0.55) * waves_sky.z;
+    let fine_raw_slope = (fine_sample.xy * 255.0 - 128.0) / 127.0;
+    let ripple_raw_slope = (ripple_sample.xy * 255.0 - 128.0) / 127.0;
+    let fine_slope = transpose(fine_rotation) * fine_raw_slope * (2.6 * fine_amplitude);
+    let ripple_slope = transpose(ripple_rotation) * ripple_raw_slope * (5.2 * ripple_amplitude);
+    let micro_slope = near_slope * 0.6 + far_slope * 0.55 + fine_slope + ripple_slope;
+    let near_variance = max(near_sample.z / 2.5 - dot(near_slope, near_slope), 0.0);
+    let far_variance = max(far_sample.z / 2.5 - dot(far_slope, far_slope), 0.0);
+    let fine_variance = max(fine_sample.z / 2.5 - dot(fine_raw_slope, fine_raw_slope), 0.0);
+    let ripple_variance = max(ripple_sample.z / 2.5 - dot(ripple_raw_slope, ripple_raw_slope), 0.0);
+    let slope_moment = dot(micro_slope, micro_slope)
+        + 0.6 * 0.6 * near_variance + 0.55 * 0.55 * far_variance
+        + 2.6 * 2.6 * fine_amplitude * fine_amplitude * fine_variance
+        + 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance;
+    let strength = smoothstep(0.05, 0.6, length(waves_sky.xy));
+    let scaled_strength = strength * waves_sky.z;
+    return vec3<f32>(micro_slope * scaled_strength, slope_moment * scaled_strength * scaled_strength);
+}
+
+fn lake_wave_slope(position: vec2<f32>, spacing: f32, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec2<f32> {
+    var slope = vec2<f32>(0.0);
     for (var component: u32 = 0u; component < 24u; component += 1u) {
         if component < u32(geometry_parameters.x) {
             let wave = geometry_waves[component];
@@ -226,10 +259,7 @@ fn lake_wave_detail(position: vec2<f32>, spacing: f32, footprint_x: vec2<f32>, f
                 + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * packet.yz) * normal_weight;
         }
     }
-    let near_variance = max(near_sample.z / 2.5 - dot(near_slope, near_slope), 0.0);
-    let far_variance = max(far_sample.z / 2.5 - dot(far_slope, far_slope), 0.0);
-    let unresolved_variance = (0.36 * near_variance + 0.3025 * far_variance) * waves_sky.z * waves_sky.z;
-    return vec4<f32>(slope, unresolved_variance, 0.0);
+    return slope;
 }
 
 @fragment
@@ -247,7 +277,17 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
 #endif
-    var detail = lake_wave_detail(position, spacing, footprint_x, footprint_y);
+    let quarter_x = footprint_x * 0.25;
+    let quarter_y = footprint_y * 0.25;
+    let micro_detail = (
+        lake_micro_detail(position - quarter_x - quarter_y, footprint_x, footprint_y)
+        + lake_micro_detail(position + quarter_x - quarter_y, footprint_x, footprint_y)
+        + lake_micro_detail(position - quarter_x + quarter_y, footprint_x, footprint_y)
+        + lake_micro_detail(position + quarter_x + quarter_y, footprint_x, footprint_y)
+    ) * 0.25;
+    let wave_slope = lake_wave_slope(position, spacing, footprint_x, footprint_y);
+    let unresolved_variance = max(micro_detail.z - dot(micro_detail.xy, micro_detail.xy), 0.0);
+    var detail = vec4<f32>(wave_slope + micro_detail.xy, unresolved_variance, 0.0);
 #ifdef VERTEX_COLORS
     detail.x -= mesh.color.x;
     detail.y -= mesh.color.y;
@@ -265,7 +305,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let geometric_fresnel = 0.02 + 0.98 * pow(1.0 - geometric_ndv, 5.0);
     let facet_fresnel = 0.02 + 0.98 * pow(1.0 - clamp(facet_ndv, 0.0, 1.0), 5.0);
     let fresnel = mix(geometric_fresnel, facet_fresnel, 0.35 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
-    let roughness = clamp(0.24 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 3.0, 0.24, 0.55);
+    let roughness = clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
     let reflected_sky = mix(sky_background(reflection), sky_background(normalize(reflection + vec3<f32>(0.0, 0.65, 0.0))), roughness * 0.4);
     let sun_visibility = 1.0 - sun_cloud.w * 0.65;
     let diffuse = 0.42 + 0.38 * max(dot(normal, sun_cloud.xyz), 0.0) * sun_visibility;

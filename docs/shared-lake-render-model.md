@@ -75,6 +75,8 @@ shader未読込み・import待機はpendingとして扱う。正規downsampleの
 Bevy consumerはcompile・Clippy、Native 100試験・共有session 21試験が合格した。Windows 11/AMD Radeon 860M/VulkanでWGSLを起動し、開始・Pilot/Chase・pause・画質変更・Result・Retryのscripted GPU検査が合格した。
 Web consumerも同じWindows環境のChromium/WebGL2で起動・Flight・pause・Result・Retryを確認した。物理キー・マウスの受入、同一条件の移植前後比較、release性能計測は未完了である。
 Issue #306全体の完了にはWeb移植前後の実描画検査も必要である。
-Issue #311の後続phaseでは、fine/rippleを含む4層micro-normal、subpixel filtering、天空・機体反射、shadow、Fresnel、glitter、crest/compressionの白波shading、hazeをWeb基準へ揃える。
+Issue #311の次cutでは、near/far/fine/rippleの4層micro-normalをWeb基準で実装した。fine/rippleは既存near画像を再利用し、回転・縮尺をtexture勾配と法線勾配へ一貫して適用する。
+4点subpixel filteringで平均勾配と二次momentを保持し、未解像varianceからWebと同じroughnessを導出する。このcutはcompile・Clippy・Native 101試験と同じWindows/Vulkan scripted GPU検査が合格した。readonlyでWebの回転・勾配・二次moment・roughnessとの対応を確認した。固定条件の描画品質比較とrelease性能計測は未完了である。
+Issue #311の後続phaseでは、天空・機体反射、shadow、Fresnel、glitter、crest/compressionの白波shading、hazeをWeb基準へ揃える。
 phase 1のnear/far detailとcrest/compression入力だけで描画品質の移植完了を扱わない。
 共通スペクトルの完成をnativeの描画品質改善の完了へ読み替えない。

@@ -1850,6 +1850,53 @@ mod tests {
     }
 
     #[test]
+    fn wgsl_filters_four_web_micro_normal_bands_and_retains_their_variance() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        assert_eq!(shader.matches("@binding(").count(), 11);
+        assert_eq!(shader.matches("textureSampleGrad(").count(), 4);
+        assert_eq!(shader.matches("lake_micro_detail(position ").count(), 4);
+        assert_eq!(
+            shader.matches("lake_wave_slope(position, spacing").count(),
+            1
+        );
+        for expected in [
+            "let fine_amplitude = 0.4;",
+            "let ripple_amplitude = 0.1;",
+            "(position - drift * 0.42) / 64.0",
+            "(position - drift * 0.89) / 288.0",
+            "let fine_drift = transpose(fine_rotation) * drift * 0.26;",
+            "let ripple_drift = transpose(ripple_rotation) * drift * 0.18;",
+            "fine_point / 64.0 + vec2<f32>(0.217, 0.631)",
+            "ripple_point / 64.0 + vec2<f32>(0.683, 0.173)",
+            "fine_rotation * footprint_x * (2.6 / 64.0), fine_rotation * footprint_y * (2.6 / 64.0)",
+            "ripple_rotation * footprint_x * (5.2 / 64.0), ripple_rotation * footprint_y * (5.2 / 64.0)",
+            "transpose(fine_rotation) * fine_raw_slope * (2.6 * fine_amplitude)",
+            "transpose(ripple_rotation) * ripple_raw_slope * (5.2 * ripple_amplitude)",
+            "+ 2.6 * 2.6 * fine_amplitude * fine_amplitude * fine_variance",
+            "+ 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance",
+            "slope_moment * scaled_strength * scaled_strength",
+            "max(micro_detail.z - dot(micro_detail.xy, micro_detail.xy), 0.0)",
+            "clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62)",
+        ] {
+            assert!(
+                shader.contains(expected),
+                "missing Web water contract: {expected}"
+            );
+        }
+        for offset in [
+            "position - quarter_x - quarter_y",
+            "position + quarter_x - quarter_y",
+            "position - quarter_x + quarter_y",
+            "position + quarter_x + quarter_y",
+        ] {
+            assert!(shader.contains(offset));
+        }
+        assert!(shader.contains(") * 0.25;"));
+        assert_eq!(shader.matches("detail.x -= mesh.color.x;").count(), 1);
+        assert_eq!(shader.matches("detail.y -= mesh.color.y;").count(), 1);
+    }
+
+    #[test]
     fn registered_water_and_sky_share_environment_without_transparency() {
         let water = WaterMaterial::registered(false).unwrap();
         let sky = WaterMaterial::registered(true).unwrap();
