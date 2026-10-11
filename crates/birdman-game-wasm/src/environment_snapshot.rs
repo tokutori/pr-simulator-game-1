@@ -1,10 +1,10 @@
-use birdman_game_core::{NedPoint, NedVector, SessionScenarioIdentity, WindField};
+use birdman_game_core::{NedPoint, NedVector, WindField};
 use birdman_game_format::{
     EnvironmentBasisDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
     EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument, SkyStateDocument,
     WaveStateDocument,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::{environment::bundled_environment, personal_best_fingerprints};
 
@@ -24,33 +24,7 @@ pub(crate) enum EnvironmentSnapshotError {
     EncodingFailed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EnvironmentIdentity {
-    catalog_version: u32,
-    scenario_id: u32,
-    scenario_version: u32,
-    aircraft_model_version: u32,
-    environment_version: u32,
-    controller_profile_version: u32,
-    seed_low: u32,
-    seed_high: u32,
-}
-
-impl From<SessionScenarioIdentity> for EnvironmentIdentity {
-    fn from(identity: SessionScenarioIdentity) -> Self {
-        Self {
-            catalog_version: identity.catalog_version,
-            scenario_id: identity.scenario_id,
-            scenario_version: identity.scenario_version,
-            aircraft_model_version: identity.aircraft_model_version,
-            environment_version: identity.environment_version,
-            controller_profile_version: identity.controller_profile_version,
-            seed_low: identity.seed as u32,
-            seed_high: (identity.seed >> 32) as u32,
-        }
-    }
-}
+pub(crate) use birdman_game_format::EnvironmentIdentity;
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]

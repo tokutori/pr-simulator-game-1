@@ -1,16 +1,19 @@
 use birdman_game_core::{
-    ControlMode, CourseAxis, DistanceScore, DistanceScoreError, DynamicsError, FlightState,
-    FlightTelemetry, GameSession, GameSessionError, PilotPositionTarget, SessionPhase,
-    SessionSnapshot, SessionTerminalState, TailControlError, TailControlProfile,
-    TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailPilotPositionMapping, TailRateTarget,
+    ControlMode, CourseAxis, DistanceScoreError, DynamicsError, FlightState, GameSession,
+    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
+    TailControlError, TailControlProfile, TailFlightTickInput, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
     InformationLevel, TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION,
     TailControlLayoutDocument as ControlLayout, TailFlightRecordFinalizationDocument,
-    TailIncidenceDocument, TailInputDocument, TailPersonalBestConfiguration,
-    TailPilotPositionCommandDocument, WeatherClass,
+    TailFrameDocument as FrameDocument, TailIncidenceDocument, TailInputDocument,
+    TailPersonalBestConfiguration, TailPilotPositionCommandDocument,
+    TailPreparedLaunchDocument as PreparedLaunchDocument,
+    TailPreparedLaunchFrame as PreparedLaunchFrame, TailProgressDocument as ProgressDocument,
+    TailSnapshotDocument as SnapshotDocument, TailStateDocument as StateDocument,
+    TailTelemetryDocument as TelemetryDocument, WeatherClass,
 };
 use serde::Serialize;
 use wasm_bindgen::{JsValue, prelude::*};
@@ -62,160 +65,48 @@ fn decode_input(json: &str) -> Result<TailFlightTickInput, BoundaryError> {
     Ok(TailFlightTickInput::new(manual, rate, position))
 }
 
-#[derive(Serialize)]
-struct SnapshotDocument<'identity> {
-    schema_version: u32,
-    control_layout: ControlLayout,
-    phase_code: u32,
-    control_mode_code: u32,
-    scenario: Option<EnvironmentIdentity>,
-    control_identity: Option<&'identity FlightRecordTailIdentityDocument>,
-    frame: FrameDocument,
-}
-
-#[derive(Serialize)]
-struct PreparedLaunchDocument<'identity> {
-    schema_version: u32,
-    control_layout: ControlLayout,
-    phase_code: u32,
-    preview: PreparedLaunchFrame<'identity>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum PreparedLaunchFrame<'identity> {
-    Unavailable,
-    Prepared {
-        scenario: EnvironmentIdentity,
-        control_identity: &'identity FlightRecordTailIdentityDocument,
-        state: Box<StateDocument>,
-    },
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum FrameDocument {
-    Menu,
-    Flight {
-        state: StateDocument,
-        telemetry: TelemetryDocument,
-        progress_m: ProgressDocument,
-    },
-    Result {
-        state: StateDocument,
-        telemetry: TelemetryDocument,
-        finalization: TailFlightRecordFinalizationDocument,
-    },
-}
-
-#[derive(Serialize)]
-struct ProgressDocument {
-    course_parallel_m: f64,
-    cross_track_m: f64,
-    net_horizontal_m: f64,
-}
-
-impl From<DistanceScore> for ProgressDocument {
-    fn from(progress: DistanceScore) -> Self {
-        Self {
-            course_parallel_m: progress.course_parallel_m(),
-            cross_track_m: progress.cross_track_m(),
-            net_horizontal_m: progress.net_horizontal_m(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct StateDocument {
+fn state_document(
     tick: u64,
     fraction: f64,
-    flight_time_s: f64,
-    datum_position_ned_m: [f64; 3],
-    datum_velocity_ned_mps: [f64; 3],
-    attitude_body_to_ned: [f64; 4],
-    angular_rate_body_rad_s: [f64; 3],
-    pilot_position_m: f64,
-    pilot_velocity_mps: f64,
-    pilot_position_target_m: f64,
-    pilot_position_target_normalized: f64,
-    physical_incidence: TailIncidenceDocument,
+    state: FlightState,
+    incidence: birdman_game_core::TailIncidence,
+    pilot_target: PilotPositionTarget,
+    pilot_mapping: TailPilotPositionMapping,
+) -> Result<StateDocument, BoundaryError> {
+    let normalized = pilot_mapping
+        .normalized_target(pilot_target)
+        .map_err(BoundaryError::PilotPosition)?;
+    Ok(StateDocument {
+        tick,
+        fraction,
+        flight_time_s: (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+        datum_position_ned_m: state.datum_position_ned().components(),
+        datum_velocity_ned_mps: state.datum_velocity_ned().components(),
+        attitude_body_to_ned: state.attitude_body_to_ned().components(),
+        angular_rate_body_rad_s: state.angular_velocity_body().components(),
+        pilot_position_m: state.pilot_position_m(),
+        pilot_velocity_mps: state.pilot_velocity_mps(),
+        pilot_position_target_m: pilot_target.position_m(),
+        pilot_position_target_normalized: normalized.value(),
+        physical_incidence: TailIncidenceDocument {
+            horizontal_tail_rad: incidence.elevator_rad(),
+            vertical_tail_rad: incidence.rudder_rad(),
+        },
+    })
 }
 
-impl StateDocument {
-    fn new(
-        tick: u64,
-        fraction: f64,
-        state: FlightState,
-        incidence: birdman_game_core::TailIncidence,
-        pilot_target: PilotPositionTarget,
-        pilot_mapping: TailPilotPositionMapping,
-    ) -> Result<Self, BoundaryError> {
-        let normalized = pilot_mapping
-            .normalized_target(pilot_target)
-            .map_err(BoundaryError::PilotPosition)?;
-        Ok(Self {
-            tick,
-            fraction,
-            flight_time_s: (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
-            datum_position_ned_m: state.datum_position_ned().components(),
-            datum_velocity_ned_mps: state.datum_velocity_ned().components(),
-            attitude_body_to_ned: state.attitude_body_to_ned().components(),
-            angular_rate_body_rad_s: state.angular_velocity_body().components(),
-            pilot_position_m: state.pilot_position_m(),
-            pilot_velocity_mps: state.pilot_velocity_mps(),
-            pilot_position_target_m: pilot_target.position_m(),
-            pilot_position_target_normalized: normalized.value(),
-            physical_incidence: TailIncidenceDocument {
-                horizontal_tail_rad: incidence.elevator_rad(),
-                vertical_tail_rad: incidence.rudder_rad(),
-            },
-        })
-    }
-
-    fn from_tick(
-        state: birdman_game_core::TailFlightTickState,
-        mapping: TailPilotPositionMapping,
-    ) -> Result<Self, BoundaryError> {
-        Self::new(
-            state.tick_index(),
-            0.0,
-            state.flight_state(),
-            state.incidence(),
-            state.pilot_position_target(),
-            mapping,
-        )
-    }
-}
-
-#[derive(Serialize)]
-struct TelemetryDocument {
-    composite_cg_position_ned_m: [f64; 3],
-    altitude_m: f64,
-    airspeed_mps: f64,
-    groundspeed_mps: f64,
-    wind_at_cg_ned_mps: [f64; 3],
-    angle_of_attack_rad: Option<f64>,
-    sideslip_angle_rad: Option<f64>,
-    attitude_euler_rad: [f64; 3],
-}
-
-impl From<FlightTelemetry> for TelemetryDocument {
-    fn from(telemetry: FlightTelemetry) -> Self {
-        Self {
-            composite_cg_position_ned_m: telemetry.composite_cg_position_ned_m.components(),
-            altitude_m: telemetry.altitude_m,
-            airspeed_mps: telemetry.airspeed_mps,
-            groundspeed_mps: telemetry.groundspeed_mps,
-            wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps.components(),
-            angle_of_attack_rad: telemetry.angle_of_attack_rad,
-            sideslip_angle_rad: telemetry.sideslip_angle_rad,
-            attitude_euler_rad: [
-                telemetry.roll_rad,
-                telemetry.pitch_rad,
-                telemetry.heading_rad,
-            ],
-        }
-    }
+fn state_from_tick(
+    state: birdman_game_core::TailFlightTickState,
+    mapping: TailPilotPositionMapping,
+) -> Result<StateDocument, BoundaryError> {
+    state_document(
+        state.tick_index(),
+        0.0,
+        state.flight_state(),
+        state.incidence(),
+        state.pilot_position_target(),
+        mapping,
+    )
 }
 
 #[derive(Debug)]
@@ -429,10 +320,7 @@ impl HybridGameSessionBridge {
                         .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?
                         .into(),
                     control_identity: &prepared.record_identity,
-                    state: Box::new(StateDocument::from_tick(
-                        state,
-                        self.required_pilot_mapping()?,
-                    )?),
+                    state: Box::new(state_from_tick(state, self.required_pilot_mapping()?)?),
                 }
             }
             None => PreparedLaunchFrame::Unavailable,
@@ -494,16 +382,16 @@ impl HybridGameSessionBridge {
         let frame = match snapshot {
             SessionSnapshot::TailFlightRunning { state, .. }
             | SessionSnapshot::TailFlightPaused { state, .. } => FrameDocument::Flight {
-                state: StateDocument::from_tick(state, self.required_pilot_mapping()?)?,
+                state: state_from_tick(state, self.required_pilot_mapping()?)?,
                 telemetry: self.required_telemetry()?,
                 progress_m: self.required_progress()?,
             },
             SessionSnapshot::Result(result) => {
                 let state = match result.state {
                     SessionTerminalState::TailTick(state) => {
-                        StateDocument::from_tick(state, self.required_pilot_mapping()?)?
+                        state_from_tick(state, self.required_pilot_mapping()?)?
                     }
-                    SessionTerminalState::TailWaterContact(sample) => StateDocument::new(
+                    SessionTerminalState::TailWaterContact(sample) => state_document(
                         sample.interval_start_tick(),
                         sample.fraction(),
                         sample.flight_state(),
