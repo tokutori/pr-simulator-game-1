@@ -397,6 +397,50 @@ describe("screen UI DOM patching", () => {
     }
   });
 
+  it.each([false, true])("uses Result Summary flow controls with technical disclosure %s", async (technicalOpen) => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    try {
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const stylesheet = documentRef.createElement("style");
+      stylesheet.textContent = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+      documentRef.head.append(stylesheet);
+      const root = documentRef.createElement("main");
+      documentRef.body.append(root);
+      const actions: unknown[] = [];
+      const adapter = new ScreenUiAdapter(root, action => actions.push(action));
+      for (const [width, height] of [[1280, 720], [360, 300], [1280, 720]] as const) {
+        window.happyDOM.setViewport({ width, height });
+        const shared = currentSharedGameUiFixture(7, {
+          ticks: 20,
+          platform: { viewport: { width, height, root_font_size: 16 } },
+          actions: technicalOpen ? [{ kind: "toggle_technical" }] : []
+        });
+        adapter.render(createGameViewModel(shared));
+        const panel = required(root, ".screen-ui-panel");
+        expect(panel.dataset.layout).toBeUndefined();
+        expect(panel.querySelector('[data-layout="normalized"]')).toBeNull();
+        expect(Array.from(panel.querySelectorAll<HTMLElement>(".screen-ui-section")).map(section => section.dataset.sectionId))
+          .toEqual(shared.panels[0]?.sections.map(section => section.id));
+        actions.length = 0;
+        const buttons = Array.from(panel.querySelectorAll<HTMLButtonElement>("button[data-control-id]:enabled"));
+        for (const button of buttons) {
+          expect(button.style.position).toBe("");
+          expect(window.getComputedStyle(button as never).minHeight).toBe(`${String(shared.theme.button_min_height_px)}px`);
+          button.focus();
+          expect(documentRef.activeElement).toBe(button);
+          button.click();
+        }
+        expect(actions).toEqual(buttons.map(button => ({ type: "activate", controlId: button.dataset.controlId })));
+      }
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   it.each(["menu", "settings", "help"] as const)("projects bounded Pause %s rows and the same HUD reservation after resize", async (overlay) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });

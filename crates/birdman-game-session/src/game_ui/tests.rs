@@ -1330,6 +1330,62 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
 }
 
 #[test]
+fn screen_result_summary_preserves_flow_navigation_and_vr_normalized_layout() {
+    let session = finalized();
+    let snapshot = session.snapshot();
+    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+        for mode in [
+            GameUiPresentationMode::Screen,
+            GameUiPresentationMode::PhoneVr,
+            GameUiPresentationMode::Webxr,
+        ] {
+            let mut platform = platform();
+            platform.viewport.width = width;
+            platform.viewport.height = height;
+            platform.presentation_mode = mode;
+            let state = GameUiState::default();
+            let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+            let expected = if mode == GameUiPresentationMode::Screen {
+                GameUiSectionLayout::Column
+            } else {
+                GameUiSectionLayout::Normalized
+            };
+            assert!(
+                view.panels[0]
+                    .sections
+                    .iter()
+                    .all(|section| section.layout == expected)
+            );
+            let navigation = view.panels[0]
+                .controls
+                .iter()
+                .filter(|control| {
+                    matches!(
+                        control.id.as_str(),
+                        "game-result-replay"
+                            | "game-result-retry"
+                            | "game-result-setup"
+                            | "game-result-title"
+                    )
+                })
+                .map(|control| control.id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                navigation,
+                [
+                    "game-result-replay",
+                    "game-result-retry",
+                    "game-result-setup",
+                    "game-result-title"
+                ]
+            );
+            assert_eq!(view.theme.button_min_height_px, 44.0);
+            assert_eq!(session.snapshot(), snapshot);
+        }
+    }
+}
+
+#[test]
 fn screen_replay_controls_use_flow_sections_and_preserve_vr_and_analysis_layouts() {
     let mut session = finalized();
     session.enter_replay().unwrap();

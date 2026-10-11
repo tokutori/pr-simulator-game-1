@@ -772,6 +772,12 @@ impl Menu {
                 .collect();
             return;
         }
+        if mode == GameUiPresentationMode::Screen
+            && phase == SessionPhase::Result
+            && state.result_tab == GameUiResultTab::Summary
+        {
+            return;
+        }
         let expanded_head_failure = phase == SessionPhase::FlightRunning
             && mode != GameUiPresentationMode::Screen
             && self
