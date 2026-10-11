@@ -126,8 +126,8 @@ export function encodeTailLogicalInput(input: TailLogicalInput): string {
     "desiredYawRateRadiansPerSecond", "pilotPositionCommand"]);
   const command = object.pilotPositionCommand;
   const pilotPositionCommand = typeof command === "object" && command !== null && !Array.isArray(command)
-    ? Object.fromEntries(Object.entries(command)) : command;
-  const document = {
+    ? Object.setPrototypeOf(Object.fromEntries(Object.entries(command)), null) as Record<string, unknown> : command;
+  const document = Object.setPrototypeOf({
     schema_version: TAIL_SESSION_SCHEMA_VERSION,
     control_layout: object.controlLayout,
     nose_up: object.noseUp,
@@ -135,7 +135,7 @@ export function encodeTailLogicalInput(input: TailLogicalInput): string {
     desired_pitch_rate_rad_s: object.desiredPitchRateRadiansPerSecond,
     desired_yaw_rate_rad_s: object.desiredYawRateRadiansPerSecond,
     pilot_position_command: pilotPositionCommand
-  };
+  }, null) as Record<string, unknown>;
   if (!validateTailInputDocument(document)) {
     throw new RangeError(`Invalid tail input: ${(validateTailInputDocument.errors ?? [])
       .map((error) => `${error.instancePath || "/"} ${error.message ?? error.keyword}`).join("; ")}`);
