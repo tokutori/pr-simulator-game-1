@@ -36,6 +36,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_generator();
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
+    input.subschema_for::<birdman_game_format::TailInputDocument>();
     let bundle = serde_json::json!({
         "serialize": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -55,7 +56,13 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "input" => ("deserialize", "GameUiPlatformInput"),
         "effects" => ("serialize", "GameUiUpdate"),
         "frame" => ("serialize", "GameUiFrame"),
-        _ => return Err("schema must be bundle, view, action, input, effects or frame".to_owned()),
+        "tail-input" => ("deserialize", "TailInputDocument"),
+        _ => {
+            return Err(
+                "schema must be bundle, view, action, input, effects, frame or tail-input"
+                    .to_owned(),
+            );
+        }
     };
     let mut schema = bundle[group]["$defs"][root]
         .as_object()

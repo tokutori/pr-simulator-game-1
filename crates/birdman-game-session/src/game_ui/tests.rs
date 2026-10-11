@@ -2257,6 +2257,7 @@ fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
         ("frame", "serialize", "GameUiFrame"),
         ("action", "deserialize", "GameUiAction"),
         ("input", "deserialize", "GameUiPlatformInput"),
+        ("tail-input", "deserialize", "TailInputDocument"),
     ] {
         let schema: serde_json::Value =
             serde_json::from_str(&export_game_ui_schema(name).unwrap()).unwrap();
@@ -2278,4 +2279,30 @@ fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
         );
     }
     assert!(bundle["deserialize"]["$defs"].get("GameUiHud").is_none());
+}
+
+#[cfg(feature = "schema")]
+#[test]
+fn tail_input_schema_preserves_the_wire_shape_and_leaves_rate_limits_to_core() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&export_game_ui_schema("tail-input").unwrap()).unwrap();
+    assert_eq!(schema["title"], "TailInputDocument");
+    assert_eq!(schema["additionalProperties"], false);
+    let required = schema["required"].as_array().unwrap();
+    assert_eq!(required.len(), 7);
+    assert_eq!(schema["properties"]["schema_version"]["const"], 2);
+    for field in ["nose_up", "turn_right"] {
+        assert_eq!(schema["properties"][field]["format"], "double");
+        assert_eq!(schema["properties"][field]["minimum"].as_f64(), Some(-1.0));
+        assert_eq!(schema["properties"][field]["maximum"].as_f64(), Some(1.0));
+    }
+    for field in ["desired_pitch_rate_rad_s", "desired_yaw_rate_rad_s"] {
+        assert_eq!(schema["properties"][field]["format"], "double");
+        assert!(schema["properties"][field].get("minimum").is_none());
+        assert!(schema["properties"][field].get("maximum").is_none());
+    }
+    let definitions = schema["$defs"].as_object().unwrap();
+    assert!(definitions.contains_key("TailInputDocument"));
+    assert!(definitions.contains_key("TailControlLayoutDocument"));
+    assert!(definitions.contains_key("TailPilotPositionCommandDocument"));
 }

@@ -1236,6 +1236,112 @@
         }
       ]
     },
+    "TailControlLayoutDocument": {
+      "description": "Control layout accepted by the current live session boundary.",
+      "oneOf": [
+        {
+          "const": "tail_incidence",
+          "description": "Independently controlled horizontal and vertical tail incidence.",
+          "type": "string"
+        }
+      ]
+    },
+    "TailInputDocument": {
+      "additionalProperties": false,
+      "description": "Wire representation of one logical input interval before core validation.",
+      "properties": {
+        "control_layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Current two-tail control layout without a surplus roll axis."
+        },
+        "desired_pitch_rate_rad_s": {
+          "description": "Desired body-positive pitch rate in rad/s, bounded by the core controller contract.",
+          "format": "double",
+          "type": "number"
+        },
+        "desired_yaw_rate_rad_s": {
+          "description": "Desired body-positive yaw rate in rad/s, bounded by the core controller contract.",
+          "format": "double",
+          "type": "number"
+        },
+        "nose_up": {
+          "description": "Normalized positive nose-up intent in the inclusive interval [-1, 1].",
+          "format": "double",
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        },
+        "pilot_position_command": {
+          "$ref": "#/$defs/TailPilotPositionCommandDocument",
+          "description": "Preserve the target or resolve a new normalized longitudinal-position target."
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Wire version checked before advancing the session.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turn_right": {
+          "description": "Normalized positive right-turn intent in the inclusive interval [-1, 1].",
+          "format": "double",
+          "maximum": 1,
+          "minimum": -1,
+          "type": "number"
+        }
+      },
+      "required": [
+        "schema_version",
+        "control_layout",
+        "nose_up",
+        "turn_right",
+        "desired_pitch_rate_rad_s",
+        "desired_yaw_rate_rad_s",
+        "pilot_position_command"
+      ],
+      "type": "object"
+    },
+    "TailPilotPositionCommandDocument": {
+      "description": "Saved input absence or a normalized longitudinal-position instruction.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Retain the previously resolved physical target.",
+          "properties": {
+            "kind": {
+              "const": "hold",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolve this normalized target through the configured trim mapping.",
+          "properties": {
+            "kind": {
+              "const": "set",
+              "type": "string"
+            },
+            "normalized": {
+              "description": "Normalized position in the inclusive interval [-1, 1].",
+              "format": "double",
+              "maximum": 1,
+              "minimum": -1,
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "normalized"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "WeatherClass": {
       "description": "Weather classification attached to a versioned scenario catalog.",
       "oneOf": [

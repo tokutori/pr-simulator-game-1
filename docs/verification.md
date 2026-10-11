@@ -33,6 +33,9 @@ CLIは共有HybridSessionPreparationで公開Playable model・Calm環境・contr
 
 既定の二系統flightはnamed schema 2 snapshot、保存schema 6、同じRust GameSessionの入力・記録・終了へ接続する。
 保存schema 6の元identity・cause・stampを検査する。未対応schemaはtyped拒否し、既存bytesを削除しない。TSによるFBW・score再計算を拒否する。
+TailInput schema 2はformatのRust wire型から生成したreadonly TS型・構造validatorを使い、生成freshness、必須・余剰field、Hold/Set、finite・normalized範囲を検査する。
+Web入力はcommandのown enumerable fieldsをplain wire objectへ一度投影してから検証し、prototype・toJSON・getterによる検査値と送信値の不一致を防ぐ。
+rate上限と1024-byte上限のRust拒否、および拒否時のsnapshot・record sample数不変を検査する。snapshot/query/保存形式と性能検証は入力schema生成のscopeから分離する。
 単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
 Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、current archive/PB routingを対象とする。
 CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。

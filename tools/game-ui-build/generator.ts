@@ -14,7 +14,8 @@ export const schemaEntries = [
   { key: "action", name: "GameUiAction", filename: "game-ui-action", group: "deserialize" },
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
-  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" }
+  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
+  { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" }
 ] as const;
 
 const schemaGroups = ["serialize", "deserialize"] as const;
