@@ -1330,6 +1330,114 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
 }
 
 #[test]
+fn screen_replay_controls_use_flow_sections_and_preserve_vr_and_analysis_layouts() {
+    let mut session = finalized();
+    session.enter_replay().unwrap();
+    let snapshot = session.snapshot();
+    let clock = session.playback_clock();
+    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+        for mode in [
+            GameUiPresentationMode::Screen,
+            GameUiPresentationMode::PhoneVr,
+            GameUiPresentationMode::Webxr,
+        ] {
+            let mut platform = platform();
+            platform.viewport.width = width;
+            platform.viewport.height = height;
+            platform.presentation_mode = mode;
+            for replay_view in [
+                GameUiReplayView::Cinematic,
+                GameUiReplayView::Telemetry,
+                GameUiReplayView::Analysis,
+            ] {
+                let state = GameUiState {
+                    replay_view,
+                    ..GameUiState::default()
+                };
+                let context = context(&session, difficulty(), &platform);
+                let view = game_ui_view(&state, &context).unwrap();
+                let panel = &view.panels[0];
+                if mode != GameUiPresentationMode::Screen {
+                    assert!(
+                        panel
+                            .sections
+                            .iter()
+                            .all(|section| section.layout == GameUiSectionLayout::Normalized)
+                    );
+                    assert!(view.hud.is_none());
+                } else if replay_view == GameUiReplayView::Analysis {
+                    assert_eq!(
+                        panel
+                            .sections
+                            .iter()
+                            .map(|section| section.id.as_str())
+                            .collect::<Vec<_>>(),
+                        [
+                            "analysis-tabs",
+                            "analysis-chart",
+                            "analysis-cursor",
+                            "analysis-details",
+                            "analysis-navigation"
+                        ]
+                    );
+                    assert!(view.hud.is_none());
+                } else {
+                    assert!(view.layout.scroll_y && !view.layout.passthrough);
+                    assert!(
+                        panel
+                            .sections
+                            .iter()
+                            .all(|section| section.layout != GameUiSectionLayout::Normalized)
+                    );
+                    for control in &panel.controls {
+                        let (section_id, layout) = match control.content {
+                            GameUiControlContent::Status { .. } => {
+                                ("replay-status", GameUiSectionLayout::Column)
+                            }
+                            GameUiControlContent::Range { .. } => {
+                                ("replay-cursor", GameUiSectionLayout::Column)
+                            }
+                            _ => ("replay-actions", GameUiSectionLayout::Row),
+                        };
+                        assert_eq!(control.section, section_id);
+                        assert!(panel.sections.iter().any(|section| {
+                            section.id == section_id && section.layout == layout
+                        }));
+                    }
+                    if replay_view == GameUiReplayView::Telemetry {
+                        let hud = view.hud.as_ref().unwrap();
+                        if width == 360.0 {
+                            assert_eq!(view.layout.shell, GameUiShell::FlightBar);
+                            assert!(
+                                hud.layout.offset_px[1] + hud.layout.maximum_height_px
+                                    < height - view.layout.maximum_height_px
+                            );
+                        } else {
+                            assert_eq!(view.layout.shell, GameUiShell::Cinematic);
+                            assert!(
+                                hud.layout.offset_px[0] + hud.layout.width_px
+                                    < width - 12.0 - view.layout.width_px
+                            );
+                        }
+                    } else {
+                        assert_eq!(view.layout.shell, GameUiShell::Cinematic);
+                        assert!(view.hud.is_none());
+                    }
+                }
+                let GameUiControlContent::Button { action, .. } =
+                    &control(&view, "game-replay-view-mode").content
+                else {
+                    panic!("missing replay view selector")
+                };
+                assert!(update_game_ui(&state, action.clone(), &context).is_ok());
+                assert_eq!(session.snapshot(), snapshot);
+                assert_eq!(session.playback_clock(), clock);
+            }
+        }
+    }
+}
+
+#[test]
 fn registered_weather_briefing_is_shared_and_unknown_identity_has_explicit_absence() {
     let selected =
         crate::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42).unwrap();

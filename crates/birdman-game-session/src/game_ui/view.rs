@@ -687,19 +687,29 @@ impl Menu {
         mode: GameUiPresentationMode,
     ) {
         if mode == GameUiPresentationMode::Screen
-            && matches!(
+            && (matches!(
                 phase,
                 SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-            )
+            ) || phase == SessionPhase::Replay
+                && state.replay_view != GameUiReplayView::Analysis)
         {
-            let groups = [
-                ("flight-status", GameUiSectionLayout::Column),
-                ("water-quality", GameUiSectionLayout::ChoiceGrid),
-                ("flight-actions", GameUiSectionLayout::Row),
-            ];
+            let groups = if phase == SessionPhase::Replay {
+                [
+                    ("replay-status", GameUiSectionLayout::Column),
+                    ("replay-cursor", GameUiSectionLayout::Column),
+                    ("replay-actions", GameUiSectionLayout::Row),
+                ]
+            } else {
+                [
+                    ("flight-status", GameUiSectionLayout::Column),
+                    ("water-quality", GameUiSectionLayout::ChoiceGrid),
+                    ("flight-actions", GameUiSectionLayout::Row),
+                ]
+            };
             for control in &mut self.controls {
                 control.section = match &control.content {
                     GameUiControlContent::Status { .. } => groups[0].0,
+                    GameUiControlContent::Range { .. } => groups[1].0,
                     GameUiControlContent::Button {
                         presentation: GameUiButtonPresentation::Choice { .. },
                         ..
@@ -1621,6 +1631,7 @@ pub(super) fn layout(
     }
     let font = viewport.root_font_size;
     let pause_settings_width = (viewport.width - 1.5 * font).max(1.0).min(30.0 * font);
+    let cinematic_width = (viewport.width - 1.5 * font).max(1.0).min(21.0 * font);
     let shell = match phase {
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
@@ -1640,6 +1651,14 @@ pub(super) fn layout(
         SessionPhase::Replay if state.replay_view == GameUiReplayView::Analysis => {
             GameUiShell::Analysis
         }
+        SessionPhase::Replay
+            if state.replay_view == GameUiReplayView::Telemetry
+                && context.platform.presentation_mode == GameUiPresentationMode::Screen
+                && viewport.width
+                    < super::hud::hud_width(context.platform) + cinematic_width + 2.25 * font =>
+        {
+            GameUiShell::FlightBar
+        }
         SessionPhase::Replay | SessionPhase::Attract => GameUiShell::Cinematic,
         _ => GameUiShell::Center,
     };
@@ -1649,7 +1668,7 @@ pub(super) fn layout(
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis | GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
-        GameUiShell::Cinematic => (viewport.width - 1.5 * font).max(1.0).min(21.0 * font),
+        GameUiShell::Cinematic => cinematic_width,
     };
     let padding = match shell {
         GameUiShell::Analysis => 0.0,
@@ -1667,7 +1686,10 @@ pub(super) fn layout(
             viewport.height
         } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
             && shell == GameUiShell::FlightBar
-            && matches!(phase, SessionPhase::FlightPaused { .. })
+            && matches!(
+                phase,
+                SessionPhase::FlightPaused { .. } | SessionPhase::Replay
+            )
         {
             ((viewport.height - 1.5 * font).max(1.0) * 0.45)
                 .min(14.0 * font)

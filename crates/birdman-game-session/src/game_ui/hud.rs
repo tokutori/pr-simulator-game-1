@@ -249,8 +249,10 @@ fn hud_layout(
     GameUiHudLayout {
         offset_px: [0.75 * font; 2],
         width_px: hud_width(platform),
-        maximum_height_px: if matches!(phase, SessionPhase::FlightPaused { .. })
-            && menu.shell == GameUiShell::FlightBar
+        maximum_height_px: if matches!(
+            phase,
+            SessionPhase::FlightPaused { .. } | SessionPhase::Replay
+        ) && menu.shell == GameUiShell::FlightBar
         {
             (platform.viewport.height - menu.maximum_height_px - 1.5 * font).max(1.0)
         } else {
