@@ -4,14 +4,14 @@ import type { MenuPresentation } from "../render/contracts/runtime.js";
 import type { MenuScrollContext, UiPanel } from "../render/contracts/ui.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import { menuCanvasSize, measureMenuLayout } from "./menu-canvas.js";
-import type { HeadHudDrawingContext } from "./head-hud-canvas.js";
+import type { MenuDrawingContext } from "./menu-canvas.js";
 import { layoutMeasuredMenu, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "./menu-layout.js";
 import { fitMenuView } from "./menu-view-fit.js";
 
 export type MenuMeasurementCache = Map<string, readonly MenuTextMeasurement[]>;
 
-export function prepareMenuPresentation(context: HeadHudDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
-  progress: number, viewer: ViewerFrame, style: Readonly<{ locale: string; caption: string; font: MenuFontIdentity }>, cache: MenuMeasurementCache): MenuPresentation {
+export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
+  progress: number, viewer: ViewerFrame, style: Readonly<{ theme: MenuLayoutRequest["theme"]; locale: string; caption: string; font: MenuFontIdentity }>, cache: MenuMeasurementCache): MenuPresentation {
   if (panel.anchor !== "menu") return Object.freeze({ kind: "absent" });
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
   let surface = panel.size;

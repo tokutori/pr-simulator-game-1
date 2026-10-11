@@ -32,25 +32,18 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   environment: EnvironmentBriefingProjection = NO_ENVIRONMENT_BRIEFING, venue: VenueMapProjection = NO_VENUE_MAP,
   framesPerSecond?: number | null): FlightFrameViewDraft {
   const phase = gameSessionPhaseCode(model.gameSession);
-  const code = model.difficulty.informationCode;
-  if (!Number.isInteger(code) || code < 0 || code > 4) throw new RangeError("Information code must lie in [0, 4]");
   let snapshot = snapshotInput;
   if (model.flightExecution.kind === "stopped" && (phase === 5 || phase === 6)) snapshot = model.flightExecution.snapshot;
-  const hud = snapshot !== null && (phase === 5 || phase === 6)
-    ? createFlightUiHudModel(model)
-    : null;
-  const headHud = model.presentation.type === "ready" && model.presentation.mode !== "screen" && ((hud !== null && phase === 5) || framesPerSecond !== undefined)
-    ? createHeadHudView(phase === 5 ? hud : null, viewer, locale, DEFAULT_HEAD_HUD_PROFILE, framesPerSecond)
+  const hud = createFlightUiHudModel(model);
+  const headHud = model.presentation.type === "ready" && model.presentation.mode !== "screen" && (hud !== null || framesPerSecond !== undefined)
+    ? createHeadHudView(hud, viewer, locale, DEFAULT_HEAD_HUD_PROFILE, framesPerSecond, model.sharedGameUi?.theme ?? null)
     : NO_HEAD_HUD_VIEW;
   return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment, venue, frameRateEnabled: framesPerSecond !== undefined });
 }
 
-export function createFlightUiHudModel(model: AppModel): FlightHudModel {
+export function createFlightUiHudModel(model: AppModel): FlightHudModel | null {
   const view = model.sharedGameUi;
-  const shared = view?.hud;
-  if (shared === undefined || shared === null) throw new RangeError("Shared Rust HUD observation is unavailable");
-  if (view === null) throw new RangeError("Shared Rust UI observation is unavailable");
-  return projectSharedFlightHudModel(shared, view.theme);
+  return view === null || view.hud === null ? null : projectSharedFlightHudModel(view.hud, view.theme);
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {

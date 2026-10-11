@@ -24,14 +24,15 @@ import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js"
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
-function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5, headFailure: string | null = null): AppModel {
+function flightModel(mode: "screen" | "phone-vr" | "webxr", phase = 5, headFailure: string | null = null,
+  replayView?: "cinematic" | "telemetry" | "analysis"): AppModel {
   const snapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase)
     : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
   const session = gameSessionState(phase, 0, snapshot, true, "tail_incidence", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Missing session fixture");
   return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: session,
     sharedGameUi: currentSharedGameUiFixture(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
-      head_hud_failure: headFailure } }) };
+      head_hud_failure: headFailure }, actions: replayView === undefined ? [] : [{ kind: "set_replay_view", view: replayView }] }) };
 }
 
 function configuredViewer() {
@@ -43,7 +44,7 @@ function configuredViewer() {
 }
 
 describe("Immutable same-frame Flight view finalization", () => {
-  it.each(["phone-vr", "webxr"] as const)("uses a noninteractive head FPS readout in all %s scene phases without adding flight telemetry", (mode) => {
+  it.each(["phone-vr", "webxr"] as const)("keeps independent Head FPS and projects shared HUD observations in all %s scene phases", (mode) => {
     for (const phase of [0, 1, 3, 4, 5, 6, 7, 8, 9, 10]) {
       const model = flightModel(mode, phase);
       const before = JSON.stringify(model);
@@ -53,6 +54,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       expect(view.headHud).toBe(draft.headHud.layer);
       if (view.headHud.kind !== "visible") throw new Error("Missing finalized Head FPS layer");
       expect(view.headHud.elements.some((element) => element.id === "head-frame-rate")).toBe(true);
+      if (model.sharedGameUi?.hud === null) expect(view.headHud.elements.map((element) => element.id)).toEqual(["head-frame-rate"]);
       expect(viewExposesAction(view, { type: "activate", controlId: "head-frame-rate" })).toBe(false);
       expect(() => { validateUiViewModel(view); }).not.toThrow();
       expect(JSON.stringify(model)).toBe(before);
@@ -61,6 +63,66 @@ describe("Immutable same-frame Flight view finalization", () => {
     const draft = createFlightFrameViewDraft(model, null, configuredViewer(), "ja", undefined, undefined, 60);
     expect(draft.headHud.kind).toBe("absent");
     expect(finalizeFlightFrameView(draft, draft.headHud).headHud.kind).toBe("absent");
+  });
+
+  it.each(["screen", "phone-vr", "webxr"] as const)("projects nullable shared %s HUD policy without requiring a physical snapshot", (mode) => {
+    for (const phase of [5, 6, 7, 10]) {
+      const model = flightModel(mode, phase);
+      const draft = createFlightFrameViewDraft(model, null, configuredViewer(), "ja");
+      const expected = phase === 5 || (mode === "screen" && phase === 6);
+      expect(model.sharedGameUi?.hud !== null).toBe(expected);
+      expect(createFlightUiHudModel(model) !== null).toBe(expected);
+      expect(draft.hud !== null).toBe(expected);
+      expect(draft.snapshot).toBeNull();
+      expect(draft.headHud.kind).toBe(expected && mode !== "screen" ? "visible" : "absent");
+    }
+    for (const replayView of ["cinematic", "telemetry", "analysis"] as const) {
+      const model = flightModel(mode, 9, null, replayView);
+      const draft = createFlightFrameViewDraft(model, null, configuredViewer(), "ja");
+      const expected = mode === "screen" && replayView === "telemetry";
+      expect(model.sharedGameUi?.hud !== null).toBe(expected);
+      expect(draft.hud !== null).toBe(expected);
+      expect(draft.headHud.kind).toBe("absent");
+    }
+    const model = { ...flightModel(mode), sharedGameUi: null };
+    expect(createFlightUiHudModel(model)).toBeNull();
+    expect(createFlightFrameViewDraft(model, null, configuredViewer(), "ja").hud).toBeNull();
+  });
+
+  it.each([
+    { mode: "screen", phase: 7 },
+    { mode: "phone-vr", phase: 6 },
+    { mode: "webxr", phase: 6 }
+  ] as const)("keeps controller reset, synchronization and current rendering valid with absent $mode phase $phase HUD", async ({ mode, phase }) => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const hud = new FlightHudAdapter(root);
+    const model = flightModel(mode, phase);
+    expect(createFlightUiHudModel(model)).toBeNull();
+    const retained = Array.from(root.childNodes);
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    launchCurrentSession(session);
+    const failures: string[] = [];
+    const controller = new TailFlightController(session.flightPort, {
+      readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
+      reset() {}, suspend() {}, resume() {}, dispose() {}
+    }, { setFlightPose() {} }, {
+      render: () => { hud.render(createFlightUiHudModel(model)); },
+      fail: (message) => { failures.push(message); },
+      setVisible: (visible) => { hud.setVisible(visible); }
+    }, 100, () => []);
+    try {
+      expect(() => { controller.reset(session.flightPort.snapshot_json()); }).not.toThrow();
+      expect(() => { controller.synchronizeSnapshot(session.flightPort.snapshot_json()); }).not.toThrow();
+      expect(() => { controller.renderCurrentSnapshot(); }).not.toThrow();
+      expect(root.hidden).toBe(true);
+      expect(Array.from(root.childNodes)).toEqual(retained);
+      expect(failures).toEqual([]);
+    } finally {
+      controller.dispose();
+      session.dispose();
+      await window.happyDOM.abort();
+    }
   });
 
   it("recovers invalid Menu geometry only for the same model and presentation", () => {
@@ -94,7 +156,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       advance_tick_json: () => { throw new Error("Rust tick failed"); } }, {
       readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
-    }, renderer, { render: (snapshot) => { hud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model)); },
+    }, renderer, { render: () => { hud.render(createFlightUiHudModel(model)); },
       fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, () => []);
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
       (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentDisplaySnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },

@@ -5,11 +5,14 @@ import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js
 import { requestMenuLayout, layoutMeasuredMenu, menuViewport } from "../../web/src/presentation/menu-layout.js";
 import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+
+const fixtureTheme = currentSharedGameUiFixture(0).theme;
 
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];
   if (panel === undefined || panel.anchor !== "menu") return { kind: "absent" };
-  const request = requestMenuLayout(panel, panel.size, { fontMeters: 0.025,
+  const request = requestMenuLayout(panel, panel.size, { theme: view.sharedPresentation?.theme ?? fixtureTheme, fontMeters: 0.025,
     font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
   const dimensions = menuCanvasSize(panel.size);
   const measurements = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);

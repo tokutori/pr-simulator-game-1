@@ -74,10 +74,11 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
       }
       const snapshot = gameSessionSnapshot(model.gameSession);
       const visible = screenUiVisible(model.presentation);
-      hud.setVisible(visible && (model.gameSession.kind === "flight" || model.gameSession.kind === "paused-flight"));
+      const hudModel = createFlightUiHudModel(model);
+      hud.render(hudModel);
+      hud.setVisible(visible && hudModel !== null);
       if (snapshot !== null) {
         renderedTicks.push(snapshot.stamp.tick);
-        if (phase === 5 || phase === 6) hud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model));
       }
       const view = model.sharedGameUi;
       adapter.render(model.gameSession.kind === "boot" || view === null ? createBootViewModel(model) : createGameViewModel(view), visible);
@@ -104,7 +105,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     const mount = required(app.root, ".screen-ui-mount");
     const shell = required(app.root, ".screen-ui-shell");
     const hudNodes = Array.from(app.hudRoot.childNodes);
-    const expectsHud = phaseCode === 5 || phaseCode === 6;
+    const expectsHud = (app.model().sharedGameUi?.hud ?? null) !== null;
     const assertVisibility = (visible: boolean): void => {
       expect(mount.hidden).toBe(!visible);
       expect(mount.hasAttribute("inert")).toBe(!visible);

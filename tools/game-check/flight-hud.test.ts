@@ -1,6 +1,5 @@
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { currentFlightDisplayFixture } from "./current-session-fixture.js";
 import { currentSharedHudFixture, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
@@ -34,7 +33,7 @@ describe("shared flight HUD instruments", () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
     const adapter = new FlightHudAdapter(root);
-    adapter.render(currentFlightDisplayFixture(), model);
+    adapter.render(model);
     expect(root.querySelector(".flight-hud-instrument-angle output")?.textContent).toBe("—");
     expect(root.querySelector('[data-instrument="angle-of-attack"] polygon')?.getAttribute("visibility")).toBe("hidden");
     const windNeedle = root.querySelector('[data-instrument="wind"] g');
@@ -60,7 +59,7 @@ describe("shared flight HUD instruments", () => {
     const root = window.document.createElement("section") as unknown as HTMLElement;
     const adapter = new FlightHudAdapter(root);
     const base = currentSharedHudFixture();
-    adapter.render(currentFlightDisplayFixture(), Object.freeze({
+    adapter.render(Object.freeze({
       ...base, pilotPosition: "-0.20 m", windDirectionDegrees: 270, headingDegrees: 90,
       heading: "90°", angleOfAttackDegrees: 0, angleOfAttack: "0.0°",
       geometry: Object.freeze({
@@ -78,7 +77,7 @@ describe("shared flight HUD instruments", () => {
     expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe("-0.20 m");
     expect(root.querySelector('[data-instrument="angle-of-attack"] polygon')?.getAttribute("points")).toBe("70,5 64,1 76,1");
     expect(root.querySelector(".flight-hud-adi")?.getAttribute("aria-label")).toBe("姿勢指示器");
-    adapter.render(currentFlightDisplayFixture(), Object.freeze({
+    adapter.render(Object.freeze({
       ...base, headingDegrees: 180, heading: "180°", angleOfAttackDegrees: 15, angleOfAttack: "15.0°",
       geometry: Object.freeze({
         ...base.geometry, angle_of_attack_ratio: 5 / 6,

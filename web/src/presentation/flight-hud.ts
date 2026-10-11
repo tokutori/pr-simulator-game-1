@@ -1,6 +1,5 @@
-import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightHudModel } from "./flight-hud-model.js";
-import { gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
+import { gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
 export class FlightHudAdapter {
   private readonly status: HTMLOutputElement;
@@ -30,10 +29,7 @@ export class FlightHudAdapter {
   private readonly instruments: HTMLDivElement;
   private readonly instrumentLabels: readonly HTMLSpanElement[];
 
-  constructor(
-    private readonly root: HTMLElement,
-    private readonly onRender: (snapshot: FlightDisplaySnapshot) => void = () => undefined
-  ) {
+  constructor(private readonly root: HTMLElement) {
     const documentRef = root.ownerDocument;
     const heading = documentRef.createElement("h2");
     heading.textContent = "FLIGHT";
@@ -171,19 +167,24 @@ export class FlightHudAdapter {
     validatorLicense.target = "_blank";
     validatorLicense.rel = "noopener noreferrer";
     validatorLicense.textContent = "Game UI validator 利用条件";
-    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense);
+    const numberFormatLicense = documentRef.createElement("a");
+    numberFormatLicense.className = "flight-hud-attribution-link";
+    numberFormatLicense.href = gameUiNumberFormatLicenseUrl;
+    numberFormatLicense.target = "_blank";
+    numberFormatLicense.rel = "noopener noreferrer";
+    numberFormatLicense.textContent = "ryu-js 利用条件";
+    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense, numberFormatLicense);
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
     root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, this.controls);
     this.setVisible(false);
   }
 
-  render(snapshot: FlightDisplaySnapshot, model: FlightHudModel): void {
-    this.applyModel(model);
-    this.onRender(snapshot);
-  }
-
-  renderDisplaySnapshot(_snapshot: FlightDisplaySnapshot, model: FlightHudModel): void {
+  render(model: FlightHudModel | null): void {
+    if (model === null) {
+      this.setVisible(false);
+      return;
+    }
     this.applyModel(model);
   }
 

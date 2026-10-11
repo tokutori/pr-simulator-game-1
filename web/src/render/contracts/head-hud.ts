@@ -1,4 +1,7 @@
 import type { Pose } from "./math.js";
+import type { GameUiView } from "../../generated/game-ui-view.js";
+
+type SharedHudGeometry = NonNullable<GameUiView["hud"]>["geometry"];
 
 export interface HeadHudRect {
   readonly left: number;
@@ -15,11 +18,12 @@ interface HeadHudElementBase {
 
 export type HeadHudElement = HeadHudElementBase & (
   | { readonly kind: "text"; readonly value: string; readonly tone: "normal" | "warning" }
-  | { readonly kind: "attitude"; readonly rollDegrees: number; readonly pitchDegrees: number; readonly flightPathAngleDegrees: number | null }
-  | { readonly kind: "heading"; readonly degrees: number }
+  | { readonly kind: "attitude"; readonly rollDegrees: number; readonly pitchDegrees: number; readonly flightPathAngleDegrees: number | null;
+      readonly geometry: Extract<NonNullable<SharedHudGeometry["adi"]>, { kind: "attitude" }> }
+  | { readonly kind: "heading"; readonly degrees: number; readonly value: string; readonly ticks: SharedHudGeometry["heading_ticks"] }
   | { readonly kind: "wind"; readonly degrees: number; readonly value: string }
-  | { readonly kind: "angle-of-attack"; readonly degrees: number; readonly value: string }
-  | { readonly kind: "flight-path"; readonly degrees: number; readonly value: string }
+  | { readonly kind: "angle-of-attack"; readonly degrees: number; readonly value: string; readonly ratio: number }
+  | { readonly kind: "flight-path"; readonly degrees: number; readonly value: string; readonly yRatio: number }
 );
 
 export interface VisibleHeadHud {
@@ -31,6 +35,7 @@ export interface VisibleHeadHud {
   readonly clearRegion: HeadHudRect;
   readonly backgroundAlpha: number;
   readonly foregroundAlpha: number;
+  readonly theme: GameUiView["theme"];
   readonly elements: readonly HeadHudElement[];
 }
 
@@ -75,18 +80,32 @@ export function validateHeadHudLayer(layer: HeadHudLayer): void {
         break;
       case "attitude":
         if (![element.rollDegrees, element.pitchDegrees].every(Number.isFinite) ||
-            (element.flightPathAngleDegrees !== null && !Number.isFinite(element.flightPathAngleDegrees))) {
+            (element.flightPathAngleDegrees !== null && !Number.isFinite(element.flightPathAngleDegrees)) ||
+            ![element.geometry.horizon.rotation_degrees, element.geometry.horizon.pitch_offset_ratio].every(Number.isFinite) ||
+            (element.geometry.flight_path_y_ratio !== null && !validRatio(element.geometry.flight_path_y_ratio))) {
           throw new RangeError(`Head HUD attitude is non-finite: ${element.id}`);
         }
         break;
       case "heading":
+        if (!Number.isFinite(element.degrees) || element.ticks.some((tick) => !validRatio(tick.position_ratio))) {
+          throw new RangeError(`Head HUD heading geometry is non-finite or out of range: ${element.id}`);
+        }
+        break;
       case "wind":
+        if (!Number.isFinite(element.degrees)) throw new RangeError(`Head HUD angle is non-finite: ${element.id}`);
+        break;
       case "angle-of-attack":
       case "flight-path":
-        if (!Number.isFinite(element.degrees)) throw new RangeError(`Head HUD angle is non-finite: ${element.id}`);
+        if (!Number.isFinite(element.degrees) || !validRatio(element.kind === "angle-of-attack" ? element.ratio : element.yRatio)) {
+          throw new RangeError(`Head HUD angle geometry is non-finite or out of range: ${element.id}`);
+        }
         break;
     }
   }
+}
+
+function validRatio(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function validateRect(bounds: HeadHudRect): void {

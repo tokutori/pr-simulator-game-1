@@ -81,7 +81,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
     const request = requestMenuLayout(panel, { width: 0.5, height: 0.6 }, {
-      fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
+      theme: shared.theme, fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
       locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: view.description
     });
     const result = layoutMeasuredMenu(request, request.texts.map(measurementFor));
@@ -186,12 +186,13 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it("uses common selected markers and primary/secondary emphasis for VR painting", () => {
-    const controls = createGameViewModel(currentSharedGameUiFixture(1)).panels.flatMap((panel) => panel.controls);
+    const shared = currentSharedGameUiFixture(1);
+    const controls = createGameViewModel(shared).panels.flatMap((panel) => panel.controls);
     const choice = controls.find((control) => control.id === "game-setup-select-information-0");
     const primary = controls.find((control) => control.id === "game-setup-start");
     const secondary = controls.find((control) => control.id === "game-setup-back");
     if (choice?.kind !== "button" || primary === undefined || secondary === undefined) throw new Error("Missing controls");
     expect(uiButtonLabel(choice)).toContain("● Full");
-    expect(uiControlBackground(primary)).not.toBe(uiControlBackground(secondary));
+    expect(uiControlBackground(primary, shared.theme)).not.toBe(uiControlBackground(secondary, shared.theme));
   });
 });

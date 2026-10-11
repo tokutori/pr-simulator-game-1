@@ -1,11 +1,38 @@
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
 describe("Flight HUD DOM lifecycle", () => {
+  it("hides an absent shared observation while retaining HUD nodes and the next model update", async () => {
+    const window = new Window();
+    const nativeRoot = window.document.createElement("section");
+    const root = nativeRoot as unknown as HTMLElement;
+    window.document.body.append(nativeRoot);
+    const hud = new FlightHudAdapter(root);
+    const nodes = Array.from(root.childNodes);
+    const initial = currentSharedHudFixture();
+    try {
+      hud.render(initial);
+      hud.setVisible(true);
+      expect(root.hidden).toBe(false);
+      expect(() => { hud.render(null); }).not.toThrow();
+      expect(root.hidden).toBe(true);
+      expect(root.getAttribute("aria-hidden")).toBe("true");
+      expect(Array.from(root.childNodes)).toEqual(nodes);
+      const updated = { ...initial, status: "共有観測を更新した" };
+      hud.render(updated);
+      expect(root.hidden).toBe(true);
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe(updated.status);
+      hud.setVisible(true);
+      expect(root.hidden).toBe(false);
+      expect(nodes.every((node) => node.isConnected)).toBe(true);
+    } finally {
+      await window.happyDOM.abort();
+    }
+  });
+
   it("preserves connected HUD nodes while hidden and applies shared readouts before showing again", async () => {
     const window = new Window();
     const nativeRoot = window.document.createElement("section");
@@ -17,14 +44,14 @@ describe("Flight HUD DOM lifecycle", () => {
     try {
       expect(root.children).toHaveLength(10);
       hud.setVisible(true);
-      hud.renderDisplaySnapshot(currentFlightDisplayFixture(5), initial);
+      hud.render(initial);
       expect(root.hidden).toBe(false);
       hud.setVisible(false);
       const updated = { ...initial, status: "時間制限", heading: "17°", pilotPosition: "+0.00 m",
         wind: "N 2.0 · E -1.0 · D 0.5 m/s", angleOfAttack: "5.7°", headingDegrees: 17,
         angleOfAttackDegrees: 5.7, windDirectionDegrees: 90, attitude: { rollDegrees: 11, pitchDegrees: 2 },
         layout: { ...initial.layout, width_px: 280, instrument_columns: 2, controls_visible: false } };
-      hud.renderDisplaySnapshot(currentFlightDisplayFixture(7), updated);
+      hud.render(updated);
       expect(root.hidden).toBe(true);
       expect(root.getAttribute("aria-hidden")).toBe("true");
       expect(Array.from(root.childNodes)).toEqual(nodes);
@@ -75,7 +102,7 @@ describe("Flight HUD DOM lifecycle", () => {
       flight_path_y_ratio: 0.6 }, angle_of_attack_ratio: 0.75,
       heading_ticks: [{ position_ratio: 0.5, major: true, label: "N" }, { position_ratio: 0.75, major: false, label: "" }] };
     try {
-      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), { ...model, geometry, windDirectionDegrees: 90 });
+      hud.render({ ...model, geometry, windDirectionDegrees: 90 });
       expect(root.querySelector(".flight-hud-adi > g")?.getAttribute("transform")).toBe("rotate(-11 120 90) translate(0 94.5)");
       expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("cy")).toBe("108");
       const heading = root.querySelector('svg[aria-label="方位目盛"]');
@@ -85,7 +112,7 @@ describe("Flight HUD DOM lifecycle", () => {
       const needle = root.querySelector('svg[aria-label="風向計。矢印は風の流れる方向を示す"] > g');
       expect(needle?.getAttribute("transform")).toBe("rotate(90 36 36)");
       const retained = Array.from(root.childNodes);
-      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), { ...model,
+      hud.render({ ...model,
         geometry: { adi: null, angle_of_attack_ratio: null, heading_ticks: [] },
         windDirectionDegrees: null });
       expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("visibility")).toBe("hidden");
@@ -111,7 +138,7 @@ describe("Flight HUD DOM lifecycle", () => {
       expect(geometry?.kind).toBe("flight_path_only");
       if (geometry?.kind !== "flight_path_only") throw new Error("Expected shared flight-path-only geometry");
       hud.setVisible(true);
-      hud.renderDisplaySnapshot(currentFlightDisplayFixture(), model);
+      hud.render(model);
       const adi = root.querySelector(".flight-hud-adi");
       const marker = adi?.querySelector("circle");
       expect(root.hidden).toBe(false);

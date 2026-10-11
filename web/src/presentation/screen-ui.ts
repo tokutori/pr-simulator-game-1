@@ -1,8 +1,6 @@
 import { actionForControl } from "./panel-interaction.js";
 import { APP_BUILD_LABEL } from "./build-info.js";
-import { chartScaleBarDistance, formatChartTick } from "../render/contracts/ui.js";
-import { chartTextPosition, deriveScreenChartLayout, INITIAL_SCREEN_CHART_VIEWPORT } from "./screen-chart-layout.js";
-import type { ScreenChartViewport } from "./screen-chart-layout.js";
+import type { GameUiChartExtent } from "../generated/game-ui-input.js";
 import type { UiActionDispatcher, UiControl, UiPanel, UiViewModel } from "../render/contracts/ui.js";
 import {
   attributesModule,
@@ -33,11 +31,12 @@ export class ScreenUiAdapter {
   private visible = true;
   private retainedDom: RetainedScreenDom | null = null;
   private currentViewModel: UiViewModel | null = null;
-  private readonly chartViewports = new Map<string, ScreenChartViewport>();
+  private readonly chartViewports = new Map<string, GameUiChartExtent>();
   private readonly observedCharts = new Set<Element>();
   private readonly chartObserver: ResizeObserver | null;
 
-  constructor(private readonly root: HTMLElement, private readonly dispatch: UiActionDispatcher) {
+  constructor(private readonly root: HTMLElement, private readonly dispatch: UiActionDispatcher,
+    private readonly chartExtentChanged: () => void = () => undefined) {
     this.mount = root.ownerDocument.createElement("div");
     this.mount.className = "screen-ui-mount";
     this.root.append(this.mount);
@@ -47,6 +46,14 @@ export class ScreenUiAdapter {
     this.root.addEventListener("input", this.onInput);
     const ResizeObserverConstructor = root.ownerDocument.defaultView?.ResizeObserver;
     this.chartObserver = ResizeObserverConstructor === undefined ? null : new ResizeObserverConstructor(this.onChartResize);
+  }
+
+  chartExtent(): GameUiChartExtent | null {
+    if (!this.visible) return null;
+    for (const [id, extent] of this.chartViewports) {
+      if (this.controls.get(id)?.kind === "chart") return extent;
+    }
+    return null;
   }
 
   render(viewModel: UiViewModel, visible = true): void {
@@ -102,14 +109,15 @@ export class ScreenUiAdapter {
       if (!this.observedCharts.has(entry.target) || !this.mount.contains(entry.target)) continue;
       const id = entry.target.getAttribute("data-chart-control-id");
       const { width, height } = entry.contentRect;
-      if (id === null || this.controls.get(id)?.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
-          || width < 140 || height < 100) continue;
+      const control = id === null ? undefined : this.controls.get(id);
+      if (id === null || control?.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
+          || width < control.presentation.measurement_minimum.width || height < control.presentation.measurement_minimum.height) continue;
       const previous = this.chartViewports.get(id);
       if (previous !== undefined && Math.abs(previous.width - width) < 0.5 && Math.abs(previous.height - height) < 0.5) continue;
       this.chartViewports.set(id, Object.freeze({ width, height }));
       changed = true;
     }
-    if (changed) this.render(this.currentViewModel, this.visible);
+    if (changed) this.chartExtentChanged();
   };
 
   private retainDom(): void {
@@ -179,15 +187,21 @@ export class ScreenUiAdapter {
   };
 
   private createPanel(panel: UiPanel): VNode {
-    const usesNormalizedLayout = panel.controls.some((control) => control.kind === "chart");
+    const usesNormalizedLayout = panel.sections?.some((section) => section.layout === "normalized") === true;
     const data: VNodeData = { key: panel.id, dataset: { anchor: panel.anchor }, attrs: { "aria-label": panel.title } };
     if (usesNormalizedLayout) data.dataset = { ...data.dataset, layout: "normalized" };
     const children: VNode[] = [];
-    if (panel.sections !== undefined && !usesNormalizedLayout) {
+    if (panel.sections !== undefined) {
       for (const section of panel.sections) {
-        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
+        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => {
+          const node = this.createControl(control);
+          if (section.layout === "normalized") {
+            node.data = { ...node.data, style: Object.assign({}, node.data?.style, normalizedStyle(control.rect)), attrs: { ...node.data?.attrs, ...(control.kind === "status" ? { tabindex: 0 } : {}) } };
+          }
+          return node;
+        }));
         children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
-          key: `${panel.id}-section-${section.id}`, dataset: { layout: section.layout }
+          key: `${panel.id}-section-${section.id}`, dataset: { sectionId: section.id, layout: section.layout }
         }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
       }
     } else {
@@ -195,10 +209,7 @@ export class ScreenUiAdapter {
       let previousChoiceGroup = "";
       for (const control of panel.controls) {
         const node = this.createControl(control);
-        if (usesNormalizedLayout) {
-          node.data = { ...node.data, style: normalizedStyle(control.rect), attrs: { ...node.data?.attrs, ...(control.kind === "status" ? { tabindex: 0 } : {}) } };
-        }
-        if (control.kind === "button" && control.presentation?.kind === "choice" && !usesNormalizedLayout) {
+        if (control.kind === "button" && control.presentation?.kind === "choice") {
           if (choices === null || previousChoiceGroup !== control.presentation.group) {
             choices = [];
             children.push(h("fieldset.screen-ui-choice-group", { key: `${panel.id}-choices-${control.presentation.group}` }, [
@@ -260,55 +271,35 @@ export class ScreenUiAdapter {
     const svg: VNode[] = [];
     const svgAttributes: Record<string, string> = {};
     const svgStyle: NonNullable<VNodeData["style"]> = {};
-    const layout = deriveScreenChartLayout(this.chartViewports.get(control.id) ?? INITIAL_SCREEN_CHART_VIEWPORT, control.equal_axis_scale);
+    const layout = control.presentation;
     svgAttributes["viewBox"] = `0 0 ${String(layout.viewport.width)} ${String(layout.viewport.height)}`;
-    svgStyle["--screen-chart-tick-font"] = `${String(layout.tickFontSize)}px`;
-    svgStyle["--screen-chart-axis-font"] = `${String(layout.axisFontSize)}px`;
+    svgStyle["--screen-chart-tick-font"] = `${String(layout.tick_font_size)}px`;
+    svgStyle["--screen-chart-axis-font"] = `${String(layout.axis_font_size)}px`;
     svgAttributes["role"] = "img";
     svgAttributes["aria-label"] = `${control.label}; ${control.x_axis_label}; ${control.y_axis_label}`;
     svgAttributes["preserveAspectRatio"] = "xMidYMid meet";
-    const plot = layout.plot;
-    const plotTop = plot.top;
-    const plotBottom = plot.bottom;
-    const plotWidth = plot.right - plot.left;
-    const plotLeft = plot.left;
-    const plotRight = plot.right;
+    const [plotLeft, plotTop, plotRight, plotBottom] = layout.plot;
+    const plotWidth = plotRight - plotLeft;
     const plotX = (value: number): number => plotLeft + (value - control.x_minimum) / (control.x_maximum - control.x_minimum) * plotWidth;
     const plotY = (value: number): number => plotBottom - (value - control.y_minimum) / (control.y_maximum - control.y_minimum) * (plotBottom - plotTop);
     svg.push(svgElement("path", {
       d: `M ${String(plotLeft)} ${String(plotTop)} V ${String(plotBottom)} H ${String(plotRight)}`,
       fill: "none",
-      stroke: "#9db8b8",
+      stroke: layout.axes_color,
       "stroke-width": "1.5"
     }));
-    for (let index = 1; index <= 3; index += 1) {
-      const y = plotTop + ((plotBottom - plotTop) * index) / 4;
+    for (const [start, end] of layout.grid_lines) {
       svg.push(svgElement("path", {
-        d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
+        d: `M ${String(start.x)} ${String(start.y)} L ${String(end.x)} ${String(end.y)}`,
         fill: "none",
-        stroke: "#456168",
+        stroke: layout.grid_color,
+        "stroke-opacity": String(layout.grid_opacity),
         "stroke-width": "1"
       }));
     }
-    for (let index = 0; index <= layout.xTickIntervals; index += 1) {
-      const ratio = index / layout.xTickIntervals;
-      const x = plotLeft + ratio * plotWidth;
-      const xTick = svgElement("text", {
-        x: String(x), y: String(plotBottom + 20), class: "screen-ui-chart-tick"
-      });
-      xTick.text = formatChartTick(control.x_minimum + ratio * (control.x_maximum - control.x_minimum));
-      svg.push(xTick);
-    }
-    for (let index = 0; index <= layout.yTickIntervals; index += 1) {
-      const ratio = index / layout.yTickIntervals;
-      const y = plotBottom - ratio * (plotBottom - plotTop);
-      const yTick = svgElement("text", {
-        x: String(plotLeft - 10), y: String(y + 5), class: "screen-ui-chart-tick screen-ui-chart-y-tick"
-      });
-      yTick.text = formatChartTick(control.y_minimum + ratio * (control.y_maximum - control.y_minimum));
-      svg.push(yTick);
-    }
-    control.reference_lines.forEach((line) => {
+    for (const tick of layout.x_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick"));
+    for (const tick of layout.y_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick screen-ui-chart-y-tick"));
+    control.reference_lines.forEach((line, index) => {
       const y = plotY(line.value);
       svg.push(svgElement("path", {
         d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
@@ -317,9 +308,8 @@ export class ScreenUiAdapter {
         "stroke-width": "2",
         "stroke-dasharray": "8 6"
       }));
-      const text = svgElement("text", { x: String(plotLeft + 8), y: String(y - 7), class: "screen-ui-chart-reference" });
-      text.text = line.label;
-      svg.push(text);
+      const label = layout.reference_labels[index];
+      if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-reference"));
     });
     control.series.forEach((series) => {
       if (series.segment_colors.length > 0 && series.points.length > 1) {
@@ -361,34 +351,30 @@ export class ScreenUiAdapter {
         "stroke-dasharray": "7 6"
       }));
     }
-    control.cursor_points.forEach((point, index) => {
-      const x = plotX(point.x);
-      const y = plotY(point.y);
+    control.cursor_points.forEach((cursor) => {
+      const coordinateX = plotX(cursor.point.x);
+      const coordinateY = plotY(cursor.point.y);
       svg.push(svgElement("circle", {
-        cx: String(x), cy: String(y), r: "4", fill: control.series[index]?.color ?? "#f3f4e8"
+        cx: String(coordinateX), cy: String(coordinateY), r: "4", fill: cursor.color
       }));
     });
-    control.markers.forEach((marker) => {
+    control.markers.forEach((marker, index) => {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
       svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "4", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
-      const label = chartTextPosition(x + 10, y - 8, marker.label, layout);
-      const text = svgElement("text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-marker" });
-      text.text = marker.label;
-      svg.push(text);
+      const label = layout.marker_labels[index];
+      if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-marker"));
     });
-    control.time_markers.forEach((marker) => {
+    control.time_markers.forEach((marker, index) => {
       const x = plotX(marker.point.x);
       const y = plotY(marker.point.y);
       svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "2.5", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
-      const label = chartTextPosition(x + 7, y + 18, marker.label, layout);
-      const text = svgElement("text", { x: String(label.x), y: String(label.y), class: "screen-ui-chart-time-marker" });
-      text.text = marker.label;
-      svg.push(text);
+      const label = layout.time_marker_labels[index];
+      if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-time-marker"));
     });
     control.vectors.forEach((vector) => {
       if (vector.segment === null) return;
@@ -407,64 +393,41 @@ export class ScreenUiAdapter {
         "stroke-linecap": "round"
       }));
     });
-    if (control.equal_axis_scale) {
-      const scaleDistance = chartScaleBarDistance(control.x_maximum - control.x_minimum);
-      const scaleWidth = scaleDistance / (control.x_maximum - control.x_minimum) * plotWidth;
-      const scaleX = plotRight - scaleWidth - 14;
-      const scaleY = plotBottom - 18;
+    if (layout.map_guides !== null) {
+      const guides = layout.map_guides;
       svg.push(svgElement("path", {
-        d: `M ${String(scaleX)} ${String(scaleY)} H ${String(scaleX + scaleWidth)} M ${String(scaleX)} ${String(scaleY - 6)} V ${String(scaleY + 3)} M ${String(scaleX + scaleWidth)} ${String(scaleY - 6)} V ${String(scaleY + 3)}`,
+        d: [...guides.scale_segments, ...guides.north_segments].map(([start, end]) =>
+          `M ${String(start.x)} ${String(start.y)} L ${String(end.x)} ${String(end.y)}`).join(" "),
         fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
       }));
-      const scaleLabel = svgElement("text", { x: String(scaleX + scaleWidth / 2), y: String(scaleY - 8), class: "screen-ui-chart-map-label" });
-      scaleLabel.text = `${formatChartTick(scaleDistance)} m`;
-      svg.push(scaleLabel);
-      const northX = plotRight - 22;
-      const northTop = plotTop + 18;
-      const northBottom = northTop + 34;
-      svg.push(svgElement("path", {
-        d: `M ${String(northX)} ${String(northBottom)} V ${String(northTop)} M ${String(northX)} ${String(northTop)} L ${String(northX - 6)} ${String(northTop + 10)} M ${String(northX)} ${String(northTop)} L ${String(northX + 6)} ${String(northTop + 10)}`,
-        fill: "none", stroke: "#f3f4e8", "stroke-width": "1.5"
-      }));
-      const northLabel = svgElement("text", { x: String(northX), y: String(northTop - 6), class: "screen-ui-chart-map-label" });
-      northLabel.text = "N";
-      svg.push(northLabel);
+      svg.push(chartText(guides.scale_label, "screen-ui-chart-map-label"), chartText(guides.north_label, "screen-ui-chart-map-label"));
     }
-    const xLabel = svgElement("text", { x: String((plotLeft + plotRight) / 2), y: String(layout.xAxisY), class: "screen-ui-chart-axis" });
-    xLabel.text = control.x_axis_label;
-    const yLabel = svgElement("text", {
-      x: String(layout.yAxisX), y: String(layout.yAxisY),
-      transform: `rotate(-90 ${String(layout.yAxisX)} ${String(layout.yAxisY)})`,
-      class: "screen-ui-chart-axis screen-ui-chart-y-axis"
-    });
-    yLabel.text = control.y_axis_label;
-    svg.push(xLabel, yLabel);
+    svg.push(chartText(layout.x_axis, "screen-ui-chart-axis"), chartText(layout.y_axis, "screen-ui-chart-axis screen-ui-chart-y-axis"));
     const legend: VNode[] = [];
-    control.series.forEach((series) => {
+    layout.legend.forEach((entry) => {
       const item = h("span", { style: {}, dataset: {} }, "");
-      item.text = series.label;
-      setNodeStyle(item, "--chart-series-color", series.color);
-      if (series.segment_colors.length > 0) {
+      item.text = entry.label;
+      setNodeStyle(item, "--chart-series-color", entry.color);
+      if (entry.segment_gradient !== null) {
         setNodeDataset(item, "progressScale", "true");
-        setNodeStyle(item, "--chart-series-start", series.segment_colors[0] ?? series.color);
-        setNodeStyle(item, "--chart-series-end", series.segment_colors[series.segment_colors.length - 1] ?? series.color);
+        setNodeStyle(item, "--chart-series-start", entry.segment_gradient[0]);
+        setNodeStyle(item, "--chart-series-end", entry.segment_gradient[1]);
       }
       legend.push(item);
     });
-    control.markers.forEach((marker) => {
-      const item = h("span", { style: {}, dataset: {} }, "");
-      item.text = marker.label;
-      setNodeStyle(item, "--chart-series-color", marker.color);
-      legend.push(item);
-    });
-    control.vectors.forEach((vector) => {
-      if (vector.label.length === 0) return;
-      const item = h("span", { style: {}, dataset: {} }, "");
-      item.text = vector.label;
-      setNodeStyle(item, "--chart-series-color", vector.color);
-      legend.push(item);
-    });
-    return h("figure.screen-ui-chart", { key: control.id }, [
+    return h("figure.screen-ui-chart", { key: control.id, style: {
+      overflow: layout.scroll_overflow ? "auto" : "hidden",
+      "--chart-minimum-width": `${String(layout.viewport_minimum_rem[0])}rem`,
+      "--chart-minimum-height": `${String(layout.viewport_minimum_rem[1])}rem`,
+      "--chart-legend-font": `${String(layout.legend_font_rem)}rem`,
+      "--chart-legend-gap": `${String(layout.legend_gap_rem)}rem`,
+      "--chart-legend-swatch-width": `${String(layout.legend_swatch_rem[0])}rem`,
+      "--chart-legend-swatch-height": `${String(layout.legend_swatch_rem[1])}rem`,
+      "--chart-legend-swatch-gap": `${String(layout.legend_swatch_gap_rem)}rem`,
+      "--chart-legend-gradient-width": `${String(layout.legend_gradient_rem[0])}rem`,
+      "--chart-legend-gradient-height": `${String(layout.legend_gradient_rem[1])}rem`,
+      "--chart-legend-gradient-radius": `${String(layout.legend_gradient_radius_rem)}rem`
+    } }, [
       caption,
       h("div.screen-ui-chart-viewport", { dataset: { chartControlId: control.id } }, [
         h("svg", { attrs: svgAttributes, style: svgStyle }, svg)
@@ -474,11 +437,21 @@ export class ScreenUiAdapter {
   }
 }
 
+function chartText(label: Extract<UiControl, { readonly kind: "chart" }>["presentation"]["x_axis"], className: string): VNode {
+  const { x: coordinateX, y: coordinateY } = label.position;
+  const node = svgElement("text", { x: String(coordinateX), y: String(coordinateY), class: className,
+    "text-anchor": label.anchor, fill: label.color,
+    transform: `rotate(${String(label.rotation_degrees)} ${String(coordinateX)} ${String(coordinateY)})`,
+    style: `font-size:${String(label.font_size)}px;font-weight:${String(label.font_weight)};text-anchor:${label.anchor};fill:${label.color}` });
+  node.text = label.label;
+  return node;
+}
+
 function sharedPresentationData(presentation: NonNullable<UiViewModel["sharedPresentation"]>): VNodeData {
   const { layout, theme } = presentation;
   return {
     dataset: {
-      shared: "true", shell: layout.shell, compact: String(layout.compact), passthrough: String(layout.passthrough),
+      shared: "true", shell: layout.shell, compact: String(layout.compact), passthrough: String(layout.passthrough), scrollY: String(layout.scroll_y),
       ...(layout.shell === "analysis" || layout.shell === "cinematic" ? { mode: layout.shell } : {})
     },
     style: {

@@ -24,6 +24,8 @@ export class HudCanvasFixture implements HeadHudDrawingContext {
   setStrokeStyle(): void {}
   setTextBaseline(): void {}
   setTextAlign(): void {}
+  translate(): void {}
+  rotate(): void {}
   setGlobalAlpha(): void {}
   setLineWidth(): void {}
   strokeRect(): void {}

@@ -123,22 +123,38 @@ describe("manual lake water quality ownership", () => {
     }
   });
 
-  it("keeps paused Settings quality choices and back focus inside the scoped scrollable card", async () => {
+  it("keeps paused Settings quality choices and back focus inside the shared scrollable panel", async () => {
     const window = new Window({ width: 320, height: 240 });
     Object.assign(globalThis, { window, document: window.document });
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
     const documentRef = window.document as unknown as Document;
+    const stylesheet = documentRef.createElement("style");
+    stylesheet.textContent = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+    documentRef.head.append(stylesheet);
     const root = documentRef.createElement("main");
     documentRef.body.append(root);
     const actions: unknown[] = [];
     const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
     try {
       const initial = readyModel(6);
-      adapter.render(createGameViewModel(qualityView(initial)));
+      const initialView = qualityView(initial);
+      adapter.render(createGameViewModel(initialView));
       const shell = root.querySelector<HTMLElement>('.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"]');
       const back = root.querySelector<HTMLButtonElement>('[data-control-id="game-pause-settings-back"]');
       if (shell === null || back === null) throw new Error("Missing paused Settings card");
-      expect(root.querySelectorAll("fieldset button")).toHaveLength(3);
+      const qualitySection = root.querySelector<HTMLElement>('[data-section-id="water-quality"]');
+      if (qualitySection === null) throw new Error("Missing shared water quality section");
+      expect(qualitySection.dataset.layout).toBe("choice_grid");
+      const choices = Array.from(qualitySection.querySelectorAll<HTMLButtonElement>("button"));
+      expect(choices).toHaveLength(3);
+      expect(choices.map((choice) => choice.dataset.controlId)).toEqual([
+        "presentation-water-quality-low", "presentation-water-quality-medium", "presentation-water-quality-high"
+      ]);
+      expect(choices.map((choice) => choice.getAttribute("aria-pressed"))).toEqual(["false", "false", "true"]);
+      expect(shell.dataset.shell).toBe(initialView.layout.shell);
+      expect(shell.style.maxHeight).toBe(`${String(initialView.layout.maximum_height_px)}px`);
+      expect(window.getComputedStyle(shell as never).overflowY).toBe("auto");
+      expect(window.getComputedStyle(shell as never).pointerEvents).toBe("auto");
       expect(back.disabled).toBe(false);
       back.focus();
       shell.scrollTop = 40;
@@ -156,14 +172,6 @@ describe("manual lake water quality ownership", () => {
       expect(root.querySelector('[data-control-id="presentation-water-quality-low"]')?.getAttribute("aria-pressed")).toBe("true");
       back.click();
       expect(actions).toEqual([{ type: "activate", controlId: "game-pause-settings-back" }]);
-      const stylesheet = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
-      const cardRule = stylesheet.match(/\.screen-ui-shell\[data-scene="Flight"\]\[data-overlay="PauseSettings"\] \{([^}]+)\}/)?.[1];
-      expect(cardRule).toContain("display: block");
-      expect(cardRule).toContain("max-height: calc(100dvh");
-      expect(cardRule).toContain("overflow-y: auto");
-      expect(cardRule).toContain("pointer-events: auto");
-      expect(stylesheet).toContain('.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-controls');
-      expect(stylesheet).toContain("repeat(auto-fit, minmax(min(100%, 12rem), 1fr))");
     } finally {
       await window.happyDOM.abort();
       Reflect.deleteProperty(globalThis, "window");

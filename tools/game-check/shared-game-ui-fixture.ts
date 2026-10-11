@@ -26,6 +26,7 @@ export interface SharedGameUiFixtureOptions {
 export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {}): GameUiPlatformInput {
   return Object.freeze({
     viewport: Object.freeze({ width: 1280, height: 720, root_font_size: 16 }),
+    chart_extent: null,
     presentation_mode: "screen",
     operation_pending: false,
     webxr_available: true,

@@ -9,9 +9,12 @@ import { hitMenuViewport, layoutMeasuredMenu, menuDocumentPointToPanel, menuPane
   menuRangeAction, menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
 const font = Object.freeze({ family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const);
-const style = Object.freeze({ fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
+const style = Object.freeze({ theme: currentSharedGameUiFixture(0).theme,
+  fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
 const controls: readonly UiControl[] = Object.freeze([
   { kind: "button", id: "resume", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.2, 0.44, 0.08) },
   { kind: "button", id: "settings", label: "設定", enabled: false, rect: normalizedRect(0.52, 0.2, 0.44, 0.08) },
@@ -45,13 +48,11 @@ function documentFor(request: MenuLayoutRequest): MenuDocument {
 }
 
 function chart(): UiChart {
-  return Object.freeze({ kind: "chart", id: "chart", label: "Altitude", x_axis_label: "Time (s)", y_axis_label: "Height (m)",
-    x_minimum: 0, x_maximum: 20, y_minimum: 0, y_maximum: 20, equal_axis_scale: true, enabled: false,
-    rect: normalizedRect(0.04, 0.12, 0.92, 0.5), series: [{ label: "Recorded altitude", color: "#ffffff", points: [{ x: 0, y: 10 }, { x: 20, y: 0 }], segment_colors: [] }],
-    vectors: [{ label: "Wind", color: "#ffffff", segment: [{ x: 2, y: 3 }, { x: 4, y: 3 }] as const }],
-    markers: [{ label: "Launch", color: "#ffffff", point: { x: 0, y: 10 } }],
-    time_markers: [{ label: "5 seconds", color: "#ffffff", point: { x: 5, y: 7 } }],
-    reference_lines: [{ value: 0, label: "Water", color: "#ffffff" }], cursor_x: 5, cursor_points: [{ x: 5, y: 7 }] });
+  const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20,
+    actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
+  const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
+  if (chart?.kind !== "chart") throw new Error("Missing real shared map chart");
+  return chart;
 }
 
 describe("Pure measured Menu document and shared viewport", () => {
@@ -184,10 +185,15 @@ describe("Pure measured Menu document and shared viewport", () => {
   it("measures every chart label, axis, tick, legend and annotation and keeps Rust query arrays and square scaling", () => {
     const original = chart();
     const request = requestMenuLayout({ ...panel, controls: [original] }, panel.size, style);
-    const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === "chart");
-    expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(5);
-    expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(5);
-    expect(texts.map((text) => text.value)).toEqual(expect.arrayContaining(["Altitude", "Time (s)", "Height (m)", "Recorded altitude", "Wind", "Launch", "5 seconds", "Water"]));
+    const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === original.id);
+    expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(original.presentation.x_ticks.length);
+    expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(original.presentation.y_ticks.length);
+    expect(texts.map((text) => text.value)).toEqual(expect.arrayContaining([original.label,
+      original.presentation.x_axis.label, original.presentation.y_axis.label,
+      ...original.presentation.x_ticks.map((tick) => tick.text.label), ...original.presentation.y_ticks.map((tick) => tick.text.label),
+      ...original.presentation.legend.map((entry) => entry.label),
+      ...original.presentation.marker_labels.map((entry) => entry.label),
+      ...original.presentation.time_marker_labels.map((entry) => entry.label), ...original.presentation.reference_labels.map((entry) => entry.label)]));
     const document = documentFor(request);
     const layout = document.controls[0];
     if (layout?.kind !== "chart") throw new Error("Missing chart");

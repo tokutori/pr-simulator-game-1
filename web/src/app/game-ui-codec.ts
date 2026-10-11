@@ -7,6 +7,7 @@ import { validateGameUiAction, validateGameUiPlatformInput, validateGameUiUpdate
 import type { ValidateFunction } from "ajv";
 
 export const gameUiValidatorLicenseUrl = new URL("../../../assets/game-ui-validators.LICENSE.txt", import.meta.url).href;
+export const gameUiNumberFormatLicenseUrl = new URL("../../../assets/ryu-js.LICENSE.txt", import.meta.url).href;
 
 export class GameUiBoundaryError extends Error {
   constructor(readonly boundary: string, readonly diagnostics: readonly string[], options?: ErrorOptions) {

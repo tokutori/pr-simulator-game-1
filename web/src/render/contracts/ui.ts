@@ -34,13 +34,13 @@ export function uiButtonLabel(control: UiButton): string {
   return control.label;
 }
 
-export function uiControlBackground(control: UiControl): string {
-  if (control.kind !== "button") return "#183139";
+export function uiControlBackground(control: UiControl, theme: GameUiView["theme"]): string {
+  if (control.kind !== "button") return theme.choice_background;
   const presentation = control.presentation;
-  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? "#356d68" : "#10242d";
-  if (presentation?.kind === "choice") return presentation.selected ? "#356d68" : "#183139";
-  if (presentation?.kind === "disclosure") return "#10242d";
-  return "#294853";
+  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? theme.primary_background : theme.panel_background;
+  if (presentation?.kind === "choice") return presentation.selected ? theme.primary_background : theme.choice_background;
+  if (presentation?.kind === "disclosure") return theme.panel_background;
+  return theme.normal_background;
 }
 
 export interface UiToggle {
@@ -181,45 +181,6 @@ export function normalizedRect(x: number, y: number, width: number, height: numb
   return Object.freeze({ x, y, width, height });
 }
 
-export function fitPlotRectToEqualScale(
-  left: number,
-  top: number,
-  right: number,
-  bottom: number,
-  equalScale: boolean
-): Readonly<{ left: number; top: number; right: number; bottom: number }> {
-  if (![left, top, right, bottom].every(Number.isFinite) || left >= right || top >= bottom) {
-    throw new RangeError("Chart plot bounds must have positive finite dimensions");
-  }
-  if (!equalScale) return Object.freeze({ left, top, right, bottom });
-  const side = Math.min(right - left, bottom - top);
-  const centerX = (left + right) / 2;
-  const centerY = (top + bottom) / 2;
-  return Object.freeze({
-    left: centerX - side / 2,
-    top: centerY - side / 2,
-    right: centerX + side / 2,
-    bottom: centerY + side / 2
-  });
-}
-
-export function formatChartTick(value: number): string {
-  if (!Number.isFinite(value)) throw new RangeError("Chart tick values must be finite");
-  const magnitude = Math.abs(value);
-  const digits = magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : 2;
-  const formatted = value.toFixed(digits).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
-  return formatted === "-0" ? "0" : formatted;
-}
-
-export function chartScaleBarDistance(span: number): number {
-  if (!Number.isFinite(span) || span <= 0) throw new RangeError("Chart scale span must be positive and finite");
-  const desired = span / 4;
-  const magnitude = 10 ** Math.floor(Math.log10(desired));
-  const normalized = desired / magnitude;
-  const factor = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
-  return factor * magnitude;
-}
-
 export function validateUiViewModel(viewModel: UiViewModel): void {
   validateHeadHudLayer(viewModel.headHud);
   const ids = new Set<string>();
@@ -248,7 +209,7 @@ export function validateUiViewModel(viewModel: UiViewModel): void {
         }
         if ((control.cursor_x !== null && (!Number.isFinite(control.cursor_x)
               || control.cursor_x < control.x_minimum || control.cursor_x > control.x_maximum))
-            || control.cursor_points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))
+            || control.cursor_points.some((cursor) => !Number.isFinite(cursor.point.x) || !Number.isFinite(cursor.point.y))
             || control.vectors.some((vector) => vector.segment !== null
               && vector.segment.some((point) => ![point.x, point.y].every(Number.isFinite)))
             || control.markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {

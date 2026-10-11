@@ -54,7 +54,6 @@ import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
-import type { FlightSnapshotInput } from "./app/session-snapshot.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
@@ -93,11 +92,15 @@ let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
 const flightControllerUi = new FlightControllerUiBindings();
 const controllerHudDisplay = Object.freeze({
-  render: (snapshot: FlightSnapshotInput): void => {
+  render: (): void => {
     synchronizeSharedGameUi();
-    flightHud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model));
+    const hud = createFlightUiHudModel(model);
+    flightHud.render(hud);
+    flightHud.setVisible(screenUiVisible(model.presentation) && hud !== null);
   },
-  setVisible: (visible: boolean): void => { flightHud.setVisible(visible); }
+  setVisible: (visible: boolean): void => {
+    flightHud.setVisible(visible && screenUiVisible(model.presentation) && model.sharedGameUi !== null && model.sharedGameUi.hud !== null);
+  }
 });
 let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
 let menuFontGeneration = 0;
@@ -105,6 +108,10 @@ let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
 const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
+}, () => {
+  synchronizeSharedGameUi();
+  synchronizeMenuScroll();
+  renderModel();
 });
 const flightLogDownload = new BrowserFlightLogDownload(document);
 
@@ -142,9 +149,7 @@ function renderModel(): void {
   flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
     ? environment.value.sky.value.condition : null);
   flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
-  const flightSnapshot = currentFlightSnapshot();
-  if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);
-  flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
+  controllerHudDisplay.render();
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
     ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
@@ -206,11 +211,13 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const panel = viewModel.panels[0];
   const panelContext = panelCanvas.getContext("2d");
   const scroll = frameModel.menuScroll;
+  const menuTheme = viewModel.sharedPresentation?.theme ?? frameModel.sharedGameUi?.theme;
   preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
+    : menuTheme === undefined ? Object.freeze({ kind: "pending" })
     : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
     : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
     : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
-      viewer, { locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
+      viewer, { theme: menuTheme, locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
   if (preparedMenu.kind === "ready") {
     if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
       const observedContext = preparedMenu.context;
@@ -733,6 +740,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
   return Object.freeze({
     viewport: Object.freeze({ width: viewport.x, height: viewport.y,
       root_font_size: Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) }),
+    chart_extent: presentationMode === "screen" ? screenUi.chartExtent() : null,
     presentation_mode: presentationMode === "phone-vr" ? "phone_vr" : presentationMode,
     operation_pending: model.pendingGameRequestId !== null || model.presentation.type !== "ready",
     webxr_available: model.webXrAvailable, phone_vr_available: model.phoneVrAvailable,
@@ -991,6 +999,7 @@ function onPhoneVrTrackingUnavailable(message: string): void {
 function onResize(): void {
   invalidateMenuGeometry();
   runtime?.resize(currentViewport());
+  renderModel();
 }
 
 function onPageHide(): void {

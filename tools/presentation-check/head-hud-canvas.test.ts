@@ -5,6 +5,7 @@ import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, headHudPaintedTe
 import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import type { HeadHudView } from "../../web/src/presentation/head-hud-view.js";
+import type { FlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, pose, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
@@ -20,23 +21,28 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   private font = "";
   private baseline = "";
   private align = "";
-  readonly texts: { value: string; alpha: number; arguments: number }[] = [];
-  readonly fills: { alpha: number; left: number; top: number; width: number; height: number }[] = [];
+  readonly texts: { value: string; alpha: number; arguments: number; x: number; baseline: number; color: string }[] = [];
+  readonly fills: { alpha: number; left: number; top: number; width: number; height: number; color: string }[] = [];
+  readonly strokes: { startX: number; startY: number; endX: number; endY: number; color: string; alpha: number }[] = [];
   readonly clears: number[][] = [];
   readonly clips: number[][] = [];
   readonly fonts: string[] = [];
   private alpha = 1;
   private fontSize = 1;
-  private readonly states: { alpha: number; fontSize: number }[] = [];
+  private fillColor = "";
+  private strokeColor = "";
+  private start = { x: 0, y: 0 };
+  private end = { x: 0, y: 0 };
+  private readonly states: { alpha: number; fontSize: number; fillColor: string; strokeColor: string }[] = [];
   invalidMetrics = false;
   excessiveInk = false;
   tinyInk = false;
 
   clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
-  fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height }); }
+  fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height, color: this.fillColor }); }
   fillText(...args: [string, number, number]): void {
     this.typography.push({ kind: "draw", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
-    this.texts.push({ value: args[0], alpha: this.alpha, arguments: args.length });
+    this.texts.push({ value: args[0], alpha: this.alpha, arguments: args.length, x: args[1], baseline: args[2], color: this.fillColor });
   }
   measureText(value: string): HeadHudTextMetrics {
     this.typography.push({ kind: "measure", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
@@ -45,19 +51,21 @@ class RecordingHeadContext implements HeadHudDrawingContext {
       ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
       descent: this.fontSize * (this.tinyInk ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
   }
-  save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize }); }
+  save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize, fillColor: this.fillColor, strokeColor: this.strokeColor }); }
   restore(): void {
     const state = this.states.pop();
     if (state === undefined) throw new Error("Unbalanced Canvas restore");
     this.alpha = state.alpha;
     this.fontSize = state.fontSize;
+    this.fillColor = state.fillColor;
+    this.strokeColor = state.strokeColor;
   }
   setFont(value: string): void { this.fonts.push(value); this.font = value; this.fontSize = Number(value.match(/([\d.]+)px/)?.[1] ?? 1); }
   setGlobalAlpha(value: number): void { this.alpha = value; }
   rect(...dimensions: [number, number, number, number]): void { this.clips.push(dimensions); }
-  setFillStyle(): void {}
+  setFillStyle(value: string): void { this.fillColor = value; }
   setLocale(locale: string): void { this.locales.push(locale); this.locale = locale; }
-  setStrokeStyle(): void {}
+  setStrokeStyle(value: string): void { this.strokeColor = value; }
   setTextBaseline(value: "top" | "middle"): void { this.baseline = value; }
   setTextAlign(value: "left"): void { this.align = value; }
   setLineWidth(): void {}
@@ -66,23 +74,100 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   closePath(): void {}
   clip(): void {}
   fill(): void {}
-  moveTo(): void {}
-  lineTo(): void {}
-  stroke(): void {}
+  moveTo(x: number, y: number): void { this.start = { x, y }; }
+  lineTo(x: number, y: number): void { this.end = { x, y }; }
+  stroke(): void { this.strokes.push({ startX: this.start.x, startY: this.start.y, endX: this.end.x, endY: this.end.y,
+    color: this.strokeColor, alpha: this.alpha }); }
 }
 
-function flightView(aspect = 1280 / 720): Extract<HeadHudView, { kind: "visible" }> {
+function flightView(aspect = 1280 / 720, model: FlightHudModel = currentSharedHudFixture({ informationCode: 4 })): Extract<HeadHudView, { kind: "visible" }> {
   const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
   camera.updateMatrixWorld(true);
   const stereo = new StereoCamera();
   stereo.aspect = 0.5;
-  const model = currentSharedHudFixture({ informationCode: 4 });
   const view = createHeadHudView(model, captureConfiguredViewerFrame(camera, stereo), "ja");
   if (view.kind !== "visible") throw new Error("Expected visible fixture");
   return view;
 }
 
 describe("Head HUD Canvas preflight and painting", () => {
+  it.each([0.5, 0.17])("paints shared ADI, heading labels and AoA +5 at shared ratio %s with theme and opacity", (ratio) => {
+    const shared = currentSharedHudFixture({ informationCode: 0 });
+    const theme = { ...shared.theme, text: "#123456", panel_background: "#234567", muted_text: "#345678", focus_outline: "#456789" };
+    const model = { ...shared, theme, layout: { ...shared.layout, opacity: 0.41 }, warning: "SHARED WARNING",
+      attitude: { rollDegrees: -45, pitchDegrees: -25 }, flightPathAngleDegrees: -15,
+      angleOfAttackDegrees: 5, angleOfAttack: "5.0°", headingDegrees: 125, heading: "SHARED 125.75°",
+      geometry: { adi: { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 },
+        angle_of_attack_ratio: ratio, heading_ticks: [
+          { position_ratio: 0.24, major: true, label: "N" },
+          { position_ratio: 0.51, major: false, label: "" },
+          { position_ratio: 0.76, major: true, label: "E" }
+        ] } };
+    const view = flightView(1280 / 720, model);
+    const size = headHudCanvasSize(view.layer);
+    const context = new RecordingHeadContext();
+    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
+    if (preparation.kind !== "ready") throw new Error("Missing shared geometry paint plan");
+    const instrument = (id: string) => {
+      const card = preparation.cards.find((candidate) => candidate.element.id === id);
+      if (card === undefined) throw new Error(`Missing ${id} card`);
+      return { left: card.left + card.padding, top: card.top + card.padding + (card.label.length + card.value.length) * preparation.fontSize * 1.5,
+        width: card.width - card.padding * 2, height: card.instrumentHeight };
+    };
+    drawHeadHud(context, preparation);
+    expect(context.fills.every((fill) => fill.alpha === 0.41 && fill.color === theme.panel_background)).toBe(true);
+    expect(context.texts.filter((text) => text.value === "SHARED WARNING").every((text) => text.color === theme.focus_outline)).toBe(true);
+    expect(context.texts.every((text) => text.alpha === view.layer.foregroundAlpha)).toBe(true);
+    expect(context.texts.some((text) => text.value === model.heading)).toBe(true);
+    const attitude = instrument("head-attitude");
+    const horizon = context.strokes.find((stroke) => stroke.color === theme.text &&
+      Math.abs((stroke.startX + stroke.endX) / 2 - (attitude.left + attitude.width / 2 - Math.sin(17 * Math.PI / 180) * 0.21 * attitude.height)) < 1e-6);
+    expect(horizon).toBeDefined();
+    expect(((horizon?.startY ?? 0) + (horizon?.endY ?? 0)) / 2)
+      .toBeCloseTo(attitude.top + attitude.height / 2 + Math.cos(17 * Math.PI / 180) * 0.21 * attitude.height, 9);
+    expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
+      Math.abs(stroke.startY - (attitude.top + 0.73 * attitude.height)) < 1e-6 &&
+      Math.abs(stroke.endX - (attitude.left + attitude.width / 2)) < 1e-6)).toBe(true);
+    const heading = instrument("head-heading");
+    for (const tick of model.geometry.heading_ticks) {
+      const x = heading.left + tick.position_ratio * heading.width;
+      expect(context.strokes).toContainEqual({ startX: x, endX: x, startY: heading.top + heading.height * (tick.major ? 0.5 : 0.75),
+        endY: heading.top + heading.height, color: tick.major ? theme.text : theme.muted_text, alpha: view.layer.foregroundAlpha });
+      if (tick.major) {
+        const ink = headHudPaintedTextInk(preparation).find((candidate) => candidate.value === tick.label);
+        expect(ink).toBeDefined();
+        expect((ink?.left ?? 0) + (ink?.width ?? 0) / 2).toBeCloseTo(x, 9);
+        expect(context.texts).toContainEqual({ value: tick.label, alpha: view.layer.foregroundAlpha, arguments: 3,
+          x: ink?.x, baseline: ink?.baseline, color: theme.text });
+      }
+    }
+    const aoa = instrument("head-aoa");
+    const markerX = aoa.left + aoa.width * (0.05 + ratio * 0.9);
+    expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
+      Math.abs(stroke.startX - markerX) < 1e-6 && Math.abs(stroke.endX - markerX) < 1e-6 &&
+      Math.abs(stroke.startY - (aoa.top + aoa.height * 0.15)) < 1e-6 &&
+      Math.abs(stroke.endY - (aoa.top + aoa.height * 0.85)) < 1e-6)).toBe(true);
+  });
+
+  it("paints FlightPathOnly at the shared ADI vertical ratio without an attitude horizon", () => {
+    const shared = currentSharedHudFixture({ informationCode: 4,
+      hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
+    const model = { ...shared, flightPathAngleDegrees: 28,
+      geometry: { ...shared.geometry, adi: { kind: "flight_path_only" as const, y_ratio: 0.37 } } };
+    const view = flightView(1280 / 720, model);
+    const size = headHudCanvasSize(view.layer);
+    const context = new RecordingHeadContext();
+    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
+    if (preparation.kind !== "ready") throw new Error("Missing FlightPathOnly paint plan");
+    const card = preparation.cards.find((candidate) => candidate.element.kind === "flight-path");
+    if (card === undefined) throw new Error("Missing FlightPathOnly card");
+    const markerY = card.top + card.padding + (card.label.length + card.value.length) * preparation.fontSize * 1.5 + 0.37 * card.instrumentHeight;
+    drawHeadHud(context, preparation);
+    expect(context.strokes).toHaveLength(2);
+    expect(context.strokes[0]?.startY).toBeCloseTo(markerY, 9);
+    expect(context.strokes[1]?.endY).toBeCloseTo(markerY, 9);
+  });
+
   it.each([true, false])("sets detached canvas language with context language support %s", (contextLanguageSupported) => {
     const canvas = { lang: "" };
     const context = contextLanguageSupported ? { canvas, lang: "inherit" } : { canvas };
@@ -208,7 +293,7 @@ describe("Head HUD Canvas preflight and painting", () => {
     drawHeadHud(context, preparation);
     expect(context.clears).toEqual([[0, 0, size.width, size.height]]);
     expect(context.fills).toHaveLength(view.layer.elements.length);
-    expect(context.fills.every((fill) => fill.alpha === 0.28)).toBe(true);
+    expect(context.fills.every((fill) => fill.alpha === view.layer.backgroundAlpha && fill.color === view.layer.theme.panel_background)).toBe(true);
     expect(context.texts.every((text) => text.alpha === 1 && text.arguments === 3)).toBe(true);
     expect(context.fonts.at(-1)).toBe(context.fonts[0]);
     for (const fill of context.fills) {

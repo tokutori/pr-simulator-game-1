@@ -84,7 +84,12 @@ describe("single Rust snapshot application projection", () => {
         expect(snapshot.controls.layout).toBe("tail_incidence");
         expect(snapshot).not.toHaveProperty("actuatorDeflectionRadians");
         expect(snapshot).not.toHaveProperty("tick");
-        expect(createFlightUiHudModel(model).controlsDescription).toContain("nose-up/down");
+        const hud = createFlightUiHudModel(model);
+        if (expectedPhase === 7) expect(hud).toBeNull();
+        else {
+          if (hud === null) throw new Error("Missing shared live Flight HUD");
+          expect(hud.controlsDescription).toContain("nose-up/down");
+        }
         if (expectedPhase === 5) facade.executeOperation("pause");
         if (expectedPhase === 6) facade.executeOperation("abort");
       }
@@ -167,6 +172,7 @@ describe("single Rust snapshot application projection", () => {
       for (const mode of ["screen", "phone-vr", "webxr"] as const) {
         const projected = observeSharedUi({ ...model, presentation: { type: "ready" as const, mode } }, facade, mode);
         const hud = createFlightUiHudModel(projected);
+        if (hud === null) throw new Error("Missing shared stopped Flight HUD");
         expect(hud.warning).toContain("Gamepad permission denied");
         expect(hud.telemetry).toContain("Last valid · tick 1");
         expect(sharedView(projected).description).toContain("停止");

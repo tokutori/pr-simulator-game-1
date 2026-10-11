@@ -13,6 +13,8 @@ import { launchCurrentSession, neutralTailInput } from "./current-session-fixtur
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "./shared-game-ui-fixture.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
+import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
+import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 
 afterEach(() => {
@@ -28,7 +30,7 @@ function readyModel(phaseCode: number, options: SharedGameUiFixtureOptions = {})
   });
 }
 
-function viewForModel(model: AppModel) {
+function viewForModel(model: AppModel, viewport?: GameUiPlatformInput["viewport"]) {
   const phase = model.gameSession.phaseCode;
   const currentMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const actions: GameUiAction[] = [];
@@ -38,6 +40,7 @@ function viewForModel(model: AppModel) {
     actions.push({ kind: "set_analysis_chart", chart: model.analysisChart });
   }
   const shared = currentSharedGameUiFixture(phase, { actions, platform: {
+    ...(viewport === undefined ? {} : { viewport }),
     presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode,
     operation_pending: model.pendingGameRequestId !== null,
     flight_log_pending: model.flightLogDownload.kind === "pending",
@@ -76,7 +79,7 @@ describe("flight log download state and common presentation", () => {
     { label: "Replay Analysis", phaseCode: 9, resultTab: "summary", replayViewMode: "analysis" },
     { label: "Replay Telemetry", phaseCode: 9, resultTab: "summary", replayViewMode: "telemetry" },
     { label: "Replay Cinematic", phaseCode: 9, resultTab: "summary", replayViewMode: "cinematic" }
-  ] as const)("reserves a nonintersecting download footer and preserves navigation in $label", ({ phaseCode, resultTab, replayViewMode }) => {
+  ] as const)("preserves shared download sections and flow or normalized navigation in $label", ({ phaseCode, resultTab, replayViewMode }) => {
     for (const mode of ["screen", "phone-vr", "webxr"] as const) {
       for (const analysisChart of ["map", "altitude", "speed"] as const) {
         const actions: GameUiAction[] = phaseCode === 7
@@ -94,7 +97,28 @@ describe("flight log download state and common presentation", () => {
         if (panel === undefined) throw new Error("Download panel is unavailable");
         expect(panel.anchor).toBe("menu");
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
-        expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
+        const analysisFlow = phaseCode === 7 && resultTab === "analysis" || phaseCode === 9 && replayViewMode === "analysis";
+        const flow = mode === "screen" && (analysisFlow || phaseCode === 9);
+        expect(exports.map((control) => control.id)).toEqual(flow
+          ? ["game-flight-log-notice", "game-flight-log-csv", "game-flight-log-json"]
+          : ["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
+        if (flow) {
+          if (panel.sections === undefined) throw new Error("Missing shared flow sections");
+          expect(panel.sections).toEqual(analysisFlow ? [
+            { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
+            { id: "analysis-cursor", label: "", layout: "column" }, { id: "analysis-details", label: "", layout: "column" },
+            { id: "analysis-navigation", label: "", layout: "row" }
+          ] : [
+            { id: "replay-status", label: "", layout: "column" },
+            ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
+            { id: "replay-actions", label: "", layout: "row" }
+          ]);
+          expect(exports.map((control) => control.section)).toEqual(analysisFlow
+            ? ["analysis-details", "analysis-navigation", "analysis-navigation"]
+            : ["replay-status", "replay-actions", "replay-actions"]);
+          expect(panel.controls.map((control) => control.id)).toEqual(panel.sections.flatMap((section) =>
+            panel.controls.filter((control) => control.section === section.id).map((control) => control.id)));
+        }
         for (const control of panel.controls) {
           expect(control.rect.x).toBeGreaterThanOrEqual(0);
           expect(control.rect.y).toBeGreaterThanOrEqual(0);
@@ -103,7 +127,7 @@ describe("flight log download state and common presentation", () => {
           expect(control.rect.x + control.rect.width).toBeLessThanOrEqual(1);
           expect(control.rect.y + control.rect.height).toBeLessThanOrEqual(1);
         }
-        for (const exported of exports) {
+        for (const exported of flow ? [] : exports) {
           for (const control of panel.controls) {
             if (control.id === exported.id) continue;
             const horizontal = Math.min(exported.rect.x + exported.rect.width, control.rect.x + control.rect.width)
@@ -117,8 +141,72 @@ describe("flight log download state and common presentation", () => {
           ? ["game-result-replay", "game-result-retry", "game-result-setup", "game-result-title", resultTab === "summary" ? "game-result-open-analysis" : "game-result-open-summary"]
           : ["game-replay-return", "game-replay-camera", "game-replay-view-mode", "game-replay-play-pause", ...(replayViewMode === "cinematic" ? []
             : ["game-replay-cursor"])];
-        for (const id of navigation) expect(panel.controls.some((control) => control.id === id)).toBe(true);
+        for (const id of [...navigation, "game-flight-log-csv", "game-flight-log-json"]) {
+          expect(panel.controls.find((control) => control.id === id)?.enabled, id).toBe(true);
+        }
       }
+    }
+  });
+
+  it.each([7, 9])("keeps Screen Analysis downloads and exits in nonabsolute wrapping flow in phase %s", async (phaseCode) => {
+    const browser = new BrowserWindow({ width: 360, height: 300 });
+    vi.stubGlobal("window", browser);
+    vi.stubGlobal("document", browser.document);
+    const stylesheet = browser.document.createElement("style");
+    stylesheet.textContent = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+    browser.document.head.append(stylesheet);
+    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+    const root = browser.document.createElement("main");
+    browser.document.body.append(root);
+    const dispatch = vi.fn<(action: UiAction) => void>();
+    const screen = new ScreenUiAdapter(root as unknown as HTMLElement, dispatch);
+    try {
+      const model = readyModel(phaseCode, { platform: { viewport: { width: 360, height: 300, root_font_size: 16 } }, actions: phaseCode === 7
+        ? [{ kind: "set_result_tab", tab: "analysis" }] : [{ kind: "set_replay_view", view: "analysis" }] });
+      const view = viewForModel(model, { width: 360, height: 300, root_font_size: 16 });
+      const panel = view.panels[0];
+      if (panel?.sections === undefined || view.sharedPresentation === undefined) throw new Error("Missing shared Analysis layout");
+      screen.render(view);
+      const shell = root.querySelector(".screen-ui-shell");
+      if (!(shell instanceof browser.HTMLElement)) throw new Error("Missing Analysis shell");
+      expect(shell.style.overflowY).toBe("auto");
+      expect(shell.dataset.scrollY).toBe("true");
+      for (const section of panel.sections) {
+        const element = root.querySelector(`[data-section-id="${section.id}"]`);
+        const content = element?.querySelector(".screen-ui-section-controls");
+        if (!(element instanceof browser.HTMLElement) || !(content instanceof browser.HTMLElement)) throw new Error("Missing Analysis section");
+        const computed = browser.getComputedStyle(content);
+        expect(computed.display).toBe(section.layout === "row" ? "flex" : "grid");
+        if (section.layout === "row") expect(computed.flexWrap).toBe("wrap");
+        const controls = panel.controls.filter((candidate) => candidate.section === section.id);
+        expect(content.children.length).toBe(controls.length);
+        for (const [index, control] of controls.entries()) {
+          const node = content.children[index];
+          if (!(node instanceof browser.HTMLElement)) throw new Error(`Missing flow control ${control.id}`);
+          expect(node.style.position).toBe("");
+          expect(browser.getComputedStyle(node).position).not.toBe("absolute");
+          if (control.kind !== "button") continue;
+          if (!(node instanceof browser.HTMLButtonElement)) throw new Error("Missing flow button");
+          expect(node.dataset.controlId).toBe(control.id);
+          expect(node.disabled).toBe(!control.enabled);
+          const minimumHeight = control.presentation?.kind === "action" && control.presentation.emphasis === "primary"
+            ? view.sharedPresentation.theme.primary_min_height_px : view.sharedPresentation.theme.button_min_height_px;
+          expect(browser.getComputedStyle(node).minHeight).toBe(`${String(minimumHeight)}px`);
+          expect(minimumHeight).toBeGreaterThanOrEqual(44);
+          if (control.enabled) {
+            node.focus();
+            expect(browser.document.activeElement).toBe(node);
+            node.click();
+          }
+        }
+      }
+      expect(dispatch.mock.calls.map(([action]) => action)).toEqual(panel.controls.filter((control) => control.kind === "button" && control.enabled)
+        .map((control) => ({ type: "activate", controlId: control.id })));
+      for (const format of ["csv", "json"] as const) {
+        expect(beginDownload(model, format).effect.format).toBe(format);
+      }
+    } finally {
+      await browser.happyDOM.abort();
     }
   });
 

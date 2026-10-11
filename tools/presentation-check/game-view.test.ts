@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
-import { chartScaleBarDistance, fitPlotRectToEqualScale, formatChartTick, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 
@@ -93,6 +93,7 @@ describe("Shared Rust game View projection", () => {
     expect(projected.reference_lines).toBe(source.content.plot.reference_lines);
     expect(projected.cursor_points).toBe(source.content.plot.cursor_points);
     expect(projected.equal_axis_scale).toBe(source.content.plot.equal_axis_scale);
+    expect(projected.presentation).toBe(source.content.plot.presentation);
     expect(projected.series.some((series) => series.points.length > 1)).toBe(true);
     for (const vector of projected.vectors) {
       if (vector.segment !== null) expect(vector.segment).toHaveLength(2);
@@ -110,11 +111,4 @@ describe("Shared Rust game View projection", () => {
     expect(native.panels.flatMap((panel) => panel.controls).filter((control) => control.id.includes("download")).every((control) => !control.enabled)).toBe(true);
   });
 
-  it("uses pixel-space equal axes and stable axis labels without changing recorded values", () => {
-    expect(fitPlotRectToEqualScale(0, 0, 400, 200, true)).toEqual({ left: 100, top: 0, right: 300, bottom: 200 });
-    expect(formatChartTick(0)).toBe("0");
-    expect(formatChartTick(0.125)).toBe("0.13");
-    expect(chartScaleBarDistance(100)).toBeGreaterThan(0);
-    expect(chartScaleBarDistance(100)).toBeLessThanOrEqual(100);
-  });
 });

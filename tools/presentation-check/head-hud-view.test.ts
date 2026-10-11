@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
-import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
-import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE } from "../../web/src/presentation/head-hud-view.js";
+import { currentSharedGameUiFixture, currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, headHudElementValue } from "../../web/src/presentation/head-hud-view.js";
 import { validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
 import { copyProjectionMatrix, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -20,6 +20,44 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
+  it("projects shared geometry overrides and layout opacity without deriving them from angles", () => {
+    const shared = currentSharedHudFixture({ informationCode: 0 });
+    const geometry = {
+      adi: { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 },
+      heading_ticks: [{ position_ratio: 0.24, major: true, label: "CUSTOM" }, { position_ratio: 0.76, major: false, label: "" }],
+      angle_of_attack_ratio: 0.5
+    };
+    const theme = { ...shared.theme, text: "#123456", panel_background: "#234567" };
+    const model = { ...shared, geometry, theme, layout: { ...shared.layout, opacity: 0.41 },
+      attitude: { rollDegrees: -45, pitchDegrees: -25 }, flightPathAngleDegrees: -15,
+      headingDegrees: 125, heading: "SHARED HEADING 125.75°", angleOfAttackDegrees: 5, angleOfAttack: "5.0°" };
+    const before = JSON.stringify(model);
+    const view = createHeadHudView(model, configuredViewer(), "ja");
+    if (view.kind !== "visible") throw new Error("Expected shared geometry override HUD");
+    const attitude = view.layer.elements.find((element) => element.kind === "attitude");
+    const heading = view.layer.elements.find((element) => element.kind === "heading");
+    const aoa = view.layer.elements.find((element) => element.kind === "angle-of-attack");
+    expect(attitude?.kind === "attitude" && attitude.geometry).toBe(geometry.adi);
+    expect(heading?.kind === "heading" && heading.ticks).toBe(geometry.heading_ticks);
+    if (heading === undefined) throw new Error("Missing shared heading element");
+    expect(headHudElementValue(heading)).toBe(model.heading);
+    expect(aoa).toMatchObject({ degrees: 5, ratio: 0.5 });
+    expect(view.layer.theme).toBe(theme);
+    expect(view.layer.backgroundAlpha).toBe(0.41);
+    expect(JSON.stringify(model)).toBe(before);
+  });
+
+  it("keeps shared FlightPathOnly geometry independent of attitude and horizontal angle gauges", () => {
+    const shared = currentSharedHudFixture({ informationCode: 4,
+      hudProfile: { ...profile, attitude: false, flightPath: true } });
+    const model = { ...shared, flightPathAngleDegrees: 28,
+      geometry: { ...shared.geometry, adi: { kind: "flight_path_only" as const, y_ratio: 0.37 } } };
+    const view = createHeadHudView(model, configuredViewer(), "ja");
+    if (view.kind !== "visible") throw new Error("Expected shared FlightPathOnly HUD");
+    expect(view.layer.elements.some((element) => element.kind === "attitude")).toBe(false);
+    expect(view.layer.elements.find((element) => element.kind === "flight-path")).toMatchObject({ degrees: 28, yRatio: 0.37 });
+  });
+
   it("reserves a small upper-right FPS card outside the forward clear region without changing physical readouts", () => {
     const model = currentSharedHudFixture({ informationCode: 0 });
     const before = JSON.stringify(model);
@@ -41,14 +79,18 @@ describe("Pure Head Flight HUD layout", () => {
 
   it("keeps FPS available for VR Menu scenes and during measurement warmup", () => {
     for (const rate of [null, 90]) {
-      const view = createHeadHudView(null, configuredViewer(), "ja", DEFAULT_HEAD_HUD_PROFILE, rate);
+      const theme = currentSharedGameUiFixture().theme;
+      const view = createHeadHudView(null, configuredViewer(), "ja", DEFAULT_HEAD_HUD_PROFILE, rate, theme);
       if (view.kind !== "visible") throw new Error("Expected standalone head FPS");
       expect(view.layer.anchor).toBe("head");
+      expect(view.layer.theme).toBe(theme);
+      expect(view.layer.backgroundAlpha).toBe(theme.hud_opacity);
       expect(view.layer.elements).toHaveLength(1);
       expect(view.layer.elements[0]).toMatchObject({ id: "head-frame-rate", value: rate === null ? "FPS —" : "FPS 90.0" });
       expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     }
     expect(createHeadHudView(null, configuredViewer(), "ja").kind).toBe("absent");
+    expect(createHeadHudView(null, configuredViewer(), "ja", DEFAULT_HEAD_HUD_PROFILE, 90).kind).toBe("absent");
   });
 
   it("requires and retains an explicit display locale without changing geometry", () => {

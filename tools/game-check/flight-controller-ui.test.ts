@@ -29,6 +29,7 @@ describe("Flight controller shared stop diagnosis", () => {
       expect(trial.controller.currentDisplaySnapshot).toEqual(retained);
       expect(trial.onTerminal).not.toHaveBeenCalled();
       const hud = createFlightUiHudModel(model);
+      if (hud === null) throw new Error("Missing shared running Flight HUD");
       expect(hud.status).toBe("飛行処理停止");
       expect(hud.warning).toContain("Gamepad permission denied");
       expect(hud.telemetry).toContain("Last valid · tick 1");
@@ -145,7 +146,9 @@ describe("Flight controller shared stop diagnosis", () => {
     trial.update({ type: "flight-controller-ready", identity: replacement.identity });
     trial.syncPhase(5);
     expect(trial.model().flightExecution).toEqual({ kind: "ready", identity: replacement.identity });
-    expect(createFlightUiHudModel(trial.model()).status).not.toBe("飛行処理停止");
+    const hud = createFlightUiHudModel(trial.model());
+    if (hud === null) throw new Error("Missing shared replacement Flight HUD");
+    expect(hud.status).not.toBe("飛行処理停止");
   });
 
   it("keeps normal terminal notification and Result persistence separate from adapter stops", () => {

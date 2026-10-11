@@ -1,4 +1,5 @@
 import type { UiChart, UiControl, UiPanel, PanelSize } from "./ui.js";
+import type { GameUiView } from "../../generated/game-ui-view.js";
 export type { MenuScrollScope, MenuScrollContext, MenuScrollState, MenuScrollIntent } from "./ui.js";
 import type { ViewerGeometryUnavailableReason } from "./viewer-frame.js";
 
@@ -33,6 +34,7 @@ export interface MenuTextRequest {
   readonly locale: string;
   readonly fontMeters: number;
   readonly font: MenuFontIdentity;
+  readonly chartText?: UiChart["presentation"]["x_axis"];
   readonly widthMeters: number;
 }
 
@@ -57,6 +59,7 @@ export interface MenuLayoutRow {
 
 export interface MenuLayoutRequest {
   readonly panel: UiPanel;
+  readonly theme: GameUiView["theme"];
   readonly surfaceSize: PanelSize;
   readonly fontMeters: number;
   readonly font: MenuFontIdentity;
@@ -71,6 +74,7 @@ export interface MenuTextLayout {
   readonly request: MenuTextRequest;
   readonly lines: readonly MenuMeasuredLine[];
   readonly bounds: MenuRect;
+  readonly chartProjection?: Readonly<{ baseline: MenuPoint; rotationDegrees: number; anchor: UiChart["presentation"]["x_axis"]["anchor"] }>;
 }
 
 export type MenuControlLayout = Readonly<{ bounds: MenuRect; texts: readonly MenuTextLayout[] }> & (

@@ -105,21 +105,20 @@ describe("tail-aware shared Flight HUD", () => {
     try {
       launch(session);
       advance(session);
-      const snapshot = display(session);
       const model = sharedHud(session);
       const root = window.document.createElement("section") as unknown as HTMLElement;
       const adapter = new FlightHudAdapter(root);
       const nodes = [...root.children];
-      adapter.renderDisplaySnapshot(snapshot, model);
+      adapter.render(model);
       expect(root.querySelector(".flight-hud-readouts")?.textContent).toContain(model.supplementaryReadouts[1]);
       expect(root.querySelector(".flight-hud-controls")?.textContent).toBe(model.controlsDescription);
       expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe(model.pilotPosition);
       expect(root.querySelector('[data-instrument="pilot-position"]')).toBeNull();
       adapter.setVisible(false);
-      adapter.renderDisplaySnapshot(snapshot, currentSharedHudFixture({ informationCode: 2 }));
+      adapter.render(currentSharedHudFixture({ informationCode: 2 }));
       expect(root.querySelector(".flight-hud-readouts")?.textContent).not.toContain("水平尾翼");
       adapter.setVisible(true);
-      adapter.renderDisplaySnapshot(snapshot, model);
+      adapter.render(model);
       expect([...root.children]).toEqual(nodes);
 
       const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
@@ -148,13 +147,17 @@ describe("tail-aware shared Flight HUD", () => {
       advance(source);
       source.abort();
       const result = display(source);
-      expect(sharedHud(source).status).toBe("手動終了");
+      const terminalView = parseGameUiView(source.game_ui_view_json(JSON.stringify(sharedGameUiPlatform())));
+      expect(terminalView.hud).toBeNull();
+      expect(terminalView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-result-terminal")?.content)
+        .toMatchObject({ kind: "status", value: "操作により飛行を終了した" });
       expect(result.kind).toBe("tail_result");
       replay.open_archived_flight_record(source.export_flight_record_json());
       const context = parseNamedReplayContext(replay.playback_context_json());
       const sample = parseNamedRecordSample(replay.flight_record_sample_at_seconds(0.005), physics_hz(), context);
       const snapshot = projectRecordedFlightSnapshot(sample, context);
       replay.game_ui_action_json(JSON.stringify({ kind: "set_replay_view", view: "telemetry" }), JSON.stringify(sharedGameUiPlatform()));
+      expect(parseGameUiView(replay.game_ui_view_json(JSON.stringify(sharedGameUiPlatform()))).selections.replay_view).toBe("telemetry");
       replay.seek_playback(0.005);
       const model = sharedHud(replay);
       expect(model.status).toBe("記録再生");
