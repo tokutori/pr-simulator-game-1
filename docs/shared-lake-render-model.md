@@ -4,6 +4,7 @@
 
 Issue #306の数値・挙動基準はWeb版の `51b8678100da1520773d2247db52e0d830c34124` である。
 `birdman-game-session::lake_water` は環境から波スペクトル、quality別投影、周期RGBAを純粋に生成する。
+`birdman-game-session::lake_sky` は同じ固定Web基準の全天sRGB RGBAを生成し、WebとNativeで共用する。
 機体の空力荷重、飛行状態、着水面、記録、clockを変更しない。
 Three.js、Bevy、texture、sampler、GLSL/WGSL、反射passの所有権はadapterへ残す。
 
@@ -39,21 +40,25 @@ npx tsx tools/wave-model/check-native-parity.ts target/lake-parity
 ```
 
 現在の全byte比較は共通モデルのnative/WASM出力を照合し、1 byte以内の量子化差、差分byte数とfingerprintを出力する。
-純粋モデル導入時にはWindows上の専用build directoryで、sessionの21 tests、Clippy all-targets（`-D warnings`）、tools TypeScript検査、`cargo fmt --all --check` が成功した。
 4条件の512×512 RGBAを変更前のWeb実装と全byte比較し、差分0を確認した。
 比較元の3ファイルは基準commitから実装base `0f9fce9` まで変更がないことを確認した。
-これらは純粋モデルと生成画像の検査結果である。GPU描画、native/WASMの実画面比較、他OSでの検査は未実施である。
+全天画像は固定Web関数をNode.js 24で直接実行した独立oracleの2条件・14画素を使用し、RGBA各channelの許容差を1 byteとする。
+これらは純粋モデルと生成画像の検査である。移植前後の実画面比較と他OSの検査は未完了である。
 
 ## Web consumer境界
 
-WASM adapterは `LakeWaveProjectionBridge` と `LakeDetailImageBridge` を公開する。
+WASM adapterは `LakeWaveProjectionBridge`、`LakeDetailImageBridge`、`LakeSkyImageBridge` を公開する。
 `wasm-bindgen` がRust宣言からTypeScriptの境界型を生成し、Float32 uploadとRGBAをowned typed arrayでまとめて返す。
 Webは環境・quality変更時に呼び出し、受信後にbridgeを解放する。物理tickや通常描画frameから画像生成を呼ばない。
 本番detailのextent、wavelet数、seed変換は共通Rustの `production_lake_detail_configs()` を使用する。
 Three.js adapterにはDataTexture、sampler、GLSL、反射pass、mesh生成とGPU resourceの交換・解放を残す。
 起動時はWASMの初期化をrenderer作成より先に完了させる。
+全天画像の入力は検証済みの太陽方位・仰角、雲量、visibilityの4項目である。
+Nativeは実環境の `SkyStateDocument` から変換し、Webは同じ4項目を渡す。画像に使用しないcloud baseを補完しない。
+sky欠損時は `neutral()` から方位非依存の背景を取得し、太陽・雲を付与しない。
+Three.jsはowned RGBAからDataTextureを構築し、bridgeを `finally` で解放する。TSのLCG、cloud配置、pixel計算は撤去した。
 
-## 残作業
+## Native consumer境界
 
 Bevy consumerは同じ24-slot uploadと6/10/18成分を直接使用する。
 近景meshはWeb基準の6 km非均一格子、96/144/224分割を採用し、頂点のUV1へgrid spacingを格納する。
@@ -72,16 +77,18 @@ quality変更はnear/farへ同一の6/10/18成分投影を原子的に適用し�
 shader未読込み・import待機はpendingとして扱う。正規downsampleの確定pipeline失敗は対象画像・shader・entry point・元原因を既存NativeEnvironmentの診断へ伝達し、対象画像の再queueを停止する。
 新環境で退役した画像のGPU診断を除去する。非同期GPU失敗はCPU交換失敗と分離し、以前の表示を保持したという保証を付与しない。
 
-Bevy consumerはcompile・Clippy、Native 100試験・共有session 21試験が合格した。Windows 11/AMD Radeon 860M/VulkanでWGSLを起動し、開始・Pilot/Chase・pause・画質変更・Result・Retryのscripted GPU検査が合格した。
-Web consumerも同じWindows環境のChromium/WebGL2で起動・Flight・pause・Result・Retryを確認した。物理キー・マウスの受入、同一条件の移植前後比較、release性能計測は未完了である。
-Issue #306全体の完了にはWeb移植前後の実描画検査も必要である。
-Issue #311の次cutでは、near/far/fine/rippleの4層micro-normalをWeb基準で実装した。fine/rippleは既存near画像を再利用し、回転・縮尺をtexture勾配と法線勾配へ一貫して適用する。
-4点subpixel filteringで平均勾配と二次momentを保持し、未解像varianceからWebと同じroughnessを導出する。このcutはcompile・Clippy・Native 101試験と同じWindows/Vulkan scripted GPU検査が合格した。readonlyでWebの回転・勾配・二次moment・roughnessとの対応を確認した。固定条件の描画品質比較とrelease性能計測は未完了である。
-Issue #311のwater shading cutでは、WebのsRGB paletteをBevyの既存color APIでlinearへ変換し、facet Fresnel、micro-normal momentに基づくsun glitter、crest/compressionの明暗・白波、wave height tint、距離hazeを移植した。daylightとhaze距離は確定したsky metadataから導出し、sky欠損時はdaylight 0とWebと同じ既定hazeを保持する。cloud fractionを水面shadowとして代用しない。
-このcutはfmt・compile・Clippy・Native 103試験とWindows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）に合格した。WaterContactはtick 2512・169.069 m、failureはなく、実画像上の水面描画を確認した。固定条件のWeb比較、物理キー・マウスの受入、release 80 FPSの計測は未完了である。
-全天texture cutでは、固定Web基準の1024×512 sRGB RGBA生成を `birdman-game-session::lake_sky` へ移植した。固定LCG、cumulusの形状・noise、horizon gradientとsun glowを保持し、sky欠損時は同じ方位非依存の中立gradientを生成する。
-固定Web関数をNode.js 24で直接実行した独立oracleから、2条件・14画素のRGBAを回帰試験へ固定した。各channelの許容差は1 byteとし、無条件のbitwise一致を要求しない。
-NativeはBevyの既存color変換でlinear `Rgba16Float` へ投影し、正式対応する公式mip生成を再利用する。S方向はRepeat、T方向はClampToEdge、filterはlinear/trilinearとし、背景と水面radianceは同じ全天画像を参照する。環境交換で3枚のowned画像を原子的に交換し、quality変更は既存画像を保持する。Web consumerの画像生成処理はこのcutで変更しない。
-全天texture cutはfmt・compile・Clippy・Native 105試験・共有session 26試験に合格した。追加した独立Web画素比較を含むsky 6試験とClippyも合格した。Windows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）が合格し、実Title・Chase画像で積雲と水面radianceを確認した。固定条件のWeb描画比較、物理マウス受入、release 80 FPSの計測は未完了である。機体mirror passと水面shadowは後続のrender-resource cutへ保持する。
-phase 1のnear/far detailとcrest/compression入力だけで描画品質の移植完了を扱わない。
-共通スペクトルの完成をnativeの描画品質改善の完了へ読み替えない。
+near/far/fine/rippleの4層micro-normalと4点subpixel filteringをWeb基準で実装する。fine/rippleはnear画像を再利用し、回転・縮尺をtexture勾配と法線勾配へ一貫して適用する。
+未解像varianceからroughnessを導出し、facet Fresnel、sun glitter、crest/compressionの明暗・白波、wave height tint、距離hazeを描画する。
+paletteはBevyの既存color APIでlinearへ変換する。daylightとhaze距離は確定したsky metadataから導出し、sky欠損時はdaylight 0とWebと同じ既定hazeを保持する。
+cloud fractionを水面shadowとして代用しない。
+全天画像は固定LCG、cumulusの形状・noise、horizon gradientとsun glowを保持する。
+NativeはBevyの既存color変換でlinear `Rgba16Float` へ投影し、正式対応する公式mip生成を再利用する。S方向はRepeat、T方向はClampToEdge、filterはlinear/trilinearとし、背景と水面radianceは同じ全天画像を参照する。
+環境交換で3枚のowned画像を原子的に交換し、quality変更は既存画像を保持する。
+
+## 検証境界と残作業
+
+全天画像のWeb consumer統一後、Native 105試験・共有session 28試験・WASM 42試験、fmt・Clippyが合格した。Webの型検査・lint・1,663試験・登録asset 9件の検査・production buildも合格した。
+Windows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）が合格し、実Title・Chase画像で積雲と水面radianceを確認した。
+Webの波・全天画像consumerは同じWindows環境のChromium 148・AMD Radeon 860Mのhardware WebGL2で起動・Flight・pause/resume・Result・Retryを確認した。実画像で積雲と水面反射を確認し、browser errorとcontext lossは発生しなかった。
+同一条件のWeb移植前後・Web/Nativeの実描画比較、物理キー・マウス受入、release 80 FPSの計測は未完了である。
+機体mirror passと水面shadowはIssue #311の後続である。共通モデルの数値検査と実描画品質の受入を区別する。

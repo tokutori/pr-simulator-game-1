@@ -52,7 +52,7 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
 波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。
 近景水面は6 kmの非均一格子と96/144/224分割を使用する。GPUへの投影、mesh、WGSLはBevy adapterが所有する。
-水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。fmt・compile・Clippy・Native 103試験とWindows 11/AMD Radeon 860M/Vulkanのscripted GPU検査が合格した。全天texture移植もNative 105試験・共有session 26試験、追加した独立Web画素比較を含むsky 6試験と実GPU検査に合格した。機体mirror pass、水面shadowと同一条件の実描画比較はIssue #311の後続である。物理キー・マウスの受入とrelease 80 FPSの計測は未完了である。
+水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。波と全天画像の生成は共有Rustへ集約し、Web/BevyはGPU投影を担当する。検証境界と未完了項目は[共有モデル](shared-lake-render-model.md#検証境界と残作業)へ記載する。
 現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
 Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
 
@@ -101,7 +101,7 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。
-空と天空反射は共有Rustが生成したWeb基準の全天textureを共用する。NativeはsRGB画像をBevyの既存APIでlinearへ変換し、公式mip生成と同じequirectangular samplingを使用する。Windows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）に合格し、実Title・Chase画像で積雲と水面radianceを確認した。機体mirror passと水面shadowは後続である。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
+空と天空反射は共有Rustが生成したWeb基準の全天textureを共用する。生成入力は実環境の太陽方位・仰角、雲量、visibilityの4項目とし、cloud baseを補完しない。NativeはsRGB画像をBevyの既存APIでlinearへ変換し、公式mip生成と同じequirectangular samplingを使用する。機体mirror passと水面shadowは後続である。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。

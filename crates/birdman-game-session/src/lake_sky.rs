@@ -7,6 +7,58 @@ pub const LAKE_SKY_IMAGE_WIDTH: u32 = 1024;
 /// Vertical resolution of the Web reference panorama.
 pub const LAKE_SKY_IMAGE_HEIGHT: u32 = 512;
 
+/// Validated display conditions independent of physical cloud-base metadata.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LakeSkyRenderCondition {
+    sun_azimuth_degrees: f64,
+    sun_elevation_degrees: f64,
+    cloud_fraction: f64,
+    visibility_m: f64,
+}
+
+impl LakeSkyRenderCondition {
+    /// Validates the four render parameters accepted by the Web reference.
+    pub fn try_new(
+        sun_azimuth_degrees: f64,
+        sun_elevation_degrees: f64,
+        cloud_fraction: f64,
+        visibility_m: f64,
+    ) -> Result<Self, EnvironmentFormatError> {
+        if !(0.0..360.0).contains(&sun_azimuth_degrees)
+            || !(-90.0..=90.0).contains(&sun_elevation_degrees)
+            || !(0.0..=1.0).contains(&cloud_fraction)
+            || !visibility_m.is_finite()
+            || visibility_m <= 0.0
+        {
+            return Err(EnvironmentFormatError::InvalidSky);
+        }
+        Ok(Self {
+            sun_azimuth_degrees,
+            sun_elevation_degrees,
+            cloud_fraction,
+            visibility_m,
+        })
+    }
+
+    /// Returns the validated visibility without inventing physical sky metadata.
+    pub const fn visibility_m(self) -> f64 {
+        self.visibility_m
+    }
+}
+
+impl TryFrom<SkyStateDocument> for LakeSkyRenderCondition {
+    type Error = EnvironmentFormatError;
+
+    fn try_from(sky: SkyStateDocument) -> Result<Self, Self::Error> {
+        Self::try_new(
+            sky.sun_azimuth_degrees,
+            sky.sun_elevation_degrees,
+            sky.cloud_fraction,
+            sky.visibility_m,
+        )
+    }
+}
+
 /// Opaque sRGB RGBA panorama; row zero is the lower hemisphere.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LakeSkyImage {
@@ -195,20 +247,7 @@ fn sky_pixel(
 }
 
 /// Generates the fixed Web panorama without I/O, animation, or physical sky state.
-pub fn generate_lake_sky(
-    condition: Option<SkyStateDocument>,
-) -> Result<LakeSkyImage, EnvironmentFormatError> {
-    if let Some(sky) = condition
-        && (!(0.0..360.0).contains(&sky.sun_azimuth_degrees)
-            || !(-90.0..=90.0).contains(&sky.sun_elevation_degrees)
-            || !(0.0..=1.0).contains(&sky.cloud_fraction)
-            || !sky.visibility_m.is_finite()
-            || sky.visibility_m <= 0.0
-            || !sky.cloud_base_m.is_finite()
-            || sky.cloud_base_m < 0.0)
-    {
-        return Err(EnvironmentFormatError::InvalidSky);
-    }
+pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyImage {
     let (sun, daylight, clouds) = condition.map_or(([0.0, 1.0, 0.0], 0.0, Vec::new()), |sky| {
         let azimuth = sky.sun_azimuth_degrees.to_radians();
         let elevation = sky.sun_elevation_degrees.to_radians();
@@ -230,7 +269,7 @@ pub fn generate_lake_sky(
             rgba.extend_from_slice(&sky_pixel(longitude, latitude, sun, daylight, &clouds));
         }
     }
-    Ok(LakeSkyImage { rgba })
+    LakeSkyImage { rgba }
 }
 
 #[cfg(test)]
@@ -287,7 +326,7 @@ mod tests {
 
     #[test]
     fn generated_panorama_is_fixed_size_opaque_srgb() {
-        let image = generate_lake_sky(None).unwrap();
+        let image = generate_lake_sky(None);
         assert_eq!((image.width(), image.height()), (1024, 512));
         assert_eq!(image.rgba().len(), 1024 * 512 * 4);
         assert!(image.rgba().chunks_exact(4).all(|texel| texel[3] == 255));
@@ -298,13 +337,7 @@ mod tests {
     fn generated_panorama_matches_independent_fixed_web_pixels_within_one_byte() {
         for (condition, pixels) in [
             (
-                SkyStateDocument {
-                    sun_azimuth_degrees: 240.0,
-                    sun_elevation_degrees: 35.0,
-                    cloud_fraction: 0.35,
-                    cloud_base_m: 1200.0,
-                    visibility_m: 28_000.0,
-                },
+                LakeSkyRenderCondition::try_new(240.0, 35.0, 0.35, 28_000.0).unwrap(),
                 [
                     (200, 308, [221, 231, 230, 255]),
                     (460, 294, [226, 234, 233, 255]),
@@ -316,13 +349,7 @@ mod tests {
                 ],
             ),
             (
-                SkyStateDocument {
-                    sun_azimuth_degrees: 45.0,
-                    sun_elevation_degrees: 20.0,
-                    cloud_fraction: 0.7,
-                    cloud_base_m: 1200.0,
-                    visibility_m: 16_000.0,
-                },
+                LakeSkyRenderCondition::try_new(45.0, 20.0, 0.7, 16_000.0).unwrap(),
                 [
                     (200, 308, [221, 231, 230, 255]),
                     (279, 315, [225, 233, 232, 255]),
@@ -334,7 +361,7 @@ mod tests {
                 ],
             ),
         ] {
-            let image = generate_lake_sky(Some(condition)).unwrap();
+            let image = generate_lake_sky(Some(condition));
             for (column, row, expected) in pixels {
                 let offset = ((row * image.width() + column) * 4) as usize;
                 for (channel, expected_byte) in expected.into_iter().enumerate() {
@@ -350,22 +377,38 @@ mod tests {
 
     #[test]
     fn invalid_sky_is_rejected_before_allocating_the_panorama() {
-        let original = crate::bundled_environment().unwrap().document().sky;
-        for visibility in [0.0, -1.0, f64::NAN, f64::INFINITY] {
-            let mut sky = original;
-            sky.visibility_m = visibility;
-            assert_eq!(
-                generate_lake_sky(Some(sky)),
-                Err(EnvironmentFormatError::InvalidSky)
-            );
+        for (index, values) in [
+            (0, [-1.0, 360.0, f64::NAN, f64::INFINITY]),
+            (1, [-91.0, 91.0, f64::NAN, f64::INFINITY]),
+            (2, [-0.1, 1.1, f64::NAN, f64::INFINITY]),
+            (3, [0.0, -1.0, f64::NAN, f64::INFINITY]),
+        ] {
+            for value in values {
+                let mut parameters = [240.0, 35.0, 0.35, 28_000.0];
+                parameters[index] = value;
+                let [azimuth, elevation, fraction, visibility] = parameters;
+                assert_eq!(
+                    LakeSkyRenderCondition::try_new(azimuth, elevation, fraction, visibility),
+                    Err(EnvironmentFormatError::InvalidSky)
+                );
+            }
         }
-        for fraction in [-0.1, 1.1, f64::NAN] {
-            let mut sky = original;
-            sky.cloud_fraction = fraction;
-            assert_eq!(
-                generate_lake_sky(Some(sky)),
-                Err(EnvironmentFormatError::InvalidSky)
-            );
+    }
+
+    #[test]
+    fn render_projection_preserves_actual_parameters_without_cloud_base() {
+        let mut sky = crate::bundled_environment().unwrap().document().sky;
+        let expected = LakeSkyRenderCondition::try_new(
+            sky.sun_azimuth_degrees,
+            sky.sun_elevation_degrees,
+            sky.cloud_fraction,
+            sky.visibility_m,
+        )
+        .unwrap();
+        assert_eq!(expected.visibility_m(), sky.visibility_m);
+        for cloud_base in [0.0, 1200.0, f64::NAN] {
+            sky.cloud_base_m = cloud_base;
+            assert_eq!(LakeSkyRenderCondition::try_from(sky), Ok(expected));
         }
     }
 }

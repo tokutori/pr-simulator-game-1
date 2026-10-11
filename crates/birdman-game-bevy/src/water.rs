@@ -36,8 +36,7 @@ use bevy::{
     },
     shader::{ShaderCacheError, ShaderRef},
 };
-use birdman_game_format::SkyStateDocument;
-use birdman_game_session::lake_sky::generate_lake_sky;
+use birdman_game_session::lake_sky::{LakeSkyRenderCondition, generate_lake_sky};
 use birdman_game_session::lake_water::{
     LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
     production_lake_detail_configs,
@@ -78,7 +77,7 @@ pub(crate) struct WaterMaterial {
     #[sampler(14)]
     sky_texture: Option<Handle<Image>>,
     visual_condition: LakeVisualCondition,
-    sky_condition: Option<SkyStateDocument>,
+    sky_condition: Option<LakeSkyRenderCondition>,
     displacement_bounds: Vec2,
 }
 
@@ -126,6 +125,11 @@ impl WaterMaterial {
         sky: bool,
     ) -> Result<Self, String> {
         let visual_condition = visual_condition(condition)?;
+        let sky_condition = condition
+            .sky
+            .map(LakeSkyRenderCondition::try_from)
+            .transpose()
+            .map_err(|cause| format!("共有天空条件を準備できない: {cause:?}"))?;
         let waves = condition.waves;
         let sun_cloud = condition.sky.map_or(Vec4::ZERO, |sky| {
             sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
@@ -185,7 +189,7 @@ impl WaterMaterial {
             haze_parameters: Vec4::new(haze_start, visibility, daylight, 0.0),
             sky_texture: None,
             visual_condition,
-            sky_condition: condition.sky,
+            sky_condition,
             displacement_bounds,
         };
         material.apply_profile(WaterQuality::High)?;
@@ -247,9 +251,8 @@ impl WaterMaterial {
     }
 }
 
-fn prepare_sky_image(condition: Option<SkyStateDocument>) -> Result<Image, String> {
-    let panorama = generate_lake_sky(condition)
-        .map_err(|cause| format!("共有天空画像を準備できない: {cause:?}"))?;
+fn prepare_sky_image(condition: Option<LakeSkyRenderCondition>) -> Result<Image, String> {
+    let panorama = generate_lake_sky(condition);
     let width = panorama.width();
     let height = panorama.height();
     let mut image = Image::new(
@@ -1852,7 +1855,7 @@ mod tests {
 
     #[test]
     fn native_sky_upload_preserves_web_srgb_radiance_and_panorama_orientation() {
-        let reference = generate_lake_sky(None).unwrap();
+        let reference = generate_lake_sky(None);
         let image = prepare_sky_image(None).unwrap();
         assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba16Float);
         assert_eq!(image.texture_descriptor.size.width, reference.width());
