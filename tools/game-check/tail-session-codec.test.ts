@@ -368,6 +368,44 @@ describe("versioned two-tail TypeScript boundary", () => {
     ]) expect(() => encodeTailLogicalInput({ ...neutral, pilotPositionCommand: command })).toThrow(RangeError);
   });
 
+  it("rejects command fields supplied only by Object.prototype", () => {
+    for (const { field, value, command } of [
+      { field: "kind", value: "hold", command: {} },
+      { field: "normalized", value: 0.5, command: { kind: "set" } }
+    ]) {
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, field);
+      try {
+        Object.defineProperty(Object.prototype, field, { value, configurable: true });
+        expect(() => encodeTailLogicalInput({ ...neutral,
+          pilotPositionCommand: command as TailLogicalInput["pilotPositionCommand"] })).toThrow(RangeError);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(Object.prototype, field);
+        else Object.defineProperty(Object.prototype, field, previous);
+      }
+    }
+  });
+
+  it("serializes validated Hold and Set inputs without global prototype toJSON", () => {
+    const inputs: readonly TailLogicalInput[] = [neutral,
+      { ...neutral, pilotPositionCommand: { kind: "set", normalized: -1 } },
+      { ...neutral, pilotPositionCommand: { kind: "set", normalized: 1 } }];
+    const expected = inputs.map(encodeTailLogicalInput);
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    let calls = 0;
+    let encoded: readonly string[];
+    try {
+      Object.defineProperty(Object.prototype, "toJSON", {
+        value: () => { calls += 1; return "prototype-value"; }, configurable: true
+      });
+      encoded = inputs.map(encodeTailLogicalInput);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", previous);
+    }
+    expect(calls).toBe(0);
+    expect(encoded).toEqual(expected);
+  });
+
   it("keeps one fractional terminal time and explicit absent telemetry angles", () => {
     const document = terminalDocument(null, "water_contact");
     const frame = nested(document, "frame");
