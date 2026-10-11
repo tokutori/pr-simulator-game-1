@@ -1484,13 +1484,7 @@ fn project_view(
                         .sections
                         .iter()
                         .find(|section| section.id == control.section)
-                        .map_or(GameUiSectionLayout::Column, |section| {
-                            if section.layout == GameUiSectionLayout::Normalized {
-                                GameUiSectionLayout::Column
-                            } else {
-                                section.layout
-                            }
-                        })
+                        .map_or(GameUiSectionLayout::Column, |section| section.layout)
                 };
                 project_control(
                     world,
@@ -2731,6 +2725,96 @@ mod tests {
                 );
                 assert_eq!(projected.flex_direction, expected.flex_direction);
             }
+        }
+    }
+
+    #[test]
+    fn attract_projects_shared_flow_information_and_scrollable_return() {
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        for (width, height) in [(360, 160), (360, 300), (1280, 720)] {
+            let mut app = analysis_app_size(width as f32, height as f32);
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                let record = session.game.take_finalized_result_record().unwrap();
+                session.game.install_attract_record(record).unwrap();
+                session.game.enter_attract().unwrap();
+            }
+            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let clock = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .playback_clock();
+            add_ui_layout(&mut app, width, height);
+            app.add_systems(
+                PostUpdate,
+                scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+            );
+            for _frame in 0..3 {
+                app.update();
+            }
+            let (shell, return_control) = {
+                let retained = app.world().resource::<RetainedUi>();
+                let view = retained.view.as_ref().unwrap();
+                assert_eq!(view.layout.shell, GameUiShell::Cinematic);
+                assert!(view.layout.scroll_y);
+                assert!(
+                    view.panels[0]
+                        .sections
+                        .iter()
+                        .all(|section| section.layout == GameUiSectionLayout::Column)
+                );
+                let mut previous_bottom = None;
+                for control in &view.panels[0].controls {
+                    let widget = &retained.widgets[&control.id];
+                    let node = app.world().get::<Node>(widget.node).unwrap();
+                    assert_eq!(node.position_type, PositionType::Relative);
+                    let rect = bounds(app.world(), widget.node);
+                    let text_height = app
+                        .world()
+                        .get::<ComputedNode>(widget.text)
+                        .unwrap()
+                        .size()
+                        .y;
+                    assert!(text_height > 0.0);
+                    assert!(rect.height() >= text_height);
+                    if let Some(bottom) = previous_bottom {
+                        assert!(rect.min.y >= bottom);
+                    }
+                    previous_bottom = Some(rect.max.y);
+                }
+                let return_control = retained.widgets["game-attract-return"].node;
+                assert!(
+                    bounds(app.world(), return_control).height()
+                        >= view.theme.button_min_height_px as f32
+                );
+                (retained.shell, return_control)
+            };
+            app.world_mut()
+                .resource_mut::<InputFocus>()
+                .set(return_control, FocusCause::Navigated);
+            app.update();
+            app.update();
+            let shell_bounds = bounds(app.world(), shell);
+            let return_bounds = bounds(app.world(), return_control);
+            assert!(return_bounds.min.y >= shell_bounds.min.y - 1.0);
+            assert!(return_bounds.max.y <= shell_bounds.max.y + 1.0);
+            assert_eq!(
+                app.world().resource::<NativeSession>().game.snapshot(),
+                snapshot
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .playback_clock(),
+                clock
+            );
         }
     }
 

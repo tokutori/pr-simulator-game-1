@@ -773,8 +773,8 @@ impl Menu {
             return;
         }
         if mode == GameUiPresentationMode::Screen
-            && phase == SessionPhase::Result
-            && state.result_tab == GameUiResultTab::Summary
+            && (phase == SessionPhase::Attract
+                || phase == SessionPhase::Result && state.result_tab == GameUiResultTab::Summary)
         {
             return;
         }

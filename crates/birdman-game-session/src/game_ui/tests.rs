@@ -1476,6 +1476,69 @@ fn screen_result_summary_preserves_flow_navigation_and_vr_normalized_layout() {
 }
 
 #[test]
+fn screen_attract_preserves_flow_information_and_vr_normalized_layout() {
+    let mut session = finalized();
+    let record = session.take_finalized_result_record().unwrap();
+    session.install_attract_record(record).unwrap();
+    session.enter_attract().unwrap();
+    let snapshot = session.snapshot();
+    let clock = session.playback_clock();
+    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+        for mode in [
+            GameUiPresentationMode::Screen,
+            GameUiPresentationMode::PhoneVr,
+            GameUiPresentationMode::Webxr,
+        ] {
+            let mut platform = platform();
+            platform.viewport.width = width;
+            platform.viewport.height = height;
+            platform.presentation_mode = mode;
+            let view = game_ui_view(
+                &GameUiState::default(),
+                &context(&session, difficulty(), &platform),
+            )
+            .unwrap();
+            let expected = if mode == GameUiPresentationMode::Screen {
+                GameUiSectionLayout::Column
+            } else {
+                GameUiSectionLayout::Normalized
+            };
+            assert!(
+                view.panels[0]
+                    .sections
+                    .iter()
+                    .all(|section| section.layout == expected)
+            );
+            assert_eq!(
+                view.panels[0]
+                    .controls
+                    .iter()
+                    .map(|control| control.id.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "game-attract-status",
+                    "game-attract-time",
+                    "game-attract-distance",
+                    "game-attract-return"
+                ]
+            );
+            assert_eq!(view.layout.shell, GameUiShell::Cinematic);
+            assert!(view.layout.scroll_y);
+            assert_eq!(view.theme.button_min_height_px, 44.0);
+            if mode != GameUiPresentationMode::Screen {
+                assert_eq!(control(&view, "game-attract-return").rect.y, 0.40 * 0.81);
+                assert_eq!(
+                    control(&view, "game-attract-return").rect.height,
+                    0.075 * 0.81
+                );
+            }
+            assert_eq!(session.snapshot(), snapshot);
+            assert_eq!(session.playback_clock(), clock);
+        }
+    }
+}
+
+#[test]
 fn screen_replay_controls_use_flow_sections_and_preserve_vr_and_analysis_layouts() {
     let mut session = finalized();
     session.enter_replay().unwrap();

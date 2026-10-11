@@ -486,6 +486,65 @@ describe("screen UI DOM patching", () => {
     }
   });
 
+  it("projects Screen Attract flow information and retains the reachable Return after resize", async () => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    try {
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const stylesheet = documentRef.createElement("style");
+      stylesheet.textContent = readFileSync(new URL("../../web/src/styles.css", import.meta.url), "utf8");
+      documentRef.head.append(stylesheet);
+      const root = documentRef.createElement("main");
+      documentRef.body.append(root);
+      const actions: unknown[] = [];
+      const adapter = new ScreenUiAdapter(root, action => actions.push(action));
+      let returnButton: HTMLButtonElement | null = null;
+      withSharedGameUiSession(10, {}, (session, platform) => {
+        const clock = session.readPlaybackClock();
+        for (const [width, height] of [[1280, 720], [360, 300], [1280, 720]] as const) {
+          window.happyDOM.setViewport({ width, height });
+          const shared = session.readSharedUi({ ...platform, viewport: { width, height, root_font_size: 16 } });
+          adapter.render(createGameViewModel(shared));
+          const shell = required(root, ".screen-ui-shell");
+          const panel = required(root, ".screen-ui-panel");
+          expect(shell.dataset.scene).toBe("Title");
+          expect(shell.style.overflowY).toBe("auto");
+          expect(shell.style.maxHeight).toBe(`${String(shared.layout.maximum_height_px)}px`);
+          expect(panel.dataset.layout).toBeUndefined();
+          expect(panel.querySelector('[data-layout="normalized"]')).toBeNull();
+          expect(Array.from(panel.querySelectorAll<HTMLElement>(".screen-ui-section")).map(section => section.dataset.sectionId))
+            .toEqual(shared.panels[0]?.sections.map(section => section.id));
+          for (const control of shared.panels[0]?.controls ?? []) {
+            if (control.content.kind !== "status") continue;
+            const status = required(root, `output#${control.id}`);
+            expect(status.style.position).toBe("");
+            expect(status.style.height).toBe("");
+            expect(status.textContent).toBe(`${control.label}: ${control.content.value}`);
+          }
+          const button = required(root, 'button[data-control-id="game-attract-return"]') as HTMLButtonElement;
+          expect(button.disabled).toBe(false);
+          expect(button.style.position).toBe("");
+          expect(window.getComputedStyle(button as never).minHeight).toBe(`${String(shared.theme.button_min_height_px)}px`);
+          if (returnButton !== null) {
+            expect(button).toBe(returnButton);
+            expect(documentRef.activeElement).toBe(button);
+          }
+          returnButton = button;
+          button.focus();
+          actions.length = 0;
+          button.click();
+          expect(actions).toEqual([{ type: "activate", controlId: "game-attract-return" }]);
+          expect(session.readPlaybackClock()).toEqual(clock);
+        }
+      });
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   it.each(["menu", "settings", "help"] as const)("projects bounded Pause %s rows and the same HUD reservation after resize", async (overlay) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
