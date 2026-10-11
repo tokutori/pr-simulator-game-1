@@ -94,31 +94,42 @@ describe("flight log download state and common presentation", () => {
             : { ...analysisFixture.samples[1], kind: "named_record", context: analysisFixture.context }
         };
         const panel = viewForModel(model).panels[0];
-        if (panel === undefined) throw new Error("Download panel is unavailable");
+        if (panel?.sections === undefined) throw new Error("Shared download panel sections are unavailable");
         expect(panel.anchor).toBe("menu");
+        expect(panel.sections.length).toBeGreaterThan(0);
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
         const analysisFlow = phaseCode === 7 && resultTab === "analysis" || phaseCode === 9 && replayViewMode === "analysis";
-        const flow = mode === "screen" && (analysisFlow || phaseCode === 9);
-        expect(exports.map((control) => control.id)).toEqual(flow
+        const flow = mode === "screen";
+        const groupedFlow = flow && (analysisFlow || phaseCode === 9);
+        expect(exports.map((control) => control.id)).toEqual(groupedFlow
           ? ["game-flight-log-notice", "game-flight-log-csv", "game-flight-log-json"]
           : ["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
         if (flow) {
-          if (panel.sections === undefined) throw new Error("Missing shared flow sections");
           expect(panel.sections).toEqual(analysisFlow ? [
             { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
             { id: "analysis-cursor", label: "", layout: "column" }, { id: "analysis-details", label: "", layout: "column" },
             { id: "analysis-navigation", label: "", layout: "row" }
-          ] : [
+          ] : phaseCode === 9 ? [
             { id: "replay-status", label: "", layout: "column" },
             ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
             { id: "replay-actions", label: "", layout: "row" }
-          ]);
+          ] : [
+            "game-state", "game-result-analysis", "game-result-open-analysis", "game-result-configuration",
+            "game-result-terminal", "technical", "game-result-replay", "game-result-retry", "game-result-setup",
+            "game-result-title", "game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"
+          ].map((id) => ({ id, label: "", layout: "column" })));
           expect(exports.map((control) => control.section)).toEqual(analysisFlow
             ? ["analysis-details", "analysis-navigation", "analysis-navigation"]
-            : ["replay-status", "replay-actions", "replay-actions"]);
+            : phaseCode === 9 ? ["replay-status", "replay-actions", "replay-actions"]
+              : ["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
           expect(panel.controls.map((control) => control.id)).toEqual(panel.sections.flatMap((section) =>
             panel.controls.filter((control) => control.section === section.id).map((control) => control.id)));
+        } else {
+          expect(panel.sections.map((section) => section.layout)).toEqual(panel.sections.map(() => "normalized"));
         }
+        expect([panel.size.width, panel.size.height].every(Number.isFinite)).toBe(true);
+        expect(panel.size.width).toBeGreaterThan(0);
+        expect(panel.size.height).toBeGreaterThan(0);
         for (const control of panel.controls) {
           expect(control.rect.x).toBeGreaterThanOrEqual(0);
           expect(control.rect.y).toBeGreaterThanOrEqual(0);
@@ -148,7 +159,11 @@ describe("flight log download state and common presentation", () => {
     }
   });
 
-  it.each([7, 9])("keeps Screen Analysis downloads and exits in nonabsolute wrapping flow in phase %s", async (phaseCode) => {
+  it.each([
+    { label: "Result Summary", phaseCode: 7, resultTab: "summary" },
+    { label: "Result Analysis", phaseCode: 7, resultTab: "analysis" },
+    { label: "Replay Analysis", phaseCode: 9, resultTab: "summary" }
+  ] as const)("keeps Screen $label downloads and exits in nonabsolute flow", async ({ phaseCode, resultTab }) => {
     const browser = new BrowserWindow({ width: 360, height: 300 });
     vi.stubGlobal("window", browser);
     vi.stubGlobal("document", browser.document);
@@ -162,19 +177,22 @@ describe("flight log download state and common presentation", () => {
     const screen = new ScreenUiAdapter(root as unknown as HTMLElement, dispatch);
     try {
       const model = readyModel(phaseCode, { platform: { viewport: { width: 360, height: 300, root_font_size: 16 } }, actions: phaseCode === 7
-        ? [{ kind: "set_result_tab", tab: "analysis" }] : [{ kind: "set_replay_view", view: "analysis" }] });
+        ? resultTab === "analysis" ? [{ kind: "set_result_tab", tab: "analysis" }] : []
+        : [{ kind: "set_replay_view", view: "analysis" }] });
       const view = viewForModel(model, { width: 360, height: 300, root_font_size: 16 });
       const panel = view.panels[0];
-      if (panel?.sections === undefined || view.sharedPresentation === undefined) throw new Error("Missing shared Analysis layout");
+      if (panel?.sections === undefined || view.sharedPresentation === undefined) throw new Error("Missing shared flow layout");
       screen.render(view);
       const shell = root.querySelector(".screen-ui-shell");
-      if (!(shell instanceof browser.HTMLElement)) throw new Error("Missing Analysis shell");
+      if (!(shell instanceof browser.HTMLElement)) throw new Error("Missing flow shell");
       expect(shell.style.overflowY).toBe("auto");
       expect(shell.dataset.scrollY).toBe("true");
+      expect(Array.from(root.querySelectorAll<HTMLElement>(".screen-ui-section"), (section) => section.dataset.sectionId))
+        .toEqual(panel.sections.map((section) => section.id));
       for (const section of panel.sections) {
         const element = root.querySelector(`[data-section-id="${section.id}"]`);
         const content = element?.querySelector(".screen-ui-section-controls");
-        if (!(element instanceof browser.HTMLElement) || !(content instanceof browser.HTMLElement)) throw new Error("Missing Analysis section");
+        if (!(element instanceof browser.HTMLElement) || !(content instanceof browser.HTMLElement)) throw new Error("Missing flow section");
         const computed = browser.getComputedStyle(content);
         expect(computed.display).toBe(section.layout === "row" ? "flex" : "grid");
         if (section.layout === "row") expect(computed.flexWrap).toBe("wrap");
