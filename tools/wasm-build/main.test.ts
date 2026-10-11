@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
+
+const scripts = (JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
+  readonly scripts: Readonly<Record<string, string>>;
+}).scripts;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -43,6 +48,28 @@ function fixture(exitStatus: number | null = 0, buildError?: Error) {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   return { calls, consumed, mkdir, rm, stderr, currentArtifact, legacyArtifact, diagnostic };
 }
+
+describe("WASM preparation script contracts", () => {
+  it("retains automatic preparation for standalone typecheck, test, and build", () => {
+    expect(scripts).toMatchObject({
+      pretypecheck: "tsx tools/wasm-build/main.ts",
+      pretest: "tsx tools/wasm-build/main.ts",
+      prebuild: "tsx tools/wasm-build/main.ts"
+    });
+  });
+
+  it("prepares WASM once and retains all fail-fast verification gates", () => {
+    expect(scripts.verify?.split(" && ")).toEqual([
+      "npm run check:game-ui",
+      "tsx tools/wasm-build/main.ts",
+      "npm run --ignore-scripts typecheck",
+      "npm run lint",
+      "npm run --ignore-scripts test",
+      "npm run check:repository",
+      "npm run --ignore-scripts build"
+    ]);
+  });
+});
 
 describe("WASM build command artifact ownership", () => {
   it("uses the custom target artifact while an old default-target artifact exists", async () => {

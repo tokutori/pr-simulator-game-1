@@ -25,7 +25,7 @@
     "check:repository": "tsx tools/check/main.ts",
     "generate:game-ui": "tsx tools/game-ui-build/main.ts --write",
     "check:game-ui": "tsx tools/game-ui-build/main.ts --check",
-    "verify": "npm run check:game-ui && npm run typecheck && npm run lint && npm test && npm run check:repository && npm run build"
+    "verify": "npm run check:game-ui && tsx tools/wasm-build/main.ts && npm run --ignore-scripts typecheck && npm run lint && npm run --ignore-scripts test && npm run check:repository && npm run --ignore-scripts build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
