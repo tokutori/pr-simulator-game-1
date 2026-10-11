@@ -4,7 +4,7 @@ import { currentNamedAnalysisFixture } from "../game-check/current-session-fixtu
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
 import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
@@ -109,6 +109,24 @@ describe("Boot application state", () => {
     expect(createBootViewModel(completed.model).panels[0]?.controls.find((control) => control.id === "boot-enter-webxr")?.enabled).toBe(true);
   });
 
+  it("distinguishes an unloaded record list from an actual request and a loaded empty list", () => {
+    const initial = createInitialAppModel();
+    expect(initial.recordList).toEqual({ kind: "unloaded", nextRequestId: 1 });
+    expect(recordListEntries(initial.recordList)).toEqual([]);
+    expect(recordListNotice(initial.recordList)).toBe("");
+    expect(Object.isFrozen(initial.recordList)).toBe(true);
+    for (const message of [
+      { type: "stored-flight-records-loaded", requestId: 1, records: [] },
+      { type: "stored-flight-records-failed", requestId: 1, message: "Unsolicited response" }
+    ] as const) expect(updateApp(initial, message)).toEqual({ model: initial, effects: [] });
+    const pending = readyModel();
+    expect(pending.recordList).toEqual({ kind: "loading", requestId: 1, nextRequestId: 2, retained: [] });
+    expect(recordListNotice(pending.recordList)).toBe("保存記録を読み込んでいる");
+    const loaded = updateApp(pending, { type: "stored-flight-records-loaded", requestId: 1, records: [] }).model;
+    expect(loaded.recordList).toEqual({ kind: "ready", nextRequestId: 2, records: [] });
+    expect(recordListNotice(loaded.recordList)).toBe("保存済みFlightRecordはない");
+  });
+
   it("loads only the latest stored-record index response", () => {
     const ready = readyModel();
     const refreshed = updateApp(ready, { type: "refresh-stored-flight-records" });
@@ -118,11 +136,90 @@ describe("Boot application state", () => {
       records: [{ id: 8, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }]
     });
     expect(stale.model).toBe(refreshed.model);
+    expect(stale.effects).toEqual([]);
+    expect(updateApp(refreshed.model, {
+      type: "stored-flight-records-failed", requestId: 1, message: "Obsolete failure"
+    })).toEqual({ model: refreshed.model, effects: [] });
+    const records = [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }];
     const loaded = updateApp(refreshed.model, {
       type: "stored-flight-records-loaded", requestId: 2,
-      records: [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }]
+      records
     });
-    expect(loaded.model.storedFlightRecords.map((record) => record.id)).toEqual([9]);
+    expect(recordListEntries(loaded.model.recordList).map((record) => record.id)).toEqual([9]);
+    expect(loaded.model.recordList).toEqual({ kind: "ready", nextRequestId: 3, records });
+    expect(recordListEntries(loaded.model.recordList)).not.toBe(records);
+    expect(Object.isFrozen(recordListEntries(loaded.model.recordList))).toBe(true);
+    expect(Object.isFrozen(loaded.model.recordList)).toBe(true);
+  });
+
+  it("retains the global record list across refresh, failure and recovery with monotonic IDs", () => {
+    const records = [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }];
+    const loaded = updateApp(readyModel(), { type: "stored-flight-records-loaded", requestId: 1, records }).model;
+    const retained = recordListEntries(loaded.recordList);
+    const refresh = updateApp(loaded, { type: "refresh-stored-flight-records" });
+    expect(refresh.effects).toEqual([{ type: "load-stored-flight-records", requestId: 2 }]);
+    expect(recordListEntries(refresh.model.recordList)).toBe(retained);
+    const replacement = updateApp(refresh.model, { type: "refresh-stored-flight-records" });
+    expect(replacement.effects).toEqual([{ type: "load-stored-flight-records", requestId: 3 }]);
+    expect(recordListEntries(replacement.model.recordList)).toBe(retained);
+    const failed = updateApp(replacement.model, {
+      type: "stored-flight-records-failed", requestId: 3, message: "Storage unavailable"
+    });
+    expect(failed.model.recordList).toEqual({ kind: "failed", nextRequestId: 4, message: "Storage unavailable", retained });
+    expect(failed.effects).toEqual([]);
+    expect(recordListEntries(failed.model.recordList)).toBe(retained);
+    expect(recordListNotice(failed.model.recordList)).toBe("FlightRecord一覧を取得できない: Storage unavailable");
+    const recovery = updateApp(failed.model, { type: "refresh-stored-flight-records" });
+    expect(recovery.effects).toEqual([{ type: "load-stored-flight-records", requestId: 4 }]);
+    expect(recordListEntries(recovery.model.recordList)).toBe(retained);
+    const empty = updateApp(recovery.model, { type: "stored-flight-records-loaded", requestId: 4, records: [] });
+    expect(empty.model.recordList).toEqual({ kind: "ready", nextRequestId: 5, records: [] });
+    expect(recordListNotice(empty.model.recordList)).toBe("保存済みFlightRecordはない");
+  });
+
+  it.each(["loaded", "failed"] as const)("rejects duplicate or contradictory responses after a %s record list", (result) => {
+    const completion: AppMessage = result === "loaded"
+      ? { type: "stored-flight-records-loaded", requestId: 1, records: [] }
+      : { type: "stored-flight-records-failed", requestId: 1, message: "Storage unavailable" };
+    const completed = updateApp(readyModel(), completion).model;
+    for (const response of [
+      { type: "stored-flight-records-loaded", requestId: 1, records: [] },
+      { type: "stored-flight-records-failed", requestId: 1, message: "Duplicate failure" }
+    ] as const) expect(updateApp(completed, response)).toEqual({ model: completed, effects: [] });
+  });
+
+  it("accepts a global record-list completion after a Scene change", () => {
+    const pending = readyModel();
+    const projection = { controlLayout: "tail_incidence", canResume: false, controlModeCode: pending.controlModeCode,
+      difficulty: pending.difficulty, configurationMetadata: pending.configurationMetadata, countdownRemaining: 0,
+      display: { kind: "unavailable", reason: "menu_phase" } } as const;
+    const setup = updateApp(pending, { type: "game-session-synced", phaseCode: 1, ...projection }).model;
+    expect(setup.recordList).toBe(pending.recordList);
+    const records = [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }];
+    const completed = updateApp(setup, { type: "stored-flight-records-loaded", requestId: 1, records });
+    expect(completed.model.gameSession.kind).toBe("setup");
+    expect(recordListEntries(completed.model.recordList)).toEqual(records);
+    expect(completed.effects).toEqual([]);
+    const title = updateApp(completed.model, { type: "game-session-synced", phaseCode: 0, ...projection }).model;
+    expect(title.recordList).toBe(completed.model.recordList);
+  });
+
+  it.each(["loaded", "failed"] as const)("retains a %s record-list completion through cached-page restoration", (result) => {
+    const records = [{ id: 9, savedAt: "2026-09-28T00:00:00.000Z", personalBest: true }];
+    const loaded = updateApp(readyModel(), { type: "stored-flight-records-loaded", requestId: 1, records }).model;
+    const refresh = updateApp(loaded, { type: "refresh-stored-flight-records" }).model;
+    const cached = updateApp(refresh, { type: "page-suspended" }).model;
+    const completion: AppMessage = result === "loaded"
+      ? { type: "stored-flight-records-loaded", requestId: 2, records: [] }
+      : { type: "stored-flight-records-failed", requestId: 2, message: "Storage unavailable" };
+    const completed = updateApp(cached, completion);
+    expect(completed.model.presentation).toEqual(cached.presentation);
+    expect(completed.model.recordList.kind).toBe(result === "loaded" ? "ready" : "failed");
+    expect(completed.model.recordList.nextRequestId).toBe(3);
+    expect(recordListEntries(completed.model.recordList)).toEqual(result === "loaded" ? [] : records);
+    expect(completed.effects).toEqual([]);
+    const restored = updateApp(completed.model, { type: "page-restored" }).model;
+    expect(restored.recordList).toBe(completed.model.recordList);
   });
 
   it("opens a selected stored record through the Rust-owned Replay phase", () => {

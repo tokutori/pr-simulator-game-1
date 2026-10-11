@@ -11,7 +11,7 @@ import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -736,7 +736,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
     : quality.kind === "failed" ? { kind: "failed", requested: quality.requested, cause: quality.message }
       : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed", cause: quality.cleanup.message }
         : { kind: "idle" };
-  const notification = [model.status, gameSessionPhaseCode(model.gameSession) === 0 ? model.storedFlightRecordsStatus : "",
+  const notification = [model.status, gameSessionPhaseCode(model.gameSession) === 0 ? recordListNotice(model.recordList) : "",
     model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested"
     ? model.flightLogDownload.message : "", model.lakeWaterQuality.kind === "failed" ? model.lakeWaterQuality.message : ""]
     .filter((value) => value.length > 0).join(" · ");
@@ -757,7 +757,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
     flight_controller_failure: model.flightExecution.kind === "stopped"
       && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,
     head_hud_failure: headHudResourceFailure,
-    stored_records: Object.freeze(model.storedFlightRecords.map((record) => Object.freeze({ id: record.id,
+    stored_records: Object.freeze(recordListEntries(model.recordList).map((record) => Object.freeze({ id: record.id,
       saved_at: record.savedAt, personal_best: record.personalBest })))
   });
 }

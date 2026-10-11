@@ -19,6 +19,15 @@ export interface StoredFlightRecordUiEntry {
   readonly personalBest: boolean;
 }
 
+export type RecordListState = { readonly nextRequestId: number } & (
+  | { readonly kind: "unloaded" }
+  | { readonly kind: "loading"; readonly requestId: number; readonly retained: readonly StoredFlightRecordUiEntry[] }
+  | { readonly kind: "ready"; readonly records: readonly StoredFlightRecordUiEntry[] }
+  | { readonly kind: "failed"; readonly message: string; readonly retained: readonly StoredFlightRecordUiEntry[] }
+);
+
+const EMPTY_STORED_FLIGHT_RECORDS: readonly StoredFlightRecordUiEntry[] = Object.freeze([]);
+
 export type NamedGameSessionOperation =
   | "open-setup"
   | "set-control-manual"
@@ -161,10 +170,7 @@ export interface AppModel {
   readonly pendingReplayClockRequestId: number | null;
   readonly nextReplayClockRequestId: number;
   readonly replayCameraMode: "auto" | FlightCameraMode;
-  readonly storedFlightRecords: readonly StoredFlightRecordUiEntry[];
-  readonly storedFlightRecordsStatus: string;
-  readonly pendingRecordListRequestId: number | null;
-  readonly nextRecordListRequestId: number;
+  readonly recordList: RecordListState;
   readonly pendingGameRequestId: number | null;
   readonly nextRequestId: number;
 }
@@ -478,13 +484,28 @@ export function createInitialAppModel(): AppModel {
     replayClockGeneration: 0,
     pendingReplayClockRequestId: null,
     nextReplayClockRequestId: 1,
-    storedFlightRecords: Object.freeze([]),
-    storedFlightRecordsStatus: "保存記録を読み込んでいる",
-    pendingRecordListRequestId: null,
-    nextRecordListRequestId: 1,
+    recordList: Object.freeze({ kind: "unloaded", nextRequestId: 1 }),
     pendingGameRequestId: null,
     nextRequestId: 1
   });
+}
+
+export function recordListEntries(state: RecordListState): readonly StoredFlightRecordUiEntry[] {
+  switch (state.kind) {
+    case "unloaded": return EMPTY_STORED_FLIGHT_RECORDS;
+    case "ready": return state.records;
+    case "loading":
+    case "failed": return state.retained;
+  }
+}
+
+export function recordListNotice(state: RecordListState): string {
+  switch (state.kind) {
+    case "unloaded": return "";
+    case "loading": return "保存記録を読み込んでいる";
+    case "ready": return state.records.length === 0 ? "保存済みFlightRecordはない" : "";
+    case "failed": return `FlightRecord一覧を取得できない: ${state.message}`;
+  }
 }
 
 export function updateApp(model: AppModel, message: AppMessage): AppTransition {
@@ -664,17 +685,16 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "refresh-stored-flight-records":
       return beginStoredFlightRecordLoad(model);
     case "stored-flight-records-loaded":
-      if (model.pendingRecordListRequestId !== message.requestId) return transition(model);
+      if (model.recordList.kind !== "loading" || model.recordList.requestId !== message.requestId) return transition(model);
       return transition(withModel(model, {
-        storedFlightRecords: Object.freeze([...message.records]),
-        storedFlightRecordsStatus: message.records.length === 0 ? "保存済みFlightRecordはない" : "",
-        pendingRecordListRequestId: null
+        recordList: Object.freeze({ kind: "ready", nextRequestId: model.recordList.nextRequestId,
+          records: Object.freeze([...message.records]) })
       }));
     case "stored-flight-records-failed":
-      if (model.pendingRecordListRequestId !== message.requestId) return transition(model);
+      if (model.recordList.kind !== "loading" || model.recordList.requestId !== message.requestId) return transition(model);
       return transition(withModel(model, {
-        storedFlightRecordsStatus: `FlightRecord一覧を取得できない: ${message.message}`,
-        pendingRecordListRequestId: null
+        recordList: Object.freeze({ kind: "failed", nextRequestId: model.recordList.nextRequestId,
+          message: message.message, retained: model.recordList.retained })
       }));
     case "permission-completed":
       return updatePermissionCompletion(model, message);
@@ -1168,11 +1188,10 @@ function validFlightControllerIdentity(identity: FlightControllerIdentity): bool
 }
 
 function beginStoredFlightRecordLoad(model: AppModel): AppTransition {
-  const requestId = model.nextRecordListRequestId;
+  const requestId = model.recordList.nextRequestId;
   return transition(withModel(model, {
-    pendingRecordListRequestId: requestId,
-    nextRecordListRequestId: requestId + 1,
-    storedFlightRecordsStatus: "保存記録を読み込んでいる"
+    recordList: Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1,
+      retained: recordListEntries(model.recordList) })
   }), [{ type: "load-stored-flight-records", requestId }]);
 }
 
