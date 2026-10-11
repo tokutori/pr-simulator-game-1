@@ -2,13 +2,14 @@ import type { AnchorKind } from "../anchors.js";
 import type { Pose } from "./math.js";
 import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
+import type { GameUiView } from "../../generated/game-ui-view.js";
 
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];
 
 export const FLIGHT_MENU_GEOMETRY = Object.freeze({ distanceMeters: 2.4, centerY: -1.12, width: 0.62, height: 0.25 });
 
-export type UiControl = UiButton | UiToggle | UiRange | UiStatus | UiChart;
+export type UiControl = (UiButton | UiToggle | UiRange | UiStatus | UiChart) & Readonly<{ section?: string }>;
 
 export interface UiButton {
   readonly kind: "button";
@@ -33,13 +34,13 @@ export function uiButtonLabel(control: UiButton): string {
   return control.label;
 }
 
-export function uiControlBackground(control: UiControl): string {
-  if (control.kind !== "button") return "#183139";
+export function uiControlBackground(control: UiControl, theme: GameUiView["theme"]): string {
+  if (control.kind !== "button") return theme.choice_background;
   const presentation = control.presentation;
-  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? "#356d68" : "#10242d";
-  if (presentation?.kind === "choice") return presentation.selected ? "#356d68" : "#183139";
-  if (presentation?.kind === "disclosure") return "#10242d";
-  return "#294853";
+  if (presentation?.kind === "action") return presentation.emphasis === "primary" ? theme.primary_background : theme.panel_background;
+  if (presentation?.kind === "choice") return presentation.selected ? theme.primary_background : theme.choice_background;
+  if (presentation?.kind === "disclosure") return theme.panel_background;
+  return theme.normal_background;
 }
 
 export interface UiToggle {
@@ -56,6 +57,7 @@ export interface UiRange {
   readonly id: string;
   readonly label: string;
   readonly value: number;
+  readonly displayValue: string;
   readonly minimum: number;
   readonly maximum: number;
   readonly step: number;
@@ -72,53 +74,20 @@ export interface UiStatus {
   readonly rect: NormalizedRect;
 }
 
-export interface UiChart {
+type SharedChart = Extract<GameUiView["panels"][number]["controls"][number]["content"], { kind: "chart" }>["plot"];
+
+export type UiChart = Readonly<{
   readonly kind: "chart";
   readonly id: string;
   readonly label: string;
-  readonly xAxisLabel: string;
-  readonly yAxisLabel: string;
-  readonly xMinimum: number;
-  readonly xMaximum: number;
-  readonly yMinimum: number;
-  readonly yMaximum: number;
-  readonly equalAxisScale: boolean;
-  readonly series: readonly UiChartSeries[];
-  readonly vectors: readonly UiChartVector[];
-  readonly markers: readonly UiChartMarker[];
-  readonly timeMarkers: readonly UiChartMarker[];
-  readonly referenceLines: readonly UiChartReferenceLine[];
-  readonly cursorX: number | null;
-  readonly cursorPoints: readonly Readonly<{ x: number; y: number }>[];
   readonly enabled: false;
   readonly rect: NormalizedRect;
-}
+}> & SharedChart;
 
-export interface UiChartSeries {
-  readonly label: string;
-  readonly color: string;
-  readonly points: readonly Readonly<{ x: number; y: number }>[];
-  readonly segmentColors?: readonly string[];
-}
-
-export interface UiChartVector {
-  readonly label: string;
-  readonly color: string;
-  readonly start: Readonly<{ x: number; y: number }> | null;
-  readonly end: Readonly<{ x: number; y: number }> | null;
-}
-
-export interface UiChartMarker {
-  readonly label: string;
-  readonly color: string;
-  readonly point: Readonly<{ x: number; y: number }>;
-}
-
-export interface UiChartReferenceLine {
-  readonly value: number;
-  readonly label: string;
-  readonly color: string;
-}
+export type UiChartSeries = SharedChart["series"][number];
+export type UiChartVector = SharedChart["vectors"][number];
+export type UiChartMarker = SharedChart["markers"][number];
+export type UiChartReferenceLine = SharedChart["reference_lines"][number];
 
 export interface NormalizedRect {
   readonly x: number;
@@ -152,6 +121,7 @@ export interface UiPanel {
   readonly localPose: Pose;
   readonly size: PanelSize;
   readonly controls: readonly UiControl[];
+  readonly sections?: GameUiView["panels"][number]["sections"];
 }
 
 export type UiPanelComposition = "physical" | "overlay";
@@ -175,6 +145,7 @@ export interface UiViewModel {
   readonly activeOverlay: string | null;
   readonly panels: readonly UiPanel[];
   readonly headHud: HeadHudLayer;
+  readonly sharedPresentation?: Readonly<{ layout: GameUiView["layout"]; theme: GameUiView["theme"] }>;
 }
 
 export type UiAction =
@@ -211,45 +182,6 @@ export function normalizedRect(x: number, y: number, width: number, height: numb
   return Object.freeze({ x, y, width, height });
 }
 
-export function fitPlotRectToEqualScale(
-  left: number,
-  top: number,
-  right: number,
-  bottom: number,
-  equalScale: boolean
-): Readonly<{ left: number; top: number; right: number; bottom: number }> {
-  if (![left, top, right, bottom].every(Number.isFinite) || left >= right || top >= bottom) {
-    throw new RangeError("Chart plot bounds must have positive finite dimensions");
-  }
-  if (!equalScale) return Object.freeze({ left, top, right, bottom });
-  const side = Math.min(right - left, bottom - top);
-  const centerX = (left + right) / 2;
-  const centerY = (top + bottom) / 2;
-  return Object.freeze({
-    left: centerX - side / 2,
-    top: centerY - side / 2,
-    right: centerX + side / 2,
-    bottom: centerY + side / 2
-  });
-}
-
-export function formatChartTick(value: number): string {
-  if (!Number.isFinite(value)) throw new RangeError("Chart tick values must be finite");
-  const magnitude = Math.abs(value);
-  const digits = magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : 2;
-  const formatted = value.toFixed(digits).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
-  return formatted === "-0" ? "0" : formatted;
-}
-
-export function chartScaleBarDistance(span: number): number {
-  if (!Number.isFinite(span) || span <= 0) throw new RangeError("Chart scale span must be positive and finite");
-  const desired = span / 4;
-  const magnitude = 10 ** Math.floor(Math.log10(desired));
-  const normalized = desired / magnitude;
-  const factor = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
-  return factor * magnitude;
-}
-
 export function validateUiViewModel(viewModel: UiViewModel): void {
   validateHeadHudLayer(viewModel.headHud);
   const ids = new Set<string>();
@@ -270,34 +202,33 @@ export function validateUiViewModel(viewModel: UiViewModel): void {
         throw new RangeError(`Invalid range control: ${control.id}`);
       }
       if (control.kind === "chart") {
-        if (![control.xMinimum, control.xMaximum, control.yMinimum, control.yMaximum].every(Number.isFinite)
-            || control.xMinimum >= control.xMaximum || control.yMinimum >= control.yMaximum
-            || (control.equalAxisScale && Math.abs((control.xMaximum - control.xMinimum) - (control.yMaximum - control.yMinimum)) > 1.0e-9)
+        if (![control.x_minimum, control.x_maximum, control.y_minimum, control.y_maximum].every(Number.isFinite)
+            || control.x_minimum >= control.x_maximum || control.y_minimum >= control.y_maximum
+            || (control.equal_axis_scale && Math.abs((control.x_maximum - control.x_minimum) - (control.y_maximum - control.y_minimum)) > 1.0e-9)
             || control.series.length === 0) {
           throw new RangeError(`Invalid chart scale or series: ${control.id}`);
         }
-        if ((control.cursorX !== null && (!Number.isFinite(control.cursorX)
-              || control.cursorX < control.xMinimum || control.cursorX > control.xMaximum))
-            || control.cursorPoints.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))
-            || control.vectors.some((vector) => (vector.start === null) !== (vector.end === null)
-              || (vector.start !== null && vector.end !== null
-                && ![vector.start.x, vector.start.y, vector.end.x, vector.end.y].every(Number.isFinite)))
+        if ((control.cursor_x !== null && (!Number.isFinite(control.cursor_x)
+              || control.cursor_x < control.x_minimum || control.cursor_x > control.x_maximum))
+            || control.cursor_points.some((cursor) => !Number.isFinite(cursor.point.x) || !Number.isFinite(cursor.point.y))
+            || control.vectors.some((vector) => vector.segment !== null
+              && vector.segment.some((point) => ![point.x, point.y].every(Number.isFinite)))
             || control.markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
           throw new RangeError(`Invalid chart cursor: ${control.id}`);
         }
-        if (control.timeMarkers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
+        if (control.time_markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
           throw new RangeError(`Invalid chart time marker: ${control.id}`);
         }
-        if (control.referenceLines.some((line) => !Number.isFinite(line.value))) {
+        if (control.reference_lines.some((line) => !Number.isFinite(line.value))) {
           throw new RangeError(`Invalid chart reference line: ${control.id}`);
         }
         for (const series of control.series) {
           if (series.points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
             throw new RangeError(`Chart series has non-finite points: ${control.id}`);
           }
-          if (series.segmentColors !== undefined && (
-            series.segmentColors.length !== Math.max(0, series.points.length - 1)
-            || series.segmentColors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))
+          if (series.segment_colors.length > 0 && (
+            series.segment_colors.length !== Math.max(0, series.points.length - 1)
+            || series.segment_colors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))
           )) throw new RangeError(`Chart series has invalid segment colors: ${control.id}`);
         }
       }

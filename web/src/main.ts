@@ -5,7 +5,6 @@ import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./game/environment-briefing.js";
-import { NO_HEAD_HUD_VIEW } from "./presentation/head-hud-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
@@ -18,10 +17,12 @@ import type {
   AppMessage,
   AppModel,
   FlightControllerIdentity,
-  GameSessionOperation,
   ReplayClockCommand,
   ReplayClockState
 } from "./app/app-state.js";
+import type { GameUiSessionCommand } from "./app/game-ui-types.js";
+import type { GameUiPlatformInput } from "./generated/game-ui-input.js";
+import type { GameUiUpdate } from "./generated/game-ui-effects.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
@@ -53,7 +54,6 @@ import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
 import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
-import type { FlightSnapshotInput } from "./app/session-snapshot.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
@@ -79,6 +79,7 @@ const panelCanvas = document.createElement("canvas");
 panelCanvas.width = 1536;
 panelCanvas.height = 1152;
 const headHudCanvas = document.createElement("canvas");
+let headHudResourceFailure: string | null = null;
 let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
 let flightController: TailFlightController | null = null;
@@ -91,10 +92,15 @@ let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
 const flightControllerUi = new FlightControllerUiBindings();
 const controllerHudDisplay = Object.freeze({
-  render: (snapshot: FlightSnapshotInput): void => {
-    flightHud.renderDisplaySnapshot(snapshot, createFlightUiHudModel(model, snapshot));
+  render: (): void => {
+    synchronizeSharedGameUi();
+    const hud = createFlightUiHudModel(model);
+    flightHud.render(hud);
+    flightHud.setVisible(screenUiVisible(model.presentation) && hud !== null);
   },
-  setVisible: (visible: boolean): void => { flightHud.setVisible(visible); }
+  setVisible: (visible: boolean): void => {
+    flightHud.setVisible(visible && screenUiVisible(model.presentation) && model.sharedGameUi !== null && model.sharedGameUi.hud !== null);
+  }
 });
 let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
 let menuFontGeneration = 0;
@@ -102,6 +108,10 @@ let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
 const menuMeasurementCache: MenuMeasurementCache = new Map();
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
+}, () => {
+  synchronizeSharedGameUi();
+  synchronizeMenuScroll();
+  renderModel();
 });
 const flightLogDownload = new BrowserFlightLogDownload(document);
 
@@ -111,6 +121,7 @@ function dispatch(message: AppMessage): void {
   model = transition.model;
   runSideEffects([
     () => {
+      synchronizeSharedGameUi();
       synchronizeMenuScroll();
       if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
       renderModel();
@@ -138,10 +149,7 @@ function renderModel(): void {
   flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
     ? environment.value.sky.value.condition : null);
   flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
-  flightHud.setInformationProfile(model.difficulty.informationCode, model.difficulty.hudProfile);
-  const flightSnapshot = currentFlightSnapshot();
-  if (flightSnapshot !== null && (phaseCode === 5 || phaseCode === 6)) controllerHudDisplay.render(flightSnapshot);
-  flightHud.setVisible(domVisible && (phaseCode === 5 || phaseCode === 6));
+  controllerHudDisplay.render();
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const cameraMode = phaseCode === 10
     ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
@@ -172,10 +180,11 @@ function renderModel(): void {
 }
 
 function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
-  const frameModel = model;
+  synchronizeSharedGameUi();
+  let frameModel = model;
   const snapshot = currentFlightSnapshot();
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, runtime?.currentMode === "screen");
-  const draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap(), runtime?.framesPerSecond ?? null);
+  let draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap(), runtime?.framesPerSecond ?? null);
   let headView: HeadHudView = draft.headHud;
   if (headView.kind === "visible") {
     const dimensions = headHudCanvasSize(headView.layer);
@@ -191,15 +200,24 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   } else if (headView.kind === "visible") {
     headView = Object.freeze({ kind: "unavailable", reason: "text-overflow" });
   }
+  const observedHeadHudFailure = headView.kind === "unavailable" ? headView.reason : null;
+  if (headHudResourceFailure !== observedHeadHudFailure) {
+    headHudResourceFailure = observedHeadHudFailure;
+    synchronizeSharedGameUi();
+    frameModel = model;
+    draft = Object.freeze({ ...draft, model: frameModel });
+  }
   const viewModel = finalizeFlightFrameView(draft, headView);
   const panel = viewModel.panels[0];
   const panelContext = panelCanvas.getContext("2d");
   const scroll = frameModel.menuScroll;
+  const menuTheme = viewModel.sharedPresentation?.theme ?? frameModel.sharedGameUi?.theme;
   preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
+    : menuTheme === undefined ? Object.freeze({ kind: "pending" })
     : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
     : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
     : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
-      viewer, { locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
+      viewer, { theme: menuTheme, locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
   if (preparedMenu.kind === "ready") {
     if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
       const observedContext = preparedMenu.context;
@@ -375,9 +393,45 @@ function runEffect(effect: AppEffect): void {
       }, (error: unknown) => { console.error("Presentation cleanup failed", error); });
       return;
     }
-    case "game-session-operation":
-      runGameSessionOperation(effect.operation, effect.requestId, gameSessionPhaseCode(model.gameSession));
+    case "update-shared-game-ui": {
+      const session = gameSession;
+      if (session === null) return;
+      let result: GameUiUpdate;
+      try {
+        result = session.updateSharedUi(effect.action, sharedGameUiPlatformInput());
+      } catch (error: unknown) {
+        dispatch({ type: "game-session-status", message: `UI操作を適用できない: ${errorMessage(error)}` });
+        return;
+      }
+      runSideEffects([
+        () => {
+          synchronizeSharedGameUi();
+          dispatch({ type: "shared-game-ui-observed", view: session.readSharedUi(sharedGameUiPlatformInput()) });
+        },
+        ...result.effects.map((operation) => () => { dispatch({ type: "shared-game-ui-effect", effect: operation }); })
+      ]);
       return;
+    }
+    case "shared-game-session-command":
+      runSharedGameSessionCommand(effect.command, effect.requestId);
+      return;
+    case "shared-record-action": {
+      try { gameSession?.executeSharedRecordAction(effect.action); }
+      catch (error: unknown) { dispatch({ type: "game-session-status", message: `記録操作を適用できない: ${errorMessage(error)}` }); }
+      return;
+    }
+    case "shared-replay-action": {
+      const session = gameSession;
+      if (session === null) return;
+      try {
+        session.executeSharedRecordAction(effect.action);
+        dispatch({ type: "replay-clock-command-completed", requestId: effect.requestId, generation: effect.generation,
+          state: projectRuntimePlaybackClock(session.readPlaybackClock()) });
+      } catch (error: unknown) {
+        dispatch({ type: "replay-clock-command-failed", requestId: effect.requestId, generation: effect.generation, message: errorMessage(error) });
+      }
+      return;
+    }
     case "control-replay-clock":
       runReplayClockCommand(effect.requestId, effect.generation, effect.command);
       return;
@@ -467,9 +521,8 @@ function runEffect(effect: AppEffect): void {
       const startedAt = performance.now();
       const session = gameSession;
       if (session === null) return;
-      const token = session.captureQueryToken();
       window.setTimeout(() => {
-        if (gameSession !== session || session.acceptQuery(token, effect).kind === "stale") return;
+        if (gameSession !== session || model.replayClockGeneration !== effect.generation) return;
         dispatch({
           type: "replay-clock-tick",
           generation: effect.generation,
@@ -553,9 +606,9 @@ async function initializePresentation(requestId: number): Promise<void> {
     | { readonly kind: "renderer"; readonly renderer: RendererAdapter }
     | { readonly kind: "runtime"; readonly runtime: PresentationRuntime } = { kind: "uncreated" };
   try {
+    await initializeWasmRuntime();
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
-    await initializeWasmRuntime();
     if (isPageHidden()) return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
@@ -670,14 +723,52 @@ function dispatchBackendResult(
 
 function currentViewModel() {
   if (gameSessionPhaseCode(model.gameSession) < 0) return createBootViewModel(model);
-  return createGameViewModel(
-    model,
-    currentFlightSnapshot(),
-    model.flightAnalysis,
-    NO_HEAD_HUD_VIEW,
-    currentEnvironmentBriefing(),
-    currentVenueMap()
-  );
+  if (model.sharedGameUi === null) return createBootViewModel(model);
+  return createGameViewModel(model.sharedGameUi);
+}
+
+function sharedGameUiPlatformInput(): GameUiPlatformInput {
+  const viewport = currentViewport();
+  const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
+  const quality = model.lakeWaterQuality;
+  const waterQualityOperation: GameUiPlatformInput["water_quality_operation"] = quality.kind === "applying"
+    ? { kind: "applying", requested: quality.requested }
+    : quality.kind === "failed" ? { kind: "failed", requested: quality.requested, cause: quality.message }
+      : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed", cause: quality.cleanup.message }
+        : { kind: "idle" };
+  const notification = [model.status, gameSessionPhaseCode(model.gameSession) === 0 ? model.storedFlightRecordsStatus : "",
+    model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested"
+    ? model.flightLogDownload.message : "", model.lakeWaterQuality.kind === "failed" ? model.lakeWaterQuality.message : ""]
+    .filter((value) => value.length > 0).join(" · ");
+  return Object.freeze({
+    viewport: Object.freeze({ width: viewport.x, height: viewport.y,
+      root_font_size: Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize) }),
+    chart_extent: presentationMode === "screen" ? screenUi.chartExtent() : null,
+    presentation_mode: presentationMode === "phone-vr" ? "phone_vr" : presentationMode,
+    operation_pending: model.pendingGameRequestId !== null || model.presentation.type !== "ready",
+    webxr_available: model.webXrAvailable, phone_vr_available: model.phoneVrAvailable,
+    analysis_available: true, replay_available: true,
+    supported_replay_cameras: Object.freeze(["auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"] as const),
+    stored_records_available: true, flight_log_available: true,
+    flight_log_pending: model.flightLogDownload.kind === "pending",
+    water_quality: quality.applied,
+    water_quality_operation: waterQualityOperation,
+    notification,
+    flight_controller_failure: model.flightExecution.kind === "stopped"
+      && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,
+    head_hud_failure: headHudResourceFailure,
+    stored_records: Object.freeze(model.storedFlightRecords.map((record) => Object.freeze({ id: record.id,
+      saved_at: record.savedAt, personal_best: record.personalBest })))
+  });
+}
+
+function synchronizeSharedGameUi(): void {
+  const session = gameSession;
+  if (session === null || gameSessionPhaseCode(model.gameSession) < 0) return;
+  const token = session.captureQueryToken();
+  const view = session.readSharedUi(sharedGameUiPlatformInput());
+  if (gameSession !== session || session.acceptQuery(token, view).kind === "stale") return;
+  model = updateApp(model, { type: "shared-game-ui-observed", view }).model;
 }
 
 function currentEnvironmentBriefing() {
@@ -693,37 +784,38 @@ function currentEnvironmentBriefing() {
   return environment;
 }
 
-function runGameSessionOperation(operation: GameSessionOperation, requestId: number, requestedPhaseCode: number): void {
+function runSharedGameSessionCommand(command: GameUiSessionCommand, requestId: number): void {
+  const requestedPhaseCode = gameSessionPhaseCode(model.gameSession);
   const session = gameSession;
   if (session === null) {
     dispatch({ type: "game-operation-failed", requestId, message: "Rust GameSession is unavailable" });
     return;
   }
   try {
-    if (operation === "cancel-countdown") countdownGeneration += 1;
-    const result = session.executeOperation(operation);
+    if (command.kind === "cancel_countdown") countdownGeneration += 1;
+    const result = session.executeSharedSessionCommand(command);
     if (result.kind === "countdown-started") {
       completeGameOperation(requestId);
       countdownGeneration += 1;
       scheduleCountdownTick(countdownGeneration);
       return;
     }
-    if (operation === "pause") flightController?.suspend();
-    if (operation === "resume") flightController?.resume();
+    if (command.kind === "pause") flightController?.suspend();
+    if (command.kind === "resume") flightController?.resume();
     if (result.kind === "aborted") {
       runSideEffects([() => { completeGameOperation(requestId); }, () => { flightController?.suspend(); }]);
       return;
     }
     completeGameOperation(requestId);
   } catch (error: unknown) {
-    dispatchGameOperationFailure(requestId, errorMessage(error), { operation, requestedPhaseCode });
+    dispatchGameOperationFailure(requestId, errorMessage(error), { command, requestedPhaseCode });
   }
 }
 
 function dispatchGameOperationFailure(
   requestId: number,
   message: string,
-  context?: { readonly operation: GameSessionOperation; readonly requestedPhaseCode: number }
+  context?: { readonly command: GameUiSessionCommand; readonly requestedPhaseCode: number }
 ): void {
   const session = gameSession;
   if (session === null) {
@@ -739,7 +831,7 @@ function dispatchGameOperationFailure(
     }
     const failureMessage = context === undefined
       ? message
-      : `${gameOperationLabel(context.operation)} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
+      : `${context.command.kind} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
     dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession });
   } catch (syncError: unknown) {
     dispatch({
@@ -748,14 +840,6 @@ function dispatchGameOperationFailure(
       message: `${message}; GameSession resync failed: ${errorMessage(syncError)}`
     });
   }
-}
-
-function gameOperationLabel(operation: GameSessionOperation): string {
-  return typeof operation === "string"
-    ? operation
-    : operation.kind === "set-information-cue"
-      ? `set-information-cue-${String(operation.cueCode)}-${String(operation.visible)}`
-      : `set-${operation.axis}-${String(operation.code)}`;
 }
 
 function completeGameOperation(requestId: number): void {
@@ -918,6 +1002,7 @@ function onPhoneVrTrackingUnavailable(message: string): void {
 function onResize(): void {
   invalidateMenuGeometry();
   runtime?.resize(currentViewport());
+  renderModel();
 }
 
 function onPageHide(): void {

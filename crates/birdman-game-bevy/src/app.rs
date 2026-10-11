@@ -1,7 +1,5 @@
 #![doc = "Native Screen presentation using the existing authoritative Rust game session."]
 
-#[path = "diagnostics.rs"]
-mod diagnostics;
 #[path = "environment.rs"]
 mod environment;
 #[path = "frame_rate.rs"]
@@ -126,7 +124,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 ..default()
             }),
     )
-    .add_plugins(MaterialPlugin::<water::WaterMaterial>::default())
+    .add_plugins((
+        MaterialPlugin::<water::WaterMaterial>::default(),
+        bevy::input_focus::tab_navigation::TabNavigationPlugin,
+    ))
     .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
     .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
     .init_resource::<NativeSession>()
@@ -178,6 +179,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 .chain(),
         );
     register_input(&mut app);
+    app.add_systems(
+        PostUpdate,
+        ui::scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+    );
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {
         if water_verification.is_some() {
@@ -254,7 +259,12 @@ fn read_input(
     } = ports;
     let focused = windows.iter().all(|window| window.focused);
     session.observe_frame(focused, time.delta() > MAX_FRAME_DELTA);
-    if keys.just_pressed(KeyCode::KeyC) {
+    if keys.just_pressed(KeyCode::KeyC)
+        && !matches!(
+            session.game.snapshot().phase(),
+            birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract
+        )
+    {
         camera.chase = !camera.chase;
         camera.look = Vec2::ZERO;
     }
@@ -276,7 +286,11 @@ fn read_input(
     }
     let flight_camera_active = matches!(
         session.game.snapshot().phase(),
-        SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } | SessionPhase::Result
+        SessionPhase::FlightRunning
+            | SessionPhase::FlightPaused { .. }
+            | SessionPhase::Result
+            | SessionPhase::Replay
+            | SessionPhase::Attract
     );
     if !flight_camera_active {
         camera.look = Vec2::ZERO;
@@ -576,8 +590,8 @@ mod tests {
     #[test]
     fn retry_and_new_flight_clear_previous_camera_look() {
         for return_action in [
-            native_session::MenuAction::Retry,
-            native_session::MenuAction::Title,
+            birdman_game_session::game_ui::GameUiSessionCommand::Retry {},
+            birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {},
         ] {
             let (mut app, window) = flight_input_app();
             let initial = app.world().resource::<NativeSession>().physical_state();
@@ -612,13 +626,15 @@ mod tests {
             assert_eq!(app.world().resource::<CameraMode>().look, previous_look);
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .action(return_action)
+                .execute_ui_command(return_action.clone())
                 .unwrap();
             app.update();
             assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
-                if return_action == native_session::MenuAction::Title {
+                if return_action
+                    == (birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {})
+                {
                     session.action(native_session::MenuAction::Start).unwrap();
                     session.action(native_session::MenuAction::Prepare).unwrap();
                 }

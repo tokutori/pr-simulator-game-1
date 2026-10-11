@@ -3,7 +3,7 @@ import type { HeadHudElement, VisibleHeadHud } from "../render/contracts/head-hu
 import { browserPanelContext } from "./browser-canvas.js";
 import { HEAD_HUD_CARD_PADDING, HEAD_HUD_LINE_HEIGHT, headHudElementValue, headHudInstrumentHeight } from "./head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "./head-hud-view.js";
-import type { PanelDrawingContext } from "./vr-panel-canvas.js";
+import type { PanelDrawingContext } from "./browser-canvas.js";
 import { inversePose, transformPoint, vec3 } from "../render/contracts/math.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
@@ -78,6 +78,7 @@ interface PreparedCard {
   readonly height: number;
   readonly padding: number;
   readonly instrumentHeight: number;
+  readonly instrumentText: readonly HeadHudTextInk[];
 }
 
 export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHudView, width: number, height: number): HeadHudPaintPreparation {
@@ -102,8 +103,32 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
       context.restore();
       return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
     }
-    cards.push(Object.freeze({ element, label: Object.freeze(label), value: Object.freeze(value), left: element.bounds.left * width, top: element.bounds.top * height,
-      width: cardWidth, height: cardHeight, padding, instrumentHeight }));
+    const left = element.bounds.left * width;
+    const top = element.bounds.top * height;
+    const instrumentText: HeadHudTextInk[] = [];
+    if (element.kind === "heading") {
+      const textTop = top + padding + (label.length + value.length) * lineHeight;
+      for (const tick of element.ticks) {
+        if (!tick.major || tick.label === "") continue;
+        const metrics = measuredLine(context, tick.label, lineHeight);
+        if (metrics === null) {
+          context.restore();
+          return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
+        }
+        const x = left + padding + tick.position_ratio * (cardWidth - padding * 2) - metrics.width / 2;
+        const baseline = textTop + lineHeight / 2 + (metrics.ascent - metrics.descent) / 2;
+        const ink = Object.freeze({ value: tick.label, x, baseline, left: x - metrics.left, top: baseline - metrics.ascent,
+          width: metrics.left + metrics.right, height: metrics.ascent + metrics.descent });
+        if (ink.left < left + padding || ink.left + ink.width > left + cardWidth - padding ||
+            ink.top < textTop || ink.top + ink.height > textTop + instrumentHeight) {
+          context.restore();
+          return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
+        }
+        instrumentText.push(ink);
+      }
+    }
+    cards.push(Object.freeze({ element, label: Object.freeze(label), value: Object.freeze(value), left, top,
+      width: cardWidth, height: cardHeight, padding, instrumentHeight, instrumentText: Object.freeze(instrumentText) }));
   }
   context.restore();
   return Object.freeze({ kind: "ready", view, width, height, fontSize, cards: Object.freeze(cards) });
@@ -123,14 +148,14 @@ export function drawHeadHud(context: HeadHudDrawingContext, preparation: HeadHud
     context.rect(card.left, card.top, card.width, card.height);
     context.clip();
     context.setGlobalAlpha(layer.backgroundAlpha);
-    context.setFillStyle("#07151d");
+    context.setFillStyle(layer.theme.panel_background);
     context.fillRect(card.left, card.top, card.width, card.height);
     context.setGlobalAlpha(layer.foregroundAlpha);
-    context.setFillStyle(card.element.kind === "text" && card.element.tone === "warning" ? "#ffca87" : "#f3fff9");
+    context.setFillStyle(card.element.kind === "text" && card.element.tone === "warning" ? layer.theme.focus_outline : layer.theme.text);
     for (const text of paintedCardText(card, lineHeight)) context.fillText(text.value, text.x, text.baseline);
     const textTop = card.top + card.padding + (card.label.length + card.value.length) * lineHeight;
     drawInstrument(context, card.element, card.left + card.padding, textTop,
-      card.width - card.padding * 2, card.instrumentHeight, fontSize);
+      card.width - card.padding * 2, card.instrumentHeight, fontSize, layer.theme);
     context.restore();
   }
   context.restore();
@@ -142,12 +167,12 @@ export function headHudPaintedTextInk(preparation: HeadHudPaintPreparation): rea
 }
 
 function paintedCardText(card: PreparedCard, lineHeight: number): readonly HeadHudTextInk[] {
-  return [...card.label, ...card.value].map((text, index) => {
+  return [...[...card.label, ...card.value].map((text, index) => {
     const x = card.left + card.padding + Math.max(0, text.metrics.left);
     const baseline = card.top + card.padding + index * lineHeight + lineHeight / 2 + (text.metrics.ascent - text.metrics.descent) / 2;
     return Object.freeze({ value: text.value, x, baseline, left: x - text.metrics.left, top: baseline - text.metrics.ascent,
       width: text.metrics.left + text.metrics.right, height: text.metrics.ascent + text.metrics.descent });
-  });
+  }), ...card.instrumentText];
 }
 
 export function validateHeadHudPaint(preparation: HeadHudPaintPreparation, viewer: ViewerFrame): HeadHudPaintPreparation {
@@ -220,65 +245,65 @@ function configureText(context: HeadHudDrawingContext, fontSize: number, locale:
   context.setTextAlign("left");
 }
 
-function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement, left: number, top: number, width: number, height: number, fontSize: number): void {
+function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement, left: number, top: number, width: number, height: number, fontSize: number,
+  theme: VisibleHeadHud["theme"]): void {
   const centerX = left + width / 2;
   const centerY = top + height / 2;
   switch (element.kind) {
     case "text": return;
     case "attitude": {
-      const roll = -element.rollDegrees * Math.PI / 180;
-      const pitchOffset = Math.max(-30, Math.min(30, element.pitchDegrees)) * height / 90;
+      const roll = element.geometry.horizon.rotation_degrees * Math.PI / 180;
+      const pitchOffset = element.geometry.horizon.pitch_offset_ratio * height;
       const length = Math.min(width * 0.43, height * 0.5);
       const directionX = Math.cos(roll);
       const directionY = Math.sin(roll);
       const perpendicularX = -directionY;
       const perpendicularY = directionX;
-      for (const mark of [-20, -10, 0, 10, 20]) {
-        const offset = pitchOffset - mark * height / 90;
-        const markX = centerX + perpendicularX * offset;
-        const markY = centerY + perpendicularY * offset;
-        const extent = mark === 0 ? length : length * 0.35;
-        line(context, markX - directionX * extent, markY - directionY * extent,
-          markX + directionX * extent, markY + directionY * extent, mark === 0 ? "#dffaf3" : "#9dc9cc", fontSize);
-      }
-      line(context, centerX - length * 0.45, centerY, centerX + length * 0.45, centerY, "#ffde71", fontSize);
-      line(context, centerX, centerY - fontSize * 0.25, centerX, centerY + fontSize * 0.25, "#ffde71", fontSize);
-      if (element.flightPathAngleDegrees !== null) {
-        const markerY = centerY - Math.max(-30, Math.min(30, element.flightPathAngleDegrees)) * height / 90;
-        const radius = fontSize * 0.35;
-        line(context, centerX - radius, markerY, centerX, markerY - radius, "#7df4c5", fontSize);
-        line(context, centerX, markerY - radius, centerX + radius, markerY, "#7df4c5", fontSize);
-      }
+      const horizonX = centerX + perpendicularX * pitchOffset;
+      const horizonY = centerY + perpendicularY * pitchOffset;
+      line(context, horizonX - directionX * length, horizonY - directionY * length,
+        horizonX + directionX * length, horizonY + directionY * length, theme.text, fontSize);
+      line(context, centerX - length * 0.45, centerY, centerX + length * 0.45, centerY, theme.focus_outline, fontSize);
+      line(context, centerX, centerY - fontSize * 0.25, centerX, centerY + fontSize * 0.25, theme.focus_outline, fontSize);
+      if (element.geometry.flight_path_y_ratio !== null) drawFlightPathMarker(context, centerX,
+        top + element.geometry.flight_path_y_ratio * height, fontSize, theme.focus_outline);
       return;
     }
     case "heading":
-      for (const offset of [-30, -15, 0, 15, 30]) {
-        const tickX = centerX + offset * width / 80;
-        line(context, tickX, top + height * 0.25, tickX, top + height * (offset === 0 ? 0.9 : 0.65), "#dffaf3", fontSize);
+      for (const tick of element.ticks) {
+        const tickX = left + tick.position_ratio * width;
+        line(context, tickX, top + height * (tick.major ? 0.5 : 0.75), tickX, top + height, tick.major ? theme.text : theme.muted_text, fontSize);
       }
-      line(context, centerX - fontSize * 0.2, top + height * 0.1, centerX + fontSize * 0.2, top + height * 0.1, "#ffde71", fontSize);
+      line(context, centerX - fontSize * 0.2, top + height * 0.9, centerX + fontSize * 0.2, top + height * 0.9, theme.focus_outline, fontSize);
       return;
     case "wind": {
       const radians = element.degrees * Math.PI / 180;
       const radius = Math.min(width * 0.3, height * 0.4);
       const endX = centerX + Math.sin(radians) * radius;
       const endY = centerY - Math.cos(radians) * radius;
-      line(context, centerX, centerY, endX, endY, "#7df4c5", fontSize);
-      line(context, endX, endY, endX - Math.sin(radians - 0.5) * radius * 0.35, endY + Math.cos(radians - 0.5) * radius * 0.35, "#7df4c5", fontSize);
-      line(context, endX, endY, endX - Math.sin(radians + 0.5) * radius * 0.35, endY + Math.cos(radians + 0.5) * radius * 0.35, "#7df4c5", fontSize);
+      line(context, centerX, centerY, endX, endY, theme.focus_outline, fontSize);
+      line(context, endX, endY, endX - Math.sin(radians - 0.5) * radius * 0.35, endY + Math.cos(radians - 0.5) * radius * 0.35, theme.focus_outline, fontSize);
+      line(context, endX, endY, endX - Math.sin(radians + 0.5) * radius * 0.35, endY + Math.cos(radians + 0.5) * radius * 0.35, theme.focus_outline, fontSize);
       return;
     }
-    case "angle-of-attack":
-    case "flight-path": {
-      const ratio = Math.max(0, Math.min(1, (element.degrees + 20) / 40));
+    case "angle-of-attack": {
       const innerWidth = width * 0.9;
       const innerLeft = left + width * 0.05;
-      line(context, innerLeft, centerY, innerLeft + innerWidth, centerY, "#dffaf3", fontSize);
-      line(context, centerX, top + height * 0.3, centerX, top + height * 0.7, "#9dc9cc", fontSize);
-      line(context, innerLeft + ratio * innerWidth, top + height * 0.15, innerLeft + ratio * innerWidth, top + height * 0.85, "#7df4c5", fontSize);
+      line(context, innerLeft, centerY, innerLeft + innerWidth, centerY, theme.text, fontSize);
+      line(context, centerX, top + height * 0.3, centerX, top + height * 0.7, theme.muted_text, fontSize);
+      line(context, innerLeft + element.ratio * innerWidth, top + height * 0.15, innerLeft + element.ratio * innerWidth, top + height * 0.85, theme.focus_outline, fontSize);
       return;
     }
+    case "flight-path":
+      drawFlightPathMarker(context, centerX, top + element.yRatio * height, fontSize, theme.focus_outline);
+      return;
   }
+}
+
+function drawFlightPathMarker(context: HeadHudDrawingContext, centerX: number, markerY: number, fontSize: number, color: string): void {
+  const radius = fontSize * 0.35;
+  line(context, centerX - radius, markerY, centerX, markerY - radius, color, fontSize);
+  line(context, centerX, markerY - radius, centerX + radius, markerY, color, fontSize);
 }
 
 function line(context: HeadHudDrawingContext, startX: number, startY: number, endX: number, endY: number, color: string, fontSize: number): void {

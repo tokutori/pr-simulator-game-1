@@ -1,3 +1,5 @@
+import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
 import { currentNamedAnalysisFixture } from "../game-check/current-session-fixture.js";
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
@@ -46,11 +48,7 @@ describe("Boot application state", () => {
   });
 
   it("preserves an activation when the same enabled control remains in the synchronized view", () => {
-    const refreshedBriefing = {
-      ...readyModel(2),
-      gameSession: sessionForTest(3)
-    };
-    const briefingView = createGameViewModel(refreshedBriefing, null);
+    const briefingView = createGameViewModel(currentSharedGameUiFixture(3));
 
     expect(isStaleGameFlowActivation(
       { type: "activate", controlId: "game-briefing-cancel" },
@@ -67,31 +65,16 @@ describe("Boot application state", () => {
     })).toBe(false);
   });
 
-  it("dispatches every enabled game-flow button from its rendered phase", () => {
-    const models = [
-      ...[0, 1, 2, 3, 4, 5, 8, 10].map((phaseCode) => readyModel(phaseCode)),
-      { ...readyModel(6), gameSession: sessionForTest(6, flightSnapshot, true) },
-      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "settings" as const } } },
-      { ...readyModel(6), gameSession: { ...sessionForTest(6, flightSnapshot), overlay: { kind: "help" as const } } },
-      { ...readyModel(7), resultTab: "summary" as const },
-      { ...readyModel(7), resultTab: "analysis" as const },
-      { ...readyModel(9), replayViewMode: "cinematic" as const },
-      { ...readyModel(9), replayViewMode: "telemetry" as const },
-      { ...readyModel(9), replayViewMode: "analysis" as const }
-    ];
-
-    for (const model of models) {
-      const view = createGameViewModel(model, flightSnapshot);
+  it("routes published UI actions to the single Rust owner without changing browser domain projections", () => {
+    for (const phase of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      const model = observeSharedUi(readyModel(phase), currentSharedGameUiFixture(phase));
+      const view = createGameViewModel(requireSharedUi(model));
       for (const control of view.panels.flatMap((panel) => panel.controls)) {
         if (control.kind !== "button" || !control.enabled) continue;
         const updated = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: control.id } });
-        expect(updated.model.status, `${view.scene}: ${control.id}`).not.toContain("is unavailable");
-        if (control.presentation?.kind === "choice" && control.presentation.selected) {
-          expect(updated.model).toBe(model);
-          expect(updated.effects).toEqual([]);
-          continue;
-        }
-        expect(updated.model !== model || updated.effects.length > 0, `${view.scene}: ${control.id}`).toBe(true);
+        expect(updated.model).toBe(model);
+        expect(updated.effects).toHaveLength(1);
+        expect(updated.effects[0]?.type).toBe("update-shared-game-ui");
       }
     }
   });
@@ -148,7 +131,7 @@ describe("Boot application state", () => {
       records: [{ id: 4, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }]
     }).model;
     const opening = updateApp(ready, {
-      type: "ui-action", action: { type: "activate", controlId: "game-title-open-record-4" }
+      type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } }
     });
     expect(opening.effects).toEqual([{ type: "open-stored-flight-record", id: 4, requestId: 2 }]);
     const entered = updateApp(opening.model, { canResume: false,
@@ -166,17 +149,17 @@ describe("Boot application state", () => {
     expect(entered.model.gameSession.phaseCode).toBe(9);
     expect(entered.model.pendingReplayClockRequestId).toBe(1);
     expect(updateApp(opening.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-title-open-record-4" }
+      type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } }
     }).model).toBe(opening.model);
   });
 
   it("loads and loops the independent Title Attract record", () => {
     const title = readyModel(0);
     const requested = updateApp(title, {
-      type: "ui-action", action: { type: "activate", controlId: "game-title-demo" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "enter_attract" } }
     });
     expect(requested.effects).toEqual([
-      { type: "game-session-operation", operation: "enter-attract", requestId: 2 }
+      { type: "shared-game-session-command", command: { kind: "enter_attract" }, requestId: 2 }
     ]);
     const entered = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 10, controlModeCode: 0,
@@ -223,10 +206,10 @@ describe("Boot application state", () => {
     expect(looped.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
 
     const returning = updateApp(looped.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-attract-return" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "leave_attract" } }
     });
     expect(returning.effects).toEqual([
-      { type: "game-session-operation", operation: "leave-attract", requestId: 3 }
+      { type: "shared-game-session-command", command: { kind: "leave_attract" }, requestId: 3 }
     ]);
     const returned = updateApp(returning.model, { canResume: false,
       type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 0, controlModeCode: 0,
@@ -239,12 +222,12 @@ describe("Boot application state", () => {
 
   it("serializes permission requests and backend changes", () => {
     const ready = readyModel();
-    const requested = updateApp(ready, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
+    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
     expect(requested.model.presentation).toEqual({ type: "transitioning", origin: "user-request", requestId: 2, from: "screen", to: "webxr", phase: "requesting" });
     expect(requested.effects).toEqual([{ type: "request-permission", mode: "webxr", requestId: 2 }]);
     expect(createBootViewModel(requested.model).panels[0]?.controls.filter((control) => control.kind === "button" && control.id.startsWith("boot-enter-")).every((control) => !control.enabled)).toBe(true);
 
-    const competing = updateApp(requested.model, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-phone-vr" } });
+    const competing = updateApp(requested.model, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "phone_vr" } } });
     expect(competing.model).toBe(requested.model);
     expect(competing.effects).toHaveLength(0);
 
@@ -264,7 +247,7 @@ describe("Boot application state", () => {
 
   it("cancels a stale successful permission result", () => {
     const ready = readyModel();
-    const transition = updateApp(ready, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
+    const transition = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
     const stale = updateApp(transition.model, {
       type: "permission-completed", requestId: 1, mode: "webxr", ok: true, message: "granted"
     });
@@ -274,7 +257,7 @@ describe("Boot application state", () => {
 
   it("reports the backend actually active after a failed switch", () => {
     const ready = readyModel();
-    const requested = updateApp(ready, { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
+    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
     const starting = updateApp(requested.model, {
       type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
     });
@@ -320,7 +303,7 @@ describe("Boot application state", () => {
     expect(completed.model.presentation).toEqual({ type: "ready", mode: "screen" });
     expect(completed.model.status).toBe(`${cause}; Screen is active`);
     expect(completed.effects).toEqual([]);
-    for (const view of [createBootViewModel(completed.model), createGameViewModel(completed.model, null)]) {
+    for (const view of [createBootViewModel(completed.model), createGameViewModel(currentSharedGameUiFixture(0, { platform: { notification: completed.model.status } }))]) {
       expect(view.panels[0]?.controls.some((control) => control.kind === "status" && control.value === completed.model.status)).toBe(true);
     }
   });
@@ -370,7 +353,7 @@ describe("Boot application state", () => {
 
   it.each(["webxr", "phone-vr"] as const)("keeps %s permission, startup fallback and explicit exit separate from faults", (mode) => {
     const requested = updateApp(readyModel(), {
-      type: "ui-action", action: { type: "activate", controlId: `boot-enter-${mode}` }
+      type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : mode } }
     });
     expect(requested.model.presentation).toMatchObject({ origin: "user-request", phase: "requesting" });
     const earlyCompletion = updateApp(requested.model, {
@@ -398,7 +381,7 @@ describe("Boot application state", () => {
       type: "backend-transition-completed", requestId: 2, requestedMode: mode, activeMode: mode,
       ok: true, message: "", successStatus: "VR is active"
     });
-    const exiting = updateApp(active.model, { type: "ui-action", action: { type: "activate", controlId: "boot-exit-vr" } });
+    const exiting = updateApp(active.model, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "screen" } } });
     expect(exiting.model.presentation).toEqual({
       type: "transitioning", origin: "user-request", requestId: 3, from: mode, to: "screen", phase: "stopping"
     });
@@ -450,7 +433,7 @@ describe("Boot application state", () => {
       ok: true, message: "", successStatus: "Screen is active"
     });
     expect(completed.effects).toEqual([]);
-    expect(createGameViewModel(completed.model, flightSnapshot).panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
+    expect(createGameViewModel(currentSharedGameUiFixture(6, { pauseReason: 1 })).panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
     const synchronized = updateApp(completed.model, {
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
@@ -459,7 +442,7 @@ describe("Boot application state", () => {
     expect(synchronized.model.status).toBe("Tracking lost; Screen is active");
     expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", phaseCode: 6, canResume: true });
     expect(synchronized.effects).toEqual([]);
-    const view = createGameViewModel(synchronized.model, flightSnapshot);
+    const view = createGameViewModel(currentSharedGameUiFixture(6, { platform: { notification: synchronized.model.status } }));
     expect(view.panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(true);
     expect(view.panels[0]?.controls.some((control) => control.kind === "status" && control.value === synchronized.model.status)).toBe(true);
     for (const action of [
@@ -474,7 +457,7 @@ describe("Boot application state", () => {
   });
 
   it("cancels pending permissions and disposes presentation on page hide", () => {
-    const pending = updateApp(readyModel(), { type: "ui-action", action: { type: "activate", controlId: "boot-enter-phone-vr" } });
+    const pending = updateApp(readyModel(), { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "phone_vr" } } });
     const hidden = updateApp(pending.model, { type: "page-hidden" });
     expect(hidden.model.presentation).toEqual({ type: "hidden" });
     expect(hidden.effects).toEqual([
@@ -512,7 +495,7 @@ describe("Boot application state", () => {
   });
 
   it("invalidates permission and backend completions across cache restoration", () => {
-    const pending = updateApp(readyModel(), { type: "ui-action", action: { type: "activate", controlId: "boot-enter-webxr" } });
+    const pending = updateApp(readyModel(), { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
     const cached = updateApp(pending.model, { type: "page-suspended" });
     const permission = updateApp(cached.model, {
       type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
@@ -541,7 +524,7 @@ describe("Boot application state", () => {
       { type: "switch-backend", mode: "screen", requestId: 3 }, { type: "restore-page-flight" }
     ]);
     expect(updateApp(cached.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-title-start" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } }
     }).effects).toEqual([]);
     expect(updateApp(cached.model, { type: "page-hidden" }).model.presentation).toEqual({ type: "hidden" });
   });
@@ -595,10 +578,10 @@ describe("Boot application state", () => {
 
   it("serializes game operations and ignores stale completions", () => {
     const title = readyModel(0);
-    const setup = updateApp(title, { type: "ui-action", action: { type: "activate", controlId: "game-title-start" } });
+    const setup = updateApp(title, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } } });
     expect(setup.model.pendingGameRequestId).toBe(2);
-    expect(setup.effects).toEqual([{ type: "game-session-operation", operation: "open-setup", requestId: 2 }]);
-    const competing = updateApp(setup.model, { type: "ui-action", action: { type: "activate", controlId: "game-title-start" } });
+    expect(setup.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "open_setup" }, requestId: 2 }]);
+    const competing = updateApp(setup.model, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } } });
     expect(competing.model).toBe(setup.model);
 
     const completed = updateApp(setup.model, { canResume: false,
@@ -626,85 +609,49 @@ describe("Boot application state", () => {
       countdownRemaining: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
     });
     expect(synced.model.gameSession).toEqual({
-      kind: "paused-flight", phaseCode: 6, controlLayout: "tail_incidence", snapshot: currentFlightDisplayFixture(6), canResume: false, overlay: { kind: "menu" }
+      kind: "paused-flight", phaseCode: 6, controlLayout: "tail_incidence", snapshot: currentFlightDisplayFixture(6), canResume: false
     });
   });
 
-  it("keeps Pause Settings and Help navigation inside the paused flight", () => {
-    const paused = readyModel(6);
-    const openedSettings = updateApp(paused, {
-      type: "ui-action", action: { type: "activate", controlId: "game-pause-open-settings" }
+  it("observes Pause Settings and Help from Rust without adding a browser overlay authority", () => {
+    withSharedGameUiSession(6, {}, (session, platform) => {
+      let model = readyModel(6);
+      for (const overlay of ["settings", "menu", "help", "menu"] as const) {
+        session.updateSharedUi({ kind: "set_pause_overlay", overlay }, platform);
+        const previous = model.gameSession;
+        model = observeSharedUi(model, session.readSharedUi(platform));
+        expect(model.gameSession).toBe(previous);
+        expect(model.sharedGameUi?.selections.pause_overlay).toBe(overlay);
+        expect("overlay" in model.gameSession).toBe(false);
+      }
     });
-    expect(openedSettings.effects).toEqual([]);
-    expect(openedSettings.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(openedSettings.model.gameSession).toMatchObject({ phaseCode: 6, canResume: false, snapshot: currentFlightDisplayFixture(6) });
-
-    const synchronized = updateApp(openedSettings.model, {
-      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
-      difficulty: openedSettings.model.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: true, display: { kind: "available", value: currentFlightDisplayFixture(6) }
-    });
-    expect(synchronized.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "settings" } });
-    expect(synchronized.model.gameSession).toMatchObject({ phaseCode: 6, canResume: true, snapshot: currentFlightDisplayFixture(6) });
-
-    const returned = updateApp(synchronized.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-pause-settings-back" }
-    });
-    expect(returned.effects).toEqual([]);
-    expect(returned.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "menu" } });
-
-    const openedHelp = updateApp(returned.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-pause-open-help" }
-    });
-    expect(openedHelp.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "help" } });
-    const returnedFromHelp = updateApp(openedHelp.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-pause-help-back" }
-    });
-    expect(returnedFromHelp.model.gameSession).toMatchObject({ kind: "paused-flight", overlay: { kind: "menu" } });
   });
 
-  it("does not dispatch Resume while external pause conditions remain", () => {
-    const model = readyModel(6);
-    const rejected = updateApp(model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" }
+  it("rejects Resume in the shared Rust view while external pause conditions remain", () => {
+    withSharedGameUiSession(6, { pauseReason: 1 }, (session, platform) => {
+      const view = createGameViewModel(session.readSharedUi(platform));
+      expect(view.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
+      expect(() => session.updateSharedUi({ kind: "session", command: { kind: "resume" } }, platform)).toThrow();
+      session.clearPauseReason(1);
+      const update = session.updateSharedUi({ kind: "session", command: { kind: "resume" } }, platform);
+      expect(update.effects).toEqual([{ kind: "session", command: { kind: "resume" } }]);
     });
-    expect(rejected.model).toBe(model);
+  });
+
+  it("rejects a browser Resume effect after the flight controller stops", () => {
+    const original = readyModel(6);
+    const identity = { sessionId: 1, controllerId: 1 };
+    const ready = updateApp(original, { type: "flight-controller-ready", identity }).model;
+    const stopped = updateApp(ready, { type: "flight-controller-stopped", identity, message: "input failed", snapshot: currentFlightDisplayFixture(6) }).model;
+    const rejected = updateApp(stopped, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "resume" } } });
+    expect(rejected.model).toBe(stopped);
     expect(rejected.effects).toEqual([]);
-
-    const eligible = {
-      ...model,
-      gameSession: sessionForTest(6, flightSnapshot, true)
-    };
-    const resumed = updateApp(eligible, {
-      type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" }
-    });
-    expect(resumed.effects).toEqual([
-      { type: "game-session-operation", operation: "resume", requestId: 2 }
-    ]);
-  });
-
-  it("ignores a Resume activation after synchronized pause eligibility changes", () => {
-    const stale = {
-      ...readyModel(6),
-      gameSession: sessionForTest(6, flightSnapshot, true)
-    };
-    const refreshed = updateApp(stale, {
-      type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
-      difficulty: stale.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
-    }).model;
-    const resume = updateApp(refreshed, {
-      type: "ui-action",
-      action: { type: "activate", controlId: "game-flight-resume" }
-    });
-    expect(resume.model).toBe(refreshed);
-    expect(resume.effects).toEqual([]);
   });
 
   it("projects the Rust-selected control mode after a Setup update", () => {
     const setupModel = readyModel(1);
-    const requested = updateApp(setupModel, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-assistance-0" } });
-    expect(requested.effects).toEqual([{ type: "game-session-operation", operation: { kind: "set-difficulty-option", axis: "assistance", code: 0 }, requestId: 2 }]);
+    const requested = updateApp(setupModel, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "select_assistance", assistance: "strong" } } });
+    expect(requested.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "select_assistance", assistance: "strong" }, requestId: 2 }]);
     const completed = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 2,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 0 },
@@ -721,12 +668,11 @@ describe("Boot application state", () => {
       difficulty: { ...readyModel(1).difficulty, informationCode: 4, hudProfile: fullHudProfile }
     };
     const requested = updateApp(model, {
-      type: "ui-action",
-      action: { type: "set-toggle", controlId: "game-setup-information-wind", value: false }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "set_cue", cue: "wind", visible: false } }
     });
     expect(requested.effects).toEqual([{
-      type: "game-session-operation",
-      operation: { kind: "set-information-cue", cueCode: 2, visible: false },
+      type: "shared-game-session-command",
+      command: { kind: "set_cue", cue: "wind", visible: false },
       requestId: 2
     }]);
   });
@@ -778,19 +724,16 @@ describe("Boot application state", () => {
       })
     });
     const result: AppModel = {
-      ...readyModel(),
-      gameSession: sessionForTest(7),
+      ...selectedModel(7, { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }] }),
       flightAnalysis,
-      resultTab: "analysis",
-      analysisCursorTimeSeconds: 0.5,
       pendingGameRequestId: null,
       nextRequestId: 2,
       nextReplayPoseRequestId: 1
     };
     const requested = updateApp(result, {
-      type: "ui-action", action: { type: "activate", controlId: "game-result-replay" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "enter_replay" } }
     });
-    expect(requested.effects).toEqual([{ type: "game-session-operation", operation: "enter-replay", requestId: 2 }]);
+    expect(requested.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "enter_replay" }, requestId: 2 }]);
     const entered = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 9, controlModeCode: 0,
       returnTarget: "result",
@@ -814,12 +757,12 @@ describe("Boot application state", () => {
       { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 }
     ]);
     const sought = updateApp(synchronized.model, {
-      type: "ui-action", action: { type: "set-range", controlId: "game-replay-cursor", value: 1.25 }
+      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 1.25 } }
     });
     expect(sought.model.analysisCursorTimeSeconds).toBe(0.5);
     expect(sought.effects).toEqual([{
-      type: "control-replay-clock", requestId: 2, generation: 2,
-      command: { kind: "seek", timeSeconds: 1.25 }
+      type: "shared-replay-action", requestId: 2, generation: 2,
+      action: { kind: "seek_replay", time_seconds: 1.25 }
     }]);
     const seekCompleted = updateApp(sought.model, {
       type: "replay-clock-command-completed", requestId: 2, generation: 2,
@@ -844,13 +787,28 @@ describe("Boot application state", () => {
       }
     });
     const leave = updateApp(currentPose.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-return" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "leave_replay" } }
     });
-    expect(leave.effects).toEqual([{ type: "game-session-operation", operation: "leave-replay", requestId: 3 }]);
-    const returned = updateApp(leave.model, { canResume: false,
+    expect(leave.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "leave_replay" }, requestId: 3 }]);
+    const returnedTransition = updateApp(leave.model, { canResume: false,
       type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
+    const freshResult = withSharedGameUiSession(7, { ticks: 200, actions: [
+      { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }
+    ] }, (session, platform) => {
+      const entry = session.updateSharedUi({ kind: "session", command: { kind: "enter_replay" } }, platform);
+      expect(entry.effects[0]).toEqual({ kind: "session", command: { kind: "enter_replay" } });
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
+      session.updateSharedUi({ kind: "set_replay_view", view: "telemetry" }, platform);
+      session.updateSharedUi({ kind: "seek_replay", time_seconds: 1.25 }, platform);
+      session.executeSharedRecordAction({ kind: "seek_replay", time_seconds: 1.25 });
+      const exit = session.updateSharedUi({ kind: "session", command: { kind: "leave_replay" } }, platform);
+      expect(exit.effects).toEqual([{ kind: "session", command: { kind: "leave_replay" } }]);
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
+      return session.readSharedUi(platform);
+    });
+    const returned = { ...returnedTransition, model: observeSharedUi(returnedTransition.model, freshResult) };
     expect(returned.model.gameSession.phaseCode).toBe(7);
     expect(returned.model.resultTab).toBe("analysis");
     expect(returned.model.analysisCursorTimeSeconds).toBe(1.25);
@@ -874,16 +832,16 @@ describe("Boot application state", () => {
       ...readyModel(),
       gameSession: sessionForTest(9),
       flightAnalysis,
-      analysisCursorTimeSeconds: 0.5,
+      playbackTimeSeconds: 0.5,
       pendingGameRequestId: null
     };
     const speed = updateApp(replay, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-speed-2" }
+      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "set_replay_rate", code: 2 } }
     });
     expect(speed.model.replaySpeed).toBe(1);
     expect(speed.effects).toEqual([{
-      type: "control-replay-clock", requestId: 1, generation: 1,
-      command: { kind: "rate", rateCode: 2 }
+      type: "shared-replay-action", requestId: 1, generation: 1,
+      action: { kind: "set_replay_rate", code: 2 }
     }]);
     const rateSet = updateApp(speed.model, {
       type: "replay-clock-command-completed", requestId: 1, generation: 1,
@@ -891,12 +849,12 @@ describe("Boot application state", () => {
     });
     expect(rateSet.model.replaySpeed).toBe(2);
     const play = updateApp(rateSet.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-play-pause" }
+      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
     });
     expect(play.model.replayPlaying).toBe(false);
     expect(play.effects).toEqual([{
-      type: "control-replay-clock", requestId: 2, generation: 2,
-      command: { kind: "play" }
+      type: "shared-replay-action", requestId: 2, generation: 2,
+      action: { kind: "toggle_replay_playing" }
     }]);
     const playing = updateApp(play.model, {
       type: "replay-clock-command-completed", requestId: 2, generation: 2,
@@ -925,12 +883,12 @@ describe("Boot application state", () => {
       { type: "schedule-replay-clock-tick", generation: 2, delayMilliseconds: 50 }
     ]);
     const pause = updateApp(advanced.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-play-pause" }
+      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
     });
     expect(pause.model.replayPlaying).toBe(true);
     expect(pause.effects).toEqual([{
-      type: "control-replay-clock", requestId: 4, generation: 3,
-      command: { kind: "pause" }
+      type: "shared-replay-action", requestId: 4, generation: 3,
+      action: { kind: "toggle_replay_playing" }
     }]);
     const paused = updateApp(pause.model, {
       type: "replay-clock-command-completed", requestId: 4, generation: 3,
@@ -953,7 +911,7 @@ describe("Boot application state", () => {
     });
     const replay: AppModel = {
       ...readyModel(9), flightAnalysis,
-      analysisCursorTimeSeconds: 1.9, replayPlaying: true, replaySpeed: 2, replayClockGeneration: 4
+      playbackTimeSeconds: 1.9, replayPlaying: true, replaySpeed: 2, replayClockGeneration: 4
     };
     const advancing = updateApp(replay, { type: "replay-clock-tick", generation: 4, elapsedSeconds: 0.1 });
     expect(advancing.effects).toEqual([{
@@ -996,36 +954,26 @@ describe("Boot application state", () => {
     expect(failed.model.status).toContain("record cursor is outside");
   });
 
-  it("cycles Auto and manual camera selection on every presentation backend", () => {
-    const replay: AppModel = readyModel(9);
-    const pilot = updateApp(replay, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    });
-    expect(pilot.model.replayCameraMode).toBe("pilot");
-    const chase = updateApp(pilot.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    });
-    expect(chase.model.replayCameraMode).toBe("chase");
-    let selection = chase;
-    for (const mode of ["orbit", "platform", "shore", "overhead", "side", "front", "telephoto", "auto"]) {
-      selection = updateApp(selection.model, {
-        type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
+  it("observes Rust camera cycling on every presentation backend without mutating the browser phase", () => {
+    for (const presentation_mode of ["screen", "webxr", "phone_vr"] as const) {
+      withSharedGameUiSession(9, { platform: { presentation_mode } }, (session, platform) => {
+        let model = readyModel(9);
+        const previous = model.gameSession;
+        for (const camera of ["pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto", "auto"]) {
+          const update = session.updateSharedUi({ kind: "cycle_replay_camera" }, platform);
+          expect(update.effects).toEqual([{ kind: "platform", command: { kind: "set_replay_camera", camera } }]);
+          model = observeSharedUi(model, session.readSharedUi(platform));
+          expect(model.replayCameraMode).toBe(camera);
+          expect(model.gameSession).toBe(previous);
+        }
       });
-      expect(selection.model.replayCameraMode).toBe(mode);
     }
-    const vrReplay: AppModel = {
-      ...replay,
-      presentation: Object.freeze({ type: "ready", mode: "webxr" })
-    };
-    expect(updateApp(vrReplay, {
-      type: "ui-action", action: { type: "activate", controlId: "game-replay-camera" }
-    }).model.replayCameraMode).toBe("pilot");
   });
 
   it("persists an explicitly aborted flight on operation completion", () => {
     const paused = readyModel(6);
     const requested = updateApp(paused, {
-      type: "ui-action", action: { type: "activate", controlId: "game-paused-abort" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "abort" } }
     });
     const completed = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
@@ -1087,7 +1035,7 @@ describe("Boot application state", () => {
 
   it("reconciles a rejected UI operation to the current Rust phase", () => {
     const requested = updateApp(readyModel(0), {
-      type: "ui-action", action: { type: "activate", controlId: "game-title-start" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } }
     });
     const rejected = updateApp(requested.model, {
       type: "game-operation-failed",
@@ -1109,12 +1057,13 @@ describe("Boot application state", () => {
     expect(rejected.model.status).toBe("InvalidTransition");
   });
 
-  it("reports an unsupported action against the active phase", () => {
-    const rejected = updateApp(readyModel(7), {
+  it("ignores controls that the shared Rust view does not publish", () => {
+    const model = observeSharedUi(readyModel(7), currentSharedGameUiFixture(7));
+    const rejected = updateApp(model, {
       type: "ui-action", action: { type: "activate", controlId: "unknown-result-action" }
     });
-
-    expect(rejected.model.status).toBe("Action unknown-result-action is unavailable in result");
+    expect(rejected.model).toBe(model);
+    expect(rejected.effects).toEqual([]);
   });
 
   it("preserves Result analysis and allows Retry again after a record allocation failure", () => {
@@ -1128,10 +1077,10 @@ describe("Boot application state", () => {
       })
     });
     const result: AppModel = {
-      ...readyModel(7), flightAnalysis: analysis, resultTab: "analysis", analysisCursorTimeSeconds: 1
+      ...selectedModel(7, { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 1 }] }), flightAnalysis: analysis
     };
     const requested = updateApp(result, {
-      type: "ui-action", action: { type: "activate", controlId: "game-result-retry" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } }
     });
     const rejected = updateApp(requested.model, {
       type: "game-operation-failed",
@@ -1156,10 +1105,10 @@ describe("Boot application state", () => {
     expect(rejected.model.pendingGameRequestId).toBeNull();
     expect(rejected.effects).toEqual([]);
     const retryAgain = updateApp(rejected.model, {
-      type: "ui-action", action: { type: "activate", controlId: "game-result-retry" }
+      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } }
     });
     expect(retryAgain.effects).toEqual([{
-      type: "game-session-operation", operation: "retry", requestId: retryAgain.model.pendingGameRequestId
+      type: "shared-game-session-command", command: { kind: "retry" }, requestId: retryAgain.model.pendingGameRequestId
     }]);
   });
 });
@@ -1468,7 +1417,20 @@ function readyModel(phaseCode = 0): AppModel {
 
 function sessionForTest(phaseCode: number, snapshot: FlightDisplaySnapshot | null = null, canResume = false): GameSessionUiState {
   const projected = phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 7 ? snapshot : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null;
-  const session = gameSessionState(phaseCode, 0, projected, canResume, null, "tail_incidence", phaseCode === 9 ? "result" : undefined);
+  const session = gameSessionState(phaseCode, 0, projected, canResume, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (session === null) throw new Error(`Invalid fixture game phase ${String(phaseCode)}`);
   return session;
+}
+
+function observeSharedUi(model: AppModel, view: ReturnType<typeof currentSharedGameUiFixture>): AppModel {
+  return updateApp(model, { type: "shared-game-ui-observed", view }).model;
+}
+
+function requireSharedUi(model: AppModel): ReturnType<typeof currentSharedGameUiFixture> {
+  if (model.sharedGameUi === null) throw new Error("Missing shared Rust UI observation");
+  return model.sharedGameUi;
+}
+
+function selectedModel(phaseCode: number, options: SharedGameUiFixtureOptions): AppModel {
+  return observeSharedUi(readyModel(phaseCode), currentSharedGameUiFixture(phaseCode, options));
 }

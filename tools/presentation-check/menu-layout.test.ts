@@ -9,14 +9,17 @@ import { hitMenuViewport, layoutMeasuredMenu, menuDocumentPointToPanel, menuPane
   menuRangeAction, menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
 const font = Object.freeze({ family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const);
-const style = Object.freeze({ fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
+const style = Object.freeze({ theme: currentSharedGameUiFixture(0).theme,
+  fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
 const controls: readonly UiControl[] = Object.freeze([
   { kind: "button", id: "resume", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.2, 0.44, 0.08) },
   { kind: "button", id: "settings", label: "設定", enabled: false, rect: normalizedRect(0.52, 0.2, 0.44, 0.08) },
   { kind: "status", id: "help", label: "操作方法", value: "Roll A/D · Pitch ↑/↓ · 重心 J/L\n入力と姿勢を確認する。", enabled: false, rect: normalizedRect(0.04, 0.32, 0.92, 0.22) },
-  { kind: "range", id: "time", label: "Flight time (s)", value: 5, minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
+  { kind: "range", id: "time", label: "Flight time (s)", value: 5, displayValue: "5.0", minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
   { kind: "toggle", id: "toggle", label: "表示", value: true, enabled: true, rect: normalizedRect(0.04, 0.76, 0.92, 0.08) }
 ]);
 const panel: UiPanel = Object.freeze({ id: "pause", title: "Pause", anchor: "menu", localPose: IDENTITY_POSE,
@@ -45,16 +48,27 @@ function documentFor(request: MenuLayoutRequest): MenuDocument {
 }
 
 function chart(): UiChart {
-  return Object.freeze({ kind: "chart", id: "chart", label: "Altitude", xAxisLabel: "Time (s)", yAxisLabel: "Height (m)",
-    xMinimum: 0, xMaximum: 20, yMinimum: 0, yMaximum: 20, equalAxisScale: true, enabled: false,
-    rect: normalizedRect(0.04, 0.12, 0.92, 0.5), series: [{ label: "Recorded altitude", color: "#ffffff", points: [{ x: 0, y: 10 }, { x: 20, y: 0 }] }],
-    vectors: [{ label: "Wind", color: "#ffffff", start: { x: 2, y: 3 }, end: { x: 4, y: 3 } }],
-    markers: [{ label: "Launch", color: "#ffffff", point: { x: 0, y: 10 } }],
-    timeMarkers: [{ label: "5 seconds", color: "#ffffff", point: { x: 5, y: 7 } }],
-    referenceLines: [{ value: 0, label: "Water", color: "#ffffff" }], cursorX: 5, cursorPoints: [{ x: 5, y: 7 }] });
+  const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20,
+    actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
+  const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
+  if (chart?.kind !== "chart") throw new Error("Missing real shared map chart");
+  return chart;
 }
 
 describe("Pure measured Menu document and shared viewport", () => {
+  it.each(["phone_vr", "webxr"] as const)("uses the shared rounding-boundary range text in %s", (presentation_mode) => {
+    const shared = currentSharedGameUiFixture(7, { ticks: 30, platform: { presentation_mode }, actions: [
+      { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.25 }
+    ] });
+    const panel = createGameViewModel(shared).panels[0];
+    if (panel === undefined) throw new Error("Missing shared VR panel");
+    const request = requestMenuLayout(panel, panel.size, { ...style, theme: shared.theme });
+    const text = request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "game-analysis-cursor" && text.slot.role === "value");
+    expect(text?.value).toBe("0.3");
+    const range = panel.controls.find((control) => control.id === "game-analysis-cursor");
+    expect(range).toMatchObject({ value: 0.25, displayValue: "0.3", step: 0.01 });
+  });
+
   it("preserves every semantic control and uses source rows in landscape and a single column in portrait", () => {
     const landscape = requestMenuLayout(panel, panel.size, style);
     const portrait = requestMenuLayout(panel, { width: 0.5, height: 1.8 }, style);
@@ -65,6 +79,8 @@ describe("Pure measured Menu document and shared viewport", () => {
       expect(document.controls.map((entry) => entry.control)).toEqual(controls);
       expect(document.controls.find((entry) => entry.control.id === "settings")?.control.enabled).toBe(false);
       expect(document.controls.find((entry) => entry.control.id === "time")?.control).toBe(controls[3]);
+      const rangeText = request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "time" && text.slot.role === "value");
+      expect(rangeText?.value).toBe("5.0");
       expect(Object.isFrozen(document)).toBe(true);
       expect(Object.isFrozen(document.controls)).toBe(true);
     }
@@ -184,16 +200,21 @@ describe("Pure measured Menu document and shared viewport", () => {
   it("measures every chart label, axis, tick, legend and annotation and keeps Rust query arrays and square scaling", () => {
     const original = chart();
     const request = requestMenuLayout({ ...panel, controls: [original] }, panel.size, style);
-    const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === "chart");
-    expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(5);
-    expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(5);
-    expect(texts.map((text) => text.value)).toEqual(expect.arrayContaining(["Altitude", "Time (s)", "Height (m)", "Recorded altitude", "Wind", "Launch", "5 seconds", "Water"]));
+    const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === original.id);
+    expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(original.presentation.x_ticks.length);
+    expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(original.presentation.y_ticks.length);
+    expect(texts.map((text) => text.value)).toEqual(expect.arrayContaining([original.label,
+      original.presentation.x_axis.label, original.presentation.y_axis.label,
+      ...original.presentation.x_ticks.map((tick) => tick.text.label), ...original.presentation.y_ticks.map((tick) => tick.text.label),
+      ...original.presentation.legend.map((entry) => entry.label),
+      ...original.presentation.marker_labels.map((entry) => entry.label),
+      ...original.presentation.time_marker_labels.map((entry) => entry.label), ...original.presentation.reference_labels.map((entry) => entry.label)]));
     const document = documentFor(request);
     const layout = document.controls[0];
     if (layout?.kind !== "chart") throw new Error("Missing chart");
     expect(layout.control).toBe(original);
     expect(layout.control.series).toBe(original.series);
-    expect(layout.control.cursorPoints).toBe(original.cursorPoints);
+    expect(layout.control.cursor_points).toBe(original.cursor_points);
     expect(layout.plot.width).toBe(layout.plot.height);
     for (const text of layout.texts) {
       expect(text.bounds.x).toBeGreaterThanOrEqual(layout.bounds.x);

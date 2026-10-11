@@ -1,6 +1,7 @@
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion } from "../../web/src/render/contracts/math.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -253,7 +254,7 @@ describe("Phone VR presentation backend", () => {
     const renderer = new FakeRenderer();
     renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
     const backend = createBackend(sensors, renderer);
-    const hud = createHeadHudFixture();
+    const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
     await backend.requestPermissionFromUserGesture();
     const startup = backend.start();

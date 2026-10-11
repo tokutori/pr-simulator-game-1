@@ -74,6 +74,154 @@ body {
   display: none;
 }
 
+.screen-ui-shell[data-shared="true"] {
+  color: var(--game-ui-text);
+  background: color-mix(in srgb, var(--game-ui-panel) calc(var(--game-ui-opacity) * 100%), transparent);
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-description,
+.screen-ui-shell[data-shared="true"] .screen-ui-choice small {
+  color: var(--game-ui-muted-text);
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls,
+.screen-ui-section-controls {
+  gap: var(--game-ui-gap);
+}
+
+.screen-ui-section {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-section > legend {
+  padding: 0 0 0.5rem;
+  font-weight: 700;
+}
+
+.screen-ui-section-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.screen-ui-section[data-layout="choice_grid"] > .screen-ui-section-controls {
+  grid-template-columns: repeat(var(--game-ui-columns), minmax(0, 1fr));
+}
+
+.screen-ui-section[data-layout="row"] > .screen-ui-section-controls {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.screen-ui-section[data-layout="normalized"],
+.screen-ui-section[data-layout="normalized"] > .screen-ui-section-controls {
+  display: contents;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button {
+  min-height: var(--game-ui-button-height);
+  color: var(--game-ui-text);
+  background: var(--game-ui-normal);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button.screen-ui-choice {
+  background: var(--game-ui-choice);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="primary"],
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button.screen-ui-choice[aria-pressed="true"] {
+  background: var(--game-ui-primary);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="primary"] {
+  min-height: var(--game-ui-primary-height);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls button[data-emphasis="secondary"] {
+  background: transparent;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls button:focus-visible,
+.screen-ui-shell[data-shared="true"] .screen-ui-controls input:focus-visible {
+  outline-color: var(--game-ui-focus);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="center"] {
+  position: fixed;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] {
+  position: fixed;
+  inset: auto;
+  bottom: 0;
+  right: 0;
+  display: block;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"],
+.screen-ui-shell[data-shared="true"][data-shell="cinematic"] {
+  inset: auto;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  display: block;
+  border: 1px solid rgb(185 214 207 / 45%);
+  border-radius: 0.75rem;
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > h1,
+.screen-ui-shell[data-shared="true"][data-shell="pause_settings"] > .screen-ui-description {
+  display: block;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] > h1,
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] > .screen-ui-description,
+.screen-ui-shell[data-shared="true"] .screen-ui-panel > h2 {
+  display: none;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-panel {
+  padding: 0;
+  border: 0;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell] .screen-ui-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  margin: 0;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-panel[data-layout="normalized"] .screen-ui-controls {
+  display: block;
+}
+
+.screen-ui-shell[data-shared="true"][data-passthrough="true"] {
+  pointer-events: none;
+}
+
+.screen-ui-shell[data-shared="true"][data-passthrough="false"] {
+  pointer-events: auto;
+}
+
+.screen-ui-shell[data-shared="true"] .screen-ui-controls button,
+.screen-ui-shell[data-shared="true"] .screen-ui-controls input {
+  pointer-events: auto;
+}
+
+.screen-ui-shell[data-shared="true"][data-shell="flight_bar"] .screen-ui-section-controls {
+  justify-content: flex-end;
+}
+
 .screen-ui-shell {
   width: min(42rem, 100%);
   max-height: calc(100dvh - 2rem);
@@ -105,6 +253,11 @@ body {
   padding: 0.25rem 0.4rem;
   border-radius: 0.25rem;
   background: rgb(16 36 43 / 80%);
+}
+
+.screen-ui-shell[data-shared="true"][data-mode="analysis"][data-scroll-y="true"] > .build-version {
+  position: static;
+  margin-top: 0.9rem;
 }
 
 .screen-ui-shell[data-mode="analysis"] {
@@ -159,7 +312,7 @@ body {
   display: none;
 }
 
-.screen-ui-shell[data-mode="analysis"] .screen-ui-controls button {
+.screen-ui-shell[data-mode="analysis"] .screen-ui-panel[data-layout="normalized"] .screen-ui-controls button {
   overflow-wrap: anywhere;
   padding: clamp(0.12rem, 1vw, 0.65rem);
   font-size: clamp(0.62rem, 1.6vw, 1rem);
@@ -181,7 +334,8 @@ body {
   margin: 0;
 }
 
-.screen-ui-panel[data-layout="normalized"] .screen-ui-controls > * {
+.screen-ui-panel[data-layout="normalized"] .screen-ui-controls > *,
+.screen-ui-section[data-layout="normalized"] .screen-ui-section-controls > * {
   box-sizing: border-box;
   min-width: 0;
   min-height: 0;
@@ -257,42 +411,6 @@ body {
   font-size: 0.85rem;
 }
 
-.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] {
-  inset: auto;
-  top: max(0.75rem, env(safe-area-inset-top));
-  right: max(0.75rem, env(safe-area-inset-right));
-  z-index: 1;
-  display: block;
-  width: min(30rem, calc(100vw - max(0.75rem, env(safe-area-inset-left)) - max(0.75rem, env(safe-area-inset-right))));
-  max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)));
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-padding-block: 1rem;
-  padding: 1rem;
-  border: 1px solid rgb(185 214 207 / 45%);
-  border-radius: 0.75rem;
-  background: rgb(16 36 43 / 92%);
-  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 28%);
-  pointer-events: auto;
-}
-
-.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  justify-content: stretch;
-  gap: 0.75rem;
-}
-
-.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-choice-options {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
-}
-
-.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"] .screen-ui-status {
-  overflow-wrap: anywhere;
-  line-height: 1.5;
-}
-
 .flight-hud {
   position: fixed;
   top: max(0.75rem, env(safe-area-inset-top));
@@ -348,6 +466,10 @@ body {
 .flight-hud-attribution-notice p { margin: 0.25rem 0 0; }
 .flight-hud-controls { grid-area: controls; color: #b9c9c2; font-size: 0.65rem; }
 
+.flight-hud[data-shared="true"] .flight-hud-controls:not([hidden]) { display: block; }
+.flight-hud[data-shared="true"] .flight-hud-controls[hidden] { display: none; }
+.flight-hud[data-shared="true"] { pointer-events: auto; }
+
 .screen-ui-shell h1,
 .screen-ui-panel h2 {
   margin: 0;
@@ -363,7 +485,7 @@ body {
   .screen-ui-root { align-items: start; padding: max(0.6rem, env(safe-area-inset-top)) max(0.6rem, env(safe-area-inset-right)) max(0.6rem, env(safe-area-inset-bottom)) max(0.6rem, env(safe-area-inset-left)); }
   .screen-ui-shell { max-height: calc(100dvh - 1.2rem); padding: 1rem; }
   .screen-ui-shell[data-scene="Boot"] { top: max(0.6rem, env(safe-area-inset-top)); left: max(0.6rem, env(safe-area-inset-left)); width: min(21rem, calc(100vw - 1.2rem)); }
-  .screen-ui-shell[data-mode="analysis"] .screen-ui-controls button { font-size: clamp(0.58rem, 2.8vw, 0.85rem); }
+  .screen-ui-shell[data-mode="analysis"] .screen-ui-panel[data-layout="normalized"] .screen-ui-controls button { font-size: clamp(0.58rem, 2.8vw, 0.85rem); }
   .flight-hud { grid-template-columns: 5.5rem minmax(0, 1fr); width: min(19rem, calc(100vw - 1.2rem)); padding: 0.4rem 0.5rem; font-size: 0.65rem; }
   .flight-hud-adi { width: 5.5rem; height: 4.2rem; }
   .flight-hud-instrument { padding: 0.2rem 0.25rem; }
@@ -508,6 +630,12 @@ body {
   white-space: pre-line;
 }
 
+.screen-ui-shell[data-shared="true"][data-shell="analysis"] .screen-ui-status {
+  color: var(--game-ui-text);
+  background: color-mix(in srgb, var(--game-ui-panel) calc(var(--game-ui-opacity) * 100%), transparent);
+  overflow-wrap: anywhere;
+}
+
 .screen-ui-panel[data-layout="normalized"] .screen-ui-status {
   overflow: auto;
   overscroll-behavior: contain;
@@ -525,7 +653,6 @@ body {
   border-radius: 0.4rem;
   background: #122a31;
   color: #f3f4e8;
-  overflow: auto;
 }
 
 .screen-ui-chart figcaption {
@@ -535,9 +662,9 @@ body {
 
 .screen-ui-chart-viewport {
   position: relative;
-  flex: 1 0 10rem;
-  min-width: 14rem;
-  min-height: 10rem;
+  flex: 1 0 var(--chart-minimum-height);
+  min-width: var(--chart-minimum-width);
+  min-height: var(--chart-minimum-height);
 }
 
 .screen-ui-chart svg {
@@ -610,23 +737,23 @@ body {
   flex-shrink: 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  font-size: 0.85rem;
+  gap: var(--chart-legend-gap);
+  font-size: var(--chart-legend-font);
 }
 
 .screen-ui-chart-legend span::before {
   display: inline-block;
-  width: 0.75rem;
-  height: 0.75rem;
-  margin-right: 0.35rem;
+  width: var(--chart-legend-swatch-width);
+  height: var(--chart-legend-swatch-height);
+  margin-right: var(--chart-legend-swatch-gap);
   border-radius: 50%;
   background: var(--chart-series-color);
   content: "";
 }
 
 .screen-ui-chart-legend span[data-progress-scale="true"]::before {
-  width: 2rem;
-  height: 0.35rem;
-  border-radius: 0.2rem;
+  width: var(--chart-legend-gradient-width);
+  height: var(--chart-legend-gradient-height);
+  border-radius: var(--chart-legend-gradient-radius);
   background: linear-gradient(90deg, var(--chart-series-start), var(--chart-series-end));
 }

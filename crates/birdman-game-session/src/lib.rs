@@ -4,6 +4,7 @@ use birdman_game_core::ControlMode;
 use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
 
 mod environment;
+pub mod game_ui;
 mod hybrid_session;
 mod launch_venue;
 

@@ -94,6 +94,9 @@ native/WASM間のbitwise一致は要求せず、量ごとの許容差で比較�
 
 主要8 GameSceneとoverlayは `game-flow.md`、視点は `camera.md` に従う。
 Result/Analysis/Replayは `flight-record.md` の記録を共用し、表示契約は `result-analysis.md` に従う。
+chartのplot bounds、目盛、grid、軸・注記の位置と書式、凡例、map scale、北方向、cursor色とbounded scrollは共有Rustで導出する。
+adapterは実測したchart content extentを観測として返し、共有descriptorのlogical pixel座標とalphabetic baselineをSVG・Canvas・Bevyへ投影する。
+初回extentは共有側の1000×520、受理する実測の下限は140×100である。selected windの凡例は静的な意味を表示し、時刻依存の高度・scaleは既存cursor readoutへ集約する。
 最初のbrowser版からPilot視点を採用する。sceneごとのThree.js worldの再生成を避ける。
 開発順は「全Scene共通Screen/VR基盤→物理→ゲーム骨格→記録・解析・Replay→実環境→描画品質→配布」とする。
 実気象・地形の取得をゲーム進行の前提にしない。実行順と完了条件は[GitHub Milestones](https://github.com/tokutori/pr-simulator-game-1/milestones)、作業の依存関係はGitHub Issuesで管理する。
@@ -140,6 +143,9 @@ no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計�
 係数と検証ケースはBPG-002以降で適用範囲を再確認する。coreの依存はno_std対応で役割の明確なものに限り、
 crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
 局所線形化のhost検査だけはWindows/Linux/macOS対象のdev依存として固定`nalgebra 0.35.0`のstd featureを使用し、core製品依存・no_std/WASM buildとは分離する。repository checkerはこのcrate/name/kind/target/version/featuresの組合せだけを許可する。
+UI Schema生成はformat/sessionの非既定`schema` featureから固定`schemars 1.2.2`のoptional依存とderive featureだけを有効化し、CLI exporterで使用する。
+repository checkerはこのfeature wiringと依存宣言を限定許可し、WASM/Bevyの通常依存とfeatureからSchema生成を有効化する経路を拒否する。coreの依存とformatの`no_std`は維持する。
+Web基準のECMAScript `Number.toFixed` 書式は共有sessionの固定`ryu-js 1.0.3`で保持する。通常依存は同crateへ限定し、他crateへの直接重複配置をrepository checkerで拒否する。
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
 GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。

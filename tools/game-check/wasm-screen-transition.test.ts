@@ -5,10 +5,39 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppModel } from "../../web/src/app/app-state.js";
 import { queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import type { UiAction } from "../../web/src/render/contracts/ui.js";
+
+function observeSharedUi(session: TailAppSessionFacade, model: AppModel): AppModel {
+  return updateApp(model, { type: "shared-game-ui-observed", view: session.readSharedUi(sharedGameUiPlatform({
+    operation_pending: model.pendingGameRequestId !== null
+  })) }).model;
+}
+
+function sharedUiTransition(session: TailAppSessionFacade, model: AppModel, action: UiAction): ReturnType<typeof updateApp> {
+  const transition = updateApp(observeSharedUi(session, model), { type: "ui-action", action });
+  const effects: AppEffect[] = [];
+  let next = transition.model;
+  for (const effect of transition.effects) {
+    if (effect.type !== "update-shared-game-ui") {
+      effects.push(effect);
+      continue;
+    }
+    const update = session.updateSharedUi(effect.action, sharedGameUiPlatform());
+    next = observeSharedUi(session, next);
+    for (const typed of update.effects) {
+      const interpreted = updateApp(next, { type: "shared-game-ui-effect", effect: typed });
+      next = interpreted.model;
+      effects.push(...interpreted.effects);
+    }
+  }
+  return { model: next, effects };
+}
 
 beforeAll(() => {
   const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
@@ -47,9 +76,9 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       };
       completeCursor(updateApp(model, { type: "flight-analysis-loaded", requestId: load.requestId, data: analysis }));
       expect(model.analysisCursorSample?.state).toEqual(analysis.samples[0]?.state);
-      model = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-result-open-analysis" } }).model;
+      model = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-open-analysis" }).model;
       for (const timeSeconds of [0.005, analysis.summary.durationSeconds]) {
-        completeCursor(updateApp(model, { type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds } }));
+        completeCursor(sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds }));
       }
       expect(model.analysisCursorSample?.state).toEqual(analysis.samples.at(-1)?.state);
       expect(session.flightPort.snapshot_json()).toBe(before);
@@ -60,6 +89,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
   it("completes Title-to-Result-to-Retry and Replay through actual DOM controls", async () => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     const window = new Window();
+    window.document.documentElement.style.fontSize = "16px";
     vi.stubGlobal("window", window);
     vi.stubGlobal("document", window.document);
     vi.stubGlobal("HTMLElement", window.HTMLElement);
@@ -69,18 +99,32 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } };
     let lastEffects: readonly AppEffect[] = [];
     const render = (): void => {
-      adapter.render(createGameViewModel(model, gameSessionSnapshot(model.gameSession), model.flightAnalysis));
+      model = observeSharedUi(session, model);
+      if (model.sharedGameUi === null) throw new Error("Missing shared Rust UI");
+      adapter.render(createGameViewModel(model.sharedGameUi));
     };
     const adapter = new ScreenUiAdapter(root, (action) => {
-      const transition = updateApp(model, { type: "ui-action", action });
+      const transition = sharedUiTransition(session, model, action);
       model = transition.model;
       lastEffects = transition.effects;
-      const operation = transition.effects.find((effect) => effect.type === "game-session-operation");
-      if (operation?.type === "game-session-operation") {
-        session.executeOperation(operation.operation);
+      const operation = transition.effects.find((effect) => effect.type === "shared-game-session-command");
+      if (operation?.type === "shared-game-session-command") {
+        session.executeSharedSessionCommand(operation.command);
         const completed = updateApp(model, { type: "game-operation-completed", requestId: operation.requestId, ...readRuntimeSessionProjection(session) });
         model = completed.model;
         lastEffects = completed.effects;
+      } else {
+        const clockAction = transition.effects.find((effect) => effect.type === "shared-replay-action");
+        if (clockAction?.type === "shared-replay-action") {
+          session.executeSharedRecordAction(clockAction.action);
+          const clock = session.readPlaybackClock();
+          const completed = updateApp(model, { type: "replay-clock-command-completed",
+            requestId: clockAction.requestId, generation: clockAction.generation,
+            state: { timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: clock.kind === "playing" } });
+          model = completed.model;
+          lastEffects = completed.effects;
+          completeRecordQueries(completed.effects);
+        }
       }
       render();
     });
@@ -152,7 +196,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       synchronize();
       activate("game-flight-pause");
       activate("game-pause-open-settings");
-      expect(model.gameSession.kind === "paused-flight" && model.gameSession.overlay.kind).toBe("settings");
+      expect(model.gameSession.kind === "paused-flight" && model.sharedGameUi?.selections.pause_overlay).toBe("settings");
       activate("game-pause-settings-back");
       activate("game-flight-resume");
       session.flightPort.advance_tick_json(neutralTailInput);
@@ -170,7 +214,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       completeRecordQueries(loaded.effects);
       render();
       activate("game-result-open-analysis");
-      const cursor = updateApp(model, { type: "ui-action", action: { type: "set-range", controlId: "game-analysis-cursor", value: 0.005 } });
+      const cursor = sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: 0.005 });
       model = cursor.model;
       completeRecordQueries(cursor.effects);
       render();
@@ -182,9 +226,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       runClockEffect(synchronizeClock);
       expect(session.readPlaybackClock().timeSeconds).toBeCloseTo(0.005);
       activate("game-replay-play-pause");
-      const play = lastEffects.find((effect) => effect.type === "control-replay-clock");
-      if (play?.type !== "control-replay-clock") throw new Error("Replay play was not requested");
-      runClockEffect(play);
+      expect(session.readPlaybackClock().kind).toBe("playing");
       const advance = updateApp(model, { type: "replay-clock-tick", generation: model.replayClockGeneration, elapsedSeconds: 0.1 });
       model = advance.model;
       const advanceClock = advance.effects.find((effect) => effect.type === "control-replay-clock");

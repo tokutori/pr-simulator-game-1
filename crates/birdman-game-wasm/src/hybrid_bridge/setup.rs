@@ -2,7 +2,6 @@ use super::*;
 use crate::environment_snapshot::{
     EnvironmentContext, EnvironmentProjection, EnvironmentSnapshot, EnvironmentSource,
 };
-use birdman_game_core::FbwAuthority;
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, HudCue};
 
 #[wasm_bindgen]
@@ -310,18 +309,6 @@ impl HybridGameSessionBridge {
 }
 
 pub(super) fn control_mode(assistance: AssistanceLevel) -> Result<ControlMode, BoundaryError> {
-    match assistance {
-        AssistanceLevel::Strong => Ok(ControlMode::Automatic),
-        AssistanceLevel::Manual => Ok(ControlMode::Manual),
-        AssistanceLevel::Assisted | AssistanceLevel::Light => {
-            let authority = if assistance == AssistanceLevel::Assisted {
-                0.5
-            } else {
-                0.2
-            };
-            FbwAuthority::try_new(authority)
-                .map(ControlMode::Shared)
-                .map_err(|error| BoundaryError::Control(TailControlError::Actuator(error)))
-        }
-    }
+    birdman_game_session::game_ui::game_ui_control_mode(assistance)
+        .map_err(|error| BoundaryError::Control(TailControlError::Actuator(error)))
 }

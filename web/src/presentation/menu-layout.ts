@@ -5,13 +5,13 @@ import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlT
   MenuFixedTextRole, MenuFontIdentity, MenuHit, MenuLayoutRequest,
   MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
   MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
-import { chartScaleBarDistance, formatChartTick, uiButtonLabel } from "../render/contracts/ui.js";
-import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
+import { uiButtonLabel } from "../render/contracts/ui.js";
+import type { PanelSize, UiChart, UiControl, UiPanel } from "../render/contracts/ui.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
 export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: Readonly<{
-  fontMeters: number; font: MenuFontIdentity; locale: string; previousLabel: string; nextLabel: string; caption: string;
+  theme: MenuLayoutRequest["theme"]; fontMeters: number; font: MenuFontIdentity; locale: string; previousLabel: string; nextLabel: string; caption: string;
 }>): MenuLayoutRequest {
   if (![surfaceSize.width, surfaceSize.height, style.fontMeters].every((value) => Number.isFinite(value) && value > 0) ||
       style.locale.trim() === "" || style.previousLabel.trim() === "" || style.nextLabel.trim() === "" ||
@@ -27,10 +27,15 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
   const rows = menuRows(panel.controls, surfaceSize.width < surfaceSize.height, contentWidth, style.fontMeters);
   const font = Object.freeze({ ...style.font });
   const texts: MenuTextRequest[] = [];
-  const addText = (slot: MenuTextSlot, value: string, widthMeters: number): void => {
+  const addText = (slot: MenuTextSlot, value: string, widthMeters: number, chartText?: UiChart["presentation"]["x_axis"]): void => {
+    const chart = slot.kind === "control" ? panel.controls.find((control) => control.id === slot.controlId) : undefined;
+    const fontMeters = chartText === undefined || chart?.kind !== "chart" ? style.fontMeters
+      : style.fontMeters * chartText.font_size / chart.presentation.tick_font_size;
+    const textFont = chartText === undefined ? font : Object.freeze({ ...font, weight: chartText.font_weight });
     const identity = JSON.stringify([panel.id, surfaceSize.width, surfaceSize.height, style.locale, style.fontMeters,
-      font.family, font.weight, font.style, font.generation, slot, value, widthMeters]);
-    texts.push(Object.freeze({ identity, slot: Object.freeze(slot), value, widthMeters, fontMeters: style.fontMeters, font, locale: style.locale }));
+      textFont.family, textFont.weight, textFont.style, textFont.generation, slot, value, widthMeters, chartText]);
+    texts.push(Object.freeze({ identity, slot: Object.freeze(slot), value, widthMeters, fontMeters, font: textFont, locale: style.locale,
+      ...(chartText === undefined ? {} : { chartText }) }));
   };
   addText({ kind: "fixed", role: "title" }, panel.title, contentWidth);
   addText({ kind: "fixed", role: "caption" }, style.caption, contentWidth);
@@ -41,34 +46,33 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
   for (const row of rows) for (const item of row.controls) {
     const control = item.control;
     const width = item.width - paddingMeters * 2;
-    const addControlText = (role: MenuControlTextRole, index: number, value: string, textWidth = width): void => {
-      addText({ kind: "control", controlId: control.id, role, index }, value, textWidth);
+    const addControlText = (role: MenuControlTextRole, index: number, value: string, textWidth = width, chartText?: UiChart["presentation"]["x_axis"]): void => {
+      addText({ kind: "control", controlId: control.id, role, index }, value, textWidth, chartText);
     };
     addControlText("label", 0, control.kind === "button" ? uiButtonLabel(control) : control.label);
     switch (control.kind) {
       case "button": break;
       case "toggle": addControlText("value", 0, control.value ? "On" : "Off"); break;
-      case "range": addControlText("value", 0, String(control.value)); break;
+      case "range": addControlText("value", 0, control.displayValue); break;
       case "status": addControlText("value", 0, control.value); break;
       case "chart": {
-        addControlText("x-axis", 0, control.xAxisLabel);
-        addControlText("y-axis", 0, control.yAxisLabel);
-        if (control.equalAxisScale) {
-          addControlText("north", 0, "N ↑");
-          addControlText("scale", 0, `${formatChartTick(chartScaleBarDistance(control.xMaximum - control.xMinimum))} m`);
+        const presentation = control.presentation;
+        addControlText("x-axis", 0, presentation.x_axis.label, width, presentation.x_axis);
+        addControlText("y-axis", 0, presentation.y_axis.label, width, presentation.y_axis);
+        if (presentation.map_guides !== null) {
+          addControlText("north", 0, presentation.map_guides.north_label.label, width, presentation.map_guides.north_label);
+          addControlText("scale", 0, presentation.map_guides.scale_label.label, width, presentation.map_guides.scale_label);
         }
-        for (let tickIndex = 0; tickIndex <= 4; tickIndex++) {
-          addControlText("x-tick", tickIndex, formatChartTick(control.xMinimum + (control.xMaximum - control.xMinimum) * tickIndex / 4), width / 5);
-          addControlText("y-tick", tickIndex, formatChartTick(control.yMinimum + (control.yMaximum - control.yMinimum) * tickIndex / 4), width / 5);
-        }
-        control.series.forEach((series, index) => { addControlText("legend", index, series.label); });
-        [...control.vectors, ...control.markers, ...control.timeMarkers, ...control.referenceLines]
-          .forEach((annotation, index) => { addControlText("annotation", index, annotation.label); });
+        presentation.x_ticks.forEach((tick, index) => { addControlText("x-tick", index, tick.text.label, width / presentation.x_ticks.length, tick.text); });
+        presentation.y_ticks.forEach((tick, index) => { addControlText("y-tick", index, tick.text.label, width / presentation.y_ticks.length, tick.text); });
+        presentation.legend.forEach((entry, index) => { addControlText("legend", index, entry.label); });
+        [...presentation.marker_labels, ...presentation.time_marker_labels, ...presentation.reference_labels]
+          .forEach((annotation, index) => { addControlText("annotation", index, annotation.label, width, annotation); });
         break;
       }
     }
   }
-  return Object.freeze({ panel, surfaceSize: Object.freeze({ ...surfaceSize }), fontMeters: style.fontMeters, font,
+  return Object.freeze({ panel, theme: style.theme, surfaceSize: Object.freeze({ ...surfaceSize }), fontMeters: style.fontMeters, font,
     lineHeightMeters: style.fontMeters * 1.35, paddingMeters, gapMeters, rows, texts: Object.freeze(texts) });
 }
 
@@ -131,27 +135,31 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
         texts.push(text);
         textTop += text.bounds.height;
       };
-      specifications.filter((text) => text.slot.role === "label" || text.slot.role === "value" || text.slot.role === "y-axis" || text.slot.role === "north" || text.slot.role === "scale").forEach(placeText);
+      specifications.filter((text) => text.slot.role === "label" || text.slot.role === "value").forEach(placeText);
       if (item.control.kind !== "chart") return Object.freeze({ kind: "control", control: item.control,
         bounds: Object.freeze({ x: item.left, y: top, width: item.width, height: textTop - top + request.paddingMeters }), texts: Object.freeze(texts) });
-      const ticks = specifications.filter((text) => text.slot.role === "x-tick" || text.slot.role === "y-tick")
-        .map((text) => textLayout(text, 0, 0));
-      const tickHeight = Math.max(request.lineHeightMeters, ...ticks.map((text) => text.bounds.height));
-      const tickWidth = (item.width - request.paddingMeters * 2) / 5;
-      const plotWidth = item.width - request.paddingMeters * 2 - tickWidth * 1.5 - request.gapMeters;
-      const plotHeight = item.control.equalAxisScale ? plotWidth : Math.max(request.lineHeightMeters * 5, plotWidth * 0.55);
-      const plot = Object.freeze({ x: item.left + request.paddingMeters + tickWidth + request.gapMeters,
-        y: textTop + tickHeight / 2, width: plotWidth, height: plotHeight });
-      for (const tick of ticks) {
-        if (tick.request.slot.kind !== "control") throw new Error("Chart tick must belong to a control");
-        const horizontal = tick.request.slot.role === "x-tick";
-        const position = tick.request.slot.index / 4;
-        const left = horizontal ? plot.x + position * plot.width - tickWidth / 2 : item.left + request.paddingMeters;
-        const tickTop = horizontal ? plot.y + plot.height + request.gapMeters : plot.y + (1 - position) * plot.height - tick.bounds.height / 2;
-        texts.push(Object.freeze({ ...tick, bounds: Object.freeze({ ...tick.bounds, x: left, y: tickTop }) }));
+      const presentation = item.control.presentation;
+      const scale = (item.width - request.paddingMeters * 2) / presentation.viewport.width;
+      const [left, chartTop, right, bottom] = presentation.plot;
+      const origin = { x: item.left + request.paddingMeters, y: textTop };
+      const plot = Object.freeze({ x: item.left + request.paddingMeters + left * scale,
+        y: textTop + chartTop * scale, width: (right - left) * scale, height: (bottom - chartTop) * scale });
+      for (const specification of specifications.filter((text) => text.chartText !== undefined)) {
+        const source = specification.chartText;
+        if (source === undefined) throw new Error("Chart label is missing its shared descriptor");
+        const text = textLayout(specification, 0, 0);
+        const baseline = Object.freeze({ x: origin.x + source.position.x * scale, y: origin.y + source.position.y * scale });
+        const chartProjection = Object.freeze({ baseline, rotationDegrees: source.rotation_degrees, anchor: source.anchor });
+        const rectangles = text.lines.map((line, index) => menuChartTextLineGeometry(chartProjection, line, index, request.lineHeightMeters).bounds);
+        const left = Math.min(...rectangles.map((rect) => rect.x));
+        const right = Math.max(...rectangles.map((rect) => rect.x + rect.width));
+        const top = Math.min(...rectangles.map((rect) => rect.y));
+        const bottom = Math.max(...rectangles.map((rect) => rect.y + rect.height));
+        texts.push(Object.freeze({ ...text, bounds: Object.freeze({ x: left, y: top, width: right - left, height: bottom - top }),
+          chartProjection }));
       }
-      textTop = plot.y + plot.height + request.gapMeters + tickHeight;
-      specifications.filter((text) => text.slot.role === "x-axis" || text.slot.role === "legend" || text.slot.role === "annotation").forEach(placeText);
+      textTop += presentation.viewport.height * scale + request.gapMeters;
+      specifications.filter((text) => text.slot.role === "legend").forEach(placeText);
       return Object.freeze({ kind: "chart", control: item.control, plot,
         bounds: Object.freeze({ x: item.left, y: top, width: item.width, height: textTop - top + request.paddingMeters }), texts: Object.freeze(texts) });
     });
@@ -169,6 +177,21 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
       controls.some((control) => !finiteRect(control.bounds) || (control.kind === "chart" && !finiteRect(control.plot)))) return unavailable("invalid-layout");
   return Object.freeze({ kind: "ready", document: Object.freeze({ request, title, caption, controls: Object.freeze(controls),
     contentHeightMeters, previous, next, footerHeightMeters }) });
+}
+
+export function menuChartTextLineGeometry(projection: NonNullable<MenuTextLayout["chartProjection"]>, line: MenuMeasuredLine,
+  index: number, lineHeightMeters: number): Readonly<{ anchor: MenuPoint; bounds: MenuRect }> {
+  const rotation = projection.rotationDegrees * Math.PI / 180;
+  const shift = projection.anchor === "middle" ? -line.advanceMeters / 2 : projection.anchor === "end" ? -line.advanceMeters : 0;
+  const project = (coordinateX: number, coordinateY: number) => ({ x: projection.baseline.x + coordinateX * Math.cos(rotation) - coordinateY * Math.sin(rotation),
+    y: projection.baseline.y + coordinateX * Math.sin(rotation) + coordinateY * Math.cos(rotation) });
+  const corners = [shift - line.leftMeters, shift + line.rightMeters].flatMap((coordinateX) =>
+    [index * lineHeightMeters - line.ascentMeters, index * lineHeightMeters + line.descentMeters].map((coordinateY) => project(coordinateX, coordinateY)));
+  const left = Math.min(...corners.map((point) => point.x));
+  const top = Math.min(...corners.map((point) => point.y));
+  return Object.freeze({ anchor: Object.freeze(project(shift, index * lineHeightMeters)),
+    bounds: Object.freeze({ x: left, y: top, width: Math.max(...corners.map((point) => point.x)) - left,
+      height: Math.max(...corners.map((point) => point.y)) - top }) });
 }
 
 function validMeasurement(request: MenuTextRequest, measurement: MenuTextMeasurement, lineHeight: number): boolean {

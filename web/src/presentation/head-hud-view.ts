@@ -14,7 +14,6 @@ export interface HeadHudLayoutProfile {
   readonly clearVerticalHalfAngleDegrees: number;
   readonly textHeightDegrees: number;
   readonly clipMargin: number;
-  readonly backgroundAlpha: number;
   readonly foregroundAlpha: number;
 }
 
@@ -38,12 +37,11 @@ export const DEFAULT_HEAD_HUD_PROFILE: HeadHudLayoutProfile = Object.freeze({
   clearVerticalHalfAngleDegrees: 10,
   textHeightDegrees: 0.6,
   clipMargin: 0.035,
-  backgroundAlpha: 0.28,
   foregroundAlpha: 1
 });
 
 export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFrame, locale: string, profile: HeadHudLayoutProfile = DEFAULT_HEAD_HUD_PROFILE,
-  framesPerSecond?: number | null): HeadHudView {
+  framesPerSecond?: number | null, sharedTheme: FlightHudModel["theme"] | null = model?.theme ?? null): HeadHudView {
   if (locale.trim() === "") throw new RangeError("Head HUD display locale must be explicit");
   validateProfile(profile);
   const instruments = model === null ? [] : instrumentElements(model);
@@ -60,6 +58,7 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
     kind: "text", id: "head-readouts", label: model?.status ?? "", bounds: unitRect, value: text, tone: "normal"
   }));
   if (textElements.length === 0 && instruments.length === 0 && frameRateLabel === null) return NO_HEAD_HUD_VIEW;
+  if (sharedTheme === null) return NO_HEAD_HUD_VIEW;
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
 
   const distance = profile.distanceMeters;
@@ -149,7 +148,8 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
           kind: "visible", anchor: "head", localPose, locale,
           size: Object.freeze({ width, height }),
           clearRegion: rect(0.5 + Math.max(-width / 2, clearLeft) / width, 0.5 - clearTop / height, clearWidth / width, (clearTop - clearBottom) / height),
-          backgroundAlpha: profile.backgroundAlpha, foregroundAlpha: profile.foregroundAlpha,
+          backgroundAlpha: model?.layout.opacity ?? sharedTheme.hud_opacity, foregroundAlpha: profile.foregroundAlpha,
+          theme: sharedTheme,
           elements: Object.freeze(elements)
         })
       });
@@ -161,7 +161,7 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
 export function headHudElementValue(element: HeadHudElement): string {
   switch (element.kind) {
     case "attitude": return `P ${element.pitchDegrees.toFixed(0)}°  R ${element.rollDegrees.toFixed(0)}°`;
-    case "heading": return `${element.degrees.toFixed(0)}°`;
+    case "heading":
     case "text":
     case "wind":
     case "angle-of-attack":
@@ -186,25 +186,28 @@ function stackedHeight(heights: readonly number[], gap: number): number {
 
 function instrumentElements(model: FlightHudModel): readonly HeadHudElement[] {
   const elements: HeadHudElement[] = [];
-  if (model.attitude !== null) elements.push(Object.freeze({
+  const adi = model.geometry.adi;
+  if (model.attitude !== null && adi?.kind === "attitude") elements.push(Object.freeze({
     kind: "attitude", id: "head-attitude", label: "ADI", bounds: unitRect,
-    ...model.attitude, flightPathAngleDegrees: model.flightPathAngleDegrees
+    ...model.attitude, flightPathAngleDegrees: model.flightPathAngleDegrees, geometry: adi
   }));
-  if (model.headingDegrees !== null) elements.push(Object.freeze({
-    kind: "heading", id: "head-heading", label: "HDG", bounds: unitRect, degrees: model.headingDegrees
+  if (model.headingDegrees !== null && model.heading !== null) elements.push(Object.freeze({
+    kind: "heading", id: "head-heading", label: model.labels.heading, bounds: unitRect, degrees: model.headingDegrees,
+    value: model.heading, ticks: model.geometry.heading_ticks
   }));
   if (model.pilotPosition !== null) elements.push(Object.freeze({
-    kind: "text", id: "head-pilot", label: "PILOT POSITION", bounds: unitRect, value: model.pilotPosition, tone: "normal"
+    kind: "text", id: "head-pilot", label: model.labels.pilotPosition, bounds: unitRect, value: model.pilotPosition, tone: "normal"
   }));
   if (model.wind !== null) elements.push(model.windDirectionDegrees === null
-    ? Object.freeze({ kind: "text", id: "head-wind", label: "WIND", bounds: unitRect, value: model.wind, tone: "normal" })
-    : Object.freeze({ kind: "wind", id: "head-wind", label: "WIND", bounds: unitRect, degrees: model.windDirectionDegrees, value: model.wind }));
-  if (model.angleOfAttack !== null) elements.push(model.angleOfAttackDegrees === null
-    ? Object.freeze({ kind: "text", id: "head-aoa", label: "AOA", bounds: unitRect, value: "unavailable", tone: "normal" })
-    : Object.freeze({ kind: "angle-of-attack", id: "head-aoa", label: "AOA", bounds: unitRect, degrees: model.angleOfAttackDegrees, value: model.angleOfAttack }));
-  if (model.attitude === null && model.flightPathAngleDegrees !== null) elements.push(Object.freeze({
+    ? Object.freeze({ kind: "text", id: "head-wind", label: model.labels.wind, bounds: unitRect, value: model.wind, tone: "normal" })
+    : Object.freeze({ kind: "wind", id: "head-wind", label: model.labels.wind, bounds: unitRect, degrees: model.windDirectionDegrees, value: model.wind }));
+  if (model.angleOfAttack !== null) elements.push(model.angleOfAttackDegrees === null || model.geometry.angle_of_attack_ratio === null
+    ? Object.freeze({ kind: "text", id: "head-aoa", label: model.labels.angleOfAttack, bounds: unitRect, value: model.angleOfAttack, tone: "normal" })
+    : Object.freeze({ kind: "angle-of-attack", id: "head-aoa", label: model.labels.angleOfAttack, bounds: unitRect,
+      degrees: model.angleOfAttackDegrees, value: model.angleOfAttack, ratio: model.geometry.angle_of_attack_ratio }));
+  if (adi?.kind === "flight_path_only" && model.flightPathAngleDegrees !== null) elements.push(Object.freeze({
     kind: "flight-path", id: "head-flight-path", label: "FLIGHT PATH", bounds: unitRect,
-    degrees: model.flightPathAngleDegrees, value: `${model.flightPathAngleDegrees.toFixed(1)}°`
+    degrees: model.flightPathAngleDegrees, value: `${model.flightPathAngleDegrees.toFixed(1)}°`, yRatio: adi.y_ratio
   }));
   return Object.freeze(elements);
 }
@@ -219,7 +222,7 @@ function validateProfile(profile: HeadHudLayoutProfile): void {
   if (![profile.distanceMeters, profile.maximumWidthMeters, profile.maximumHeightMeters, profile.textHeightDegrees].every((value) => Number.isFinite(value) && value > 0) ||
       ![profile.clearHorizontalHalfAngleDegrees, profile.clearVerticalHalfAngleDegrees].every((value) => Number.isFinite(value) && value > 0 && value < 90) ||
       !Number.isFinite(profile.clipMargin) || profile.clipMargin < 0 || profile.clipMargin >= 1 ||
-      ![profile.backgroundAlpha, profile.foregroundAlpha].every((value) => Number.isFinite(value) && value >= 0 && value <= 1) ||
+      !Number.isFinite(profile.foregroundAlpha) || profile.foregroundAlpha < 0 || profile.foregroundAlpha > 1 ||
       profile.textHeightDegrees >= 90) {
     throw new RangeError("Head HUD profile requires positive finite dimensions, valid angles, and alpha in [0, 1]");
   }

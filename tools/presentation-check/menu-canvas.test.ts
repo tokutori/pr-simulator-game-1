@@ -3,7 +3,8 @@ import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import { drawMeasuredMenu, measureMenuLayout, menuCanvasSize, menuPaintedTextInk } from "../../web/src/presentation/menu-canvas.js";
-import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
+import type { HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
+import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.js";
 import { hitMenuViewport, layoutMeasuredMenu, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
@@ -12,8 +13,10 @@ import { prepareMenuPresentation } from "../../web/src/presentation/menu-prepara
 import type { MenuMeasurementCache } from "../../web/src/presentation/menu-preparation.js";
 import { menuActionAt, menuContextCanInteract, menuInputGeometry, menuInputGeometryChanged, menuPageProgress } from "../../web/src/presentation/menu-interaction.js";
 import { menuDocumentPointToPanel, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
-class RecordingContext implements HeadHudDrawingContext {
+class RecordingContext implements MenuDrawingContext {
   font = "";
   locale = "";
   baseline = "";
@@ -21,8 +24,12 @@ class RecordingContext implements HeadHudDrawingContext {
   saves = 0;
   restores = 0;
   clips = 0;
-  readonly drawings: { value: string; x: number; y: number; font: string; locale: string; baseline: string; align: string }[] = [];
-  readonly boxes: { x: number; y: number; width: number; height: number }[] = [];
+  fillStyle = "";
+  globalAlpha = 1;
+  readonly drawings: { value: string; x: number; y: number; font: string; locale: string; baseline: string; align: string; color: string; alpha: number }[] = [];
+  readonly boxes: { x: number; y: number; width: number; height: number; color: string; alpha: number }[] = [];
+  readonly translations: { x: number; y: number }[] = [];
+  readonly rotations: number[] = [];
   readonly paths: { x: number; y: number }[] = [];
   read: (value: string, pixels: number) => HeadHudTextMetrics = (value, pixels) => {
     const width = Array.from(value).length * pixels * 0.6;
@@ -31,9 +38,9 @@ class RecordingContext implements HeadHudDrawingContext {
       ascent: visible ? pixels * 0.6 : 0, descent: visible ? pixels * 0.2 : 0 };
   };
   clearRect(): void {}
-  fillRect(coordinateX: number, coordinateY: number, width: number, height: number): void { this.boxes.push({ x: coordinateX, y: coordinateY, width, height }); }
+  fillRect(coordinateX: number, coordinateY: number, width: number, height: number): void { this.boxes.push({ x: coordinateX, y: coordinateY, width, height, color: this.fillStyle, alpha: this.globalAlpha }); }
   fillText(value: string, coordinateX: number, coordinateY: number): void { this.drawings.push({ value, x: coordinateX, y: coordinateY,
-    font: this.font, locale: this.locale, baseline: this.baseline, align: this.align }); }
+    font: this.font, locale: this.locale, baseline: this.baseline, align: this.align, color: this.fillStyle, alpha: this.globalAlpha }); }
   strokeRect(): void {}
   beginPath(): void {}
   closePath(): void {}
@@ -45,12 +52,14 @@ class RecordingContext implements HeadHudDrawingContext {
   moveTo(coordinateX: number, coordinateY: number): void { this.paths.push({ x: coordinateX, y: coordinateY }); }
   lineTo(coordinateX: number, coordinateY: number): void { this.paths.push({ x: coordinateX, y: coordinateY }); }
   stroke(): void {}
-  setFillStyle(): void {}
+  setFillStyle(value: string): void { this.fillStyle = value; }
   setStrokeStyle(): void {}
   setFont(value: string): void { this.font = value; }
-  setTextBaseline(value: "middle"): void { this.baseline = value; }
+  setTextBaseline(value: "middle" | "alphabetic"): void { this.baseline = value; }
+  translate(coordinateX: number, coordinateY: number): void { this.translations.push({ x: coordinateX, y: coordinateY }); }
+  rotate(radians: number): void { this.rotations.push(radians); }
   setLineWidth(): void {}
-  setGlobalAlpha(): void {}
+  setGlobalAlpha(value: number): void { this.globalAlpha = value; }
   setLocale(value: string): void { this.locale = value; }
   setTextAlign(value: "left"): void { this.align = value; }
   measureText(value: string): HeadHudTextMetrics {
@@ -64,11 +73,11 @@ const panel: UiPanel = { id: "menu", title: "Pause", anchor: "menu", localPose: 
   { kind: "button", id: "resume", label: "Resume", enabled: true, rect: normalizedRect(0.04, 0.2, 0.92, 0.08) },
   { kind: "status", id: "help", label: "方法", value: "A\n\nB\n", enabled: false, rect: normalizedRect(0.04, 0.4, 0.92, 0.2) }
 ] };
-const style = { fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const,
+const style = { theme: currentSharedGameUiFixture(0).theme, fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const,
   locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Build" };
 
-function prepare(context: HeadHudDrawingContext, source = panel) {
-  const request = requestMenuLayout(source, source.size, style);
+function prepare(context: MenuDrawingContext, source = panel, presentation = style) {
+  const request = requestMenuLayout(source, source.size, presentation);
   const canvas = menuCanvasSize(source.size);
   const measurement = measureMenuLayout(context, request, canvas.width, canvas.height);
   if (measurement.kind !== "ready") throw new Error(measurement.reason);
@@ -78,6 +87,121 @@ function prepare(context: HeadHudDrawingContext, source = panel) {
 }
 
 describe("Canvas measurement boundary and shared Menu painting", () => {
+  it("paints the supplied shared theme for panels, text and every control emphasis without a local palette", () => {
+    const theme = { ...style.theme, panel_background: "#102030", text: "#d1e2f3", muted_text: "#a1b2c3",
+      primary_background: "#234567", normal_background: "#345678", choice_background: "#456789", panel_opacity: 0.37 };
+    const source: UiPanel = { ...panel, size: { width: 2.4, height: 3 }, controls: [
+      { kind: "button", id: "normal", label: "Normal", enabled: true, rect: normalizedRect(0, 0, 1, 0.08) },
+      { kind: "button", id: "primary", label: "Primary", enabled: true, rect: normalizedRect(0, 0.1, 1, 0.08),
+        presentation: { kind: "action", emphasis: "primary" } },
+      { kind: "button", id: "secondary", label: "Secondary", enabled: true, rect: normalizedRect(0, 0.2, 1, 0.08),
+        presentation: { kind: "action", emphasis: "secondary" } },
+      { kind: "button", id: "selected", label: "Selected", enabled: true, rect: normalizedRect(0, 0.3, 1, 0.08),
+        presentation: { kind: "choice", group: "choice", groupLabel: "Choice", selected: true, description: "Selected detail" } },
+      { kind: "button", id: "choice", label: "Choice", enabled: true, rect: normalizedRect(0, 0.4, 1, 0.08),
+        presentation: { kind: "choice", group: "choice", groupLabel: "Choice", selected: false, description: "Choice detail" } },
+      { kind: "button", id: "disclosure", label: "Disclosure", enabled: true, rect: normalizedRect(0, 0.5, 1, 0.08),
+        presentation: { kind: "disclosure", expanded: false } },
+      { kind: "button", id: "disabled", label: "Disabled", enabled: false, rect: normalizedRect(0, 0.6, 1, 0.08) },
+      { kind: "status", id: "status", label: "Status", value: "Ready", enabled: false, rect: normalizedRect(0, 0.7, 1, 0.08) }
+    ] };
+    const context = new RecordingContext();
+    const prepared = prepare(context, source, { ...style, theme });
+    const viewport = menuViewport(prepared.document, 0);
+    expect(viewport.maximumOffsetMeters).toBe(0);
+    expect(prepared.request.theme).toBe(theme);
+    drawMeasuredMenu(context, viewport, prepared.canvas.width, prepared.canvas.height);
+    expect(context.boxes[0]).toEqual({ x: 0, y: 0, width: prepared.canvas.width, height: prepared.canvas.height,
+      color: theme.panel_background, alpha: theme.panel_opacity });
+    const backgrounds = new Map([
+      ["normal", theme.normal_background], ["primary", theme.primary_background], ["secondary", theme.panel_background],
+      ["selected", theme.primary_background], ["choice", theme.choice_background], ["disclosure", theme.panel_background],
+      ["disabled", theme.normal_background], ["status", theme.choice_background]
+    ]);
+    for (const [index, layout] of prepared.document.controls.entries()) {
+      const clipped = menuRectInViewport(viewport, layout.bounds);
+      if (clipped.kind !== "visible") throw new Error("Missing visible themed control");
+      const rectangle = context.boxes[index + 1];
+      if (rectangle === undefined) throw new Error("Missing themed control paint");
+      expect(rectangle).toMatchObject({ color: backgrounds.get(layout.control.id), alpha: 1 });
+      expect(rectangle.x).toBeCloseTo(clipped.rect.x * prepared.canvas.width / source.size.width, 10);
+      expect(rectangle.y).toBeCloseTo(clipped.rect.y * prepared.canvas.height / source.size.height, 10);
+      expect(rectangle.width).toBeCloseTo(clipped.rect.width * prepared.canvas.width / source.size.width, 10);
+      expect(rectangle.height).toBeCloseTo(clipped.rect.height * prepared.canvas.height / source.size.height, 10);
+    }
+    expect(context.drawings.find((draw) => draw.value === source.title)).toMatchObject({ color: theme.text, alpha: 1 });
+    expect(context.drawings.find((draw) => draw.value === style.caption)).toMatchObject({ color: theme.muted_text, alpha: 1 });
+    expect(context.drawings.find((draw) => draw.value === "Disabled")).toMatchObject({ color: theme.muted_text, alpha: 1 });
+    for (const value of ["Normal", "Primary", "Secondary", "● Selected", "○ Choice", "▸ Disclosure", "Status", "Ready"]) {
+      expect(context.drawings.find((draw) => draw.value === value)).toMatchObject({ color: theme.text, alpha: 1 });
+    }
+  });
+
+  it("paints page controls using the current shared normal background and enabled or muted text", () => {
+    const theme = { ...style.theme, panel_background: "#243546", text: "#daeafb", muted_text: "#9aabbc",
+      normal_background: "#526374", panel_opacity: 0.49 };
+    const source = { ...panel, size: { width: 0.5, height: 0.45 } };
+    const prepared = prepare(new RecordingContext(), source, { ...style, theme });
+    for (const progress of [0, 1]) {
+      const context = new RecordingContext();
+      const viewport = menuViewport(prepared.document, progress);
+      expect(viewport.maximumOffsetMeters).toBeGreaterThan(0);
+      drawMeasuredMenu(context, viewport, prepared.canvas.width, prepared.canvas.height);
+      for (const [index, bounds] of [viewport.previousBounds, viewport.nextBounds].entries()) {
+        const rectangle = context.boxes[context.boxes.length - 2 + index];
+        if (rectangle === undefined) throw new Error("Missing themed page paint");
+        expect(rectangle).toMatchObject({ color: theme.normal_background, alpha: 1 });
+        expect(rectangle.x).toBeCloseTo(bounds.x * prepared.canvas.width / source.size.width, 10);
+        expect(rectangle.y).toBeCloseTo(bounds.y * prepared.canvas.height / source.size.height, 10);
+        expect(rectangle.width).toBeCloseTo(bounds.width * prepared.canvas.width / source.size.width, 10);
+        expect(rectangle.height).toBeCloseTo(bounds.height * prepared.canvas.height / source.size.height, 10);
+      }
+      expect(context.drawings.find((draw) => draw.value === style.previousLabel)).toMatchObject({
+        color: progress === 0 ? theme.muted_text : theme.text, alpha: 1 });
+      expect(context.drawings.find((draw) => draw.value === style.nextLabel)).toMatchObject({
+        color: progress === 1 ? theme.muted_text : theme.text, alpha: 1 });
+    }
+  });
+
+  it("projects shared chart baselines, anchors, rotation and series cursor colours without a second label layout", () => {
+    for (const kind of ["map", "speed"] as const) {
+      const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20, actions: [
+        { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart: kind }
+      ] }));
+      const chart = view.panels.flatMap((entry) => entry.controls).find((control) => control.kind === "chart");
+      if (chart?.kind !== "chart") throw new Error("Missing shared chart");
+      const source: UiPanel = { ...panel, size: { width: 2.4, height: 4 }, controls: [chart] };
+      const context = new RecordingContext();
+      const prepared = prepare(context, source);
+      const layout = prepared.document.controls[0];
+      if (layout?.kind !== "chart") throw new Error("Missing measured chart");
+      const [left, top, right, bottom] = chart.presentation.plot;
+      for (const text of layout.texts) {
+        const descriptor = text.request.chartText;
+        if (descriptor === undefined) continue;
+        const projection = text.chartProjection;
+        if (projection === undefined) throw new Error("Missing shared chart text projection");
+        expect(projection.anchor).toBe(descriptor.anchor);
+        expect(projection.rotationDegrees).toBe(descriptor.rotation_degrees);
+        expect((projection.baseline.x - layout.plot.x) / layout.plot.width).toBeCloseTo((descriptor.position.x - left) / (right - left), 12);
+        expect((projection.baseline.y - layout.plot.y) / layout.plot.height).toBeCloseTo((descriptor.position.y - top) / (bottom - top), 12);
+      }
+      const viewport = menuViewport(prepared.document, 0);
+      drawMeasuredMenu(context, viewport, prepared.canvas.width, prepared.canvas.height);
+      const inks = menuPaintedTextInk(viewport);
+      for (const text of layout.texts.filter((entry) => entry.chartProjection !== undefined)) {
+        const ink = inks.find((entry) => entry.identity === text.request.identity);
+        if (ink === undefined || ink.visible.kind !== "visible") throw new Error("Shared label is unreachable");
+        expect(context.translations.some((translation) => Math.abs(translation.x * source.size.width / prepared.canvas.width - ink.anchorX) < 1e-12
+          && Math.abs(translation.y * source.size.height / prepared.canvas.height - ink.baselineY) < 1e-12)).toBe(true);
+        expect(context.drawings.some((drawing) => drawing.value === ink.value && drawing.x === 0 && drawing.y === 0 && drawing.baseline === "alphabetic")).toBe(true);
+      }
+      expect(context.rotations).toContain(-Math.PI / 2);
+      for (const cursor of chart.cursor_points) expect(context.boxes.some((box) => box.width === 8 && box.height === 8 && box.color === cursor.color)).toBe(true);
+      expect(context.saves).toBe(context.restores);
+    }
+  });
+
   it("reflows every semantic Scene to both profile orientations and preserves reachable controls", () => {
     for (const view of [...createAllSceneFixtures(), createSceneFixture("Flight", "Pause"), createSceneFixture("Flight", "Pause/Settings")]) {
       const source = view.panels[0];
@@ -89,7 +213,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
         const viewer = configuredViewerFixture(width, height);
         const ready = prepareMenuPresentation(context, menuPanel,
           { scope: { kind: "scene", scene: view.scene, panelId: source.id, viewKey: "main" }, generation: 1 }, 0, viewer,
-          { locale: "ja", caption: view.description, font: style.font }, new Map());
+          { theme: style.theme, locale: "ja", caption: view.description, font: style.font }, new Map());
         if (ready.kind !== "ready") throw new Error(`${view.scene}/${String(width)}: ${ready.kind === "unavailable" ? ready.reason : ready.kind}`);
         expect(ready.viewport.document.controls).toHaveLength(source.controls.length);
         for (const control of source.controls) expect(ready.viewport.document.controls.find((layout) => layout.control.id === control.id)?.control).toBe(control);
@@ -112,10 +236,10 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
   it("uses the same measured viewport for page controls, clipped ranges and paint without a second geometry", () => {
     const context = new RecordingContext();
     const rangePanel: UiPanel = { ...panel, controls: [...panel.controls,
-      { kind: "range", id: "trim", label: "Trim", value: 0, minimum: -1, maximum: 1, step: 0.1, enabled: true, rect: normalizedRect(0.04, 0.7, 0.92, 0.08) }] };
+      { kind: "range", id: "trim", label: "Trim", value: 0, displayValue: "0.0", minimum: -1, maximum: 1, step: 0.1, enabled: true, rect: normalizedRect(0.04, 0.7, 0.92, 0.08) }] };
     const ready = prepareMenuPresentation(context, rangePanel,
       { scope: { kind: "overlay", scene: "Flight", overlay: "Pause", panelId: panel.id, viewKey: "main" }, generation: 7 }, 0,
-      configuredViewerFixture(720, 1280), { locale: "ja", caption: "Long note ".repeat(80), font: style.font }, new Map());
+      configuredViewerFixture(720, 1280), { theme: style.theme, locale: "ja", caption: "Long note ".repeat(80), font: style.font }, new Map());
     if (ready.kind !== "ready") throw new Error("Missing prepared Menu");
     expect(ready.viewport.maximumOffsetMeters).toBeGreaterThan(0);
     const bounds = ready.viewport.nextBounds;
@@ -144,7 +268,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
       controls: [{ kind: "button", id: "pause", label: "一時停止", enabled: true, rect: normalizedRect(0, 0, 1, 1) }] };
     const prepared = prepareMenuPresentation(new RecordingContext(), compact,
       { scope: { kind: "scene", scene: "Flight", panelId: compact.id, viewKey: "main" }, generation: 1 }, 0,
-      configuredViewerFixture(720, 1280), { locale: "ja", caption: "Flight status", font: style.font }, new Map());
+      configuredViewerFixture(720, 1280), { theme: style.theme, locale: "ja", caption: "Flight status", font: style.font }, new Map());
     if (prepared.kind !== "ready") throw new Error(`Compact Menu ${prepared.kind === "unavailable" ? prepared.reason : prepared.kind}`);
     expect(prepared.viewport.maximumOffsetMeters).toBe(0);
     expect(prepared.viewport.nextBounds.height).toBe(0);
@@ -157,7 +281,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
     const context = new RecordingContext();
     const scroll = { scope: { kind: "overlay" as const, scene: "Flight" as const, overlay: "Pause", panelId: panel.id, viewKey: "main" }, generation: 7 };
     const viewer = configuredViewerFixture(720, 1280);
-    const first = prepareMenuPresentation(context, panel, scroll, 0, viewer, { locale: "ja", caption: "", font: style.font }, new Map());
+    const first = prepareMenuPresentation(context, panel, scroll, 0, viewer, { theme: style.theme, locale: "ja", caption: "", font: style.font }, new Map());
     if (first.kind !== "ready") throw new Error("Missing layout A");
     const resume = first.viewport.document.controls.find((layout) => layout.control.id === "resume");
     if (resume === undefined) throw new Error("Missing Resume");
@@ -165,7 +289,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
       { x: resume.bounds.x + resume.bounds.width / 2, y: resume.bounds.y + resume.bounds.height / 2 }));
     if (oldAction.kind !== "action" || oldAction.action.type !== "menu-control") throw new Error("Missing old action");
     const second = prepareMenuPresentation(context, panel, scroll, 0, viewer,
-      { locale: "ja", caption: "Long paragraph ".repeat(100), font: style.font }, new Map());
+      { theme: style.theme, locale: "ja", caption: "Long paragraph ".repeat(100), font: style.font }, new Map());
     if (second.kind !== "ready") throw new Error("Missing layout B");
     expect(menuInputGeometryChanged(menuInputGeometry(first), second)).toBe(true);
     const oldState = { kind: "active" as const, ...scroll, progress: 0 };
@@ -175,7 +299,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
     expect(menuContextCanInteract(currentMenu, currentState, oldAction.action.context)).toBe(false);
     expect(menuContextCanInteract(currentMenu, currentState, currentMenu.context)).toBe(true);
     const sameGeometry = prepareMenuPresentation(context, { ...panel, controls: panel.controls.map((control) => control.kind === "status"
-      ? { ...control, value: "C\n\nD\n" } : control) }, scroll, 0, viewer, { locale: "ja", caption: "", font: style.font }, new Map());
+      ? { ...control, value: "C\n\nD\n" } : control) }, scroll, 0, viewer, { theme: style.theme, locale: "ja", caption: "", font: style.font }, new Map());
     if (sameGeometry.kind !== "ready") throw new Error("Missing equal geometry");
     expect(menuInputGeometryChanged(menuInputGeometry(first), sameGeometry)).toBe(false);
   });
@@ -278,16 +402,21 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
     const cache: MenuMeasurementCache = new Map();
     const scroll = { scope: { kind: "scene" as const, scene: "Title" as const, panelId: panel.id, viewKey: "main" }, generation: 1 };
     const viewer = configuredViewerFixture();
-    const typography = { locale: "ja", caption: "", font: style.font };
+    const typography = { theme: style.theme, locale: "ja", caption: "", font: style.font };
     const first = prepareMenuPresentation(context, panel, scroll, 0, viewer, typography, cache);
     if (first.kind !== "ready") throw new Error("Missing first Menu");
     context.read = () => { throw new Error("Unexpected repeated text measurement"); };
     const replacement = { ...panel, controls: panel.controls.map((control) => ({ ...control })) };
-    const second = prepareMenuPresentation(context, replacement, { ...scroll, generation: 2 }, 0.5, viewer, typography, cache);
+    const theme = { ...style.theme, panel_background: "#213547", panel_opacity: 0.41 };
+    const second = prepareMenuPresentation(context, replacement, { ...scroll, generation: 2 }, 0.5, viewer, { ...typography, theme }, cache);
     if (second.kind !== "ready") throw new Error("Missing cached Menu");
     for (const control of replacement.controls) expect(second.viewport.document.controls.find((layout) => layout.control.id === control.id)?.control).toBe(control);
     expect(second.context.generation).toBe(2);
     expect(second.viewport.progress).toBe(0.5);
+    expect(second.viewport.document.request.theme).toBe(theme);
+    const dimensions = menuCanvasSize(second.panel.size);
+    drawMeasuredMenu(context, second.viewport, dimensions.width, dimensions.height);
+    expect(context.boxes[0]).toMatchObject({ color: theme.panel_background, alpha: theme.panel_opacity });
     expect(prepareMenuPresentation(context, replacement, scroll, 0, viewer,
       { ...typography, font: { ...style.font, generation: 1 } }, cache)).toEqual({ kind: "unavailable", reason: "measurement-unavailable" });
   });

@@ -595,6 +595,7 @@ fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
 mod tests {
     use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
+    use birdman_game_session::game_ui::GameUiSessionCommand;
 
     fn projection_app() -> App {
         let mut app = App::new();
@@ -802,7 +803,7 @@ mod tests {
         assert_sample_projection(&mut app, sample, true);
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .action(MenuAction::Retry)
+            .execute_ui_command(GameUiSessionCommand::Retry {})
             .unwrap();
         app.update();
         assert_sample_projection(&mut app, sample, false);
@@ -972,7 +973,7 @@ mod tests {
         assert!(app.world().resource::<RenderHistory>().samples.is_none());
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .action(MenuAction::Retry)
+            .execute_ui_command(GameUiSessionCommand::Retry {})
             .unwrap();
         app.update();
         assert_sample_projection(&mut app, initial, false);
@@ -1244,7 +1245,9 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Abort).unwrap();
-            session.action(MenuAction::Retry).unwrap();
+            session
+                .execute_ui_command(GameUiSessionCommand::Retry {})
+                .unwrap();
         }
         app.update();
         assert_eq!(

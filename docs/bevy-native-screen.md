@@ -45,13 +45,14 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 
 起動→飛行を設定→操縦支援を選択→飛行準備へ進む→発進カウントダウンを開始→Flight→Result→同じ条件で再試行を確認する。
 設定・確認・発進の進行表示を設け、設定選択、主要操作、戻る操作を区別する。
-設定の操縦支援はManual・Shared 50%・Automaticの3択であり、確認画面では選択値と操作方法を表示する。
+設定のプリセット、Information、Assistance、Weatherは共有Rust Viewの候補と順序を使用する。
+確認画面では選択値と操作方法を表示し、versionとseedは閉じた技術情報に格納する。
 カウントダウンを取り消すと確認画面へ戻り、確認画面から設定変更もできる。
-既定のTypical環境を維持し、nativeで未提供の気象選択を表示しない。
+既定のTypical環境を維持し、気象選択は共有Rustの設定解決と準備処理へ接続する。
 
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
 波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。
-近景水面は6 kmの非均一格子と96/144/224分割を使用する。GPUへの投影、mesh、WGSLはBevy adapterが所有する。
+GPUへの投影、mesh、WGSLはBevy adapterが所有する。
 水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。波と全天画像の生成は共有Rustへ集約し、Web/BevyはGPU投影を担当する。検証境界と未完了項目は[共有モデル](shared-lake-render-model.md#検証境界と残作業)へ記載する。
 現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
 Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
@@ -61,19 +62,24 @@ Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持
 | ↑ / ↓ | 現行二系統モデルのpitch入力 |
 | ← / → | 現行二系統モデルの旋回入力 |
 | J / L | パイロット位置の目標値を前後に移動 |
-| C | Pilot / Chase切替 |
+| C | FlightのPilot / Chase切替。Replayでは共有cameraボタンを使用する |
 | P / Esc | 飛行の一時停止・復帰 |
 | 右mouse buttonを押してdrag | 視点操作 |
 | F12 | カレントディレクトリへnative screenshotを保存 |
+| Tab / Shift+Tab | 共通Viewの操作順にフォーカスを移動 |
+| Enter / Space | フォーカスした有効な操作を実行 |
+| Range上の矢印 / Home / End | 解析・Replayの共有時刻を変更 |
 
 独立したroll入力は現行二系統モデルに追加しない。操作機器を解放した後のpilot目標保持も既存coreの契約を使用する。
 
 Resultは終了理由、確定距離、短い原因説明を表示し、入れ子の内部診断は「技術情報」に格納する。
-Flight HUDは飛行中に限定する。一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
-本文と下部操作を同じcolumnに配置する。本文は最大65vhと残余高の範囲へ収め、操作領域を保持する。
-設定画面の本文は65vh制限を解除し、bounded rootの実残余高へ収める。既存の`flex_shrink: 1`・`min_height: 0`・縦scrollと下部navigationを保持し、他Sceneの高さを変更しない。
-GPU撮影時は表示中の画質buttonについて祖先のoverflow clipも検査する。viewport内にあるbuttonがscroll panelで切断される場合も検出する。
-ボタンは明示幅と最低高48pxを持ち、狭いwindowでは折り返す。本文と技術情報はwheelでスクロールできる。
+HUDの文言、表示値、表示条件と配置は共有Rust `GameUiHud`を使用する。Web基準のADI、FPI、方位目盛、風向針、AoA指示をretained ECSへ投影する。ADIのpitch係数・clamp、FPI位置、方位ラベル、AoA位置は共有Rustのgeometry descriptorで導出し、物理値を再計算しない。
+Customで姿勢cueを非表示にしても、飛行経路cueを選択した場合は独立したFPI領域を表示する。Replay入場時は共有UIで選択されたcameraを毎回適用し、Flight・Resultの視点切替と分離する。
+一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
+メニューの幅、最大scroll高、候補列数、CTAの順序と最低高は共有Viewのlogical pixelを使用する。
+600px以下のresponsive分岐も共通Rustで解決する。ウィンドウのlogical sizeとBevy `UiScale`から同じviewportを渡す。
+画面外の操作は縦scrollとkeyboard focusで到達できる。scene変更時にscrollを初期化し、同じsceneの更新は既存entity・focus・scrollを保持する。
+GPU撮影時は表示中のbuttonのglyphと割当領域を検査し、画面外の操作についてscroll範囲内の到達可能性を検査する。
 Resultでは選択した操縦支援、記録由来のcontroller version、確定した飛行時刻も確認できる。
 通常の概要と元のtyped causeを保持した技術情報を分離し、UIの折畳み操作から物理状態を変更しない。
 
@@ -98,6 +104,10 @@ ICU4X 2.3の`BidiClass::to_icu4c_value`に関する非推奨警告は、公式�
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
 水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
+共有UI接続では記録由来の解析系列、seek、再生停止・再開、再生速度を接続する。
+解析の軸名・単位、目盛、grid、基準線、legend、地図のscaleと北方位、plotの配置は共有`GameUiChart.presentation`から投影する。chart viewportの実測寸法を共有UIへ渡し、静的要素はview revisionの変更時だけ再投影する。seek中は同じcursor entityと共有系列色を使用する。低高さでは共有overflow契約に従ってchart内部をスクロールし、seek操作領域を保持する。文字のbaselineはBevyが使用するフォントの実測metricsから変換する。今回のchart投影に対する実GPU検査は未実施である。
+Replay cameraは共通候補順序を保持し、nativeのcapabilityでPilot・Chaseを提供する。その他のrigは未実装理由を表示する。
+記録一覧・保存・downloadはnativeで未提供であり、対応操作は共有capabilityから無効化する。
 水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。
@@ -106,15 +116,15 @@ near/farと全画質は同じ環境snapshot、world-space位置、固定phase、
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
 Titleと未準備のSetupは共有catalogの既定Typicalを展示する。準備後はGameSessionが確定した全identityを共有登録sourceと照合し、同じ環境の近景・遠景水面、空、DirectionalLight、変位Aabbを一括適用する。未知identityや資源欠損はtyped causeを保持し、交換前の表示を維持する。通知概要と技術情報から原因を確認できる。通常Updateは同じ失敗を反復せず、別環境への遷移または明示的な別画質への変更で再適用する。
-Calm等のsynthetic preset環境には共有の登録済み波浪入力を使用する。物理風から波浪入力を再生成しない。sky metadataが欠ける場合は共通の中立背景を使用し、太陽・雲と直達照明を無効化する。現在の環境6の太陽条件を補完しない。画質変更とRetryは確定した環境を維持し、近景mesh交換でcamera・波位相のsimulation timeを変更しない。Weather選択UIの追加と複数Weatherの時間的optic flow検査は別作業である。
+Calm等のsynthetic preset環境には共有の登録済み波浪入力を使用する。物理風から波浪入力を再生成しない。sky metadataが欠ける場合は共通の中立背景を使用し、太陽・雲と直達照明を無効化する。現在の環境6の太陽条件を補完しない。画質変更とRetryは確定した環境を維持し、近景mesh交換でcamera・波位相のsimulation timeを変更しない。複数Weatherの時間的optic flow検査は別作業である。
 near meshは全画質で6 km四方の非一様gridを使用し、cameraの水平位置を1 m格子へsnapして追従する。far ringは18万m四方を覆い、中央のnear領域を除外する。波の位相はworld-space、時刻は共有simulation timeで評価する。finite packetと解析的勾配、共有投影の非反転reserveを使用し、描画専用の水平・鉛直変位を与える。実測波浪の再現性や波浪予報精度は主張しない。
 
 Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択し、near/farへ同じ投影を原子的に適用する。実meshの間隔に対する波長filterと非反転reserveを使用し、選択した環境の全quality共通Aabbを保持する。detail画像、4層micro-normal、環境時刻と固定phase、sky資源を再利用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
 vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow caster・prepassは無効とし、平面のdefault prepassとの不一致を回避する。shadow receiverは変位後のworld positionとgeometric normalを公式samplingへ渡す。reflection targetはUI・水面・空・地形を含めず、resizeで旧targetだけを退役させる。環境・quality交換は同じ反射passを保持する。geometry・micro-normal・反射pass・cascade shadowの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
-機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
-数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI等の詳細計器は未移植である。
+機体は簡易meshで表示する。HUDの内容・幾何・表示条件は共有Rustを使用する。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
+数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI、FPI、方位目盛、風向針、AoA指示はWeb版と同じ共有値・表示条件を使用する。実GPUでの視認性と各機器の操作性は検証結果を参照する。
 
 ## GPU接続の検査
 
@@ -140,6 +150,7 @@ OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS�
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
 通常のsession操作とlogical inputを使って開始・飛行・Pilot/Chase・一時停止/再開・終了・Result・Retryを確認する。
 Title/設定/確認/Countdown/Pilot/Chase/一時停止/Resultの画像を書き込み、保存完了後に成功を返す。
+Resultから共有control IDの実操作経路を使ってMap→Altitude→Speed→Replay→Replay Analysis→Resultへ進み、各画面も撮影する。Speedでは記録中点へseekし、AnalysisとReplay退出が確定結果と記録を変更しないことを検査する。
 再試行では全nose-up入力による実フライトの終端と技術情報も撮影し、元cause・score・recordの一致を確認する。
 WaterContact/TimeLimitの正常終了も受理する。診断表示のために通常入力の失敗を必須としない。
 途中のwindow終了とtimeoutは失敗になる。

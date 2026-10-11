@@ -38,7 +38,9 @@ pub use personal_best::{
 };
 
 /// Information presentation selected for a session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum InformationLevel {
     /// Full flight telemetry and warnings.
     Full,
@@ -176,7 +178,9 @@ impl HudProfile {
 }
 
 /// Stable identity for one independently configurable HUD cue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum HudCue {
     /// Numeric telemetry readouts.
     Telemetry,
@@ -193,7 +197,9 @@ pub enum HudCue {
 }
 
 /// Weather classification attached to a versioned scenario catalog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum WeatherClass {
     /// Low-variation synthetic conditions.
     Calm,
@@ -208,7 +214,9 @@ pub enum WeatherClass {
 }
 
 /// Named preset whose axes are resolved independently.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum DifficultyPreset {
     /// Full information, strong assistance, mild weather.
     Beginner,
@@ -352,7 +360,9 @@ impl DifficultySettings {
 }
 
 /// Controller category resolved from the Assistance axis.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum AssistanceLevel {
     /// Full FBW authority.
     Strong,

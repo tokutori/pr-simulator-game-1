@@ -14,8 +14,6 @@ import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } fr
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { GazeDwellSelector } from "../../web/src/presentation/gaze-dwell.js";
 import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "../../web/src/presentation/panel-interaction.js";
-import { drawVrPanel } from "../../web/src/presentation/vr-panel-canvas.js";
-import type { PanelDrawingContext } from "../../web/src/presentation/vr-panel-canvas.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 
 describe("scene and overlay fixtures", () => {
@@ -66,74 +64,6 @@ describe("scene and overlay fixtures", () => {
     }
   });
 
-  it("draws the common panel model into the VR Canvas surface", () => {
-    const panel = requiredPanel(createSceneFixture("Title"));
-    const labels: string[] = [];
-    const context: PanelDrawingContext = {
-      clearRect: () => undefined,
-      fillRect: () => undefined,
-      fillText: (text: string) => labels.push(text),
-      strokeRect: () => undefined,
-      beginPath: () => undefined,
-      closePath: () => undefined,
-      rect: () => undefined,
-      clip: () => undefined,
-      save: () => undefined,
-      restore: () => undefined,
-      fill: () => undefined,
-      moveTo: () => undefined,
-      lineTo: () => undefined,
-      stroke: () => undefined,
-      setFillStyle: () => undefined,
-      setStrokeStyle: () => undefined,
-      setFont: () => undefined,
-      setTextBaseline: () => undefined,
-      setLineWidth: () => undefined,
-      setGlobalAlpha: () => undefined
-    };
-    drawVrPanel(context, panel, 1024, 768);
-    expect(labels).toContain(panel.title);
-    expect(labels).toContain("共通actionを送信");
-  });
-
-  it("renders multiline Result metadata inside an enlarged VR panel row", () => {
-    const panel = requiredPanel(createSceneFixture("Result"));
-    const labels: string[] = [];
-    const fonts: string[] = [];
-    const context: PanelDrawingContext = {
-      clearRect: () => undefined,
-      fillRect: () => undefined,
-      fillText: (text: string) => labels.push(text),
-      strokeRect: () => undefined,
-      beginPath: () => undefined,
-      closePath: () => undefined,
-      rect: () => undefined,
-      clip: () => undefined,
-      save: () => undefined,
-      restore: () => undefined,
-      fill: () => undefined,
-      moveTo: () => undefined,
-      lineTo: () => undefined,
-      stroke: () => undefined,
-      setFillStyle: () => undefined,
-      setStrokeStyle: () => undefined,
-      setFont: (value: string) => fonts.push(value),
-      setTextBaseline: () => undefined,
-      setLineWidth: () => undefined,
-      setGlobalAlpha: () => undefined
-    };
-    const metadata = {
-      kind: "button" as const,
-      id: "game-result-configuration",
-      label: "Selected axes\nScenario and model versions",
-      enabled: false,
-      rect: { x: 0.08, y: 0.6, width: 0.84, height: 0.11 }
-    };
-    drawVrPanel(context, { ...panel, controls: [metadata] }, 1024, 768);
-    expect(labels).toContain("Selected axes");
-    expect(labels).toContain("Scenario and model versions");
-    expect(fonts).toContain("500 17px system-ui, sans-serif");
-  });
 });
 
 describe("same-frame view projection boundary", () => {

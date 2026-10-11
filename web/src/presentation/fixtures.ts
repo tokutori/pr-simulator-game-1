@@ -1,6 +1,7 @@
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import type { VisibleHeadHud } from "../render/contracts/head-hud.js";
+import type { GameUiView } from "../generated/game-ui-view.js";
 import type { AnchorKind } from "../render/anchors.js";
 import { GAME_SCENES, normalizedRect } from "../render/contracts/ui.js";
 import type { GameScene, UiPanel, UiViewModel } from "../render/contracts/ui.js";
@@ -63,6 +64,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         id: `${scene.toLowerCase()}-range`,
         label: "表示値",
         value: 0.5,
+        displayValue: "0.5",
         minimum: 0,
         maximum: 1,
         step: 0.1,
@@ -104,7 +106,7 @@ export function createAnchorFixture(anchor: AnchorKind): UiPanel {
   });
 }
 
-export function createHeadHudFixture(): VisibleHeadHud {
+export function createHeadHudFixture(theme: GameUiView["theme"]): VisibleHeadHud {
   return Object.freeze({
     kind: "visible",
     locale: "ja",
@@ -114,6 +116,7 @@ export function createHeadHudFixture(): VisibleHeadHud {
     clearRegion: Object.freeze({ left: 0.25, top: 0.1, width: 0.5, height: 0.5 }),
     backgroundAlpha: 0.3,
     foregroundAlpha: 1,
+    theme,
     elements: Object.freeze([Object.freeze({
       kind: "text" as const,
       id: "flight-status",

@@ -23,16 +23,21 @@
     "build": "vite build --config web/vite.config.ts",
     "preview": "vite preview --config web/vite.config.ts",
     "check:repository": "tsx tools/check/main.ts",
-    "verify": "npm run typecheck && npm run lint && npm test && npm run check:repository && npm run build"
+    "generate:game-ui": "tsx tools/game-ui-build/main.ts --write",
+    "check:game-ui": "tsx tools/game-ui-build/main.ts --check",
+    "verify": "npm run check:game-ui && tsx tools/wasm-build/main.ts && npm run --ignore-scripts typecheck && npm run lint && npm run --ignore-scripts test && npm run check:repository && npm run --ignore-scripts build"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "24.10.1",
     "@types/three": "0.186.0",
     "@types/webxr": "0.5.24",
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "fake-indexeddb": "6.2.5",
     "happy-dom": "20.14.5",
+    "json-schema-to-typescript": "16.0.0",
     "smol-toml": "1.9.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

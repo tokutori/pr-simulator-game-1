@@ -1,819 +1,1278 @@
 use super::{
-    CameraMode, NativeFont,
-    diagnostics::{failure_summary, result_reason_label},
-    environment::{EnvironmentTarget, NativeEnvironment},
+    NativeFont,
+    environment::NativeEnvironment,
     frame_rate::FrameRate,
-    native_session::{MenuAction, NativeSession},
-    water_quality::{WaterQuality, WaterQualitySelection, quality_menu_visible},
+    native_session::NativeSession,
+    water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    ecs::{hierarchy::ChildSpawnerCommands, system::SystemParam},
     input::mouse::MouseScrollUnit,
-    input_focus::{FocusCause, InputFocus},
+    input_focus::{
+        FocusCause, InputFocus,
+        tab_navigation::{TabGroup, TabIndex},
+    },
+    picking::Pickable,
     prelude::*,
+    text::{ComputedTextBlock, TextLayoutInfo},
+    ui::ColorStop,
+    ui::RelativeCursorPosition,
 };
-use birdman_game_core::{
-    ControlMode, FlightRecordFinalization, FlightRecordHeader, PauseReason, PauseReasons,
-    SessionEndReason, SessionPhase, SessionScenarioIdentity, SessionSnapshot,
+use birdman_game_session::game_ui::{
+    GameUiAction, GameUiButtonPresentation, GameUiChart, GameUiChartCursor, GameUiChartExtent,
+    GameUiChartPoint, GameUiChartText, GameUiChartTextAnchor, GameUiControl, GameUiControlContent,
+    GameUiEffect, GameUiEmphasis, GameUiFrame, GameUiHud, GameUiLayout, GameUiPlatformCommand,
+    GameUiPlatformInput, GameUiPresentationMode, GameUiRangeTarget, GameUiReplayCamera,
+    GameUiSectionLayout, GameUiShell, GameUiState, GameUiTheme, GameUiView, GameUiViewport,
+    GameUiWaterQuality, GameUiWaterQualityOperation,
 };
-use std::borrow::Cow;
+use std::collections::BTreeMap;
 
-const FLIGHT_CONTROL_GUIDE: &str =
-    "操縦: ↑/↓ 機首上げ/下げ · ←/→ 左/右旋回\n重心移動: J/L（解放時保持） · 視点: C / 右ドラッグ";
-
-#[derive(Clone, Copy)]
-enum UiAction {
-    Session(MenuAction),
-    WaterQuality(WaterQuality),
-    TechnicalDetails,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ButtonEmphasis {
-    Primary,
-    Secondary,
-    Choice { selected: bool },
-    Disabled,
+#[derive(Component)]
+pub(crate) struct MenuButton {
+    action: GameUiAction,
+    enabled: bool,
 }
 
 #[derive(Component)]
-pub(crate) struct MenuButton(UiAction);
+struct MenuRange {
+    target: GameUiRangeTarget,
+    value: f64,
+    minimum: f64,
+    maximum: f64,
+    step: f64,
+    enabled: bool,
+}
+
 #[derive(Component)]
 pub(crate) enum UiText {
-    PreparationSteps,
     Session,
-    AssistanceSelection,
-    WaterQualitySelection,
-    WaterQualityChoice(WaterQuality),
-    Action(MenuAction),
-    Hud,
+    WaterQualityChoice,
     TechnicalDetails,
-    TechnicalButton,
     FrameRate,
 }
+
 #[derive(Component)]
 pub(crate) enum UiPanel {
     SessionContent,
     Navigation,
-    PreparationSteps,
-    AssistanceChoices,
-    WaterQualityChoices,
-    FlightHud,
-    TechnicalDetails,
 }
+
+struct Widget {
+    node: Entity,
+    text: Entity,
+}
+
+#[derive(Resource)]
+struct RetainedUi {
+    shell: Entity,
+    heading: Entity,
+    description: Entity,
+    content: Entity,
+    view: Option<GameUiView>,
+    source: Option<NativeUiSource>,
+    revision: u32,
+    sections: BTreeMap<String, Entity>,
+    widgets: BTreeMap<String, Widget>,
+    hud: RetainedHud,
+}
+
+#[derive(PartialEq)]
+struct NativeUiSource {
+    phase: birdman_game_core::SessionPhase,
+    difficulty: birdman_game_format::DifficultySettings,
+    identity: Option<birdman_game_core::SessionScenarioIdentity>,
+    selections: GameUiState,
+    platform: GameUiPlatformInput,
+}
+
+#[derive(Component, Clone)]
+struct RetainedChart {
+    surface: Entity,
+    cursor: Entity,
+    points: Vec<Entity>,
+    wind: [Entity; 3],
+    plot: [f64; 4],
+    x: [f64; 2],
+    y: [f64; 2],
+}
+
 #[derive(Component)]
-struct UiLayoutRoot;
-#[derive(Resource, Default)]
-pub(crate) struct TechnicalDisclosure {
-    expanded: bool,
-}
+struct ChartViewport;
 
-#[derive(SystemParam)]
-pub(crate) struct UiViewQueries<'w, 's> {
-    quality: Res<'w, WaterQualitySelection>,
-    environment: Option<Res<'w, NativeEnvironment>>,
-    buttons: Query<
-        'w,
-        's,
-        (
-            &'static MenuButton,
-            &'static Interaction,
-            &'static mut Node,
-            &'static mut BackgroundColor,
-            &'static mut BorderColor,
-        ),
-    >,
-    panels: Query<
-        'w,
-        's,
-        (
-            &'static UiPanel,
-            &'static mut Node,
-            &'static mut ScrollPosition,
-        ),
-        Without<MenuButton>,
-    >,
-    text: Query<'w, 's, (&'static UiText, &'static mut Text)>,
-}
+#[derive(Component)]
+struct ChartTextBaseline;
 
-impl TechnicalDisclosure {
-    pub(crate) fn toggle(&mut self) {
-        self.expanded = !self.expanded;
-    }
-
-    pub(crate) fn is_expanded(&self) -> bool {
-        self.expanded
-    }
+struct RetainedHud {
+    shell: Entity,
+    instruments: Entity,
+    attitude: Entity,
+    horizon: Entity,
+    flight_path: Entity,
+    heading_ticks: Vec<(Entity, Entity)>,
+    wind_needle: Entity,
+    angle_indicator: Entity,
+    instrument_cards: BTreeMap<&'static str, Entity>,
+    readouts: Entity,
+    fields: BTreeMap<&'static str, Entity>,
+    previous: Option<GameUiHud>,
 }
 
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
-    commands.init_resource::<TechnicalDisclosure>();
-    commands.init_resource::<WaterQualitySelection>();
     commands.spawn((
         UiText::FrameRate,
         Text::new("FPS —"),
         frame_rate_node(),
         TextLayout::linebreak(LineBreak::NoWrap),
-        TextFont {
-            font: font.0.clone().into(),
-            font_size: FontSize::Px(16.0),
-            ..default()
-        },
+        text_font(&font, 16.0),
         TextColor(Color::WHITE),
         BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.75)),
     ));
-    let layout = commands
+    let shell = commands
         .spawn((
-            UiLayoutRoot,
-            Node {
-                position_type: PositionType::Absolute,
-                top: px(12),
-                bottom: px(16),
-                left: px(16),
-                right: px(16),
-                flex_direction: FlexDirection::Column,
-                justify_content: JustifyContent::SpaceBetween,
-                row_gap: px(16),
-                ..default()
-            },
+            UiPanel::SessionContent,
+            TabGroup::default(),
+            Node::default(),
+            BackgroundColor(Color::NONE),
+        ))
+        .observe(scroll_content)
+        .id();
+    let heading = commands
+        .spawn((
+            ChildOf(shell),
+            UiText::Session,
+            Text::new(""),
+            text_font(&font, 28.0),
+            TextColor(Color::WHITE),
+        ))
+        .id();
+    let description = commands
+        .spawn((
+            ChildOf(shell),
+            Text::new(""),
+            text_font(&font, 16.0),
+            TextColor(Color::WHITE),
         ))
         .id();
     let content = commands
-        .spawn((
-            UiPanel::SessionContent,
-            Node {
-                width: percent(72),
-                min_height: px(0),
-                max_height: vh(65),
-                overflow: Overflow::scroll_y(),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(8),
-                padding: UiRect::all(px(8)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.82)),
-        ))
-        .with_children(|parent| {
-            parent
-                .spawn((UiPanel::PreparationSteps, Node::default()))
-                .with_children(|steps| {
-                    steps.spawn((
-                        UiText::PreparationSteps,
-                        Text::new(""),
-                        TextFont {
-                            font: font.0.clone().into(),
-                            font_size: FontSize::Px(18.0),
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.75, 0.86, 1.0)),
-                    ));
-                });
-            parent.spawn((
-                UiText::Session,
-                Text::new("Birdman native Screen"),
-                Node {
-                    width: percent(100),
-                    min_width: px(0),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                TextFont {
-                    font: font.0.clone().into(),
-                    font_size: FontSize::Px(22.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-            parent
-                .spawn((
-                    UiPanel::AssistanceChoices,
-                    Node {
-                        display: Display::None,
-                        width: percent(100),
-                        min_width: px(0),
-                        flex_shrink: 0.0,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(8),
-                        ..default()
-                    },
-                ))
-                .with_children(|choices| {
-                    choices.spawn((
-                        UiText::AssistanceSelection,
-                        Text::new(""),
-                        Node {
-                            width: percent(100),
-                            min_width: px(0),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                        TextFont {
-                            font: font.0.clone().into(),
-                            font_size: FontSize::Px(18.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                    choices
-                        .spawn(Node {
-                            width: percent(100),
-                            min_width: px(0),
-                            flex_wrap: FlexWrap::Wrap,
-                            column_gap: px(8),
-                            row_gap: px(8),
-                            ..default()
-                        })
-                        .with_children(|buttons| {
-                            for action in [
-                                MenuAction::Manual,
-                                MenuAction::Shared,
-                                MenuAction::Automatic,
-                            ] {
-                                spawn_session_button(buttons, &font, action);
-                            }
-                        });
-                });
-            parent
-                .spawn((
-                    UiPanel::WaterQualityChoices,
-                    Node {
-                        display: Display::None,
-                        width: percent(100),
-                        min_width: px(0),
-                        flex_shrink: 0.0,
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(8),
-                        ..default()
-                    },
-                ))
-                .with_children(|choices| {
-                    choices.spawn((
-                        UiText::WaterQualitySelection,
-                        Text::new(""),
-                        TextFont {
-                            font: font.0.clone().into(),
-                            font_size: FontSize::Px(18.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                    choices
-                        .spawn(Node {
-                            width: percent(100),
-                            min_width: px(0),
-                            flex_wrap: FlexWrap::Wrap,
-                            column_gap: px(8),
-                            row_gap: px(8),
-                            ..default()
-                        })
-                        .with_children(|buttons| {
-                            for quality in WaterQuality::ALL {
-                                spawn_quality_button(buttons, &font, quality);
-                            }
-                        });
-                });
-            parent
-                .spawn((
-                    Button,
-                    MenuButton(UiAction::TechnicalDetails),
-                    Node {
-                        display: Display::None,
-                        align_self: AlignSelf::Start,
-                        flex_shrink: 0.0,
-                        padding: UiRect::axes(px(12), px(8)),
-                        border: UiRect::all(px(1)),
-                        ..default()
-                    },
-                    BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
-                    BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        UiText::TechnicalButton,
-                        Text::new("技術情報を開く"),
-                        TextFont {
-                            font: font.0.clone().into(),
-                            font_size: FontSize::Px(18.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
-            parent
-                .spawn((
-                    UiPanel::TechnicalDetails,
-                    Node {
-                        display: Display::None,
-                        width: percent(100),
-                        height: vh(30),
-                        max_height: px(240),
-                        min_height: px(0),
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgba(0.01, 0.02, 0.04, 0.9)),
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        UiText::TechnicalDetails,
-                        Text::new(""),
-                        Node {
-                            width: percent(100),
-                            min_width: px(0),
-                            flex_shrink: 0.0,
-                            ..default()
-                        },
-                        TextLayout::linebreak(LineBreak::AnyCharacter),
-                        TextFont {
-                            font: font.0.clone().into(),
-                            font_size: FontSize::Px(16.0),
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                })
-                .observe(scroll_content);
-        })
-        .observe(scroll_content)
+        .spawn((ChildOf(shell), UiPanel::Navigation, Node::default()))
         .id();
-    commands
+    let hud = setup_hud(&mut commands, &font);
+    commands.insert_resource(RetainedUi {
+        shell,
+        heading,
+        description,
+        content,
+        view: None,
+        source: None,
+        revision: 0,
+        sections: BTreeMap::new(),
+        widgets: BTreeMap::new(),
+        hud,
+    });
+}
+
+fn setup_hud(commands: &mut Commands, font: &NativeFont) -> RetainedHud {
+    let shell = commands
         .spawn((
-            UiPanel::FlightHud,
             Node {
-                display: Display::None,
                 position_type: PositionType::Absolute,
-                top: px(135),
-                left: px(16),
-                width: percent(42),
-                max_width: px(400),
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.04, 0.08, 0.72)),
+            Pickable {
+                should_block_lower: false,
+                is_hoverable: true,
+            },
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                UiText::Hud,
+        .observe(scroll_hud)
+        .id();
+    let mut fields = BTreeMap::new();
+    for key in ["status", "warning"] {
+        let entity = commands
+            .spawn((
+                ChildOf(shell),
                 Text::new(""),
+                text_font(font, 12.0),
+                TextColor(Color::WHITE),
+                Pickable::IGNORE,
+            ))
+            .id();
+        fields.insert(key, entity);
+    }
+    let readings = commands
+        .spawn((
+            ChildOf(shell),
+            Node {
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let attitude = commands
+        .spawn((
+            ChildOf(readings),
+            Node {
+                overflow: Overflow::clip(),
+                flex_shrink: 0.0,
+                ..default()
+            },
+            Pickable::IGNORE,
+            BackgroundColor(Color::srgb(0.224, 0.490, 0.604)),
+        ))
+        .id();
+    let horizon = commands
+        .spawn((
+            ChildOf(attitude),
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(200),
+                height: percent(200),
+                left: percent(-50),
+                top: percent(-50),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(horizon),
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(50),
+            top: percent(50),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.604, 0.439, 0.278)),
+        Pickable::IGNORE,
+    ));
+    commands.spawn((
+        ChildOf(horizon),
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: px(1),
+            top: percent(50),
+            ..default()
+        },
+        BackgroundColor(Color::WHITE),
+        Pickable::IGNORE,
+    ));
+    for degrees in [-30.0_f32, -20.0, -10.0, 10.0, 20.0, 30.0] {
+        let half_width = if degrees.abs() % 20.0 == 0.0 {
+            27.0
+        } else {
+            17.0
+        };
+        commands.spawn((
+            ChildOf(horizon),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(50.0 - half_width / 480.0 * 100.0),
+                width: percent(half_width / 240.0 * 100.0),
+                height: px(1),
+                top: percent(50.0 - degrees * 2.2 / 360.0 * 100.0),
+                ..default()
+            },
+            BackgroundColor(Color::WHITE),
+            Pickable::IGNORE,
+        ));
+        commands.spawn((
+            ChildOf(horizon),
+            Text::new(format!("{:.0}", degrees.abs())),
+            text_font(font, 6.0),
+            TextColor(Color::WHITE),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(50.0 + (half_width + 5.0) / 480.0 * 100.0),
+                top: percent(50.0 - degrees * 2.2 / 360.0 * 100.0),
+                ..default()
+            },
+            UiTransform::from_translation(Val2::percent(0, -50)),
+            Pickable::IGNORE,
+        ));
+    }
+    commands.spawn((
+        ChildOf(attitude),
+        Node {
+            position_type: PositionType::Absolute,
+            top: percent(46),
+            left: percent(49),
+            width: percent(2),
+            height: percent(8),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(1.0, 0.85, 0.25)),
+        Pickable::IGNORE,
+    ));
+    let flight_path = commands
+        .spawn((
+            ChildOf(attitude),
+            Node {
+                position_type: PositionType::Absolute,
+                display: Display::None,
+                left: percent(50),
+                top: percent(50),
+                width: px(7),
+                height: px(7),
+                border: UiRect::all(px(1.5)),
+                border_radius: BorderRadius::MAX,
+                ..default()
+            },
+            UiTransform::from_translation(Val2::percent(-50, -50)),
+            BorderColor::all(Color::srgb(0.490, 0.957, 0.773)),
+            Pickable::IGNORE,
+        ))
+        .id();
+    for (left, width) in [(30.0, 15.0), (55.0, 15.0)] {
+        commands.spawn((
+            ChildOf(attitude),
+            Node {
+                position_type: PositionType::Absolute,
+                top: percent(50),
+                left: percent(left),
+                width: percent(width),
+                height: px(2),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(1.0, 0.85, 0.25)),
+            Pickable::IGNORE,
+        ));
+    }
+    let readouts = commands
+        .spawn((
+            ChildOf(readings),
+            Text::new(""),
+            text_font(font, 12.0),
+            TextColor(Color::WHITE),
+            Node {
+                min_width: px(0),
+                flex_grow: 1.0,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let instruments = commands
+        .spawn((
+            ChildOf(shell),
+            Node {
+                display: Display::Grid,
+                width: percent(100),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    let mut instrument_cards = BTreeMap::new();
+    for key in ["heading", "pilot", "wind", "aoa"] {
+        let card = commands
+            .spawn((
+                ChildOf(instruments),
                 Node {
-                    width: percent(100),
+                    min_width: px(0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(px(4)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.03, 0.09, 0.12, 0.46)),
+                Pickable::IGNORE,
+            ))
+            .id();
+        instrument_cards.insert(key, card);
+        let entity = commands
+            .spawn((
+                ChildOf(card),
+                Text::new(""),
+                text_font(font, 12.0),
+                TextColor(Color::WHITE),
+                Node {
                     min_width: px(0),
                     ..default()
                 },
-                TextLayout::linebreak(LineBreak::WordBoundary),
-                TextFont {
-                    font: font.0.clone().into(),
-                    font_size: FontSize::Px(18.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
-        });
-    let navigation = commands
+                Pickable::IGNORE,
+            ))
+            .id();
+        fields.insert(key, entity);
+    }
+    let heading_gauge = commands
         .spawn((
-            UiPanel::Navigation,
+            ChildOf(instrument_cards["heading"]),
             Node {
                 width: percent(100),
-                min_width: px(0),
-                flex_shrink: 0.0,
-                align_items: AlignItems::Start,
-                flex_wrap: FlexWrap::Wrap,
-                column_gap: px(8),
-                row_gap: px(8),
+                height: px(34),
+                overflow: Overflow::clip(),
                 ..default()
             },
+            Pickable::IGNORE,
         ))
-        .with_children(|parent| {
-            for action in [
-                MenuAction::Retry,
-                MenuAction::Start,
-                MenuAction::Prepare,
-                MenuAction::Launch,
-                MenuAction::Pause,
-                MenuAction::Resume,
-                MenuAction::Abort,
-                MenuAction::Title,
-                MenuAction::Exit,
-            ] {
-                spawn_session_button(parent, &font, action);
-            }
-        })
         .id();
-    commands.entity(layout).add_children(&[content, navigation]);
+    let heading_ticks = (0..13)
+        .map(|_| {
+            let line = commands
+                .spawn((
+                    ChildOf(heading_gauge),
+                    Node::default(),
+                    BackgroundColor(Color::WHITE),
+                    Pickable::IGNORE,
+                ))
+                .id();
+            let label = commands
+                .spawn((
+                    ChildOf(heading_gauge),
+                    Text::new(""),
+                    text_font(font, 8.0),
+                    TextColor(Color::WHITE),
+                    Node::default(),
+                    UiTransform::from_translation(Val2::percent(-50, 0)),
+                    Pickable::IGNORE,
+                ))
+                .id();
+            (line, label)
+        })
+        .collect();
+    commands.spawn((
+        ChildOf(heading_gauge),
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: px(23),
+            width: px(5),
+            height: px(5),
+            ..default()
+        },
+        UiTransform {
+            translation: Val2::percent(-50, 0),
+            rotation: Rot2::degrees(45.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(1.0, 0.85, 0.25)),
+        Pickable::IGNORE,
+    ));
+    let wind_gauge = commands
+        .spawn((
+            ChildOf(instrument_cards["wind"]),
+            Node {
+                width: px(56),
+                height: px(56),
+                align_self: AlignSelf::Center,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(wind_gauge),
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(12.5),
+            top: percent(12.5),
+            width: percent(75),
+            height: percent(75),
+            border: UiRect::all(px(1)),
+            border_radius: BorderRadius::MAX,
+            ..default()
+        },
+        BorderColor::all(Color::srgb(0.725, 0.788, 0.761)),
+        Pickable::IGNORE,
+    ));
+    for (left, top, width, height) in [(50.0, 12.5, 1.5, 75.0), (12.5, 50.0, 75.0, 1.5)] {
+        commands.spawn((
+            ChildOf(wind_gauge),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(left),
+                top: percent(top),
+                width: percent(width),
+                height: percent(height),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.322, 0.424, 0.439)),
+            Pickable::IGNORE,
+        ));
+    }
+    commands.spawn((
+        ChildOf(wind_gauge),
+        Text::new("N"),
+        text_font(font, 7.0),
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(50),
+            top: px(0),
+            ..default()
+        },
+        UiTransform::from_translation(Val2::percent(-50, 0)),
+        Pickable::IGNORE,
+    ));
+    let wind_needle = commands
+        .spawn((
+            ChildOf(wind_gauge),
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    for (left, top, width, height, rotation) in [
+        (48.5, 22.0, 3.0, 32.0, 0.0),
+        (40.0, 25.0, 13.0, 3.0, -45.0),
+        (48.0, 25.0, 13.0, 3.0, 45.0),
+    ] {
+        commands.spawn((
+            ChildOf(wind_needle),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(left),
+                top: percent(top),
+                width: percent(width),
+                height: percent(height),
+                ..default()
+            },
+            UiTransform::from_rotation(Rot2::degrees(rotation)),
+            BackgroundColor(Color::srgb(1.0, 0.85, 0.25)),
+            Pickable::IGNORE,
+        ));
+    }
+    let angle_gauge = commands
+        .spawn((
+            ChildOf(instrument_cards["aoa"]),
+            Node {
+                width: percent(100),
+                height: px(34),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
+    commands.spawn((
+        ChildOf(angle_gauge),
+        Node {
+            position_type: PositionType::Absolute,
+            left: percent(5),
+            top: px(16),
+            width: percent(90),
+            height: px(2),
+            ..default()
+        },
+        BackgroundColor(Color::srgb(0.725, 0.788, 0.761)),
+        Pickable::IGNORE,
+    ));
+    for index in 0..=6 {
+        commands.spawn((
+            ChildOf(angle_gauge),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(5.0 + index as f32 * 15.0),
+                top: px(12),
+                width: px(1),
+                height: px(9),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.725, 0.788, 0.761)),
+            Pickable::IGNORE,
+        ));
+    }
+    let angle_indicator = commands
+        .spawn((
+            ChildOf(angle_gauge),
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(5),
+                top: px(3),
+                width: px(7),
+                height: px(7),
+                ..default()
+            },
+            UiTransform {
+                translation: Val2::percent(-50, 0),
+                rotation: Rot2::degrees(45.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(1.0, 0.85, 0.25)),
+            Pickable::IGNORE,
+        ))
+        .id();
+    for key in [
+        "telemetry",
+        "location",
+        "attribution",
+        "supplementary",
+        "controls",
+    ] {
+        let entity = commands
+            .spawn((
+                ChildOf(shell),
+                Text::new(""),
+                text_font(font, 12.0),
+                TextColor(Color::WHITE),
+                Node {
+                    min_width: px(0),
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .id();
+        fields.insert(key, entity);
+    }
+    RetainedHud {
+        shell,
+        instruments,
+        attitude,
+        horizon,
+        flight_path,
+        heading_ticks,
+        wind_needle,
+        angle_indicator,
+        instrument_cards,
+        readouts,
+        fields,
+        previous: None,
+    }
+}
+
+fn text_font(font: &NativeFont, size: f32) -> TextFont {
+    TextFont {
+        font: font.0.clone().into(),
+        font_size: FontSize::Px(size),
+        ..default()
+    }
 }
 
 fn frame_rate_node() -> Node {
     Node {
         position_type: PositionType::Absolute,
-        top: px(12),
-        right: px(16),
+        top: px(8),
+        right: px(8),
         padding: UiRect::axes(px(8), px(4)),
         ..default()
     }
 }
 
-fn session_button_node(action: MenuAction) -> Node {
-    let width = match action {
-        MenuAction::Launch => 280,
-        MenuAction::Retry => 220,
-        MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic => 200,
-        _ => 180,
-    };
-    Node {
-        width: px(width),
-        min_height: px(48),
-        max_width: percent(100),
-        flex_shrink: 0.0,
-        align_items: AlignItems::Center,
-        justify_content: JustifyContent::Center,
-        padding: UiRect::axes(px(16), px(10)),
-        border: UiRect::all(px(1)),
-        ..default()
-    }
-}
-
-fn spawn_session_button(parent: &mut ChildSpawnerCommands, font: &NativeFont, action: MenuAction) {
-    parent
-        .spawn((
-            Button,
-            MenuButton(UiAction::Session(action)),
-            session_button_node(action),
-            BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
-            BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
-        ))
-        .with_children(|button| {
-            button.spawn((
-                UiText::Action(action),
-                Text::new(action_label(
-                    SessionPhase::Title,
-                    action,
-                    ControlMode::Manual,
-                )),
-                Node {
-                    width: percent(100),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
-                TextFont {
-                    font: font.0.clone().into(),
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
+pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
+    let scale = world.get_resource::<UiScale>().map_or(1.0, |scale| scale.0);
+    let viewport = world
+        .query::<&Window>()
+        .iter(world)
+        .next()
+        .map_or((1280.0, 720.0), |window| {
+            (window.width() / scale, window.height() / scale)
         });
-}
-
-fn quality_choice_label(quality: WaterQuality, selection: &WaterQualitySelection) -> String {
-    if quality == selection.applied() {
-        format!("✓ {}", quality.label())
-    } else {
-        quality.label().into()
-    }
-}
-
-fn spawn_quality_button(
-    parent: &mut ChildSpawnerCommands,
-    font: &NativeFont,
-    quality: WaterQuality,
-) {
-    parent
-        .spawn((
-            Button,
-            MenuButton(UiAction::WaterQuality(quality)),
-            session_button_node(MenuAction::Title),
-            BorderColor::all(Color::srgb(0.65, 0.75, 0.9)),
-            BackgroundColor(Color::srgb(0.08, 0.16, 0.25)),
-        ))
-        .with_children(|button| {
-            button.spawn((
-                UiText::WaterQualityChoice(quality),
-                Text::new(quality_choice_label(
-                    quality,
-                    &WaterQualitySelection::default(),
-                )),
-                Node {
-                    width: percent(100),
-                    flex_shrink: 0.0,
-                    ..default()
-                },
-                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
-                TextFont {
-                    font: font.0.clone().into(),
-                    font_size: FontSize::Px(20.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
+    let chart_minimum = world
+        .get_resource::<RetainedUi>()
+        .and_then(|retained| retained.view.as_ref())
+        .and_then(|view| {
+            view.panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .find_map(|control| match &control.content {
+                    GameUiControlContent::Chart { plot, .. } => {
+                        Some(plot.presentation.measurement_minimum)
+                    }
+                    _ => None,
+                })
         });
-}
-
-pub(crate) fn button_actions(
-    buttons: Query<(Entity, &Interaction, &MenuButton), Changed<Interaction>>,
-    mut session: ResMut<NativeSession>,
-    mut exit: MessageWriter<AppExit>,
-    mut focus: ResMut<InputFocus>,
-    mut disclosure: ResMut<TechnicalDisclosure>,
-    mut quality: ResMut<WaterQualitySelection>,
-) {
-    for (entity, interaction, button) in &buttons {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
-        if let UiAction::Session(action) = button.0
-            && !action_available(&session, action)
-        {
-            continue;
-        }
-        if matches!(button.0, UiAction::WaterQuality(_))
-            && !quality.can_select(session.game.snapshot().phase())
-        {
-            continue;
-        }
-        focus.set(entity, FocusCause::Pressed);
-        match button.0 {
-            UiAction::WaterQuality(requested) => {
-                if let Some(next) = quality.request(requested, session.game.snapshot().phase()) {
-                    *quality = next;
-                }
-            }
-            UiAction::TechnicalDetails => disclosure.toggle(),
-            UiAction::Session(MenuAction::Exit) => {
-                exit.write(AppExit::Success);
-            }
-            UiAction::Session(action) => {
-                if let Err(error) = session.action(action) {
-                    session.notice = Some(error);
-                }
-            }
-        }
+    let chart_extent = world
+        .query_filtered::<(&ComputedNode, Option<&InheritedVisibility>), With<ChartViewport>>()
+        .iter(world)
+        .find_map(|(node, visibility)| {
+            let size = node.size() * node.inverse_scale_factor;
+            (size.is_finite()
+                && chart_minimum.is_some_and(|minimum| {
+                    f64::from(size.x) >= minimum.width && f64::from(size.y) >= minimum.height
+                })
+                && visibility.is_none_or(|visibility| visibility.get()))
+            .then_some(GameUiChartExtent {
+                width: f64::from(size.x),
+                height: f64::from(size.y),
+            })
+        });
+    let quality = world.resource::<WaterQualitySelection>();
+    let session = world.resource::<NativeSession>();
+    let mut notifications = Vec::new();
+    if let Some(notice) = &session.notice {
+        notifications.push(notice.clone());
     }
-}
-
-fn visible_action(phase: SessionPhase, action: MenuAction) -> bool {
-    match action {
-        MenuAction::Start => matches!(phase, SessionPhase::Title | SessionPhase::Result),
-        MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic | MenuAction::Prepare => {
-            phase == SessionPhase::FlightSetup
-        }
-        MenuAction::Launch => phase == SessionPhase::BriefingReady,
-        MenuAction::Pause => phase == SessionPhase::FlightRunning,
-        MenuAction::Resume => matches!(phase, SessionPhase::FlightPaused { .. }),
-        MenuAction::Abort => {
-            phase == SessionPhase::FlightRunning
-                || matches!(phase, SessionPhase::FlightPaused { .. })
-        }
-        MenuAction::Retry => phase == SessionPhase::Result,
-        MenuAction::Title => !matches!(
-            phase,
-            SessionPhase::Title | SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-        ),
-        MenuAction::Exit => true,
+    if let Some(environment) = world.get_resource::<NativeEnvironment>()
+        && let Some(notice) = environment.failure_notice()
+    {
+        notifications.push(notice);
     }
-}
-
-fn action_available(session: &NativeSession, action: MenuAction) -> bool {
-    visible_action(session.game.snapshot().phase(), action)
-        && (action != MenuAction::Resume || session.can_resume())
-}
-
-fn preparation_progress(phase: SessionPhase) -> Option<&'static str> {
-    match phase {
-        SessionPhase::FlightSetup => Some("● 設定 ─ ○ 確認 ─ ○ 発進"),
-        SessionPhase::BriefingPreparing
-        | SessionPhase::BriefingReady
-        | SessionPhase::BriefingFailed { .. } => Some("✓ 設定 ─ ● 確認 ─ ○ 発進"),
-        SessionPhase::Countdown { .. } => Some("✓ 設定 ─ ✓ 確認 ─ ● 発進"),
-        _ => None,
-    }
-}
-
-fn session_content_max_height(phase: SessionPhase) -> Val {
-    if phase == SessionPhase::FlightSetup {
-        Val::Auto
-    } else {
-        vh(65)
-    }
-}
-
-fn control_mode_label(mode: ControlMode) -> String {
-    match mode {
-        ControlMode::Manual => "手動（Manual）".into(),
-        ControlMode::Shared(authority) => {
-            format!("共有支援（FBW {:.0}%）", authority.value() * 100.0)
-        }
-        ControlMode::Automatic => "FBW自動制御（Automatic）".into(),
-    }
-}
-
-fn control_mode_description(mode: ControlMode) -> &'static str {
-    match mode {
-        ControlMode::Manual => "矢印入力を尾翼の取付角指令に反映する。",
-        ControlMode::Shared(_) => "手動の取付角指令とFBWの角速度制御を組み合わせる。",
-        ControlMode::Automatic => "矢印入力の目標角速度に合わせ、FBWが尾翼の取付角を調整する。",
-    }
-}
-
-fn selected_assistance(mode: ControlMode, action: MenuAction) -> bool {
-    match (mode, action) {
-        (ControlMode::Manual, MenuAction::Manual)
-        | (ControlMode::Automatic, MenuAction::Automatic) => true,
-        (ControlMode::Shared(authority), MenuAction::Shared) => authority.value() == 0.5,
-        _ => false,
-    }
-}
-
-fn action_label(phase: SessionPhase, action: MenuAction, mode: ControlMode) -> String {
-    let label = match action {
-        MenuAction::Start if phase == SessionPhase::Result => "条件を変更",
-        MenuAction::Start => "飛行を設定",
-        MenuAction::Manual => "手動",
-        MenuAction::Shared => "共有支援 50%",
-        MenuAction::Automatic => "FBW自動制御",
-        MenuAction::Prepare => "飛行準備へ進む",
-        MenuAction::Launch => "発進カウントダウンを開始",
-        MenuAction::Pause => "一時停止",
-        MenuAction::Resume => "飛行を再開",
-        MenuAction::Abort => "飛行を終了",
-        MenuAction::Retry => "同じ条件で再試行",
-        MenuAction::Title => match phase {
-            SessionPhase::BriefingPreparing
-            | SessionPhase::BriefingReady
-            | SessionPhase::BriefingFailed { .. } => "← 設定へ戻る",
-            SessionPhase::Countdown { .. } => "発進を取り消す",
-            _ => "← タイトルへ",
+    GameUiPlatformInput {
+        viewport: GameUiViewport {
+            width: f64::from(viewport.0),
+            height: f64::from(viewport.1),
+            root_font_size: 16.0,
         },
-        MenuAction::Exit => "アプリを終了",
-    };
-    if selected_assistance(mode, action) {
-        format!("✓ {label}")
-    } else {
-        label.into()
-    }
-}
-
-fn button_emphasis(phase: SessionPhase, action: UiAction, mode: ControlMode) -> ButtonEmphasis {
-    match action {
-        UiAction::Session(
-            action @ (MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic),
-        ) => ButtonEmphasis::Choice {
-            selected: selected_assistance(mode, action),
-        },
-        UiAction::Session(MenuAction::Start) if phase == SessionPhase::Title => {
-            ButtonEmphasis::Primary
-        }
-        UiAction::Session(
-            MenuAction::Prepare
-            | MenuAction::Launch
-            | MenuAction::Pause
-            | MenuAction::Resume
-            | MenuAction::Retry,
-        ) => ButtonEmphasis::Primary,
-        _ => ButtonEmphasis::Secondary,
-    }
-}
-
-fn button_colors(emphasis: ButtonEmphasis, interaction: Interaction) -> (Color, Color) {
-    let (normal, hovered, border) = match emphasis {
-        ButtonEmphasis::Primary => (
-            Color::srgb(0.1, 0.32, 0.6),
-            Color::srgb(0.15, 0.45, 0.75),
-            Color::srgb(0.6, 0.82, 1.0),
-        ),
-        ButtonEmphasis::Choice { selected: true } => (
-            Color::srgb(0.1, 0.33, 0.22),
-            Color::srgb(0.15, 0.45, 0.3),
-            Color::srgb(0.6, 0.95, 0.75),
-        ),
-        ButtonEmphasis::Choice { selected: false } | ButtonEmphasis::Secondary => (
-            Color::srgb(0.08, 0.16, 0.25),
-            Color::srgb(0.15, 0.32, 0.46),
-            Color::srgb(0.65, 0.75, 0.9),
-        ),
-        ButtonEmphasis::Disabled => (
-            Color::srgb(0.12, 0.14, 0.17),
-            Color::srgb(0.12, 0.14, 0.17),
-            Color::srgb(0.3, 0.34, 0.4),
-        ),
-    };
-    (
-        if interaction == Interaction::None {
-            normal
+        chart_extent,
+        presentation_mode: GameUiPresentationMode::Screen,
+        operation_pending: false,
+        webxr_available: false,
+        phone_vr_available: false,
+        analysis_available: true,
+        replay_available: session.game.playback_record().is_some(),
+        stored_records_available: false,
+        flight_log_available: false,
+        supported_replay_cameras: vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase],
+        water_quality: shared_quality(quality.applied()),
+        water_quality_operation: if let Some(requested) = quality.pending() {
+            GameUiWaterQualityOperation::Applying {
+                requested: shared_quality(requested),
+            }
+        } else if let Some((requested, cause)) = quality.failure() {
+            GameUiWaterQualityOperation::Failed {
+                requested: shared_quality(requested),
+                cause: format!("{cause:?}"),
+            }
         } else {
-            hovered
+            GameUiWaterQualityOperation::Idle {}
         },
-        border,
-    )
+        flight_log_pending: false,
+        flight_controller_failure: None,
+        head_hud_failure: None,
+        notification: notifications.join("\n"),
+        stored_records: Vec::new(),
+    }
 }
 
-fn format_countdown(remaining_seconds: u32) -> String {
-    format!(
-        "発進まで: {remaining_seconds} 秒\nカウントダウン中は物理計算を停止する。\n発進を取り消すと確認画面へ戻る。"
-    )
-}
-
-fn visible_hud(phase: SessionPhase, details_open: bool) -> bool {
-    !details_open && phase == SessionPhase::FlightRunning
-}
-
-fn format_pause_summary(reasons: PauseReasons, can_resume: bool) -> String {
-    let mut labels = String::new();
-    for (reason, label) in [
-        (PauseReason::Manual, "手動操作"),
-        (PauseReason::DocumentHidden, "アプリの非アクティブ化"),
-        (PauseReason::TrackingSuspended, "頭部追跡の停止"),
-        (PauseReason::ProcessingDelay, "描画処理の遅延"),
-    ] {
-        if reasons.contains(reason) {
-            if !labels.is_empty() {
-                labels.push_str(" / ");
+pub(crate) fn button_actions(world: &mut World) {
+    let platform = platform_input(world);
+    let mut actions = Vec::new();
+    for (entity, interaction, button) in world
+        .query_filtered::<(Entity, &Interaction, &MenuButton), Changed<Interaction>>()
+        .iter(world)
+    {
+        if *interaction == Interaction::Pressed && button.enabled {
+            actions.push((entity, button.action.clone()));
+        }
+    }
+    for (entity, interaction, cursor, range) in world
+        .query::<(Entity, &Interaction, &RelativeCursorPosition, &MenuRange)>()
+        .iter(world)
+    {
+        if *interaction != Interaction::Pressed || !range.enabled {
+            continue;
+        }
+        if let Some(position) = cursor.normalized {
+            let time_seconds = range.minimum
+                + f64::from((position.x + 0.5).clamp(0.0, 1.0)) * (range.maximum - range.minimum);
+            actions.push((
+                entity,
+                match range.target {
+                    GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
+                    GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
+                },
+            ));
+        }
+    }
+    let focused = world.resource::<InputFocus>().get();
+    if let Some(focused) = focused
+        && let Some(keys) = world.get_resource::<ButtonInput<KeyCode>>()
+    {
+        if (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
+            && let Some(button) = world.get::<MenuButton>(focused)
+            && button.enabled
+            && !actions.iter().any(|(entity, _)| *entity == focused)
+        {
+            actions.push((focused, button.action.clone()));
+        }
+        if let Some(range) = world.get::<MenuRange>(focused)
+            && range.enabled
+        {
+            let next = if keys.just_pressed(KeyCode::Home) {
+                Some(range.minimum)
+            } else if keys.just_pressed(KeyCode::End) {
+                Some(range.maximum)
+            } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::ArrowDown)
+            {
+                Some(range.value - range.step)
+            } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::ArrowUp)
+            {
+                Some(range.value + range.step)
+            } else {
+                None
+            };
+            if let Some(next) = next {
+                let time_seconds = next.clamp(range.minimum, range.maximum);
+                actions.push((
+                    focused,
+                    match range.target {
+                        GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
+                        GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
+                    },
+                ));
             }
-            labels.push_str(label);
         }
     }
-    if labels.is_empty() {
-        labels.push_str("停止理由は解消済み");
+    for (entity, action) in actions {
+        world
+            .resource_mut::<InputFocus>()
+            .set(entity, FocusCause::Pressed);
+        let update = world
+            .resource_mut::<NativeSession>()
+            .update_ui_action(action, &platform);
+        let result = update.and_then(|update| {
+            for effect in update.effects {
+                match effect {
+                    GameUiEffect::Session { command } => world
+                        .resource_mut::<NativeSession>()
+                        .execute_ui_command(command)?,
+                    GameUiEffect::Record { action } => world
+                        .resource_mut::<NativeSession>()
+                        .execute_ui_record_action(action)?,
+                    GameUiEffect::Platform {
+                        command: GameUiPlatformCommand::SetWaterQuality { quality },
+                    } => {
+                        let phase = world.resource::<NativeSession>().game.snapshot().phase();
+                        let current = world.resource::<WaterQualitySelection>();
+                        let next = current
+                            .request(native_quality(quality), phase)
+                            .ok_or_else(|| "湖面画質の変更を受理できない".to_owned())?;
+                        *world.resource_mut::<WaterQualitySelection>() = next;
+                    }
+                    GameUiEffect::Platform {
+                        command: GameUiPlatformCommand::SetReplayCamera { camera },
+                    } => {
+                        let mut mode = world.resource_mut::<super::CameraMode>();
+                        mode.chase = match camera {
+                            birdman_game_session::game_ui::GameUiReplayCamera::Pilot => false,
+                            birdman_game_session::game_ui::GameUiReplayCamera::Chase => true,
+                            _ => {
+                                return Err(
+                                    "native camera capabilityに存在しないrigである".to_owned()
+                                );
+                            }
+                        };
+                        mode.look = Vec2::ZERO;
+                    }
+                    GameUiEffect::Platform { command } => {
+                        return Err(format!("native capabilityに存在しない操作: {command:?}"));
+                    }
+                }
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            world.resource_mut::<NativeSession>().notice = Some(error);
+        }
     }
-    let availability = if can_resume {
-        "飛行状態を保持中。「飛行を再開」または P / Esc で再開できる。"
-    } else {
-        "停止条件の解消を待っている。現在は再開できない。"
+}
+
+pub(crate) fn update_ui(world: &mut World) {
+    if !world.contains_resource::<RetainedUi>() {
+        return;
+    }
+    let platform = platform_input(world);
+    let font = world.resource::<NativeFont>().0.clone();
+    let mut retained = world
+        .remove_resource::<RetainedUi>()
+        .expect("UI owner exists during exclusive projection");
+    let session = world.resource::<NativeSession>();
+    let mut selections = session.ui.clone();
+    selections.analysis_time_seconds = 0.0;
+    let source = NativeUiSource {
+        phase: session.game.snapshot().phase(),
+        difficulty: session.difficulty,
+        identity: session.ui_identity(),
+        selections,
+        platform: platform.clone(),
     };
-    format!("一時停止 — {labels}\n{availability}\n{FLIGHT_CONTROL_GUIDE}")
-}
-
-fn format_briefing(mode: ControlMode, identity: Option<SessionScenarioIdentity>) -> String {
-    let weather = identity
-        .and_then(|identity| EnvironmentTarget::Sealed(identity).resolve().ok())
-        .map_or_else(
-            || "登録情報未確認".into(),
-            |resolved| format!("{:?}", resolved.condition().weather),
-        );
-    format!(
-        "飛行条件の確認 — {weather} / 架空の機体\n選択した操縦支援: {}\n{FLIGHT_CONTROL_GUIDE}\n尾翼２軸を操作する。独立したRoll入力はない。\n準備完了。3秒のカウントダウンで発進する。\nモデルの適用範囲外では飛行を終了する。",
-        control_mode_label(mode),
-    )
-}
-
-fn format_result_context(
-    mode: ControlMode,
-    header: FlightRecordHeader,
-    finalization: FlightRecordFinalization,
-) -> String {
-    let time_seconds = (finalization.terminal_tick as f64 + finalization.terminal_fraction)
-        / f64::from(header.physics_hz);
-    format!(
-        "選択した操縦支援: {}\ncontroller v{} / 確定時刻: {time_seconds:.2}\u{00a0}s",
-        control_mode_label(mode),
-        header.scenario.controller_profile_version,
-    )
-}
-
-fn format_result_summary(
-    reason: SessionEndReason,
-    distance_m: Option<f64>,
-    failure: Option<birdman_game_core::TailFlightTickError>,
-) -> String {
-    let distance =
-        distance_m.map_or_else(|| "取得不能".into(), |value| format!("{value:.2}\u{00a0}m"));
-    let mut summary = format!(
-        "飛行結果 — {}\n確定距離: {distance}",
-        result_reason_label(reason)
-    );
-    let explanation = failure_summary(failure);
-    if !explanation.is_empty() {
-        summary.push_str(&format!("\n{explanation}"));
+    let projected = if retained.source.as_ref() != Some(&source) || retained.view.is_none() {
+        session.ui_view(&platform).and_then(|mut view| {
+            let revision = retained
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| "UI view revisionが範囲を超えた".to_owned())?;
+            view.view_revision = revision;
+            project_view(world, &mut retained, &view, &font)?;
+            project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)?;
+            retained.revision = revision;
+            retained.source = Some(source);
+            Ok(())
+        })
+    } else {
+        let view = retained.view.as_ref().expect("published view exists");
+        session
+            .ui_frame(&platform, view)
+            .and_then(|frame| project_frame(world, &mut retained, &frame))
+    };
+    let theme = retained.view.as_ref().map(|view| view.theme.clone());
+    world.insert_resource(retained);
+    if let Err(error) = projected {
+        world.resource_mut::<NativeSession>().notice = Some(error);
     }
-    summary.push_str("\n最後の有効状態を表示する。");
-    summary
-}
-
-fn format_technical_details(
-    reason: Option<SessionEndReason>,
-    failure: Option<birdman_game_core::TailFlightTickError>,
-    notice: Option<&str>,
-) -> String {
-    let mut details = String::new();
-    if let Some(reason) = reason {
-        details.push_str(&format!("終了理由: {reason:?}"));
+    if let Some(theme) = theme {
+        project_focus(world, &theme);
     }
-    if let Some(failure) = failure {
-        details.push_str(&format!("\n失敗したtickの診断:\n{failure:#?}"));
-    }
-    if let Some(notice) = notice {
-        if !details.is_empty() {
-            details.push('\n');
+    align_chart_text_baselines(world);
+    let label = world
+        .get_resource::<FrameRate>()
+        .map_or_else(|| "FPS —".to_owned(), FrameRate::label);
+    for (role, mut text) in world.query::<(&UiText, &mut Text)>().iter_mut(world) {
+        if matches!(role, UiText::FrameRate) && text.0 != label {
+            text.0.clone_from(&label);
         }
-        details.push_str(&format!("通知詳細:\n{notice}"));
     }
-    details
 }
 
-fn scroll_content(
+fn project_frame(
+    world: &mut World,
+    retained: &mut RetainedUi,
+    frame: &GameUiFrame,
+) -> Result<(), String> {
+    let view = retained
+        .view
+        .as_ref()
+        .ok_or_else(|| "UI viewが存在しない".to_owned())?;
+    if frame.view_revision != view.view_revision {
+        return Err("UI frameのview revisionが一致しない".to_owned());
+    }
+    project_hud(world, &mut retained.hud, frame.hud.as_ref(), &view.theme)?;
+    let controls = view
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .collect::<Vec<_>>();
+    for range in &frame.ranges {
+        let control = controls
+            .iter()
+            .find(|control| control.id == range.id)
+            .ok_or_else(|| format!("UI rangeが存在しない: {}", range.id))?;
+        let widget = retained
+            .widgets
+            .get(&range.id)
+            .ok_or_else(|| format!("UI range entityが存在しない: {}", range.id))?;
+        let mut input = world
+            .get_mut::<MenuRange>(widget.node)
+            .ok_or_else(|| format!("UI range componentが存在しない: {}", range.id))?;
+        input.value = range.value;
+        set_text(
+            world,
+            widget.text,
+            format!("{}: {}", control.label, range.display_value),
+        );
+    }
+    for readout in &frame.readouts {
+        let control = controls
+            .iter()
+            .find(|control| control.id == readout.id)
+            .ok_or_else(|| format!("UI readoutが存在しない: {}", readout.id))?;
+        let widget = retained
+            .widgets
+            .get(&readout.id)
+            .ok_or_else(|| format!("UI readout entityが存在しない: {}", readout.id))?;
+        set_text(
+            world,
+            widget.text,
+            format!("{}: {}", control.label, readout.value),
+        );
+    }
+    for button in &frame.button_labels {
+        let widget = retained
+            .widgets
+            .get(&button.id)
+            .ok_or_else(|| format!("UI button entityが存在しない: {}", button.id))?;
+        set_text(world, widget.text, button.label.clone());
+    }
+    if let Some(cursor) = &frame.chart_cursor {
+        let widget = retained
+            .widgets
+            .get(&cursor.id)
+            .ok_or_else(|| format!("UI chart entityが存在しない: {}", cursor.id))?;
+        project_chart_cursor(world, widget.node, cursor)?;
+    }
+    Ok(())
+}
+
+fn set_text(world: &mut World, entity: Entity, value: String) {
+    let mut text = world.get_mut::<Text>(entity).expect("retained text exists");
+    if text.0 != value {
+        text.0 = value;
+    }
+}
+
+fn project_hud(
+    world: &mut World,
+    retained: &mut RetainedHud,
+    hud: Option<&GameUiHud>,
+    theme: &GameUiTheme,
+) -> Result<(), String> {
+    let Some(hud) = hud else {
+        world
+            .get_mut::<Node>(retained.shell)
+            .expect("HUD shell is retained")
+            .display = Display::None;
+        retained.previous = None;
+        return Ok(());
+    };
+    if retained.previous.as_ref() == Some(hud) {
+        return Ok(());
+    }
+    let layout = &hud.layout;
+    let ink = color(&theme.text, 1.0)?;
+    world.entity_mut(retained.shell).insert((
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(layout.offset_px[0]),
+            top: px(layout.offset_px[1]),
+            width: px(layout.width_px),
+            max_height: px(layout.maximum_height_px),
+            padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
+            flex_direction: FlexDirection::Column,
+            row_gap: px(layout.gap_px[1]),
+            overflow: Overflow::scroll_y(),
+            ..default()
+        },
+        BackgroundColor(color(&theme.panel_background, layout.opacity)?),
+    ));
+    world.entity_mut(retained.instruments).insert(Node {
+        display: Display::Grid,
+        width: percent(100),
+        grid_template_columns: vec![RepeatedGridTrack::flex(
+            layout.instrument_columns as u16,
+            1.0,
+        )],
+        column_gap: px(layout.gap_px[0]),
+        row_gap: px(layout.gap_px[1]),
+        ..default()
+    });
+    let horizon = hud.geometry.adi.and_then(|adi| adi.horizon());
+    let flight_path_y_ratio = hud.geometry.adi.and_then(|adi| adi.flight_path_y_ratio());
+    world.entity_mut(retained.attitude).insert((
+        Node {
+            display: if hud.geometry.adi.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            width: px(layout.attitude_size_px[0]),
+            height: px(layout.attitude_size_px[1]),
+            overflow: Overflow::clip(),
+            flex_shrink: 0.0,
+            margin: UiRect::right(px(layout.gap_px[0])),
+            ..default()
+        },
+        BackgroundColor(if horizon.is_some() {
+            Color::srgb(0.224, 0.490, 0.604)
+        } else {
+            Color::NONE
+        }),
+    ));
+    world
+        .get_mut::<Node>(retained.horizon)
+        .expect("HUD horizon node is retained")
+        .display = if horizon.is_some() {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if let Some(attitude) = horizon {
+        let offset = attitude.pitch_offset_ratio * layout.attitude_size_px[1];
+        let rotation = attitude.rotation_degrees.to_radians();
+        world.entity_mut(retained.horizon).insert(UiTransform {
+            translation: Val2::px(-offset * rotation.sin(), offset * rotation.cos()),
+            rotation: Rot2::degrees(attitude.rotation_degrees as f32),
+            ..default()
+        });
+    }
+    world.entity_mut(retained.flight_path).insert(Node {
+        position_type: PositionType::Absolute,
+        display: if flight_path_y_ratio.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        },
+        left: percent(50),
+        top: percent(flight_path_y_ratio.unwrap_or(0.5) * 100.0),
+        width: px(7),
+        height: px(7),
+        border: UiRect::all(px(1.5)),
+        border_radius: BorderRadius::MAX,
+        ..default()
+    });
+    if hud.geometry.heading_ticks.len() > retained.heading_ticks.len() {
+        return Err("共有heading tapeの目盛数が保持entity数を超えた".to_owned());
+    }
+    for (index, (line, label)) in retained.heading_ticks.iter().copied().enumerate() {
+        let tick = hud.geometry.heading_ticks.get(index);
+        world.entity_mut(line).insert(Node {
+            position_type: PositionType::Absolute,
+            display: if tick.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            left: percent(tick.map_or(0.0, |tick| tick.position_ratio * 100.0)),
+            top: px(if tick.is_some_and(|tick| tick.major) {
+                19
+            } else {
+                23
+            }),
+            width: px(1),
+            height: px(if tick.is_some_and(|tick| tick.major) {
+                8
+            } else {
+                4
+            }),
+            ..default()
+        });
+        world.entity_mut(label).insert(Node {
+            position_type: PositionType::Absolute,
+            display: if tick.is_some_and(|tick| tick.major) {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            left: percent(tick.map_or(0.0, |tick| tick.position_ratio * 100.0)),
+            top: px(4),
+            ..default()
+        });
+        set_text(
+            world,
+            label,
+            tick.map_or_else(String::new, |tick| tick.label.clone()),
+        );
+    }
+    world.entity_mut(retained.wind_needle).insert((
+        Node {
+            position_type: PositionType::Absolute,
+            display: if hud.wind_direction_degrees.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        },
+        UiTransform::from_rotation(Rot2::degrees(
+            hud.wind_direction_degrees.unwrap_or(0.0) as f32
+        )),
+    ));
+    world.entity_mut(retained.angle_indicator).insert(Node {
+        position_type: PositionType::Absolute,
+        display: if hud.geometry.angle_of_attack_ratio.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        },
+        left: percent(5.0 + hud.geometry.angle_of_attack_ratio.unwrap_or(0.0) * 90.0),
+        top: px(3),
+        width: px(7),
+        height: px(7),
+        ..default()
+    });
+    world
+        .entity_mut(retained.readouts)
+        .insert((Text::new(&hud.readouts), TextColor(ink)));
+    let heading = hud
+        .heading
+        .as_ref()
+        .map(|value| format!("{}\n{value}", hud.heading_label));
+    let pilot = hud
+        .pilot_position
+        .as_ref()
+        .map(|value| format!("{}\n{value}", hud.pilot_position_label));
+    let wind = hud
+        .wind
+        .as_ref()
+        .map(|value| format!("{}\n{value}", hud.wind_label));
+    let aoa = hud
+        .angle_of_attack
+        .as_ref()
+        .map(|value| format!("{}\n{value}", hud.angle_of_attack_label));
+    let values = [
+        ("status", hud.status.as_str()),
+        ("warning", hud.warning.as_deref().unwrap_or("")),
+        ("heading", heading.as_deref().unwrap_or("")),
+        ("pilot", pilot.as_deref().unwrap_or("")),
+        ("wind", wind.as_deref().unwrap_or("")),
+        ("aoa", aoa.as_deref().unwrap_or("")),
+        ("telemetry", hud.telemetry.as_str()),
+        ("location", hud.location.as_str()),
+        ("attribution", hud.map_attribution.as_str()),
+        (
+            "controls",
+            if layout.controls_visible {
+                hud.controls_description.as_str()
+            } else {
+                ""
+            },
+        ),
+    ];
+    for (key, visible) in [
+        ("heading", hud.heading.is_some()),
+        ("pilot", hud.pilot_position.is_some()),
+        ("wind", hud.wind.is_some()),
+        ("aoa", hud.angle_of_attack.is_some()),
+    ] {
+        world
+            .get_mut::<Node>(retained.instrument_cards[key])
+            .expect("HUD instrument card is retained")
+            .display = if visible {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    for (key, value) in values {
+        let entity = retained.fields[key];
+        world.entity_mut(entity).insert((
+            Text::new(value),
+            TextColor(if key == "warning" {
+                Color::srgb(1.0, 0.6, 0.4)
+            } else {
+                ink
+            }),
+        ));
+        world
+            .get_mut::<Node>(entity)
+            .expect("HUD node is retained")
+            .display = if value.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    let supplementary = hud.supplementary_readouts.join("\n");
+    let entity = retained.fields["supplementary"];
+    world
+        .entity_mut(entity)
+        .insert((Text::new(&supplementary), TextColor(ink)));
+    world
+        .get_mut::<Node>(entity)
+        .expect("HUD node is retained")
+        .display = if supplementary.is_empty() {
+        Display::None
+    } else {
+        Display::Flex
+    };
+    let entities = retained
+        .fields
+        .values()
+        .copied()
+        .chain([retained.readouts])
+        .collect::<Vec<_>>();
+    for entity in entities {
+        if let Some(mut font) = world.get_mut::<TextFont>(entity) {
+            font.font_size = FontSize::Px(layout.font_size_px as f32);
+        }
+    }
+    retained.previous = Some(hud.clone());
+    Ok(())
+}
+
+fn scroll_hud(
     mut on_scroll: On<Pointer<Scroll>>,
-    mut panels: Query<(&mut ScrollPosition, &ComputedNode), With<UiPanel>>,
+    mut panels: Query<(&mut ScrollPosition, &ComputedNode)>,
 ) {
     if let Ok((mut position, node)) = panels.get_mut(on_scroll.entity) {
         let delta = match on_scroll.unit {
@@ -829,472 +1288,1306 @@ fn scroll_content(
     }
 }
 
-fn format_quantity(label: &str, value: f64, decimal_places: usize, unit: &str) -> String {
-    let unit = unit.replace('/', "/\u{2060}");
-    format!("{label}: {value:.decimal_places$}\u{00a0}{unit}")
-}
-
-fn format_three_axis_quantity(
-    label: &str,
-    values: [f64; 3],
-    decimal_places: usize,
-    unit: &str,
-) -> String {
-    let unit = unit.replace('/', "/\u{2060}");
-    format!(
-        "{label} [{unit}]\n{:.decimal_places$} / {:.decimal_places$} / {:.decimal_places$}",
-        values[0], values[1], values[2]
-    )
-}
-
-pub(crate) fn update_ui(
-    session: Res<NativeSession>,
-    camera: Res<CameraMode>,
-    mut disclosure: ResMut<TechnicalDisclosure>,
-    mut previous_phase: Local<Option<SessionPhase>>,
-    mut view: UiViewQueries,
-    frame_rate: Option<Res<FrameRate>>,
-) {
-    let snapshot = session.game.snapshot();
-    let phase = snapshot.phase();
-    let phase_changed = *previous_phase != Some(phase);
-    if phase_changed {
-        disclosure.expanded = false;
-        *previous_phase = Some(phase);
+fn project_view(
+    world: &mut World,
+    retained: &mut RetainedUi,
+    view: &GameUiView,
+    font: &Handle<Font>,
+) -> Result<(), String> {
+    if retained.view.as_ref() == Some(view) {
+        return Ok(());
     }
-    let result = match snapshot {
-        SessionSnapshot::Result(result) => Some(result),
-        _ => None,
-    };
-    let mut details = format_technical_details(
-        result.map(|result| result.reason),
-        result.and_then(|result| result.failure),
-        session.notice.as_deref(),
-    );
-    let environment_notice = view
-        .environment
+    if retained
+        .view
         .as_ref()
-        .and_then(|environment| environment.failure_notice());
-    if let Some(notice) = &environment_notice {
-        if !details.is_empty() {
-            details.push('\n');
-        }
-        details.push_str(notice);
+        .is_none_or(|previous| previous.theme != view.theme)
+    {
+        retained.hud.previous = None;
     }
-    let details_open = disclosure.is_expanded() && !details.is_empty();
-    for (button, interaction, mut node, mut background, mut border) in &mut view.buttons {
-        let visible = match button.0 {
-            UiAction::Session(action) => visible_action(phase, action),
-            UiAction::WaterQuality(_) => quality_menu_visible(phase),
-            UiAction::TechnicalDetails => !details.is_empty(),
-        };
-        node.display = if visible {
-            Display::Flex
+    let text_color = color(&view.theme.text, 1.0)?;
+    let background = color(
+        &view.theme.panel_background,
+        if view.layout.passthrough {
+            0.0
         } else {
-            Display::None
-        };
-        let emphasis = match button.0 {
-            UiAction::WaterQuality(quality) => {
-                if view.quality.can_select(phase) {
-                    ButtonEmphasis::Choice {
-                        selected: quality == view.quality.applied(),
+            view.theme.panel_opacity
+        },
+    )?;
+    world.entity_mut(retained.shell).insert((
+        shell_node(&view.layout),
+        BackgroundColor(background),
+        if view.layout.passthrough {
+            Pickable::IGNORE
+        } else {
+            Pickable::default()
+        },
+        if view.layout.shell == GameUiShell::Center {
+            UiTransform::from_translation(Val2::percent(-50, -50))
+        } else {
+            UiTransform::IDENTITY
+        },
+    ));
+    let show_headings =
+        view.layout.shell == GameUiShell::Center || view.layout.shell == GameUiShell::PauseSettings;
+    world.entity_mut(retained.heading).insert((
+        Text::new(&view.title),
+        TextColor(text_color),
+        Node {
+            display: if show_headings {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            flex_shrink: 0.0,
+            ..default()
+        },
+    ));
+    world.entity_mut(retained.description).insert((
+        Text::new(&view.description),
+        TextColor(color(&view.theme.muted_text, 1.0)?),
+        Node {
+            display: if show_headings {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            flex_shrink: 0.0,
+            ..default()
+        },
+    ));
+    let normalized = view.layout.shell == GameUiShell::Analysis
+        && view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.sections)
+            .any(|section| section.layout == GameUiSectionLayout::Normalized);
+    world.entity_mut(retained.content).insert(Node {
+        width: percent(100),
+        height: if normalized { percent(100) } else { auto() },
+        position_type: if normalized {
+            PositionType::Absolute
+        } else {
+            PositionType::Relative
+        },
+        flex_direction: FlexDirection::Column,
+        row_gap: px(view.layout.gap_px),
+        flex_shrink: 0.0,
+        ..default()
+    });
+    let rebuild = retained
+        .view
+        .as_ref()
+        .is_none_or(|previous| structure(previous) != structure(view));
+    let focus_id = world.resource::<InputFocus>().get().and_then(|focused| {
+        retained
+            .widgets
+            .iter()
+            .find_map(|(id, widget)| (widget.node == focused).then(|| id.clone()))
+    });
+    if rebuild {
+        let children = world
+            .entity(retained.content)
+            .get::<Children>()
+            .map(|children| children.iter().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for child in children {
+            world.despawn(child);
+        }
+        retained.sections.clear();
+        retained.widgets.clear();
+        if retained.view.as_ref().is_some_and(|previous| {
+            previous.scene != view.scene || previous.active_overlay != view.active_overlay
+        }) && let Some(mut scroll) = world.get_mut::<ScrollPosition>(retained.shell)
+        {
+            scroll.y = 0.0;
+        }
+        for panel in &view.panels {
+            if !normalized {
+                for section in &panel.sections {
+                    let group = world
+                        .spawn((
+                            ChildOf(retained.content),
+                            Node {
+                                width: percent(100),
+                                flex_shrink: 0.0,
+                                flex_direction: FlexDirection::Column,
+                                row_gap: px(view.layout.gap_px),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    if !section.label.is_empty() {
+                        spawn_text(world, group, &section.label, font, 16.0, text_color);
                     }
-                } else {
-                    ButtonEmphasis::Disabled
+                    let columns = world
+                        .spawn((ChildOf(group), section_node(section.layout, &view.layout)))
+                        .id();
+                    retained.sections.insert(section.id.clone(), columns);
                 }
             }
-            UiAction::Session(action) if !action_available(&session, action) => {
-                ButtonEmphasis::Disabled
+            for control in &panel.controls {
+                let parent = if normalized {
+                    retained.content
+                } else {
+                    *retained
+                        .sections
+                        .get(&control.section)
+                        .ok_or_else(|| format!("UI sectionが存在しない: {}", control.section))?
+                };
+                let node = world
+                    .spawn((
+                        ChildOf(parent),
+                        Node::default(),
+                        Name::new(control.id.clone()),
+                    ))
+                    .id();
+                if matches!(control.content, GameUiControlContent::Chart { .. }) {
+                    world.entity_mut(node).observe(scroll_content);
+                }
+                let text = spawn_text(world, node, "", font, 16.0, text_color);
+                retained
+                    .widgets
+                    .insert(control.id.clone(), Widget { node, text });
             }
-            _ => button_emphasis(phase, button.0, session.control_mode),
-        };
-        let (background_color, border_color) = button_colors(emphasis, *interaction);
-        *background = BackgroundColor(background_color);
-        *border = BorderColor::all(border_color);
-    }
-    for (panel, mut node, mut position) in &mut view.panels {
-        if matches!(panel, UiPanel::SessionContent) {
-            node.max_height = session_content_max_height(phase);
         }
-        let visible = match panel {
-            UiPanel::SessionContent | UiPanel::Navigation => true,
-            UiPanel::PreparationSteps => preparation_progress(phase).is_some(),
-            UiPanel::AssistanceChoices => phase == SessionPhase::FlightSetup,
-            UiPanel::WaterQualityChoices => quality_menu_visible(phase),
-            UiPanel::FlightHud => visible_hud(phase, details_open),
-            UiPanel::TechnicalDetails => details_open,
-        };
-        node.display = if visible {
-            Display::Flex
-        } else {
-            Display::None
-        };
-        if phase_changed {
-            position.y = 0.0;
+        if let Some(id) = focus_id
+            && let Some(widget) = retained.widgets.get(&id)
+        {
+            world
+                .resource_mut::<InputFocus>()
+                .set(widget.node, FocusCause::Navigated);
         }
     }
-    let mode = match session.control_mode {
-        ControlMode::Manual => "Manual",
-        ControlMode::Shared(_) => "Shared 50%",
-        ControlMode::Automatic => "Automatic",
-    };
-    let mut title = match snapshot {
-        SessionSnapshot::Title => "Birdman native Screen\n架空の機体モデルで飛行を試す。\n「飛行を設定」から操縦支援を選び、飛行条件を確認する。".into(),
-        SessionSnapshot::FlightSetup => "飛行条件の設定\n気象: Typical（既定値） / 機体: 架空のhybrid mock\n操縦支援を選び、飛行準備へ進む。".into(),
-        SessionSnapshot::BriefingReady { .. } => format_briefing(session.control_mode, session.game.configuration_identity()),
-        SessionSnapshot::Countdown {
-            remaining_ticks, ..
-        } => format_countdown(remaining_ticks),
-        SessionSnapshot::TailFlightRunning { .. } => format!(
-            "Flight — {mode} / {} camera / C: 視点切替、P: 一時停止",
-            if camera.chase { "Chase" } else { "Pilot" }
-        ),
-        SessionSnapshot::TailFlightPaused { reasons, .. } => {
-            format_pause_summary(reasons, session.can_resume())
-        }
-        SessionSnapshot::Result(result) => {
-            let mut summary = format_result_summary(
-                result.reason,
-                result.score.map(|score| score.course_parallel_m()),
-                result.failure,
-            );
-            if let Some(record) = session.game.flight_record()
-                && let Some(finalization) = record.finalization()
+    for panel in &view.panels {
+        for control in &panel.controls {
+            let widget = retained
+                .widgets
+                .get(&control.id)
+                .ok_or_else(|| format!("UI controlを取得できない: {}", control.id))?;
+            let previous = retained.view.as_ref().and_then(|previous| {
+                previous
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .find(|previous| previous.id == control.id)
+            });
+            if rebuild
+                || previous != Some(control)
+                || retained.view.as_ref().is_some_and(|previous| {
+                    previous.layout != view.layout || previous.theme != view.theme
+                })
             {
-                summary.push('\n');
-                summary.push_str(&format_result_context(
-                    session.control_mode,
-                    record.header(),
-                    finalization,
-                ));
+                let section_layout = if normalized {
+                    GameUiSectionLayout::Normalized
+                } else {
+                    panel
+                        .sections
+                        .iter()
+                        .find(|section| section.id == control.section)
+                        .map_or(GameUiSectionLayout::Column, |section| section.layout)
+                };
+                project_control(
+                    world,
+                    widget,
+                    control,
+                    &view.theme,
+                    font,
+                    section_layout,
+                    view.layout.shell,
+                )?;
             }
-            summary
         }
-        _ => format!("{:?}", phase),
+    }
+    retained.view = Some(view.clone());
+    Ok(())
+}
+
+fn structure(view: &GameUiView) -> Vec<String> {
+    let mut result = vec![format!(
+        "{:?}/{:?}/{:?}",
+        view.scene, view.active_overlay, view.layout.shell
+    )];
+    for panel in &view.panels {
+        for section in &panel.sections {
+            result.push(format!("{}/{}/{:?}", panel.id, section.id, section.layout));
+        }
+        for control in &panel.controls {
+            let kind = match control.content {
+                GameUiControlContent::Button { .. } => "button",
+                GameUiControlContent::Toggle { .. } => "toggle",
+                GameUiControlContent::Range { .. } => "range",
+                GameUiControlContent::Status { .. } => "status",
+                GameUiControlContent::Chart { .. } => "chart",
+            };
+            result.push(format!("{}/{}/{kind}", control.id, control.section));
+        }
+    }
+    result
+}
+
+fn shell_node(layout: &GameUiLayout) -> Node {
+    let mut node = Node {
+        position_type: PositionType::Absolute,
+        width: px(layout.width_px),
+        max_height: px(layout.maximum_height_px),
+        padding: UiRect::all(px(layout.padding_px)),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(layout.gap_px),
+        overflow: if layout.scroll_y {
+            Overflow::scroll_y()
+        } else {
+            Overflow::clip()
+        },
+        ..default()
     };
-    if session.notice.is_some() {
-        title.push_str("\n通知がある。技術情報で詳細を確認できる。");
+    match layout.shell {
+        GameUiShell::Center => {
+            node.left = percent(50);
+            node.top = percent(50);
+        }
+        GameUiShell::FlightBar => {
+            node.right = px(0);
+            node.bottom = px(0);
+        }
+        GameUiShell::PauseSettings | GameUiShell::Cinematic => {
+            node.top = px(12);
+            node.right = px(12);
+        }
+        GameUiShell::Analysis => {
+            node.left = px(0);
+            node.top = px(0);
+            node.height = px(layout.maximum_height_px);
+        }
     }
-    if environment_notice.is_some() {
-        title.push_str("\n描画環境の通知がある。技術情報で原因を確認できる。");
+    node
+}
+
+fn section_node(section: GameUiSectionLayout, layout: &GameUiLayout) -> Node {
+    Node {
+        width: percent(100),
+        min_width: px(0),
+        flex_direction: if section == GameUiSectionLayout::Row {
+            FlexDirection::Row
+        } else {
+            FlexDirection::Column
+        },
+        row_gap: px(layout.gap_px),
+        column_gap: px(layout.gap_px),
+        display: if section == GameUiSectionLayout::ChoiceGrid {
+            Display::Grid
+        } else {
+            Display::Flex
+        },
+        grid_template_columns: if section == GameUiSectionLayout::ChoiceGrid {
+            vec![RepeatedGridTrack::flex(layout.choice_columns as u16, 1.0)]
+        } else {
+            Vec::new()
+        },
+        flex_wrap: if section == GameUiSectionLayout::Row {
+            FlexWrap::Wrap
+        } else {
+            FlexWrap::NoWrap
+        },
+        justify_content: if section == GameUiSectionLayout::Row
+            && layout.shell == GameUiShell::FlightBar
+        {
+            JustifyContent::FlexEnd
+        } else {
+            JustifyContent::FlexStart
+        },
+        ..default()
     }
-    let mut readout = String::new();
-    if visible_hud(phase, details_open)
-        && let Some(state) = session.physical_state()
-    {
-        let rates = state.angular_velocity_body().components();
-        readout = [
-            format_three_axis_quantity("body rates p/q/r", rates, 3, "rad/s"),
-            format_quantity("pilot位置", state.pilot_position_m(), 3, "m"),
-        ]
-        .join("\n");
-        if let Some(display) = session.display_state() {
-            readout.push_str(&format!(
-                "\ntick {:.3} / {:.2}\u{00a0}s\n水平/垂直尾翼 [rad]: {:.4} / {:.4}\n{}",
-                display.tick,
-                display.tick / f64::from(birdman_game_core::PHYSICS_HZ),
-                display.incidence.elevator_rad(),
-                display.incidence.rudder_rad(),
-                format_quantity("held target", display.held_target_m, 3, "m"),
+}
+
+fn project_control(
+    world: &mut World,
+    widget: &Widget,
+    control: &GameUiControl,
+    theme: &GameUiTheme,
+    font: &Handle<Font>,
+    section_layout: GameUiSectionLayout,
+    shell: GameUiShell,
+) -> Result<(), String> {
+    let mut node = Node {
+        width: percent(100),
+        min_width: px(0),
+        flex_shrink: 0.0,
+        flex_direction: FlexDirection::Column,
+        padding: UiRect::all(px(8)),
+        row_gap: px(4),
+        ..default()
+    };
+    if section_layout == GameUiSectionLayout::Normalized {
+        node.position_type = PositionType::Absolute;
+        node.left = percent(control.rect.x * 100.0);
+        node.top = percent(control.rect.y * 100.0);
+        node.width = percent(control.rect.width * 100.0);
+        node.height = percent(control.rect.height * 100.0);
+    } else if section_layout == GameUiSectionLayout::Row {
+        node.width = auto();
+        node.max_width = percent(100);
+        node.flex_grow = if matches!(shell, GameUiShell::FlightBar | GameUiShell::PauseSettings) {
+            0.0
+        } else {
+            1.0
+        };
+    }
+    let mut background = Color::NONE;
+    let mut label = control.label.clone();
+    match &control.content {
+        GameUiControlContent::Button {
+            action,
+            presentation,
+        } => {
+            node.min_height = px(theme.button_min_height_px);
+            background = color(&theme.normal_background, 1.0)?;
+            match presentation {
+                GameUiButtonPresentation::Action {
+                    emphasis: GameUiEmphasis::Primary,
+                } => {
+                    node.min_height = px(theme.primary_min_height_px);
+                    background = color(&theme.primary_background, 1.0)?;
+                }
+                GameUiButtonPresentation::Action {
+                    emphasis: GameUiEmphasis::Secondary,
+                }
+                | GameUiButtonPresentation::Disclosure { .. } => background = Color::NONE,
+                GameUiButtonPresentation::Choice {
+                    selected,
+                    description,
+                    ..
+                } => {
+                    background = color(
+                        if *selected {
+                            &theme.primary_background
+                        } else {
+                            &theme.choice_background
+                        },
+                        1.0,
+                    )?;
+                    label = format!(
+                        "{}{}\n{description}",
+                        if *selected { "● " } else { "" },
+                        control.label
+                    );
+                }
+                _ => {}
+            }
+            if let GameUiButtonPresentation::Disclosure { expanded } = presentation {
+                label = format!("{} {}", if *expanded { "▾" } else { "▸" }, control.label);
+            }
+            world.entity_mut(widget.node).insert((
+                Button,
+                MenuButton {
+                    action: action.clone(),
+                    enabled: control.enabled,
+                },
+            ));
+            if let GameUiAction::Platform {
+                command: GameUiPlatformCommand::SetWaterQuality { .. },
+            } = action
+            {
+                world
+                    .entity_mut(widget.text)
+                    .insert(UiText::WaterQualityChoice);
+            }
+        }
+        GameUiControlContent::Toggle { cue, value } => {
+            node.min_height = px(theme.button_min_height_px);
+            background = color(&theme.choice_background, 1.0)?;
+            label = format!("{} {}", if *value { "☑" } else { "☐" }, control.label);
+            world.entity_mut(widget.node).insert((
+                Button,
+                MenuButton {
+                    enabled: control.enabled,
+                    action: GameUiAction::Session {
+                        command: birdman_game_session::game_ui::GameUiSessionCommand::SetCue {
+                            cue: *cue,
+                            visible: !value,
+                        },
+                    },
+                },
             ));
         }
-        match session.game.telemetry() {
-            Ok(Some(telemetry)) => readout.push_str(&format!(
-                "\n{} / {}\n{}",
-                format_quantity("高度", telemetry.altitude_m, 2, "m"),
-                format_quantity("対気速度", telemetry.airspeed_mps, 2, "m/s"),
-                format_three_axis_quantity(
-                    "roll/pitch/heading",
-                    [
-                        telemetry.roll_rad.to_degrees(),
-                        telemetry.pitch_rad.to_degrees(),
-                        telemetry.heading_rad.to_degrees(),
-                    ],
-                    1,
-                    "°",
-                ),
-            )),
-            Err(error) => readout.push_str(&format!("\n計器取得不能: {error:?}")),
-            _ => {}
+        GameUiControlContent::Range {
+            target,
+            value,
+            display_value,
+            minimum,
+            maximum,
+            step,
+        } => {
+            node.min_height = px(theme.button_min_height_px);
+            label = format!("{}: {display_value}", control.label);
+            background = color(&theme.choice_background, 1.0)?;
+            world.entity_mut(widget.node).insert((
+                Button,
+                RelativeCursorPosition::default(),
+                MenuRange {
+                    target: *target,
+                    value: *value,
+                    minimum: *minimum,
+                    maximum: *maximum,
+                    step: *step,
+                    enabled: control.enabled,
+                },
+            ));
         }
-        match session.game.flight_progress() {
-            Ok(Some(progress)) => readout.push_str(&format!(
-                "\n{}",
-                format_quantity("進行距離", progress.course_parallel_m(), 2, "m")
-            )),
-            Err(error) => readout.push_str(&format!("\n距離取得不能: {error:?}")),
-            _ => {}
+        GameUiControlContent::Status { value } => {
+            label = format!("{}: {value}", control.label);
+            if control.id == "game-briefing-technical-content" {
+                world
+                    .entity_mut(widget.text)
+                    .insert(UiText::TechnicalDetails);
+            }
+        }
+        GameUiControlContent::Chart { plot, .. } => {
+            label = control.label.clone();
+            background = color(&theme.panel_background, theme.panel_opacity)?;
+            node.overflow = if plot.presentation.scroll_overflow {
+                Overflow::scroll()
+            } else {
+                Overflow::clip()
+            };
+            if world.get::<ScrollPosition>(widget.node).is_none() {
+                world
+                    .entity_mut(widget.node)
+                    .insert(ScrollPosition::default());
+            }
+            let root_font_size = platform_input(world).viewport.root_font_size;
+            let legend_ink = color(&theme.text, 1.0)?;
+            project_chart(
+                world,
+                widget.node,
+                widget.text,
+                plot,
+                root_font_size,
+                legend_ink,
+                font,
+            )?;
         }
     }
-    for (kind, mut value) in &mut view.text {
-        let label: Cow<'_, str> = match kind {
-            UiText::PreparationSteps => {
-                Cow::Borrowed(preparation_progress(phase).unwrap_or_default())
+    world
+        .entity_mut(widget.node)
+        .insert((node, BackgroundColor(background)));
+    if control.enabled
+        && !matches!(
+            control.content,
+            GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+        )
+    {
+        world.entity_mut(widget.node).insert(TabIndex(0));
+    } else {
+        world.entity_mut(widget.node).remove::<TabIndex>();
+        if world.resource::<InputFocus>().get() == Some(widget.node) {
+            world.resource_mut::<InputFocus>().clear();
+        }
+    }
+    world.entity_mut(widget.text).insert((
+        Text::new(label),
+        TextColor(color(
+            &theme.text,
+            if control.enabled
+                || matches!(
+                    control.content,
+                    GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+                )
+            {
+                1.0
+            } else {
+                0.45
+            },
+        )?),
+    ));
+    Ok(())
+}
+
+fn project_chart(
+    world: &mut World,
+    parent: Entity,
+    title: Entity,
+    chart: &GameUiChart,
+    root_font_size: f64,
+    legend_ink: Color,
+    font: &Handle<Font>,
+) -> Result<(), String> {
+    let retained_surface = world
+        .get::<RetainedChart>(parent)
+        .map(|chart| chart.surface);
+    let children = world
+        .entity(parent)
+        .get::<Children>()
+        .map(|children| {
+            children
+                .iter()
+                .filter(|entity| *entity != title && Some(*entity) != retained_surface)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for child in children {
+        world.despawn(child);
+    }
+    let surface = retained_surface.unwrap_or_else(|| {
+        world
+            .spawn((ChildOf(parent), Node::default(), ChartViewport))
+            .id()
+    });
+    let children = world
+        .get::<Children>(surface)
+        .map(|children| children.iter().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for child in children {
+        world.despawn(child);
+    }
+    let presentation = &chart.presentation;
+    world.entity_mut(surface).insert(Node {
+        width: percent(100),
+        min_width: px(presentation.viewport_minimum_rem[0] * root_font_size),
+        min_height: px(presentation.viewport_minimum_rem[1] * root_font_size),
+        flex_grow: 1.0,
+        flex_basis: px(presentation.viewport_minimum_rem[1] * root_font_size),
+        flex_shrink: 0.0,
+        overflow: Overflow::clip(),
+        ..default()
+    });
+    let plot = presentation.plot;
+    let screen_position = |point: GameUiChartPoint| Vec2::new(point.x as f32, point.y as f32);
+    let position = |point: GameUiChartPoint| {
+        Vec2::new(
+            (plot[0]
+                + (point.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum)
+                    * (plot[2] - plot[0])) as f32,
+            (plot[3]
+                - (point.y - chart.y_minimum) / (chart.y_maximum - chart.y_minimum)
+                    * (plot[3] - plot[1])) as f32,
+        )
+    };
+    let axes = color(&presentation.axes_color, 1.0)?;
+    for [start, end] in &presentation.grid_lines {
+        chart_line(
+            world,
+            surface,
+            screen_position(*start),
+            screen_position(*end),
+            color(&presentation.grid_color, presentation.grid_opacity)?,
+        );
+    }
+    chart_line(
+        world,
+        surface,
+        Vec2::new(plot[0] as f32, plot[1] as f32),
+        Vec2::new(plot[0] as f32, plot[3] as f32),
+        axes,
+    );
+    chart_line(
+        world,
+        surface,
+        Vec2::new(plot[0] as f32, plot[3] as f32),
+        Vec2::new(plot[2] as f32, plot[3] as f32),
+        axes,
+    );
+    for tick in presentation.x_ticks.iter().chain(&presentation.y_ticks) {
+        project_chart_text(world, surface, &tick.text, font)?;
+    }
+    for series in &chart.series {
+        for (index, pair) in series.points.windows(2).enumerate() {
+            let ink = color(
+                series.segment_colors.get(index).unwrap_or(&series.color),
+                1.0,
+            )?;
+            chart_line(world, surface, position(pair[0]), position(pair[1]), ink);
+        }
+    }
+    for vector in chart.vectors.iter().skip(1) {
+        if let Some([start, end]) = vector.segment {
+            let ink = color(&vector.color, 1.0)?;
+            let start = position(start);
+            let end = position(end);
+            chart_line(world, surface, start, end, ink);
+            let direction = (end - start).normalize_or_zero();
+            let side = Vec2::new(-direction.y, direction.x);
+            chart_line(world, surface, end, end - direction * 7.0 + side * 3.0, ink);
+            chart_line(world, surface, end, end - direction * 7.0 - side * 3.0, ink);
+        }
+    }
+    for marker in chart.markers.iter().chain(&chart.time_markers) {
+        let point = position(marker.point);
+        world.spawn((
+            ChildOf(surface),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(point.x - 3.0),
+                top: px(point.y - 3.0),
+                width: px(6),
+                height: px(6),
+                ..default()
+            },
+            BackgroundColor(color(&marker.color, 1.0)?),
+        ));
+    }
+    for label in presentation
+        .marker_labels
+        .iter()
+        .chain(&presentation.time_marker_labels)
+    {
+        project_chart_text(world, surface, label, font)?;
+    }
+    for reference in &chart.reference_lines {
+        let point = position(GameUiChartPoint {
+            x: chart.x_minimum,
+            y: reference.value,
+        });
+        let ink = color(&reference.color, 1.0)?;
+        chart_line(
+            world,
+            surface,
+            point,
+            position(GameUiChartPoint {
+                x: chart.x_maximum,
+                y: reference.value,
+            }),
+            ink,
+        );
+    }
+    for label in &presentation.reference_labels {
+        project_chart_text(world, surface, label, font)?;
+    }
+    project_chart_text(world, surface, &presentation.x_axis, font)?;
+    project_chart_text(world, surface, &presentation.y_axis, font)?;
+    if let Some(guides) = &presentation.map_guides {
+        for (segments, label) in [
+            (&guides.scale_segments, &guides.scale_label),
+            (&guides.north_segments, &guides.north_label),
+        ] {
+            for [start, end] in segments {
+                chart_line(
+                    world,
+                    surface,
+                    screen_position(*start),
+                    screen_position(*end),
+                    color(&label.color, 1.0)?,
+                );
             }
-            UiText::Session => Cow::Borrowed(&title),
-            UiText::AssistanceSelection => Cow::Owned(format!(
-                "操縦支援 — 現在の選択: {}\n{}",
-                control_mode_label(session.control_mode),
-                control_mode_description(session.control_mode),
-            )),
-            UiText::WaterQualitySelection => Cow::Owned(view.quality.status()),
-            UiText::WaterQualityChoice(quality) => {
-                Cow::Owned(quality_choice_label(*quality, &view.quality))
-            }
-            UiText::Action(action) => {
-                Cow::Owned(action_label(phase, *action, session.control_mode))
-            }
-            UiText::Hud => Cow::Borrowed(&readout),
-            UiText::TechnicalDetails => Cow::Borrowed(&details),
-            UiText::TechnicalButton => {
-                Cow::Borrowed(match (visible_hud(phase, false), details_open) {
-                    (true, true) => "技術情報を閉じて計器に戻る",
-                    (true, false) => "技術情報を開く（計器を隠す）",
-                    (false, true) => "技術情報を閉じる",
-                    (false, false) => "技術情報を開く",
-                })
-            }
-            UiText::FrameRate => Cow::Owned(
-                frame_rate
-                    .as_ref()
-                    .map_or_else(|| "FPS —".into(), |rate| rate.label()),
-            ),
+        }
+        project_chart_text(world, surface, &guides.scale_label, font)?;
+        project_chart_text(world, surface, &guides.north_label, font)?;
+    }
+    let legend = world
+        .spawn((
+            ChildOf(parent),
+            Node {
+                width: percent(100),
+                min_width: px(0),
+                flex_wrap: FlexWrap::Wrap,
+                flex_shrink: 0.0,
+                align_items: AlignItems::Center,
+                column_gap: px(presentation.legend_gap_rem * root_font_size),
+                row_gap: px(presentation.legend_gap_rem * root_font_size),
+                ..default()
+            },
+        ))
+        .id();
+    for entry in &presentation.legend {
+        let item = world
+            .spawn((
+                ChildOf(legend),
+                Node {
+                    align_items: AlignItems::Center,
+                    flex_shrink: 0.0,
+                    column_gap: px(presentation.legend_swatch_gap_rem * root_font_size),
+                    ..default()
+                },
+            ))
+            .id();
+        let dimensions = if entry.segment_gradient.is_some() {
+            presentation.legend_gradient_rem
+        } else {
+            presentation.legend_swatch_rem
         };
-        if value.0.as_str() != label.as_ref() {
-            label.as_ref().clone_into(&mut value.0);
+        let swatch = world
+            .spawn((
+                ChildOf(item),
+                Node {
+                    width: px(dimensions[0] * root_font_size),
+                    height: px(dimensions[1] * root_font_size),
+                    flex_shrink: 0.0,
+                    border_radius: if entry.segment_gradient.is_some() {
+                        BorderRadius::all(px(
+                            presentation.legend_gradient_radius_rem * root_font_size
+                        ))
+                    } else {
+                        BorderRadius::MAX
+                    },
+                    ..default()
+                },
+                BackgroundColor(color(&entry.color, 1.0)?),
+            ))
+            .id();
+        if let Some([start, end]) = &entry.segment_gradient {
+            world
+                .entity_mut(swatch)
+                .insert(BackgroundGradient::from(LinearGradient::to_right(vec![
+                    ColorStop::new(color(start, 1.0)?, percent(0)),
+                    ColorStop::new(color(end, 1.0)?, percent(100)),
+                ])));
+        }
+        let text = spawn_text(
+            world,
+            item,
+            &entry.label,
+            font,
+            (presentation.legend_font_rem * root_font_size) as f32,
+            legend_ink,
+        );
+        world.entity_mut(text).insert(TextLayout::no_wrap());
+    }
+    let cursor = chart_line(world, surface, Vec2::ZERO, Vec2::ZERO, Color::WHITE);
+    let wind =
+        std::array::from_fn(|_| chart_line(world, surface, Vec2::ZERO, Vec2::ZERO, Color::WHITE));
+    world.entity_mut(parent).insert(RetainedChart {
+        surface,
+        cursor,
+        points: Vec::new(),
+        wind,
+        plot,
+        x: [chart.x_minimum, chart.x_maximum],
+        y: [chart.y_minimum, chart.y_maximum],
+    });
+    project_chart_cursor(
+        world,
+        parent,
+        &GameUiChartCursor {
+            id: String::new(),
+            cursor_x: chart.cursor_x,
+            cursor_points: chart.cursor_points.clone(),
+            selected_wind_vector: chart.vectors.first().cloned(),
+        },
+    )?;
+    Ok(())
+}
+
+fn project_chart_text(
+    world: &mut World,
+    parent: Entity,
+    text: &GameUiChartText,
+    font: &Handle<Font>,
+) -> Result<Entity, String> {
+    let anchor = world
+        .spawn((
+            ChildOf(parent),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(text.position.x),
+                top: px(text.position.y),
+                width: px(0),
+                height: px(0),
+                ..default()
+            },
+            UiTransform::from_rotation(Rot2::radians(text.rotation_degrees.to_radians() as f32)),
+        ))
+        .id();
+    let entity = spawn_text(
+        world,
+        anchor,
+        &text.label,
+        font,
+        text.font_size as f32,
+        color(&text.color, 1.0)?,
+    );
+    world.entity_mut(entity).insert((
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px(0),
+            ..default()
+        },
+        TextLayout::no_wrap(),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(text.font_size as f32),
+            weight: FontWeight(text.font_weight),
+            ..default()
+        },
+        UiTransform::from_translation(Val2::percent(
+            match text.anchor {
+                GameUiChartTextAnchor::Start => 0.0,
+                GameUiChartTextAnchor::Middle => -50.0,
+                GameUiChartTextAnchor::End => -100.0,
+            },
+            0.0,
+        )),
+        Visibility::Hidden,
+        ChartTextBaseline,
+    ));
+    Ok(entity)
+}
+
+fn align_chart_text_baselines(world: &mut World) {
+    for (block, layout, mut node, mut visibility) in world
+        .query_filtered::<(
+            &ComputedTextBlock,
+            &TextLayoutInfo,
+            &mut Node,
+            &mut Visibility,
+        ), With<ChartTextBaseline>>()
+        .iter_mut(world)
+    {
+        if let Some(line) = block.buffer().lines().next()
+            && layout.scale_factor.is_finite()
+            && layout.scale_factor > 0.0
+        {
+            let top = px(-line.metrics().baseline / layout.scale_factor);
+            if node.top != top {
+                node.top = top;
+            }
+            if *visibility != Visibility::Inherited {
+                *visibility = Visibility::Inherited;
+            }
+        }
+    }
+}
+
+fn chart_line(world: &mut World, parent: Entity, start: Vec2, end: Vec2, ink: Color) -> Entity {
+    let entity = world
+        .spawn((ChildOf(parent), Node::default(), BackgroundColor(ink)))
+        .id();
+    set_chart_line(world, entity, start, end, ink);
+    entity
+}
+
+fn set_chart_line(world: &mut World, entity: Entity, start: Vec2, end: Vec2, ink: Color) {
+    let difference = end - start;
+    let midpoint = (start + end) * 0.5;
+    world.entity_mut(entity).insert((
+        Node {
+            display: if difference.length() < 0.001 {
+                Display::None
+            } else {
+                Display::Flex
+            },
+            position_type: PositionType::Absolute,
+            left: px(midpoint.x - difference.length() * 0.5),
+            top: px(midpoint.y - 0.75),
+            width: px(difference.length()),
+            height: px(1.5),
+            ..default()
+        },
+        UiTransform::from_rotation(Rot2::radians(difference.y.atan2(difference.x))),
+        BackgroundColor(ink),
+    ));
+}
+
+fn project_chart_cursor(
+    world: &mut World,
+    parent: Entity,
+    cursor: &GameUiChartCursor,
+) -> Result<(), String> {
+    let mut retained = world
+        .get::<RetainedChart>(parent)
+        .cloned()
+        .ok_or_else(|| "Chart静的投影が存在しない".to_owned())?;
+    let position = |point: GameUiChartPoint| {
+        Vec2::new(
+            (retained.plot[0]
+                + (point.x - retained.x[0]) / (retained.x[1] - retained.x[0])
+                    * (retained.plot[2] - retained.plot[0])) as f32,
+            (retained.plot[3]
+                - (point.y - retained.y[0]) / (retained.y[1] - retained.y[0])
+                    * (retained.plot[3] - retained.plot[1])) as f32,
+        )
+    };
+    let (start, end) = cursor.cursor_x.map_or((Vec2::ZERO, Vec2::ZERO), |x| {
+        (
+            position(GameUiChartPoint {
+                x,
+                y: retained.y[0],
+            }),
+            position(GameUiChartPoint {
+                x,
+                y: retained.y[1],
+            }),
+        )
+    });
+    set_chart_line(world, retained.cursor, start, end, Color::WHITE);
+    while retained.points.len() < cursor.cursor_points.len() {
+        retained.points.push(
+            world
+                .spawn((
+                    ChildOf(retained.surface),
+                    Node::default(),
+                    BackgroundColor(Color::WHITE),
+                ))
+                .id(),
+        );
+    }
+    for (index, entity) in retained.points.iter().enumerate() {
+        let sample = cursor.cursor_points.get(index);
+        let point = sample.map(|sample| position(sample.point));
+        world.entity_mut(*entity).insert(Node {
+            display: if point.is_some() {
+                Display::Flex
+            } else {
+                Display::None
+            },
+            position_type: PositionType::Absolute,
+            left: px(point.map_or(0.0, |point| point.x) - 4.0),
+            top: px(point.map_or(0.0, |point| point.y) - 4.0),
+            width: px(8),
+            height: px(8),
+            ..default()
+        });
+        if let Some(sample) = sample {
+            world
+                .entity_mut(*entity)
+                .insert(BackgroundColor(color(&sample.color, 1.0)?));
+        }
+    }
+    let wind = cursor
+        .selected_wind_vector
+        .as_ref()
+        .and_then(|vector| vector.segment);
+    if let (Some(vector), Some([start, end])) = (&cursor.selected_wind_vector, wind) {
+        let ink = color(&vector.color, 1.0)?;
+        let start = position(start);
+        let end = position(end);
+        let direction = (end - start).normalize_or_zero();
+        let side = Vec2::new(-direction.y, direction.x);
+        set_chart_line(world, retained.wind[0], start, end, ink);
+        set_chart_line(
+            world,
+            retained.wind[1],
+            end,
+            end - direction * 7.0 + side * 3.0,
+            ink,
+        );
+        set_chart_line(
+            world,
+            retained.wind[2],
+            end,
+            end - direction * 7.0 - side * 3.0,
+            ink,
+        );
+    } else {
+        for entity in retained.wind {
+            set_chart_line(world, entity, Vec2::ZERO, Vec2::ZERO, Color::WHITE);
+        }
+    }
+    world.entity_mut(parent).insert(retained);
+    Ok(())
+}
+
+fn spawn_text(
+    world: &mut World,
+    parent: Entity,
+    label: &str,
+    font: &Handle<Font>,
+    size: f32,
+    ink: Color,
+) -> Entity {
+    world
+        .spawn((
+            ChildOf(parent),
+            Text::new(label),
+            TextLayout::linebreak(LineBreak::WordOrCharacter),
+            TextFont {
+                font: font.clone().into(),
+                font_size: FontSize::Px(size),
+                ..default()
+            },
+            TextColor(ink),
+            Node {
+                flex_shrink: 0.0,
+                overflow: Overflow::clip(),
+                ..default()
+            },
+        ))
+        .id()
+}
+
+fn project_focus(world: &mut World, theme: &GameUiTheme) {
+    let focused = world.resource::<InputFocus>().get();
+    let ink = color(&theme.focus_outline, 1.0).unwrap_or(Color::WHITE);
+    let entities = world
+        .query_filtered::<Entity, Or<(With<MenuButton>, With<MenuRange>)>>()
+        .iter(world)
+        .collect::<Vec<_>>();
+    for entity in entities {
+        if focused == Some(entity) {
+            world
+                .entity_mut(entity)
+                .insert(Outline::new(px(2), px(1), ink));
+        } else {
+            world.entity_mut(entity).remove::<Outline>();
+        }
+    }
+}
+
+pub(crate) fn scroll_focused_control(world: &mut World) {
+    let Some(focus) = world.get_resource_ref::<InputFocus>() else {
+        return;
+    };
+    let Some(focused) = focus.get() else {
+        return;
+    };
+    let focus_changed = focus.is_changed();
+    let Some(retained) = world.get_resource::<RetainedUi>() else {
+        return;
+    };
+    if !retained
+        .widgets
+        .values()
+        .any(|widget| widget.node == focused)
+    {
+        return;
+    }
+    let shell = retained.shell;
+    let Some(shell_node) = world
+        .get_entity(shell)
+        .ok()
+        .and_then(|entity| entity.get_ref::<ComputedNode>())
+    else {
+        return;
+    };
+    if !focus_changed && !shell_node.is_changed() {
+        return;
+    }
+    let Some(shell_transform) = world.get::<UiGlobalTransform>(shell) else {
+        return;
+    };
+    let Some(control_node) = world.get::<ComputedNode>(focused) else {
+        return;
+    };
+    let Some(control_transform) = world.get::<UiGlobalTransform>(focused) else {
+        return;
+    };
+    let viewport = Rect::from_center_size(shell_transform.translation, shell_node.size());
+    let bounds = Rect::from_center_size(control_transform.translation, control_node.size());
+    let delta = if bounds.min.y < viewport.min.y {
+        bounds.min.y - viewport.min.y
+    } else if bounds.max.y > viewport.max.y {
+        bounds.max.y - viewport.max.y
+    } else {
+        0.0
+    };
+    let range =
+        (shell_node.content_size.y - shell_node.size.y).max(0.0) * shell_node.inverse_scale_factor;
+    let delta = delta * shell_node.inverse_scale_factor;
+    if let Some(mut scroll) = world.get_mut::<ScrollPosition>(shell) {
+        scroll.y = (scroll.y + delta).clamp(0.0, range);
+    }
+}
+
+fn color(value: &str, alpha: f64) -> Result<Color, String> {
+    let bytes = value
+        .strip_prefix('#')
+        .ok_or_else(|| format!("共通UI color形式が無効である: {value}"))?;
+    if bytes.len() != 6 || !bytes.bytes().all(|byte| byte.is_ascii_hexdigit()) || !alpha.is_finite()
+    {
+        return Err(format!("共通UI color値が無効である: {value}"));
+    }
+    let mut parsed = bevy::color::Srgba::hex(value)
+        .map_err(|cause| format!("共通UI colorを変換できない: {cause}"))?;
+    parsed.alpha = f32::from((alpha.clamp(0.0, 1.0) * 255.0).round() as u8) / 255.0;
+    Ok(Color::Srgba(parsed))
+}
+
+fn native_quality(quality: GameUiWaterQuality) -> WaterQuality {
+    match quality {
+        GameUiWaterQuality::Low => WaterQuality::Low,
+        GameUiWaterQuality::Medium => WaterQuality::Medium,
+        GameUiWaterQuality::High => WaterQuality::High,
+    }
+}
+
+fn shared_quality(quality: WaterQuality) -> GameUiWaterQuality {
+    match quality {
+        WaterQuality::Low => GameUiWaterQuality::Low,
+        WaterQuality::Medium => GameUiWaterQuality::Medium,
+        WaterQuality::High => GameUiWaterQuality::High,
+    }
+}
+
+fn scroll_content(
+    mut on_scroll: On<Pointer<Scroll>>,
+    mut panels: Query<(&mut ScrollPosition, &ComputedNode)>,
+) {
+    if let Ok((mut position, node)) = panels.get_mut(on_scroll.entity) {
+        let factor = match on_scroll.unit {
+            MouseScrollUnit::Line => 20.0,
+            MouseScrollUnit::Pixel => 1.0,
+        };
+        let range = (node.content_size - node.size).max(Vec2::ZERO) * node.inverse_scale_factor;
+        let next = (Vec2::new(position.x, position.y)
+            - Vec2::new(on_scroll.x, on_scroll.y) * factor)
+            .clamp(Vec2::ZERO, range);
+        if next != Vec2::new(position.x, position.y) {
+            position.x = next.x;
+            position.y = next.y;
+            on_scroll.propagate(false);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::native_session::MenuAction;
     use super::*;
-    use birdman_game_core::{
-        AeroError, AerodynamicEvaluationError, AerodynamicStage, DynamicsError, FbwAuthority,
-        HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, TailFlightTickError,
+    use birdman_game_session::game_ui::{
+        GameUiPauseOverlay, GameUiResultTab, GameUiSessionCommand,
     };
 
-    #[test]
-    fn quality_choices_use_the_applied_resource_and_preserve_core_state_and_retry() {
+    fn app(width: f32, height: f32) -> App {
         let mut app = App::new();
-        app.init_resource::<NativeSession>()
-            .init_resource::<CameraMode>()
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
-            .init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<StandardMaterial>>()
-            .init_resource::<Assets<Image>>()
-            .init_resource::<Assets<super::super::water::WaterMaterial>>()
+            .init_resource::<super::super::CameraMode>()
             .insert_resource(NativeFont(Handle::default()))
-            .add_systems(Startup, (super::super::world::setup_world, setup_ui))
-            .add_systems(
-                Update,
-                (
-                    button_actions,
-                    super::super::water::apply_environment,
-                    super::super::water::apply_quality,
-                    update_ui,
-                )
-                    .chain(),
-            );
+            .insert_resource(ButtonInput::<KeyCode>::default())
+            .insert_resource(UiScale(1.0))
+            .add_systems(Startup, setup_ui)
+            .add_systems(Update, (button_actions, update_ui).chain());
+        app.world_mut().spawn(Window {
+            resolution: (width as u32, height as u32).into(),
+            ..default()
+        });
         app.update();
-        let quality_panel = app
-            .world_mut()
-            .query::<(Entity, &UiPanel)>()
-            .iter(app.world())
-            .find_map(|(entity, panel)| {
-                matches!(panel, UiPanel::WaterQualityChoices).then_some(entity)
-            })
-            .unwrap();
-        assert_eq!(
-            app.world().get::<Node>(quality_panel).unwrap().display,
-            Display::None
-        );
-        let quality_buttons: Vec<_> = app
-            .world_mut()
-            .query::<(Entity, &MenuButton)>()
-            .iter(app.world())
-            .filter_map(|(entity, button)| match button.0 {
-                UiAction::WaterQuality(quality) => Some((quality, entity)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(quality_buttons.len(), 3);
-        app.world_mut()
-            .resource_mut::<NativeSession>()
-            .action(MenuAction::Start)
-            .unwrap();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(quality_panel).unwrap().display,
-            Display::Flex
-        );
-        for quality in WaterQuality::ALL {
-            let before = app.world().resource::<NativeSession>().game.snapshot();
-            let entity = quality_buttons
-                .iter()
-                .find(|(candidate, _)| *candidate == quality)
-                .unwrap()
-                .1;
-            app.world_mut()
-                .entity_mut(entity)
-                .insert(Interaction::Pressed);
-            app.update();
-            assert_eq!(
-                app.world().resource::<WaterQualitySelection>().applied(),
-                quality
-            );
-            assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
-                before
-            );
-            let mut selected = 0;
-            for (kind, text) in app
-                .world_mut()
-                .query::<(&UiText, &Text)>()
-                .iter(app.world())
-            {
-                if let UiText::WaterQualityChoice(candidate) = kind {
-                    assert_eq!(text.0.starts_with('✓'), *candidate == quality);
-                    selected += usize::from(text.0.starts_with('✓'));
-                }
-            }
-            assert_eq!(selected, 1);
-            app.world_mut().entity_mut(entity).insert(Interaction::None);
-        }
-        {
-            let mut session = app.world_mut().resource_mut::<NativeSession>();
-            session.action(MenuAction::Prepare).unwrap();
-            session.action(MenuAction::Launch).unwrap();
-            for _ in 0..3 {
-                session.countdown(1.0);
-            }
-        }
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(quality_panel).unwrap().display,
-            Display::None
-        );
-        let medium = quality_buttons
-            .iter()
-            .find(|(quality, _)| *quality == WaterQuality::Medium)
-            .unwrap()
-            .1;
-        app.world_mut()
-            .entity_mut(medium)
-            .insert(Interaction::Pressed);
-        app.update();
-        assert_eq!(
-            app.world().resource::<WaterQualitySelection>().applied(),
-            WaterQuality::High
-        );
-        app.world_mut().entity_mut(medium).insert(Interaction::None);
-        app.world_mut()
-            .resource_mut::<NativeSession>()
-            .action(MenuAction::Pause)
-            .unwrap();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(quality_panel).unwrap().display,
-            Display::Flex
-        );
-        let before = app.world().resource::<NativeSession>().game.snapshot();
-        let record = app
+        app
+    }
+
+    fn press(app: &mut App, id: &str) {
+        let node = app
             .world()
-            .resource::<NativeSession>()
-            .game
-            .flight_record()
-            .unwrap();
-        let identity = record.header();
-        let sample_count = record.sample_count();
+            .resource::<RetainedUi>()
+            .widgets
+            .get(id)
+            .unwrap()
+            .node;
         app.world_mut()
-            .entity_mut(medium)
+            .entity_mut(node)
             .insert(Interaction::Pressed);
         app.update();
-        assert_eq!(
-            app.world().resource::<WaterQualitySelection>().applied(),
-            WaterQuality::Medium
-        );
-        let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot(), before);
-        assert_eq!(session.game.flight_record().unwrap().header(), identity);
-        assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
-            sample_count
-        );
-        {
-            let mut session = app.world_mut().resource_mut::<NativeSession>();
-            session.action(MenuAction::Abort).unwrap();
-            session.action(MenuAction::Retry).unwrap();
+        if let Ok(mut entity) = app.world_mut().get_entity_mut(node) {
+            entity.insert(Interaction::None);
         }
         app.update();
-        assert_eq!(
-            app.world().resource::<WaterQualitySelection>().applied(),
-            WaterQuality::Medium
-        );
-        assert_eq!(
-            app.world().get::<Node>(quality_panel).unwrap().display,
-            Display::None
-        );
+    }
+
+    fn labels(app: &App) -> Vec<String> {
+        let retained = app.world().resource::<RetainedUi>();
+        let view = retained.view.as_ref().unwrap();
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .map(|control| {
+                app.world()
+                    .get::<Text>(retained.widgets[&control.id].text)
+                    .unwrap()
+                    .0
+                    .clone()
+            })
+            .collect()
     }
 
     #[test]
-    fn unchanged_derived_labels_preserve_every_text_change_tick() {
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
+    fn native_quality_mapping_and_theme_colors_preserve_shared_contract() {
+        for quality in [
+            GameUiWaterQuality::Low,
+            GameUiWaterQuality::Medium,
+            GameUiWaterQuality::High,
+        ] {
+            assert_eq!(shared_quality(native_quality(quality)), quality);
         }
-        for _ in 0..3 {
-            session.countdown(1.0);
-        }
-        session.notice = Some("操作に失敗した: InvalidTransition".into());
-        let snapshot = session.game.snapshot();
-        let mut app = App::new();
-        app.insert_resource(session)
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .add_systems(Update, update_ui);
-        let entities = [
-            UiText::PreparationSteps,
-            UiText::Session,
-            UiText::AssistanceSelection,
-            UiText::Action(MenuAction::Pause),
-            UiText::Hud,
-            UiText::TechnicalDetails,
-            UiText::TechnicalButton,
-            UiText::FrameRate,
-        ]
-        .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
-        let observe = |app: &App| {
-            entities.map(|entity| {
-                let text = app.world().entity(entity).get_ref::<Text>().unwrap();
-                (text.0.clone(), text.last_changed())
-            })
-        };
-        app.update();
-        let initial = observe(&app);
-        assert!(initial[4].0.contains("body rates p/q/r"));
-        assert!(initial[5].0.contains("InvalidTransition"));
-        assert_eq!(initial[7].0, "FPS —");
-        app.update();
-        assert_eq!(observe(&app), initial);
         assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
-            snapshot
+            color("#f3f4e8", 1.0).unwrap(),
+            Color::srgba_u8(243, 244, 232, 255)
         );
+        for value in [
+            "invalid",
+            "f3f4e8",
+            "#fff",
+            "#f3f4e800",
+            "#zzzzzz",
+            "#１２３",
+        ] {
+            assert!(color(value, 1.0).is_err());
+        }
+        for alpha in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(color("#f3f4e8", alpha).is_err());
+        }
+        for (alpha, expected) in [(-1.0, 0), (0.5, 128), (2.0, 255)] {
+            assert_eq!(
+                color("#F3f4E8", alpha).unwrap(),
+                Color::srgba_u8(243, 244, 232, expected)
+            );
+        }
+    }
+
+    #[test]
+    fn native_water_quality_failures_retain_typed_cause_and_use_shared_status() {
+        use super::super::{
+            environment::{EnvironmentFailure, EnvironmentSurface},
+            water_quality::WaterQualityFailure,
+        };
+
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        for cause in [
+            WaterQualityFailure::NearSurfaceUnavailable,
+            WaterQualityFailure::MeshUnavailable,
+            WaterQualityFailure::MaterialUnavailable,
+            WaterQualityFailure::WavePreparation("wave preparation failed".into()),
+            WaterQualityFailure::EnvironmentProjection(EnvironmentFailure::SurfaceUnavailable(
+                EnvironmentSurface::Far,
+            )),
+        ] {
+            let failed = WaterQualitySelection::default()
+                .request(
+                    WaterQuality::Low,
+                    birdman_game_core::SessionPhase::FlightSetup,
+                )
+                .unwrap()
+                .completed(Err(cause.clone()));
+            assert_eq!(failed.applied(), WaterQuality::High);
+            assert_eq!(failed.failure(), Some((WaterQuality::Low, &cause)));
+            *app.world_mut().resource_mut::<WaterQualitySelection>() = failed;
+            let platform = platform_input(app.world_mut());
+            let raw_cause = format!("{cause:?}");
+            assert_eq!(platform.water_quality, GameUiWaterQuality::High);
+            assert_eq!(
+                platform.water_quality_operation,
+                GameUiWaterQualityOperation::Failed {
+                    requested: GameUiWaterQuality::Low,
+                    cause: raw_cause.clone(),
+                }
+            );
+            app.update();
+            let retained = app.world().resource::<RetainedUi>();
+            let view = retained.view.as_ref().unwrap();
+            let status = view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .find(|control| control.id == "presentation-water-quality-status")
+                .unwrap();
+            let GameUiControlContent::Status { value } = &status.content else {
+                panic!("Water quality status must preserve the shared status control");
+            };
+            assert!(value.contains(&raw_cause));
+            assert!(
+                app.world()
+                    .get::<Text>(retained.widgets[&status.id].text)
+                    .unwrap()
+                    .0
+                    .contains(value)
+            );
+        }
     }
 
     #[test]
     fn gpu_mip_notice_retains_the_cause_without_claiming_the_previous_display_is_preserved() {
-        let mut app = App::new();
-        app.init_resource::<NativeSession>()
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .insert_resource(NativeEnvironment::try_default().unwrap())
-            .add_systems(Update, update_ui);
-        let [summary, details] = [UiText::Session, UiText::TechnicalDetails]
-            .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
+        let mut app = app(1280.0, 720.0);
+        app.insert_resource(NativeEnvironment::try_default().unwrap());
         let snapshot = app.world().resource::<NativeSession>().game.snapshot();
         app.world_mut()
             .resource_mut::<NativeEnvironment>()
@@ -1305,903 +2598,1676 @@ mod tests {
                 cause: "CreateShaderModule(original GPU validation cause)".into(),
             }));
         app.update();
-        let summary = &app.world().get::<Text>(summary).unwrap().0;
-        assert!(summary.contains("描画環境の通知がある。"));
-        assert!(!summary.contains("以前の表示を保持"));
-        let details = &app.world().get::<Text>(details).unwrap().0;
-        assert!(details.contains("GPU mipmap"));
-        assert!(details.contains("downsample_second"));
-        assert!(details.contains("CreateShaderModule(original GPU validation cause)"));
-        assert!(!details.contains("以前の表示を保持"));
-        assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
-            snapshot
-        );
-    }
-
-    #[test]
-    fn changed_notice_updates_its_labels_once_and_preserves_the_raw_cause() {
-        let mut app = App::new();
-        app.init_resource::<NativeSession>()
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .add_systems(Update, update_ui);
-        let entities = [
-            UiText::Session,
-            UiText::TechnicalDetails,
-            UiText::Action(MenuAction::Exit),
-        ]
-        .map(|kind| app.world_mut().spawn((kind, Text::new(""))).id());
-        let observe = |app: &App| {
-            entities.map(|entity| {
-                let text = app.world().entity(entity).get_ref::<Text>().unwrap();
-                (text.0.clone(), text.last_changed())
-            })
-        };
-        app.update();
-        let initial = observe(&app);
-        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
-        let notice = "操作に失敗した: InvalidTransition { from: Title, action: Resume }";
-        app.world_mut().resource_mut::<NativeSession>().notice = Some(notice.into());
-        app.update();
-        let updated = observe(&app);
-        assert!(updated[0].0.contains("通知がある。"));
-        assert_eq!(updated[1].0, format!("通知詳細:\n{notice}"));
-        assert_ne!(updated[0].1, initial[0].1);
-        assert_ne!(updated[1].1, initial[1].1);
-        assert_eq!(updated[2], initial[2]);
-        app.update();
-        assert_eq!(observe(&app), updated);
-        app.world_mut().resource_mut::<NativeSession>().notice = None;
-        app.update();
-        let cleared = observe(&app);
-        assert_eq!(cleared[0].0, initial[0].0);
-        assert!(cleared[1].0.is_empty());
-        assert_ne!(cleared[0].1, updated[0].1);
-        assert_ne!(cleared[1].1, updated[1].1);
-        assert_eq!(cleared[2], initial[2]);
-        app.update();
-        assert_eq!(observe(&app), cleared);
-        assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
-            snapshot
-        );
-    }
-
-    #[test]
-    fn fps_uses_a_separate_upper_right_anchor_with_intrinsic_text_width() {
-        let node = frame_rate_node();
-        assert_eq!(node.position_type, PositionType::Absolute);
-        assert_eq!(node.top, px(12));
-        assert_eq!(node.right, px(16));
-        assert_eq!(node.left, Val::Auto);
-        assert_eq!(node.width, Val::Auto);
-        assert_eq!(node.min_width, Val::Auto);
-    }
-
-    #[test]
-    fn preflight_labels_and_back_actions_follow_the_real_session_route() {
-        let mut session = NativeSession::default();
-        let label = |phase, action| action_label(phase, action, ControlMode::Manual);
-        assert_eq!(
-            label(session.game.snapshot().phase(), MenuAction::Start),
-            "飛行を設定"
-        );
-        assert_eq!(preparation_progress(session.game.snapshot().phase()), None);
-        session.action(MenuAction::Start).unwrap();
-        assert_eq!(
-            preparation_progress(session.game.snapshot().phase()),
-            Some("● 設定 ─ ○ 確認 ─ ○ 発進")
-        );
-        assert_eq!(
-            label(session.game.snapshot().phase(), MenuAction::Prepare),
-            "飛行準備へ進む"
-        );
-        assert_eq!(
-            label(session.game.snapshot().phase(), MenuAction::Title),
-            "← タイトルへ"
-        );
-        session.action(MenuAction::Prepare).unwrap();
-        assert_eq!(
-            preparation_progress(session.game.snapshot().phase()),
-            Some("✓ 設定 ─ ● 確認 ─ ○ 発進")
-        );
-        assert_eq!(
-            label(session.game.snapshot().phase(), MenuAction::Launch),
-            "発進カウントダウンを開始"
-        );
-        assert_eq!(
-            label(session.game.snapshot().phase(), MenuAction::Title),
-            "← 設定へ戻る"
-        );
-        session.action(MenuAction::Title).unwrap();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightSetup);
-        session.action(MenuAction::Prepare).unwrap();
-        session.action(MenuAction::Launch).unwrap();
-        let countdown_phase = session.game.snapshot().phase();
-        assert_eq!(
-            preparation_progress(countdown_phase),
-            Some("✓ 設定 ─ ✓ 確認 ─ ● 発進")
-        );
-        assert_eq!(label(countdown_phase, MenuAction::Title), "発進を取り消す");
-        assert_eq!(
-            button_emphasis(
-                countdown_phase,
-                UiAction::Session(MenuAction::Title),
-                ControlMode::Manual
-            ),
-            ButtonEmphasis::Secondary
-        );
-        for expected_seconds in [3, 2, 1] {
-            let SessionSnapshot::Countdown {
-                remaining_ticks, ..
-            } = session.game.snapshot()
-            else {
-                panic!("expected the real native countdown");
-            };
-            assert_eq!(remaining_ticks, expected_seconds);
-            let countdown = format_countdown(remaining_ticks);
-            assert!(countdown.contains(&format!("発進まで: {expected_seconds} 秒")));
-            assert!(countdown.contains("確認画面へ戻る"));
-            assert!(!countdown.contains("ticks"));
-            session.countdown(1.0);
+        let notification = platform_input(app.world_mut()).notification;
+        let rendered = labels(&app).join("\n");
+        for message in [notification, rendered] {
+            assert!(message.contains("GPU mipmap"));
+            assert!(message.contains("downsample_second"));
+            assert!(message.contains("CreateShaderModule(original GPU validation cause)"));
+            assert!(!message.contains("以前の表示を保持"));
         }
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-        session.action(MenuAction::Abort).unwrap();
-        let result_phase = session.game.snapshot().phase();
-        assert_eq!(label(result_phase, MenuAction::Retry), "同じ条件で再試行");
-        assert_eq!(label(result_phase, MenuAction::Start), "条件を変更");
-        assert!(visible_action(result_phase, MenuAction::Start));
-        session.action(MenuAction::Start).unwrap();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightSetup);
-        session.action(MenuAction::Prepare).unwrap();
-        session.action(MenuAction::Launch).unwrap();
-        session.action(MenuAction::Title).unwrap();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
     }
 
     #[test]
-    fn assistance_selection_and_primary_actions_are_unambiguous() {
-        let choices = [
-            MenuAction::Manual,
-            MenuAction::Shared,
-            MenuAction::Automatic,
-        ];
-        for mode in [
-            ControlMode::Manual,
-            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-            ControlMode::Automatic,
-        ] {
-            assert_eq!(
-                choices
-                    .iter()
-                    .filter(|action| selected_assistance(mode, **action))
-                    .count(),
-                1
+    fn native_menu_renders_shared_candidates_groups_actions_and_sealed_flight() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        let platform = platform_input(app.world_mut());
+        let mut shared = app
+            .world()
+            .resource::<NativeSession>()
+            .ui_view(&platform)
+            .unwrap();
+        let retained = app.world().resource::<RetainedUi>();
+        shared.view_revision = retained.revision;
+        assert_eq!(retained.view.as_ref(), Some(&shared));
+        assert_eq!(
+            retained.sections.len(),
+            shared
+                .panels
+                .iter()
+                .map(|panel| panel.sections.len())
+                .sum::<usize>()
+        );
+        for control in shared.panels.iter().flat_map(|panel| &panel.controls) {
+            let widget = &retained.widgets[&control.id];
+            assert!(
+                app.world()
+                    .get::<Text>(widget.text)
+                    .unwrap()
+                    .0
+                    .contains(&control.label)
             );
-            assert!(!control_mode_description(mode).is_empty());
-            for action in choices {
-                assert!(visible_action(SessionPhase::FlightSetup, action));
-                assert!(!visible_action(SessionPhase::BriefingReady, action));
-                assert!(!visible_action(SessionPhase::Result, action));
+            if let GameUiControlContent::Button { action, .. } = &control.content {
                 assert_eq!(
-                    action_label(SessionPhase::FlightSetup, action, mode).starts_with("✓ "),
-                    selected_assistance(mode, action)
-                );
-                assert_eq!(
-                    button_emphasis(SessionPhase::FlightSetup, UiAction::Session(action), mode),
-                    ButtonEmphasis::Choice {
-                        selected: selected_assistance(mode, action)
-                    }
+                    &app.world().get::<MenuButton>(widget.node).unwrap().action,
+                    action
                 );
             }
         }
-        assert_eq!(
-            control_mode_label(ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap())),
-            "共有支援（FBW 50%）"
-        );
-        let navigation = [
-            MenuAction::Start,
-            MenuAction::Prepare,
-            MenuAction::Launch,
-            MenuAction::Pause,
-            MenuAction::Resume,
-            MenuAction::Abort,
-            MenuAction::Retry,
-            MenuAction::Title,
-            MenuAction::Exit,
-        ];
-        for (phase, primary) in [
-            (SessionPhase::Title, MenuAction::Start),
-            (SessionPhase::FlightSetup, MenuAction::Prepare),
-            (SessionPhase::BriefingReady, MenuAction::Launch),
-            (SessionPhase::Result, MenuAction::Retry),
-        ] {
-            let primary_actions: Vec<_> = navigation
-                .into_iter()
-                .filter(|action| {
-                    visible_action(phase, *action)
-                        && button_emphasis(phase, UiAction::Session(*action), ControlMode::Manual)
-                            == ButtonEmphasis::Primary
-                })
-                .collect();
-            assert_eq!(primary_actions, vec![primary]);
-        }
-        assert_ne!(
-            button_colors(ButtonEmphasis::Primary, Interaction::None),
-            button_colors(ButtonEmphasis::Secondary, Interaction::None)
-        );
-    }
-
-    #[test]
-    fn setup_choice_group_updates_from_real_actions_and_hides_during_confirmation() {
-        let mut app = App::new();
-        app.init_resource::<NativeSession>()
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .init_resource::<InputFocus>()
-            .add_message::<AppExit>()
-            .add_systems(Update, (button_actions, update_ui).chain());
-        let choices = app
-            .world_mut()
-            .spawn((UiPanel::AssistanceChoices, Node::default()))
-            .id();
-        let steps = app
-            .world_mut()
-            .spawn((UiPanel::PreparationSteps, Node::default()))
-            .id();
-        let selection = app
-            .world_mut()
-            .spawn((UiText::AssistanceSelection, Text::new("")))
-            .id();
-        let automatic_label = app
-            .world_mut()
-            .spawn((UiText::Action(MenuAction::Automatic), Text::new("")))
-            .id();
-        let automatic_button = app
-            .world_mut()
-            .spawn((
-                Button,
-                MenuButton(UiAction::Session(MenuAction::Automatic)),
-                BackgroundColor::default(),
-                BorderColor::default(),
-            ))
-            .id();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(choices).unwrap().display,
-            Display::None
-        );
-        assert_eq!(
-            app.world().get::<Node>(steps).unwrap().display,
-            Display::None
-        );
-        app.world_mut()
-            .resource_mut::<NativeSession>()
-            .action(MenuAction::Start)
-            .unwrap();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(choices).unwrap().display,
-            Display::Flex
-        );
-        assert_eq!(
-            app.world().get::<Node>(steps).unwrap().display,
-            Display::Flex
-        );
-        assert!(
-            app.world()
-                .get::<Text>(selection)
-                .unwrap()
-                .0
-                .contains("手動（Manual）")
-        );
-        app.world_mut()
-            .entity_mut(automatic_button)
-            .insert(Interaction::Pressed);
-        app.update();
-        assert_eq!(
-            app.world().resource::<NativeSession>().control_mode,
-            ControlMode::Automatic
-        );
+        let tail = labels(&app);
+        assert!(tail[tail.len() - 2].contains("飛行準備へ進む"));
+        assert!(tail[tail.len() - 1].contains("タイトルへ"));
+        press(&mut app, "game-setup-start");
         assert_eq!(
             app.world()
                 .resource::<NativeSession>()
                 .game
                 .snapshot()
                 .phase(),
-            SessionPhase::FlightSetup
+            birdman_game_core::SessionPhase::BriefingReady
         );
-        assert!(
-            app.world()
-                .get::<Text>(selection)
-                .unwrap()
-                .0
-                .contains("FBW自動制御（Automatic）")
-        );
-        assert!(
-            app.world()
-                .get::<Text>(selection)
-                .unwrap()
-                .0
-                .contains("目標角速度")
-        );
-        assert_eq!(
-            app.world().get::<Text>(automatic_label).unwrap().0,
-            "✓ FBW自動制御"
-        );
-        app.world_mut()
-            .resource_mut::<NativeSession>()
-            .action(MenuAction::Prepare)
+        let launch = app
+            .world()
+            .resource::<NativeSession>()
+            .prepared_display_state()
             .unwrap();
+        press(&mut app, "game-briefing-start");
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
+        }
         app.update();
         assert_eq!(
-            app.world().get::<Node>(choices).unwrap().display,
-            Display::None
+            app.world().resource::<NativeSession>().physical_state(),
+            Some(launch.state)
         );
         assert_eq!(
-            app.world().get::<Node>(steps).unwrap().display,
-            Display::Flex
-        );
-        assert_eq!(
-            app.world().get::<Node>(automatic_button).unwrap().display,
-            Display::None
-        );
-    }
-
-    #[test]
-    fn paused_resume_appearance_and_click_follow_the_same_admission() {
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-        }
-        for _step in 0..3 {
-            session.countdown(1.0);
-        }
-        session.observe_frame(true, true);
-        let before = session.game.snapshot();
-        let sample_count = session.game.flight_record().unwrap().sample_count();
-        assert!(!action_available(&session, MenuAction::Resume));
-        let mut app = App::new();
-        app.insert_resource(session)
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .init_resource::<InputFocus>()
-            .add_message::<AppExit>()
-            .add_systems(Update, (button_actions, update_ui).chain());
-        let resume = app
-            .world_mut()
-            .spawn((
-                Button,
-                MenuButton(UiAction::Session(MenuAction::Resume)),
-                BackgroundColor::default(),
-                BorderColor::default(),
-            ))
-            .id();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(resume).unwrap().display,
-            Display::Flex
-        );
-        assert_eq!(
-            app.world().get::<BackgroundColor>(resume).unwrap().0,
-            button_colors(ButtonEmphasis::Disabled, Interaction::None).0
-        );
-        app.world_mut()
-            .entity_mut(resume)
-            .insert(Interaction::Pressed);
-        app.update();
-        let blocked = app.world().resource::<NativeSession>();
-        assert_eq!(blocked.game.snapshot(), before);
-        assert_eq!(
-            blocked.game.flight_record().unwrap().sample_count(),
-            sample_count
-        );
-        assert!(blocked.notice.is_none());
-        app.world_mut()
-            .resource_mut::<NativeSession>()
-            .observe_frame(true, false);
-        app.world_mut().entity_mut(resume).insert(Interaction::None);
-        app.update();
-        assert!(action_available(
-            app.world().resource::<NativeSession>(),
-            MenuAction::Resume
-        ));
-        assert_eq!(
-            app.world().get::<BackgroundColor>(resume).unwrap().0,
-            button_colors(ButtonEmphasis::Primary, Interaction::None).0
-        );
-        app.world_mut()
-            .entity_mut(resume)
-            .insert(Interaction::Pressed);
-        app.update();
-        let resumed = app.world().resource::<NativeSession>();
-        assert_eq!(resumed.game.snapshot().phase(), SessionPhase::FlightRunning);
-        assert_eq!(
-            resumed.game.snapshot().tail_flight_state(),
-            before.tail_flight_state()
-        );
-        assert_eq!(
-            resumed.game.flight_record().unwrap().sample_count(),
-            sample_count
-        );
-    }
-
-    #[test]
-    fn pause_summary_explains_all_reasons_and_reuses_basic_controls() {
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-        }
-        for _step in 0..3 {
-            session.countdown(1.0);
-        }
-        for reason in [
-            PauseReason::Manual,
-            PauseReason::DocumentHidden,
-            PauseReason::TrackingSuspended,
-            PauseReason::ProcessingDelay,
-        ] {
-            session.game.pause(reason).unwrap();
-        }
-        let SessionPhase::FlightPaused { reasons } = session.game.snapshot().phase() else {
-            panic!("expected paused flight");
-        };
-        let summary = format_pause_summary(reasons, session.can_resume());
-        for label in ["手動操作", "非アクティブ化", "頭部追跡", "処理の遅延"] {
-            assert!(summary.contains(label));
-        }
-        assert!(summary.contains("現在は再開できない"));
-        assert!(summary.contains(FLIGHT_CONTROL_GUIDE));
-        assert!(!summary.contains("PauseReasons"));
-        assert!(format_pause_summary(reasons, true).contains("P / Esc"));
-    }
-
-    #[test]
-    fn briefing_is_compact_and_content_has_a_scrollable_height_limit() {
-        for mode in [
-            ControlMode::Manual,
-            ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-            ControlMode::Automatic,
-        ] {
-            let identity = EnvironmentTarget::DefaultExhibition
-                .resolve()
+            app.world()
+                .resource::<RetainedUi>()
+                .view
+                .as_ref()
                 .unwrap()
-                .condition()
-                .identity;
-            let briefing = format_briefing(mode, Some(identity));
-            assert!(briefing.contains("Typical"));
-            assert!(briefing.lines().count() <= 7);
-            assert!(briefing.contains(FLIGHT_CONTROL_GUIDE));
-            assert!(briefing.contains("独立したRoll入力はない"));
-            assert!(briefing.contains("3秒のカウントダウン"));
-        }
-        let mut app = App::new();
-        app.insert_resource(NativeFont(Handle::default()))
-            .add_systems(Startup, setup_ui);
-        app.update();
-        let mut panels = app.world_mut().query::<(&UiPanel, &Node)>();
-        let (_, content) = panels
-            .iter(app.world())
-            .find(|(panel, _node)| matches!(panel, UiPanel::SessionContent))
-            .unwrap();
-        assert_eq!(content.max_height, vh(65));
-        assert_eq!(content.overflow, Overflow::scroll_y());
-        assert_eq!(content.min_height, px(0));
-        assert_eq!(content.position_type, PositionType::Relative);
-    }
-
-    #[test]
-    fn briefing_does_not_supply_typical_for_a_missing_or_unknown_identity() {
-        assert!(format_briefing(ControlMode::Manual, None).contains("登録情報未確認"));
-        let mut identity = EnvironmentTarget::DefaultExhibition
-            .resolve()
-            .unwrap()
-            .condition()
-            .identity;
-        identity.environment_version = 99;
-        let briefing = format_briefing(ControlMode::Manual, Some(identity));
-        assert!(briefing.contains("登録情報未確認"));
-        assert!(!briefing.contains("Typical"));
-    }
-
-    #[test]
-    fn setup_content_uses_remaining_height_and_other_scenes_keep_the_existing_limit() {
-        assert_eq!(
-            session_content_max_height(SessionPhase::FlightSetup),
-            Val::Auto
+                .layout
+                .shell,
+            GameUiShell::FlightBar
         );
-        for phase in [
-            SessionPhase::Title,
-            SessionPhase::BriefingReady,
-            SessionPhase::Countdown { remaining_ticks: 3 },
-            SessionPhase::FlightRunning,
-            SessionPhase::Result,
+    }
+
+    #[test]
+    fn responsive_projection_uses_shared_logical_viewport_and_scroll_bounds() {
+        for (width, height, scale) in [
+            (320.0, 240.0, 1.0),
+            (600.0, 450.0, 1.0),
+            (1200.0, 900.0, 2.0),
+            (1280.0, 720.0, 1.0),
         ] {
-            assert_eq!(session_content_max_height(phase), vh(65));
-        }
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-        }
-        for _step in 0..3 {
-            session.countdown(1.0);
-        }
-        session.action(MenuAction::Pause).unwrap();
-        assert_eq!(
-            session_content_max_height(session.game.snapshot().phase()),
-            vh(65)
-        );
-    }
-
-    #[test]
-    fn session_button_labels_have_definite_width_without_zero_intrinsic_measurement() {
-        let mut app = App::new();
-        app.insert_resource(NativeFont(Handle::default()))
-            .add_systems(Startup, setup_ui);
-        app.update();
-        let mut buttons = app.world_mut().query::<(&MenuButton, &Node, &Children)>();
-        let mut session_count = 0;
-        for (button, node, children) in buttons.iter(app.world()) {
-            let UiAction::Session(action) = button.0 else {
-                continue;
-            };
-            session_count += 1;
-            assert!(matches!(node.width, Val::Px(width) if width >= 180.0));
-            assert_eq!(node.min_height, px(48));
-            assert_eq!(node.flex_shrink, 0.0);
-            assert_eq!(node.max_width, percent(100));
-            assert_eq!(node.justify_content, JustifyContent::Center);
-            let label = children[0];
-            let text = app.world().get::<Text>(label).unwrap();
-            assert_eq!(
-                text.0,
-                action_label(SessionPhase::Title, action, ControlMode::Manual)
-            );
-            assert!(!text.0.is_empty());
-            let label_node = app.world().get::<Node>(label).unwrap();
-            assert_eq!(label_node.width, percent(100));
-            assert_eq!(label_node.min_width, Val::Auto);
-            assert_eq!(label_node.flex_shrink, 0.0);
-            let layout = app.world().get::<TextLayout>(label).unwrap();
-            assert_eq!(layout.linebreak, LineBreak::WordBoundary);
-            assert_eq!(layout.justify, Justify::Center);
-        }
-        assert_eq!(session_count, 12);
-    }
-
-    #[test]
-    fn content_and_navigation_share_bounded_column_with_scrollable_remaining_height() {
-        let mut app = App::new();
-        app.insert_resource(NativeFont(Handle::default()))
-            .add_systems(Startup, setup_ui);
-        app.update();
-        let root = {
-            let mut roots = app
-                .world_mut()
-                .query_filtered::<(Entity, &Node), With<UiLayoutRoot>>();
-            let (entity, node) = roots.single(app.world()).unwrap();
-            assert_eq!(node.position_type, PositionType::Absolute);
-            assert_eq!(node.top, px(12));
-            assert_eq!(node.bottom, px(16));
-            assert_eq!(node.left, px(16));
-            assert_eq!(node.right, px(16));
-            assert_eq!(node.flex_direction, FlexDirection::Column);
-            assert_eq!(node.row_gap, px(16));
-            entity
-        };
-        let mut panels = app.world_mut().query::<(Entity, &UiPanel, &Node)>();
-        let children = app.world().get::<Children>(root).unwrap();
-        let mut bounded_children = 0;
-        for (entity, panel, node) in panels.iter(app.world()) {
-            match panel {
-                UiPanel::SessionContent => {
-                    assert!(children.contains(&entity));
-                    assert_eq!(node.min_height, px(0));
-                    assert_eq!(node.overflow, Overflow::scroll_y());
-                    assert_eq!(node.flex_shrink, 1.0);
-                    bounded_children += 1;
-                }
-                UiPanel::Navigation => {
-                    assert!(children.contains(&entity));
-                    assert_eq!(node.position_type, PositionType::Relative);
-                    assert_eq!(node.width, percent(100));
-                    assert_eq!(node.flex_shrink, 0.0);
-                    assert_eq!(node.flex_wrap, FlexWrap::Wrap);
-                    assert_eq!(node.row_gap, px(8));
-                    bounded_children += 1;
-                }
-                _ => {}
+            let mut app = app(width, height);
+            app.world_mut().insert_resource(UiScale(scale));
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .action(MenuAction::Start)
+                .unwrap();
+            app.update();
+            let platform = platform_input(app.world_mut());
+            assert_eq!(platform.viewport.width, f64::from(width / scale));
+            let retained = app.world().resource::<RetainedUi>();
+            let view = retained.view.as_ref().unwrap();
+            assert_eq!(view.layout.compact, width / scale <= 600.0);
+            let shell = app.world().get::<Node>(retained.shell).unwrap();
+            assert_eq!(shell.width, px(view.layout.width_px));
+            assert_eq!(shell.max_height, px(view.layout.maximum_height_px));
+            assert_eq!(shell.overflow.y, OverflowAxis::Scroll);
+            assert!(view.layout.maximum_height_px < f64::from(height / scale));
+            for section in view.panels.iter().flat_map(|panel| &panel.sections) {
+                let projected = app
+                    .world()
+                    .get::<Node>(retained.sections[&section.id])
+                    .unwrap();
+                let expected = section_node(section.layout, &view.layout);
+                assert_eq!(
+                    projected.grid_template_columns,
+                    expected.grid_template_columns
+                );
+                assert_eq!(projected.flex_direction, expected.flex_direction);
             }
         }
-        assert_eq!(bounded_children, 2);
     }
 
     #[test]
-    fn result_context_uses_record_controller_version_and_fractional_terminal_time() {
-        let mut session = NativeSession::default();
-        session.action(MenuAction::Start).unwrap();
-        session.action(MenuAction::Shared).unwrap();
-        session.action(MenuAction::Prepare).unwrap();
-        session.action(MenuAction::Launch).unwrap();
-        for _step in 0..3 {
-            session.countdown(1.0);
-        }
-        session.action(MenuAction::Abort).unwrap();
-        let record = session.game.flight_record().unwrap();
-        let header = record.header();
-        let mut finalization = record.finalization().unwrap();
-        finalization.terminal_tick = 83;
-        finalization.terminal_fraction = 0.25;
-        let context = format_result_context(session.control_mode, header, finalization);
-        assert_eq!(context.lines().count(), 2);
-        assert!(context.contains("選択した操縦支援: 共有支援（FBW 50%）"));
-        assert!(context.contains(&format!(
-            "controller v{}",
-            header.scenario.controller_profile_version
-        )));
-        assert!(context.contains("確定時刻: 0.83\u{00a0}s"));
-    }
-
-    #[test]
-    fn result_summary_is_short_and_technical_details_preserve_the_typed_failure() {
-        let error = HybridError::try_from_recorded(
-            HybridSite::Proxy {
-                surface: HybridSurfaceRole::HorizontalTail,
-                index: 0,
-            },
-            AeroError::OutsideEnvelope,
-            Some(HybridLimit::ControlledAlphaDifference),
-            Some(AerodynamicStage::First),
-        )
-        .unwrap();
-        let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
-            AerodynamicEvaluationError::Hybrid(error),
-        )));
-        let summary = format_result_summary(failure.end_reason(), Some(123.456), Some(failure));
-        assert!(summary.contains("水平尾翼の局所迎角差と取付角"));
-        assert!(summary.contains("確定距離: 123.46\u{00a0}m"));
-        assert_eq!(summary.lines().count(), 4);
-        for technical_token in [
-            "Some(",
-            "TailIncidence",
-            "ControlledAlphaDifference",
-            "OutOfValidEnvelope",
-        ] {
-            assert!(!summary.contains(technical_token));
-        }
-        let details = format_technical_details(Some(failure.end_reason()), Some(failure), None);
-        assert!(details.contains(&format!("{failure:#?}")));
-        assert!(details.contains("HorizontalTail"));
-        assert!(details.contains("ControlledAlphaDifference"));
-        assert!(details.contains("First"));
-    }
-
-    #[test]
-    fn technical_details_keep_new_operation_notices_independent_of_result_failures() {
-        let notice = "操作に失敗した: InvalidTransition { from: Result, action: Retry }";
-        let details = format_technical_details(
-            Some(SessionEndReason::OutOfValidEnvelope),
-            None,
-            Some(notice),
-        );
-        assert!(details.contains("OutOfValidEnvelope"));
-        assert!(details.contains(notice));
-        assert!(format_technical_details(None, None, None).is_empty());
-        assert_eq!(
-            format_technical_details(None, None, Some(notice)),
-            format!("通知詳細:\n{notice}")
-        );
-        let summary = format_result_summary(SessionEndReason::ManualAbort, None, None);
-        assert!(summary.contains("操作により飛行を終了した"));
-        assert!(summary.contains("確定距離: 取得不能"));
-        assert!(!summary.contains("None"));
-    }
-
-    #[test]
-    fn flight_hud_is_exclusive_to_running_while_pause_and_result_retain_world_state() {
-        let mut session = NativeSession::default();
-        assert!(!visible_hud(session.game.snapshot().phase(), false));
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-            assert!(!visible_hud(session.game.snapshot().phase(), false));
-        }
-        for _ in 0..3 {
-            session.countdown(1.0);
-        }
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-        assert!(visible_hud(session.game.snapshot().phase(), false));
-        session.action(MenuAction::Pause).unwrap();
-        assert!(matches!(
-            session.game.snapshot().phase(),
-            SessionPhase::FlightPaused { .. }
-        ));
-        assert!(!visible_hud(session.game.snapshot().phase(), false));
-        let retained = session.physical_state();
-        session.action(MenuAction::Abort).unwrap();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::Result);
-        assert!(!visible_hud(session.game.snapshot().phase(), false));
-        assert_eq!(session.physical_state(), retained);
-        assert!(retained.is_some());
-    }
-
-    #[test]
-    fn details_toggle_is_presentation_only_and_resets_on_phase_changes() {
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-        }
-        for _ in 0..3 {
-            session.countdown(1.0);
-        }
-        session.notice = Some("操作に失敗した: InvalidTransition".into());
-        let snapshot = session.game.snapshot();
-        let mut app = App::new();
-        app.insert_resource(session)
-            .init_resource::<CameraMode>()
-            .init_resource::<TechnicalDisclosure>()
-            .init_resource::<WaterQualitySelection>()
-            .init_resource::<InputFocus>()
-            .add_message::<AppExit>()
-            .add_systems(Update, (button_actions, update_ui).chain());
-        let hud_panel = app
-            .world_mut()
-            .spawn((UiPanel::FlightHud, Node::default()))
-            .id();
-        let details_panel = app
-            .world_mut()
-            .spawn((UiPanel::TechnicalDetails, Node::default()))
-            .id();
-        let button = app
-            .world_mut()
-            .spawn((
-                Button,
-                MenuButton(UiAction::TechnicalDetails),
-                BackgroundColor::default(),
-                BorderColor::default(),
-            ))
-            .id();
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(hud_panel).unwrap().display,
-            Display::Flex
-        );
-        assert_eq!(
-            app.world().get::<Node>(details_panel).unwrap().display,
-            Display::None
-        );
-        for expected_open in [true, false, true] {
-            app.world_mut().entity_mut(button).insert(Interaction::None);
-            app.update();
-            app.world_mut()
-                .entity_mut(button)
-                .insert(Interaction::Pressed);
-            app.update();
-            assert_eq!(
-                app.world().resource::<TechnicalDisclosure>().is_expanded(),
-                expected_open
+    fn attract_projects_shared_flow_information_and_scrollable_return() {
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        for (width, height) in [(360, 160), (360, 300), (1280, 720)] {
+            let mut app = analysis_app_size(width as f32, height as f32);
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                let record = session.game.take_finalized_result_record().unwrap();
+                session.game.install_attract_record(record).unwrap();
+                session.game.enter_attract().unwrap();
+            }
+            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let clock = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .playback_clock();
+            add_ui_layout(&mut app, width, height);
+            app.add_systems(
+                PostUpdate,
+                scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
             );
+            for _frame in 0..3 {
+                app.update();
+            }
+            let (shell, return_control) = {
+                let retained = app.world().resource::<RetainedUi>();
+                let view = retained.view.as_ref().unwrap();
+                assert_eq!(view.layout.shell, GameUiShell::Cinematic);
+                assert!(view.layout.scroll_y);
+                assert!(
+                    view.panels[0]
+                        .sections
+                        .iter()
+                        .all(|section| section.layout == GameUiSectionLayout::Column)
+                );
+                let mut previous_bottom = None;
+                for control in &view.panels[0].controls {
+                    let widget = &retained.widgets[&control.id];
+                    let node = app.world().get::<Node>(widget.node).unwrap();
+                    assert_eq!(node.position_type, PositionType::Relative);
+                    let rect = bounds(app.world(), widget.node);
+                    let text_height = app
+                        .world()
+                        .get::<ComputedNode>(widget.text)
+                        .unwrap()
+                        .size()
+                        .y;
+                    assert!(text_height > 0.0);
+                    assert!(rect.height() >= text_height);
+                    if let Some(bottom) = previous_bottom {
+                        assert!(rect.min.y >= bottom);
+                    }
+                    previous_bottom = Some(rect.max.y);
+                }
+                let return_control = retained.widgets["game-attract-return"].node;
+                assert!(
+                    bounds(app.world(), return_control).height()
+                        >= view.theme.button_min_height_px as f32
+                );
+                (retained.shell, return_control)
+            };
+            app.world_mut()
+                .resource_mut::<InputFocus>()
+                .set(return_control, FocusCause::Navigated);
+            app.update();
+            app.update();
+            let shell_bounds = bounds(app.world(), shell);
+            let return_bounds = bounds(app.world(), return_control);
+            assert!(return_bounds.min.y >= shell_bounds.min.y - 1.0);
+            assert!(return_bounds.max.y <= shell_bounds.max.y + 1.0);
             assert_eq!(
                 app.world().resource::<NativeSession>().game.snapshot(),
                 snapshot
             );
             assert_eq!(
-                app.world().get::<Node>(hud_panel).unwrap().display,
-                if expected_open {
-                    Display::None
-                } else {
-                    Display::Flex
-                }
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .playback_clock(),
+                clock
             );
-            assert_eq!(
-                app.world().get::<Node>(details_panel).unwrap().display,
-                if expected_open {
-                    Display::Flex
-                } else {
-                    Display::None
-                }
-            );
+        }
+    }
+
+    #[test]
+    fn updates_preserve_entities_focus_scroll_and_disable_unavailable_controls() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        let (shell, start) = {
+            let retained = app.world().resource::<RetainedUi>();
+            (retained.shell, retained.widgets["game-setup-start"].node)
+        };
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(start, FocusCause::Navigated);
+        app.world_mut()
+            .entity_mut(shell)
+            .insert(ScrollPosition(Vec2::new(0.0, 80.0)));
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                assistance: birdman_game_format::AssistanceLevel::Strong,
+            })
+            .unwrap();
+        app.update();
+        assert_eq!(
+            app.world().resource::<RetainedUi>().widgets["game-setup-start"].node,
+            start
+        );
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(start));
+        assert_eq!(app.world().get::<ScrollPosition>(shell).unwrap().y, 80.0);
+        press(&mut app, "game-setup-start");
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Launch)
+            .unwrap();
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
         }
         app.world_mut()
             .resource_mut::<NativeSession>()
             .action(MenuAction::Pause)
             .unwrap();
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .ui
+            .pause_overlay = GameUiPauseOverlay::Settings;
         app.update();
-        assert!(!app.world().resource::<TechnicalDisclosure>().is_expanded());
+        let shared = app.world().resource::<RetainedUi>().view.as_ref().unwrap();
+        assert_eq!(shared.layout.shell, GameUiShell::PauseSettings);
+        for control in shared
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter(|control| !control.enabled)
+        {
+            let node = app.world().resource::<RetainedUi>().widgets[&control.id].node;
+            assert!(app.world().get::<TabIndex>(node).is_none());
+        }
+    }
+
+    #[test]
+    fn keyboard_activation_uses_published_action_and_keeps_domain_owner() {
+        let mut app = app(640.0, 480.0);
+        let start = app.world().resource::<RetainedUi>().widgets["game-title-start"].node;
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(start, FocusCause::Navigated);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
         assert_eq!(
-            app.world().get::<Node>(hud_panel).unwrap().display,
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase(),
+            birdman_game_core::SessionPhase::FlightSetup
+        );
+        assert!(
+            app.world()
+                .resource::<NativeSession>()
+                .physical_state()
+                .is_none()
+        );
+    }
+
+    fn analysis_app() -> App {
+        analysis_app_size(1280.0, 720.0)
+    }
+
+    fn analysis_app_size(width: f32, height: f32) -> App {
+        let mut app = app(width, height);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            for _ in 0..20 {
+                session.tick(super::super::native_session::FlightInput::default());
+            }
+            session.action(MenuAction::Abort).unwrap();
+        }
+        app.update();
+        press(&mut app, "game-result-open-analysis");
+        app
+    }
+
+    fn add_ui_layout(app: &mut App, width: u32, height: u32) -> Entity {
+        use bevy::{
+            asset::{AssetApp, AssetPlugin},
+            camera::{ComputedCameraValues, RenderTargetInfo, Viewport},
+            image::{ImagePlugin, TextureAtlasLayout},
+            input::InputPlugin,
+            picking::DefaultPickingPlugins,
+            text::TextPlugin,
+            ui::UiPlugin,
+            window::{ExitCondition, WindowPlugin},
+        };
+        app.add_plugins((
+            AssetPlugin::default(),
+            InputPlugin,
+            WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                close_when_requested: false,
+                ..default()
+            },
+            ImagePlugin::default(),
+            TextPlugin,
+            DefaultPickingPlugins,
+            UiPlugin,
+        ))
+        .init_asset::<TextureAtlasLayout>();
+        app.world_mut()
+            .spawn((
+                Camera2d,
+                Camera {
+                    computed: ComputedCameraValues {
+                        target_info: Some(RenderTargetInfo {
+                            physical_size: UVec2::new(width, height),
+                            scale_factor: 1.0,
+                        }),
+                        ..default()
+                    },
+                    viewport: Some(Viewport {
+                        physical_size: UVec2::new(width, height),
+                        ..default()
+                    }),
+                    ..default()
+                },
+            ))
+            .id()
+    }
+
+    fn projected_chart(app: &App) -> (Entity, &GameUiChart) {
+        let retained = app.world().resource::<RetainedUi>();
+        let chart = retained.widgets["game-analysis-plot"].node;
+        let plot = retained
+            .view
+            .as_ref()
+            .unwrap()
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .find_map(|control| match &control.content {
+                GameUiControlContent::Chart { plot, .. } => Some(plot),
+                _ => None,
+            })
+            .unwrap();
+        (chart, plot)
+    }
+
+    fn assert_chart_text(world: &World, surface: Entity, expected: &GameUiChartText) {
+        let anchor = world
+            .get::<Children>(surface)
+            .unwrap()
+            .iter()
+            .find(|entity| {
+                world.get::<Node>(*entity).is_some_and(|node| {
+                    node.left == px(expected.position.x) && node.top == px(expected.position.y)
+                }) && world.get::<Children>(*entity).is_some_and(|children| {
+                    children.iter().any(|child| {
+                        world
+                            .get::<Text>(child)
+                            .is_some_and(|text| text.0 == expected.label)
+                    })
+                })
+            })
+            .unwrap();
+        let text = world.get::<Children>(anchor).unwrap()[0];
+        assert_eq!(
+            world.get::<UiTransform>(anchor).unwrap().rotation,
+            Rot2::radians(expected.rotation_degrees.to_radians() as f32)
+        );
+        assert_eq!(
+            world.get::<UiTransform>(text).unwrap().translation,
+            Val2::percent(
+                match expected.anchor {
+                    GameUiChartTextAnchor::Start => 0.0,
+                    GameUiChartTextAnchor::Middle => -50.0,
+                    GameUiChartTextAnchor::End => -100.0,
+                },
+                0.0,
+            )
+        );
+        let font = world.get::<TextFont>(text).unwrap();
+        assert_eq!(font.font_size, FontSize::Px(expected.font_size as f32));
+        assert_eq!(font.weight, FontWeight(expected.font_weight));
+        assert_eq!(
+            world.get::<TextColor>(text).unwrap().0,
+            color(&expected.color, 1.0).unwrap()
+        );
+        assert!(world.get::<ChartTextBaseline>(text).is_some());
+    }
+
+    fn assert_text_ink_within_node(world: &World, entity: Entity) {
+        let node = world.get::<ComputedNode>(entity).unwrap();
+        let layout = world.get::<TextLayoutInfo>(entity).unwrap();
+        let text = &world.get::<Text>(entity).unwrap().0;
+        assert_eq!(
+            world.get::<Node>(entity).unwrap().overflow,
+            Overflow::clip()
+        );
+        assert!(node.size.is_finite() && layout.size.is_finite());
+        let clip = Rect::from_corners(-Vec2::ONE, node.size + Vec2::ONE);
+        for glyph in &layout.glyphs {
+            let ink_size = glyph.atlas_info.rect.size();
+            if ink_size.min_element() > 0.0 {
+                let ink = Rect::from_center_size(glyph.position, ink_size);
+                assert!(
+                    clip.contains(ink.min) && clip.contains(ink.max),
+                    "Text ink exceeds its clip: {text:?}, node={:?}, ink={ink:?}",
+                    node.size
+                );
+            }
+        }
+    }
+
+    fn assert_chart_segment(
+        world: &World,
+        surface: Entity,
+        segment: [GameUiChartPoint; 2],
+        ink: Color,
+    ) {
+        let start = Vec2::new(segment[0].x as f32, segment[0].y as f32);
+        let end = Vec2::new(segment[1].x as f32, segment[1].y as f32);
+        let midpoint = (start + end) * 0.5;
+        let length = (end - start).length();
+        assert!(
+            world
+                .get::<Children>(surface)
+                .unwrap()
+                .iter()
+                .any(|entity| {
+                    world.get::<Node>(entity).is_some_and(|node| {
+                        node.left == px(midpoint.x - length * 0.5)
+                            && node.top == px(midpoint.y - 0.75)
+                            && node.width == px(length)
+                    }) && world
+                        .get::<BackgroundColor>(entity)
+                        .is_some_and(|color| color.0 == ink)
+                })
+        );
+    }
+
+    #[test]
+    fn chart_projects_shared_ticks_labels_grid_legend_and_map_guides() {
+        let mut app = analysis_app();
+        for selection in [
+            "game-analysis-map",
+            "game-analysis-altitude",
+            "game-analysis-speed",
+        ] {
+            press(&mut app, selection);
+            let (chart, plot) = projected_chart(&app);
+            let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
+            let presentation = &plot.presentation;
+            assert_eq!(
+                app.world().get::<RetainedChart>(chart).unwrap().plot,
+                presentation.plot
+            );
+            for label in [&presentation.x_axis, &presentation.y_axis]
+                .into_iter()
+                .chain(presentation.x_ticks.iter().map(|tick| &tick.text))
+                .chain(presentation.y_ticks.iter().map(|tick| &tick.text))
+                .chain(&presentation.marker_labels)
+                .chain(&presentation.time_marker_labels)
+                .chain(&presentation.reference_labels)
+            {
+                assert_chart_text(app.world(), surface, label);
+            }
+            for segment in &presentation.grid_lines {
+                assert_chart_segment(
+                    app.world(),
+                    surface,
+                    *segment,
+                    color(&presentation.grid_color, presentation.grid_opacity).unwrap(),
+                );
+            }
+            if let Some(guides) = &presentation.map_guides {
+                for (segments, label) in [
+                    (&guides.scale_segments, &guides.scale_label),
+                    (&guides.north_segments, &guides.north_label),
+                ] {
+                    assert_chart_text(app.world(), surface, label);
+                    for segment in segments {
+                        assert_chart_segment(
+                            app.world(),
+                            surface,
+                            *segment,
+                            color(&label.color, 1.0).unwrap(),
+                        );
+                    }
+                }
+            }
+            let legend = app
+                .world()
+                .get::<Children>(chart)
+                .unwrap()
+                .iter()
+                .find(|entity| *entity != surface && app.world().get::<Children>(*entity).is_some())
+                .unwrap();
+            let items = app.world().get::<Children>(legend).unwrap();
+            assert_eq!(items.len(), presentation.legend.len());
+            for (item, expected) in items.iter().zip(&presentation.legend) {
+                let children = app.world().get::<Children>(item).unwrap();
+                let swatch = children[0];
+                assert_eq!(
+                    app.world().get::<Text>(children[1]).unwrap().0,
+                    expected.label
+                );
+                assert_eq!(
+                    app.world().get::<BackgroundColor>(swatch).unwrap().0,
+                    color(&expected.color, 1.0).unwrap()
+                );
+                match &expected.segment_gradient {
+                    Some([start, end]) => assert_eq!(
+                        app.world().get::<BackgroundGradient>(swatch).unwrap(),
+                        &BackgroundGradient::from(LinearGradient::to_right(vec![
+                            ColorStop::new(color(start, 1.0).unwrap(), percent(0)),
+                            ColorStop::new(color(end, 1.0).unwrap(), percent(100)),
+                        ]))
+                    ),
+                    None => assert!(app.world().get::<BackgroundGradient>(swatch).is_none()),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chart_legend_layout_keeps_shared_names_with_rasterized_glyphs_and_disjoint_items() {
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        for width in [360, 800] {
+            for replay in [false, true] {
+                let mut app = analysis_app_size(width as f32, 600.0);
+                if replay {
+                    press(&mut app, "game-result-replay");
+                    press(&mut app, "game-replay-view-mode");
+                    press(&mut app, "game-replay-view-mode");
+                }
+                add_ui_layout(&mut app, width, 600);
+                for selection in [
+                    "game-analysis-map",
+                    "game-analysis-altitude",
+                    "game-analysis-speed",
+                ] {
+                    press(&mut app, selection);
+                    for _ in 0..4 {
+                        app.update();
+                    }
+                    let (chart, plot) = projected_chart(&app);
+                    let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
+                    let legend = app
+                        .world()
+                        .get::<Children>(chart)
+                        .unwrap()
+                        .iter()
+                        .find(|entity| {
+                            *entity != surface && app.world().get::<Children>(*entity).is_some()
+                        })
+                        .unwrap();
+                    let items = app.world().get::<Children>(legend).unwrap();
+                    assert_eq!(items.len(), plot.presentation.legend.len());
+                    for (index, (item, entry)) in
+                        items.iter().zip(&plot.presentation.legend).enumerate()
+                    {
+                        let children = app.world().get::<Children>(item).unwrap();
+                        let swatch_bounds = bounds(app.world(), children[0]);
+                        let text = children[1];
+                        let text_bounds = bounds(app.world(), text);
+                        let item_bounds = bounds(app.world(), item);
+                        assert_text_ink_within_node(app.world(), text);
+                        let layout = app.world().get::<TextLayoutInfo>(text).unwrap();
+                        assert_eq!(app.world().get::<Text>(text).unwrap().0, entry.label);
+                        assert!(
+                            !layout.glyphs.is_empty()
+                                && layout.size.is_finite()
+                                && layout.size.min_element() > 0.0,
+                            "Legend glyphs collapsed: {} node={:?} layout={:?}",
+                            entry.label,
+                            text_bounds,
+                            layout.size
+                        );
+                        let block = app.world().get::<ComputedTextBlock>(text).unwrap();
+                        let mut glyph_sources = Vec::new();
+                        for line in block.buffer().lines() {
+                            for run in line.runs() {
+                                for cluster in run.visual_clusters() {
+                                    let source = &entry.label[cluster.text_range()];
+                                    for glyph in cluster.glyphs() {
+                                        if u16::try_from(glyph.id).is_ok() {
+                                            glyph_sources.push(source);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(
+                            glyph_sources.len(),
+                            layout.glyphs.len(),
+                            "Legend source clusters differ from rendered glyphs: {}",
+                            entry.label
+                        );
+                        assert_eq!(
+                            app.world().get::<TextLayout>(text).unwrap().linebreak,
+                            LineBreak::NoWrap
+                        );
+                        let mut visible_ink = 0;
+                        for (glyph, source) in layout.glyphs.iter().zip(glyph_sources) {
+                            let ink_size = glyph.atlas_info.rect.size();
+                            assert!(
+                                glyph.position.is_finite()
+                                    && glyph.atlas_info.offset.is_finite()
+                                    && glyph.atlas_info.rect.min.is_finite()
+                                    && glyph.atlas_info.rect.max.is_finite()
+                                    && ink_size.min_element() >= 0.0,
+                                "Legend glyph has invalid geometry: {} source={source:?} glyph={glyph:?}",
+                                entry.label
+                            );
+                            assert_eq!(
+                                glyph.line_index, 0,
+                                "Legend glyph wrapped: {} source={source:?} glyph={glyph:?}",
+                                entry.label
+                            );
+                            if ink_size.min_element() > 0.0 {
+                                visible_ink += 1;
+                            } else {
+                                assert!(
+                                    source.chars().all(char::is_whitespace),
+                                    "Non-whitespace legend glyph has no visible ink: {} source={source:?} glyph={glyph:?}",
+                                    entry.label
+                                );
+                            }
+                        }
+                        assert!(
+                            visible_ink > 0,
+                            "Legend has no visible ink: {}",
+                            entry.label
+                        );
+                        assert!(text_bounds.size().x + 1.0 >= layout.size.x);
+                        assert!(text_bounds.size().y + 1.0 >= layout.size.y);
+                        assert!(item_bounds.min.cmple(text_bounds.min + Vec2::ONE).all());
+                        assert!(item_bounds.max.cmpge(text_bounds.max - Vec2::ONE).all());
+                        assert!(swatch_bounds.max.x < text_bounds.min.x);
+                        for other in items.iter().skip(index + 1) {
+                            let other_bounds = bounds(app.world(), other);
+                            assert!(
+                                item_bounds.max.x <= other_bounds.min.x
+                                    || other_bounds.max.x <= item_bounds.min.x
+                                    || item_bounds.max.y <= other_bounds.min.y
+                                    || other_bounds.max.y <= item_bounds.min.y
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chart_observes_logical_viewport_and_retains_surface_across_reprojection() {
+        let mut app = analysis_app();
+        let (chart, _) = projected_chart(&app);
+        let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
+        app.world_mut().entity_mut(surface).insert((
+            ComputedNode {
+                size: Vec2::new(800.0, 480.0),
+                inverse_scale_factor: 0.5,
+                ..default()
+            },
+            InheritedVisibility::VISIBLE,
+        ));
+        let extent = GameUiChartExtent {
+            width: 400.0,
+            height: 240.0,
+        };
+        assert_eq!(platform_input(app.world_mut()).chart_extent, Some(extent));
+        app.update();
+        let (updated, plot) = projected_chart(&app);
+        assert_eq!(updated, chart);
+        assert_eq!(plot.presentation.viewport, extent);
+        assert_eq!(
+            app.world().get::<RetainedChart>(chart).unwrap().surface,
+            surface
+        );
+        app.world_mut()
+            .entity_mut(surface)
+            .insert(InheritedVisibility::HIDDEN);
+        assert!(platform_input(app.world_mut()).chart_extent.is_none());
+        app.world_mut().entity_mut(surface).insert((
+            InheritedVisibility::VISIBLE,
+            ComputedNode {
+                size: Vec2::ZERO,
+                ..default()
+            },
+        ));
+        assert!(platform_input(app.world_mut()).chart_extent.is_none());
+        app.world_mut().entity_mut(surface).insert(ComputedNode {
+            size: Vec2::new(139.0, 100.0),
+            inverse_scale_factor: 1.0,
+            ..default()
+        });
+        assert!(platform_input(app.world_mut()).chart_extent.is_none());
+    }
+
+    #[test]
+    fn speed_cursor_projects_series_colors_and_retains_points_during_seek() {
+        let mut app = analysis_app();
+        press(&mut app, "game-analysis-speed");
+        let (chart, plot) = projected_chart(&app);
+        let expected = plot.cursor_points.clone();
+        let retained = app.world().get::<RetainedChart>(chart).unwrap().clone();
+        assert_eq!(expected.len(), 2);
+        assert_ne!(expected[0].color, expected[1].color);
+        let revision = app.world().resource::<RetainedUi>().revision;
+        for (entity, expected) in retained.points.iter().zip(&expected) {
+            assert_eq!(
+                app.world().get::<BackgroundColor>(*entity).unwrap().0,
+                color(&expected.color, 1.0).unwrap()
+            );
+        }
+        let initial = app.world().get::<Node>(retained.points[0]).unwrap().left;
+        let platform = platform_input(app.world_mut());
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .update_ui_action(GameUiAction::SeekAnalysis { time_seconds: 0.1 }, &platform)
+            .unwrap();
+        app.update();
+        assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+        assert_eq!(
+            app.world().get::<RetainedChart>(chart).unwrap().points,
+            retained.points
+        );
+        assert_ne!(
+            app.world().get::<Node>(retained.points[0]).unwrap().left,
+            initial
+        );
+        for (entity, expected) in retained.points.iter().zip(&expected) {
+            assert_eq!(
+                app.world().get::<BackgroundColor>(*entity).unwrap().0,
+                color(&expected.color, 1.0).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn analysis_range_pointer_left_center_right_reach_start_midpoint_end() {
+        let mut app = analysis_app();
+        let node = app.world().resource::<RetainedUi>().widgets["game-analysis-cursor"].node;
+        let range = app.world().get::<MenuRange>(node).unwrap();
+        let minimum = range.minimum;
+        let maximum = range.maximum;
+        for (position, expected) in [
+            (-0.5, minimum),
+            (0.0, (minimum + maximum) * 0.5),
+            (0.5, maximum),
+        ] {
+            app.world_mut()
+                .get_mut::<RelativeCursorPosition>(node)
+                .unwrap()
+                .normalized = Some(Vec2::new(position, 0.0));
+            app.world_mut()
+                .entity_mut(node)
+                .insert(Interaction::Pressed);
+            app.update();
+            assert!(
+                (app.world()
+                    .resource::<NativeSession>()
+                    .ui
+                    .analysis_time_seconds
+                    - expected)
+                    .abs()
+                    < 1e-12
+            );
+        }
+    }
+
+    #[test]
+    fn range_initial_and_frame_projection_use_shared_display_text_without_rounding_seek() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            for _ in 0..30 {
+                session.tick(super::super::native_session::FlightInput::default());
+            }
+            session.action(MenuAction::Abort).unwrap();
+            session.ui.analysis_time_seconds = 0.25;
+        }
+        app.update();
+        press(&mut app, "game-result-open-analysis");
+        for replay in [false, true] {
+            let id = if replay {
+                press(&mut app, "game-result-replay");
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .game
+                    .seek_playback(0.25)
+                    .unwrap();
+                press(&mut app, "game-replay-view-mode");
+                "game-replay-cursor"
+            } else {
+                "game-analysis-cursor"
+            };
+            let retained = app.world().resource::<RetainedUi>();
+            let revision = retained.revision;
+            let widget = &retained.widgets[id];
+            let node = widget.node;
+            let text = widget.text;
+            let label = retained
+                .view
+                .as_ref()
+                .unwrap()
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .find(|control| control.id == id)
+                .unwrap()
+                .label
+                .clone();
+            assert_eq!(
+                app.world().get::<Text>(text).unwrap().0,
+                format!("{label}: 0.3")
+            );
+            assert_eq!(app.world().get::<MenuRange>(node).unwrap().value, 0.25);
+            assert_eq!(app.world().get::<MenuRange>(node).unwrap().step, 0.01);
+            let platform = platform_input(app.world_mut());
+            for (time_seconds, display) in [
+                (0.24999999999999997, "0.2"),
+                (0.25, "0.3"),
+                (0.25000000000000006, "0.3"),
+            ] {
+                let action = if replay {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                };
+                let authoritative_time = {
+                    let mut session = app.world_mut().resource_mut::<NativeSession>();
+                    let update = session.update_ui_action(action.clone(), &platform).unwrap();
+                    assert_eq!(
+                        update.effects,
+                        [GameUiEffect::Record {
+                            action: action.clone()
+                        }]
+                    );
+                    session.execute_ui_record_action(action).unwrap();
+                    if replay {
+                        session.game.playback_clock().unwrap().time_seconds()
+                    } else {
+                        session.ui.analysis_time_seconds
+                    }
+                };
+                assert_eq!(authoritative_time, time_seconds);
+                app.update();
+                assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+                assert_eq!(
+                    app.world().get::<MenuRange>(node).unwrap().value,
+                    authoritative_time
+                );
+                assert_eq!(
+                    app.world().get::<Text>(text).unwrap().0,
+                    format!("{label}: {display}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn paused_hud_and_menu_reflow_without_overlap_and_focus_reaches_navigation() {
+        use birdman_game_format::InformationLevel;
+
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        let disjoint = |left: Rect, right: Rect| {
+            left.max.x <= right.min.x + 1.0
+                || right.max.x <= left.min.x + 1.0
+                || left.max.y <= right.min.y + 1.0
+                || right.max.y <= left.min.y + 1.0
+        };
+        for information in [InformationLevel::Full, InformationLevel::Minimal] {
+            let mut app = app(1280.0, 720.0);
+            press(&mut app, "game-title-start");
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                session.difficulty = session.difficulty.with_information(information);
+            }
+            app.update();
+            press(&mut app, "game-setup-start");
+            press(&mut app, "game-briefing-start");
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                for _ in 0..3 {
+                    session.countdown(1.0);
+                }
+                session.action(MenuAction::Pause).unwrap();
+            }
+            app.update();
+            let camera = add_ui_layout(&mut app, 1280, 720);
+            app.add_systems(
+                PostUpdate,
+                scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+            );
+            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let retained_hud = app.world().resource::<RetainedUi>().hud.shell;
+            for (width, height) in [(1280, 720), (800, 600), (360, 300), (1280, 720)] {
+                for mut window in app
+                    .world_mut()
+                    .query::<&mut Window>()
+                    .iter_mut(app.world_mut())
+                {
+                    window.resolution.set(width as f32, height as f32);
+                }
+                {
+                    let mut camera = app.world_mut().get_mut::<Camera>(camera).unwrap();
+                    let dimensions = UVec2::new(width, height);
+                    camera.computed.target_info.as_mut().unwrap().physical_size = dimensions;
+                    camera.viewport.as_mut().unwrap().physical_size = dimensions;
+                }
+                for overlay in [
+                    GameUiPauseOverlay::Menu,
+                    GameUiPauseOverlay::Settings,
+                    GameUiPauseOverlay::Help,
+                ] {
+                    app.world_mut()
+                        .resource_mut::<NativeSession>()
+                        .ui
+                        .pause_overlay = overlay;
+                    for _ in 0..4 {
+                        app.update();
+                    }
+                    let retained = app.world().resource::<RetainedUi>();
+                    let shell = retained.shell;
+                    let view = retained.view.as_ref().unwrap();
+                    assert_eq!(retained.hud.shell, retained_hud);
+                    assert!(retained.hud.previous.is_some());
+                    assert_eq!(
+                        app.world().get::<Node>(retained_hud).unwrap().display,
+                        Display::Flex
+                    );
+                    let shell_bounds = bounds(app.world(), shell);
+                    let hud_bounds = bounds(app.world(), retained_hud);
+                    assert!(
+                        disjoint(shell_bounds, hud_bounds),
+                        "{width}x{height} {overlay:?}: menu={shell_bounds:?}, hud={hud_bounds:?}"
+                    );
+                    assert!(
+                        shell_bounds.min.y >= -1.0 && shell_bounds.max.y <= height as f32 + 1.0
+                    );
+                    assert!(hud_bounds.min.y >= -1.0 && hud_bounds.max.y <= height as f32 + 1.0);
+                    let buttons = retained
+                        .widgets
+                        .values()
+                        .filter_map(|widget| {
+                            app.world().get::<Button>(widget.node).map(|_| widget.node)
+                        })
+                        .collect::<Vec<_>>();
+                    for (index, button) in buttons.iter().enumerate() {
+                        let button_bounds = bounds(app.world(), *button);
+                        assert!(button_bounds.size().y >= view.theme.button_min_height_px as f32);
+                        for other in &buttons[index + 1..] {
+                            assert!(disjoint(button_bounds, bounds(app.world(), *other)));
+                        }
+                    }
+                    let navigation = retained.widgets[match overlay {
+                        GameUiPauseOverlay::Menu => "game-paused-abort",
+                        GameUiPauseOverlay::Settings => "game-pause-settings-back",
+                        GameUiPauseOverlay::Help => "game-pause-help-back",
+                    }]
+                    .node;
+                    app.world_mut()
+                        .resource_mut::<InputFocus>()
+                        .set(navigation, FocusCause::Navigated);
+                    app.update();
+                    app.update();
+                    let navigation_bounds = bounds(app.world(), navigation);
+                    assert!(navigation_bounds.min.y >= shell_bounds.min.y - 1.0);
+                    assert!(navigation_bounds.max.y <= shell_bounds.max.y + 1.0);
+                    assert_eq!(
+                        app.world().resource::<NativeSession>().game.snapshot(),
+                        snapshot
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn low_height_analysis_flow_preserves_wheel_scroll_and_reveals_changed_focus_or_layout() {
+        use bevy::{
+            camera::NormalizedRenderTarget,
+            input::{ButtonState, mouse::MouseButtonInput, touch::TouchPhase},
+            picking::{
+                backend::HitData,
+                pointer::{Location, PointerId},
+            },
+            window::{PrimaryWindow, WindowRef},
+        };
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        let wheel = |app: &mut App, shell: Entity, camera: Entity, window: Entity, delta: f32| {
+            let shell_bounds = bounds(app.world(), shell);
+            app.world_mut().trigger(Pointer::new(
+                PointerId::Mouse,
+                Location {
+                    target: NormalizedRenderTarget::Window(
+                        WindowRef::Entity(window).normalize(None).unwrap(),
+                    ),
+                    position: shell_bounds.center(),
+                },
+                Scroll {
+                    unit: MouseScrollUnit::Pixel,
+                    x: 0.0,
+                    y: -delta,
+                    hit: HitData::new(camera, 0.0, None, None),
+                    phase: TouchPhase::Moved,
+                },
+                shell,
+            ));
+            app.update();
+            app.update();
+        };
+        let assert_visible = |world: &World, shell: Entity, control: Entity| {
+            let shell_bounds = bounds(world, shell);
+            let control_bounds = bounds(world, control);
+            assert!(
+                control_bounds.min.y >= shell_bounds.min.y - 1.0,
+                "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
+                world.resource::<NativeSession>().game.snapshot().phase(),
+                world.get::<Name>(control),
+                world.resource::<InputFocus>().get(),
+                world.get::<ScrollPosition>(shell)
+            );
+            assert!(
+                control_bounds.max.y <= shell_bounds.max.y + 1.0,
+                "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
+                world.resource::<NativeSession>().game.snapshot().phase(),
+                world.get::<Name>(control),
+                world.resource::<InputFocus>().get(),
+                world.get::<ScrollPosition>(shell)
+            );
+        };
+        for (width, height) in [(360, 300), (800, 300)] {
+            for replay in [false, true] {
+                let mut app = analysis_app_size(width as f32, height as f32);
+                if replay {
+                    press(&mut app, "game-result-replay");
+                    press(&mut app, "game-replay-view-mode");
+                    press(&mut app, "game-replay-view-mode");
+                }
+                let window = app
+                    .world_mut()
+                    .query_filtered::<Entity, With<Window>>()
+                    .iter(app.world())
+                    .next()
+                    .unwrap();
+                app.world_mut().entity_mut(window).insert(PrimaryWindow);
+                let camera = add_ui_layout(&mut app, width, height);
+                app.add_plugins((
+                    bevy::mesh::MeshPlugin,
+                    bevy::camera::visibility::VisibilityPlugin,
+                ))
+                .add_systems(
+                    PostUpdate,
+                    scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+                );
+                app.world_mut().resource_mut::<InputFocus>().clear();
+                app.update();
+                app.update();
+                app.update();
+                let clicked =
+                    app.world().resource::<RetainedUi>().widgets["game-analysis-map"].node;
+                let cursor = bounds(app.world(), clicked).center();
+                app.world_mut()
+                    .get_mut::<Window>(window)
+                    .unwrap()
+                    .set_cursor_position(Some(cursor));
+                app.world_mut().write_message(MouseButtonInput {
+                    button: MouseButton::Left,
+                    state: ButtonState::Pressed,
+                    window,
+                });
+                app.update();
+                app.world_mut().write_message(MouseButtonInput {
+                    button: MouseButton::Left,
+                    state: ButtonState::Released,
+                    window,
+                });
+                app.update();
+                let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+                let retained = app.world().resource::<RetainedUi>();
+                let view = retained.view.as_ref().unwrap();
+                assert!(view.layout.scroll_y && !view.layout.passthrough);
+                assert_eq!(retained.sections.len(), view.panels[0].sections.len());
+                let shell = retained.shell;
+                let focused = retained.widgets["game-analysis-map"].node;
+                assert_eq!(app.world().resource::<InputFocus>().get(), Some(focused));
+                let seek = retained.widgets[if replay {
+                    "game-replay-cursor"
+                } else {
+                    "game-analysis-cursor"
+                }]
+                .node;
+                let navigation = retained.widgets[if replay {
+                    "game-replay-return"
+                } else {
+                    "game-result-title"
+                }]
+                .node;
+                let minimum_hit = view.theme.button_min_height_px as f32;
+                for widget in retained.widgets.values() {
+                    assert_text_ink_within_node(app.world(), widget.text);
+                    if app.world().get::<Button>(widget.node).is_some() {
+                        assert!(
+                            app.world()
+                                .get::<ComputedNode>(widget.node)
+                                .unwrap()
+                                .size()
+                                .y
+                                >= minimum_hit
+                        );
+                    }
+                }
+                let (chart, plot) = projected_chart(&app);
+                let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
+                assert!(
+                    app.world().get::<ComputedNode>(surface).unwrap().size().y
+                        >= plot.presentation.viewport_minimum_rem[1] as f32 * 16.0
+                );
+                let chart_bounds = bounds(app.world(), chart);
+                let seek_bounds = bounds(app.world(), seek);
+                let navigation_bounds = bounds(app.world(), navigation);
+                let shell_bounds = bounds(app.world(), shell);
+                assert!(chart_bounds.max.y <= seek_bounds.min.y);
+                assert!(seek_bounds.max.y <= navigation_bounds.min.y);
+                assert!(shell_bounds.size().y <= height as f32);
+                assert!(navigation_bounds.max.y > shell_bounds.max.y);
+                let shell_node = app.world().get::<ComputedNode>(shell).unwrap();
+                let range = (shell_node.content_size.y - shell_node.size.y)
+                    * shell_node.inverse_scale_factor;
+                assert!(range > 0.0);
+                for target in [seek, navigation] {
+                    let target_bounds = bounds(app.world(), target);
+                    let viewport = bounds(app.world(), shell);
+                    let delta = (target_bounds.max.y - viewport.max.y).max(0.0);
+                    wheel(&mut app, shell, camera, window, delta);
+                    assert_visible(app.world(), shell, target);
+                    assert_eq!(app.world().resource::<InputFocus>().get(), Some(focused));
+                }
+                wheel(&mut app, shell, camera, window, 10000.0);
+                assert_visible(app.world(), shell, navigation);
+                assert_eq!(app.world().resource::<InputFocus>().get(), Some(focused));
+                assert!((app.world().get::<ScrollPosition>(shell).unwrap().y - range).abs() < 1.0);
+                assert_eq!(
+                    app.world()
+                        .get::<ComputedNode>(shell)
+                        .unwrap()
+                        .scroll_position
+                        .y,
+                    range.floor()
+                );
+                assert_eq!(app.world().get::<ScrollPosition>(chart).unwrap().y, 0.0);
+                for _ in 0..3 {
+                    app.update();
+                }
+                assert!((app.world().get::<ScrollPosition>(shell).unwrap().y - range).abs() < 1.0);
+                app.world_mut()
+                    .resource_mut::<InputFocus>()
+                    .set(focused, FocusCause::Navigated);
+                app.update();
+                app.update();
+                assert_visible(app.world(), shell, focused);
+                assert!(bounds(app.world(), navigation).max.y > bounds(app.world(), shell).max.y);
+                app.world_mut()
+                    .resource_mut::<InputFocus>()
+                    .set(navigation, FocusCause::Navigated);
+                app.update();
+                app.update();
+                assert_visible(app.world(), shell, navigation);
+                wheel(&mut app, shell, camera, window, -10000.0);
+                assert_eq!(app.world().get::<ScrollPosition>(shell).unwrap().y, 0.0);
+                assert_eq!(app.world().resource::<InputFocus>().get(), Some(navigation));
+                assert!(bounds(app.world(), navigation).max.y > bounds(app.world(), shell).max.y);
+                app.world_mut()
+                    .get_mut::<Window>(window)
+                    .unwrap()
+                    .resolution
+                    .set(width as f32, 240.0);
+                {
+                    let mut camera = app.world_mut().get_mut::<Camera>(camera).unwrap();
+                    let dimensions = UVec2::new(width, 240);
+                    camera.computed.target_info.as_mut().unwrap().physical_size = dimensions;
+                    camera.viewport.as_mut().unwrap().physical_size = dimensions;
+                }
+                app.update();
+                app.update();
+                assert_visible(app.world(), shell, navigation);
+                assert!(app.world().get::<ScrollPosition>(shell).unwrap().y > 0.0);
+                if !replay {
+                    wheel(&mut app, shell, camera, window, -10000.0);
+                    app.world_mut()
+                        .resource_mut::<NativeSession>()
+                        .ui
+                        .result_tab = GameUiResultTab::Summary;
+                    app.update();
+                    app.update();
+                    let rebuilt =
+                        app.world().resource::<RetainedUi>().widgets["game-result-title"].node;
+                    assert_ne!(navigation, rebuilt);
+                    assert_eq!(app.world().resource::<InputFocus>().get(), Some(rebuilt));
+                    assert_visible(app.world(), shell, rebuilt);
+                    if width == 360 {
+                        let cause = "UnboundedShaderCause".repeat(4);
+                        assert_eq!(cause.len(), 80);
+                        {
+                            let mut session = app.world_mut().resource_mut::<NativeSession>();
+                            session.notice = Some(cause.clone());
+                        }
+                        press(&mut app, "game-result-technical");
+                        app.update();
+                        app.update();
+                        assert!(app.world().resource::<NativeSession>().ui.technical_open);
+                        let retained = app.world().resource::<RetainedUi>();
+                        assert!(
+                            retained
+                                .widgets
+                                .contains_key("game-result-technical-content")
+                        );
+                        assert!(labels(&app).iter().any(|label| label.contains(&cause)));
+                        let shell_bounds = bounds(app.world(), shell);
+                        for (id, widget) in &retained.widgets {
+                            assert_text_ink_within_node(app.world(), widget.text);
+                            let control_bounds = bounds(app.world(), widget.node);
+                            let text_bounds = bounds(app.world(), widget.text);
+                            assert!(
+                                control_bounds.min.x >= shell_bounds.min.x - 1.0
+                                    && control_bounds.max.x <= shell_bounds.max.x + 1.0,
+                                "Control exceeds its shell: {id}, shell={shell_bounds:?}, control={control_bounds:?}"
+                            );
+                            assert!(
+                                text_bounds.min.x >= control_bounds.min.x - 1.0
+                                    && text_bounds.max.x <= control_bounds.max.x + 1.0,
+                                "Text exceeds its control: {id}, control={control_bounds:?}, text={text_bounds:?}"
+                            );
+                        }
+                    }
+                }
+                assert_eq!(
+                    app.world().resource::<NativeSession>().game.snapshot(),
+                    snapshot
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn frame_projection_preserves_static_chart_entities_and_rejects_stale_revision() {
+        let mut app = analysis_app();
+        let (chart, revision, children, surface, static_children, cursor) = {
+            let retained = app.world().resource::<RetainedUi>();
+            let chart = retained.widgets["game-analysis-plot"].node;
+            let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
+            (
+                chart,
+                retained.revision,
+                app.world()
+                    .get::<Children>(chart)
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<_>>(),
+                surface,
+                app.world()
+                    .get::<Children>(surface)
+                    .unwrap()
+                    .iter()
+                    .collect::<Vec<_>>(),
+                app.world().get::<RetainedChart>(chart).unwrap().cursor,
+            )
+        };
+        let platform = platform_input(app.world_mut());
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session
+                .update_ui_action(GameUiAction::SeekAnalysis { time_seconds: 0.1 }, &platform)
+                .unwrap();
+        }
+        app.update();
+        assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+        assert_eq!(
+            app.world()
+                .get::<Children>(chart)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            children
+        );
+        assert_eq!(
+            app.world()
+                .get::<Children>(surface)
+                .unwrap()
+                .iter()
+                .collect::<Vec<_>>(),
+            static_children
+        );
+        assert_eq!(
+            app.world().get::<RetainedChart>(chart).unwrap().cursor,
+            cursor
+        );
+        let view = app.world().resource::<RetainedUi>().view.as_ref().unwrap();
+        let mut frame = app
+            .world()
+            .resource::<NativeSession>()
+            .ui_frame(&platform, view)
+            .unwrap();
+        frame.view_revision += 1;
+        let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
+        assert!(project_frame(app.world_mut(), &mut retained, &frame).is_err());
+        app.world_mut().insert_resource(retained);
+    }
+
+    #[test]
+    fn native_hud_projects_shared_gauges_and_retains_instrument_entities() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+        }
+        app.update();
+        let retained = app.world().resource::<RetainedUi>();
+        let hud = retained.hud.previous.as_ref().unwrap();
+        let marker = retained.hud.flight_path;
+        let needle = retained.hud.wind_needle;
+        let angle = retained.hud.angle_indicator;
+        let ticks = retained.hud.heading_ticks.clone();
+        let horizon = retained.hud.horizon;
+        assert_eq!(
+            app.world().get::<Node>(marker).unwrap().top,
+            percent(hud.geometry.adi.unwrap().flight_path_y_ratio().unwrap() * 100.0)
+        );
+        assert_eq!(
+            app.world().get::<Node>(angle).unwrap().left,
+            percent(5.0 + hud.geometry.angle_of_attack_ratio.unwrap() * 90.0)
+        );
+        let attitude = hud.geometry.adi.unwrap().horizon().unwrap();
+        let offset = attitude.pitch_offset_ratio * hud.layout.attitude_size_px[1];
+        let rotation = attitude.rotation_degrees.to_radians();
+        assert_eq!(
+            app.world().get::<UiTransform>(horizon).unwrap().translation,
+            Val2::px(-offset * rotation.sin(), offset * rotation.cos())
+        );
+        for ((line, label), tick) in ticks.iter().zip(&hud.geometry.heading_ticks) {
+            assert_eq!(
+                app.world().get::<Node>(*line).unwrap().left,
+                percent(tick.position_ratio * 100.0)
+            );
+            assert_eq!(app.world().get::<Text>(*label).unwrap().0, tick.label);
+        }
+        let mut projected = hud.clone();
+        projected.wind_direction_degrees = Some(90.0);
+        let mut theme = retained.view.as_ref().unwrap().theme.clone();
+        let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
+        let mut themed_view = retained.view.as_ref().unwrap().clone();
+        let unchanged_hud = themed_view.hud.as_ref().unwrap().clone();
+        themed_view.theme.text = "#123456".to_owned();
+        themed_view.theme.panel_background = "#234567".to_owned();
+        let font = app.world().resource::<NativeFont>().0.clone();
+        assert_eq!(retained.hud.previous.as_ref(), Some(&unchanged_hud));
+        project_view(app.world_mut(), &mut retained, &themed_view, &font).unwrap();
+        assert!(retained.hud.previous.is_none());
+        theme.clone_from(&themed_view.theme);
+        project_hud(
+            app.world_mut(),
+            &mut retained.hud,
+            Some(&unchanged_hud),
+            &theme,
+        )
+        .unwrap();
+        assert_eq!(
+            app.world()
+                .get::<TextColor>(retained.hud.readouts)
+                .unwrap()
+                .0,
+            color(&theme.text, 1.0).unwrap()
+        );
+        assert_eq!(
+            app.world()
+                .get::<BackgroundColor>(retained.hud.shell)
+                .unwrap()
+                .0,
+            color(&theme.panel_background, unchanged_hud.layout.opacity).unwrap()
+        );
+        project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        assert_eq!(
+            app.world().get::<UiTransform>(needle).unwrap().rotation,
+            Rot2::degrees(90.0)
+        );
+        projected.wind_direction_degrees = None;
+        projected.geometry.adi = Some(
+            birdman_game_session::game_ui::GameUiHudAdiGeometry::Attitude {
+                horizon: attitude,
+                flight_path_y_ratio: None,
+            },
+        );
+        projected.geometry.angle_of_attack_ratio = None;
+        projected.geometry.heading_ticks.clear();
+        project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        assert_eq!(
+            app.world().get::<Node>(needle).unwrap().display,
             Display::None
         );
         assert_eq!(
-            app.world().get::<Node>(details_panel).unwrap().display,
+            app.world().get::<Node>(marker).unwrap().display,
             Display::None
         );
+        assert_eq!(
+            app.world().get::<Node>(angle).unwrap().display,
+            Display::None
+        );
+        assert!(ticks.iter().all(
+            |(line, label)| app.world().get::<Node>(*line).unwrap().display == Display::None
+                && app.world().get::<Node>(*label).unwrap().display == Display::None
+        ));
+        assert_eq!(retained.hud.heading_ticks, ticks);
+        assert_eq!(retained.hud.flight_path, marker);
+        assert_eq!(retained.hud.wind_needle, needle);
+        assert_eq!(retained.hud.angle_indicator, angle);
+        app.world_mut().insert_resource(retained);
+    }
+
+    #[test]
+    fn custom_flight_path_only_is_visible_through_retained_adi_ancestors() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-select-information-4");
+        press(&mut app, "game-setup-information-attitude");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        for _ in 0..3 {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .countdown(1.0);
+        }
+        app.update();
+        let retained = app.world().resource::<RetainedUi>();
+        let hud = retained.hud.previous.as_ref().unwrap();
+        let Some(birdman_game_session::game_ui::GameUiHudAdiGeometry::FlightPathOnly { y_ratio }) =
+            hud.geometry.adi
+        else {
+            panic!("Custom flight path cue must retain its independent ADI region");
+        };
+        assert!(hud.attitude.is_none());
+        assert_eq!(
+            app.world().get::<Node>(retained.hud.shell).unwrap().display,
+            Display::Flex
+        );
+        let readings = app
+            .world()
+            .get::<ChildOf>(retained.hud.attitude)
+            .unwrap()
+            .parent();
+        assert_eq!(
+            app.world().get::<Node>(readings).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world().get::<ChildOf>(readings).unwrap().parent(),
+            retained.hud.shell
+        );
+        assert_eq!(
+            app.world()
+                .get::<Node>(retained.hud.attitude)
+                .unwrap()
+                .display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world()
+                .get::<Node>(retained.hud.horizon)
+                .unwrap()
+                .display,
+            Display::None
+        );
+        assert_eq!(
+            app.world()
+                .get::<Node>(retained.hud.flight_path)
+                .unwrap()
+                .display,
+            Display::Flex
+        );
+        assert_eq!(
+            app.world()
+                .get::<ChildOf>(retained.hud.flight_path)
+                .unwrap()
+                .parent(),
+            retained.hud.attitude
+        );
+        assert_eq!(
+            app.world()
+                .get::<Node>(retained.hud.flight_path)
+                .unwrap()
+                .top,
+            percent(y_ratio * 100.0)
+        );
+    }
+
+    #[test]
+    fn replay_entry_reapplies_the_shared_camera_after_return_keys_and_retry() {
+        let mut app = app(1280.0, 720.0);
+        app.init_resource::<super::super::native_session::FlightInput>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
+            .add_systems(PreUpdate, super::super::read_input);
+        fn toggle_camera(app: &mut App) {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyC);
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .reset_all();
+            app.update();
+        }
+        fn assert_replay_camera(app: &App, selected: GameUiReplayCamera, chase: bool) {
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                birdman_game_core::SessionPhase::Replay
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<RetainedUi>()
+                    .view
+                    .as_ref()
+                    .unwrap()
+                    .selections
+                    .replay_camera,
+                selected
+            );
+            assert_eq!(
+                app.world().resource::<super::super::CameraMode>().chase,
+                chase
+            );
+            assert_eq!(
+                app.world().resource::<super::super::CameraMode>().look,
+                Vec2::ZERO
+            );
+            assert!(app.world().resource::<NativeSession>().notice.is_none());
+        }
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            session.tick(super::super::native_session::FlightInput::default());
+        }
+        toggle_camera(&mut app);
+        assert!(app.world().resource::<super::super::CameraMode>().chase);
         app.world_mut()
             .resource_mut::<NativeSession>()
             .action(MenuAction::Abort)
             .unwrap();
         app.update();
-        assert_eq!(
-            app.world().get::<Node>(hud_panel).unwrap().display,
-            Display::None
-        );
-        app.world_mut().entity_mut(button).insert(Interaction::None);
-        app.update();
-        app.world_mut()
-            .entity_mut(button)
-            .insert(Interaction::Pressed);
-        app.update();
-        assert_eq!(
-            app.world().get::<Node>(details_panel).unwrap().display,
-            Display::Flex
-        );
-        assert_eq!(
-            app.world().get::<Node>(hud_panel).unwrap().display,
-            Display::None
-        );
+        press(&mut app, "game-result-replay");
+        assert_replay_camera(&app, GameUiReplayCamera::Pilot, false);
+
+        press(&mut app, "game-replay-return");
+        toggle_camera(&mut app);
+        assert!(app.world().resource::<super::super::CameraMode>().chase);
+        press(&mut app, "game-result-replay");
+        assert_replay_camera(&app, GameUiReplayCamera::Pilot, false);
+
+        press(&mut app, "game-replay-camera");
+        assert_replay_camera(&app, GameUiReplayCamera::Chase, true);
+        press(&mut app, "game-replay-return");
+        toggle_camera(&mut app);
+        assert!(!app.world().resource::<super::super::CameraMode>().chase);
+        press(&mut app, "game-result-replay");
+        assert_replay_camera(&app, GameUiReplayCamera::Chase, true);
+
+        press(&mut app, "game-replay-return");
+        press(&mut app, "game-result-retry");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            session.tick(super::super::native_session::FlightInput::default());
+        }
+        toggle_camera(&mut app);
+        assert!(!app.world().resource::<super::super::CameraMode>().chase);
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .action(MenuAction::Retry)
+            .action(MenuAction::Abort)
             .unwrap();
         app.update();
-        assert!(!app.world().resource::<TechnicalDisclosure>().is_expanded());
-        assert_eq!(
-            app.world().get::<Node>(details_panel).unwrap().display,
-            Display::None
-        );
-        assert_eq!(
-            app.world().get::<Node>(hud_panel).unwrap().display,
-            Display::None
-        );
-    }
-
-    #[test]
-    fn quantity_preserves_sign_precision_and_expanding_digits_with_its_unit() {
-        for (value, expected) in [
-            (0.0, "body rate p: 0.000\u{00a0}rad/\u{2060}s"),
-            (-0.004, "body rate p: -0.004\u{00a0}rad/\u{2060}s"),
-            (123456.789, "body rate p: 123456.789\u{00a0}rad/\u{2060}s"),
-            (-123456.789, "body rate p: -123456.789\u{00a0}rad/\u{2060}s"),
-        ] {
-            assert_eq!(format_quantity("body rate p", value, 3, "rad/s"), expected);
-        }
-    }
-
-    #[test]
-    fn quantity_keeps_each_unit_attached_to_its_own_measurement() {
-        let readout = [
-            format_quantity("pilot位置", -0.02, 3, "m"),
-            format_quantity("held target", 0.02, 3, "m"),
-            format_quantity("高度", 10.37, 2, "m"),
-            format_quantity("対気速度", 9.71, 2, "m/s"),
-        ]
-        .join("\n");
-        assert_eq!(
-            readout,
-            "pilot位置: -0.020\u{00a0}m\nheld target: 0.020\u{00a0}m\n高度: 10.37\u{00a0}m\n対気速度: 9.71\u{00a0}m/\u{2060}s"
-        );
-    }
-
-    #[test]
-    fn three_axis_quantity_keeps_order_and_shared_unit_for_expanding_digits() {
-        assert_eq!(
-            format_three_axis_quantity("body rates p/q/r", [-123.456, 0.0, 123.456], 3, "rad/s",),
-            "body rates p/q/r [rad/\u{2060}s]\n-123.456 / 0.000 / 123.456"
-        );
-        assert_eq!(
-            format_three_axis_quantity("roll/pitch/heading", [0.0, -0.6, -45.0], 1, "°"),
-            "roll/pitch/heading [°]\n0.0 / -0.6 / -45.0"
-        );
-    }
-
-    #[test]
-    fn result_never_exposes_live_pause_abort_or_resume() {
-        for action in [MenuAction::Pause, MenuAction::Resume, MenuAction::Abort] {
-            assert!(!visible_action(SessionPhase::Result, action));
-        }
-        assert!(visible_action(SessionPhase::Result, MenuAction::Retry));
+        press(&mut app, "game-result-replay");
+        assert_replay_camera(&app, GameUiReplayCamera::Chase, true);
     }
 }

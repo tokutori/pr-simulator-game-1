@@ -23,6 +23,7 @@ const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
 mod analysis;
 mod attract;
+mod game_ui;
 mod record;
 mod setup;
 
@@ -253,6 +254,7 @@ enum BoundaryError {
     Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
+    SharedUi(birdman_game_session::game_ui::GameUiCommandError),
 }
 
 impl BoundaryError {
@@ -271,6 +273,7 @@ impl BoundaryError {
             Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
+            Self::SharedUi(error) => format!("shared game UI command failed: {error:?}"),
             error => format!("hybrid boundary rejected: {error:?}"),
         };
         JsValue::from_str(&message)
@@ -287,6 +290,9 @@ pub struct HybridGameSessionBridge {
     prepared: Option<PreparedMetadata>,
     archived: Option<record::ArchiveMetadata>,
     attract: Option<attract::AttractMetadata>,
+    ui: birdman_game_session::game_ui::GameUiState,
+    ui_view_cache: Option<game_ui::CachedUiView>,
+    ui_view_revision: u32,
 }
 
 #[wasm_bindgen]
@@ -468,29 +474,25 @@ impl HybridGameSessionBridge {
             prepared: None,
             archived: None,
             attract: None,
+            ui: birdman_game_session::game_ui::GameUiState::default(),
+            ui_view_cache: None,
+            ui_view_revision: 0,
         }
     }
 
     fn prepare_internal(&mut self) -> Result<(), BoundaryError> {
-        let control_mode = setup::control_mode(self.difficulty.assistance())?;
-        let preparation = HybridSessionPreparation::try_new_for_weather(
-            control_mode,
+        let metadata = birdman_game_session::game_ui::prepare_game_ui_flight(
+            &mut self.session,
+            self.difficulty,
             self.maximum_flight_ticks,
             self.seed,
-            self.difficulty.weather(),
         )
-        .map_err(BoundaryError::Preparation)?;
-        let controller_profile = preparation.controller_profile();
-        let course_axis = preparation.course_axis();
-        let (configuration, identity) = preparation.into_parts();
-        self.session
-            .prepare_flight(configuration)
-            .map_err(BoundaryError::Session)?;
+        .map_err(BoundaryError::SharedUi)?;
         self.prepared = Some(PreparedMetadata {
-            record_identity: identity,
-            controller_profile,
-            course_axis,
-            control_mode,
+            record_identity: metadata.record_identity,
+            controller_profile: metadata.controller_profile,
+            course_axis: metadata.course_axis,
+            control_mode: metadata.control_mode,
         });
         Ok(())
     }

@@ -38,8 +38,8 @@ graphも同じrecord・軸・cursorモデルからVR panelへ描く。VR表示�
 
 | Presentation状態 | Screen DOM / Flight HUD |
 |---|---|
-| uninitialized / initializing / failed | Screen DOMを表示する。HUDはFlight/Pauseだけで表示する |
-| ready(Screen) | Screen DOMを表示する。HUDはFlight/Pauseだけで表示する |
+| uninitialized / initializing / failed | Screen DOMを表示する。共有HUD observationがある場合にHUDを表示する |
+| ready(Screen) | Screen DOMを表示する。共有HUD observationがある場合にHUDを表示する |
 | requesting、from=Screen | 権限要求中のScreen DOMを維持する |
 | requesting、from=VR/null | 非表示とする |
 | starting / stopping | from/toを問わず非表示とする。BFCache復帰のfrom=nullも含む |
@@ -50,7 +50,11 @@ Snabbdomの安定mountへ`hidden`・`inert`・`aria-hidden`を反映し、専用
 author CSSの`display: contents`が`hidden`の表示抑制を上書きしないようにする。
 根拠: [HTML hidden](https://html.spec.whatwg.org/multipage/interaction.html#the-hidden-attribute)、
 [HTML inert](https://html.spec.whatwg.org/multipage/interaction.html#the-inert-attribute)。
-非表示中も最新Viewをpatchし、Flight HUDの既存nodeとsnapshot更新・render通知を保持する。
+HUDのScene・表示mode・Replay tabによる有無は共有Rustの`hud`を正本とする。Webはそのobservationとbrowser lifecycleの可視性を投影する。
+ScreenのFlight/PauseとReplay TelemetryにHUDを表示し、Result・Replay Cinematic/Analysis・Attractでは非表示とする。
+VRの飛行HUDはactive Flightだけに表示する。独立したFPS表示はHUD observationの有無にかかわらず維持する。
+非表示中も最新Viewをpatchし、HUD observationがある場合はFlight HUDの既存nodeを更新する。
+HUD描画入口は共有modelだけを受け取り、欠測時は既存nodeを保持して非表示とする。physics snapshotは機体描画と停止診断に使用する。
 DOMのclick/change/inputは非表示中に拒否する。表示復帰時にlistenerを再登録しない。
 focusとscrollはbrowser adapter内で非表示への遷移時に一度だけ退避する。
 同一Scene/overlayへ戻るときにscrollを復元し、focusは同一の接続中・有効なnodeに限って`preventScroll`付きで復元する。

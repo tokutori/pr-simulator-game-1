@@ -1,6 +1,7 @@
 import { runtimeViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
+import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
@@ -54,7 +55,7 @@ describe("WebXR session backend", () => {
     const renderer = new FakeRenderer();
     renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
     const backend = new WebXrPresentationBackend(adapter, renderer, viewport, () => undefined, () => undefined);
-    const hud = createHeadHudFixture();
+    const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
     const runtimeHead = pose(vec3(0.02, 0.05, -0.03), IDENTITY_POSE.orientation);
     await backend.requestSessionFromUserGesture();

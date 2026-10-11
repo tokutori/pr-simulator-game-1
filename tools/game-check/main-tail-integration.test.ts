@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
 import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 
@@ -13,12 +14,14 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
 });
 
-async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false) {
+async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false, captureReplayTicks = false,
+  recordListMode: "normal" | "loading" | "failed" = "normal") {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
   browser.document.body.innerHTML = '<main id="app"></main>';
   browser.document.documentElement.lang = "ja";
+  browser.document.documentElement.style.fontSize = "16px";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
   vi.stubGlobal("window", browser);
   vi.stubGlobal("document", browser.document);
@@ -31,11 +34,12 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   vi.stubGlobal("indexedDB", persistence);
   vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   const countdown: (() => void)[] = [];
+  const replayTicks: (() => void)[] = [];
   const timeout = browser.setTimeout.bind(browser);
   vi.spyOn(browser, "setTimeout").mockImplementation((handler, delay, ...args) => {
-    if (delay === 800 && typeof handler === "function") {
+    if ((delay === 800 || captureReplayTicks && delay === 50) && typeof handler === "function") {
       const callback = handler as (...values: unknown[]) => void;
-      countdown.push(() => { callback(...args); });
+      (delay === 800 ? countdown : replayTicks).push(() => { callback(...args); });
       const handle = timeout(() => undefined, 0);
       browser.clearTimeout(handle);
       return handle;
@@ -83,11 +87,20 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       await repository.saveFrom(archived);
     } finally { archived.free(); }
   }
+  if (recordListMode !== "normal") {
+    const { FlightRecordRepository } = await import("../../web/src/game/flight-record-store.js");
+    const list = vi.spyOn(FlightRecordRepository.prototype, "list");
+    if (recordListMode === "loading") list.mockImplementation(() => new Promise(() => undefined));
+    else list.mockRejectedValue(new Error("Injected record listing failure"));
+  }
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
-  const abort = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "abort");
+  const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
+  const sharedView = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "game_ui_view_json");
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
+  const advancePlayback = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_playback");
+  const playbackClock = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_clock_state");
   const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
   const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
   let releaseInitialization: () => void = () => undefined;
@@ -122,7 +135,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     while (countdown.length > 0 && count < 10) { countdown.shift()?.(); count += 1; }
     expect(scene()).toBe("Flight");
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, abort, tick,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, tick, advancePlayback, playbackClock, replayTicks,
     countdownTick: () => { countdown.shift()?.(); },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
@@ -130,14 +143,156 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
 
 function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTimestampMilliseconds: number,
   maximumElapsedMilliseconds: number): void {
-  const frameMilliseconds = 1_000 / 30;
+  const frameMilliseconds = 200;
   for (let elapsed = frameMilliseconds; elapsed < maximumElapsedMilliseconds && trial.scene() === "Flight"; elapsed += frameMilliseconds) {
     trial.frame(initialTimestampMilliseconds + elapsed);
   }
   if (trial.scene() === "Flight") trial.frame(initialTimestampMilliseconds + maximumElapsedMilliseconds);
 }
 
+async function manualReplayFixture() {
+  const trial = await fixture(false, false, false, true);
+  await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+  trial.click("game-title-start");
+  trial.click("game-setup-start");
+  trial.launch();
+  for (let timestamp = 0; timestamp <= 1000; timestamp += 200) trial.frame(timestamp);
+  expect(trial.scene()).toBe("Flight");
+  trial.click("game-flight-abort");
+  let nowMilliseconds = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => nowMilliseconds);
+  trial.click("game-result-replay");
+  trial.click("game-replay-play-pause");
+  expect(trial.documentRef.querySelector('[data-control-id="game-replay-play-pause"]')?.textContent).toBe("Pause");
+  expect(trial.replayTicks).toHaveLength(1);
+  return {
+    ...trial,
+    replayTime: (): number => {
+      const clock = trial.playbackClock.mock.results.at(-1);
+      if (clock?.type !== "return") throw new Error("Rust Replay clock is missing");
+      const time = clock.value[0];
+      if (time === undefined || !Number.isFinite(time)) throw new Error("Rust Replay time is invalid");
+      return time;
+    },
+    tickReplay: (callback = trial.replayTicks.shift()): void => {
+      if (callback === undefined) throw new Error("Replay timer is missing");
+      nowMilliseconds += 50;
+      callback();
+    }
+  };
+}
+
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it.each([
+    ["loading", "保存記録を読み込んでいる"],
+    ["failed", "FlightRecord一覧を取得できない: Injected record listing failure"],
+    ["normal", "保存済みFlightRecordはない"]
+  ] as const)("projects %s record-list feedback into the Rust Title view without leaking into other scenes", async (mode, message) => {
+    const trial = await fixture(false, false, false, false, mode);
+    const observedView = () => {
+      const result = trial.sharedView.mock.results.at(-1);
+      if (result?.type !== "return" || typeof result.value !== "string") throw new Error("Shared Rust UI view is unavailable");
+      return parseGameUiView(result.value);
+    };
+    await vi.waitFor(() => {
+      expect(trial.scene()).toBe("Title");
+      expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain(message);
+    });
+    const titleView = observedView();
+    expect(titleView.description).toContain(message);
+    const titleStatus = titleView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-state")?.content;
+    if (titleStatus?.kind !== "status") throw new Error("Shared Title status is unavailable");
+    expect(titleStatus.value).toContain(message);
+    const assertNoListFeedback = () => {
+      expect(JSON.stringify(observedView())).not.toContain(message);
+      expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).not.toContain(message);
+    };
+    trial.click("game-title-start");
+    expect(trial.scene()).toBe("FlightSetup");
+    assertNoListFeedback();
+    trial.click("game-setup-start");
+    expect(trial.scene()).toBe("Briefing");
+    assertNoListFeedback();
+    trial.click("game-briefing-start");
+    expect(trial.scene()).toBe("Countdown");
+    assertNoListFeedback();
+    for (let tick = 0; tick < 3; tick += 1) trial.countdownTick();
+    expect(trial.scene()).toBe("Flight");
+    trial.frame(0);
+    trial.frame(10);
+    assertNoListFeedback();
+    trial.click("game-flight-pause");
+    expect(observedView().active_overlay).toBe("Pause");
+    assertNoListFeedback();
+    trial.click("game-flight-resume");
+    trial.click("game-flight-abort");
+    expect(trial.scene()).toBe("Result");
+    assertNoListFeedback();
+    trial.click("game-result-replay");
+    expect(trial.scene()).toBe("Replay");
+    assertNoListFeedback();
+    trial.click("game-replay-return");
+    trial.click("game-result-title");
+    expect(trial.scene()).toBe("Title");
+    if (mode !== "normal") await vi.waitFor(() => { expect(observedView().description).toContain(message); });
+    trial.click("game-title-demo");
+    expect(trial.documentRef.querySelector('[data-control-id="game-attract-return"]')).not.toBeNull();
+    assertNoListFeedback();
+  });
+
+  it("continues the same Rust Replay clock after display and camera changes", async () => {
+    const trial = await manualReplayFixture();
+    trial.tickReplay();
+    let previousTime = trial.replayTime();
+    expect(previousTime).toBeGreaterThan(0);
+    for (const controlId of ["game-replay-view-mode", "game-replay-camera", "game-replay-view-mode", "game-replay-view-mode"]) {
+      const previousLabel = trial.documentRef.querySelector(`[data-control-id="${controlId}"]`)?.textContent;
+      trial.click(controlId);
+      expect(trial.documentRef.querySelector(`[data-control-id="${controlId}"]`)?.textContent).not.toBe(previousLabel);
+      trial.tickReplay();
+      const time = trial.replayTime();
+      expect(time).toBeGreaterThan(previousTime);
+      previousTime = time;
+      expect(trial.replayTicks).toHaveLength(1);
+      expect(trial.documentRef.querySelector('[data-control-id="game-replay-play-pause"]')?.textContent).toBe("Pause");
+    }
+    expect(trial.advancePlayback).toHaveBeenCalledTimes(5);
+    expect(trial.free).not.toHaveBeenCalled();
+  });
+
+  it.each(["pause", "return", "retry", "pagehide"] as const)("rejects the obsolete Replay timer after %s", async (operation) => {
+    const trial = await manualReplayFixture();
+    const obsoleteTick = trial.replayTicks.shift();
+    if (obsoleteTick === undefined) throw new Error("Replay timer is missing");
+    if (operation === "pagehide") {
+      trial.page("pagehide", false);
+      expect(trial.free).toHaveBeenCalledTimes(1);
+    } else if (operation === "pause") {
+      trial.click("game-replay-play-pause");
+      trial.click("game-replay-play-pause");
+    } else {
+      trial.click("game-replay-return");
+      if (operation === "retry") {
+        trial.click("game-result-retry");
+        trial.launch();
+        trial.frame(2000);
+        trial.frame(2200);
+        trial.click("game-flight-abort");
+      }
+      trial.click("game-result-replay");
+      trial.click("game-replay-play-pause");
+    }
+    trial.tickReplay(obsoleteTick);
+    expect(trial.advancePlayback).not.toHaveBeenCalled();
+    expect(trial.replayTicks).toHaveLength(operation === "pagehide" ? 0 : 1);
+    if (operation !== "pagehide") {
+      trial.tickReplay();
+      expect(trial.advancePlayback).toHaveBeenCalledTimes(1);
+      expect(trial.replayTime()).toBeGreaterThan(0);
+      expect(trial.replayTicks).toHaveLength(1);
+    }
+  });
+
   it("waits for quality application and retains the selection through weather changes and Retry", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
@@ -364,7 +519,10 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     let injected = false;
     trial.renderer.setLakeVisualCondition.mockImplementation(() => {
-      const terminal = reason === "manual_abort" ? trial.abort.mock.results.length > 0
+      const terminal = reason === "manual_abort" ? trial.sharedCommand.mock.calls.some(([json], index) => {
+        const command = JSON.parse(json) as { readonly kind: string };
+        return command.kind === "abort" && trial.sharedCommand.mock.results[index]?.type === "return";
+      })
         : trial.tick.mock.results.some((result) => {
           const snapshot: unknown = JSON.parse(result.value as string);
           return typeof snapshot === "object" && snapshot !== null && "phase_code" in snapshot && snapshot.phase_code === 7;

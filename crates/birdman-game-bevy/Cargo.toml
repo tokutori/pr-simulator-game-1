@@ -23,5 +23,8 @@ bevy = { version = "=0.19.1", default-features = false, features = [
   "bevy_core_pipeline", "bevy_pbr", "bevy_text", "bevy_ui", "bevy_ui_render", "bevy_input_focus", "ui_picking", "png"
 ] }
 
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+bevy = { version = "=0.19.1", default-features = false, features = ["default_font"] }
+
 [lints]
 workspace = true

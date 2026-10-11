@@ -5,7 +5,8 @@ import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel, GameSessionUiState, ReplayReturnTarget, TailGameSessionProjection } from "../../web/src/app/app-state.js";
+import type { GameSessionUiState, ReplayReturnTarget, TailGameSessionProjection } from "../../web/src/app/app-state.js";
+import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 
@@ -23,21 +24,26 @@ function verifyReturnViews(session: TailAppSessionFacade, expected: ReplayReturn
   expect(Object.isFrozen(projection)).toBe(true);
   const observed = updateApp(createInitialAppModel(), { type: "game-session-synced", ...projection }).model;
   expect(observed.gameSession).toMatchObject({ kind: "replay", returnTarget: expected });
-  const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-  verifyUiReturnViews({ ...observed, flightAnalysis: data }, expected);
+  verifyUiReturnViews(session, expected);
 }
 
-function verifyUiReturnViews(observed: AppModel, expected: ReplayReturnTarget): void {
+function verifyUiReturnViews(session: TailAppSessionFacade, expected: ReplayReturnTarget): void {
   for (const mode of ["screen", "phone-vr", "webxr"] as const) {
     for (const replayViewMode of ["analysis", "cinematic", "telemetry"] as const) {
-      const model = { ...observed, presentation: { type: "ready", mode } as const, replayViewMode };
-      const view = createGameViewModel(model, null);
+      const platform = sharedGameUiPlatform({ presentation_mode: mode === "phone-vr" ? "phone_vr" : mode });
+      selectSharedReplayView(session, platform, replayViewMode);
+      const shared = session.readSharedUi(platform);
+      const model = updateApp({ ...createInitialAppModel(), presentation: { type: "ready", mode } as const },
+        { type: "shared-game-ui-observed", view: shared }).model;
+      const view = createGameViewModel(shared);
       validateUiViewModel(view);
       const controls = view.panels.flatMap((panel) => panel.controls).filter((control) => control.id === "game-replay-return");
       expect(controls).toHaveLength(1);
       expect(controls[0]).toMatchObject({ kind: "button", enabled: true, label: expected === "title" ? "Titleへ戻る" : "Resultへ戻る" });
       const action = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-replay-return" } });
-      expect(action.effects).toContainEqual({ type: "game-session-operation", operation: "leave-replay", requestId: model.nextRequestId });
+      expect(action.effects).toContainEqual({ type: "update-shared-game-ui", action: { kind: "session", command: { kind: "leave_replay" } } });
+      expect(session.updateSharedUi({ kind: "session", command: { kind: "leave_replay" } }, platform).effects)
+        .toEqual([{ kind: "session", command: { kind: "leave_replay" } }]);
     }
   }
 }
@@ -48,8 +54,8 @@ describe("Rust-owned Replay exit projection", () => {
     expectTypeOf<Extract<TailGameSessionProjection, { phaseCode: 9 }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
     expectTypeOf<Extract<GameSessionUiState, { kind: "title" }>>().not.toHaveProperty("returnTarget");
     for (const layout of ["tail_incidence"] as const) {
-      expect(gameSessionState(9, 0, null, false, null, layout)).toBeNull();
-      expect(gameSessionState(9, 0, null, false, null, layout, "invalid" as ReplayReturnTarget)).toBeNull();
+      expect(gameSessionState(9, 0, null, false, layout)).toBeNull();
+      expect(gameSessionState(9, 0, null, false, layout, "invalid" as ReplayReturnTarget)).toBeNull();
     }
   });
 
