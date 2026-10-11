@@ -60,10 +60,10 @@ function enterReplayAtCursor(session: TailAppSessionFacade, timeSeconds: number)
 }
 
 function observeReplayClock(model: AppModel, session: TailAppSessionFacade): AppModel {
-  const requestId = model.pendingReplayClockRequestId;
-  if (requestId === null) throw new Error("Expected the runtime playback clock observation request");
+  const clock = model.replayClock;
+  if (clock.kind !== "requesting") throw new Error("Expected the runtime playback clock observation request");
   return updateApp(observeUi(model, session), {
-    type: "replay-clock-command-completed", requestId, generation: model.replayClockGeneration,
+    type: "replay-clock-command-completed", requestId: clock.requestId, generation: clock.generation,
     state: projectRuntimePlaybackClock(session.readPlaybackClock())
   }).model;
 }
