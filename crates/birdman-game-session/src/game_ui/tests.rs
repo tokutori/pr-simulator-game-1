@@ -1,7 +1,9 @@
 use super::*;
 use birdman_game_core::{
-    ControlMode, GameSession, PauseReason, SessionPhase, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailRateTarget,
+    AeroError, AerodynamicEvaluationError, AerodynamicStage, ControlMode, DynamicsError,
+    GameSession, HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, PauseReason,
+    SessionEndReason, SessionPhase, TailFlightTickError, TailFlightTickInput, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, WindError,
 };
 use birdman_game_format::{
     AssistanceLevel, DifficultyPreset, DifficultySettings, HudCue, InformationLevel, WeatherClass,
@@ -23,8 +25,9 @@ fn platform() -> GameUiPlatformInput {
         supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
         stored_records_available: false,
         flight_log_available: true,
+        flight_log_pending: false,
         water_quality: GameUiWaterQuality::High,
-        water_quality_pending: false,
+        water_quality_operation: GameUiWaterQualityOperation::Idle {},
         notification: String::new(),
         flight_controller_failure: None,
         head_hud_failure: None,
@@ -886,4 +889,328 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap();
     assert!(custom.attitude.is_none() && custom.wind.is_none());
     assert!(custom.readouts.contains("IAS") && !custom.readouts.contains("PITCH"));
+}
+
+#[test]
+fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
+    let mut session = finalized();
+    session.enter_replay().unwrap();
+    let platform = platform();
+    let state = GameUiState {
+        replay_view: GameUiReplayView::Telemetry,
+        ..GameUiState::default()
+    };
+    let retained = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    for code in 0..3 {
+        session.set_playback_rate_code(code).unwrap();
+        let clock = session.playback_clock();
+        let frame = game_ui_frame(
+            &state,
+            &context(&session, difficulty(), &platform),
+            &retained,
+        )
+        .unwrap();
+        let fresh = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        for suffix in ["0_5", "1", "2"] {
+            let id = format!("game-replay-speed-{suffix}");
+            assert_eq!(
+                frame
+                    .button_labels
+                    .iter()
+                    .find(|button| button.id == id)
+                    .unwrap()
+                    .label,
+                control(&fresh, &id).label
+            );
+        }
+        assert_eq!(
+            frame
+                .button_labels
+                .iter()
+                .filter(|button| button.label.starts_with("● "))
+                .count(),
+            1
+        );
+        assert_eq!(session.playback_clock(), clock);
+        assert_eq!(frame.selections, state);
+    }
+}
+
+#[test]
+fn water_quality_operation_retains_applied_selection_and_original_failure() {
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let before = session.snapshot();
+    let state = GameUiState::default();
+    let mut platform = platform();
+    for (operation, expected, enabled) in [
+        (
+            GameUiWaterQualityOperation::Idle {},
+            "High · 水面の描画密度",
+            true,
+        ),
+        (
+            GameUiWaterQualityOperation::Applying {
+                requested: GameUiWaterQuality::Low,
+            },
+            "High · Lowを適用中",
+            false,
+        ),
+        (
+            GameUiWaterQualityOperation::Failed {
+                requested: GameUiWaterQuality::Low,
+                cause: "prepare-cause".to_owned(),
+            },
+            "Highを保持する。Lowの適用に失敗した: prepare-cause",
+            true,
+        ),
+        (
+            GameUiWaterQualityOperation::CleanupFailed {
+                cause: "cleanup-cause".to_owned(),
+            },
+            "Highを適用した。旧geometryの解放に失敗した: cleanup-cause",
+            true,
+        ),
+    ] {
+        platform.water_quality_operation = operation;
+        let context = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &context).unwrap();
+        let GameUiControlContent::Status { value } =
+            &control(&view, "presentation-water-quality-status").content
+        else {
+            panic!("missing quality status")
+        };
+        assert!(value.contains(expected));
+        for suffix in ["low", "medium", "high"] {
+            assert_eq!(
+                control(&view, &format!("presentation-water-quality-{suffix}")).enabled,
+                enabled
+            );
+        }
+        assert!(matches!(
+            control(&view, "presentation-water-quality-high").content,
+            GameUiControlContent::Button {
+                presentation: GameUiButtonPresentation::Choice { selected: true, .. },
+                ..
+            }
+        ));
+        let action = GameUiAction::Platform {
+            command: GameUiPlatformCommand::SetWaterQuality {
+                quality: GameUiWaterQuality::Low,
+            },
+        };
+        assert_eq!(update_game_ui(&state, action, &context).is_ok(), enabled);
+        assert_eq!(session.snapshot(), before);
+    }
+    assert!(
+        serde_json::from_str::<GameUiWaterQualityOperation>(r#"{"kind":"idle","requested":"low"}"#)
+            .is_err()
+    );
+    assert!(
+        serde_json::from_str::<GameUiWaterQualityOperation>(
+            r#"{"kind":"applying","requested":"low","cause":"surplus"}"#
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn pending_log_download_disables_repeated_io_and_preserves_navigation_and_notification() {
+    let mut session = finalized();
+    let state = GameUiState::default();
+    let mut platform = platform();
+    for replay in [false, true] {
+        if replay {
+            session.enter_replay().unwrap();
+        }
+        platform.flight_log_pending = true;
+        let before = session.snapshot();
+        let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        for id in ["game-flight-log-csv", "game-flight-log-json"] {
+            assert!(!control(&view, id).enabled);
+        }
+        let navigation = if replay {
+            "game-replay-return"
+        } else {
+            "game-result-retry"
+        };
+        assert!(control(&view, navigation).enabled);
+        assert_eq!(
+            update_game_ui(
+                &state,
+                GameUiAction::Platform {
+                    command: GameUiPlatformCommand::DownloadFlightCsv {}
+                },
+                &context(&session, difficulty(), &platform)
+            ),
+            Err(GameUiError::ActionUnavailable)
+        );
+        let GameUiControlContent::Status { value } =
+            &control(&view, "game-flight-log-notice").content
+        else {
+            panic!("missing log notice")
+        };
+        assert!(value.contains("要求している") && value.contains("finite-difference"));
+        platform.flight_log_pending = false;
+        for notification in [
+            "飛行ログのダウンロードを要求した: flight.csv",
+            "ダウンロードに失敗した: original-cause",
+        ] {
+            platform.notification = notification.to_owned();
+            let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+            assert!(control(&view, "game-flight-log-csv").enabled);
+            let GameUiControlContent::Status { value } =
+                &control(&view, "game-flight-log-notice").content
+            else {
+                panic!("missing log notice")
+            };
+            assert!(value.contains(notification));
+        }
+        assert_eq!(session.snapshot(), before);
+    }
+}
+
+#[test]
+fn shared_result_diagnostics_preserve_reason_site_limit_stage_and_raw_cause() {
+    for (reason, expected) in [
+        (SessionEndReason::WaterContact, "着水した"),
+        (
+            SessionEndReason::OutOfValidEnvelope,
+            "モデルの適用範囲を超えたため終了した",
+        ),
+        (SessionEndReason::ManualAbort, "操作により飛行を終了した"),
+        (
+            SessionEndReason::FatalSimulationError,
+            "計算処理のエラーにより終了した",
+        ),
+        (SessionEndReason::TimeLimit, "飛行時間の上限に達した"),
+    ] {
+        assert_eq!(game_ui_result_reason_label(reason), expected);
+    }
+    for (site, limit, expected) in [
+        (
+            HybridSite::StaticPolar,
+            HybridLimit::StaticAlpha,
+            "機体の迎角",
+        ),
+        (HybridSite::Datum, HybridLimit::GlobalBeta, "横滑り角"),
+        (
+            HybridSite::TailIncidence,
+            HybridLimit::ElevatorIncidence,
+            "水平尾翼の取付角",
+        ),
+        (
+            HybridSite::TailIncidence,
+            HybridLimit::RudderIncidence,
+            "垂直尾翼の取付角",
+        ),
+        (
+            HybridSite::Surface(HybridSurfaceRole::HorizontalTail),
+            HybridLimit::ControlledAlphaDifference,
+            "水平尾翼の局所迎角差",
+        ),
+        (
+            HybridSite::Proxy {
+                surface: HybridSurfaceRole::VerticalTail,
+                index: 1,
+            },
+            HybridLimit::ControlledAlphaDifference,
+            "垂直尾翼の局所迎角差",
+        ),
+        (
+            HybridSite::Surface(HybridSurfaceRole::MainWing),
+            HybridLimit::LocalSpeed,
+            "局所的な気流",
+        ),
+    ] {
+        let original = HybridError::try_from_recorded(
+            site,
+            AeroError::OutsideEnvelope,
+            Some(limit),
+            Some(AerodynamicStage::Second),
+        )
+        .unwrap();
+        let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(original),
+        )));
+        assert!(game_ui_failure_summary(Some(failure)).contains(expected));
+        assert_eq!(original.site(), site);
+        assert_eq!(original.limit(), Some(limit));
+        assert_eq!(original.stage(), Some(AerodynamicStage::Second));
+        assert_eq!(original.cause(), AeroError::OutsideEnvelope);
+        assert!(format!("{failure:#?}").contains("Second"));
+    }
+    let original = HybridError::try_from_recorded(
+        HybridSite::Datum,
+        AeroError::Wind(WindError::OutsideGrid),
+        None,
+        None,
+    )
+    .unwrap();
+    let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+        AerodynamicEvaluationError::Hybrid(original),
+    )));
+    assert_eq!(
+        game_ui_failure_summary(Some(failure)),
+        "機体が風データの有効領域を離れた。"
+    );
+    assert_eq!(game_ui_failure_summary(None), "");
+    let session = finalized();
+    let platform = platform();
+    let mut state = GameUiState::default();
+    let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(
+        !view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| control.id == "game-result-technical-content")
+    );
+    state = update_game_ui(
+        &state,
+        GameUiAction::ToggleTechnical {},
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap()
+    .state;
+    let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(
+        matches!(&control(&view, "game-result-technical-content").content, GameUiControlContent::Status { value }
+        if value.contains("終了理由: TimeLimit") && value.contains("失敗したtickの診断:"))
+    );
+}
+
+#[cfg(feature = "schema")]
+#[test]
+fn output_schema_requires_serialized_nullable_fields_while_input_accepts_omission() {
+    let bundle: serde_json::Value =
+        serde_json::from_str(&export_game_ui_schema("bundle").unwrap()).unwrap();
+    for (root, fields) in [
+        ("view", &["active_overlay", "hud"][..]),
+        ("frame", &["hud", "chart_cursor"][..]),
+    ] {
+        let required = bundle[root]["required"].as_array().unwrap();
+        for field in fields {
+            assert!(required.iter().any(|value| value.as_str() == Some(*field)));
+        }
+    }
+    let hud_required = bundle["view"]["$defs"]["GameUiHud"]["required"]
+        .as_array()
+        .unwrap();
+    assert!(
+        hud_required
+            .iter()
+            .any(|value| value == "angle_of_attack_degrees")
+    );
+    let input_required = bundle["input"]["required"].as_array().unwrap();
+    assert!(
+        !input_required
+            .iter()
+            .any(|value| value == "flight_controller_failure")
+    );
+    assert!(
+        !input_required
+            .iter()
+            .any(|value| value == "head_hud_failure")
+    );
 }

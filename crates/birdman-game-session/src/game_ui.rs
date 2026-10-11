@@ -25,11 +25,26 @@ pub use view::game_ui_view;
 /// Serializes schemas from the exact shared Rust wire types without performing I/O.
 #[cfg(feature = "schema")]
 pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
-    let view = schemars::schema_for!(GameUiView);
-    let action = schemars::schema_for!(GameUiAction);
-    let input = schemars::schema_for!(GameUiPlatformInput);
-    let effects = schemars::schema_for!(GameUiUpdate);
-    let frame = schemars::schema_for!(GameUiFrame);
+    let output = schemars::generate::SchemaSettings::draft2020_12().for_serialize();
+    let input_settings = schemars::generate::SchemaSettings::draft2020_12().for_deserialize();
+    let view = output
+        .clone()
+        .into_generator()
+        .into_root_schema_for::<GameUiView>();
+    let action = input_settings
+        .clone()
+        .into_generator()
+        .into_root_schema_for::<GameUiAction>();
+    let input = input_settings
+        .into_generator()
+        .into_root_schema_for::<GameUiPlatformInput>();
+    let effects = output
+        .clone()
+        .into_generator()
+        .into_root_schema_for::<GameUiUpdate>();
+    let frame = output
+        .into_generator()
+        .into_root_schema_for::<GameUiFrame>();
     let value = match name {
         "bundle" => {
             serde_json::json!({ "view": view, "action": action, "input": input, "effects": effects, "frame": frame })

@@ -87,6 +87,15 @@ pub fn game_ui_frame(
             id: "game-replay-play-pause".to_owned(),
             label: if clock.is_playing() { "Pause" } else { "Play" }.to_owned(),
         });
+        for (code, suffix, label) in [(0, "0_5", "0.5×"), (1, "1", "1×"), (2, "2", "2×")] {
+            let id = format!("game-replay-speed-{suffix}");
+            if controls.iter().any(|control| control.id == id) {
+                frame.button_labels.push(GameUiButtonLabel {
+                    id,
+                    label: view::replay_rate_label(code, clock.rate().code(), label),
+                });
+            }
+        }
     } else if phase == SessionPhase::Attract {
         frame.readouts.push(readout(
             "game-attract-time",

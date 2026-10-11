@@ -1052,10 +1052,24 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.status(
         "presentation-water-quality-status",
         "水面画質",
-        &format!(
-            "{} · 水面の描画密度を選択する。飛行物理と記録条件は維持する。",
-            label(current)
-        ),
+        &match &context.platform.water_quality_operation {
+            GameUiWaterQualityOperation::Idle {} => format!(
+                "{} · 水面の描画密度を選択する。飛行物理と記録条件は維持する。",
+                label(current)
+            ),
+            GameUiWaterQualityOperation::Applying { requested } => {
+                format!("{} · {}を適用中", label(current), label(*requested))
+            }
+            GameUiWaterQualityOperation::Failed { requested, cause } => format!(
+                "{}を保持する。{}の適用に失敗した: {cause}",
+                label(current),
+                label(*requested)
+            ),
+            GameUiWaterQualityOperation::CleanupFailed { cause } => format!(
+                "{}を適用した。旧geometryの解放に失敗した: {cause}",
+                label(current)
+            ),
+        },
     );
     for (quality, suffix, description) in [
         (GameUiWaterQuality::Low, "low", "描画負荷を抑える"),
@@ -1069,7 +1083,10 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         menu.push(
             &format!("presentation-water-quality-{suffix}"),
             label(quality),
-            !context.platform.water_quality_pending,
+            !matches!(
+                context.platform.water_quality_operation,
+                GameUiWaterQualityOperation::Applying { .. }
+            ) && context.platform.flight_controller_failure.is_none(),
             "water-quality",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {
@@ -1145,7 +1162,9 @@ fn record_summary(context: &GameUiContext<'_, '_>) -> Result<String, GameUiError
 }
 
 fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
-    let enabled = context.platform.flight_log_available && context.record.is_some();
+    let enabled = context.platform.flight_log_available
+        && !context.platform.flight_log_pending
+        && context.record.is_some();
     menu.platform(
         "game-flight-log-csv",
         "飛行ログ CSV",
@@ -1158,9 +1177,20 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         GameUiPlatformCommand::DownloadRecordJson {},
         enabled,
     );
-    menu.status("game-flight-log-notice", "ログ出力", if context.platform.flight_log_available {
+    let mut notice = if context.platform.flight_log_available {
         "CSVの加速度は保存標本からのfinite-difference推定値である。JSONは元のFlightRecordである。"
-    } else { "この表示環境では飛行ログのダウンロードに対応していない。" });
+            .to_owned()
+    } else {
+        "この表示環境では飛行ログのダウンロードに対応していない。".to_owned()
+    };
+    if context.platform.flight_log_pending {
+        notice.push_str(" · 飛行ログのダウンロードを要求している。");
+    }
+    if !context.platform.notification.is_empty() {
+        notice.push_str(" · ");
+        notice.push_str(&context.platform.notification);
+    }
+    menu.status("game-flight-log-notice", "ログ出力", &notice);
 }
 
 fn analysis(
@@ -1322,14 +1352,7 @@ fn replay(
             for (code, suffix, label) in [(0, "0_5", "0.5×"), (1, "1", "1×"), (2, "2", "2×")] {
                 menu.action(
                     &format!("game-replay-speed-{suffix}"),
-                    &format!(
-                        "{}{label}",
-                        if clock.rate().code() == code {
-                            "● "
-                        } else {
-                            ""
-                        }
-                    ),
+                    &replay_rate_label(code, clock.rate().code(), label),
                     GameUiAction::SetReplayRate { code },
                     true,
                 );
@@ -1374,6 +1397,10 @@ fn replay(
         true,
     );
     Ok(())
+}
+
+pub(super) fn replay_rate_label(code: u32, current: u32, label: &str) -> String {
+    format!("{}{label}", if code == current { "● " } else { "" })
 }
 
 pub(super) fn scene(phase: SessionPhase) -> GameUiScene {

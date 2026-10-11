@@ -228,6 +228,32 @@ pub enum GameUiWaterQuality {
     High,
 }
 
+/// Exclusive observation of a platform-owned water resource operation.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GameUiWaterQualityOperation {
+    /// No resource operation is pending and prior resources were released.
+    Idle {},
+    /// A replacement has been requested and the confirmed resource remains active.
+    Applying {
+        /// Requested replacement quality.
+        requested: GameUiWaterQuality,
+    },
+    /// Replacement failed before commitment; the confirmed resource remains active.
+    Failed {
+        /// Failed replacement quality.
+        requested: GameUiWaterQuality,
+        /// Captured resource preparation cause.
+        cause: String,
+    },
+    /// Replacement committed, but release of the superseded resource failed.
+    CleanupFailed {
+        /// Captured superseded-resource cleanup cause.
+        cause: String,
+    },
+}
+
 /// Presentation mode supported by a platform adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -392,10 +418,12 @@ pub struct GameUiPlatformInput {
     pub stored_records_available: bool,
     /// Platform supports record downloads.
     pub flight_log_available: bool,
+    /// A download request for the current resource owner remains pending.
+    pub flight_log_pending: bool,
     /// Confirmed current render quality.
     pub water_quality: GameUiWaterQuality,
-    /// Quality apply operation is pending.
-    pub water_quality_pending: bool,
+    /// Actual resource preparation, commitment and cleanup observation.
+    pub water_quality_operation: GameUiWaterQualityOperation,
     /// Platform operation feedback.
     pub notification: String,
     /// Captured flight-controller resource failure; the session retains its last valid state.
