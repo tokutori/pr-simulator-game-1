@@ -1,4 +1,4 @@
-import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, RenderError, RuntimeResult, ViewportSize, PanelUnavailableReason } from "../render/contracts/runtime.js";
+import type { RendererAdapter, PresentationBackendAdapter, PresentationMode, PresentationCleanupFailure, RuntimeResult, ViewportSize, PanelUnavailableReason } from "../render/contracts/runtime.js";
 import type { PreparedPresentationView } from "../render/contracts/runtime.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import { FrameRateCounter } from "./frame-rate.js";
@@ -8,6 +8,7 @@ export class PresentationRuntime {
   private activeBackend: PresentationBackendAdapter | null = null;
   private loopStarted = false;
   private disposed = false;
+  private disposal: Promise<RuntimeResult> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private readonly frameRate = new FrameRateCounter();
 
@@ -51,25 +52,30 @@ export class PresentationRuntime {
   }
 
   dispose(): Promise<RuntimeResult> {
-    return this.enqueue(async () => {
-      if (this.disposed) return { ok: true };
-      this.disposed = true;
-      this.frameRate.reset();
-      if (this.loopStarted) this.renderer.stopLoop();
-      this.loopStarted = false;
-      let stopError: RenderError | null = null;
-      if (this.activeBackend !== null) {
-        const backend = this.activeBackend;
-        this.activeBackend = null;
-        try {
-          await backend.stop();
-        } catch (error) {
-          stopError = { type: "backend-failed", mode: backend.mode, message: errorMessage(error) };
-        }
+    this.disposal ??= this.enqueue(() => this.disposeNow());
+    return this.disposal;
+  }
+
+  private async disposeNow(): Promise<RuntimeResult> {
+    this.disposed = true;
+    const backend = this.activeBackend;
+    this.activeBackend = null;
+    const failures: PresentationCleanupFailure[] = [];
+    const loopFailure = this.stopLoop();
+    if (loopFailure !== null) failures.push(loopFailure);
+    if (backend !== null) {
+      try {
+        await backend.stop();
+      } catch (cause: unknown) {
+        failures.push({ type: "backend-failed", operation: "stop-backend", mode: backend.mode, message: errorMessage(cause), cause });
       }
+    }
+    try {
       this.renderer.dispose();
-      return stopError === null ? { ok: true } : { ok: false, error: stopError };
-    });
+    } catch (cause: unknown) {
+      failures.push({ type: "renderer-failed", operation: "dispose-renderer", message: errorMessage(cause), cause });
+    }
+    return cleanupResult(failures);
   }
 
   private async startNow(mode: PresentationMode): Promise<RuntimeResult> {
@@ -95,14 +101,10 @@ export class PresentationRuntime {
         try {
           await backend.stop();
         } catch (stopError) {
-          return {
-            ok: false,
-            error: {
-              type: "backend-failed",
-              mode: backend.mode,
-              message: `Renderer start failed: ${errorMessage(error)}; backend cleanup failed: ${errorMessage(stopError)}`
-            }
-          };
+          return cleanupResult([
+            { type: "renderer-failed", operation: "start-loop", message: errorMessage(error), cause: error },
+            { type: "backend-failed", operation: "stop-backend", mode: backend.mode, message: errorMessage(stopError), cause: stopError }
+          ]);
         }
         return { ok: false, error: { type: "renderer-failed", message: errorMessage(error) } };
       }
@@ -121,8 +123,12 @@ export class PresentationRuntime {
       await previous.stop();
     } catch (error) {
       this.activeBackend = null;
-      this.stopLoop();
-      return { ok: false, error: { type: "backend-failed", mode: previous.mode, message: errorMessage(error) } };
+      const failures: PresentationCleanupFailure[] = [
+        { type: "backend-failed", operation: "stop-backend", mode: previous.mode, message: errorMessage(error), cause: error }
+      ];
+      const loopFailure = this.stopLoop();
+      if (loopFailure !== null) failures.push(loopFailure);
+      return cleanupResult(failures);
     }
     this.activeBackend = null;
     try {
@@ -135,15 +141,13 @@ export class PresentationRuntime {
       try {
         await next.stop();
       } catch (cleanupError) {
-        this.stopLoop();
-        return {
-          ok: false,
-          error: {
-            type: "backend-failed",
-            mode,
-            message: `Backend start failed: ${startMessage}; cleanup failed: ${errorMessage(cleanupError)}`
-          }
-        };
+        const failures: PresentationCleanupFailure[] = [
+          { type: "backend-failed", operation: "start-backend", mode, message: startMessage, cause: error },
+          { type: "backend-failed", operation: "stop-backend", mode, message: errorMessage(cleanupError), cause: cleanupError }
+        ];
+        const loopFailure = this.stopLoop();
+        if (loopFailure !== null) failures.push(loopFailure);
+        return cleanupResult(failures);
       }
       const screen = this.backends.get("screen");
       if (screen !== undefined && screen !== next) {
@@ -154,27 +158,33 @@ export class PresentationRuntime {
           return { ok: false, error: { type: "backend-failed", mode, message: startMessage } };
         } catch (fallbackError) {
           this.activeBackend = null;
-          this.stopLoop();
-          return {
-            ok: false,
-            error: {
-              type: "backend-failed",
-              mode,
-              message: `Backend start failed: ${startMessage}; Screen recovery failed: ${errorMessage(fallbackError)}`
-            }
-          };
+          const failures: PresentationCleanupFailure[] = [
+            { type: "backend-failed", operation: "start-backend", mode, message: startMessage, cause: error },
+            { type: "backend-failed", operation: "start-backend", mode: "screen", message: errorMessage(fallbackError), cause: fallbackError }
+          ];
+          const loopFailure = this.stopLoop();
+          if (loopFailure !== null) failures.push(loopFailure);
+          return cleanupResult(failures);
         }
       }
-      this.stopLoop();
+      const loopFailure = this.stopLoop();
+      if (loopFailure !== null) return cleanupResult([
+        { type: "backend-failed", operation: "start-backend", mode, message: startMessage, cause: error }, loopFailure
+      ]);
       return { ok: false, error: { type: "backend-failed", mode, message: startMessage } };
     }
   }
 
-  private stopLoop(): void {
+  private stopLoop(): PresentationCleanupFailure | null {
     this.frameRate.reset();
-    if (!this.loopStarted) return;
-    this.renderer.stopLoop();
+    if (!this.loopStarted) return null;
     this.loopStarted = false;
+    try {
+      this.renderer.stopLoop();
+      return null;
+    } catch (cause: unknown) {
+      return { type: "renderer-failed", operation: "stop-loop", message: errorMessage(cause), cause };
+    }
   }
 
   private renderFrame(timestampMs: number, viewer: ViewerFrame): void {
@@ -206,5 +216,14 @@ function validateViewport(viewport: ViewportSize): void {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "Presentation operation failed with an unprintable cause";
+  }
+}
+
+function cleanupResult(failures: readonly PresentationCleanupFailure[]): RuntimeResult {
+  const first = failures[0];
+  return first === undefined ? { ok: true } : { ok: false, error: { type: "cleanup-failed", failures: [first, ...failures.slice(1)] } };
 }
