@@ -101,7 +101,7 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。
-空と天空反射は共有Rustが生成したWeb基準の全天textureを共用する。生成入力は実環境の太陽方位・仰角、雲量、visibilityの4項目とし、cloud baseを補完しない。NativeはsRGB画像をBevyの既存APIでlinearへ変換し、公式mip生成と同じequirectangular samplingを使用する。機体mirror passと水面shadowは後続である。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
+空と天空反射は共有Rustが生成したWeb基準の全天textureを共用する。生成入力は実環境の太陽方位・仰角、雲量、visibilityの4項目とし、cloud baseを補完しない。NativeはsRGB画像をBevyの既存APIでlinearへ変換し、公式mip生成と同じequirectangular samplingを使用する。機体mirror passは水面で鏡映したcameraからairframeだけを透明textureへ描画し、Webと同じprojective UV・slope offset・alpha/Fresnel合成を使用する。DirectionalLightの公式cascade shadowを水面へ接続する。追加後のfmt・Clippy・Native 114試験とWindows 11/Vulkanのscripted GPU検査13 captureが合格した。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
@@ -110,7 +110,7 @@ Calm等のsynthetic preset環境には共有の登録済み波浪入力を使用
 near meshは全画質で6 km四方の非一様gridを使用し、cameraの水平位置を1 m格子へsnapして追従する。far ringは18万m四方を覆い、中央のnear領域を除外する。波の位相はworld-space、時刻は共有simulation timeで評価する。finite packetと解析的勾配、共有投影の非反転reserveを使用し、描画専用の水平・鉛直変位を与える。実測波浪の再現性や波浪予報精度は主張しない。
 
 Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択し、near/farへ同じ投影を原子的に適用する。実meshの間隔に対する波長filterと非反転reserveを使用し、選択した環境の全quality共通Aabbを保持する。detail画像、4層micro-normal、環境時刻と固定phase、sky資源を再利用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
-vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow生成・prepassは無効とし、平面のdefault prepassとの不一致を回避する。機体の鏡映反射・水面への影など高品質な反射は未移植である。geometryとmicro-normalの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
+vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow caster・prepassは無効とし、平面のdefault prepassとの不一致を回避する。shadow receiverは変位後のworld positionとgeometric normalを公式samplingへ渡す。reflection targetはUI・水面・空・地形を含めず、resizeで旧targetだけを退役させる。環境・quality交換は同じ反射passを保持する。geometry・micro-normal・反射pass・cascade shadowの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 機体は簡易mesh、HUDは数値主体である。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、

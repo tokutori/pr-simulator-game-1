@@ -85,10 +85,26 @@ cloud fractionを水面shadowとして代用しない。
 NativeはBevyの既存color変換でlinear `Rgba16Float` へ投影し、正式対応する公式mip生成を再利用する。S方向はRepeat、T方向はClampToEdge、filterはlinear/trilinearとし、背景と水面radianceは同じ全天画像を参照する。
 環境交換で3枚のowned画像を原子的に交換し、quality変更は既存画像を保持する。
 
+機体mirror passは反射専用cameraと透明linear `Rgba16Float` targetをBevy adapterが所有する。
+反射対象はairframe meshと照明のlayer 1に限定し、UI、湖面、天空、地形を描画しない。通常cameraだけを既定UI cameraに指定する。
+水面基準の鏡映行列、反転したculling、oblique near clip planeは[Bevy 0.19.1の公式mirror例](https://github.com/bevyengine/bevy/blob/v0.19.1/examples/3d/mirror.rs)のAPIを使用する。
+固定Web基準にはoblique clipの指定がなく、Nativeのclip planeは水面下の反射geometryを除外するadapter側の処理である。
+cameraの高さが0.05 mを超えた場合だけpassとsamplingを有効にする。
+targetはviewportの半解像度を基準に共通縮尺で最大1024 texelsへ制限し、各軸を1 texel以上とする。projective matrixは丸め後の実target aspectを使用する。
+固定Webの鏡映forward/upによるlookAtとNativeの鏡映行列ではright基底が逆向きとなる。textureのY原点も逆向きとなるため、Webのslope offset `(0.006, 0.006)` をNativeでは `(-0.006, -0.006)` へ変換する。
+独立したWebのcross-product基底・OpenGL projectionとNativeの鏡映行列を使い、rollを含む姿勢で両UVとshaderのoffset係数の対応を検査する。
+alphaと `clamp(0.16 + Fresnel * 0.7, 0, 0.72)` はWeb基準を保持する。
+resizeは新しいtargetをcamera・near/far materialへ一括接続してから旧targetだけを退役させる。環境・quality交換は反射targetと投影を保持し、detail・全天画像の寿命と分離する。
+
+DirectionalLightのshadowはdaylightに同期し、Bevyの既存2048 texel cascade shadow mapと30–600 mの3段cascadeを使用する。
+湖面fragmentは変位後のworld positionとgeometric normalを[公式 `fetch_directional_shadow`](https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_pbr/src/render/shadows.wgsl)へ渡し、Webと同じglitter・diffuse・base attenuationへshadow visibilityを適用する。
+湖面自身のshadow casterとprepassは無効のまま維持する。専用shadow mapやshadow samplingの別実装は追加しない。
+
 ## 検証境界と残作業
 
 全天画像のWeb consumer統一後、Native 105試験・共有session 28試験・WASM 42試験、fmt・Clippyが合格した。Webの型検査・lint・1,663試験・登録asset 9件の検査・production buildも合格した。
 Windows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）が合格し、実Title・Chase画像で積雲と水面radianceを確認した。
 Webの波・全天画像consumerは同じWindows環境のChromium 148・AMD Radeon 860Mのhardware WebGL2で起動・Flight・pause/resume・Result・Retryを確認した。実画像で積雲と水面反射を確認し、browser errorとcontext lossは発生しなかった。
 同一条件のWeb移植前後・Web/Nativeの実描画比較、物理キー・マウス受入、release 80 FPSの計測は未完了である。
-機体mirror passと水面shadowはIssue #311の後続である。共通モデルの数値検査と実描画品質の受入を区別する。
+機体mirror passと水面shadowの追加後、fmt・Clippy・Native 114試験と同環境のscripted GPU検査13 captureが合格した。独立readonly reviewで検出した反射distortionのX符号を是正し、実shader係数とWeb/Nativeの基底対応を回帰試験で確認した。
+共通モデルの数値検査と実描画品質の受入を区別する。

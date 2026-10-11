@@ -76,6 +76,13 @@ pub(crate) struct WaterMaterial {
     #[texture(13)]
     #[sampler(14)]
     sky_texture: Option<Handle<Image>>,
+    #[texture(15)]
+    #[sampler(16)]
+    pub(crate) reflection_texture: Option<Handle<Image>>,
+    #[uniform(17)]
+    pub(crate) reflection_clip_from_world: Mat4,
+    #[uniform(18)]
+    pub(crate) reflection_parameters: Vec4,
     visual_condition: LakeVisualCondition,
     sky_condition: Option<LakeSkyRenderCondition>,
     displacement_bounds: Vec2,
@@ -188,6 +195,9 @@ impl WaterMaterial {
             .map(|[red, green, blue]| Color::srgb_u8(red, green, blue).to_linear().to_vec4()),
             haze_parameters: Vec4::new(haze_start, visibility, daylight, 0.0),
             sky_texture: None,
+            reflection_texture: None,
+            reflection_clip_from_world: Mat4::IDENTITY,
+            reflection_parameters: Vec4::ZERO,
             visual_condition,
             sky_condition,
             displacement_bounds,
@@ -618,6 +628,9 @@ pub(crate) fn apply_environment(
                 .ok_or(EnvironmentFailure::MaterialUnavailable(role))?;
             prepared[role.index()].camera_time = current.camera_time;
             prepared[role.index()].geometry_patch = current.geometry_patch;
+            prepared[role.index()].reflection_texture = current.reflection_texture.clone();
+            prepared[role.index()].reflection_clip_from_world = current.reflection_clip_from_world;
+            prepared[role.index()].reflection_parameters = current.reflection_parameters;
             for image in [
                 &current.detail_near,
                 &current.detail_far,
@@ -681,6 +694,7 @@ pub(crate) fn apply_environment(
         } else {
             0.0
         };
+        light.shadow_maps_enabled = light.illuminance > 0.0;
         Ok(resolved)
     })();
     match result {
@@ -752,6 +766,9 @@ pub(crate) fn apply_quality(
         prepared_material.detail_near = current_material.detail_near.clone();
         prepared_material.detail_far = current_material.detail_far.clone();
         prepared_material.sky_texture = current_material.sky_texture.clone();
+        prepared_material.reflection_texture = current_material.reflection_texture.clone();
+        prepared_material.reflection_clip_from_world = current_material.reflection_clip_from_world;
+        prepared_material.reflection_parameters = current_material.reflection_parameters;
         prepared_far
             .apply_profile(requested)
             .map_err(WaterQualityFailure::WavePreparation)?;
@@ -810,6 +827,7 @@ mod tests {
         world,
     };
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::mesh::VertexAttributeValues;
     use birdman_game_format::WeatherClass;
     use birdman_game_session::{
@@ -886,6 +904,139 @@ mod tests {
             world.query_filtered::<(&DirectionalLight, &Transform), With<EnvironmentSun>>();
         let (light, transform) = query.single(world).unwrap();
         (light.illuminance, *transform)
+    }
+
+    #[test]
+    fn environment_and_quality_exchange_preserve_the_owned_reflection_pass() {
+        let mut app = environment_app();
+        app.world_mut()
+            .run_system_once(super::super::water_reflection::setup_reflection)
+            .unwrap();
+        let before = environment_materials(&mut app);
+        let reflection = before[EnvironmentSurface::Near.index()]
+            .reflection_texture
+            .clone()
+            .unwrap();
+        assert_eq!(
+            before[EnvironmentSurface::Far.index()].reflection_texture,
+            Some(reflection.clone())
+        );
+        assert_eq!(
+            before[EnvironmentSurface::Sky.index()].reflection_texture,
+            None
+        );
+        let marker = Mat4::from_translation(Vec3::new(2.0, 3.0, 4.0));
+        for (_, material) in app
+            .world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .iter_mut()
+        {
+            material.reflection_clip_from_world = marker;
+            material.reflection_parameters =
+                Vec4::new(f32::from(material.waves_sky.w < 0.5), 0.0, 0.0, 0.0);
+        }
+        prepare_calm(&mut app);
+        app.update();
+        {
+            let world = app.world_mut();
+            let mut lights = world.query_filtered::<&DirectionalLight, With<EnvironmentSun>>();
+            assert!(!lights.single(world).unwrap().shadow_maps_enabled);
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.countdown(1.0);
+            }
+            session.action(MenuAction::Pause).unwrap();
+        }
+        let physical_state = app.world().resource::<NativeSession>().physical_state();
+        let selection = app
+            .world()
+            .resource::<WaterQualitySelection>()
+            .request(
+                WaterQuality::Low,
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+            )
+            .unwrap();
+        *app.world_mut().resource_mut::<WaterQualitySelection>() = selection;
+        app.update();
+        for (role, material) in EnvironmentSurface::ALL
+            .into_iter()
+            .zip(environment_materials(&mut app))
+        {
+            assert_eq!(
+                material.reflection_texture,
+                if role == EnvironmentSurface::Sky {
+                    None
+                } else {
+                    Some(reflection.clone())
+                }
+            );
+            assert_eq!(material.reflection_clip_from_world, marker);
+            assert_eq!(
+                material.reflection_parameters.x,
+                f32::from(role != EnvironmentSurface::Sky)
+            );
+        }
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), 4);
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(reflection.id())
+                .is_some()
+        );
+        assert_eq!(
+            app.world().resource::<NativeSession>().physical_state(),
+            physical_state
+        );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Abort).unwrap();
+            session.action(MenuAction::Title).unwrap();
+        }
+        {
+            let world = app.world_mut();
+            let mut query = world.query_filtered::<Entity, With<EnvironmentSun>>();
+            let sun = query.single(world).unwrap();
+            world.entity_mut(sun).remove::<DirectionalLight>();
+        }
+        app.update();
+        for (role, material) in EnvironmentSurface::ALL
+            .into_iter()
+            .zip(environment_materials(&mut app))
+        {
+            assert_eq!(
+                material.reflection_texture,
+                if role == EnvironmentSurface::Sky {
+                    None
+                } else {
+                    Some(reflection.clone())
+                }
+            );
+            assert_eq!(material.reflection_clip_from_world, marker);
+            assert_eq!(
+                material.reflection_parameters.x,
+                f32::from(role != EnvironmentSurface::Sky)
+            );
+        }
+        assert_eq!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .condition_for(EnvironmentTarget::DefaultExhibition),
+            Err(EnvironmentFailure::SunUnavailable)
+        );
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), 4);
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(reflection.id())
+                .is_some()
+        );
     }
 
     #[test]
@@ -2026,7 +2177,7 @@ mod tests {
     #[test]
     fn wgsl_filters_four_web_micro_normal_bands_and_retains_their_variance() {
         let shader = include_str!("../assets/native_water.wgsl");
-        assert_eq!(shader.matches("@binding(").count(), 15);
+        assert_eq!(shader.matches("@binding(").count(), 19);
         assert_eq!(shader.matches("textureSampleGrad(").count(), 4);
         assert_eq!(shader.matches("lake_micro_detail(position ").count(), 4);
         assert_eq!(

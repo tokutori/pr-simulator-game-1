@@ -18,6 +18,8 @@ mod verification;
 mod water;
 #[path = "water_quality.rs"]
 mod water_quality;
+#[path = "water_reflection.rs"]
+mod water_reflection;
 #[path = "world.rs"]
 mod world;
 
@@ -151,7 +153,15 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .resource_mut::<Assets<Font>>()
         .add(Font::from_bytes(font_bytes));
     app.insert_resource(NativeFont(font))
-        .add_systems(Startup, (world::setup_world, ui::setup_ui))
+        .add_systems(
+            Startup,
+            (
+                world::setup_world,
+                water_reflection::setup_reflection,
+                ui::setup_ui,
+            )
+                .chain(),
+        )
         .add_systems(FixedUpdate, advance_physics)
         .add_systems(
             Update,
@@ -162,6 +172,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 water::apply_quality,
                 advance_presentation,
                 world::project_world,
+                water_reflection::project_reflection,
                 ui::update_ui,
             )
                 .chain(),

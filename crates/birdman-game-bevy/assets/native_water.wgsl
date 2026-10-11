@@ -2,6 +2,9 @@
     forward_io::{Vertex, VertexOutput},
     mesh_functions,
     view_transformations::position_world_to_clip,
+    mesh_view_bindings as view_bindings,
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT,
+    shadows::fetch_directional_shadow,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> camera_time: vec4<f32>;
@@ -19,6 +22,10 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(12) var<uniform> haze_parameters: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(13) var sky_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(14) var sky_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(15) var reflection_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(16) var reflection_sampler: sampler;
+@group(#{MATERIAL_BIND_GROUP}) @binding(17) var<uniform> reflection_clip_from_world: mat4x4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(18) var<uniform> reflection_parameters: vec4<f32>;
 
 struct SurfaceProjection {
     offset: vec3<f32>,
@@ -315,7 +322,15 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let fresnel = mix(geometric_fresnel, facet_fresnel, 0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
     let roughness = clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
     let sun_direction = select(vec3<f32>(0.0, 1.0, 0.0), sun_cloud.xyz, dot(sun_cloud.xyz, sun_cloud.xyz) > 0.5);
-    let sun_visibility = 1.0;
+    var sun_visibility = 1.0;
+    if haze_parameters.z > 0.5 && view_bindings::lights.n_directional_lights > 0u {
+        let sun = view_bindings::lights.directional_lights[0];
+        if (sun.flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
+            let view_depth = (view_bindings::view.view_from_world * mesh.world_position).z;
+            sun_visibility = fetch_directional_shadow(0u, mesh.world_position,
+                geometric_normal, view_depth, mesh.position.xy);
+        }
+    }
     let sun_alignment = max(dot(reflected_direction, sun_direction), 0.0);
     let glitter_lobe = pow(sun_alignment, mix(220.0, 45.0, roughness));
     let glitter_noise = 0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0);
@@ -326,6 +341,16 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     base *= mix(0.82, 1.0, sun_visibility);
     base *= vec3<f32>(0.29, 0.34, 0.37);
     var color = mix(base, reflection, fresnel * 0.45);
+    let reflected_clip = reflection_clip_from_world * mesh.world_position;
+    if reflection_parameters.x > 0.5 && reflected_clip.w > 0.0 {
+        let reflected_uv = reflected_clip.xy / reflected_clip.w * vec2<f32>(0.5, -0.5)
+            + vec2<f32>(0.5) + total_slope * vec2<f32>(-0.006, -0.006);
+        if all(reflected_uv >= vec2<f32>(0.0)) && all(reflected_uv <= vec2<f32>(1.0)) {
+            let aircraft_reflection = textureSampleLevel(reflection_texture, reflection_sampler, reflected_uv, 0.0);
+            color = mix(color, aircraft_reflection.rgb,
+                aircraft_reflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
+        }
+    }
     let depth_tint = clamp(geometry_parameters.z / 0.35, 0.0, 1.0);
     color = mix(color, color * vec3<f32>(0.92, 0.97, 1.04), depth_tint * 0.12);
     color += vec3<f32>(1.0, 0.78, 0.52) * glitter * 0.15;
