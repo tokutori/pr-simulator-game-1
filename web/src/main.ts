@@ -736,7 +736,8 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
     : quality.kind === "failed" ? { kind: "failed", requested: quality.requested, cause: quality.message }
       : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed", cause: quality.cleanup.message }
         : { kind: "idle" };
-  const notification = [model.status, model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested"
+  const notification = [model.status, gameSessionPhaseCode(model.gameSession) === 0 ? model.storedFlightRecordsStatus : "",
+    model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested"
     ? model.flightLogDownload.message : "", model.lakeWaterQuality.kind === "failed" ? model.lakeWaterQuality.message : ""]
     .filter((value) => value.length > 0).join(" · ");
   return Object.freeze({

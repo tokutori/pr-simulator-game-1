@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
 import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 
@@ -13,7 +14,8 @@ afterEach(async () => {
   vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
 });
 
-async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false, captureReplayTicks = false) {
+async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false, captureReplayTicks = false,
+  recordListMode: "normal" | "loading" | "failed" = "normal") {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
@@ -85,10 +87,17 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       await repository.saveFrom(archived);
     } finally { archived.free(); }
   }
+  if (recordListMode !== "normal") {
+    const { FlightRecordRepository } = await import("../../web/src/game/flight-record-store.js");
+    const list = vi.spyOn(FlightRecordRepository.prototype, "list");
+    if (recordListMode === "loading") list.mockImplementation(() => new Promise(() => undefined));
+    else list.mockRejectedValue(new Error("Injected record listing failure"));
+  }
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
   const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
+  const sharedView = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "game_ui_view_json");
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
   const advancePlayback = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_playback");
   const playbackClock = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_clock_state");
@@ -126,7 +135,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     while (countdown.length > 0 && count < 10) { countdown.shift()?.(); count += 1; }
     expect(scene()).toBe("Flight");
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, tick, advancePlayback, playbackClock, replayTicks,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, tick, advancePlayback, playbackClock, replayTicks,
     countdownTick: () => { countdown.shift()?.(); },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
@@ -174,6 +183,63 @@ async function manualReplayFixture() {
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it.each([
+    ["loading", "保存記録を読み込んでいる"],
+    ["failed", "FlightRecord一覧を取得できない: Injected record listing failure"],
+    ["normal", "保存済みFlightRecordはない"]
+  ] as const)("projects %s record-list feedback into the Rust Title view without leaking into other scenes", async (mode, message) => {
+    const trial = await fixture(false, false, false, false, mode);
+    const observedView = () => {
+      const result = trial.sharedView.mock.results.at(-1);
+      if (result?.type !== "return" || typeof result.value !== "string") throw new Error("Shared Rust UI view is unavailable");
+      return parseGameUiView(result.value);
+    };
+    await vi.waitFor(() => {
+      expect(trial.scene()).toBe("Title");
+      expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain(message);
+    });
+    const titleView = observedView();
+    expect(titleView.description).toContain(message);
+    const titleStatus = titleView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-state")?.content;
+    if (titleStatus?.kind !== "status") throw new Error("Shared Title status is unavailable");
+    expect(titleStatus.value).toContain(message);
+    const assertNoListFeedback = () => {
+      expect(JSON.stringify(observedView())).not.toContain(message);
+      expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).not.toContain(message);
+    };
+    trial.click("game-title-start");
+    expect(trial.scene()).toBe("FlightSetup");
+    assertNoListFeedback();
+    trial.click("game-setup-start");
+    expect(trial.scene()).toBe("Briefing");
+    assertNoListFeedback();
+    trial.click("game-briefing-start");
+    expect(trial.scene()).toBe("Countdown");
+    assertNoListFeedback();
+    for (let tick = 0; tick < 3; tick += 1) trial.countdownTick();
+    expect(trial.scene()).toBe("Flight");
+    trial.frame(0);
+    trial.frame(10);
+    assertNoListFeedback();
+    trial.click("game-flight-pause");
+    expect(observedView().active_overlay).toBe("Pause");
+    assertNoListFeedback();
+    trial.click("game-flight-resume");
+    trial.click("game-flight-abort");
+    expect(trial.scene()).toBe("Result");
+    assertNoListFeedback();
+    trial.click("game-result-replay");
+    expect(trial.scene()).toBe("Replay");
+    assertNoListFeedback();
+    trial.click("game-replay-return");
+    trial.click("game-result-title");
+    expect(trial.scene()).toBe("Title");
+    if (mode !== "normal") await vi.waitFor(() => { expect(observedView().description).toContain(message); });
+    trial.click("game-title-demo");
+    expect(trial.documentRef.querySelector('[data-control-id="game-attract-return"]')).not.toBeNull();
+    assertNoListFeedback();
+  });
+
   it("continues the same Rust Replay clock after display and camera changes", async () => {
     const trial = await manualReplayFixture();
     trial.tickReplay();
