@@ -170,14 +170,14 @@ fn flight_progress_is_read_only_and_unavailable_outside_live_phases() {
     assert!(progress.course_parallel_m() > 0.0);
     let before = session.snapshot();
     let sample_count = session.flight_record().unwrap().sample_count();
-    let clock = session.playback_clock;
+    let clock = session.playback_clock();
     assert_eq!(session.flight_progress(), Ok(Some(progress)));
     assert_eq!(session.snapshot(), before);
     assert_eq!(
         session.flight_record().unwrap().sample_count(),
         sample_count
     );
-    assert_eq!(session.playback_clock, clock);
+    assert_eq!(session.playback_clock(), clock);
     session.pause(PauseReason::Manual).unwrap();
     assert_eq!(session.flight_progress(), Ok(Some(progress)));
     session.resume().unwrap();
@@ -195,6 +195,7 @@ fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     assert_eq!(session.launch(), Err(GameSessionError::InvalidTransition));
     session.open_setup().unwrap();
     session.prepare_flight(configuration(100)).unwrap();
+    let sample_storage = session.flight_record().unwrap().samples().as_ptr();
     session.mark_briefing_ready().unwrap();
     assert_eq!(
         session.start_countdown(0),
@@ -207,6 +208,7 @@ fn lifecycle_rejects_unavailable_transitions_and_launches_once() {
     session.launch().unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
     let record = session.flight_record().unwrap();
+    assert_eq!(record.samples().as_ptr(), sample_storage);
     assert_eq!(record.sample_count(), 1);
     assert_eq!(record.sample(0).unwrap().tick_index, 0);
     assert!(!record.sample(0).unwrap().controls.has_input());
@@ -220,9 +222,9 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
         session.enter_attract(),
         Err(GameSessionError::InvalidTransition)
     );
-    session
-        .install_attract_record(finalized_demo_record())
-        .unwrap();
+    let demo = finalized_demo_record();
+    let demo_storage = demo.samples().as_ptr();
+    session.install_attract_record(demo).unwrap();
     session.enter_attract().unwrap();
     assert!(matches!(
         session.snapshot(),
@@ -230,8 +232,12 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
     ));
     assert!(session.flight_record().is_none());
     assert!(session.playback_record().unwrap().sample_count() > 1);
+    assert_eq!(
+        session.playback_record().unwrap().samples().as_ptr(),
+        demo_storage
+    );
     let before = session.snapshot();
-    let clock = session.playback_clock;
+    let clock = session.playback_clock();
     let record = session.playback_record().unwrap();
     for time_seconds in [0.0, 0.005, record.duration_seconds().unwrap()] {
         assert_eq!(
@@ -240,12 +246,24 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
         );
     }
     assert_eq!(session.snapshot(), before);
-    assert_eq!(session.playback_clock, clock);
+    assert_eq!(session.playback_clock(), clock);
 
     session.leave_attract().unwrap();
     assert_eq!(session.snapshot(), SessionSnapshot::Title);
     assert!(session.flight_record().is_none());
+    session.open_setup().unwrap();
+    session.prepare_flight(configuration(100)).unwrap();
+    session.mark_briefing_ready().unwrap();
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    session.abort_flight().unwrap();
+    session.return_to_title().unwrap();
     session.enter_attract().unwrap();
+    assert_eq!(
+        session.playback_record().unwrap().samples().as_ptr(),
+        demo_storage
+    );
     let clock = session.playback_clock().unwrap();
     assert!(clock.is_playing());
     let duration = session
@@ -340,7 +358,7 @@ fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
             .unwrap();
     }
     let before = session.snapshot();
-    let clock = session.playback_clock;
+    let clock = session.playback_clock();
     let record = session.flight_record().unwrap();
     let header = record.header();
     let samples = record.samples().to_vec();
@@ -386,7 +404,7 @@ fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
         Err(GameSessionError::InvalidTransition)
     );
     assert_eq!(session.snapshot(), before);
-    assert_eq!(session.playback_clock, clock);
+    assert_eq!(session.playback_clock(), clock);
     let record = session.flight_record().unwrap();
     assert_eq!(record.header(), header);
     assert_eq!(record.samples(), samples);
@@ -432,6 +450,7 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     session.abort_flight().unwrap();
     let result = session.snapshot().result();
     let record = session.flight_record().unwrap().sample_count();
+    let sample_storage = session.flight_record().unwrap().samples().as_ptr();
     session.enter_replay().unwrap();
     assert!(!session.playback_clock().unwrap().is_playing());
     assert_eq!(session.snapshot().phase(), SessionPhase::Replay);
@@ -443,6 +462,10 @@ fn replay_phase_retains_the_immutable_result_and_record() {
         }
     ));
     assert_eq!(session.flight_record().unwrap().sample_count(), record);
+    assert_eq!(
+        session.flight_record().unwrap().samples().as_ptr(),
+        sample_storage
+    );
     session.set_playback_rate_code(2).unwrap();
     session.seek_playback(0.01).unwrap();
     session.set_playback_playing(true).unwrap();
@@ -466,6 +489,10 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     );
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     assert_eq!(session.snapshot().result(), result);
+    assert_eq!(
+        session.flight_record().unwrap().samples().as_ptr(),
+        sample_storage
+    );
 }
 
 #[test]
@@ -507,12 +534,44 @@ fn archived_record_opens_replay_from_title_and_returns_without_result() {
     assert_eq!(viewer.snapshot().phase(), SessionPhase::Title);
     assert!(viewer.flight_record().is_none());
     assert_eq!(viewer.configuration_identity(), None);
+
+    let sample_storage = source.flight_record().unwrap().samples().as_ptr();
+    let record = source.take_finalized_result_record().unwrap();
+    assert_eq!(record.samples().as_ptr(), sample_storage);
+    assert_eq!(source.snapshot(), SessionSnapshot::Title);
+    assert!(source.flight_record().is_none());
+    assert!(source.configuration_identity().is_none());
+
+    viewer.open_setup().unwrap();
+    viewer.prepare_flight(configuration(100)).unwrap();
+    viewer.mark_briefing_ready().unwrap();
+    viewer.start_countdown(1).unwrap();
+    viewer.advance_countdown().unwrap();
+    viewer.launch().unwrap();
+    viewer.abort_flight().unwrap();
+    viewer.open_archived_replay(record).unwrap();
+    assert!(matches!(
+        viewer.snapshot(),
+        SessionSnapshot::Replay {
+            source: SessionReplaySource::ArchivedRecord,
+            ..
+        }
+    ));
+    assert_eq!(
+        viewer.flight_record().unwrap().samples().as_ptr(),
+        sample_storage
+    );
+    assert!(viewer.tail_pilot_position_mapping().is_none());
+    assert_eq!(viewer.telemetry(), Ok(None));
+    viewer.leave_replay().unwrap();
+    assert_eq!(viewer.snapshot(), SessionSnapshot::Title);
+    assert!(viewer.flight_record().is_none());
 }
 
 #[test]
 fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
     let mut session = session(2);
-    let identity = session.configuration.as_ref().unwrap().identity();
+    let identity = session.configuration_identity().unwrap();
     session.start_countdown(1).unwrap();
     session.advance_countdown().unwrap();
     session.launch().unwrap();
@@ -542,7 +601,7 @@ fn time_limit_finalizes_once_and_retry_restores_identical_configuration() {
     session.retry().unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
     assert_eq!(session.snapshot().tail_flight_state(), None);
-    assert_eq!(session.configuration.as_ref().unwrap().identity(), identity);
+    assert_eq!(session.configuration_identity(), Some(identity));
     assert!(session.flight_record().unwrap().sample(0).is_none());
 }
 

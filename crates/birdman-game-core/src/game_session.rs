@@ -21,7 +21,6 @@ use crate::wind_field::WindError;
 /// Physical configuration sealed when a flight enters preparation.
 pub struct GameSessionConfiguration<'a> {
     scenario: TailFlightScenario<'a>,
-    state: Option<TailFlightTickState>,
     control_mode: ControlMode,
     maximum_flight_ticks: u64,
     identity: SessionScenarioIdentity,
@@ -38,7 +37,6 @@ impl<'a> GameSessionConfiguration<'a> {
         validate_configuration_identity(maximum_flight_ticks, identity)?;
         Ok(Self {
             scenario,
-            state: None,
             control_mode,
             maximum_flight_ticks,
             identity,
@@ -55,20 +53,8 @@ impl<'a> GameSessionConfiguration<'a> {
         self.identity
     }
 
-    fn state(&self) -> Option<TailFlightTickState> {
-        self.state
-    }
-
     fn initial_state(&self) -> TailFlightTickState {
         self.scenario.initial_state()
-    }
-
-    fn clear_state(&mut self) {
-        self.state = None;
-    }
-
-    fn set_state(&mut self, next: TailFlightTickState) {
-        self.state = Some(next);
     }
 
     fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
@@ -325,89 +311,153 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Lifecycle payloads remain inline without allocating on state transitions."
+)]
+enum SessionLifecycle<'a> {
+    Title,
+    FlightSetup,
+    Configured(ConfiguredSession<'a>),
+    ArchivedReplay {
+        record: FlightRecord,
+        clock: ReplayClock,
+    },
+    Attract {
+        record: FlightRecord,
+        clock: ReplayClock,
+    },
+}
+
+struct ConfiguredSession<'a> {
+    configuration: GameSessionConfiguration<'a>,
+    record: FlightRecord,
+    phase: ConfiguredPhase,
+}
+
+#[derive(Clone, Copy)]
+enum ConfiguredPhase {
+    Preparing,
+    Ready,
+    Failed {
+        reason: BriefingFailure,
+    },
+    Countdown {
+        remaining_ticks: u32,
+    },
+    Running {
+        state: TailFlightTickState,
+    },
+    Paused {
+        state: TailFlightTickState,
+        reasons: PauseReasons,
+    },
+    Result {
+        result: SessionResult,
+    },
+    Replay {
+        result: SessionResult,
+        clock: ReplayClock,
+    },
+}
+
 /// Rust-owned lifecycle, physics gating, terminal result, and retry blueprint.
 pub struct GameSession<'a> {
-    phase: SessionPhase,
-    configuration: Option<GameSessionConfiguration<'a>>,
-    result: Option<SessionResult>,
-    record: Option<FlightRecord>,
+    lifecycle: SessionLifecycle<'a>,
     attract_record: Option<FlightRecord>,
-    playback_clock: ReplayClock,
 }
 
 impl<'a> GameSession<'a> {
     /// Creates a session at Title with no active flight configuration.
     pub const fn new() -> Self {
         Self {
-            phase: SessionPhase::Title,
-            configuration: None,
-            result: None,
-            record: None,
+            lifecycle: SessionLifecycle::Title,
             attract_record: None,
-            playback_clock: ReplayClock::new(),
         }
     }
 
     /// Returns the current immutable session projection.
     pub fn snapshot(&self) -> SessionSnapshot {
-        match self.phase {
-            SessionPhase::Title => SessionSnapshot::Title,
-            SessionPhase::FlightSetup => SessionSnapshot::FlightSetup,
-            SessionPhase::BriefingPreparing => SessionSnapshot::BriefingPreparing {
-                scenario: self.required_configuration().identity(),
-            },
-            SessionPhase::BriefingReady => SessionSnapshot::BriefingReady {
-                scenario: self.required_configuration().identity(),
-            },
-            SessionPhase::BriefingFailed { reason } => SessionSnapshot::BriefingFailed {
-                scenario: self.required_configuration().identity(),
-                reason,
-            },
-            SessionPhase::Countdown { remaining_ticks } => SessionSnapshot::Countdown {
-                scenario: self.required_configuration().identity(),
-                remaining_ticks,
-            },
-            SessionPhase::FlightRunning => SessionSnapshot::TailFlightRunning {
-                scenario: self.required_configuration().identity(),
-                state: self.required_flight_state(),
-            },
-            SessionPhase::FlightPaused { reasons } => SessionSnapshot::TailFlightPaused {
-                scenario: self.required_configuration().identity(),
-                state: self.required_flight_state(),
-                reasons,
-            },
-            SessionPhase::Result => {
-                SessionSnapshot::Result(self.result.expect("result phase must retain a result"))
-            }
-            SessionPhase::Replay => {
-                let (scenario, source) = match self.result {
-                    Some(result) => (result.scenario, SessionReplaySource::CurrentSessionResult),
-                    None => {
-                        let scenario = self
-                            .record
-                            .as_ref()
-                            .expect("replay phase must retain a record")
-                            .header()
-                            .scenario;
-                        (scenario, SessionReplaySource::ArchivedRecord)
+        match &self.lifecycle {
+            SessionLifecycle::Title => SessionSnapshot::Title,
+            SessionLifecycle::FlightSetup => SessionSnapshot::FlightSetup,
+            SessionLifecycle::Configured(configured) => {
+                let scenario = configured.configuration.identity();
+                match configured.phase {
+                    ConfiguredPhase::Preparing => SessionSnapshot::BriefingPreparing { scenario },
+                    ConfiguredPhase::Ready => SessionSnapshot::BriefingReady { scenario },
+                    ConfiguredPhase::Failed { reason } => {
+                        SessionSnapshot::BriefingFailed { scenario, reason }
                     }
-                };
-                SessionSnapshot::Replay { scenario, source }
+                    ConfiguredPhase::Countdown { remaining_ticks } => SessionSnapshot::Countdown {
+                        scenario,
+                        remaining_ticks,
+                    },
+                    ConfiguredPhase::Running { state } => {
+                        SessionSnapshot::TailFlightRunning { scenario, state }
+                    }
+                    ConfiguredPhase::Paused { state, reasons } => {
+                        SessionSnapshot::TailFlightPaused {
+                            scenario,
+                            state,
+                            reasons,
+                        }
+                    }
+                    ConfiguredPhase::Result { result } => SessionSnapshot::Result(result),
+                    ConfiguredPhase::Replay { result, .. } => SessionSnapshot::Replay {
+                        scenario: result.scenario,
+                        source: SessionReplaySource::CurrentSessionResult,
+                    },
+                }
             }
-            SessionPhase::Attract => SessionSnapshot::Attract {
-                scenario: self
-                    .attract_record
-                    .as_ref()
-                    .expect("attract phase must retain its demonstration record")
-                    .header()
-                    .scenario,
+            SessionLifecycle::ArchivedReplay { record, .. } => SessionSnapshot::Replay {
+                scenario: record.header().scenario,
+                source: SessionReplaySource::ArchivedRecord,
             },
+            SessionLifecycle::Attract { record, .. } => SessionSnapshot::Attract {
+                scenario: record.header().scenario,
+            },
+        }
+    }
+
+    const fn phase(&self) -> SessionPhase {
+        match &self.lifecycle {
+            SessionLifecycle::Title => SessionPhase::Title,
+            SessionLifecycle::FlightSetup => SessionPhase::FlightSetup,
+            SessionLifecycle::Configured(configured) => match configured.phase {
+                ConfiguredPhase::Preparing => SessionPhase::BriefingPreparing,
+                ConfiguredPhase::Ready => SessionPhase::BriefingReady,
+                ConfiguredPhase::Failed { reason } => SessionPhase::BriefingFailed { reason },
+                ConfiguredPhase::Countdown { remaining_ticks } => {
+                    SessionPhase::Countdown { remaining_ticks }
+                }
+                ConfiguredPhase::Running { .. } => SessionPhase::FlightRunning,
+                ConfiguredPhase::Paused { reasons, .. } => SessionPhase::FlightPaused { reasons },
+                ConfiguredPhase::Result { .. } => SessionPhase::Result,
+                ConfiguredPhase::Replay { .. } => SessionPhase::Replay,
+            },
+            SessionLifecycle::ArchivedReplay { .. } => SessionPhase::Replay,
+            SessionLifecycle::Attract { .. } => SessionPhase::Attract,
+        }
+    }
+
+    const fn configured(&self) -> Option<&ConfiguredSession<'a>> {
+        match &self.lifecycle {
+            SessionLifecycle::Configured(configured) => Some(configured),
+            _ => None,
+        }
+    }
+
+    fn configured_mut(&mut self) -> Result<&mut ConfiguredSession<'a>, GameSessionError> {
+        match &mut self.lifecycle {
+            SessionLifecycle::Configured(configured) => Ok(configured),
+            _ => Err(GameSessionError::InvalidTransition),
         }
     }
 
     /// Returns whether an explicit resume can succeed under the current pause causes.
     pub const fn can_resume(&self) -> bool {
-        match self.phase {
+        match self.phase() {
             SessionPhase::FlightPaused { reasons } => reasons.can_resume_after_manual(),
             _ => false,
         }
@@ -417,7 +467,7 @@ impl<'a> GameSession<'a> {
     /// This observation neither launches a flight nor appends a record sample.
     pub fn prepared_launch_state(&self) -> Option<TailFlightTickState> {
         if !matches!(
-            self.phase,
+            self.phase(),
             SessionPhase::BriefingPreparing
                 | SessionPhase::BriefingReady
                 | SessionPhase::BriefingFailed { .. }
@@ -425,68 +475,44 @@ impl<'a> GameSession<'a> {
         ) {
             return None;
         }
-        Some(self.required_configuration().initial_state())
-    }
-
-    fn required_configuration(&self) -> &GameSessionConfiguration<'a> {
-        self.configuration
-            .as_ref()
-            .expect("configured phase must retain its sealed configuration")
-    }
-
-    fn required_flight_state(&self) -> TailFlightTickState {
-        self.required_configuration()
-            .state()
-            .expect("active flight phase must retain its last valid state")
-    }
-
-    fn set_flight_state(&mut self, state: TailFlightTickState) -> Result<(), GameSessionError> {
-        self.configuration
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .set_state(state);
-        Ok(())
+        Some(self.configured()?.configuration.initial_state())
     }
 
     /// Returns the sealed tail-position mapping without deriving it from the moving pilot.
     pub fn tail_pilot_position_mapping(&self) -> Option<TailPilotPositionMapping> {
-        Some(self.configuration.as_ref()?.scenario.pilot_mapping())
+        Some(self.configured()?.configuration.scenario.pilot_mapping())
     }
 
     /// Returns the sealed configuration identity while its briefing, flight, or result is retained.
     pub const fn configuration_identity(&self) -> Option<SessionScenarioIdentity> {
-        match (
-            self.configuration.as_ref(),
-            self.record.as_ref(),
-            self.phase,
-        ) {
-            (Some(configuration), _, _) => Some(configuration.identity()),
-            (None, Some(record), SessionPhase::Replay) => Some(record.header().scenario),
-            (None, _, SessionPhase::Attract) => match self.attract_record.as_ref() {
-                Some(record) => Some(record.header().scenario),
-                None => None,
-            },
+        match &self.lifecycle {
+            SessionLifecycle::Configured(configured) => Some(configured.configuration.identity()),
+            SessionLifecycle::ArchivedReplay { record, .. }
+            | SessionLifecycle::Attract { record, .. } => Some(record.header().scenario),
             _ => None,
         }
     }
 
     /// Returns the immutable flight record after one has been initialized.
     pub const fn flight_record(&self) -> Option<&FlightRecord> {
-        self.record.as_ref()
+        match &self.lifecycle {
+            SessionLifecycle::Configured(configured) => Some(&configured.record),
+            SessionLifecycle::ArchivedReplay { record, .. } => Some(record),
+            _ => None,
+        }
     }
 
     /// Returns the record associated with the current playback view.
     pub const fn playback_record(&self) -> Option<&FlightRecord> {
-        if matches!(self.phase, SessionPhase::Attract) {
-            self.attract_record.as_ref()
-        } else {
-            self.record.as_ref()
+        match &self.lifecycle {
+            SessionLifecycle::Attract { record, .. } => Some(record),
+            _ => self.flight_record(),
         }
     }
 
     /// Installs one finalized demonstration record without replacing player records.
     pub fn install_attract_record(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Title
+        if self.phase() != SessionPhase::Title
             || self.attract_record.is_some()
             || record.finalization().is_none()
         {
@@ -498,141 +524,180 @@ impl<'a> GameSession<'a> {
 
     /// Enters playback of the independent demonstration record from Title.
     pub fn enter_attract(&mut self) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Title
-            || self
-                .attract_record
-                .as_ref()
-                .and_then(FlightRecord::finalization)
-                .is_none()
-        {
+        if self.phase() != SessionPhase::Title {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.phase = SessionPhase::Attract;
-        self.playback_clock = ReplayClock::new();
-        self.set_playback_playing(true)?;
+        let record = self
+            .attract_record
+            .as_ref()
+            .ok_or(GameSessionError::InvalidTransition)?;
+        if record.finalization().is_none() {
+            return Err(GameSessionError::InvalidTransition);
+        }
+        let duration = record
+            .duration_seconds()
+            .map_err(GameSessionError::PlaybackQuery)?;
+        let mut clock = ReplayClock::new();
+        clock
+            .play(duration)
+            .map_err(GameSessionError::PlaybackClock)?;
+        let record = self
+            .attract_record
+            .take()
+            .ok_or(GameSessionError::InvalidTransition)?;
+        self.lifecycle = SessionLifecycle::Attract { record, clock };
         Ok(())
     }
 
     /// Returns from demonstration playback to Title without changing player records.
     pub fn leave_attract(&mut self) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Attract {
+        if self.phase() != SessionPhase::Attract {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.playback_clock.pause();
-        self.phase = SessionPhase::Title;
-        Ok(())
+        match core::mem::replace(&mut self.lifecycle, SessionLifecycle::Title) {
+            SessionLifecycle::Attract { record, .. } => {
+                self.attract_record = Some(record);
+                Ok(())
+            }
+            previous => {
+                self.lifecycle = previous;
+                Err(GameSessionError::InvalidTransition)
+            }
+        }
     }
 
     /// Moves a finalized result record out of a temporary session.
     pub fn take_finalized_result_record(&mut self) -> Result<FlightRecord, GameSessionError> {
-        if self.phase != SessionPhase::Result
+        if self.phase() != SessionPhase::Result
             || self
-                .record
-                .as_ref()
+                .flight_record()
                 .and_then(FlightRecord::finalization)
                 .is_none()
         {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.configuration = None;
-        self.result = None;
-        self.phase = SessionPhase::Title;
-        self.record
-            .take()
-            .ok_or(GameSessionError::InvalidTransition)
+        match core::mem::replace(&mut self.lifecycle, SessionLifecycle::Title) {
+            SessionLifecycle::Configured(configured) => Ok(configured.record),
+            previous => {
+                self.lifecycle = previous;
+                Err(GameSessionError::InvalidTransition)
+            }
+        }
     }
 
     /// Enters read-only playback while retaining the finalized result and record.
     pub fn enter_replay(&mut self) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Result || self.result.is_none() {
+        let configured = self.configured_mut()?;
+        let ConfiguredPhase::Result { result } = configured.phase else {
             return Err(GameSessionError::InvalidTransition);
-        }
-        self.phase = SessionPhase::Replay;
-        self.playback_clock = ReplayClock::new();
+        };
+        configured.phase = ConfiguredPhase::Replay {
+            result,
+            clock: ReplayClock::new(),
+        };
         Ok(())
     }
 
     /// Opens a finalized archived record directly in read-only playback from Title or Result.
     pub fn open_archived_replay(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
-        if !matches!(self.phase, SessionPhase::Title | SessionPhase::Result)
+        if !matches!(self.phase(), SessionPhase::Title | SessionPhase::Result)
             || record.finalization().is_none()
         {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.configuration = None;
-        self.result = None;
-        self.record = Some(record);
-        self.phase = SessionPhase::Replay;
-        self.playback_clock = ReplayClock::new();
+        self.lifecycle = SessionLifecycle::ArchivedReplay {
+            record,
+            clock: ReplayClock::new(),
+        };
         Ok(())
     }
 
     /// Returns from read-only playback to the same finalized result.
     pub fn leave_replay(&mut self) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Replay {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        self.playback_clock.pause();
-        if self.result.is_some() {
-            self.phase = SessionPhase::Result;
-        } else {
-            self.record = None;
-            self.phase = SessionPhase::Title;
+        match &mut self.lifecycle {
+            SessionLifecycle::Configured(configured) => {
+                let ConfiguredPhase::Replay { result, .. } = configured.phase else {
+                    return Err(GameSessionError::InvalidTransition);
+                };
+                configured.phase = ConfiguredPhase::Result { result };
+            }
+            SessionLifecycle::ArchivedReplay { .. } => self.lifecycle = SessionLifecycle::Title,
+            _ => return Err(GameSessionError::InvalidTransition),
         }
         Ok(())
     }
 
     /// Returns the playback cursor when the session is in Replay or Attract.
     pub const fn playback_clock(&self) -> Option<ReplayClock> {
-        if matches!(self.phase, SessionPhase::Replay | SessionPhase::Attract) {
-            Some(self.playback_clock)
-        } else {
-            None
+        match &self.lifecycle {
+            SessionLifecycle::Configured(configured) => match configured.phase {
+                ConfiguredPhase::Replay { clock, .. } => Some(clock),
+                _ => None,
+            },
+            SessionLifecycle::ArchivedReplay { clock, .. }
+            | SessionLifecycle::Attract { clock, .. } => Some(*clock),
+            _ => None,
+        }
+    }
+
+    fn playback_mut(
+        &mut self,
+    ) -> Result<(&FlightRecord, &mut ReplayClock, bool), GameSessionError> {
+        match &mut self.lifecycle {
+            SessionLifecycle::Configured(configured) => match &mut configured.phase {
+                ConfiguredPhase::Replay { clock, .. } => Ok((&configured.record, clock, false)),
+                _ => Err(GameSessionError::InvalidTransition),
+            },
+            SessionLifecycle::ArchivedReplay { record, clock } => Ok((record, clock, false)),
+            SessionLifecycle::Attract { record, clock } => Ok((record, clock, true)),
+            _ => Err(GameSessionError::InvalidTransition),
         }
     }
 
     /// Changes the playback rate while preserving the current record cursor.
     pub fn set_playback_rate_code(&mut self, code: u32) -> Result<(), GameSessionError> {
-        self.require_playback_phase()?;
-        self.playback_clock
+        let (_, clock, _) = self.playback_mut()?;
+        clock
             .set_rate_code(code)
             .map_err(GameSessionError::PlaybackClock)
     }
 
     /// Starts or pauses playback using the current finalized record duration.
     pub fn set_playback_playing(&mut self, playing: bool) -> Result<(), GameSessionError> {
-        self.require_playback_phase()?;
+        let (record, clock, _) = self.playback_mut()?;
         if playing {
-            let duration_seconds = self.playback_duration_seconds()?;
-            self.playback_clock
+            let duration_seconds = record
+                .duration_seconds()
+                .map_err(GameSessionError::PlaybackQuery)?;
+            clock
                 .play(duration_seconds)
                 .map_err(GameSessionError::PlaybackClock)
         } else {
-            self.playback_clock.pause();
+            clock.pause();
             Ok(())
         }
     }
 
     /// Seeks the playback cursor to a time within the current record.
     pub fn seek_playback(&mut self, time_seconds: f64) -> Result<f64, GameSessionError> {
-        self.require_playback_phase()?;
-        let duration_seconds = self.playback_duration_seconds()?;
-        self.playback_clock
+        let (record, clock, _) = self.playback_mut()?;
+        let duration_seconds = record
+            .duration_seconds()
+            .map_err(GameSessionError::PlaybackQuery)?;
+        clock
             .seek(time_seconds, duration_seconds)
             .map_err(GameSessionError::PlaybackClock)?;
-        Ok(self.playback_clock.time_seconds())
+        Ok(clock.time_seconds())
     }
 
     /// Advances playback time and wraps only for the independent Attract record.
     pub fn advance_playback(&mut self, elapsed_seconds: f64) -> Result<f64, GameSessionError> {
-        self.require_playback_phase()?;
-        let duration_seconds = self.playback_duration_seconds()?;
-        self.playback_clock
-            .advance(
-                elapsed_seconds,
-                duration_seconds,
-                self.phase == SessionPhase::Attract,
-            )
+        let (record, clock, looping) = self.playback_mut()?;
+        let duration_seconds = record
+            .duration_seconds()
+            .map_err(GameSessionError::PlaybackQuery)?;
+        clock
+            .advance(elapsed_seconds, duration_seconds, looping)
             .map_err(GameSessionError::PlaybackClock)
     }
 
@@ -642,7 +707,7 @@ impl<'a> GameSession<'a> {
         time_seconds: f64,
     ) -> Result<crate::FlightRecordPlaybackSample, GameSessionError> {
         if !matches!(
-            self.phase,
+            self.phase(),
             SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
         ) {
             return Err(GameSessionError::InvalidTransition);
@@ -653,76 +718,60 @@ impl<'a> GameSession<'a> {
             .map_err(GameSessionError::PlaybackQuery)
     }
 
-    fn require_playback_phase(&self) -> Result<(), GameSessionError> {
-        if matches!(self.phase, SessionPhase::Replay | SessionPhase::Attract) {
-            Ok(())
-        } else {
-            Err(GameSessionError::InvalidTransition)
-        }
-    }
-
-    fn playback_duration_seconds(&self) -> Result<f64, GameSessionError> {
-        self.playback_record()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .duration_seconds()
-            .map_err(GameSessionError::PlaybackQuery)
-    }
-
     /// Queries the sealed scenario wind without changing the simulation state.
     pub fn wind_velocity_at(
         &self,
         position_ned: crate::math::NedPoint,
     ) -> Result<Option<crate::math::NedVector>, crate::wind_field::WindError> {
-        self.configuration
-            .as_ref()
-            .map(|configuration| configuration.wind_velocity_at(position_ned))
+        self.configured()
+            .map(|configured| configured.configuration.wind_velocity_at(position_ned))
             .transpose()
     }
 
     /// Returns telemetry for the latest flight state when a scenario is sealed.
     pub fn telemetry(&self) -> Result<Option<FlightTelemetry>, FlightTelemetryError> {
-        let Some(configuration) = self.configuration.as_ref() else {
+        let Some(configured) = self.configured() else {
             return Ok(None);
         };
-        let state = match self.result {
-            Some(result) => Some(result.state.flight_state()),
-            None => configuration.state().map(TailFlightTickState::flight_state),
+        let state = match configured.phase {
+            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => {
+                Some(state.flight_state())
+            }
+            ConfiguredPhase::Result { result } | ConfiguredPhase::Replay { result, .. } => {
+                Some(result.state.flight_state())
+            }
+            _ => None,
         };
         state
-            .map(|state| configuration.telemetry(state))
+            .map(|state| configured.configuration.telemetry(state))
             .transpose()
     }
 
     /// Returns signed datum displacement for Flight or Paused without finalizing a score.
     pub fn flight_progress(&self) -> Result<Option<DistanceScore>, DistanceScoreError> {
-        if !matches!(
-            self.phase,
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-        ) {
-            return Ok(None);
-        }
-        let Some(configuration) = self.configuration.as_ref() else {
+        let Some(configured) = self.configured() else {
             return Ok(None);
         };
-        configuration
-            .state()
-            .map(|state| {
-                course_distance_score(
-                    configuration
-                        .initial_state()
-                        .flight_state()
-                        .datum_position_ned(),
-                    state.flight_state().datum_position_ned(),
-                    configuration.course_axis(),
-                )
-            })
-            .transpose()
+        let state = match configured.phase {
+            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => state,
+            _ => return Ok(None),
+        };
+        course_distance_score(
+            configured
+                .configuration
+                .initial_state()
+                .flight_state()
+                .datum_position_ned(),
+            state.flight_state().datum_position_ned(),
+            configured.configuration.course_axis(),
+        )
+        .map(Some)
     }
 
     /// Opens FlightSetup from Title, Briefing, Countdown, or Result.
     pub fn open_setup(&mut self) -> Result<(), GameSessionError> {
         if !matches!(
-            self.phase,
+            self.phase(),
             SessionPhase::Title
                 | SessionPhase::BriefingPreparing
                 | SessionPhase::BriefingReady
@@ -732,22 +781,19 @@ impl<'a> GameSession<'a> {
         ) {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.configuration = None;
-        self.result = None;
-        self.record = None;
-        self.phase = SessionPhase::FlightSetup;
+        self.lifecycle = SessionLifecycle::FlightSetup;
         Ok(())
     }
 
     /// Returns to Title from FlightSetup or Result.
     pub fn return_to_title(&mut self) -> Result<(), GameSessionError> {
-        if !matches!(self.phase, SessionPhase::FlightSetup | SessionPhase::Result) {
+        if !matches!(
+            self.phase(),
+            SessionPhase::FlightSetup | SessionPhase::Result
+        ) {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.configuration = None;
-        self.result = None;
-        self.record = None;
-        self.phase = SessionPhase::Title;
+        self.lifecycle = SessionLifecycle::Title;
         Ok(())
     }
 
@@ -756,79 +802,78 @@ impl<'a> GameSession<'a> {
         &mut self,
         configuration: GameSessionConfiguration<'a>,
     ) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::FlightSetup {
+        if self.phase() != SessionPhase::FlightSetup {
             return Err(GameSessionError::InvalidTransition);
         }
         let header =
             FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
                 .map_err(GameSessionError::Record)?;
-        self.record = Some(FlightRecord::try_new(header).map_err(GameSessionError::Record)?);
-        self.configuration = Some(configuration);
-        self.phase = SessionPhase::BriefingPreparing;
+        let record = FlightRecord::try_new(header).map_err(GameSessionError::Record)?;
+        self.lifecycle = SessionLifecycle::Configured(ConfiguredSession {
+            configuration,
+            record,
+            phase: ConfiguredPhase::Preparing,
+        });
         Ok(())
     }
 
     /// Cancels Briefing preparation and returns to FlightSetup.
     pub fn cancel_briefing(&mut self) -> Result<(), GameSessionError> {
         if !matches!(
-            self.phase,
+            self.phase(),
             SessionPhase::BriefingPreparing
                 | SessionPhase::BriefingReady
                 | SessionPhase::BriefingFailed { .. }
         ) {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.configuration = None;
-        self.result = None;
-        self.record = None;
-        self.phase = SessionPhase::FlightSetup;
+        self.lifecycle = SessionLifecycle::FlightSetup;
         Ok(())
     }
 
     /// Confirms required assets are available and marks Briefing ready.
     pub fn mark_briefing_ready(&mut self) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::BriefingPreparing {
+        if self.phase() != SessionPhase::BriefingPreparing {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.phase = SessionPhase::BriefingReady;
+        self.configured_mut()?.phase = ConfiguredPhase::Ready;
         Ok(())
     }
 
     /// Records a typed preparation failure without creating a flight result.
     pub fn fail_briefing(&mut self, reason: BriefingFailure) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::BriefingPreparing {
+        if self.phase() != SessionPhase::BriefingPreparing {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.phase = SessionPhase::BriefingFailed { reason };
+        self.configured_mut()?.phase = ConfiguredPhase::Failed { reason };
         Ok(())
     }
 
     /// Retries preparation after a classified failure.
     pub fn retry_briefing(&mut self) -> Result<(), GameSessionError> {
-        if !matches!(self.phase, SessionPhase::BriefingFailed { .. }) {
+        if !matches!(self.phase(), SessionPhase::BriefingFailed { .. }) {
             return Err(GameSessionError::InvalidTransition);
         }
-        let configuration = self
-            .configuration
-            .as_ref()
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let configured = self.configured_mut()?;
+        let configuration = &configured.configuration;
         let header =
             FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
                 .map_err(GameSessionError::Record)?;
-        self.record = Some(FlightRecord::try_new(header).map_err(GameSessionError::Record)?);
-        self.phase = SessionPhase::BriefingPreparing;
+        let record = FlightRecord::try_new(header).map_err(GameSessionError::Record)?;
+        configured.record = record;
+        configured.phase = ConfiguredPhase::Preparing;
         Ok(())
     }
 
     /// Starts a UI countdown without advancing physical time.
     pub fn start_countdown(&mut self, countdown_ticks: u32) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::BriefingReady {
+        if self.phase() != SessionPhase::BriefingReady {
             return Err(GameSessionError::InvalidTransition);
         }
         if countdown_ticks == 0 {
             return Err(GameSessionError::InvalidCountdown);
         }
-        self.phase = SessionPhase::Countdown {
+        self.configured_mut()?.phase = ConfiguredPhase::Countdown {
             remaining_ticks: countdown_ticks,
         };
         Ok(())
@@ -836,11 +881,12 @@ impl<'a> GameSession<'a> {
 
     /// Advances only the UI countdown; zero permits one explicit launch intent.
     pub fn advance_countdown(&mut self) -> Result<u32, GameSessionError> {
-        let SessionPhase::Countdown { remaining_ticks } = self.phase else {
+        let configured = self.configured_mut()?;
+        let ConfiguredPhase::Countdown { remaining_ticks } = configured.phase else {
             return Err(GameSessionError::InvalidTransition);
         };
         let next = remaining_ticks.saturating_sub(1);
-        self.phase = SessionPhase::Countdown {
+        configured.phase = ConfiguredPhase::Countdown {
             remaining_ticks: next,
         };
         Ok(next)
@@ -848,46 +894,45 @@ impl<'a> GameSession<'a> {
 
     /// Launches exactly once after countdown reaches zero.
     pub fn launch(&mut self) -> Result<SessionSnapshot, GameSessionError> {
-        if self.phase != (SessionPhase::Countdown { remaining_ticks: 0 }) {
+        let configured = self.configured_mut()?;
+        if !matches!(
+            configured.phase,
+            ConfiguredPhase::Countdown { remaining_ticks: 0 }
+        ) {
             return Err(GameSessionError::InvalidTransition);
         }
-        let configuration = self
-            .configuration
-            .as_ref()
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let configuration = &configured.configuration;
         let initial = configuration.initial_state();
         let telemetry = configuration
             .telemetry(initial.flight_state())
             .map_err(GameSessionError::Telemetry)?;
-        let record = self
+        configured
             .record
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?;
-        record
             .begin_tail(initial, telemetry)
             .map_err(GameSessionError::Record)?;
-        self.set_flight_state(initial)?;
-        self.phase = SessionPhase::FlightRunning;
+        configured.phase = ConfiguredPhase::Running { state: initial };
         Ok(self.snapshot())
     }
 
     /// Cancels Countdown and returns to the same ready Briefing.
     pub fn cancel_countdown(&mut self) -> Result<(), GameSessionError> {
-        if !matches!(self.phase, SessionPhase::Countdown { .. }) {
+        if !matches!(self.phase(), SessionPhase::Countdown { .. }) {
             return Err(GameSessionError::InvalidTransition);
         }
-        self.phase = SessionPhase::BriefingReady;
+        self.configured_mut()?.phase = ConfiguredPhase::Ready;
         Ok(())
     }
 
     /// Adds a pause cause while running or already paused.
     pub fn pause(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
-        let reasons = match self.phase {
-            SessionPhase::FlightRunning => empty_pause_reasons(),
-            SessionPhase::FlightPaused { reasons } => reasons,
+        let configured = self.configured_mut()?;
+        let (state, reasons) = match configured.phase {
+            ConfiguredPhase::Running { state } => (state, empty_pause_reasons()),
+            ConfiguredPhase::Paused { state, reasons } => (state, reasons),
             _ => return Err(GameSessionError::InvalidTransition),
         };
-        self.phase = SessionPhase::FlightPaused {
+        configured.phase = ConfiguredPhase::Paused {
+            state,
             reasons: reasons.insert(reason),
         };
         Ok(())
@@ -895,10 +940,14 @@ impl<'a> GameSession<'a> {
 
     /// Removes a resolved pause cause without resuming physics.
     pub fn clear_pause_reason(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
-        let SessionPhase::FlightPaused { reasons } = self.phase else {
+        let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
         };
-        self.phase = SessionPhase::FlightPaused {
+        let ConfiguredPhase::Paused { state, reasons } = configured.phase else {
+            return Err(GameSessionError::NotPaused);
+        };
+        configured.phase = ConfiguredPhase::Paused {
+            state,
             reasons: reasons.remove(reason),
         };
         Ok(())
@@ -906,15 +955,18 @@ impl<'a> GameSession<'a> {
 
     /// Resumes only after every pause cause has cleared and Resume is explicit.
     pub fn resume(&mut self) -> Result<(), GameSessionError> {
-        let SessionPhase::FlightPaused { reasons } = self.phase else {
+        let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
+            return Err(GameSessionError::NotPaused);
+        };
+        let ConfiguredPhase::Paused { state, reasons } = configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
         let reasons = reasons.remaining_after_manual();
         if !reasons.is_empty() {
-            self.phase = SessionPhase::FlightPaused { reasons };
+            configured.phase = ConfiguredPhase::Paused { state, reasons };
             return Err(GameSessionError::PauseConditionsRemain);
         }
-        self.phase = SessionPhase::FlightRunning;
+        configured.phase = ConfiguredPhase::Running { state };
         Ok(())
     }
 
@@ -923,14 +975,12 @@ impl<'a> GameSession<'a> {
         &mut self,
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        if self.phase != SessionPhase::FlightRunning {
+        let configured = self.configured_mut()?;
+        let ConfiguredPhase::Running { state: previous } = configured.phase else {
             return Err(GameSessionError::InvalidTransition);
-        }
-        let configuration = self.required_configuration();
+        };
+        let configuration = &configured.configuration;
         let scenario = &configuration.scenario;
-        let previous = configuration
-            .state
-            .ok_or(GameSessionError::InvalidTransition)?;
         let maximum_ticks = configuration.maximum_flight_ticks;
         let report = match scenario.advance_tick_with_contact_report(
             previous,
@@ -939,7 +989,7 @@ impl<'a> GameSession<'a> {
         ) {
             Ok(report) => report,
             Err(error) => {
-                self.finalize_failed_tick(error)?;
+                self.finalize_failed_tick(error, previous)?;
                 return Err(GameSessionError::TailTick(error));
             }
         };
@@ -954,18 +1004,13 @@ impl<'a> GameSession<'a> {
                 return Err(GameSessionError::Telemetry(error));
             }
         };
-        if let Err(error) = self
-            .record
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?
-            .append_tail_report(report, telemetry)
-        {
+        if let Err(error) = configured.record.append_tail_report(report, telemetry) {
             self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
             return Err(GameSessionError::Record(error));
         }
         match report.outcome() {
             TailFlightTickOutcome::Advanced(next) => {
-                self.set_flight_state(next)?;
+                configured.phase = ConfiguredPhase::Running { state: next };
                 if next.tick_index() >= maximum_ticks {
                     self.finalize_tick(SessionEndReason::TimeLimit, next)?;
                 }
@@ -983,13 +1028,10 @@ impl<'a> GameSession<'a> {
 
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
-        if !matches!(
-            self.phase,
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-        ) {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        let state = self.required_flight_state();
+        let state = match self.configured_mut()?.phase {
+            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => state,
+            _ => return Err(GameSessionError::InvalidTransition),
+        };
         self.finalize_tick(SessionEndReason::ManualAbort, state)?;
         Ok(self.snapshot())
     }
@@ -1004,21 +1046,17 @@ impl<'a> GameSession<'a> {
         &mut self,
         create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
     ) -> Result<(), GameSessionError> {
-        if self.phase != SessionPhase::Result {
+        if self.phase() != SessionPhase::Result {
             return Err(GameSessionError::InvalidTransition);
         }
-        let configuration = self
-            .configuration
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let configured = self.configured_mut()?;
+        let configuration = &configured.configuration;
         let header =
             FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
                 .map_err(GameSessionError::Record)?;
         let record = create_record(header).map_err(GameSessionError::Record)?;
-        configuration.clear_state();
-        self.result = None;
-        self.record = Some(record);
-        self.phase = SessionPhase::BriefingReady;
+        configured.record = record;
+        configured.phase = ConfiguredPhase::Ready;
         Ok(())
     }
 
@@ -1034,8 +1072,9 @@ impl<'a> GameSession<'a> {
     fn finalize_failed_tick(
         &mut self,
         failure: TailFlightTickError,
+        state: TailFlightTickState,
     ) -> Result<(), GameSessionError> {
-        let terminal = SessionTerminalState::TailTick(self.required_flight_state());
+        let terminal = SessionTerminalState::TailTick(state);
         self.finalize_terminal(failure.end_reason(), terminal, Some(failure))
     }
 
@@ -1045,10 +1084,8 @@ impl<'a> GameSession<'a> {
         state: SessionTerminalState,
         failure: Option<TailFlightTickError>,
     ) -> Result<(), GameSessionError> {
-        let configuration = self
-            .configuration
-            .as_ref()
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let configured = self.configured_mut()?;
+        let configuration = &configured.configuration;
         let start = configuration
             .initial_state()
             .flight_state()
@@ -1066,10 +1103,7 @@ impl<'a> GameSession<'a> {
                 (sample.interval_start_tick(), sample.fraction())
             }
         };
-        let record = self
-            .record
-            .as_mut()
-            .ok_or(GameSessionError::InvalidTransition)?;
+        let record = &mut configured.record;
         match failure {
             Some(failure) => {
                 record.finalize_with_failure(reason, tick_index, fraction, score, failure)
@@ -1077,14 +1111,15 @@ impl<'a> GameSession<'a> {
             None => record.finalize(reason, tick_index, fraction, score),
         }
         .map_err(GameSessionError::Record)?;
-        self.result = Some(SessionResult {
-            reason,
-            state,
-            score,
-            scenario: configuration.identity,
-            failure,
-        });
-        self.phase = SessionPhase::Result;
+        configured.phase = ConfiguredPhase::Result {
+            result: SessionResult {
+                reason,
+                state,
+                score,
+                scenario: configuration.identity,
+                failure,
+            },
+        };
         if failure.is_some() {
             Ok(())
         } else {

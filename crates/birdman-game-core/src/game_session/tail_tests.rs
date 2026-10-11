@@ -156,7 +156,7 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
         initial.pilot_position_target(),
     )
     .unwrap();
-    session.configuration.as_mut().unwrap().set_state(current);
+    session.configured_mut().unwrap().phase = ConfiguredPhase::Running { state: current };
     let progress = session.flight_progress().unwrap().unwrap();
     assert!((progress.course_parallel_m() + 4.0).abs() < 1.0e-12);
     assert!((progress.cross_track_m() - 3.0).abs() < 1.0e-12);
