@@ -18,6 +18,12 @@ const nativeTextDependency = {
   rename: null, optional: false, uses_default_features: false, features: ["std", "complex-scripts"]
 };
 
+const nativeTestFontDependency = {
+  ...nativeEngineDependency, kind: "dev", features: ["default_font"],
+  source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
+  rename: null, optional: false
+};
+
 const schemaDependency = {
   name: "schemars", kind: null, target: null, req: "=1.2.2",
   source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
@@ -214,7 +220,7 @@ describe("Cargo dependency boundary", () => {
   it.each([
     { req: "^0.19.1" }, { kind: "build" }, { kind: "dev" }, { target: null },
     { target: 'cfg(target_arch = "wasm32")' }, { uses_default_features: true },
-    { features: ["3d"] }, { features: ["ui"] }, { features: ["default_platform"] },
+    { features: ["3d"] }, { features: ["ui"] }, { features: ["default_platform"] }, { features: ["default_font"] },
     { features: ["audio"] }, { features: ["bevy_gilrs"] }, { features: ["web"] },
     { features: ["webgl2"] }, { features: ["webgpu"] }
   ])("rejects a broader native engine dependency %j", (difference) => {
@@ -222,6 +228,30 @@ describe("Cargo dependency boundary", () => {
       { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] }
     ]); }).toThrow("Forbidden native engine dependency");
   });
+
+  it("allows only the pinned Windows test font beside the product native engine", () => {
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-bevy", dependencies: [nativeEngineDependency, nativeTestFontDependency] }
+    ]); }).not.toThrow();
+  });
+
+  it.each([
+    { req: "^0.19.1" }, { kind: null }, { kind: "build" }, { target: null },
+    { target: 'cfg(target_arch = "wasm32")' }, { uses_default_features: true },
+    { features: [] }, { features: ["std"] }, { features: ["default_font", "std"] },
+    { source: "git+https://example.invalid/bevy" }, { registry: "other" },
+    { path: "../bevy" }, { rename: "other" }, { optional: true }
+  ])("rejects a broader native test font dependency %j", (difference) => {
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-bevy", dependencies: [{ ...nativeTestFontDependency, ...difference }] }
+    ]); }).toThrow("Forbidden native engine dependency");
+  });
+
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-session", "birdman-game-cli", "birdman-game-wasm"])(
+    "rejects the native test font in %s", (name) => {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [nativeTestFontDependency] }]); }).toThrow();
+    }
+  );
 
   it.each([
     { kind: null }, { kind: "build" }, { kind: "unknown" }, { target: null },

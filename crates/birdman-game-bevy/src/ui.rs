@@ -2993,26 +2993,6 @@ mod tests {
         (chart, plot)
     }
 
-    fn use_meiryo_font(app: &mut App) {
-        let font_path = std::path::PathBuf::from(
-            std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into()),
-        )
-        .join("Fonts/meiryo.ttc");
-        let font_bytes = std::fs::read(font_path).unwrap();
-        let font = app
-            .world_mut()
-            .resource_mut::<Assets<Font>>()
-            .add(Font::from_bytes(font_bytes));
-        app.world_mut().resource_mut::<NativeFont>().0 = font.clone();
-        for mut text_font in app
-            .world_mut()
-            .query::<&mut TextFont>()
-            .iter_mut(app.world_mut())
-        {
-            text_font.font = font.clone().into();
-        }
-    }
-
     fn assert_chart_text(world: &World, surface: Entity, expected: &GameUiChartText) {
         let anchor = world
             .get::<Children>(surface)
@@ -3184,7 +3164,6 @@ mod tests {
                     press(&mut app, "game-replay-view-mode");
                 }
                 add_ui_layout(&mut app, width, 600);
-                use_meiryo_font(&mut app);
                 for selection in [
                     "game-analysis-map",
                     "game-analysis-altitude",
@@ -3551,7 +3530,6 @@ mod tests {
             }
             app.update();
             let camera = add_ui_layout(&mut app, 1280, 720);
-            use_meiryo_font(&mut app);
             app.add_systems(
                 PostUpdate,
                 scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),

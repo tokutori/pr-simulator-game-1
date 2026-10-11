@@ -13,7 +13,7 @@ const allowed = new Map<string, readonly string[]>([
 ]);
 
 const excludedNativeFeatures = new Set([
-  "default", "default_platform", "3d", "ui", "audio", "bevy_audio",
+  "default", "default_platform", "default_font", "3d", "ui", "audio", "bevy_audio",
   "bevy_gilrs", "web", "webgl2", "webgpu"
 ]);
 
@@ -30,12 +30,20 @@ export function assertNativeTextPatch(workspace: unknown): void {
 
 function isNativeEngineDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
-    && dependency.kind === null
     && dependency.target === NATIVE_SCREEN_TARGET
     && dependency.req === "=0.19.1"
     && dependency.uses_default_features === false
     && Array.isArray(dependency.features)
-    && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
+    && (dependency.kind === null
+      && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature))
+      || dependency.kind === "dev"
+      && dependency.features.length === 1
+      && dependency.features[0] === "default_font"
+      && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
+      && dependency.registry === null
+      && dependency.path === undefined
+      && dependency.rename === null
+      && dependency.optional === false);
 }
 
 function isNativeTextDependency(crate: string, dependency: Record<string, unknown>): boolean {
