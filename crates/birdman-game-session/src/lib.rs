@@ -7,6 +7,8 @@ mod environment;
 mod hybrid_session;
 mod launch_venue;
 
+pub mod lake_water;
+
 pub use environment::{
     PresetEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,
     preset_environment_for_version, preset_wind_for_version,
