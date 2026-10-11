@@ -53,7 +53,7 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
     switch (control.kind) {
       case "button": break;
       case "toggle": addControlText("value", 0, control.value ? "On" : "Off"); break;
-      case "range": addControlText("value", 0, String(control.value)); break;
+      case "range": addControlText("value", 0, control.displayValue); break;
       case "status": addControlText("value", 0, control.value); break;
       case "chart": {
         const presentation = control.presentation;

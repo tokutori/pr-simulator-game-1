@@ -585,6 +585,10 @@ export interface GameUiControl {
          */
         readonly value: boolean;
     } | {
+        /**
+         * Shared one-decimal display text.
+         */
+        readonly display_value: string;
         readonly kind: "range";
         /**
          * Last permitted time.

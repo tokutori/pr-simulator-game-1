@@ -57,6 +57,7 @@ export interface UiRange {
   readonly id: string;
   readonly label: string;
   readonly value: number;
+  readonly displayValue: string;
   readonly minimum: number;
   readonly maximum: number;
   readonly step: number;

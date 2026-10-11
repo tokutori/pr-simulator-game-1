@@ -58,7 +58,8 @@ function projectControl(control: SharedControl): UiControl {
     case "toggle":
       return Object.freeze({ ...base, kind: "toggle", value: content.value });
     case "range":
-      return Object.freeze({ ...base, kind: "range", value: content.value, minimum: content.minimum, maximum: content.maximum, step: content.step });
+      return Object.freeze({ ...base, kind: "range", value: content.value, displayValue: content.display_value,
+        minimum: content.minimum, maximum: content.maximum, step: content.step });
     case "status":
       return Object.freeze({ ...base, kind: "status", value: content.value });
     case "chart": {

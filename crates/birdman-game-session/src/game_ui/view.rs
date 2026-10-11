@@ -1398,6 +1398,7 @@ fn analysis(
                     GameUiRangeTarget::Analysis
                 },
                 value: time,
+                display_value: super::frame::range_display_value(time),
                 minimum: 0.0,
                 maximum: duration.max(0.01),
                 step: 0.01,
@@ -1493,6 +1494,7 @@ fn replay(
                     GameUiControlContent::Range {
                         target: GameUiRangeTarget::Replay,
                         value: clock.time_seconds(),
+                        display_value: super::frame::range_display_value(clock.time_seconds()),
                         minimum: 0.0,
                         maximum: duration.max(0.01),
                         step: 0.01,

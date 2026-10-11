@@ -236,7 +236,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
   it("uses the same measured viewport for page controls, clipped ranges and paint without a second geometry", () => {
     const context = new RecordingContext();
     const rangePanel: UiPanel = { ...panel, controls: [...panel.controls,
-      { kind: "range", id: "trim", label: "Trim", value: 0, minimum: -1, maximum: 1, step: 0.1, enabled: true, rect: normalizedRect(0.04, 0.7, 0.92, 0.08) }] };
+      { kind: "range", id: "trim", label: "Trim", value: 0, displayValue: "0.0", minimum: -1, maximum: 1, step: 0.1, enabled: true, rect: normalizedRect(0.04, 0.7, 0.92, 0.08) }] };
     const ready = prepareMenuPresentation(context, rangePanel,
       { scope: { kind: "overlay", scene: "Flight", overlay: "Pause", panelId: panel.id, viewKey: "main" }, generation: 7 }, 0,
       configuredViewerFixture(720, 1280), { theme: style.theme, locale: "ja", caption: "Long note ".repeat(80), font: style.font }, new Map());

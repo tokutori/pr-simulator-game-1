@@ -590,6 +590,10 @@
       "additionalProperties": false,
       "description": "Value of a retained typed range control.",
       "properties": {
+        "display_value": {
+          "description": "Shared one-decimal display text.",
+          "type": "string"
+        },
         "id": {
           "description": "Retained control identity.",
           "type": "string"
@@ -602,7 +606,8 @@
       },
       "required": [
         "id",
-        "value"
+        "value",
+        "display_value"
       ],
       "type": "object"
     },

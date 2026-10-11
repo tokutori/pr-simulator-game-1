@@ -582,6 +582,8 @@ pub struct GameUiRangeValue {
     pub id: String,
     /// Shared finite range value.
     pub value: f64,
+    /// Shared one-decimal display text.
+    pub display_value: String,
 }
 
 /// Text of a retained record readout.
@@ -924,6 +926,8 @@ pub enum GameUiControlContent {
         target: GameUiRangeTarget,
         /// Current time.
         value: f64,
+        /// Shared one-decimal display text.
+        display_value: String,
         /// First permitted time.
         minimum: f64,
         /// Last permitted time.

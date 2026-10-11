@@ -258,7 +258,7 @@ export class ScreenUiAdapter {
     }
     if (control.kind === "range") {
       return h("label.screen-ui-range", { key: control.id }, [
-        h("span", `${control.label}: ${control.value.toFixed(1)}`),
+        h("span", `${control.label}: ${control.displayValue}`),
         h("input", { key: `${control.id}-input`, attrs: { type: "range", min: String(control.minimum), max: String(control.maximum), step: String(control.step) }, dataset: { controlId: control.id }, props: { value: String(control.value), disabled: !control.enabled } })
       ]);
     }

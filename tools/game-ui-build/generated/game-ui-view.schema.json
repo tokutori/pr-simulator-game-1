@@ -1165,6 +1165,10 @@
           "additionalProperties": false,
           "description": "Record query cursor.",
           "properties": {
+            "display_value": {
+              "description": "Shared one-decimal display text.",
+              "type": "string"
+            },
             "kind": {
               "const": "range",
               "type": "string"
@@ -1198,6 +1202,7 @@
             "kind",
             "target",
             "value",
+            "display_value",
             "minimum",
             "maximum",
             "step"

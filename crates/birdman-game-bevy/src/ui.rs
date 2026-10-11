@@ -957,7 +957,7 @@ fn project_frame(
         set_text(
             world,
             widget.text,
-            format!("{}: {:.1}", control.label, range.value),
+            format!("{}: {}", control.label, range.display_value),
         );
     }
     for readout in &frame.readouts {
@@ -1718,12 +1718,13 @@ fn project_control(
         GameUiControlContent::Range {
             target,
             value,
+            display_value,
             minimum,
             maximum,
             step,
         } => {
             node.min_height = px(theme.button_min_height_px);
-            label = format!("{}: {value:.1}", control.label);
+            label = format!("{}: {display_value}", control.label);
             background = color(&theme.choice_background, 1.0)?;
             world.entity_mut(widget.node).insert((
                 Button,
@@ -3332,6 +3333,89 @@ mod tests {
                     .abs()
                     < 1e-12
             );
+        }
+    }
+
+    #[test]
+    fn range_initial_and_frame_projection_use_shared_display_text_without_rounding_seek() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            for _ in 0..30 {
+                session.tick(super::super::native_session::FlightInput::default());
+            }
+            session.action(MenuAction::Abort).unwrap();
+            session.ui.analysis_time_seconds = 0.25;
+        }
+        app.update();
+        press(&mut app, "game-result-open-analysis");
+        for replay in [false, true] {
+            let id = if replay {
+                press(&mut app, "game-result-replay");
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .game
+                    .seek_playback(0.25)
+                    .unwrap();
+                press(&mut app, "game-replay-view-mode");
+                "game-replay-cursor"
+            } else {
+                "game-analysis-cursor"
+            };
+            let retained = app.world().resource::<RetainedUi>();
+            let revision = retained.revision;
+            let widget = &retained.widgets[id];
+            let node = widget.node;
+            let text = widget.text;
+            let label = retained
+                .view
+                .as_ref()
+                .unwrap()
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .find(|control| control.id == id)
+                .unwrap()
+                .label
+                .clone();
+            assert_eq!(
+                app.world().get::<Text>(text).unwrap().0,
+                format!("{label}: 0.3")
+            );
+            assert_eq!(app.world().get::<MenuRange>(node).unwrap().value, 0.25);
+            assert_eq!(app.world().get::<MenuRange>(node).unwrap().step, 0.01);
+            let platform = platform_input(app.world_mut());
+            for (time_seconds, display) in [
+                (0.24999999999999997, "0.2"),
+                (0.25, "0.3"),
+                (0.25000000000000006, "0.3"),
+            ] {
+                let action = if replay {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                };
+                app.world_mut()
+                    .resource_mut::<NativeSession>()
+                    .update_ui_action(action, &platform)
+                    .unwrap();
+                app.update();
+                assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+                assert_eq!(
+                    app.world().get::<MenuRange>(node).unwrap().value,
+                    time_seconds
+                );
+                assert_eq!(
+                    app.world().get::<Text>(text).unwrap().0,
+                    format!("{label}: {display}")
+                );
+            }
         }
     }
 

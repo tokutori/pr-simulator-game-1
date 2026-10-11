@@ -72,6 +72,7 @@ pub fn game_ui_frame(
             frame.ranges.push(GameUiRangeValue {
                 id: control.id.clone(),
                 value: time,
+                display_value: range_display_value(time),
             });
         }
     }
@@ -152,6 +153,10 @@ fn readout(id: &str, value: String) -> GameUiReadoutValue {
         id: id.to_owned(),
         value,
     }
+}
+
+pub(super) fn range_display_value(value: f64) -> String {
+    ryu_js::Buffer::new().format_to_fixed(value, 1).to_owned()
 }
 
 pub(super) fn analysis_cursor_readout(

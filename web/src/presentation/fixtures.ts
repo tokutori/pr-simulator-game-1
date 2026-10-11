@@ -64,6 +64,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         id: `${scene.toLowerCase()}-range`,
         label: "表示値",
         value: 0.5,
+        displayValue: "0.5",
         minimum: 0,
         maximum: 1,
         step: 0.1,

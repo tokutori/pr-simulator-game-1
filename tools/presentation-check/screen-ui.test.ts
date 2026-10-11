@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import { normalizedRect } from "../../web/src/render/contracts/ui.js";
@@ -44,7 +44,7 @@ describe("screen UI DOM patching", () => {
     const updated: UiViewModel = {
       ...initial,
       panels: initial.panels.map((panel) => ({ ...panel, controls: panel.controls.map((control) =>
-        control.kind === "range" ? { ...control, value: 0.7 } : control) }))
+        control.kind === "range" ? { ...control, value: 0.7, displayValue: "0.7" } : control) }))
     };
     adapter.render(updated, false);
     expect(range.value).toBe("0.7");
@@ -148,7 +148,7 @@ describe("screen UI DOM patching", () => {
       panels: initial.panels.map((panel) => ({
         ...panel,
         controls: panel.controls.map((control) => control.kind === "range" && control.id === range.id
-          ? { ...control, value: 0.6 }
+          ? { ...control, value: 0.6, displayValue: "0.6" }
           : control)
       }))
     };
@@ -164,6 +164,51 @@ describe("screen UI DOM patching", () => {
     await window.happyDOM.abort();
     Reflect.deleteProperty(globalThis, "window");
     Reflect.deleteProperty(globalThis, "document");
+  });
+
+  it.each([7, 9])("projects shared initial and frame range text without rounding the seek in phase %s", async (phase) => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+    const documentRef = window.document as unknown as Document;
+    const root = documentRef.createElement("main");
+    documentRef.body.append(root);
+    const adapter = new ScreenUiAdapter(root, () => undefined);
+    const seekKind = phase === 7 ? "seek_analysis" : "seek_replay";
+    const id = phase === 7 ? "game-analysis-cursor" : "game-replay-cursor";
+    try {
+      withSharedGameUiSession(phase, { ticks: 30, actions: [
+        phase === 7 ? { kind: "set_result_tab", tab: "analysis" } : { kind: "set_replay_view", view: "telemetry" },
+        { kind: seekKind, time_seconds: 0.25 }
+      ] }, (session, platform) => {
+        const initial = session.readSharedUi(platform);
+        const revision = initial.view_revision;
+        const record = session.exportRecordJson();
+        const control = initial.panels.flatMap((panel) => panel.controls).find((control) => control.id === id);
+        if (control?.content.kind !== "range") throw new Error("Missing shared range");
+        adapter.render(createGameViewModel(initial));
+        const input = requiredInput(root, `input[data-control-id="${id}"]`);
+        expect(input.value).toBe("0.25");
+        expect(input.step).toBe("0.01");
+        expect(input.parentElement?.querySelector("span")?.textContent).toBe(`${control.label}: 0.3`);
+        for (const [time_seconds, display] of [[0.24999999999999997, "0.2"], [0.25, "0.3"], [0.25000000000000006, "0.3"]] as const) {
+          const action = { kind: seekKind, time_seconds } as const;
+          session.updateSharedUi(action, platform);
+          session.executeSharedRecordAction(action);
+          const observed = session.readSharedUi(platform);
+          expect(observed.view_revision).toBe(revision);
+          adapter.render(createGameViewModel(observed));
+          expect(requiredInput(root, `input[data-control-id="${id}"]`)).toBe(input);
+          expect(Number(input.value)).toBe(time_seconds);
+          expect(input.parentElement?.querySelector("span")?.textContent).toBe(`${control.label}: ${display}`);
+          expect(session.exportRecordJson()).toBe(record);
+        }
+      });
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
+    }
   });
 
   it.each(["Result", "Replay"] as const)("preserves normalized %s analysis layout and hidden chart updates", async (scene) => {

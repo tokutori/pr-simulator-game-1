@@ -364,6 +364,10 @@ export interface GameUiHudLayout {
  */
 export interface GameUiRangeValue {
     /**
+     * Shared one-decimal display text.
+     */
+    readonly display_value: string;
+    /**
      * Retained control identity.
      */
     readonly id: string;

@@ -4,8 +4,29 @@ import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
+import { parseGameUiFrame, parseGameUiView } from "../../web/src/app/game-ui-codec.js";
 
 describe("Shared Rust game View projection", () => {
+  it("requires the shared range display string at both view and frame boundaries", () => {
+    const view = currentSharedGameUiFixture(7, { ticks: 30, actions: [
+      { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.25 }
+    ] });
+    const control = view.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "range");
+    if (control?.content.kind !== "range") throw new Error("Missing shared range");
+    expect(control.content.display_value).toBe("0.3");
+    const frame = { view_revision: view.view_revision, selections: view.selections, hud: view.hud,
+      ranges: [{ id: control.id, value: control.content.value, display_value: control.content.display_value }],
+      readouts: [], button_labels: [], chart_cursor: null };
+    expect(parseGameUiView(JSON.stringify(view))).toEqual(view);
+    expect(parseGameUiFrame(JSON.stringify(frame))).toEqual(frame);
+    for (const display_value of [undefined, 0.3]) {
+      expect(() => parseGameUiView(JSON.stringify({ ...view, panels: view.panels.map((panel) => ({ ...panel,
+        controls: panel.controls.map((candidate) => candidate.id === control.id
+          ? { ...candidate, content: { ...candidate.content, display_value } } : candidate) })) }))).toThrow("GameUiView");
+      expect(() => parseGameUiFrame(JSON.stringify({ ...frame, ranges: [{ ...frame.ranges[0], display_value }] }))).toThrow("GameUiFrame");
+    }
+  });
+
   it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])("preserves every published field and control in phase %s", (phase) => {
     for (const presentation_mode of ["screen", "phone_vr", "webxr"] as const) {
       const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode } });
@@ -31,7 +52,10 @@ describe("Shared Rust game View projection", () => {
           expect(output?.kind).toBe(control.content.kind);
           expect(output?.rect).toEqual(control.rect);
           if (output?.kind === "status" && control.content.kind === "status") expect(output.value).toBe(control.content.value);
-          if (output?.kind === "range" && control.content.kind === "range") expect(output.value).toBe(control.content.value);
+          if (output?.kind === "range" && control.content.kind === "range") {
+            expect(output.value).toBe(control.content.value);
+            expect(output.displayValue).toBe(control.content.display_value);
+          }
         });
       });
       expect(JSON.stringify(shared)).toBe(before);

@@ -19,7 +19,7 @@ const controls: readonly UiControl[] = Object.freeze([
   { kind: "button", id: "resume", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.2, 0.44, 0.08) },
   { kind: "button", id: "settings", label: "設定", enabled: false, rect: normalizedRect(0.52, 0.2, 0.44, 0.08) },
   { kind: "status", id: "help", label: "操作方法", value: "Roll A/D · Pitch ↑/↓ · 重心 J/L\n入力と姿勢を確認する。", enabled: false, rect: normalizedRect(0.04, 0.32, 0.92, 0.22) },
-  { kind: "range", id: "time", label: "Flight time (s)", value: 5, minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
+  { kind: "range", id: "time", label: "Flight time (s)", value: 5, displayValue: "5.0", minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
   { kind: "toggle", id: "toggle", label: "表示", value: true, enabled: true, rect: normalizedRect(0.04, 0.76, 0.92, 0.08) }
 ]);
 const panel: UiPanel = Object.freeze({ id: "pause", title: "Pause", anchor: "menu", localPose: IDENTITY_POSE,
@@ -56,6 +56,19 @@ function chart(): UiChart {
 }
 
 describe("Pure measured Menu document and shared viewport", () => {
+  it.each(["phone_vr", "webxr"] as const)("uses the shared rounding-boundary range text in %s", (presentation_mode) => {
+    const shared = currentSharedGameUiFixture(7, { ticks: 30, platform: { presentation_mode }, actions: [
+      { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.25 }
+    ] });
+    const panel = createGameViewModel(shared).panels[0];
+    if (panel === undefined) throw new Error("Missing shared VR panel");
+    const request = requestMenuLayout(panel, panel.size, { ...style, theme: shared.theme });
+    const text = request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "game-analysis-cursor" && text.slot.role === "value");
+    expect(text?.value).toBe("0.3");
+    const range = panel.controls.find((control) => control.id === "game-analysis-cursor");
+    expect(range).toMatchObject({ value: 0.25, displayValue: "0.3", step: 0.01 });
+  });
+
   it("preserves every semantic control and uses source rows in landscape and a single column in portrait", () => {
     const landscape = requestMenuLayout(panel, panel.size, style);
     const portrait = requestMenuLayout(panel, { width: 0.5, height: 1.8 }, style);
@@ -66,6 +79,8 @@ describe("Pure measured Menu document and shared viewport", () => {
       expect(document.controls.map((entry) => entry.control)).toEqual(controls);
       expect(document.controls.find((entry) => entry.control.id === "settings")?.control.enabled).toBe(false);
       expect(document.controls.find((entry) => entry.control.id === "time")?.control).toBe(controls[3]);
+      const rangeText = request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "time" && text.slot.role === "value");
+      expect(rangeText?.value).toBe("5.0");
       expect(Object.isFrozen(document)).toBe(true);
       expect(Object.isFrozen(document.controls)).toBe(true);
     }

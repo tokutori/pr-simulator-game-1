@@ -3,7 +3,7 @@ import type { GameUiView } from "../generated/game-ui-view.js";
 
 export function mergeGameUiFrame(view: GameUiView, frame: GameUiFrame): GameUiView {
   if (view.view_revision !== frame.view_revision) throw new RangeError("Shared UI frame belongs to a superseded view");
-  const ranges = new Map(frame.ranges.map((range) => [range.id, range.value]));
+  const ranges = new Map(frame.ranges.map((range) => [range.id, range]));
   const readouts = new Map(frame.readouts.map((readout) => [readout.id, readout.value]));
   const buttons = new Map(frame.button_labels.map((button) => [button.id, button.label]));
   const cursor = frame.chart_cursor;
@@ -11,8 +11,9 @@ export function mergeGameUiFrame(view: GameUiView, frame: GameUiFrame): GameUiVi
     panels: Object.freeze(view.panels.map((panel) => Object.freeze({ ...panel,
       controls: Object.freeze(panel.controls.map((control) => {
         const content = control.content;
-        if (content.kind === "range" && ranges.has(control.id)) {
-          return Object.freeze({ ...control, content: Object.freeze({ ...content, value: ranges.get(control.id) ?? content.value }) });
+        const range = ranges.get(control.id);
+        if (content.kind === "range" && range !== undefined) {
+          return Object.freeze({ ...control, content: Object.freeze({ ...content, value: range.value, display_value: range.display_value }) });
         }
         if (content.kind === "status" && readouts.has(control.id)) {
           return Object.freeze({ ...control, content: Object.freeze({ ...content, value: readouts.get(control.id) ?? content.value }) });

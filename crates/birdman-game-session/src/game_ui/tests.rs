@@ -977,6 +977,96 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
 }
 
 #[test]
+fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries() {
+    for (value, expected) in [
+        (0.0, "0.0"),
+        (0.24999999999999997, "0.2"),
+        (0.25, "0.3"),
+        (0.25000000000000006, "0.3"),
+        (2.55, "2.5"),
+    ] {
+        assert_eq!(super::frame::range_display_value(value), expected);
+    }
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    prepare_game_ui_flight(&mut session, difficulty(), 100, 42).unwrap();
+    session.mark_briefing_ready().unwrap();
+    session.start_countdown(1).unwrap();
+    session.advance_countdown().unwrap();
+    session.launch().unwrap();
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    for _ in 0..30 {
+        session.advance_tail_flight_tick(input).unwrap();
+    }
+    session.abort_flight().unwrap();
+    for replay_view in [
+        None,
+        Some(GameUiReplayView::Analysis),
+        Some(GameUiReplayView::Telemetry),
+    ] {
+        if replay_view.is_some() && session.snapshot().phase() == SessionPhase::Result {
+            session.enter_replay().unwrap();
+        }
+        let mut state = GameUiState {
+            result_tab: GameUiResultTab::Analysis,
+            replay_view: replay_view.unwrap_or(GameUiReplayView::Cinematic),
+            ..GameUiState::default()
+        };
+        let id = if replay_view.is_some() {
+            "game-replay-cursor"
+        } else {
+            "game-analysis-cursor"
+        };
+        for mode in [
+            GameUiPresentationMode::Screen,
+            GameUiPresentationMode::PhoneVr,
+            GameUiPresentationMode::Webxr,
+        ] {
+            let mut platform = platform();
+            platform.presentation_mode = mode;
+            let retained =
+                game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+            for (time, expected) in [
+                (0.0, "0.0"),
+                (0.24999999999999997, "0.2"),
+                (0.25, "0.3"),
+                (0.25000000000000006, "0.3"),
+            ] {
+                if replay_view.is_some() {
+                    session.seek_playback(time).unwrap();
+                } else {
+                    state.analysis_time_seconds = time;
+                }
+                let before = session.snapshot();
+                let context = context(&session, difficulty(), &platform);
+                let full = game_ui_view(&state, &context).unwrap();
+                let frame = game_ui_frame(&state, &context, &retained).unwrap();
+                let GameUiControlContent::Range {
+                    value,
+                    display_value,
+                    step,
+                    ..
+                } = &control(&full, id).content
+                else {
+                    panic!("missing range");
+                };
+                let range = frame.ranges.iter().find(|range| range.id == id).unwrap();
+                assert_eq!(*value, time);
+                assert_eq!(*step, 0.01);
+                assert_eq!(display_value, expected);
+                assert_eq!(range.value, *value);
+                assert_eq!(range.display_value, *display_value);
+                assert_eq!(session.snapshot(), before);
+            }
+        }
+    }
+}
+
+#[test]
 fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choices() {
     let session = finalized();
     let mut platform = platform();
