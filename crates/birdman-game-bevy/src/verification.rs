@@ -12,6 +12,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     diagnostic::DiagnosticsStore,
+    input_focus::{FocusCause, InputFocus},
     material::descriptor::PipelineDescriptor,
     prelude::*,
     render::{
@@ -32,6 +33,10 @@ use birdman_game_core::{
 use birdman_game_format::WeatherClass;
 use birdman_game_session::{
     DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, HybridSessionPreparation,
+    game_ui::{
+        GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiReplayView, GameUiResultTab,
+        GameUiSessionCommand,
+    },
 };
 use std::{
     path::PathBuf,
@@ -491,6 +496,10 @@ enum VerificationStage {
     Resume,
     Abort,
     Result,
+    Analysis(GameUiAnalysisChart),
+    Replay,
+    ReplayAnalysis,
+    ReturnedResult,
     Retry,
     InputTrialLaunch,
     InputTrialCountdown,
@@ -594,6 +603,7 @@ pub(crate) struct Verification {
     processing_delay_reported: bool,
     capture: CaptureState,
     capture_serial: u64,
+    briefing_navigation: Option<Result<Entity, String>>,
     launch_state: Option<TailFlightTickState>,
     paused_state: Option<TailFlightTickState>,
     terminal: Option<SessionResult>,
@@ -638,6 +648,7 @@ impl Verification {
                 processing_delay_reported: false,
                 capture: CaptureState::Idle,
                 capture_serial: 0,
+                briefing_navigation: None,
                 launch_state: None,
                 paused_state: None,
                 terminal: None,
@@ -673,6 +684,8 @@ impl Verification {
         self.stage = stage;
         self.stage_started = Instant::now();
         self.readiness.confirmation_frames = 0;
+        self.briefing_navigation = None;
+        self.processing_delay_reported = false;
     }
 
     fn capture(&mut self, commands: &mut Commands, filename: &str) {
@@ -746,7 +759,14 @@ pub(crate) fn verify_ui_layout(
         &UiGlobalTransform,
         Option<&UiText>,
     )>,
-    panels: Query<(&UiPanel, &ComputedNode, &UiGlobalTransform)>,
+    panels: Query<(
+        Entity,
+        &UiPanel,
+        &Node,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &ScrollPosition,
+    )>,
     windows: Query<&Window>,
     hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
@@ -762,10 +782,15 @@ pub(crate) fn verify_ui_layout(
             if button.is_empty() {
                 continue;
             }
-            visible_buttons += 1;
             let bounds = Rect::from_center_size(transform.translation, button.size());
-            if !contains_layout(viewport, bounds) {
-                return Err(format!("Button is outside the viewport: {bounds:?}"));
+            let fully_visible = contains_layout(viewport, bounds)
+                && within_ancestor_clip(entity, bounds, &hierarchy);
+            if fully_visible {
+                visible_buttons += 1;
+            } else if !scroll_reachable(entity, bounds, &panels, &hierarchy) {
+                return Err(format!(
+                    "Button is neither visible nor scroll-reachable: {bounds:?}"
+                ));
             }
             let mut visible_labels = 0;
             for child in children.iter() {
@@ -793,8 +818,9 @@ pub(crate) fn verify_ui_layout(
                         text.0
                     ));
                 }
-                if matches!(role, Some(UiText::WaterQualityChoice(_)))
-                    && !within_ancestor_clip(entity, bounds, &hierarchy)
+                if matches!(role, Some(UiText::WaterQualityChoice))
+                    && !fully_visible
+                    && !scroll_reachable(entity, bounds, &panels, &hierarchy)
                 {
                     return Err(format!(
                         "Visible quality control is clipped by an ancestor: {:?}",
@@ -811,24 +837,19 @@ pub(crate) fn verify_ui_layout(
             return Err("Captured scene has no visible navigation buttons".into());
         }
         let mut content = None;
-        let mut navigation = None;
-        for (panel, node, transform) in &panels {
+        for (_, panel, _, node, transform, _) in &panels {
             if node.is_empty() {
                 continue;
             }
             let bounds = Rect::from_center_size(transform.translation, node.size());
             match panel {
                 UiPanel::SessionContent => content = Some(bounds),
-                UiPanel::Navigation => navigation = Some(bounds),
-                _ => {}
+                UiPanel::Navigation => {}
             }
         }
         let content = content.ok_or("Captured scene has no session content panel")?;
-        let navigation = navigation.ok_or("Captured scene has no navigation panel")?;
-        if content.intersect(navigation).height() > 2.0
-            && content.intersect(navigation).width() > 2.0
-        {
-            return Err("Session content overlaps navigation buttons".into());
+        if !contains_layout(viewport, content) {
+            return Err("Shared menu scroll viewport exceeds the native viewport".into());
         }
         Ok(())
     })();
@@ -838,6 +859,43 @@ pub(crate) fn verify_ui_layout(
         verification.failure = Some(error);
         exit.write(AppExit::error());
     }
+}
+
+fn scroll_reachable(
+    entity: Entity,
+    bounds: Rect,
+    panels: &Query<(
+        Entity,
+        &UiPanel,
+        &Node,
+        &ComputedNode,
+        &UiGlobalTransform,
+        &ScrollPosition,
+    )>,
+    hierarchy: &VerificationUiHierarchy,
+) -> bool {
+    let mut current = entity;
+    while let Ok(parent) = hierarchy.parents.get(current) {
+        current = parent.parent();
+        if let Ok((_, UiPanel::SessionContent, style, node, transform, scroll)) =
+            panels.get(current)
+        {
+            if style.overflow.y != OverflowAxis::Scroll {
+                return false;
+            }
+            let viewport = Rect::from_center_size(transform.translation, node.size());
+            let scroll_px = scroll.y / node.inverse_scale_factor;
+            let virtual_bounds = Rect::from_corners(
+                Vec2::new(viewport.min.x, viewport.min.y - scroll_px),
+                Vec2::new(
+                    viewport.max.x,
+                    viewport.min.y - scroll_px + node.content_size.y.max(node.size.y),
+                ),
+            );
+            return contains_layout(virtual_bounds, bounds);
+        }
+    }
+    false
 }
 
 fn contains_layout(outer: Rect, inner: Rect) -> bool {
@@ -1051,39 +1109,13 @@ fn advance_step(
         );
     }
     let phase = session.game.snapshot().phase();
-    if let SessionPhase::FlightPaused { reasons } = phase
-        && matches!(
-            verification.stage,
-            VerificationStage::Pilot
-                | VerificationStage::Chase
-                | VerificationStage::Pause
-                | VerificationStage::Abort
-                | VerificationStage::InputTrialFlight
-                | VerificationStage::WaterMotion(..)
-                | VerificationStage::WaterResumed
-        )
-    {
-        if !processing_delay_only(reasons) {
-            return Err(format!(
-                "Unexpected core pause in {:?}: {reasons:?}",
-                verification.stage
-            ));
-        }
-        if !verification.processing_delay_reported {
-            println!(
-                "GPU verification observed ProcessingDelay in {:?}; waiting for a normal focused frame before explicit Resume.",
-                verification.stage
-            );
-            verification.processing_delay_reported = true;
-        }
-        if normal_frame && verification.readiness.can_capture() {
-            session.action(MenuAction::Resume)?;
-            require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
-            println!(
-                "GPU verification explicitly resumed after ProcessingDelay recovery outside a continuous observation interval."
-            );
-            verification.processing_delay_reported = false;
-        }
+    if recover_processing_delay(
+        &mut verification.processing_delay_reported,
+        verification.stage,
+        session,
+        normal_frame,
+        &verification.readiness,
+    )? {
         return Ok(());
     }
     if verification.capture.pending() {
@@ -1156,13 +1188,38 @@ fn advance_step(
                     VerificationStage::QualityHigh
                 }
                 VerificationStage::QualityHigh => VerificationStage::Resume,
-                VerificationStage::Result => VerificationStage::Retry,
+                VerificationStage::Result if verification.water_case.is_some() => {
+                    VerificationStage::Retry
+                }
+                VerificationStage::Result => {
+                    queue_ui_control(commands, "game-result-open-analysis", None);
+                    VerificationStage::Analysis(GameUiAnalysisChart::Map)
+                }
+                VerificationStage::Analysis(GameUiAnalysisChart::Map) => {
+                    queue_ui_control(commands, "game-analysis-altitude", None);
+                    VerificationStage::Analysis(GameUiAnalysisChart::Altitude)
+                }
+                VerificationStage::Analysis(GameUiAnalysisChart::Altitude) => {
+                    queue_ui_control(commands, "game-analysis-speed", None);
+                    queue_ui_control(commands, "game-analysis-cursor", Some(0.5));
+                    VerificationStage::Analysis(GameUiAnalysisChart::Speed)
+                }
+                VerificationStage::Analysis(GameUiAnalysisChart::Speed) => {
+                    queue_ui_control(commands, "game-result-replay", None);
+                    VerificationStage::Replay
+                }
+                VerificationStage::Replay => {
+                    queue_ui_control(commands, "game-replay-view-mode", None);
+                    VerificationStage::ReplayAnalysis
+                }
+                VerificationStage::ReplayAnalysis => {
+                    queue_ui_control(commands, "game-replay-return", None);
+                    VerificationStage::ReturnedResult
+                }
+                VerificationStage::ReturnedResult => VerificationStage::Retry,
                 VerificationStage::InputTrialResult => {
                     commands.queue(|world: &mut World| {
-                        let mut disclosure = world.resource_mut::<super::ui::TechnicalDisclosure>();
-                        if !disclosure.is_expanded() {
-                            disclosure.toggle();
-                        }
+                        world.resource_mut::<NativeSession>().ui.technical_open = true;
                     });
                     VerificationStage::InputTrialDetails
                 }
@@ -1189,7 +1246,14 @@ fn advance_step(
             }
         }
         VerificationStage::Start => {
-            session.action(MenuAction::Start)?;
+            require_phase(phase, SessionPhase::Title)
+                .map_err(|cause| format!("Start/OpenSetup precondition failed: {cause}"))?;
+            session.action(MenuAction::Start).map_err(|cause| {
+                format!(
+                    "Start/OpenSetup failed: phase_before={phase:?}, phase_after={:?}; {cause}",
+                    session.game.snapshot().phase()
+                )
+            })?;
             require_phase(session.game.snapshot().phase(), SessionPhase::FlightSetup)?;
             if let Some(case) = verification.water_case {
                 **quality = quality
@@ -1204,10 +1268,7 @@ fn advance_step(
                 if let Some(case) = verification.water_case {
                     if quality.pending().is_none() {
                         if quality.applied() != case.quality {
-                            return Err(format!(
-                                "Setup water quality failed: {}",
-                                quality.status()
-                            ));
+                            return Err(format!("Setup water quality failed: {quality:?}"));
                         }
                         verification.next(VerificationStage::Prepare);
                     }
@@ -1219,7 +1280,7 @@ fn advance_step(
         VerificationStage::Prepare => {
             if let Some(case) = verification.water_case {
                 let preparation = HybridSessionPreparation::try_new_for_weather(
-                    session.control_mode,
+                    session.control_mode(),
                     DEFAULT_MAXIMUM_FLIGHT_TICKS,
                     DEFAULT_SESSION_SEED,
                     case.weather,
@@ -1246,7 +1307,16 @@ fn advance_step(
                 if verification.water_case.is_some() {
                     verification.next(VerificationStage::Launch);
                 } else {
-                    verification.capture(commands, "01b-briefing.png");
+                    match &verification.briefing_navigation {
+                        Some(Ok(_)) => verification.capture(commands, "01b-briefing.png"),
+                        Some(Err(cause)) => return Err(cause.clone()),
+                        None => commands.queue(|world: &mut World| {
+                            let focused = focus_briefing_navigation(world);
+                            let mut verification = world.resource_mut::<Verification>();
+                            verification.briefing_navigation = Some(focused);
+                            verification.readiness.confirmation_frames = 0;
+                        }),
+                    }
                 }
             }
         }
@@ -1469,7 +1539,7 @@ fn advance_step(
                 _ => return Err("Unexpected quality capture stage".into()),
             };
             if quality.applied() != expected {
-                return Err(format!("Quality exchange failed: {}", quality.status()));
+                return Err(format!("Quality exchange failed: {quality:?}"));
             }
             if verification.water_case.is_some() {
                 verify_paused_water(verification, session, water_time)?;
@@ -1584,6 +1654,84 @@ fn advance_step(
                 && verification.readiness.can_capture()
             {
                 verification.capture(commands, "04-result.png");
+            }
+        }
+        VerificationStage::Analysis(chart) => {
+            require_phase(phase, SessionPhase::Result)?;
+            if session.ui.result_tab != GameUiResultTab::Analysis
+                || session.ui.analysis_chart != chart
+            {
+                return Err(format!(
+                    "Published Analysis control did not select {chart:?}"
+                ));
+            }
+            if chart == GameUiAnalysisChart::Speed {
+                let midpoint = session
+                    .game
+                    .flight_record()
+                    .ok_or("Speed cursor has no retained record")?
+                    .duration_seconds()
+                    .map_err(|cause| format!("Speed duration: {cause:?}"))?
+                    * 0.5;
+                if (session.ui.analysis_time_seconds - midpoint).abs() > 1e-9 {
+                    return Err("Native range pointer did not seek the record midpoint".into());
+                }
+            }
+            if session.game.snapshot().result() != verification.terminal
+                || session
+                    .game
+                    .flight_record()
+                    .map(|record| record.sample_count())
+                    != Some(verification.terminal_sample_count)
+            {
+                return Err("Analysis changed the terminal flight or retained record".into());
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                let filename = match chart {
+                    GameUiAnalysisChart::Map => "04a-analysis-map.png",
+                    GameUiAnalysisChart::Altitude => "04b-analysis-altitude.png",
+                    GameUiAnalysisChart::Speed => "04c-analysis-speed.png",
+                };
+                verification.capture(commands, filename);
+            }
+        }
+        VerificationStage::Replay => {
+            require_phase(phase, SessionPhase::Replay)?;
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                verification.capture(commands, "04d-replay.png");
+            }
+        }
+        VerificationStage::ReplayAnalysis => {
+            require_phase(phase, SessionPhase::Replay)?;
+            if session.ui.replay_view == GameUiReplayView::Telemetry {
+                queue_ui_control(commands, "game-replay-view-mode", None);
+            } else if session.ui.replay_view != GameUiReplayView::Analysis {
+                return Err("Published Replay view control did not select Analysis".into());
+            } else if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                verification.capture(commands, "04e-replay-analysis.png");
+            }
+        }
+        VerificationStage::ReturnedResult => {
+            require_phase(phase, SessionPhase::Result)?;
+            if session.game.snapshot().result() != verification.terminal
+                || session
+                    .game
+                    .flight_record()
+                    .map(|record| record.sample_count())
+                    != Some(verification.terminal_sample_count)
+            {
+                return Err("Replay return changed the terminal flight or retained record".into());
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                verification.capture(commands, "04f-replay-return-result.png");
             }
         }
         VerificationStage::Retry => {
@@ -1724,6 +1872,141 @@ fn processing_delay_only(reasons: PauseReasons) -> bool {
         .any(|reason| reasons.contains(reason))
 }
 
+fn recover_processing_delay(
+    observed: &mut bool,
+    stage: VerificationStage,
+    session: &mut NativeSession,
+    normal_frame: bool,
+    readiness: &RenderReadiness,
+) -> Result<bool, String> {
+    let SessionPhase::FlightPaused { reasons } = session.game.snapshot().phase() else {
+        *observed = false;
+        return Ok(false);
+    };
+    if !matches!(
+        stage,
+        VerificationStage::Pilot
+            | VerificationStage::Chase
+            | VerificationStage::Pause
+            | VerificationStage::Abort
+            | VerificationStage::InputTrialFlight
+            | VerificationStage::WaterMotion(..)
+            | VerificationStage::WaterResumed
+    ) {
+        return Ok(false);
+    }
+    if !(processing_delay_only(reasons) || (*observed && reasons.is_empty())) {
+        return Err(format!("Unexpected core pause in {stage:?}: {reasons:?}"));
+    }
+    if !*observed {
+        println!(
+            "GPU verification observed ProcessingDelay in {stage:?}; waiting for a normal focused frame before explicit Resume."
+        );
+        *observed = true;
+    }
+    if normal_frame && readiness.can_capture() {
+        session.action(MenuAction::Resume)?;
+        require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
+        println!(
+            "GPU verification explicitly resumed after ProcessingDelay recovery outside a continuous observation interval."
+        );
+        *observed = false;
+    }
+    Ok(true)
+}
+
+fn queue_ui_control(commands: &mut Commands, id: &'static str, range_position: Option<f32>) {
+    commands.queue(move |world: &mut World| {
+        let result = (|| {
+            let platform = super::ui::platform_input(world);
+            let view = world.resource::<NativeSession>().ui_view(&platform)?;
+            if !view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .any(|control| control.id == id && control.enabled)
+            {
+                return Err(format!("Published native control is unavailable: {id}"));
+            }
+            let nodes = world
+                .query_filtered::<(Entity, &Name), With<Button>>()
+                .iter(world)
+                .filter(|(_, name)| name.as_str() == id)
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>();
+            let [node] = nodes.as_slice() else {
+                return Err(format!(
+                    "Published control {id} has {} native nodes",
+                    nodes.len()
+                ));
+            };
+            if let Some(position) = range_position {
+                world
+                    .get_mut::<bevy::ui::RelativeCursorPosition>(*node)
+                    .ok_or_else(|| format!("Published range lacks a pointer projection: {id}"))?
+                    .normalized = Some(Vec2::new(position - 0.5, 0.0));
+            }
+            world.entity_mut(*node).insert(Interaction::Pressed);
+            super::ui::button_actions(world);
+            world.entity_mut(*node).insert(Interaction::None);
+            Ok(())
+        })();
+        if let Err(error) = result {
+            error!("Native UI verification: {error}");
+            let mut verification = world.resource_mut::<Verification>();
+            verification.complete(Err(error.clone()));
+            verification.failure = Some(error);
+            world.write_message(AppExit::error());
+        }
+    });
+}
+
+fn focus_briefing_navigation(world: &mut World) -> Result<Entity, String> {
+    let platform = super::ui::platform_input(world);
+    let session = world.resource::<NativeSession>();
+    require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
+    let view = session.ui_view(&platform)?;
+    let label = view
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .find(|control| {
+            control.enabled
+                && matches!(
+                    control.content,
+                    GameUiControlContent::Button {
+                        action: GameUiAction::Session {
+                            command: GameUiSessionCommand::StartCountdown {},
+                        },
+                        ..
+                    }
+                )
+        })
+        .ok_or("Briefing has no published StartCountdown control")?
+        .label
+        .clone();
+    let candidates = world
+        .query_filtered::<(Entity, &Children), With<MenuButton>>()
+        .iter(world)
+        .filter(|(_, children)| {
+            children
+                .iter()
+                .any(|child| world.get::<Text>(child).is_some_and(|text| text.0 == label))
+        })
+        .map(|(entity, _)| entity)
+        .collect::<Vec<_>>();
+    let [entity] = candidates.as_slice() else {
+        return Err(format!(
+            "Published Briefing StartCountdown control has {} native buttons",
+            candidates.len()
+        ));
+    };
+    world
+        .resource_mut::<InputFocus>()
+        .set(*entity, FocusCause::Navigated);
+    Ok(*entity)
+}
+
 fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), String> {
     if actual == expected {
         Ok(())
@@ -1734,22 +2017,153 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        NativeFont,
+        ui::{setup_ui, update_ui},
+        water_quality::WaterQualitySelection,
+    };
     use super::{
         CaptureCompletion, CaptureIdentity, CaptureState, MOTION_DURATION, MenuAction,
         MotionEndpoint, MotionInterval, MotionMetrics, NativeSession, READY_CONFIRMATION_FRAMES,
         RenderReadiness, VerificationCompletion, VerificationStage, VerificationUiHierarchy,
-        WaterMotion, WaterVerificationCase, contains_layout, save_capture, shader_is_pending,
+        WaterMotion, WaterVerificationCase, contains_layout, focus_briefing_navigation,
+        queue_ui_control, recover_processing_delay, save_capture, shader_is_pending,
         within_ancestor_clip,
     };
     use bevy::ecs::system::SystemState;
+    use bevy::input_focus::InputFocus;
     use bevy::prelude::{
-        ChildOf, ComputedNode, Image, Node, Overflow, Quat, Rect, Transform, UiGlobalTransform,
-        Vec2, Vec3, World,
+        App, ChildOf, ComputedNode, Handle, Image, MinimalPlugins, Node, Overflow, Quat, Rect,
+        Startup, Transform, UiGlobalTransform, UiScale, Update, Vec2, Vec3, Window, World,
     };
     use bevy::shader::ShaderCacheError;
     use bevy::tasks::TaskPoolBuilder;
     use birdman_game_core::{PauseReason, SessionPhase};
+    use birdman_game_session::game_ui::{GameUiAnalysisChart, GameUiResultTab};
     use std::time::Duration;
+
+    #[test]
+    fn briefing_capture_focuses_published_navigation_without_starting_countdown() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<NativeSession>()
+            .init_resource::<WaterQualitySelection>()
+            .insert_resource(NativeFont(Handle::default()))
+            .insert_resource(UiScale(1.0))
+            .add_systems(Startup, setup_ui)
+            .add_systems(Update, update_ui);
+        app.world_mut().spawn(Window {
+            resolution: (800, 600).into(),
+            ..Default::default()
+        });
+        app.update();
+        assert!(focus_briefing_navigation(app.world_mut()).is_err());
+        assert_eq!(app.world().resource::<InputFocus>().get(), None);
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+        }
+        app.update();
+        let identity = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .configuration_identity();
+        let entity = focus_briefing_navigation(app.world_mut()).unwrap();
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(entity));
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+        assert_eq!(session.game.configuration_identity(), identity);
+        assert_eq!(session.game.playback_record().unwrap().sample_count(), 0);
+    }
+
+    #[test]
+    fn scripted_ui_controls_execute_production_handler_before_the_next_frame() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<NativeSession>()
+            .init_resource::<WaterQualitySelection>()
+            .init_resource::<super::super::CameraMode>()
+            .insert_resource(NativeFont(Handle::default()))
+            .insert_resource(bevy::input::ButtonInput::<bevy::input::keyboard::KeyCode>::default())
+            .insert_resource(UiScale(1.0))
+            .add_systems(Startup, setup_ui)
+            .add_systems(Update, update_ui);
+        app.world_mut().spawn(Window {
+            resolution: (800, 600).into(),
+            ..Default::default()
+        });
+        app.update();
+        for (id, phase) in [
+            ("game-title-start", SessionPhase::FlightSetup),
+            ("game-setup-start", SessionPhase::BriefingReady),
+            (
+                "game-briefing-start",
+                SessionPhase::Countdown { remaining_ticks: 3 },
+            ),
+        ] {
+            queue_ui_control(&mut app.world_mut().commands(), id, None);
+            app.world_mut().flush();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                phase
+            );
+            app.update();
+        }
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            session.tick(super::super::native_session::FlightInput::default());
+            session.action(MenuAction::Abort).unwrap();
+        }
+        app.update();
+        queue_ui_control(
+            &mut app.world_mut().commands(),
+            "game-result-open-analysis",
+            None,
+        );
+        app.world_mut().flush();
+        assert_eq!(
+            app.world().resource::<NativeSession>().ui.result_tab,
+            GameUiResultTab::Analysis
+        );
+        app.update();
+        queue_ui_control(&mut app.world_mut().commands(), "game-analysis-speed", None);
+        app.world_mut().flush();
+        assert_eq!(
+            app.world().resource::<NativeSession>().ui.analysis_chart,
+            GameUiAnalysisChart::Speed
+        );
+        app.update();
+        queue_ui_control(
+            &mut app.world_mut().commands(),
+            "game-analysis-cursor",
+            Some(0.5),
+        );
+        app.world_mut().flush();
+        let session = app.world().resource::<NativeSession>();
+        let midpoint = session
+            .game
+            .flight_record()
+            .unwrap()
+            .duration_seconds()
+            .unwrap()
+            * 0.5;
+        assert!((session.ui.analysis_time_seconds - midpoint).abs() < 1e-12);
+        assert!(
+            app.world_mut()
+                .query::<&bevy::ui::Interaction>()
+                .iter(app.world())
+                .all(|interaction| *interaction != bevy::ui::Interaction::Pressed)
+        );
+    }
 
     #[test]
     fn water_cases_are_exactly_the_registered_weather_quality_cross_product() {
@@ -1931,6 +2345,199 @@ mod tests {
                 interrupted
             );
         }
+    }
+
+    #[test]
+    fn observed_processing_delay_recovers_only_after_frame_and_render_readiness() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _ in 0..3 {
+            session.countdown(1.0);
+        }
+        let state = session.game.snapshot().tail_flight_state().unwrap();
+        let sample_count = session.game.flight_record().unwrap().sample_count();
+        let mut observed = false;
+        let mut readiness = RenderReadiness::default();
+        session.observe_frame(true, true);
+        assert!(
+            recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                false,
+                &readiness,
+            )
+            .unwrap()
+        );
+        assert!(observed);
+        session.observe_frame(true, false);
+        assert!(matches!(
+            session.game.snapshot().phase(),
+            SessionPhase::FlightPaused { reasons } if reasons.is_empty()
+        ));
+        assert!(
+            recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                true,
+                &readiness,
+            )
+            .unwrap()
+        );
+        assert!(observed);
+        readiness.assets_loaded = true;
+        readiness.water_pipelines = 1;
+        readiness.material_pipelines = 1;
+        for _ in 0..READY_CONFIRMATION_FRAMES {
+            readiness.confirm_frame();
+        }
+        assert!(
+            recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                false,
+                &readiness,
+            )
+            .unwrap()
+        );
+        assert!(matches!(
+            session.game.snapshot().phase(),
+            SessionPhase::FlightPaused { reasons } if reasons.is_empty()
+        ));
+        session.tick(super::FlightInput::default());
+        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+        assert!(
+            recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                true,
+                &readiness,
+            )
+            .unwrap()
+        );
+        assert!(!observed);
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            sample_count
+        );
+        session.tick(super::FlightInput::default());
+        assert_eq!(
+            session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index(),
+            state.tick_index() + 1,
+        );
+    }
+
+    #[test]
+    fn processing_delay_recovery_rejects_unobserved_empty_and_additional_causes() {
+        for additional in [
+            None,
+            Some(PauseReason::Manual),
+            Some(PauseReason::DocumentHidden),
+            Some(PauseReason::TrackingSuspended),
+        ] {
+            let mut session = NativeSession::default();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            session.game.pause(PauseReason::ProcessingDelay).unwrap();
+            let mut observed = additional.is_some();
+            if let Some(reason) = additional {
+                session.game.pause(reason).unwrap();
+            } else {
+                session.observe_frame(true, false);
+            }
+            let before = session.game.snapshot();
+            let sample_count = session.game.flight_record().unwrap().sample_count();
+            assert!(
+                recover_processing_delay(
+                    &mut observed,
+                    VerificationStage::Pilot,
+                    &mut session,
+                    true,
+                    &RenderReadiness::default(),
+                )
+                .unwrap_err()
+                .starts_with("Unexpected core pause")
+            );
+            assert_eq!(session.game.snapshot(), before);
+            assert_eq!(
+                session.game.flight_record().unwrap().sample_count(),
+                sample_count
+            );
+        }
+    }
+
+    #[test]
+    fn processing_delay_observation_does_not_survive_a_finished_pause_episode() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        for _ in 0..3 {
+            session.countdown(1.0);
+        }
+        let mut observed = false;
+        let readiness = RenderReadiness::default();
+        session.observe_frame(true, true);
+        recover_processing_delay(
+            &mut observed,
+            VerificationStage::Pilot,
+            &mut session,
+            false,
+            &readiness,
+        )
+        .unwrap();
+        assert!(observed);
+        session.observe_frame(true, false);
+        session.action(MenuAction::Resume).unwrap();
+        assert!(
+            !recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                true,
+                &readiness,
+            )
+            .unwrap()
+        );
+        assert!(!observed);
+        session.game.pause(PauseReason::Manual).unwrap();
+        session
+            .game
+            .clear_pause_reason(PauseReason::Manual)
+            .unwrap();
+        let before = session.game.snapshot();
+        assert!(
+            recover_processing_delay(
+                &mut observed,
+                VerificationStage::Pilot,
+                &mut session,
+                true,
+                &readiness,
+            )
+            .unwrap_err()
+            .contains("Unexpected core pause")
+        );
+        assert_eq!(session.game.snapshot(), before);
     }
 
     #[test]

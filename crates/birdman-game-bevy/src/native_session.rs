@@ -1,19 +1,26 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{
-    ControlMode, FbwAuthority, FlightState, GameSession, GameSessionError, PauseReason,
-    SessionPhase, SessionSnapshot, SessionTerminalState, TailFlightTickInput, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    ControlMode, FlightState, GameSession, GameSessionError, PauseReason, SessionPhase,
+    SessionSnapshot, SessionTerminalState, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+};
+use birdman_game_format::DifficultySettings;
+use birdman_game_session::game_ui::{
+    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiSessionCommand,
+    GameUiState, GameUiUpdate, GameUiView, game_ui_control_mode, game_ui_environment_readout,
+    game_ui_frame, game_ui_view, prepare_game_ui_flight, select_game_ui_difficulty, update_game_ui,
 };
 use birdman_game_session::{
-    DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
-    HybridSessionPreparation,
+    DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED,
+    HybridSessionPreparation, default_difficulty, identity_for_selection,
 };
 
 #[derive(Resource)]
 pub(crate) struct NativeSession {
     pub(crate) game: GameSession<'static>,
-    pub(crate) control_mode: ControlMode,
+    pub(crate) difficulty: DifficultySettings,
+    pub(crate) ui: GameUiState,
     pub(crate) notice: Option<String>,
     pub(crate) initial_pilot_position_m: f64,
     pub(crate) countdown_elapsed: f64,
@@ -24,7 +31,8 @@ impl Default for NativeSession {
     fn default() -> Self {
         Self {
             game: GameSession::new(),
-            control_mode: DEFAULT_CONTROL_MODE,
+            difficulty: default_difficulty(DEFAULT_CONTROL_MODE),
+            ui: GameUiState::default(),
             notice: None,
             initial_pilot_position_m: 0.0,
             countdown_elapsed: 0.0,
@@ -42,11 +50,6 @@ pub(crate) enum MenuAction {
     Resume,
     Abort,
     Retry,
-    Title,
-    Manual,
-    Shared,
-    Automatic,
-    Exit,
 }
 
 impl NativeSession {
@@ -64,6 +67,15 @@ impl NativeSession {
         ] {
             if blocked && let Err(error) = self.game.pause(reason) {
                 self.notice = Some(format!("停止理由を同期できない: {error:?}"));
+            }
+            if !blocked
+                && matches!(
+                    self.game.snapshot().phase(),
+                    SessionPhase::FlightPaused { .. }
+                )
+                && let Err(error) = self.game.clear_pause_reason(reason)
+            {
+                self.notice = Some(format!("解消した停止理由を同期できない: {error:?}"));
             }
         }
     }
@@ -91,61 +103,142 @@ impl NativeSession {
     }
 
     pub(crate) fn action(&mut self, action: MenuAction) -> Result<(), String> {
-        if action == MenuAction::Resume && !self.can_resume() {
+        let command = match action {
+            MenuAction::Start => GameUiSessionCommand::OpenSetup {},
+            MenuAction::Prepare => GameUiSessionCommand::Prepare {},
+            MenuAction::Launch => GameUiSessionCommand::StartCountdown {},
+            MenuAction::Pause => GameUiSessionCommand::Pause {},
+            MenuAction::Resume => GameUiSessionCommand::Resume {},
+            MenuAction::Abort => GameUiSessionCommand::Abort {},
+            MenuAction::Retry => GameUiSessionCommand::Retry {},
+        };
+        self.execute_ui_command(command)
+    }
+
+    pub(crate) fn control_mode(&self) -> ControlMode {
+        game_ui_control_mode(self.difficulty.assistance())
+            .expect("validated difficulty retains a valid authority")
+    }
+
+    pub(crate) fn ui_view(&self, platform: &GameUiPlatformInput) -> Result<GameUiView, String> {
+        let environment = game_ui_environment_readout(self.ui_identity())
+            .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
+        game_ui_view(&self.ui, &self.ui_context(platform, &environment))
+            .map_err(|error| format!("表示を導出できない: {error:?}"))
+    }
+
+    pub(crate) fn ui_frame(
+        &self,
+        platform: &GameUiPlatformInput,
+        retained: &GameUiView,
+    ) -> Result<GameUiFrame, String> {
+        let environment = game_ui_environment_readout(self.ui_identity())
+            .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
+        game_ui_frame(&self.ui, &self.ui_context(platform, &environment), retained)
+            .map_err(|error| format!("表示frameを導出できない: {error:?}"))
+    }
+
+    pub(crate) fn update_ui_action(
+        &mut self,
+        action: GameUiAction,
+        platform: &GameUiPlatformInput,
+    ) -> Result<GameUiUpdate, String> {
+        let environment = game_ui_environment_readout(self.ui_identity())
+            .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
+        let update = update_game_ui(&self.ui, action, &self.ui_context(platform, &environment))
+            .map_err(|error| format!("操作を受理できない: {error:?}"))?;
+        self.ui = update.state.clone();
+        Ok(update)
+    }
+
+    pub(crate) fn ui_identity(&self) -> Option<birdman_game_core::SessionScenarioIdentity> {
+        if self.game.snapshot().phase() == SessionPhase::FlightSetup {
+            HybridSessionPreparation::select_scenario(
+                self.difficulty.weather(),
+                DEFAULT_SESSION_SEED,
+            )
+            .ok()
+            .map(identity_for_selection)
+        } else {
+            self.game.configuration_identity()
+        }
+    }
+
+    fn ui_context<'view>(
+        &'view self,
+        platform: &'view GameUiPlatformInput,
+        environment: &'view str,
+    ) -> GameUiContext<'view, 'static> {
+        GameUiContext {
+            session: &self.game,
+            difficulty: self.difficulty,
+            preset: self.difficulty.preset_label(),
+            identity: self.ui_identity(),
+            record: self.game.playback_record(),
+            environment_readout: environment,
+            platform,
+        }
+    }
+
+    pub(crate) fn execute_ui_command(
+        &mut self,
+        command: GameUiSessionCommand,
+    ) -> Result<(), String> {
+        if command == (GameUiSessionCommand::Resume {}) && !self.can_resume() {
             return Err(
                 "一時停止中の非アクティブ状態・処理遅延・追跡停止の解消後に再開する".into(),
             );
         }
-        let result = match action {
-            MenuAction::Start => self.game.open_setup(),
-            MenuAction::Prepare => {
-                let preparation = HybridSessionPreparation::try_new_for_weather(
-                    self.control_mode,
+        let result = match command {
+            GameUiSessionCommand::OpenSetup {} => self.game.open_setup(),
+            GameUiSessionCommand::Prepare {} => {
+                prepare_game_ui_flight(
+                    &mut self.game,
+                    self.difficulty,
                     DEFAULT_MAXIMUM_FLIGHT_TICKS,
                     DEFAULT_SESSION_SEED,
-                    DEFAULT_WEATHER,
                 )
                 .map_err(|error| format!("準備に失敗した: {error:?}"))?;
-                let (configuration, _) = preparation.into_parts();
-                self.game
-                    .prepare_flight(configuration)
-                    .and_then(|()| self.game.mark_briefing_ready())
+                self.game.mark_briefing_ready()
             }
-            MenuAction::Launch => {
+            GameUiSessionCommand::StartCountdown {} => {
                 self.countdown_elapsed = 0.0;
                 self.game.start_countdown(3)
             }
-            MenuAction::Pause => self.game.pause(PauseReason::Manual),
-            MenuAction::Resume => self
+            GameUiSessionCommand::Pause {} => self.game.pause(PauseReason::Manual),
+            GameUiSessionCommand::Resume {} => self
                 .game
                 .clear_pause_reason(PauseReason::Manual)
                 .and_then(|()| self.game.clear_pause_reason(PauseReason::DocumentHidden))
                 .and_then(|()| self.game.clear_pause_reason(PauseReason::ProcessingDelay))
                 .and_then(|()| self.game.resume()),
-            MenuAction::Abort => self.game.abort_flight().map(|_| ()),
-            MenuAction::Retry => self.game.retry(),
-            MenuAction::Title => match self.game.snapshot().phase() {
-                SessionPhase::BriefingReady
-                | SessionPhase::BriefingPreparing
-                | SessionPhase::BriefingFailed { .. } => self.game.cancel_briefing(),
-                SessionPhase::Countdown { .. } => self.game.cancel_countdown(),
-                _ => self.game.return_to_title(),
-            },
-            MenuAction::Manual | MenuAction::Shared | MenuAction::Automatic => {
-                if self.game.snapshot().phase() != SessionPhase::FlightSetup {
-                    return Err("制御方式は設定画面で選択する".into());
-                }
-                self.control_mode = match action {
-                    MenuAction::Manual => ControlMode::Manual,
-                    MenuAction::Shared => ControlMode::Shared(
-                        FbwAuthority::try_new(0.5)
-                            .map_err(|error| format!("制御権限: {error:?}"))?,
-                    ),
-                    _ => ControlMode::Automatic,
-                };
+            GameUiSessionCommand::Abort {} => self.game.abort_flight().map(|_| ()),
+            GameUiSessionCommand::Retry {} => self.game.retry(),
+            GameUiSessionCommand::RetryBriefing {} => self
+                .game
+                .retry_briefing()
+                .and_then(|()| self.game.mark_briefing_ready()),
+            GameUiSessionCommand::ReturnToTitle {} => self.game.return_to_title(),
+            GameUiSessionCommand::CancelBriefing {} => self.game.cancel_briefing(),
+            GameUiSessionCommand::CancelCountdown {} => self.game.cancel_countdown(),
+            GameUiSessionCommand::EnterReplay {} => self.game.enter_replay(),
+            GameUiSessionCommand::LeaveReplay {} => self.game.leave_replay(),
+            GameUiSessionCommand::EnterAttract {} => self.game.enter_attract(),
+            GameUiSessionCommand::LeaveAttract {} => self.game.leave_attract(),
+            command @ (GameUiSessionCommand::SelectPreset { .. }
+            | GameUiSessionCommand::SelectInformation { .. }
+            | GameUiSessionCommand::SelectAssistance { .. }
+            | GameUiSessionCommand::SelectWeather { .. }
+            | GameUiSessionCommand::SetCue { .. }) => {
+                self.difficulty = select_game_ui_difficulty(
+                    &self.game,
+                    self.difficulty,
+                    &command,
+                    DEFAULT_SESSION_SEED,
+                )
+                .map_err(|error| format!("設定を解決できない: {error:?}"))?;
                 Ok(())
             }
-            MenuAction::Exit => Ok(()),
         };
         result
             .map(|()| {
@@ -154,6 +247,26 @@ impl NativeSession {
             .map_err(|error| format!("操作に失敗した: {error:?}"))
     }
 
+    pub(crate) fn execute_ui_record_action(&mut self, action: GameUiAction) -> Result<(), String> {
+        let result = match action {
+            GameUiAction::SeekReplay { time_seconds } => {
+                self.game.seek_playback(time_seconds).map(|_| ())
+            }
+            GameUiAction::ToggleReplayPlaying {} => self.game.set_playback_playing(
+                !self
+                    .game
+                    .playback_clock()
+                    .ok_or_else(|| "Replay clockが存在しない".to_owned())?
+                    .is_playing(),
+            ),
+            GameUiAction::SetReplayRate { code } => self.game.set_playback_rate_code(code),
+            GameUiAction::SeekAnalysis { .. } => Ok(()),
+            _ => return Err("記録操作として受理できない".into()),
+        };
+        result.map_err(|error| format!("記録操作に失敗した: {error:?}"))
+    }
+
+    #[cfg(test)]
     pub(crate) fn physical_state(&self) -> Option<FlightState> {
         self.display_state().map(|display| display.state)
     }
@@ -164,7 +277,6 @@ impl NativeSession {
             state: state.flight_state(),
             incidence: state.incidence(),
             tick: state.tick_index() as f64,
-            held_target_m: state.pilot_position_target().position_m(),
         })
     }
 
@@ -175,27 +287,43 @@ impl NativeSession {
                 state: state.flight_state(),
                 incidence: state.incidence(),
                 tick: state.tick_index() as f64,
-                held_target_m: state.pilot_position_target().position_m(),
             }),
             SessionSnapshot::Result(result) => match result.state {
                 SessionTerminalState::TailTick(state) => Some(TailDisplay {
                     state: state.flight_state(),
                     incidence: state.incidence(),
                     tick: state.tick_index() as f64,
-                    held_target_m: state.pilot_position_target().position_m(),
                 }),
                 SessionTerminalState::TailWaterContact(sample) => Some(TailDisplay {
                     state: sample.flight_state(),
                     incidence: sample.incidence(),
                     tick: sample.interval_start_tick() as f64 + sample.fraction(),
-                    held_target_m: sample.pilot_position_target().position_m(),
                 }),
             },
+            SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
+                let seconds = self.game.playback_clock()?.time_seconds();
+                let sample = self.game.playback_sample_at_seconds(seconds).ok()?;
+                let position = sample.tick_index as f64 + sample.fraction;
+                Some(TailDisplay {
+                    state: sample.flight_state,
+                    incidence: sample.actuators,
+                    tick: position,
+                })
+            }
             _ => None,
         }
     }
 
     pub(crate) fn countdown(&mut self, elapsed: f64) {
+        if matches!(
+            self.game.snapshot().phase(),
+            SessionPhase::Replay | SessionPhase::Attract
+        ) {
+            if let Err(error) = self.game.advance_playback(elapsed) {
+                self.notice = Some(format!("記録再生を更新できない: {error:?}"));
+            }
+            return;
+        }
         if !matches!(self.game.snapshot(), SessionSnapshot::Countdown { .. }) {
             self.countdown_elapsed = 0.0;
             return;
@@ -250,7 +378,6 @@ pub(crate) struct TailDisplay {
     pub(crate) state: FlightState,
     pub(crate) incidence: TailIncidence,
     pub(crate) tick: f64,
-    pub(crate) held_target_m: f64,
 }
 
 #[derive(Resource, Default, Clone, Copy)]
@@ -303,7 +430,6 @@ mod tests {
             let countdown = session.prepared_display_state().unwrap();
             assert_eq!(countdown.state, initial.state);
             assert_eq!(countdown.incidence, initial.incidence);
-            assert_eq!(countdown.held_target_m, initial.held_target_m);
             assert!(session.display_state().is_none());
             assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
         }
@@ -312,7 +438,6 @@ mod tests {
         let launched = session.display_state().unwrap();
         assert_eq!(launched.state, initial.state);
         assert_eq!(launched.incidence, initial.incidence);
-        assert_eq!(launched.held_target_m, initial.held_target_m);
         assert_eq!(launched.tick, 0.0);
         session.tick(FlightInput::default());
         session.action(MenuAction::Abort).unwrap();
@@ -320,24 +445,30 @@ mod tests {
         let retry = session.prepared_display_state().unwrap();
         assert_eq!(retry.state, initial.state);
         assert_eq!(retry.incidence, initial.incidence);
-        assert_eq!(retry.held_target_m, initial.held_target_m);
         assert!(session.display_state().is_none());
-        session.action(MenuAction::Title).unwrap();
+        session
+            .execute_ui_command(GameUiSessionCommand::CancelBriefing {})
+            .unwrap();
         assert!(session.prepared_display_state().is_none());
     }
     use super::*;
+    use birdman_game_format::AssistanceLevel;
 
     #[test]
     fn bounded_native_input_sequences_keep_terminal_record_and_retry_consistent() {
         for (mode_action, mode_name) in [
-            (MenuAction::Manual, "Manual"),
-            (MenuAction::Shared, "Shared 50%"),
-            (MenuAction::Automatic, "Automatic"),
+            (AssistanceLevel::Manual, "Manual"),
+            (AssistanceLevel::Assisted, "Shared 50%"),
+            (AssistanceLevel::Strong, "Automatic"),
         ] {
             for nose_up in [0.0, 1.0, -1.0] {
                 let mut session = NativeSession::default();
                 session.action(MenuAction::Start).unwrap();
-                session.action(mode_action).unwrap();
+                session
+                    .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                        assistance: mode_action,
+                    })
+                    .unwrap();
                 session.action(MenuAction::Prepare).unwrap();
                 let sealed_identity = session.game.configuration_identity().unwrap();
                 assert_eq!(sealed_identity.seed, DEFAULT_SESSION_SEED);
@@ -392,9 +523,6 @@ mod tests {
                     finalization.terminal_tick as f64 + finalization.terminal_fraction
                 );
                 assert_eq!(last_sample.controls.actuators(), display.incidence);
-                if let Some(target) = last_sample.controls.pilot_position_target_m() {
-                    assert_eq!(target, display.held_target_m);
-                }
                 if let Some(failure) = result.failure {
                     assert_eq!(result.reason, failure.end_reason());
                     assert_eq!(
@@ -578,19 +706,23 @@ mod tests {
     #[test]
     fn selected_control_mode_cannot_change_during_flight_or_result() {
         for selected in [
-            MenuAction::Manual,
-            MenuAction::Shared,
-            MenuAction::Automatic,
+            AssistanceLevel::Manual,
+            AssistanceLevel::Assisted,
+            AssistanceLevel::Strong,
         ] {
             let mut session = NativeSession::default();
             session.action(MenuAction::Start).unwrap();
-            session.action(selected).unwrap();
+            session
+                .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                    assistance: selected,
+                })
+                .unwrap();
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
                 session.countdown(1.0);
             }
-            let mode = session.control_mode;
+            let mode = session.control_mode();
             let header = session.game.flight_record().unwrap().header();
             for terminal in [false, true] {
                 if terminal {
@@ -598,12 +730,18 @@ mod tests {
                 }
                 let before = session.game.snapshot();
                 for changed in [
-                    MenuAction::Manual,
-                    MenuAction::Shared,
-                    MenuAction::Automatic,
+                    AssistanceLevel::Manual,
+                    AssistanceLevel::Assisted,
+                    AssistanceLevel::Strong,
                 ] {
-                    assert!(session.action(changed).is_err());
-                    assert_eq!(session.control_mode, mode);
+                    assert!(
+                        session
+                            .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                                assistance: changed
+                            })
+                            .is_err()
+                    );
+                    assert_eq!(session.control_mode(), mode);
                     assert_eq!(session.game.snapshot(), before);
                     assert_eq!(session.game.flight_record().unwrap().header(), header);
                 }

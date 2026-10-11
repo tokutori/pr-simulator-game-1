@@ -479,15 +479,15 @@ mod tests {
     use super::super::{
         CameraMode,
         native_session::{FlightInput, MenuAction},
-        ui::{TechnicalDisclosure, UiText, update_ui},
+        ui::platform_input,
         world,
     };
     use super::*;
     use bevy::mesh::VertexAttributeValues;
     use birdman_game_format::WeatherClass;
     use birdman_game_session::{
-        DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, HybridSessionPreparation,
         bundled_environment,
+        game_ui::{GameUiControlContent, GameUiSessionCommand},
     };
 
     fn environment_app() -> App {
@@ -513,18 +513,39 @@ mod tests {
     fn prepare_calm(app: &mut App) {
         let mut session = app.world_mut().resource_mut::<NativeSession>();
         session.action(MenuAction::Start).unwrap();
-        let preparation = HybridSessionPreparation::try_new_for_weather(
-            session.control_mode,
-            DEFAULT_MAXIMUM_FLIGHT_TICKS,
-            DEFAULT_SESSION_SEED,
-            WeatherClass::Calm,
-        )
-        .unwrap();
         session
-            .game
-            .prepare_flight(preparation.into_parts().0)
+            .execute_ui_command(GameUiSessionCommand::SelectWeather {
+                weather: WeatherClass::Calm,
+            })
             .unwrap();
-        session.game.mark_briefing_ready().unwrap();
+        session.action(MenuAction::Prepare).unwrap();
+    }
+
+    fn shared_ui_text(app: &mut App) -> String {
+        let platform = platform_input(app.world_mut());
+        let view = app
+            .world()
+            .resource::<NativeSession>()
+            .ui_view(&platform)
+            .unwrap();
+        let controls = view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter_map(|control| {
+                if let GameUiControlContent::Status { value } = &control.content {
+                    Some(format!("{}: {value}", control.label))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        format!(
+            "{}\n{}\n{}",
+            view.title,
+            view.description,
+            controls.join("\n")
+        )
     }
 
     fn environment_surface(
@@ -563,12 +584,9 @@ mod tests {
     #[test]
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
-        app.init_resource::<TechnicalDisclosure>()
-            .add_systems(Update, update_ui.after(apply_quality));
-        let summary = app.world_mut().spawn((UiText::Session, Text::new(""))).id();
         prepare_calm(&mut app);
         app.update();
-        let briefing = &app.world().get::<Text>(summary).unwrap().0;
+        let briefing = shared_ui_text(&mut app);
         assert!(briefing.contains("Calm"));
         assert!(!briefing.contains("Typical"));
         let identity = app
@@ -702,7 +720,9 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .action(MenuAction::Title)
+            .execute_ui_command(
+                birdman_game_session::game_ui::GameUiSessionCommand::CancelBriefing {},
+            )
             .unwrap();
         app.update();
         let default = EnvironmentTarget::DefaultExhibition
@@ -717,7 +737,9 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .action(MenuAction::Title)
+            .execute_ui_command(
+                birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {},
+            )
             .unwrap();
         app.update();
         assert_eq!(
@@ -814,13 +836,6 @@ mod tests {
     #[test]
     fn incomplete_environment_retains_every_resource_and_quality_cannot_restore_the_default() {
         let mut app = environment_app();
-        app.init_resource::<TechnicalDisclosure>()
-            .add_systems(Update, update_ui.after(apply_quality));
-        let summary = app.world_mut().spawn((UiText::Session, Text::new(""))).id();
-        let details = app
-            .world_mut()
-            .spawn((UiText::TechnicalDetails, Text::new("")))
-            .id();
         let (far, far_handle) = environment_surface(&mut app, EnvironmentSurface::Far);
         let (near, _) = environment_surface(&mut app, EnvironmentSurface::Near);
         let materials = environment_materials(&mut app);
@@ -871,18 +886,10 @@ mod tests {
             app.world().get::<Aabb>(near).unwrap().half_extents,
             bounds.half_extents
         );
+        assert!(shared_ui_text(&mut app).contains("以前の表示を保持する"));
         assert!(
-            app.world()
-                .get::<Text>(summary)
-                .unwrap()
-                .0
-                .contains("以前の表示を保持する")
-        );
-        assert!(
-            app.world()
-                .get::<Text>(details)
-                .unwrap()
-                .0
+            platform_input(app.world_mut())
+                .notification
                 .contains("SurfaceUnavailable(Far)")
         );
         {
@@ -911,11 +918,14 @@ mod tests {
             app.world().resource::<WaterQualitySelection>().applied(),
             WaterQuality::High
         );
-        assert!(
-            app.world()
-                .resource::<WaterQualitySelection>()
-                .status()
-                .contains("SurfaceUnavailable(Far)")
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().failure(),
+            Some((
+                WaterQuality::Low,
+                &WaterQualityFailure::EnvironmentProjection(
+                    EnvironmentFailure::SurfaceUnavailable(EnvironmentSurface::Far)
+                )
+            ))
         );
         app.world_mut()
             .entity_mut(far)
@@ -946,14 +956,8 @@ mod tests {
         );
         assert_eq!(environment_light(&mut app), (0.0, Transform::IDENTITY));
         assert_eq!(environment_materials(&mut app)[0].sun_cloud, Vec4::ZERO);
-        assert!(
-            !app.world()
-                .get::<Text>(summary)
-                .unwrap()
-                .0
-                .contains("以前の表示を保持する")
-        );
-        assert!(app.world().get::<Text>(details).unwrap().0.is_empty());
+        assert!(!shared_ui_text(&mut app).contains("以前の表示を保持する"));
+        assert!(platform_input(app.world_mut()).notification.is_empty());
     }
 
     #[derive(Clone, Copy)]
@@ -1533,7 +1537,10 @@ mod tests {
         let quality = app.world().resource::<WaterQualitySelection>();
         assert_eq!(quality.applied(), WaterQuality::High);
         assert_eq!(quality.pending(), None);
-        assert!(quality.status().contains("material"));
+        assert_eq!(
+            quality.failure(),
+            Some((WaterQuality::Low, &WaterQualityFailure::MaterialUnavailable))
+        );
     }
 
     #[test]
@@ -1570,11 +1577,12 @@ mod tests {
             let quality = app.world().resource::<WaterQualitySelection>();
             assert_eq!(quality.applied(), WaterQuality::High);
             assert_eq!(quality.pending(), None);
-            assert!(quality.status().contains(if has_surface {
-                "mesh asset"
+            let cause = if has_surface {
+                WaterQualityFailure::MeshUnavailable
             } else {
-                "描画対象"
-            }));
+                WaterQualityFailure::NearSurfaceUnavailable
+            };
+            assert_eq!(quality.failure(), Some((WaterQuality::Low, &cause)));
         }
     }
 

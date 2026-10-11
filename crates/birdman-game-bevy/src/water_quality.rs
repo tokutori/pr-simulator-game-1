@@ -17,6 +17,7 @@ pub(crate) struct WaterQualityProfile {
 }
 
 impl WaterQuality {
+    #[cfg(test)]
     pub(crate) const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
 
     pub(crate) const fn label(self) -> &'static str {
@@ -45,18 +46,6 @@ pub(crate) enum WaterQualityFailure {
     MaterialUnavailable,
     WavePreparation(String),
     EnvironmentProjection(EnvironmentFailure),
-}
-
-impl WaterQualityFailure {
-    fn label(&self) -> String {
-        match self {
-            Self::NearSurfaceUnavailable => "近景水面の描画対象を特定できない".into(),
-            Self::MeshUnavailable => "現在の近景mesh assetを取得できない".into(),
-            Self::MaterialUnavailable => "現在の近景水面materialを取得できない".into(),
-            Self::WavePreparation(cause) => cause.clone(),
-            Self::EnvironmentProjection(cause) => format!("描画環境を適用できない: {cause:?}"),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +91,15 @@ impl WaterQualitySelection {
         }
     }
 
+    pub(crate) const fn failure(&self) -> Option<(WaterQuality, &WaterQualityFailure)> {
+        match &self.state {
+            WaterQualityState::Failed {
+                requested, cause, ..
+            } => Some((*requested, cause)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn can_select(&self, phase: SessionPhase) -> bool {
         self.pending().is_none() && quality_menu_visible(phase)
     }
@@ -136,31 +134,6 @@ impl WaterQualitySelection {
                     cause,
                 },
             },
-        }
-    }
-
-    pub(crate) fn status(&self) -> String {
-        match &self.state {
-            WaterQualityState::Ready(applied) => format!(
-                "湖面画質: {} — {}分割\n描画密度のみを変更する。飛行条件は保持する。",
-                applied.label(),
-                applied.profile().near_cells,
-            ),
-            WaterQualityState::Requested { applied, requested } => format!(
-                "湖面画質: {}を適用中（現在: {}）",
-                requested.label(),
-                applied.label(),
-            ),
-            WaterQualityState::Failed {
-                applied,
-                requested,
-                cause,
-            } => format!(
-                "湖面画質: {}を保持。{}の適用に失敗した。\n{}。",
-                applied.label(),
-                requested.label(),
-                cause.label(),
-            ),
         }
     }
 }
@@ -235,7 +208,10 @@ mod tests {
         let failed = pending.completed(Err(WaterQualityFailure::MeshUnavailable));
         assert_eq!(failed.applied(), WaterQuality::High);
         assert_eq!(failed.pending(), None);
-        assert!(failed.status().contains("mesh asset"));
+        assert_eq!(
+            failed.failure(),
+            Some((WaterQuality::Low, &WaterQualityFailure::MeshUnavailable))
+        );
         let retry = failed
             .request(WaterQuality::Low, SessionPhase::FlightSetup)
             .unwrap();
