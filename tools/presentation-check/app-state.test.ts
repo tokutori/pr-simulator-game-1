@@ -4,7 +4,7 @@ import { currentNamedAnalysisFixture, currentNamedCursorFixture } from "../game-
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "../../web/src/app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionState, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayClockObservation, replayPoseData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
 import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
@@ -244,7 +244,7 @@ describe("Boot application state", () => {
       { type: "load-flight-analysis", requestId: 1 }
     ]);
     expect(entered.model.gameSession.phaseCode).toBe(9);
-    expect(entered.model.pendingReplayClockRequestId).toBe(1);
+    expect(entered.model.replayClock).toMatchObject({ kind: "requesting", requestId: 1 });
     expect(updateApp(opening.model, {
       type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } }
     }).model).toBe(opening.model);
@@ -263,7 +263,7 @@ describe("Boot application state", () => {
       difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.model.gameSession.phaseCode).toBe(10);
-    expect(entered.model.replayPlaying).toBe(false);
+    expect(entered.model.replayClock.observation.playing).toBe(false);
     expect(entered.effects).toEqual([
       {
         type: "control-replay-clock", requestId: 1, generation: 1,
@@ -275,7 +275,7 @@ describe("Boot application state", () => {
       type: "replay-clock-command-completed", requestId: 1, generation: 1,
       state: { timeSeconds: 0, rateCode: 1, playing: true }
     });
-    expect(synchronized.model.replayPlaying).toBe(true);
+    expect(synchronized.model.replayClock.observation.playing).toBe(true);
 
     const analysis = currentNamedAnalysisFixture({ phase: "attract",
       samples: Object.freeze([]), initialPilotPositionMeters: 0,
@@ -298,7 +298,7 @@ describe("Boot application state", () => {
       state: { timeSeconds: 0.1, rateCode: 1, playing: true }
     });
     expect(looped.model.analysisCursorTimeSeconds).toBeCloseTo(0.1);
-    expect(looped.model.replayPlaying).toBe(true);
+    expect(looped.model.replayClock.observation.playing).toBe(true);
     expect(looped.effects).toContainEqual({ type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.1 });
     expect(looped.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
 
@@ -313,8 +313,8 @@ describe("Boot application state", () => {
       difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(returned.model.gameSession.phaseCode).toBe(0);
-    expect(returned.model.replayPlaying).toBe(false);
-    expect(returned.model.replayClockGeneration).toBe(2);
+    expect(returned.model.replayClock.observation.playing).toBe(false);
+    expect(returned.model.replayClock.generation).toBe(2);
   });
 
   it("serializes permission requests and backend changes", () => {
@@ -627,10 +627,12 @@ describe("Boot application state", () => {
   });
 
   it.each([9, 10])("pauses the Rust playback clock and rejects old ticks in cached phase %s", (phaseCode) => {
-    const playing = { ...readyModel(phaseCode), replayPlaying: true, replayClockGeneration: 7 };
+    const initial = readyModel(phaseCode);
+    const playing: AppModel = { ...initial, replayClock: { ...initial.replayClock, generation: 7,
+      observation: { ...initial.replayClock.observation, playing: true } } };
     const cached = updateApp(playing, { type: "page-suspended" });
-    expect(cached.model.replayPlaying).toBe(false);
-    expect(cached.model.replayClockGeneration).toBe(8);
+    expect(cached.model.replayClock.observation.playing).toBe(false);
+    expect(cached.model.replayClock.generation).toBe(8);
     expect(cached.effects).toContainEqual({
       type: "control-replay-clock", requestId: 1, generation: 8, command: { kind: "pause" }
     });
@@ -638,8 +640,8 @@ describe("Boot application state", () => {
       type: "replay-clock-command-completed", requestId: 1, generation: 8,
       state: { timeSeconds: 0, rateCode: 1, playing: false }
     });
-    expect(paused.model.pendingReplayClockRequestId).toBeNull();
-    expect(paused.model.replayPlaying).toBe(false);
+    expect(paused.model.replayClock.kind).toBe("settled");
+    expect(paused.model.replayClock.observation.playing).toBe(false);
     expect(paused.model.presentation.type).toBe("cached");
     expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
     expect(updateApp(cached.model, {
@@ -647,7 +649,7 @@ describe("Boot application state", () => {
     }).model).toBe(cached.model);
     const restoration = updateApp(paused.model, { type: "page-restored" });
     const restored = restoration.model;
-    expect(restored.replayPlaying).toBe(false);
+    expect(restored.replayClock.observation.playing).toBe(false);
     const play = restoration.effects.find((effect) => effect.type === "control-replay-clock");
     if (phaseCode === 10) {
       expect(play).toEqual({ type: "control-replay-clock", requestId: 2, generation: 9, command: { kind: "play" } });
@@ -655,7 +657,7 @@ describe("Boot application state", () => {
         type: "replay-clock-command-completed", requestId: 2, generation: 9,
         state: { timeSeconds: 0, rateCode: 1, playing: true }
       });
-      expect(playingAgain.model.replayPlaying).toBe(true);
+      expect(playingAgain.model.replayClock.observation.playing).toBe(true);
       expect(playingAgain.model.analysisCursorTimeSeconds).toBe(0);
     } else expect(play).toBeUndefined();
     expect(updateApp(restored, {
@@ -890,7 +892,8 @@ describe("Boot application state", () => {
     const initial: AppModel = { ...readyModel(9),
       analysis: { kind: "ready", data, nextRequestId: 2 },
       analysisCursor: { kind: "ready", sample, nextRequestId: 2 },
-      pendingReplayClockRequestId: 4, replayClockGeneration: 3 };
+      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 3,
+        observation: { timeSeconds: 0, speed: 1, playing: false } } };
     const queried = updateApp(initial, { type: "replay-clock-command-completed", requestId: 4, generation: 3,
       state: { timeSeconds: 2, rateCode: 1, playing: false } });
     expect(queried.model.analysisCursor).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: sample });
@@ -962,8 +965,7 @@ describe("Boot application state", () => {
       ...selectedModel(7, { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }] }),
       analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
       pendingGameRequestId: null,
-      nextRequestId: 2,
-      nextReplayPoseRequestId: 1
+      nextRequestId: 2
     };
     const requested = updateApp(result, {
       type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "enter_replay" } }
@@ -1011,8 +1013,8 @@ describe("Boot application state", () => {
         pilotPositionMeters: 0, initialPilotPositionMeters: 0
       }
     });
-    expect(stale.model.replayPose).toBeNull();
-    expect(stale.model.pendingReplayPoseRequestId).toBe(3);
+    expect(replayPoseData(stale.model.replayPose)).toBeNull();
+    expect(stale.model.replayPose).toMatchObject({ kind: "loading", requestId: 3 });
     const currentPose = updateApp(seekCompleted.model, {
       type: "flight-replay-pose-loaded", requestId: 3,
       pose: {
@@ -1047,7 +1049,7 @@ describe("Boot application state", () => {
     expect(returned.model.gameSession.phaseCode).toBe(7);
     expect(returned.model.resultTab).toBe("analysis");
     expect(returned.model.analysisCursorTimeSeconds).toBe(1.25);
-    expect(returned.model.replayPose).toBeNull();
+    expect(replayPoseData(returned.model.replayPose)).toBeNull();
     expect(returned.effects).toEqual([{ type: "load-flight-analysis", requestId: 2 }]);
   });
 
@@ -1067,13 +1069,14 @@ describe("Boot application state", () => {
       ...readyModel(),
       gameSession: sessionForTest(9),
       analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
-      playbackTimeSeconds: 0.5,
+      replayClock: { kind: "settled", nextRequestId: 1, generation: 0,
+        observation: { timeSeconds: 0.5, speed: 1, playing: false } },
       pendingGameRequestId: null
     };
     const speed = updateApp(replay, {
       type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "set_replay_rate", code: 2 } }
     });
-    expect(speed.model.replaySpeed).toBe(1);
+    expect(speed.model.replayClock.observation.speed).toBe(1);
     expect(speed.effects).toEqual([{
       type: "shared-replay-action", requestId: 1, generation: 1,
       action: { kind: "set_replay_rate", code: 2 }
@@ -1082,11 +1085,11 @@ describe("Boot application state", () => {
       type: "replay-clock-command-completed", requestId: 1, generation: 1,
       state: { timeSeconds: 0.5, rateCode: 2, playing: false }
     });
-    expect(rateSet.model.replaySpeed).toBe(2);
+    expect(rateSet.model.replayClock.observation.speed).toBe(2);
     const play = updateApp(rateSet.model, {
       type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
     });
-    expect(play.model.replayPlaying).toBe(false);
+    expect(play.model.replayClock.observation.playing).toBe(false);
     expect(play.effects).toEqual([{
       type: "shared-replay-action", requestId: 2, generation: 2,
       action: { kind: "toggle_replay_playing" }
@@ -1095,7 +1098,7 @@ describe("Boot application state", () => {
       type: "replay-clock-command-completed", requestId: 2, generation: 2,
       state: { timeSeconds: 0.5, rateCode: 2, playing: true }
     });
-    expect(playing.model.replayPlaying).toBe(true);
+    expect(playing.model.replayClock.observation.playing).toBe(true);
     expect(playing.effects).toEqual([
       { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.5 },
       { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 },
@@ -1120,7 +1123,7 @@ describe("Boot application state", () => {
     const pause = updateApp(advanced.model, {
       type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
     });
-    expect(pause.model.replayPlaying).toBe(true);
+    expect(pause.model.replayClock.observation.playing).toBe(true);
     expect(pause.effects).toEqual([{
       type: "shared-replay-action", requestId: 4, generation: 3,
       action: { kind: "toggle_replay_playing" }
@@ -1129,7 +1132,7 @@ describe("Boot application state", () => {
       type: "replay-clock-command-completed", requestId: 4, generation: 3,
       state: { timeSeconds: 1, rateCode: 2, playing: false }
     });
-    expect(paused.model.replayPlaying).toBe(false);
+    expect(paused.model.replayClock.observation.playing).toBe(false);
     const staleTick = updateApp(paused.model, { type: "replay-clock-tick", generation: 2, elapsedSeconds: 1 });
     expect(staleTick.model).toBe(paused.model);
   });
@@ -1146,7 +1149,8 @@ describe("Boot application state", () => {
     });
     const replay: AppModel = {
       ...readyModel(9), analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
-      playbackTimeSeconds: 1.9, replayPlaying: true, replaySpeed: 2, replayClockGeneration: 4
+      replayClock: { kind: "settled", nextRequestId: 1, generation: 4,
+        observation: { timeSeconds: 1.9, speed: 2, playing: true } }
     };
     const advancing = updateApp(replay, { type: "replay-clock-tick", generation: 4, elapsedSeconds: 0.1 });
     expect(advancing.effects).toEqual([{
@@ -1158,17 +1162,16 @@ describe("Boot application state", () => {
       state: { timeSeconds: 2, rateCode: 2, playing: false }
     });
     expect(ended.model.analysisCursorTimeSeconds).toBe(2);
-    expect(ended.model.replayPlaying).toBe(false);
-    expect(ended.model.replayClockGeneration).toBe(4);
+    expect(ended.model.replayClock.observation.playing).toBe(false);
+    expect(ended.model.replayClock.generation).toBe(4);
     expect(ended.effects).toHaveLength(2);
   });
 
   it("ignores stale clock responses and stops after a failed Rust clock command", () => {
     const pending: AppModel = {
       ...readyModel(9),
-      pendingReplayClockRequestId: 3,
-      replayClockGeneration: 5,
-      replayPlaying: true
+      replayClock: { kind: "requesting", requestId: 3, nextRequestId: 4, generation: 5,
+        observation: { timeSeconds: 0, speed: 1, playing: true } }
     };
     const stale = updateApp(pending, {
       type: "replay-clock-command-completed", requestId: 2, generation: 5,
@@ -1181,12 +1184,158 @@ describe("Boot application state", () => {
       message: "record cursor is outside the retained interval",
       state: { timeSeconds: 0.5, rateCode: 2, playing: false }
     });
-    expect(failed.model.pendingReplayClockRequestId).toBeNull();
+    expect(failed.model.replayClock.kind).toBe("failed");
     expect(failed.model.analysisCursorTimeSeconds).toBe(0.5);
-    expect(failed.model.replaySpeed).toBe(2);
-    expect(failed.model.replayPlaying).toBe(false);
-    expect(failed.model.replayClockGeneration).toBe(6);
+    expect(failed.model.replayClock.observation.speed).toBe(2);
+    expect(failed.model.replayClock.observation.playing).toBe(false);
+    expect(failed.model.replayClock.generation).toBe(6);
     expect(failed.model.status).toContain("record cursor is outside");
+  });
+
+  it("starts without a pose request and exposes the immutable clock observation by reference", () => {
+    const initial = createInitialAppModel();
+    expect(initial.replayPose).toEqual({ kind: "idle", nextRequestId: 1 });
+    expect(replayPoseData(initial.replayPose)).toBeNull();
+    expect(initial.replayClock).toEqual({ kind: "settled", nextRequestId: 1, generation: 0,
+      observation: { timeSeconds: 0, speed: 1, playing: false } });
+    expect(replayClockObservation(initial.replayClock)).toBe(initial.replayClock.observation);
+    expect(Object.isFrozen(initial.replayPose)).toBe(true);
+    expect(Object.isFrozen(initial.replayClock)).toBe(true);
+    expect(Object.isFrozen(initial.replayClock.observation)).toBe(true);
+  });
+
+  it("retains a pose through replacement queries and rejects stale, duplicate and contradictory completions", () => {
+    const pose = { datumPositionNed: { north: 1, east: 2, down: -3 },
+      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 };
+    const initial: AppModel = { ...readyModel(9),
+      analysis: { kind: "ready", nextRequestId: 1, data: currentNamedAnalysisFixture({ phase: "replay" }) },
+      replayPose: { kind: "ready", nextRequestId: 1, pose } };
+    const first = updateApp(initial, { type: "shared-game-ui-effect",
+      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.25 } } });
+    const queried = updateApp(first.model, { type: "replay-clock-command-completed", requestId: 1, generation: 1,
+      state: { timeSeconds: 0.25, rateCode: 1, playing: false } });
+    expect(queried.model.replayPose).toEqual({ kind: "loading", requestId: 1, nextRequestId: 2, retained: pose });
+    expect(replayPoseData(queried.model.replayPose)).toBe(pose);
+    const second = updateApp(queried.model, { type: "shared-game-ui-effect",
+      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.5 } } });
+    const latest = updateApp(second.model, { type: "replay-clock-command-completed", requestId: 2, generation: 2,
+      state: { timeSeconds: 0.5, rateCode: 1, playing: false } });
+    expect(latest.model.replayPose).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: pose });
+    const stale = updateApp(latest.model, { type: "flight-replay-pose-loaded", requestId: 1, pose });
+    expect(stale.model).toBe(latest.model);
+    expect(stale.effects).toEqual([]);
+    const replacement = { ...pose, pilotPositionMeters: 0.2 };
+    const loaded = updateApp(latest.model, { type: "flight-replay-pose-loaded", requestId: 2, pose: replacement });
+    expect(loaded.model.replayPose).toEqual({ kind: "ready", nextRequestId: 3, pose: replacement });
+    expect(replayPoseData(loaded.model.replayPose)).toBe(replacement);
+    for (const message of [
+      { type: "flight-replay-pose-loaded", requestId: 2, pose },
+      { type: "flight-replay-pose-failed", requestId: 2, message: "late failure" },
+      { type: "replay-clock-command-completed", requestId: 2, generation: 2,
+        state: { timeSeconds: 0.75, rateCode: 1, playing: true } }
+    ] satisfies readonly AppMessage[]) {
+      const duplicate = updateApp(loaded.model, message);
+      expect(duplicate.model).toBe(loaded.model);
+      expect(duplicate.effects).toEqual([]);
+    }
+    const third = updateApp(loaded.model, { type: "shared-game-ui-effect",
+      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.75 } } });
+    const pending = updateApp(third.model, { type: "replay-clock-command-completed", requestId: 3, generation: 3,
+      state: { timeSeconds: 0.75, rateCode: 1, playing: false } });
+    expect(replayPoseData(pending.model.replayPose)).toBe(replacement);
+    const failed = updateApp(pending.model, { type: "flight-replay-pose-failed", requestId: 3, message: "pose unavailable" });
+    expect(failed.model.replayPose).toEqual({ kind: "failed", nextRequestId: 4, message: "pose unavailable" });
+    expect(replayPoseData(failed.model.replayPose)).toBeNull();
+    expect(updateApp(failed.model, { type: "flight-replay-pose-loaded", requestId: 3, pose }).model).toBe(failed.model);
+  });
+
+  it.each(["loaded", "failed"] as const)("accepts pose %s while cached without changing playback ownership", (result) => {
+    const pose = { datumPositionNed: { north: 1, east: 2, down: -3 },
+      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 };
+    const initial: AppModel = { ...readyModel(9), replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null } };
+    const cached = updateApp(initial, { type: "page-suspended" }).model;
+    const completed = updateApp(cached, result === "loaded"
+      ? { type: "flight-replay-pose-loaded", requestId: 7, pose }
+      : { type: "flight-replay-pose-failed", requestId: 7, message: "pose unavailable" });
+    expect(completed.model.presentation.type).toBe("cached");
+    expect(completed.model.gameSession).toBe(cached.gameSession);
+    expect(completed.model.replayClock).toBe(cached.replayClock);
+    expect(completed.model.replayPose.nextRequestId).toBe(8);
+    expect(replayPoseData(completed.model.replayPose)).toBe(result === "loaded" ? pose : null);
+    expect(completed.effects).toEqual([]);
+    expect(updateApp(completed.model, { type: "page-restored" }).model.replayPose).toBe(completed.model.replayPose);
+  });
+
+  it.each([false, true])("separates clock failure admission from the observed Rust playing value (actual state %s)", (actualState) => {
+    const pending: AppModel = { ...readyModel(9), replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+      observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
+    const failure: AppMessage = { type: "replay-clock-command-failed", requestId: 4, generation: 5, message: "clock unavailable",
+      ...(actualState ? { state: { timeSeconds: 1.5, rateCode: 2 as const, playing: true } } : {}) };
+    const failed = updateApp(pending, failure);
+    expect(failed.model.replayClock).toEqual({ kind: "failed", message: "clock unavailable", nextRequestId: 5, generation: 6,
+      observation: actualState ? { timeSeconds: 1.5, speed: 2, playing: true } : { timeSeconds: 1.25, speed: 0.5, playing: false } });
+    expect(failed.effects).toEqual([]);
+    expect(updateApp(failed.model, failure).model).toBe(failed.model);
+    expect(updateApp(failed.model, { type: "replay-clock-tick", generation: 5, elapsedSeconds: 1 }).model).toBe(failed.model);
+    const retried = updateApp(failed.model, { type: "shared-game-ui-effect",
+      effect: { kind: "record", action: { kind: "toggle_replay_playing" } } });
+    expect(retried.model.replayClock).toMatchObject({ kind: "requesting", requestId: 5, nextRequestId: 6, generation: 7 });
+    expect(retried.model.replayClock.observation).toBe(failed.model.replayClock.observation);
+    expect(updateApp(retried.model, { type: "shared-game-ui-effect",
+      effect: { kind: "record", action: { kind: "toggle_replay_playing" } } }).model).toBe(retried.model);
+  });
+
+  it.each([NaN, -1])("rejects invalid clock time %s while retaining the last valid time and rate", (timeSeconds) => {
+    const pending: AppModel = { ...readyModel(9), replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+      observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
+    const failed = updateApp(pending, { type: "replay-clock-command-completed", requestId: 4, generation: 5,
+      state: { timeSeconds, rateCode: 2, playing: true } });
+    expect(failed.model.replayClock).toEqual({ kind: "failed", message: "Rust Replay clock returned an invalid state",
+      nextRequestId: 5, generation: 6, observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
+    expect(failed.effects).toEqual([]);
+  });
+
+  it.each([0, 7] as const)("cancels playback requests on phase %s exit and preserves IDs when opening the next record", (phaseCode) => {
+    const initial: AppModel = { ...readyModel(9), pendingGameRequestId: 8,
+      replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null },
+      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+        observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
+    const projection = phaseCode === 7
+      ? { phaseCode: 7 as const, display: { kind: "unavailable" as const, reason: "record_not_loaded" as const } }
+      : { phaseCode: 0 as const, display: { kind: "unavailable" as const, reason: "menu_phase" as const } };
+    const exited = updateApp(initial, { type: "game-operation-completed", requestId: 8, ...projection, countdownRemaining: 0,
+      canResume: false, controlLayout: "tail_incidence", controlModeCode: 0, difficulty: initial.difficulty, configurationMetadata: null,
+    });
+    expect(exited.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
+    expect(exited.model.replayClock).toEqual({ kind: "settled", nextRequestId: 5, generation: 6,
+      observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
+    const reopened = updateApp({ ...exited.model, pendingGameRequestId: 9 }, {
+      type: "game-operation-completed", requestId: 9, phaseCode: 9, returnTarget: phaseCode === 0 ? "title" : "result",
+      countdownRemaining: 0, canResume: false, controlLayout: "tail_incidence", controlModeCode: 0,
+      difficulty: initial.difficulty, configurationMetadata: null, display: { kind: "unavailable", reason: "record_not_loaded" }
+    });
+    expect(reopened.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
+    expect(reopened.model.replayClock).toMatchObject({ kind: "requesting", requestId: 5, nextRequestId: 6, generation: 7 });
+    for (const message of [
+      { type: "flight-replay-pose-loaded", requestId: 7, pose: { datumPositionNed: { north: 1, east: 2, down: -3 },
+        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 } },
+      { type: "replay-clock-command-completed", requestId: 4, generation: 5,
+        state: { timeSeconds: 1.5, rateCode: 2, playing: true } }
+    ] satisfies readonly AppMessage[]) {
+      const stale = updateApp(reopened.model, message);
+      expect(stale.model).toBe(reopened.model);
+      expect(stale.effects).toEqual([]);
+    }
+  });
+
+  it.each([9, 10])("preserves the existing pending clock semantics after a pose failure in phase %s", (phaseCode) => {
+    const initial: AppModel = { ...readyModel(phaseCode), replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null },
+      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+        observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
+    const failed = updateApp(initial, { type: "flight-replay-pose-failed", requestId: 7, message: "pose unavailable" });
+    expect(failed.model.replayClock).toEqual({ kind: "requesting", requestId: 4, nextRequestId: 5,
+      generation: phaseCode === 10 ? 6 : 5, observation: { timeSeconds: 1.25, speed: 0.5, playing: phaseCode !== 10 } });
+    expect(failed.effects).toEqual([]);
   });
 
   it("observes Rust camera cycling on every presentation backend without mutating the browser phase", () => {
@@ -1612,8 +1761,7 @@ describe("Single Menu scroll state", () => {
     expect(overlay.model.analysis).toBe(initial.analysis);
     expect(overlay.model.analysisCursorTimeSeconds).toBe(initial.analysisCursorTimeSeconds);
     expect(overlay.model.analysisCursor).toBe(initial.analysisCursor);
-    expect(overlay.model.replayClockGeneration).toBe(initial.replayClockGeneration);
-    expect(overlay.model.pendingReplayClockRequestId).toBe(initial.pendingReplayClockRequestId);
+    expect(overlay.model.replayClock).toBe(initial.replayClock);
     expect(overlay.model.pendingGameRequestId).toBe(initial.pendingGameRequestId);
   });
 

@@ -11,7 +11,7 @@ import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "./app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -159,14 +159,15 @@ function renderModel(): void {
       : "pilot";
   const venue = currentVenueMap();
   const cameraPoints = venue.kind === "available" ? venue.value.cameraPoints : [];
-  const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
-    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, analysis === null ? undefined : projectAnalysisView(analysis).samples)
+  const replayPose = replayPoseData(model.replayPose);
+  const cinematicView = isCinematicCameraMode(cameraMode) && replayPose !== null
+    ? cinematicCameraView(cameraMode, replayPose, model.analysisCursorTimeSeconds, cameraPoints, analysis === null ? undefined : projectAnalysisView(analysis).samples)
     : null;
   flightRenderer?.setCinematicCameraView(cinematicView);
   flightRenderer?.setFlightCameraMode(cameraMode);
   if (phaseCode === 9 || phaseCode === 10) {
     flightRenderer?.setPreparedFlightPose(null);
-    flightRenderer?.setFlightPose(model.replayPose);
+    flightRenderer?.setFlightPose(replayPose);
   } else if (phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8) {
     flightRenderer?.setFlightPose(null);
     flightRenderer?.setPreparedFlightPose(gameSession?.readPreparedLaunchPose() ?? null);
@@ -523,7 +524,7 @@ function runEffect(effect: AppEffect): void {
       const session = gameSession;
       if (session === null) return;
       window.setTimeout(() => {
-        if (gameSession !== session || model.replayClockGeneration !== effect.generation) return;
+        if (gameSession !== session || model.replayClock.generation !== effect.generation) return;
         dispatch({
           type: "replay-clock-tick",
           generation: effect.generation,

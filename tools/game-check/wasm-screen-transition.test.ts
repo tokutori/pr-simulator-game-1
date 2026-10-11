@@ -229,12 +229,12 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       expect(session.readPlaybackClock().timeSeconds).toBeCloseTo(0.005);
       activate("game-replay-play-pause");
       expect(session.readPlaybackClock().kind).toBe("playing");
-      const advance = updateApp(model, { type: "replay-clock-tick", generation: model.replayClockGeneration, elapsedSeconds: 0.1 });
+      const advance = updateApp(model, { type: "replay-clock-tick", generation: model.replayClock.generation, elapsedSeconds: 0.1 });
       model = advance.model;
       const advanceClock = advance.effects.find((effect) => effect.type === "control-replay-clock");
       if (advanceClock?.type !== "control-replay-clock") throw new Error("Replay advance was not requested");
       runClockEffect(advanceClock);
-      expect(model.replayPlaying).toBe(false);
+      expect(model.replayClock.observation.playing).toBe(false);
       expect(model.analysisCursorTimeSeconds).toBeCloseTo(analysis.summary.durationSeconds);
       activate("game-replay-return");
       activate("game-result-retry");
