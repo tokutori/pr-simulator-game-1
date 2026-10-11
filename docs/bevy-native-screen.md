@@ -87,8 +87,8 @@ Resultでは選択した操縦支援、記録由来のcontroller version、確�
 日本語表示はWindowsにインストールされたMeiryoをローカルで読み取る。フォントファイルをrepositoryやbinaryへ同梱しない。
 日本語の単語分割にはICU辞書を使用する。Bevy 0.19.1が利用するParley 0.9.0へ公式の`complex-scripts`選択処理を限定backportし、
 Windows native依存だけで有効化する。出典と変更範囲は`vendor/parley/BACKPORT.md`に記録する。
-Parley 0.9.0にはICU4X 2.3の`BidiClass::to_icu4c_value`に関する既存の非推奨警告が1件残る。
-これは分割モデル欠損と別の上流API変更であり、[ICU4X #6067](https://github.com/unicode-org/icu4x/issues/6067)を参照する。
+ICU4X 2.3の`BidiClass::to_icu4c_value`に関する非推奨警告は、公式のconst mask処理を限定backportして解消した。
+出典と23分類のbit対応・未知分類の処理は[backport記録](../vendor/parley/BACKPORT.md)を参照する。
 警告の抑制や依存versionの後退は行わない。
 利用と再配布の境界は[Microsoftのfont FAQ](https://learn.microsoft.com/en-us/typography/fonts/font-faq)に従う。
 未導入環境では起動時に明示的なエラーを返し、利用許諾を持つフォントを`--font`で指定する。

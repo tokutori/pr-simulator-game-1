@@ -894,5 +894,79 @@ impl BracketStack {
 }
 
 const fn mask(t: BidiClass) -> u32 {
-    1 << (t.to_icu4c_value() as u32)
+    let bit = match t {
+        BidiClass::LeftToRight => 0,
+        BidiClass::RightToLeft => 1,
+        BidiClass::EuropeanNumber => 2,
+        BidiClass::EuropeanSeparator => 3,
+        BidiClass::EuropeanTerminator => 4,
+        BidiClass::ArabicNumber => 5,
+        BidiClass::CommonSeparator => 6,
+        BidiClass::ParagraphSeparator => 7,
+        BidiClass::SegmentSeparator => 8,
+        BidiClass::WhiteSpace => 9,
+        BidiClass::OtherNeutral => 10,
+        BidiClass::LeftToRightEmbedding => 11,
+        BidiClass::LeftToRightOverride => 12,
+        BidiClass::ArabicLetter => 13,
+        BidiClass::RightToLeftEmbedding => 14,
+        BidiClass::RightToLeftOverride => 15,
+        BidiClass::PopDirectionalFormat => 16,
+        BidiClass::NonspacingMark => 17,
+        BidiClass::BoundaryNeutral => 18,
+        BidiClass::FirstStrongIsolate => 19,
+        BidiClass::LeftToRightIsolate => 20,
+        BidiClass::RightToLeftIsolate => 21,
+        BidiClass::PopDirectionalIsolate => 22,
+        _ => {
+            debug_assert!(false, "unhandled Bidi_Class");
+            return 0;
+        }
+    };
+    1 << bit
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask;
+    use icu_properties::props::BidiClass;
+
+    #[test]
+    fn masks_preserve_all_public_bidi_class_bits() {
+        let classes = [
+            BidiClass::LeftToRight,
+            BidiClass::RightToLeft,
+            BidiClass::EuropeanNumber,
+            BidiClass::EuropeanSeparator,
+            BidiClass::EuropeanTerminator,
+            BidiClass::ArabicNumber,
+            BidiClass::CommonSeparator,
+            BidiClass::ParagraphSeparator,
+            BidiClass::SegmentSeparator,
+            BidiClass::WhiteSpace,
+            BidiClass::OtherNeutral,
+            BidiClass::LeftToRightEmbedding,
+            BidiClass::LeftToRightOverride,
+            BidiClass::ArabicLetter,
+            BidiClass::RightToLeftEmbedding,
+            BidiClass::RightToLeftOverride,
+            BidiClass::PopDirectionalFormat,
+            BidiClass::NonspacingMark,
+            BidiClass::BoundaryNeutral,
+            BidiClass::FirstStrongIsolate,
+            BidiClass::LeftToRightIsolate,
+            BidiClass::RightToLeftIsolate,
+            BidiClass::PopDirectionalIsolate,
+        ];
+        let mut combined_mask = 0;
+        for (index, bidi_class) in classes.into_iter().enumerate() {
+            let class_mask = mask(bidi_class);
+            assert_eq!(usize::from(u16::from(bidi_class)), index);
+            assert_eq!(class_mask, 1 << u32::from(u16::from(bidi_class)));
+            assert_eq!(class_mask.count_ones(), 1);
+            assert_eq!(combined_mask & class_mask, 0);
+            combined_mask |= class_mask;
+        }
+        assert_eq!(combined_mask, 0x7fffff);
+    }
 }
