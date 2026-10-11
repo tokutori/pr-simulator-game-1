@@ -751,8 +751,10 @@ pub(crate) struct VerificationUiHierarchy<'w, 's> {
 
 pub(crate) fn verify_ui_layout(
     mut verification: ResMut<Verification>,
+    session: Res<NativeSession>,
     buttons: Query<(Entity, &ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
     labels: Query<(
+        Entity,
         &Text,
         &ComputedNode,
         &bevy::text::TextLayoutInfo,
@@ -777,6 +779,47 @@ pub(crate) fn verify_ui_layout(
     let result = (|| {
         let window = windows.iter().next().ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
+        if verification.stage == VerificationStage::InputTrialDetails {
+            require_phase(session.game.snapshot().phase(), SessionPhase::Result)?;
+            if session.ui.result_tab != GameUiResultTab::Summary || !session.ui.technical_open {
+                return Err("Technical capture requires the expanded Result Summary".into());
+            }
+            let terminal = verification
+                .terminal
+                .ok_or("Missing input-trial terminal")?;
+            let expected = format!(
+                "終了理由: {:?}\n失敗したtickの診断:\n{:#?}",
+                terminal.reason, terminal.failure
+            );
+            if !labels
+                .iter()
+                .any(|(entity, text, node, layout, transform, _)| {
+                    text.0.starts_with("技術情報: ")
+                        && text.0.contains(&expected)
+                        && !node.is_empty()
+                        && !layout.glyphs.is_empty()
+                        && layout.size.is_finite()
+                        && layout.size.min_element() > 0.0
+                        && layout.glyphs.last().is_some_and(|glyph| {
+                            let position = node.content_box().min + glyph.position;
+                            let center = transform.transform_point2(position);
+                            !glyph.atlas_info.rect.is_empty()
+                                && node.content_box().contains(position)
+                                && viewport.contains(center)
+                                && clip_check_recursive(
+                                    center,
+                                    entity,
+                                    &hierarchy.clipping,
+                                    &hierarchy.parents,
+                                )
+                        })
+                })
+            {
+                return Err(
+                    "Technical capture lacks the projected original diagnostic glyphs".into(),
+                );
+            }
+        }
         let mut visible_buttons = 0;
         for (entity, button, transform, children) in &buttons {
             if button.is_empty() {
@@ -794,7 +837,7 @@ pub(crate) fn verify_ui_layout(
             }
             let mut visible_labels = 0;
             for child in children.iter() {
-                let Ok((text, node, layout, transform, role)) = labels.get(child) else {
+                let Ok((_, text, node, layout, transform, role)) = labels.get(child) else {
                     continue;
                 };
                 if text.0.trim().is_empty()
@@ -934,6 +977,8 @@ pub(crate) struct VerificationPresentation<'w, 's> {
         ),
     >,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
+    focus: Res<'w, InputFocus>,
+    ui_controls: Query<'w, 's, (Entity, &'static Name)>,
 }
 
 impl VerificationPresentation<'_, '_> {
@@ -1218,9 +1263,7 @@ fn advance_step(
                 }
                 VerificationStage::ReturnedResult => VerificationStage::Retry,
                 VerificationStage::InputTrialResult => {
-                    commands.queue(|world: &mut World| {
-                        world.resource_mut::<NativeSession>().ui.technical_open = true;
-                    });
+                    queue_ui_control(commands, "game-result-technical", None);
                     VerificationStage::InputTrialDetails
                 }
                 VerificationStage::InputTrialDetails => VerificationStage::Retry,
@@ -1736,13 +1779,21 @@ fn advance_step(
         }
         VerificationStage::Retry => {
             commands.remove_resource::<VerificationObserver>();
-            session.action(MenuAction::Retry)?;
             match session.game.snapshot() {
+                SessionSnapshot::Result(_) => {
+                    queue_ui_control(commands, "game-result-retry", None);
+                }
                 SessionSnapshot::BriefingReady { scenario }
                     if verification
                         .terminal
                         .is_some_and(|terminal| terminal.scenario == scenario) =>
                 {
+                    if session.ui.result_tab != GameUiResultTab::Summary
+                        || session.ui.technical_open
+                        || session.ui.analysis_time_seconds != 0.0
+                    {
+                        return Err("Published Retry did not reset the shared UI selections".into());
+                    }
                     if verification.input_trial || verification.water_case.is_some() {
                         verification.next(VerificationStage::Finished);
                     } else {
@@ -1813,6 +1864,15 @@ fn advance_step(
             snapshot => return Err(format!("Input-trial flight ended with {snapshot:?}")),
         },
         VerificationStage::InputTrialResult | VerificationStage::InputTrialDetails => {
+            require_phase(phase, SessionPhase::Result)?;
+            if session.ui.result_tab != GameUiResultTab::Summary
+                || session.ui.technical_open
+                    != (verification.stage == VerificationStage::InputTrialDetails)
+            {
+                return Err(
+                    "Input-trial capture does not match its Result Summary disclosure".into(),
+                );
+            }
             if session.game.snapshot().result() != verification.terminal
                 || session
                     .game
@@ -1821,6 +1881,31 @@ fn advance_step(
                     != Some(verification.terminal_sample_count)
             {
                 return Err("Input-trial Result or record advanced after terminal".into());
+            }
+            if verification.stage == VerificationStage::InputTrialDetails {
+                let nodes = presentation
+                    .ui_controls
+                    .iter()
+                    .filter(|(_, name)| name.as_str() == "game-result-technical-content")
+                    .map(|(entity, _)| entity)
+                    .collect::<Vec<_>>();
+                let [node] = nodes.as_slice() else {
+                    return Err(format!(
+                        "Published technical content has {} native nodes",
+                        nodes.len()
+                    ));
+                };
+                if presentation.focus.get() != Some(*node) {
+                    let node = *node;
+                    commands.queue(move |world: &mut World| {
+                        world
+                            .resource_mut::<InputFocus>()
+                            .set(node, FocusCause::Navigated);
+                    });
+                    verification.stage_started = Instant::now();
+                    verification.readiness.confirmation_frames = 0;
+                    return Ok(());
+                }
             }
             if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
@@ -2162,6 +2247,84 @@ mod tests {
                 .query::<&bevy::ui::Interaction>()
                 .iter(app.world())
                 .all(|interaction| *interaction != bevy::ui::Interaction::Pressed)
+        );
+        queue_ui_control(&mut app.world_mut().commands(), "game-result-replay", None);
+        app.world_mut().flush();
+        app.update();
+        queue_ui_control(&mut app.world_mut().commands(), "game-replay-return", None);
+        app.world_mut().flush();
+        assert_eq!(
+            app.world().resource::<NativeSession>().ui.result_tab,
+            GameUiResultTab::Analysis
+        );
+        app.update();
+        let identity = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .configuration_identity();
+        queue_ui_control(&mut app.world_mut().commands(), "game-result-retry", None);
+        app.world_mut().flush();
+        {
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+            assert_eq!(session.game.configuration_identity(), identity);
+            assert_eq!(session.ui.result_tab, GameUiResultTab::Summary);
+            assert!(!session.ui.technical_open);
+            assert_eq!(session.ui.analysis_time_seconds, 0.0);
+        }
+        app.update();
+        queue_ui_control(&mut app.world_mut().commands(), "game-briefing-start", None);
+        app.world_mut().flush();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            session.tick(super::super::native_session::FlightInput::default());
+            session.action(MenuAction::Abort).unwrap();
+        }
+        app.update();
+        let terminal = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .snapshot()
+            .result()
+            .unwrap();
+        let samples = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        queue_ui_control(
+            &mut app.world_mut().commands(),
+            "game-result-technical",
+            None,
+        );
+        app.world_mut().flush();
+        {
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.ui.result_tab, GameUiResultTab::Summary);
+            assert!(session.ui.technical_open);
+            assert_eq!(session.game.snapshot().result(), Some(terminal));
+            assert_eq!(
+                session.game.flight_record().unwrap().sample_count(),
+                samples
+            );
+        }
+        app.update();
+        let expected = format!(
+            "終了理由: {:?}\n失敗したtickの診断:\n{:#?}",
+            terminal.reason, terminal.failure
+        );
+        assert!(
+            app.world_mut()
+                .query::<&bevy::prelude::Text>()
+                .iter(app.world())
+                .any(|text| text.0.starts_with("技術情報: ") && text.0.contains(&expected))
         );
     }
 
