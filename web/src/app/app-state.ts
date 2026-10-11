@@ -28,6 +28,20 @@ export type RecordListState = { readonly nextRequestId: number } & (
 
 const EMPTY_STORED_FLIGHT_RECORDS: readonly StoredFlightRecordUiEntry[] = Object.freeze([]);
 
+export type FlightAnalysisState = { readonly nextRequestId: number } & (
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading"; readonly requestId: number; readonly retained: FlightAnalysisInput | null }
+  | { readonly kind: "ready"; readonly data: FlightAnalysisInput }
+  | { readonly kind: "failed"; readonly message: string; readonly retained: FlightAnalysisInput | null }
+);
+
+export type AnalysisCursorState = { readonly nextRequestId: number } & (
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading"; readonly requestId: number; readonly retained: FlightAnalysisCursorInput | null }
+  | { readonly kind: "ready"; readonly sample: FlightAnalysisCursorInput }
+  | { readonly kind: "failed"; readonly message: string; readonly retained: FlightAnalysisCursorInput | null }
+);
+
 export type NamedGameSessionOperation =
   | "open-setup"
   | "set-control-manual"
@@ -150,16 +164,12 @@ export interface AppModel {
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
   readonly briefingDetailsOpen: boolean;
-  readonly flightAnalysis: FlightAnalysisInput | null;
-  readonly pendingAnalysisRequestId: number | null;
-  readonly nextAnalysisRequestId: number;
+  readonly analysis: FlightAnalysisState;
   readonly resultTab: "summary" | "analysis";
   readonly analysisChart: "map" | "altitude" | "speed";
   readonly analysisCursorTimeSeconds: number;
   readonly playbackTimeSeconds: number;
-  readonly analysisCursorSample: FlightAnalysisCursorInput | null;
-  readonly pendingAnalysisCursorRequestId: number | null;
-  readonly nextAnalysisCursorRequestId: number;
+  readonly analysisCursor: AnalysisCursorState;
   readonly replayPose: FlightRenderPose | null;
   readonly pendingReplayPoseRequestId: number | null;
   readonly nextReplayPoseRequestId: number;
@@ -469,13 +479,9 @@ export function createInitialAppModel(): AppModel {
       weatherCode: 0
     }),
     configurationMetadata: null,
-    flightAnalysis: null,
-    pendingAnalysisRequestId: null,
-    nextAnalysisRequestId: 1,
+    analysis: Object.freeze({ kind: "idle", nextRequestId: 1 }),
     playbackTimeSeconds: 0,
-    analysisCursorSample: null,
-    pendingAnalysisCursorRequestId: null,
-    nextAnalysisCursorRequestId: 1,
+    analysisCursor: Object.freeze({ kind: "idle", nextRequestId: 1 }),
     replayPose: null,
     pendingReplayPoseRequestId: null,
     nextReplayPoseRequestId: 1,
@@ -505,6 +511,24 @@ export function recordListNotice(state: RecordListState): string {
     case "loading": return "保存記録を読み込んでいる";
     case "ready": return state.records.length === 0 ? "保存済みFlightRecordはない" : "";
     case "failed": return `FlightRecord一覧を取得できない: ${state.message}`;
+  }
+}
+
+export function flightAnalysisData(state: FlightAnalysisState): FlightAnalysisInput | null {
+  switch (state.kind) {
+    case "idle": return null;
+    case "ready": return state.data;
+    case "loading":
+    case "failed": return state.retained;
+  }
+}
+
+export function analysisCursorData(state: AnalysisCursorState): FlightAnalysisCursorInput | null {
+  switch (state.kind) {
+    case "idle": return null;
+    case "ready": return state.sample;
+    case "loading":
+    case "failed": return state.retained;
   }
 }
 
@@ -711,9 +735,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
       const returningReplay = previousPhaseCode === 9 && nextPhaseCode === 7;
       const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(model.flightAnalysis, nextPhaseCode)
-        || (returningReplay && model.flightAnalysis === null));
-      const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.nextAnalysisRequestId : null;
+      const analysis = flightAnalysisData(model.analysis);
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
+        || (returningReplay && analysis === null));
+      const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.analysis.nextRequestId : null;
       const effects: AppEffect[] = enteringResult && analysisRequestId !== null
         ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
         : refreshingNamedAnalysis && analysisRequestId !== null ? [{ type: "load-flight-analysis", requestId: analysisRequestId }] : [];
@@ -722,13 +747,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         controlModeCode: message.controlModeCode,
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
-        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
-        pendingAnalysisRequestId: analysisRequestId,
-        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
-        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
-          ? model.pendingAnalysisCursorRequestId
-          : null,
-        nextAnalysisRequestId: analysisRequestId === null ? model.nextAnalysisRequestId : analysisRequestId + 1,
+        analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
+        analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
+          ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
         replayPlaying: nextPhaseCode === 10 || nextPhaseCode === 9 ? model.replayPlaying : false,
         replayClockGeneration: [9, 10].includes(nextPhaseCode) ? model.replayClockGeneration : model.replayClockGeneration + 1,
         pendingReplayClockRequestId: [9, 10].includes(nextPhaseCode) ? model.pendingReplayClockRequestId : null
@@ -753,10 +774,11 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const replayClockGeneration = enteringPlayback || leavingPlayback
         ? model.replayClockGeneration + 1
         : model.replayClockGeneration;
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(model.flightAnalysis, nextPhaseCode)
-        || (returningReplay && model.flightAnalysis === null));
-      const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && model.flightAnalysis === null)
-        ? model.nextAnalysisRequestId
+      const analysis = flightAnalysisData(model.analysis);
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
+        || (returningReplay && analysis === null));
+      const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && analysis === null)
+        ? model.analysis.nextRequestId
         : null;
       const effects: AppEffect[] = [];
       if (playbackClockRequestId !== null) {
@@ -784,13 +806,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         difficulty: message.difficulty,
         configurationMetadata: message.configurationMetadata,
         status: "",
-        flightAnalysis: [7, 9, 10].includes(nextPhaseCode) && !refreshingNamedAnalysis ? model.flightAnalysis : null,
-        pendingAnalysisRequestId: analysisRequestId,
-        analysisCursorSample: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis ? model.analysisCursorSample : null,
-        pendingAnalysisCursorRequestId: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
-          ? model.pendingAnalysisCursorRequestId
-          : null,
-        nextAnalysisRequestId: analysisRequestId === null ? model.nextAnalysisRequestId : analysisRequestId + 1,
+        analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
+        analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
+          ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
         replayPose: enteringPlayback ? null : [9, 10].includes(nextPhaseCode) ? model.replayPose : null,
         pendingReplayPoseRequestId: enteringPlayback ? null : model.pendingReplayPoseRequestId,
         replayPlaying: enteringPlayback ? false : [9, 10].includes(nextPhaseCode) ? model.replayPlaying : false,
@@ -804,7 +822,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "flight-analysis-loaded":
-      if (model.pendingAnalysisRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      if (model.analysis.kind !== "loading" || model.analysis.requestId !== message.requestId
+          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
       {
         try {
           validateAnalysisInput(message.data);
@@ -813,9 +832,13 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           }
         } catch (error: unknown) {
           if (!(error instanceof RangeError)) throw error;
-          return transition(withModel(model, { pendingAnalysisRequestId: null, status: `Analysisデータが一致しない: ${error.message}` }));
+          return transition(withModel(model, {
+            analysis: Object.freeze({ kind: "failed", nextRequestId: model.analysis.nextRequestId,
+              message: error.message, retained: model.analysis.retained }),
+            status: `Analysisデータが一致しない: ${error.message}`
+          }));
         }
-        const requestId = model.nextAnalysisCursorRequestId;
+        const requestId = model.analysisCursor.nextRequestId;
         const playbackPhase = gameSessionPhaseCode(model.gameSession);
         const replayPoseRequestId = [9, 10].includes(playbackPhase) ? model.nextReplayPoseRequestId : null;
         const timeSeconds = model.analysisCursorTimeSeconds;
@@ -827,21 +850,19 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           effects.push({ type: "schedule-replay-clock-tick", generation: model.replayClockGeneration, delayMilliseconds: 50 });
         }
         return transition(withModel(model, {
-          flightAnalysis: message.data,
-          analysisCursorSample: null,
-          pendingAnalysisRequestId: null,
-          pendingAnalysisCursorRequestId: requestId,
-          nextAnalysisCursorRequestId: requestId + 1,
+          analysis: Object.freeze({ kind: "ready", nextRequestId: model.analysis.nextRequestId, data: message.data }),
+          analysisCursor: Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1, retained: null }),
           pendingReplayPoseRequestId: replayPoseRequestId,
           nextReplayPoseRequestId: replayPoseRequestId === null ? model.nextReplayPoseRequestId : replayPoseRequestId + 1
         }), effects);
       }
     case "flight-analysis-failed":
-      if (model.pendingAnalysisRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      if (model.analysis.kind !== "loading" || model.analysis.requestId !== message.requestId
+          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
       return transition(withModel(model, {
-        flightAnalysis: null,
-        pendingAnalysisRequestId: null,
-        pendingAnalysisCursorRequestId: null,
+        analysis: Object.freeze({ kind: "failed", nextRequestId: model.analysis.nextRequestId,
+          message: message.message, retained: null }),
+        analysisCursor: settleAnalysisCursor(model.analysisCursor),
         replayPlaying: gameSessionPhaseCode(model.gameSession) === 10 ? false : model.replayPlaying,
         replayClockGeneration: gameSessionPhaseCode(model.gameSession) === 10
           ? model.replayClockGeneration + 1
@@ -849,17 +870,22 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         status: `Analysisデータを取得できない: ${message.message}`
       }));
     case "flight-analysis-cursor-loaded":
-      if (model.pendingAnalysisCursorRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
-      if (!analysisCursorMatches(model.flightAnalysis, message.sample) || ("kind" in message.sample
+      if (model.analysisCursor.kind !== "loading" || model.analysisCursor.requestId !== message.requestId
+          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      if (!analysisCursorMatches(flightAnalysisData(model.analysis), message.sample) || ("kind" in message.sample
           && message.sample.context.phase !== analysisPhase(gameSessionPhaseCode(model.gameSession)))) return transition(withModel(model, {
-        pendingAnalysisCursorRequestId: null, status: "Analysis cursorの記録または操縦layoutが一致しない"
+        analysisCursor: Object.freeze({ kind: "failed", nextRequestId: model.analysisCursor.nextRequestId,
+          message: "Analysis cursorの記録または操縦layoutが一致しない", retained: model.analysisCursor.retained }),
+        status: "Analysis cursorの記録または操縦layoutが一致しない"
       }));
-      return transition(withModel(model, { analysisCursorSample: message.sample, pendingAnalysisCursorRequestId: null }));
+      return transition(withModel(model, { analysisCursor: Object.freeze({ kind: "ready",
+        nextRequestId: model.analysisCursor.nextRequestId, sample: message.sample }) }));
     case "flight-analysis-cursor-failed":
-      if (model.pendingAnalysisCursorRequestId !== message.requestId || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+      if (model.analysisCursor.kind !== "loading" || model.analysisCursor.requestId !== message.requestId
+          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
       return transition(withModel(model, {
-        analysisCursorSample: null,
-        pendingAnalysisCursorRequestId: null,
+        analysisCursor: Object.freeze({ kind: "failed", nextRequestId: model.analysisCursor.nextRequestId,
+          message: message.message, retained: null }),
         status: `Analysis cursorを取得できない: ${message.message}`
       }));
     case "flight-replay-pose-loaded":
@@ -898,10 +924,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         replaySpeed: speed,
         replayPlaying: message.state.playing
       });
-      const queried = model.flightAnalysis === null
+      const queried = flightAnalysisData(model.analysis) === null
         ? { model: next, effects: [] as AppEffect[] }
         : withReplayQuery(next, message.state.timeSeconds);
-      if (message.state.playing && model.flightAnalysis !== null) {
+      if (message.state.playing && flightAnalysisData(model.analysis) !== null) {
         queried.effects.push({
           type: "schedule-replay-clock-tick",
           generation: message.generation,
@@ -1075,9 +1101,9 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
   if (effect.kind === "record") {
     const action = effect.action;
     if (action.kind === "seek_analysis") {
-      const requestId = model.nextAnalysisCursorRequestId;
-      return transition(withModel(model, { analysisCursorSample: null, pendingAnalysisCursorRequestId: requestId,
-        nextAnalysisCursorRequestId: requestId + 1 }), [
+      const requestId = model.analysisCursor.nextRequestId;
+      return transition(withModel(model, { analysisCursor: Object.freeze({ kind: "loading", requestId,
+        nextRequestId: requestId + 1, retained: null }) }), [
         { type: "shared-record-action", action },
         { type: "load-flight-analysis-cursor", requestId, timeSeconds: action.time_seconds }
       ]);
@@ -1133,7 +1159,7 @@ function updateReplayClock(
 ): AppTransition {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   if (!model.replayPlaying || ![9, 10].includes(phaseCode) || message.generation !== model.replayClockGeneration
-      || model.flightAnalysis === null || !Number.isFinite(message.elapsedSeconds) || message.elapsedSeconds < 0) {
+      || flightAnalysisData(model.analysis) === null || !Number.isFinite(message.elapsedSeconds) || message.elapsedSeconds < 0) {
     return transition(model);
   }
   return beginReplayClockCommand(model, { kind: "advance", elapsedSeconds: message.elapsedSeconds }, false);
@@ -1165,12 +1191,12 @@ function playbackRateForCode(code: number): AppModel["replaySpeed"] | null {
 
 function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model: AppModel; readonly effects: AppEffect[] } {
   const replayRequestId = model.nextReplayPoseRequestId;
-  const cursorRequestId = model.nextAnalysisCursorRequestId;
+  const cursorRequestId = model.analysisCursor.nextRequestId;
   model = withModel(model, {
     pendingReplayPoseRequestId: replayRequestId,
     nextReplayPoseRequestId: replayRequestId + 1,
-    pendingAnalysisCursorRequestId: cursorRequestId,
-    nextAnalysisCursorRequestId: cursorRequestId + 1
+    analysisCursor: Object.freeze({ kind: "loading", requestId: cursorRequestId, nextRequestId: cursorRequestId + 1,
+      retained: analysisCursorData(model.analysisCursor) })
   });
   return {
     model,
@@ -1291,6 +1317,23 @@ function canRequestPresentation(state: PresentationUiState): boolean {
 
 function isInVr(state: PresentationUiState): boolean {
   return state.type === "ready" && state.mode !== "screen";
+}
+
+function observeAnalysisPhase(state: FlightAnalysisState, phaseCode: number, requestId: number | null,
+  clearData: boolean): FlightAnalysisState {
+  const keepData = [7, 9, 10].includes(phaseCode) && !clearData;
+  const data = keepData ? flightAnalysisData(state) : null;
+  if (requestId !== null) return Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1, retained: data });
+  if (!keepData) return Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId });
+  if (state.kind !== "loading") return state;
+  return data === null ? Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId })
+    : Object.freeze({ kind: "ready", nextRequestId: state.nextRequestId, data });
+}
+
+function settleAnalysisCursor(state: AnalysisCursorState): AnalysisCursorState {
+  if (state.kind !== "loading") return state;
+  return state.retained === null ? Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId })
+    : Object.freeze({ kind: "ready", nextRequestId: state.nextRequestId, sample: state.retained });
 }
 
 function analysisPhase(phaseCode: number): "result" | "replay" | "attract" | "unavailable" {

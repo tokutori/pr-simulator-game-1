@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppSessionFacade, TailAppSessionPort } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
@@ -40,8 +40,8 @@ describe("layout-discriminated application session facade", () => {
       }
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const current = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
-      const model = updateApp({ ...current, pendingAnalysisRequestId: 4 }, { type: "flight-analysis-loaded", requestId: 4, data: dataset }).model;
-      const raw = model.flightAnalysis;
+      const model = updateApp({ ...current, analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: flightAnalysisData(current.analysis) } }, { type: "flight-analysis-loaded", requestId: 4, data: dataset }).model;
+      const raw = flightAnalysisData(model.analysis);
       if (raw === null || !("kind" in raw)) throw new Error("Expected the original named Model dataset");
       expect(raw).toBe(dataset);
       expect(facade.queryAnalysisCursor(0.005, raw).context).toBe(dataset.context);

@@ -89,9 +89,10 @@ describe("flight log download state and common presentation", () => {
           actions.push({ kind: "set_analysis_chart", chart: analysisChart });
         }
         const model: AppModel = {
-          ...readyModel(phaseCode, { actions }), presentation: { type: "ready", mode }, flightAnalysis: analysisFixture,
-          analysisCursorSample: analysisFixture.samples[1] === undefined ? null
-            : { ...analysisFixture.samples[1], kind: "named_record", context: analysisFixture.context }
+          ...readyModel(phaseCode, { actions }), presentation: { type: "ready", mode },
+          analysis: { kind: "ready", data: analysisFixture, nextRequestId: 1 },
+          analysisCursor: analysisFixture.samples[1] === undefined ? { kind: "idle", nextRequestId: 1 }
+            : { kind: "ready", nextRequestId: 1, sample: { ...analysisFixture.samples[1], kind: "named_record", context: analysisFixture.context } }
         };
         const panel = viewForModel(model).panels[0];
         if (panel?.sections === undefined) throw new Error("Shared download panel sections are unavailable");

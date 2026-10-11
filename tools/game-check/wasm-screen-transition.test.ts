@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppModel } from "../../web/src/app/app-state.js";
 import { queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
@@ -70,17 +70,17 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
         if (query?.type !== "load-flight-analysis-cursor") throw new Error("Result cursor query was not requested");
         const sample = session.queryAnalysisCursor(query.timeSeconds, analysis);
         model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: query.requestId, sample }).model;
-        expect(model.analysisCursorSample?.timeSeconds).toBeCloseTo(query.timeSeconds, 12);
-        expect(model.pendingAnalysisCursorRequestId).toBeNull();
+        expect(analysisCursorData(model.analysisCursor)?.timeSeconds).toBeCloseTo(query.timeSeconds, 12);
+        expect(model.analysisCursor.kind).toBe("ready");
         expect(model.gameSession.kind).toBe("result");
       };
       completeCursor(updateApp(model, { type: "flight-analysis-loaded", requestId: load.requestId, data: analysis }));
-      expect(model.analysisCursorSample?.state).toEqual(analysis.samples[0]?.state);
+      expect(analysisCursorData(model.analysisCursor)?.state).toEqual(analysis.samples[0]?.state);
       model = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-open-analysis" }).model;
       for (const timeSeconds of [0.005, analysis.summary.durationSeconds]) {
         completeCursor(sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds }));
       }
-      expect(model.analysisCursorSample?.state).toEqual(analysis.samples.at(-1)?.state);
+      expect(analysisCursorData(model.analysisCursor)?.state).toEqual(analysis.samples.at(-1)?.state);
       expect(session.flightPort.snapshot_json()).toBe(before);
       expect(session.exportRecordJson()).toBe(encoded);
     } finally { session.dispose(); }
@@ -148,12 +148,14 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
           model = loaded.model;
           completeRecordQueries(loaded.effects);
         } else if (effect.type === "load-flight-analysis-cursor") {
-          if (model.flightAnalysis === null) throw new Error("Cursor requires observed Analysis");
-          const sample = session.queryAnalysisCursor(effect.timeSeconds, model.flightAnalysis);
+          const analysis = flightAnalysisData(model.analysis);
+          if (analysis === null) throw new Error("Cursor requires observed Analysis");
+          const sample = session.queryAnalysisCursor(effect.timeSeconds, analysis);
           model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: effect.requestId, sample }).model;
         } else if (effect.type === "load-flight-replay-pose") {
-          if (model.flightAnalysis === null) throw new Error("Replay pose requires observed Analysis");
-          const { pose } = queryRuntimeRecordPose(session, model.flightAnalysis, effect.timeSeconds);
+          const analysis = flightAnalysisData(model.analysis);
+          if (analysis === null) throw new Error("Replay pose requires observed Analysis");
+          const { pose } = queryRuntimeRecordPose(session, analysis, effect.timeSeconds);
           model = updateApp(model, { type: "flight-replay-pose-loaded", requestId: effect.requestId, pose }).model;
         }
       }
@@ -206,8 +208,8 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       const record = JSON.parse(session.exportRecordJson()) as { schema_version: number; header: { difficulty: { hud_profile: { wind: boolean } } } };
       expect(record.schema_version).toBe(6);
       expect(record.header.difficulty.hud_profile.wind).toBe(false);
-      const requestId = model.pendingAnalysisRequestId;
-      if (requestId === null) throw new Error("Result did not request Analysis");
+      if (model.analysis.kind !== "loading") throw new Error("Result did not request Analysis");
+      const requestId = model.analysis.requestId;
       const analysis = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const loaded = updateApp(model, { type: "flight-analysis-loaded", requestId, data: analysis });
       model = loaded.model;

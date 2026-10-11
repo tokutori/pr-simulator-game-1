@@ -11,7 +11,7 @@ import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "./app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -151,15 +151,16 @@ function renderModel(): void {
   flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
   controllerHudDisplay.render();
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
+  const analysis = flightAnalysisData(model.analysis);
   const cameraMode = phaseCode === 10
-    ? resolveAttractCameraMode(model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+    ? resolveAttractCameraMode(analysis, model.analysisCursorTimeSeconds, presentationMode)
     : phaseCode === 9
-      ? resolveReplayCameraMode(model.replayCameraMode, model.flightAnalysis, model.analysisCursorTimeSeconds, presentationMode)
+      ? resolveReplayCameraMode(model.replayCameraMode, analysis, model.analysisCursorTimeSeconds, presentationMode)
       : "pilot";
   const venue = currentVenueMap();
   const cameraPoints = venue.kind === "available" ? venue.value.cameraPoints : [];
   const cinematicView = isCinematicCameraMode(cameraMode) && model.replayPose !== null
-    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, model.flightAnalysis === null ? undefined : projectAnalysisView(model.flightAnalysis).samples)
+    ? cinematicCameraView(cameraMode, model.replayPose, model.analysisCursorTimeSeconds, cameraPoints, analysis === null ? undefined : projectAnalysisView(analysis).samples)
     : null;
   flightRenderer?.setCinematicCameraView(cinematicView);
   flightRenderer?.setFlightCameraMode(cameraMode);
@@ -485,7 +486,7 @@ function runEffect(effect: AppEffect): void {
     }
     case "load-flight-analysis-cursor": {
       const session = gameSession;
-      const analysis = model.flightAnalysis;
+      const analysis = flightAnalysisData(model.analysis);
       if (session === null || analysis === null) {
         dispatch({ type: "flight-analysis-cursor-failed", requestId: effect.requestId, message: "Rust GameSession is unavailable" });
         return;
@@ -502,7 +503,7 @@ function runEffect(effect: AppEffect): void {
     }
     case "load-flight-replay-pose": {
       const session = gameSession;
-      const analysis = model.flightAnalysis;
+      const analysis = flightAnalysisData(model.analysis);
       if (session === null || analysis === null) {
         dispatch({ type: "flight-replay-pose-failed", requestId: effect.requestId, message: "Rust FlightRecord is unavailable" });
         return;
@@ -1097,8 +1098,8 @@ function syncGameSession(): void {
 
 function currentFlightSnapshot(): FlightDisplaySnapshot | null {
   const phaseCode = gameSessionPhaseCode(model.gameSession);
-  const cursor = model.analysisCursorSample;
-  const analysis = model.flightAnalysis;
+  const cursor = analysisCursorData(model.analysisCursor);
+  const analysis = flightAnalysisData(model.analysis);
   if ((phaseCode === 9 || phaseCode === 10) && cursor !== null && "kind" in cursor && analysis !== null
       && analysisCursorMatches(analysis, cursor)) return projectRecordedFlightSnapshot(cursor, cursor.context);
   if (model.flightExecution.kind === "stopped" && (phaseCode === 5 || phaseCode === 6)) return model.flightExecution.snapshot;
@@ -1118,7 +1119,7 @@ function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
       : session.readSnapshot().identity;
     const expected = "kind" in identity ? identity.kind === "prepared" ? identity.scenario : undefined : identity;
     const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, expected);
-    const analysis = model.flightAnalysis;
+    const analysis = flightAnalysisData(model.analysis);
     if (analysis !== null && environment.kind === "available"
         && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
     return environment;
@@ -1128,7 +1129,7 @@ function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
 }
 
 function currentVenueMap() {
-  const analysis = model.flightAnalysis;
+  const analysis = flightAnalysisData(model.analysis);
   const environment = currentRuntimeEnvironment();
   if (analysis !== null && environment.kind === "available"
       && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return NO_VENUE_MAP;

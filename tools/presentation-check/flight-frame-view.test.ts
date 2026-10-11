@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fixturePresentation } from "./menu-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, flightAnalysisData, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
@@ -179,7 +179,7 @@ describe("Immutable same-frame Flight view finalization", () => {
     const draft = createFlightFrameViewDraft(captured, snapshot, configuredViewer(), "ja");
     expect(draft.model).toBe(captured);
     expect(draft.snapshot).toBe(snapshot);
-    expect(draft.analysis).toBe(captured.flightAnalysis);
+    expect(draft.analysis).toBe(flightAnalysisData(captured.analysis));
     expect(draft.headHud.kind).toBe("visible");
     if (draft.headHud.kind !== "visible") throw new Error("Missing Head layout");
     const size = headHudCanvasSize(draft.headHud.layer);

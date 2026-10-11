@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -103,23 +103,23 @@ describe("pure saved Analysis view projection", () => {
       expect(() => projectAnalysisView({ ...data, windGrid: otherData.windGrid })).toThrow(/different records/);
       expect(() => projectAnalysisCursor(cursor(other, otherData), data)).toThrow(/another record/);
       const model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
-      const loaded = updateApp({ ...model, pendingAnalysisRequestId: 4 }, { type: "flight-analysis-loaded", requestId: 4, data }).model;
+      const loaded = updateApp({ ...model, analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: null } }, { type: "flight-analysis-loaded", requestId: 4, data }).model;
       const currentCursor = cursor(session, data);
-      const previous = { ...loaded, analysisCursorSample: currentCursor, pendingAnalysisCursorRequestId: 7 };
+      const previous: AppModel = { ...loaded, analysisCursor: { kind: "loading", requestId: 7, nextRequestId: 8, retained: currentCursor } };
       const rejected = updateApp(previous, { type: "flight-analysis-cursor-loaded", requestId: 7, sample: cursor(other, otherData) });
-      expect(rejected.model.analysisCursorSample).toBe(currentCursor);
-      expect(rejected.model.flightAnalysis).toBe(data);
-      expect(rejected.model.pendingAnalysisCursorRequestId).toBeNull();
+      expect(analysisCursorData(rejected.model.analysisCursor)).toBe(currentCursor);
+      expect(flightAnalysisData(rejected.model.analysis)).toBe(data);
+      expect(rejected.model.analysisCursor.kind).toBe("failed");
       expect(rejected.model.status).toContain("一致しない");
       expect(rejected.effects).toEqual([]);
-      const rejectedData = updateApp({ ...previous, pendingAnalysisRequestId: 8 }, {
+      const rejectedData = updateApp({ ...previous, analysis: { kind: "loading", requestId: 8, nextRequestId: 9, retained: data } }, {
         type: "flight-analysis-loaded", requestId: 8, data: { ...data, summary: otherData.summary }
       });
-      expect(rejectedData.model.flightAnalysis).toBe(data);
+      expect(flightAnalysisData(rejectedData.model.analysis)).toBe(data);
       expect(rejectedData.effects).toEqual([]);
-      expect(updateApp({ ...previous, pendingAnalysisCursorRequestId: 9 }, {
+      expect(updateApp({ ...previous, analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10, retained: currentCursor } }, {
         type: "flight-analysis-cursor-loaded", requestId: 7, sample: currentCursor
-      }).model).toMatchObject({ pendingAnalysisCursorRequestId: 9 });
+      }).model).toMatchObject({ analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10 } });
     } finally { session.dispose(); other.dispose(); }
   });
 
@@ -197,7 +197,8 @@ describe("pure saved Analysis view projection", () => {
       const cursorSample = cursor(session, data);
       const gameSession = gameSessionState(10, 0, session.queryRecordDisplay(0), false, "tail_incidence");
       if (gameSession === null) throw new Error("Expected the Rust Attract display");
-      const model = { ...createInitialAppModel(), gameSession, flightAnalysis: data, analysisCursorSample: cursorSample };
+      const model: AppModel = { ...createInitialAppModel(), gameSession,
+        analysis: { kind: "ready", data, nextRequestId: 1 }, analysisCursor: { kind: "ready", sample: cursorSample, nextRequestId: 1 } };
       const distance = createGameViewModel(session.readSharedUi(sharedGameUiPlatform())).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-attract-distance");
       const expected = data.summary.scoreMeters.kind === "available" ? `${data.summary.scoreMeters.value.courseParallelMeters.toFixed(1)} m` : "距離未記録";
       expect(distance).toMatchObject({ label: "確定距離 / 保存時刻", value: `${expected} · t 0.00 s` });
@@ -205,10 +206,10 @@ describe("pure saved Analysis view projection", () => {
       expect(resolveAttractCameraMode(data, 0, "webxr")).toBe("pilot");
       const resultSession = result();
       try {
-        const phaseMismatch = updateApp({ ...model, pendingAnalysisRequestId: 5 }, {
+        const phaseMismatch = updateApp({ ...model, analysis: { kind: "loading", requestId: 5, nextRequestId: 6, retained: data } }, {
           type: "flight-analysis-loaded", requestId: 5, data: dataset(resultSession)
         });
-        expect(phaseMismatch.model.flightAnalysis).toBe(data);
+        expect(flightAnalysisData(phaseMismatch.model.analysis)).toBe(data);
         expect(phaseMismatch.model.status).toContain("phase");
       } finally { resultSession.dispose(); }
     } finally { session.dispose(); }
@@ -220,24 +221,25 @@ describe("pure saved Analysis view projection", () => {
       const data = dataset(session);
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
       selectAnalysisCursor(session, 0.015);
-      model = observeUi({ ...model, flightAnalysis: data, analysisCursorSample: cursor(session, data, 0.015), pendingGameRequestId: 5 }, session);
+      model = observeUi({ ...model, analysis: { kind: "ready", data, nextRequestId: model.analysis.nextRequestId },
+        analysisCursor: { kind: "ready", sample: cursor(session, data, 0.015), nextRequestId: model.analysisCursor.nextRequestId }, pendingGameRequestId: 5 }, session);
       enterReplayAtCursor(session, 0.015);
       const replayTransition = updateApp(model, { type: "game-operation-completed", requestId: 5, ...readRuntimeSessionProjection(session) });
       const replay = { ...replayTransition, model: observeReplayClock(replayTransition.model, session) };
-      expect(replay.model.flightAnalysis).toBeNull();
-      expect(replay.model.analysisCursorSample).toBeNull();
+      expect(flightAnalysisData(replay.model.analysis)).toBeNull();
+      expect(analysisCursorData(replay.model.analysisCursor)).toBeNull();
       expect(replay.model.analysisCursorTimeSeconds).toBe(0.015);
-      expect(replay.effects).toContainEqual({ type: "load-flight-analysis", requestId: model.nextAnalysisRequestId });
+      expect(replay.effects).toContainEqual({ type: "load-flight-analysis", requestId: model.analysis.nextRequestId });
       expect(replay.effects.some((effect) => effect.type === "persist-flight-record")).toBe(false);
       const replayData = dataset(session);
-      const loaded = updateApp(replay.model, { type: "flight-analysis-loaded", requestId: model.nextAnalysisRequestId, data: replayData });
-      expect(loaded.model.flightAnalysis).toBe(replayData);
+      const loaded = updateApp(replay.model, { type: "flight-analysis-loaded", requestId: model.analysis.nextRequestId, data: replayData });
+      expect(flightAnalysisData(loaded.model.analysis)).toBe(replayData);
       leaveReplay(session);
       const returnedTransition = updateApp({ ...loaded.model, pendingGameRequestId: 6 }, {
         type: "game-operation-completed", requestId: 6, ...session.readGameSessionProjection()
       });
       const returned = { ...returnedTransition, model: observeUi(returnedTransition.model, session) };
-      expect(returned.model.flightAnalysis).toBeNull();
+      expect(flightAnalysisData(returned.model.analysis)).toBeNull();
       expect(returned.model.analysisCursorTimeSeconds).toBe(0.015);
       expect(returned.effects.some((effect) => effect.type === "persist-flight-record")).toBe(false);
       expect(returned.effects.some((effect) => effect.type === "load-flight-analysis")).toBe(true);
@@ -250,12 +252,12 @@ describe("pure saved Analysis view projection", () => {
       const data = dataset(session);
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
       selectAnalysisCursor(session, 0.015);
-      model = observeUi({ ...model, flightAnalysis: data, pendingGameRequestId: 5 }, session);
+      model = observeUi({ ...model, analysis: { kind: "ready", data, nextRequestId: model.analysis.nextRequestId }, pendingGameRequestId: 5 }, session);
       enterReplayAtCursor(session, 0.015);
       let replay = observeReplayClock(updateApp(model, { type: "game-operation-completed", requestId: 5,
         ...readRuntimeSessionProjection(session) }).model, session);
-      const oldRequestId = replay.pendingAnalysisRequestId;
-      if (oldRequestId === null) throw new Error("Expected the named Replay load request");
+      if (replay.analysis.kind !== "loading") throw new Error("Expected the named Replay load request");
+      const oldRequestId = replay.analysis.requestId;
       const replayData = dataset(session);
       if (loadingState === "failed") replay = updateApp(replay, {
         type: "flight-analysis-failed", requestId: oldRequestId, message: "injected query failure"
@@ -265,16 +267,15 @@ describe("pure saved Analysis view projection", () => {
         type: "game-operation-completed", requestId: 6, ...session.readGameSessionProjection()
       });
       const returned = { ...returnedTransition, model: observeUi(returnedTransition.model, session) };
-      const freshRequestId = returned.model.pendingAnalysisRequestId;
-      expect(freshRequestId).not.toBeNull();
+      if (returned.model.analysis.kind !== "loading") throw new Error("Expected a fresh Result request");
+      const freshRequestId = returned.model.analysis.requestId;
       expect(freshRequestId).not.toBe(oldRequestId);
       expect(returned.effects).toEqual([{ type: "load-flight-analysis", requestId: freshRequestId }]);
       expect(returned.model.analysisCursorTimeSeconds).toBe(0.015);
       expect(updateApp(returned.model, { type: "flight-analysis-loaded", requestId: oldRequestId, data: replayData }).model).toBe(returned.model);
-      if (freshRequestId === null) throw new Error("Expected a fresh Result request");
       const resultData = dataset(session);
       const loaded = updateApp(returned.model, { type: "flight-analysis-loaded", requestId: freshRequestId, data: resultData });
-      expect(loaded.model.flightAnalysis).toBe(resultData);
+      expect(flightAnalysisData(loaded.model.analysis)).toBe(resultData);
       expect(loaded.effects.some((effect) => effect.type === "persist-flight-record")).toBe(false);
     } finally { session.dispose(); }
   });

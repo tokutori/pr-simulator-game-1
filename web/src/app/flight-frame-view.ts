@@ -1,7 +1,8 @@
 import { createBootViewModel } from "./boot-view.js";
 import { createGameViewModel } from "./game-view.js";
-import { gameSessionPhaseCode } from "./app-state.js";
+import { flightAnalysisData, gameSessionPhaseCode } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
+import type { FlightAnalysisInput } from "../game/flight-analysis-view.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { NO_ENVIRONMENT_BRIEFING } from "../game/environment-briefing.js";
@@ -20,7 +21,7 @@ import type { VenueMapProjection } from "../game/biwa-venue-map.js";
 export interface FlightFrameViewDraft {
   readonly model: AppModel;
   readonly snapshot: FlightDisplaySnapshot | null;
-  readonly analysis: AppModel["flightAnalysis"];
+  readonly analysis: FlightAnalysisInput | null;
   readonly hud: FlightHudModel | null;
   readonly headHud: HeadHudView;
   readonly environment: EnvironmentBriefingProjection;
@@ -38,7 +39,7 @@ export function createFlightFrameViewDraft(model: AppModel, snapshotInput: Fligh
   const headHud = model.presentation.type === "ready" && model.presentation.mode !== "screen" && (hud !== null || framesPerSecond !== undefined)
     ? createHeadHudView(hud, viewer, locale, DEFAULT_HEAD_HUD_PROFILE, framesPerSecond, model.sharedGameUi?.theme ?? null)
     : NO_HEAD_HUD_VIEW;
-  return Object.freeze({ model, snapshot, analysis: model.flightAnalysis, hud, headHud, environment, venue, frameRateEnabled: framesPerSecond !== undefined });
+  return Object.freeze({ model, snapshot, analysis: flightAnalysisData(model.analysis), hud, headHud, environment, venue, frameRateEnabled: framesPerSecond !== undefined });
 }
 
 export function createFlightUiHudModel(model: AppModel): FlightHudModel | null {
