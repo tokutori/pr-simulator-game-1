@@ -36,6 +36,7 @@ import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-envi
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import * as lakeWater from "../../web/src/render/contracts/lake-water.js";
 import * as lakeDetail from "../../web/src/render/engines/three/lake-detail-texture.js";
+import * as lakeProjection from "../../web/src/render/engines/three/lake-wave-projection.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import { createLakeWaveProjection, LAKE_WAVE_PROJECTION_GLSL } from "../../web/src/render/engines/three/lake-wave-projection.js";
 
@@ -179,7 +180,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const sky: unknown = original.foreground.material.uniforms.uSkyTexture?.value;
     const reflection: unknown = original.foreground.material.uniforms.uReflectionTexture?.value;
     expect(reflection).toBeDefined();
-    const detailCreation = vi.spyOn(lakeDetail, "createLakeDetailLayer");
+    const detailCreation = vi.spyOn(lakeDetail, "createProductionLakeDetailLayer");
     try {
       for (const quality of ["high", "medium", "low"] as const) {
         const previous = original.foreground.mesh.geometry;
@@ -217,7 +218,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const counts: unknown[] = [];
     let request: Promise<LakeWaterQualityCleanupResult> = Promise.resolve({ kind: "complete" });
     let applied = false;
-    const detailCreation = vi.spyOn(lakeDetail, "createLakeDetailLayer");
+    const detailCreation = vi.spyOn(lakeDetail, "createProductionLakeDetailLayer");
     bundle.renderer.startLoop((timestamp) => {
       bundle.renderer.beginViewFrame();
       if (timestamp === 1) {
@@ -256,7 +257,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const geometry = foreground.mesh.geometry;
     const waves: unknown = foreground.material.uniforms.uWaveKAmplitude?.value;
     const detail: unknown = foreground.material.uniforms.uDetailNear?.value;
-    const spectrum = vi.spyOn(lakeWater, "createLakeWaveSpectrum");
+    const spectrum = vi.spyOn(lakeProjection, "createLakeWaveProjection");
     const failure = new Error("Injected wave allocation failure");
     spectrum.mockImplementationOnce(() => { throw failure; });
     try {

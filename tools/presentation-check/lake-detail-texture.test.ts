@@ -1,3 +1,4 @@
+import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { createLakeDetailLayer } from "../../web/src/render/engines/three/lake-detail-texture.js";
 

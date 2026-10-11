@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import "./lake-model-fixture.js";
+import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { EquirectangularReflectionMapping, SRGBColorSpace } from "three";
+import { ClampToEdgeWrapping, EquirectangularReflectionMapping, LinearFilter,
+  LinearMipmapLinearFilter, RepeatWrapping, SRGBColorSpace } from "three";
+import { LakeSkyImageBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { createLakeSkyTexture } from "../../web/src/render/engines/three/lake-sky-texture.js";
 
 const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
@@ -11,11 +14,50 @@ function fingerprint(texture: ReturnType<typeof createLakeSkyTexture>): string {
 }
 
 describe("shared lake sky", () => {
+  it.each([{ sky: null }, { sky: condition }])("frees the owned bridge after copying the panorama", ({ sky }) => {
+    const release = vi.spyOn(LakeSkyImageBridge.prototype, "free");
+    try {
+      const texture = createLakeSkyTexture(sky);
+      try {
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(texture.image.data).toBeInstanceOf(Uint8Array);
+        expect(texture.image.data?.length).toBe(1024 * 512 * 4);
+        expect(texture.image.data?.slice(0, 4)).toEqual(new Uint8Array([180, 205, 218, 255]));
+      } finally { texture.dispose(); }
+    } finally { release.mockRestore(); }
+  });
+
+  it("frees the bridge when copying the image fails", () => {
+    const cause = new Error("sky image copy failed");
+    const pixels = vi.spyOn(LakeSkyImageBridge.prototype, "rgba").mockImplementationOnce(() => { throw cause; });
+    const release = vi.spyOn(LakeSkyImageBridge.prototype, "free");
+    try {
+      expect(() => createLakeSkyTexture(condition)).toThrow(cause);
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally { pixels.mockRestore(); release.mockRestore(); }
+  });
+
+  it("rejects invalid render parameters at the generated WASM boundary", () => {
+    for (const [azimuth, elevation, fraction, visibility] of [
+      [Number.NaN, 35, 0.35, 28_000], [360, 35, 0.35, 28_000],
+      [240, Number.POSITIVE_INFINITY, 0.35, 28_000], [240, 91, 0.35, 28_000],
+      [240, 35, -0.1, 28_000], [240, 35, 1.1, 28_000],
+      [240, 35, 0.35, 0], [240, 35, 0.35, Number.NaN]
+    ] as const) {
+      expect(() => new LakeSkyImageBridge(azimuth, elevation, fraction, visibility)).toThrow();
+    }
+  });
+
   it("keeps the reflected horizon and equirectangular seam continuous", () => {
     const texture = createLakeSkyTexture(condition);
     try {
       expect(texture.mapping).toBe(EquirectangularReflectionMapping);
       expect(texture.colorSpace).toBe(SRGBColorSpace);
+      expect(texture.wrapS).toBe(RepeatWrapping);
+      expect(texture.wrapT).toBe(ClampToEdgeWrapping);
+      expect(texture.magFilter).toBe(LinearFilter);
+      expect(texture.minFilter).toBe(LinearMipmapLinearFilter);
+      expect(texture.generateMipmaps).toBe(true);
       const { data, width, height } = texture.image;
       if (data === null) throw new Error("Sky texture has no pixel data");
       expect(width).toBe(1024);

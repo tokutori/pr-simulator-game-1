@@ -1,4 +1,6 @@
 import { DataTexture, LinearFilter, LinearMipmapLinearFilter, RepeatWrapping } from "three";
+import { LakeDetailImageBridge } from "../../../../pkg/birdman_game_wasm.js";
+import type { LakeVisualCondition } from "../../contracts/lake-water.js";
 
 export interface LakeDetailLayer {
   readonly texture: DataTexture;
@@ -11,7 +13,6 @@ interface BroaderWavelets {
   readonly heightScale: number;
 }
 
-/** Builds a periodic normal field from finite-length height wavelets once. */
 export function createLakeDetailLayer(
   extentMeters: number,
   waveletCount: number,
@@ -20,102 +21,30 @@ export function createLakeDetailLayer(
   directionZ: number,
   broaderWavelets?: BroaderWavelets
 ): LakeDetailLayer {
-  const size = 512;
-  const texelMeters = extentMeters / size;
-  const featureScale = extentMeters / 96;
-  const heightField = new Float32Array(size * size);
-  const slopeX = new Float32Array(size * size);
-  const slopeZ = new Float32Array(size * size);
-  let randomState = seed >>> 0;
-  const random = (): number => {
-    randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
-    return randomState / 4294967296;
-  };
+  const image = new LakeDetailImageBridge(extentMeters, waveletCount, seed >>> 0,
+    new Float64Array([directionX, directionZ]), new Float64Array(broaderWavelets === undefined ? []
+      : [broaderWavelets.count, broaderWavelets.featureScaleMeters, broaderWavelets.heightScale]));
+  return uploadLakeDetailImage(image);
+}
 
-  for (let wavelet = 0; wavelet < waveletCount + (broaderWavelets?.count ?? 0); wavelet++) {
-    const broader = wavelet >= waveletCount;
-    const localFeatureScale = broader ? (broaderWavelets?.featureScaleMeters ?? featureScale) : featureScale;
-    const shapeBits = Math.imul(wavelet ^ seed, 0x9e3779b1) >>> 0;
-    const crestlet = shapeBits / 4294967296 < 0.6;
-    const centerX = random() * size;
-    const centerZ = random() * size;
-    const centerCellX = Math.floor(centerX);
-    const centerCellZ = Math.floor(centerZ);
-    const centerFractionX = centerX - centerCellX;
-    const centerFractionZ = centerZ - centerCellZ;
-    const angle = (random() - 0.5) * 1.8;
-    const travelX = directionX * Math.cos(angle) - directionZ * Math.sin(angle);
-    const travelZ = directionZ * Math.cos(angle) + directionX * Math.sin(angle);
-    const crestX = -travelZ;
-    const crestZ = travelX;
-    const crestLength = (crestlet ? 0.6 + random() * 0.25 : 0.3 + random() * 0.35) * localFeatureScale;
-    const envelopeWidth = (crestlet ? 0.35 + random() * 0.15 : 0.4 + random() * 0.5) * localFeatureScale;
-    const height = (0.045 + random() * 0.085) * Math.min(1.35, Math.sqrt(localFeatureScale))
-      * (crestlet ? 1.2 : 1) * (broader ? (broaderWavelets?.heightScale ?? 1) : 1);
-    const bend = crestlet ? (((shapeBits >>> 8) & 255) / 255 - 0.5) * 0.25 : 0;
-    const waveNumber = 1.8 / envelopeWidth;
-    const carrierMean = Math.exp(-0.5 * 1.8 * 1.8);
-    const radius = Math.ceil(4 * Math.max(crestLength, envelopeWidth) / texelMeters);
+export function createProductionLakeDetailLayer(condition: LakeVisualCondition, far: boolean): LakeDetailLayer {
+  const image = LakeDetailImageBridge.for_visual_condition(condition.windNorthMetersPerSecond,
+    condition.windEastMetersPerSecond, condition.fetchMeters, condition.detailAmplitudeScale, condition.patternSeed, far);
+  return uploadLakeDetailImage(image);
+}
 
-    for (let offsetZ = -radius; offsetZ <= radius; offsetZ++) {
-      for (let offsetX = -radius; offsetX <= radius; offsetX++) {
-        const deltaX = (offsetX - centerFractionX) * texelMeters;
-        const deltaZ = (offsetZ - centerFractionZ) * texelMeters;
-        const alongCrest = deltaX * crestX + deltaZ * crestZ;
-        const alongTravel = deltaX * travelX + deltaZ * travelZ;
-        const curvedTravel = alongTravel - bend * alongCrest * alongCrest / crestLength;
-        const normalizedRadius = (alongCrest / crestLength) ** 2 + (curvedTravel / envelopeWidth) ** 2;
-        if (normalizedRadius > 16) continue;
-        const envelope = height * Math.exp(-0.5 * normalizedRadius);
-        let localHeight: number;
-        let crestDerivative: number;
-        let travelDerivative: number;
-        if (crestlet) {
-          // A short, gently curved crest and its flanking troughs. The
-          // Gaussian-weighted cosine has zero integral along the travel axis.
-          const carrier = Math.cos(waveNumber * curvedTravel) - carrierMean;
-          localHeight = envelope * carrier;
-          travelDerivative = envelope * (
-            -curvedTravel * carrier / (envelopeWidth * envelopeWidth) - waveNumber * Math.sin(waveNumber * curvedTravel)
-          );
-          crestDerivative = -alongCrest * localHeight / (crestLength * crestLength)
-            - travelDerivative * 2 * bend * alongCrest / crestLength;
-        } else {
-          // Compact mound with a surrounding trough and zero height integral.
-          localHeight = envelope * (1 - 0.5 * normalizedRadius);
-          const derivative = envelope * (0.5 * normalizedRadius - 2);
-          crestDerivative = derivative * alongCrest / (crestLength * crestLength);
-          travelDerivative = derivative * curvedTravel / (envelopeWidth * envelopeWidth);
-        }
-        const texelX = ((centerCellX + offsetX) % size + size) % size;
-        const texelZ = ((centerCellZ + offsetZ) % size + size) % size;
-        const index = texelZ * size + texelX;
-        heightField[index] = (heightField[index] ?? 0) + localHeight;
-        slopeX[index] = (slopeX[index] ?? 0) + crestDerivative * crestX + travelDerivative * travelX;
-        slopeZ[index] = (slopeZ[index] ?? 0) + crestDerivative * crestZ + travelDerivative * travelZ;
-      }
-    }
+function uploadLakeDetailImage(image: LakeDetailImageBridge): LakeDetailLayer {
+  try {
+    const texture = new DataTexture(image.rgba(), image.size, image.size);
+    texture.wrapS = RepeatWrapping;
+    texture.wrapT = RepeatWrapping;
+    texture.magFilter = LinearFilter;
+    texture.minFilter = LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = 8;
+    texture.needsUpdate = true;
+    return { texture, extentMeters: image.extent_meters };
+  } finally {
+    image.free();
   }
-
-  const pixels = new Uint8Array(size * size * 4);
-  for (let index = 0; index < slopeX.length; index++) {
-    const x = Math.max(-1, Math.min(1, slopeX[index] ?? 0));
-    const z = Math.max(-1, Math.min(1, slopeZ[index] ?? 0));
-    pixels[index * 4] = Math.round(128 + x * 127);
-    pixels[index * 4 + 1] = Math.round(128 + z * 127);
-    pixels[index * 4 + 2] = Math.round(Math.min(1, (x * x + z * z) * 2.5) * 255);
-    pixels[index * 4 + 3] = Math.max(0, Math.min(255,
-      Math.round(128 + Math.max(-0.5, Math.min(0.5, heightField[index] ?? 0)) * 255)
-    ));
-  }
-
-  const texture = new DataTexture(pixels, size, size);
-  texture.wrapS = RepeatWrapping;
-  texture.wrapT = RepeatWrapping;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.anisotropy = 8;
-  texture.needsUpdate = true;
-  return { texture, extentMeters };
 }

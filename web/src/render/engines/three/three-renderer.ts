@@ -45,7 +45,7 @@ import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../co
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyCondition } from "../../contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
-import { createLakeDetailLayer } from "./lake-detail-texture.js";
+import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
 import { createLakeGeometry } from "./lake-water-geometry.js";
@@ -134,12 +134,9 @@ function createLakeVisualResources(condition: LakeVisualCondition, quality: Lake
     throw new RangeError("Invalid render-only lake visual condition");
   }
   const waves = createLakeWaveResources(condition, quality);
-  const directionX = condition.windEastMetersPerSecond / windSpeed;
-  const directionZ = -condition.windNorthMetersPerSecond / windSpeed;
-  const near = createLakeDetailLayer(64, 3150, 1717 + condition.patternSeed * 997, directionX, directionZ);
+  const near = createProductionLakeDetailLayer(condition, false);
   try {
-    const far = createLakeDetailLayer(288, 5400, 2917 + condition.patternSeed * 991, directionX, directionZ,
-      { count: 900, featureScaleMeters: 4.5, heightScale: 0.5 });
+    const far = createProductionLakeDetailLayer(condition, true);
     return { ...waves, windSpeed, near, far };
   } catch (error) {
     near.texture.dispose();

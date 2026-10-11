@@ -2589,6 +2589,34 @@ mod tests {
     }
 
     #[test]
+    fn gpu_mip_notice_retains_the_cause_without_claiming_the_previous_display_is_preserved() {
+        let mut app = app(1280.0, 720.0);
+        app.insert_resource(NativeEnvironment::try_default().unwrap());
+        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        app.world_mut()
+            .resource_mut::<NativeEnvironment>()
+            .report_detail_mip_failure(Some(super::super::environment::DetailMipFailure {
+                images: vec![AssetId::<Image>::default()],
+                shader: AssetId::<Shader>::default(),
+                entry: "downsample_second",
+                cause: "CreateShaderModule(original GPU validation cause)".into(),
+            }));
+        app.update();
+        let notification = platform_input(app.world_mut()).notification;
+        let rendered = labels(&app).join("\n");
+        for message in [notification, rendered] {
+            assert!(message.contains("GPU mipmap"));
+            assert!(message.contains("downsample_second"));
+            assert!(message.contains("CreateShaderModule(original GPU validation cause)"));
+            assert!(!message.contains("以前の表示を保持"));
+        }
+        assert_eq!(
+            app.world().resource::<NativeSession>().game.snapshot(),
+            snapshot
+        );
+    }
+
+    #[test]
     fn native_menu_renders_shared_candidates_groups_actions_and_sealed_flight() {
         let mut app = app(1280.0, 720.0);
         press(&mut app, "game-title-start");

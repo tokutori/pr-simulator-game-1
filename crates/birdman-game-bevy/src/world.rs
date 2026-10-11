@@ -7,8 +7,9 @@ use super::{
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    asset::RenderAssetUsages, core_pipeline::tonemapping::Tonemapping, mesh::Indices, prelude::*,
-    render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages, camera::visibility::RenderLayers,
+    core_pipeline::tonemapping::Tonemapping, light::CascadeShadowConfigBuilder, mesh::Indices,
+    prelude::*, render::render_resource::PrimitiveTopology,
 };
 use birdman_game_core::{
     HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
@@ -302,6 +303,7 @@ pub(crate) fn setup_world(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut water: ResMut<Assets<WaterMaterial>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     commands.init_resource::<RenderHistory>();
     commands.insert_resource(NativeEnvironment::try_default().expect("登録環境が不正"));
@@ -338,7 +340,10 @@ pub(crate) fn setup_world(
             Transform::IDENTITY,
         ));
     }
-    let registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
+    let mut registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
+    registered_water
+        .upload_detail(&mut images)
+        .expect("登録微細波画像が不正");
     let sunlight = sunlight_transform(registered_water.sun_cloud.truncate());
     let mut registered_sky = registered_water.clone();
     registered_sky.waves_sky.w = 1.0;
@@ -379,8 +384,17 @@ pub(crate) fn setup_world(
         EnvironmentSun,
         DirectionalLight {
             illuminance: 18_000.0,
+            shadow_maps_enabled: true,
             ..default()
         },
+        CascadeShadowConfigBuilder {
+            first_cascade_far_bound: 30.0,
+            maximum_distance: 600.0,
+            num_cascades: 3,
+            ..default()
+        }
+        .build(),
+        RenderLayers::layer(0).with(1),
         sunlight,
     ));
     let platform = launch_venue().expect("登録launch venueが不正").platform;
@@ -427,11 +441,13 @@ pub(crate) fn setup_world(
                 Mesh3d(meshes.add(Cuboid::new(0.08, 0.08, 3.0))),
                 MeshMaterial3d(frame.clone()),
                 Transform::from_xyz(0.0, -0.2, 0.5),
+                RenderLayers::layer(0).with(1),
             ));
             parent.spawn((
                 Mesh3d(meshes.add(Cuboid::new(0.55, 0.5, 0.7))),
                 MeshMaterial3d(frame),
                 Transform::from_xyz(0.0, -0.35, -0.25),
+                RenderLayers::layer(0).with(1),
             ));
             let mut wing_vertices = Vec::new();
             for side in [-1.0_f32, 1.0] {
@@ -453,6 +469,7 @@ pub(crate) fn setup_world(
                     Mesh3d(meshes.add(rectangular_surface(vertices))),
                     MeshMaterial3d(white.clone()),
                     Transform::IDENTITY,
+                    RenderLayers::layer(0).with(1),
                 ));
             }
             parent
@@ -465,6 +482,7 @@ pub(crate) fn setup_world(
                     tail.spawn((
                         Mesh3d(meshes.add(rectangular_surface(horizontal_tail.vertices))),
                         MeshMaterial3d(white.clone()),
+                        RenderLayers::layer(0).with(1),
                     ));
                 });
             parent
@@ -477,12 +495,14 @@ pub(crate) fn setup_world(
                     tail.spawn((
                         Mesh3d(meshes.add(rectangular_surface(vertical_tail.vertices))),
                         MeshMaterial3d(white),
+                        RenderLayers::layer(0).with(1),
                     ));
                 });
         });
     commands.spawn((
         WorldProjection::FlightCamera,
         Camera3d::default(),
+        IsDefaultUiCamera,
         Tonemapping::Reinhard,
         Projection::Perspective(PerspectiveProjection {
             far: 200_000.0,
@@ -1052,6 +1072,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
         app.update();
@@ -1059,6 +1080,7 @@ mod tests {
         let mut lights = app.world_mut().query::<(&DirectionalLight, &Transform)>();
         let (light, transform) = lights.single(app.world()).unwrap();
         assert_eq!(light.illuminance, 18_000.0);
+        assert!(light.shadow_maps_enabled);
         assert!((transform.forward().as_vec3() + expected).length() < 1.0e-6);
         let materials = app.world().resource::<Assets<WaterMaterial>>();
         let mut material_modes = Vec::new();
@@ -1068,6 +1090,39 @@ mod tests {
         }
         material_modes.sort_by(f32::total_cmp);
         assert_eq!(material_modes, vec![0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn reflection_layer_contains_airframe_meshes_and_sun_but_excludes_water_and_terrain() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let world = app.world_mut();
+        let mut meshes =
+            world.query::<(&Mesh3d, Option<&RenderLayers>, Option<&EnvironmentSurface>)>();
+        let mut reflected_meshes = 0;
+        let mut excluded_meshes = 0;
+        for (_, layers, water) in meshes.iter(world) {
+            if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
+                assert!(water.is_none());
+                reflected_meshes += 1;
+            } else {
+                excluded_meshes += 1;
+            }
+        }
+        assert_eq!(reflected_meshes, 52);
+        assert!(excluded_meshes >= 5);
+        let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
+        assert_eq!(
+            *lights.single(world).unwrap(),
+            RenderLayers::layer(0).with(1)
+        );
+        let mut default_ui = world.query_filtered::<&WorldProjection, With<IsDefaultUiCamera>>();
+        assert!(*default_ui.single(world).unwrap() == WorldProjection::FlightCamera);
     }
 
     #[test]

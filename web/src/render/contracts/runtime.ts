@@ -110,10 +110,15 @@ export interface PresentationBackendAdapter {
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame;
 }
 
+export type PresentationCleanupFailure =
+  | { readonly type: "renderer-failed"; readonly operation: "start-loop" | "stop-loop" | "dispose-renderer"; readonly message: string; readonly cause: unknown }
+  | { readonly type: "backend-failed"; readonly operation: "start-backend" | "stop-backend"; readonly mode: PresentationMode; readonly message: string; readonly cause: unknown };
+
 export type RenderError =
   | { readonly type: "unsupported"; readonly mode: PresentationMode }
   | { readonly type: "backend-failed"; readonly mode: PresentationMode; readonly message: string }
   | { readonly type: "renderer-failed"; readonly message: string }
+  | { readonly type: "cleanup-failed"; readonly failures: readonly [PresentationCleanupFailure, ...PresentationCleanupFailure[]] }
   | { readonly type: "disposed" };
 
 export type RuntimeResult =

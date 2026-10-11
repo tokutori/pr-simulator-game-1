@@ -2,6 +2,7 @@ use super::environment::EnvironmentFailure;
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::Resource;
 use birdman_game_core::SessionPhase;
+use birdman_game_session::lake_water::LakeWaterQuality;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum WaterQuality {
@@ -17,7 +18,6 @@ pub(crate) struct WaterQualityProfile {
 }
 
 impl WaterQuality {
-    #[cfg(test)]
     pub(crate) const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
 
     pub(crate) const fn label(self) -> &'static str {
@@ -30,11 +30,15 @@ impl WaterQuality {
 
     pub(crate) const fn profile(self) -> WaterQualityProfile {
         WaterQualityProfile {
-            near_cells: match self {
-                Self::Low => 64,
-                Self::Medium => 128,
-                Self::High => 256,
-            },
+            near_cells: self.shared().mesh_segments(),
+        }
+    }
+
+    pub(crate) const fn shared(self) -> LakeWaterQuality {
+        match self {
+            Self::Low => LakeWaterQuality::Low,
+            Self::Medium => LakeWaterQuality::Medium,
+            Self::High => LakeWaterQuality::High,
         }
     }
 }
@@ -155,7 +159,7 @@ mod tests {
         assert_eq!(WaterQuality::default(), WaterQuality::High);
         assert_eq!(
             WaterQuality::ALL.map(|quality| quality.profile().near_cells),
-            [64, 128, 256]
+            [96, 144, 224]
         );
         assert_eq!(
             WaterQuality::ALL.map(WaterQuality::label),

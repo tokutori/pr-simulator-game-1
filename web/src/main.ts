@@ -8,6 +8,7 @@ import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./gam
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
+import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
 import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, updateApp } from "./app/app-state.js";
@@ -388,7 +389,9 @@ function runEffect(effect: AppEffect): void {
       const presentation = runtime;
       runtime = null;
       flightRenderer = null;
-      void presentation?.dispose();
+      void presentation?.dispose().then((result) => {
+        if (!result.ok) console.error("Presentation cleanup failed", result.error);
+      }, (error: unknown) => { console.error("Presentation cleanup failed", error); });
       return;
     }
     case "update-shared-game-ui": {
@@ -608,6 +611,8 @@ async function initializePresentation(requestId: number): Promise<void> {
     await initializeWasmRuntime();
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
+    await initializeWasmRuntime();
+    if (isPageHidden()) return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
@@ -1138,6 +1143,8 @@ function currentViewport(): ViewportSize {
 }
 
 function runtimeErrorMessage(result: Exclude<RuntimeResult, { readonly ok: true }>): string {
+  if (result.error.type === "cleanup-failed") return result.error.failures.map((failure) =>
+    `${failure.operation}${failure.type === "backend-failed" ? ` (${failure.mode})` : ""}: ${failure.message}`).join("; ");
   if (result.error.type === "backend-failed") return `${result.error.type} (${result.error.mode}): ${result.error.message}`;
   if (result.error.type === "unsupported") return `${result.error.type}: ${result.error.mode}`;
   if (result.error.type === "renderer-failed") return `${result.error.type}: ${result.error.message}`;
