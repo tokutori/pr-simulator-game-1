@@ -47,7 +47,7 @@ fn run_command() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage: birdman-game-cli verify-hybrid-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>\n       birdman-game-cli export-game-ui-schema [bundle|view|action|input|effects|frame] (requires schema feature)".to_owned()
+    "Usage: birdman-game-cli verify-hybrid-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>\n       birdman-game-cli export-game-ui-schema [bundle|view|action|input|effects|frame|tail-input] (requires schema feature)".to_owned()
 }
 
 fn validate_environment(path: &str) -> Result<(), String> {
