@@ -23,7 +23,6 @@ import type {
 import type { GameUiSessionCommand } from "./app/game-ui-types.js";
 import type { GameUiPlatformInput } from "./generated/game-ui-input.js";
 import type { GameUiUpdate } from "./generated/game-ui-effects.js";
-import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
@@ -522,9 +521,8 @@ function runEffect(effect: AppEffect): void {
       const startedAt = performance.now();
       const session = gameSession;
       if (session === null) return;
-      const token = session.captureQueryToken();
       window.setTimeout(() => {
-        if (gameSession !== session || session.acceptQuery(token, effect).kind === "stale") return;
+        if (gameSession !== session || model.replayClockGeneration !== effect.generation) return;
         dispatch({
           type: "replay-clock-tick",
           generation: effect.generation,
@@ -611,7 +609,6 @@ async function initializePresentation(requestId: number): Promise<void> {
     await initializeWasmRuntime();
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
-    await initializeWasmRuntime();
     if (isPageHidden()) return;
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null, model.lakeWaterQuality.applied, headHudCanvas);
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
