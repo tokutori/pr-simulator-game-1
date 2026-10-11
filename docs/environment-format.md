@@ -65,7 +65,7 @@ Three.js等への座標変換とshader/GPU更新はengine adapterが担当する
 
 ## WASM metadata snapshot
 
-`GameSessionBridge::environment_snapshot_json` はschema version 1のJSONを一括返す。
+`HybridGameSessionBridge::environment_snapshot_json` はschema version 1のJSONを一括返す。
 包絡は`schema_version`、`context`、`projection`である。session contextは`kind: session`と
 同時点の`phase_code`を保持する。registry queryのcontextは`kind: registry`である。
 queryはsession・record・physics timeを変更せず、独立したgeneration counterを保持しない。
@@ -89,10 +89,10 @@ Briefing用Web projectionはphase 1の`selected`と整数phase 2〜8の`sealed`�
 
 metadataは名前、hash、local frame、風のquery領域、代表点・高度・coreでsampleした風、
 wave/sky inputs、月統計、provenanceと出典を含む。全格子標本は転送しない。
-local frameとskyは`defined`/`unavailable`の直和型であり、legacyに架空の値を補完しない。
+local frameとskyは`defined`/`unavailable`の直和型であり、presetに架空の値を補完しない。
 definedは環境入力の定義を示す。rendererへの適用状況はWeb/engine adapterが管理する。
-hashはenv6の`asset_bytes`とlegacyの`source_fingerprint`を区別し、各SHA-256を保持する。
-legacy hashは現在のbuildのsource fingerprintであり、過去recordの実asset hashを復元する値ではない。
+hashはenv6の`asset_bytes`とpresetの`source_fingerprint`を区別し、各SHA-256を保持する。
+preset hashは現在のbuildのsource fingerprintであり、過去recordの実asset hashを復元する値ではない。
 
 `environment_snapshot_for_identity_json` はJSON文字列だけを受理するregistry queryである。
 JSのnull・型不一致、4,096 byte超過、object以外の包絡、JSON/field/range異常、0のversionを分類して拒否する。
@@ -100,16 +100,11 @@ registryは次の組合せを完全identityで照合する。scenario IDとenvir
 
 | catalog | scenario ID | scenario version | aircraft model version | controller profile version |
 |---|---|---|---|---|
-| v1 | 1〜5 | v1 | v1 / v2 | v1〜v4 |
-| v2 | 1 / 2 / 4 / 5 / 6 | v1 | v1 / v2 | v1〜v4 |
-| v2 | 1 / 2 / 4 / 5 / 6 | v2 | v1 | v1 / v2 |
-| v3 | 1 / 2 / 4 / 5 / 6 | v3 | v2 | v2 / v3 |
+| v3 | 1 / 2 / 4 / 5 / 6 | v3 | v2 | v3 |
 
-旧archiveの環境metadata照会用の組合せを保持し、v3を現行hybrid機体の選択catalogとする。
-環境metadataの照会は旧機体を再積分する操作を含まない。
-現行の通常選択はscenario v3、aircraft model v2、controller profile v3を使用する。
-既知registryの存在は、旧機体や旧controllerの通常選択への公開を意味しない。
-未知identityはunavailableを返し、archiveの受入・記録・snapshot replayを維持する。
+現行model/controller/scenarioだけをregistryへ登録する。
+未知identityはunavailableを返し、schema 6の保存snapshotを現在のmodelや環境へ再解釈しない。
+旧catalog・controller version向けのaliasや互換登録を提供しない。
 
 ## 現在の実装範囲
 

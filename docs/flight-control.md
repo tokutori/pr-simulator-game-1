@@ -15,38 +15,13 @@ u=(1-a)u_{pilot}+a u_{FBW},\qquad 0\le a\le1
 
 ## 型と単位
 
-roll、pitch、yawの各論理指令・actuator出力は、対応する機体軸まわりの角度をradianで表す。
-authorityは有限な$[0,1]$値だけを保持するvalidated型とする。制御modeはManual、Shared(authority)、Automaticの
-直和型で表し、modeとauthorityの矛盾を許さない。
-
-`BodyRateFeedbackConfig`はroll・pitch・yaw順の有限な非負gain（秒）と正のcommand limit（radian）を保持する。
-`body_rate_feedback_commands`は明示されたtarget/observed body angular rate（rad/s）から
-$u_i=K_i(\omega_{target,i}-\omega_{observed,i})$を計算し、axisごとにcommand limitで飽和する。
-feedback-controlled tickはtargetを入力とし、observed rateは直前のRust core stateから取得してFBW commandを導出する。
-CLI/WASM adapterはFBW commandを事前生成しない。これはcontroller primitiveであり、標準gainや公開機体へのtuningを定義しない。機体固有controllerは、空力微係数・actuator・scenarioと
-合わせた検証後に構成する。
-
-各actuatorは正の最大舵角$radian$と最大舵角速度$radian/second$を持つ。
-入力targetは最大舵角でsaturateし、現在状態から1 stepで移動できる角度を最大舵角速度とtimestepで制限する。
-整数tick $k$ のsnapshotは直前区間の保持値 $\delta_k$ を保存する。入力 $k$ から求めた更新値
-$\delta_{k+1}$ は区間 $(k,k+1]$ で保持し、全RK4 stageの空力評価へ同じ値を渡す。
-RK4の開始stageは入力更新後の右側値を評価する。rate limitは隣接tickの更新量を制限し、
-tick内の連続したactuator軌跡を定義しない。
-接触fractionが正なら終端physical actuatorも $\delta_{k+1}$ とする。fractionが0なら正の飛行時間を
-経過していないため、既存snapshotの $\delta_k$ を終端値として保持する。
-制御・actuator更新周期はphysics tickと同じ100 Hzとする。actuator stepは正の有限timestepのみ受理する。
-pilot target policyは保持加速度によるtick内軌跡と終端stateの有限停止証明を検査し、目標近傍では2 tickで位置目標へ停止する運動学に基づく要求を生成する。
-停止証明は積分器と同じ`f64`運動を最大4096 step検査する。物理的な連続停止不能とpolicyの数値適用範囲外を別の型付きerrorにする。詳細は `pilot-motion.md` を正本とする。
-そのtimestepは100 Hz tick以下の有限値とし、描画frame数から値を生成しない。
-`advance_surface_control`はpilot/FBWのauthority混合、rate limit・saturation適用、更新後stateを一つの
-決定的な操作として返す。混合後commandもrecord可能な値として返却する。
-`advance_flight_tick_with_contact`は統合tickの次状態をwater-contact detectorへ渡し、次のinteger-tick stateまたはterminal contactを
-返す。Contact時にはfractional sampleのみを公開し、接触後のinteger-tick stateを呼出し側へ返さない。
-FlightRecordとReplayのactuatorもこの保持規則を使用する。exact sample時刻は保存値、
-sample間の内点はその区間の終端sampleに保存された保持値を返す。
-
-このactuator modelは静的舵角限界とrate limitを表す。独立した遅延・一次lagを追加する場合は、
-遅延bufferとその初期状態をFlightRecordへ含める契約および統合収束試験を同時に定義する。
+TailPilotIntentはnormalized nose-up/right-turn、TailRateTargetはbody q/r、TailIncidenceは水平・垂直尾翼のphysical angleを保持する。
+ControlModeはManual、Shared(authority)、Automaticの直和型とし、authorityは有限な$[0,1]$へ限定する。
+slew更新はcoreの固定tickに従う。整数tick $k$ のstateは前区間の保持値 $\delta_k$、
+入力 $k$ による更新値 $\delta_{k+1}$ は区間 $(k,k+1]$ の全RK4 stageへ保持する。
+正のcontact fractionは更新後incidenceを保存し、fraction=0は直前incidenceを保存する。
+Replayのexact sampleは保存値、区間内点は終端側sampleの保持incidenceを返す。
+pilot target policyは身体の独立した有限停止条件を検証する。詳細は[pilot-motion](pilot-motion.md)へ従う。
 
 ## エラーと検証
 
@@ -57,7 +32,7 @@ gain×(observed-target)を各±0.2 radで飽和する。observed roll rateを操
 software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airframe/polar parameterから分離する。
 `advance_tail_control`は既存ControlModeのauthority混合、physical saturation、slewを純粋に評価し、
 混合targetと次区間の保持incidenceを返す。pilot位置指令はこのmixerの対象外である。
-既存generic三軸APIを保持する。この単位は二系統制御primitiveとHybrid荷重の符号を検証する。
+二系統制御primitiveとHybrid荷重の符号を検証する。
 新mockのWASM・input・record・既定モデルはBPG-042のアプリ統合で同じ二系統契約へ接続する。
 
 ### 局所迎角差と尾翼角の合成範囲保護
@@ -84,8 +59,7 @@ controller、pilot目標、pilot加速度は一度だけ導出し、候補間で
 endpointの直接評価はstageを`None`とし、第四stageと混同しない。
 
 要求intent・manual/feedback/mixed targetは従来のcontrol reportへ保存する。
-保護後の実incidenceはphysical sampleへ保存する。controller profile version 2でこの動作を識別し、
-version 1の記録の読取り・snapshot Replayを維持する。Personal Bestの比較keyはcontroller versionを含む。
+保護後の実incidenceはphysical sampleへ保存する。現行controller version 3にこの保護を含め、Personal Bestの比較keyもversionを保持する。
 
 `TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
 `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
@@ -94,7 +68,7 @@ version 1の記録の読取り・snapshot Replayを維持する。Personal Best�
 
 `TailFlightTickState`はbody/pilot state、二系統incidence、保持pilot target、整数tickの単一正本である。
 `advance_tail_flight_tick`は直前成功stateのq/rから制御を一度だけ評価し、更新incidenceを全RK4 stageへ保持する。
-Hybrid専用load adapterはphysical incidenceを直接評価する。旧roll枠・legacy actuator stateへ写像しない。
+Hybrid専用load adapterはphysical incidenceを直接評価する。TailIncidenceをそのまま使用する。
 pilot target policy・moving mass・積分器・contact検索/slerpは既存処理を共有する。
 `advance_tail_flight_tick_with_contact`は着水時にfractional terminal sampleだけを返す。
 fraction 0では直前incidence/target、正fractionでは新incidence/targetを保持し、body/pilot stateは同時刻へ補間する。
@@ -105,17 +79,16 @@ physical incidenceと保持pilot targetはoutcomeのstate/sampleを参照し、r
 fraction 0のreportは未適用の新controlを保持せず、正fractionと整数tickはその区間の適用controlを返す。
 `TailFlightScenarioParameters`は共通のComposite-CG launch/contact検証から二系統のtick-zero stateを生成する。
 `TailFlightScenario`はborrowed Hybrid load/wind、pilot trim、contact、courseを固定し、software profileを機体から分離する。
-telemetry式とdistance scoreは旧scenarioと共有する。`run`はTimeLimit/WaterContactで同時刻のstateとscoreを返す。
+telemetry式とdistance scoreは共有coreから導出する。`run`はTimeLimit/WaterContactで同時刻のstateとscoreを返す。
 失敗時は直前成功の二系統stateと元のcause/stageを返し、そのtickをcommitしない。
 新mock機体のWASM/input/record/defaultはBPG-042で一体として接続する。
 
-GameSessionは既存lifecycleを共有し、scenarioと同型のactive stateをlegacy/tailの排他的engineへ保持する。
+GameSessionは既存lifecycleを共有し、TailFlightScenarioと同型のTailFlightTickStateをactive stateへ保持する。
 hybrid tickの成功reportをFlightRecordへ渡し、記録・telemetryの成功後に整数tickを公開する。
 失敗stageのstate・incidence・pilot target・inputを公開せず、直前成功stateをResult/recordへ確定する。
 Resultは元のtick errorを保持する。空力envelopeと有限windのOutsideGridはOutOfValidEnvelope、
 非有限値・算術・policy等の失敗はFatalSimulationErrorとして区別する。
 FlightRecordのfinalizationにも同じ型付きerrorを保存し、失敗tickのsampleを追加しない。
-旧三軸snapshot ABIはtail payloadを型付きerrorで拒否し、余剰rollを生成しない。
 新既定モデル・新ABI・record schemaの公開切替はBPG-042の同一PRで結合する。
 WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを固定owned cacheへ保持し、
 既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
@@ -123,38 +96,37 @@ trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速
 model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。
 アプリ既定は`bpg041-playable-hybrid-mock`/version 2と`bpg040-tail-rate-feedback`/version 3である。
 modelのPWL列・geometry・trimと、全modeのsoft alpha/身体target保護は[playableモデル契約](playable-hybrid-model.md)に従う。
-旧JS factoryはlegacy三軸の明示的な互換入口として保持する。
 
 明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、
 入力は`nose_up`/`turn_right`、body-positiveの`desired_pitch_rate_rad_s`/`desired_yaw_rate_rad_s`、
 `pilot_position_command`の`hold`/`set`を受け取る。余剰axis・未知field・異なるschemaを拒否する。
 snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
 terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
-旧factory・33値ABIはlegacy互換入口として保持する。既定アプリのReplay/Attractは同じbridgeのnamed保存queryを使用する。
+既定アプリのReplay/Attractは同じbridgeのnamed保存queryを使用する。
 hybridのSetupは既存`DifficultySettings`とcatalog 3を使用する。Calm/Mild/Challenging/NearLimitは
 登録済みuniform provider 1/2/4/5、Typicalはoffline asset 6のgridを使用し、環境metadataと物理のproviderを一致させる。
 Informationは表示だけに作用し、Assistanceは既存Strong/Assisted/Light/Manualをauthority 1/0.5/0.2/0へ解決する。
 Briefing開始後は選択を固定し、18値のconfiguration metadataとmodel/controller identityをRustから供給する。
 snapshotはTitle/FlightSetupで両identityを`null`、BriefingPreparing/BriefingFailed/BriefingReady/Countdown以降で両identityを必須とする。
 Setupの候補は別environment projectionの`selected`で示し、準備失敗・再準備・Countdown取消でもsealed identityを保持する。
-record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。旧三軸feedback profileを生成しない。
+record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。同じ二系統profileを使用する。
 `control_profile_json()`はsealed controller ID/versionとpitch/yawのrate上限・feedback gain・slewを供給する。
 device adapterは型付き上限へnormalized demandを写像し、TSに物理定数を定義しない。explicit q/r入力は同一ABIを維持する。
 live stateの`pilot_position_target_normalized`は、同じsealed mappingで現在のheld physical targetを逆写像した値である。
 trimを0、両端を±1とし、trimと端点が一致する場合は同じphysical targetを0へ正規化する。
 初期化・Resume・入力機器の再取得はこの値を参照し、現在のphysical positionや初期positionから目標を推定しない。
 `Hold`は直前effective targetを保持した名目要求であり、controller 3のalpha保護は危険側biasをさらにtrim側へ絞り得る。
-元Hold/Set要求とresolved effective targetを区別する。旧保存queryへnormalized targetを追加せず、記録値とlive入力状態を区別する。
+元Hold/Set要求とresolved effective targetを区別する。保存記録値とlive入力状態を区別する。
 Flight/Pausedの`frame.progress_m`は`course_parallel_m`・`cross_track_m`・`net_horizontal_m`をRustから供給する。
 sealed initial datumと最新成功datumの変位へdistance score v1の幾何計算を適用し、CG移動・累積経路長と区別する。
 進行値は未確定の診断値であり、Resultは同時刻の既存`finalization.score_m`を保持する。保存queryへcursor scoreを追加しない。
 Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
-queryのschema 2は保存physics/telemetryと`controls.layout`による`legacy_three_axis`/`tail_incidence`の排他値を返す。
+queryのschema 2は保存physics/telemetryと`controls.layout`による`tail_incidence`のphysical値を返す。
 Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。
-`playback_context_json()`はnamed phase `replay`/`attract`、保存scenario/control identity、difficulty、layout別finalization/causeを返す。
-live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/queryを使用する。保存v1–5を二系統へ読み替えない。
+`playback_context_json()`はnamed phase `replay`/`attract`、保存scenario/control identity、difficulty、二系統finalization/causeを返す。
+live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/queryを使用する。未対応schemaを拒否する。
 `export_flight_record_json()`は同じsealed metadataからschema 6とcanonical PB keyを生成する。archiveはsnapshot閲覧へ限定する。
-`TailPersonalBestSelectionBridge`は既存Rust比較を使用し、旧layoutやmodel/controller/key不一致を比較対象から除外する。
+`TailPersonalBestSelectionBridge`は既存Rust比較を使用し、未対応schemaとmodel/controller/key不一致を比較対象から除外する。
 `enter_attract()`はTitleから独立した有界demo recordを一度生成・保持し、再入時は同recordのclockだけを初期化する。
 demoは登録Calm環境・Automatic制御の架空hybridモデルを使用し、playerのdifficulty・seed・recordへ書き込まない。
 Attractの描画・分析は保存queryを使用し、live snapshot・player record exportを拒否する。`leave_attract()`はTitleへ戻る。
@@ -165,12 +137,10 @@ Attractの描画・分析は保存queryを使用し、live snapshot・player rec
 
 Webの`tail-session-codec`はschema 2と`tail_incidence`を検査し、phaseとframeを結合したimmutableな直和型へ変換する。
 physical incidenceは水平・垂直尾翼の二値、body角速度はroll/pitch/yawの三値として保持する。
-terminalのfraction・stamp・typed causeとRust由来identityを保存し、旧33値decoderへroll制御値を補填しない。
-既定アプリはこのcodecから共通表示snapshotを導出し、旧33値decoderはlegacy互換入口に限定する。
+terminalのfraction・stamp・typed causeとRust由来identityを保存し、このcodecから共通表示snapshotを導出する。
 二系統device adapterはArrowUp/Downをnose-up/down、ArrowRight/Leftをright/left turn、J/Lをnormalized身体指令に対応付ける。
 Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キーボード解放はHold、Gamepadの身体軸はSetとする。
 身体の物理target・FBW出力・gain・slewはRustに保持し、Webは呼出し側から受け取ったexplicit q/r demandを変更せず渡す。
-旧三軸keyboard/Gamepad adapterはlegacy互換入口で保持する。
 
 `parseTailControlProfile`はRustのsealed controller ID/version・pitch/yaw rate limit・gain・slew metadataをstrictに検査する。
 `tailInputFromControlProfile`は同じsealed scenario/aircraft/controller/seedのsnapshotと照合し、normalized demandをRust所有rate limitへ写像する。
@@ -180,35 +150,35 @@ gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator�
 身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
 `TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
 発進原点・発進台寸法・方位は`assets/biwa-launch-venue.json`をRust session、Web、nativeで共用する。
-hybrid scenario version 2/3は北から時計回り315°を初期headingとcourse axisへ適用する。
+hybrid scenario version 3は北から時計回り315°を初期headingとcourse axisへ適用する。
 NEDの環境風は回転せず、同じCG地点の風をtrimの空気相対速度へ一度加算する。
 reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
 既定アプリはこの二系統port/controllerを使用し、入力・HUD・Resultへ同じsnapshotを渡す。
-`LegacyAppSessionFacade`と`TailAppSessionFacade`はlayout別にWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
-facade内にdomain phaseや物理状態の独立した正本を保持しない。FlightControllerも同じresource ownerのportを使用する。
+`TailAppSessionFacade`は単一ownerとしてWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
+facade内にdomain phaseや物理状態の独立した正本を保持しない。TailFlightControllerも同じresource ownerのportを使用する。
 非同期queryは観測開始時のopaque owner/query generation tokenを保持し、取得途中の変更後に届いた結果を拒否する。
 Analysis datasetのproofは別のrecord source generationを保持し、Retry・設定変更・archive開閉・disposeで失効する。
 同recordのseek・再生速度・再生可否・clock更新ではdatasetを維持し、cursor queryだけを実行する。
 scenario/seedが同一でもresource世代が異なる結果は受理しない。
 `session-factory`はlayoutを明示した構成からWASM resourceを生成し、単一のfacade ownerへ渡す。
 新factoryはraw bridgeを公開せず、初回projectionに失敗したresourceを解放する。
-`archived-personal-best`は保存schema v1〜5とv6を各Rust selectorへ接続する。
-異なるlayoutの既存recordも対応するRust decoderで検証し、同layoutの比較・key・適格性はRust selectorへ委譲する。
+`archived-personal-best`はschema 6をRust Tail selectorへ接続する。
+未対応schemaの保存bytesは変更せず、比較から除外する。schema 6の破損とkey・適格性の検証はRust selectorへ委譲する。
 既定アプリのmain・入力・HUD・Result・保存・Replayは同じtail facadeを使用する。
 Scene退出とBFCache退避ではcontrollerを停止し、非復帰teardownとowner置換でresourceを最終解放する。
 AppModelのFlight/Pausedはcontrol layout・Rust phase・共通snapshotを相関した直和型で保持する。
 Resultの保存snapshotはfinalizationと同じ終端stampだけを受理し、Replay/Attractのcursorとは分離する。
-record未取得は理由付きavailabilityで保持し、旧33値のnullable入力は互換境界で正規化する。
+record未取得は理由付きavailabilityで保持する。
 adapter停止ではcontroller世代とlayoutを照合し、Pause同期前の最後の有効snapshotも保持する。Rust domain phaseは変更しない。
 Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
 Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
 enter/leaveはrecord sourceの世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
 再生操作はquery generationを更新し、同recordのdataset proofを維持する。
 共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
-旧live ABIと保存queryは不足理由を持つ`unavailable`とし、保存cursorの距離を再計算・補填しない。
+保存queryの不足理由は`unavailable`へ保持し、保存cursorの距離を再計算しない。
 
 `named-record-query`はschema 2の保存query・Analysis batch・Replay/Attract contextをimmutableな型へ変換する。
-保存v1〜5の三軸とv6の二系統尾翼はcontrolsの直和型で保持し、tail snapshotへroll制御値を補填しない。
+schema 6の二系統尾翼をphysical controlsとして保持する。
 同sessionのRust terminal projectionとphysics frequencyを使用し、layout・stamp・初期/終端・時系列・clockの整合を検査する。
 queryは保存snapshotとRust-owned Replay clockを参照し、再simulation・物理/score/controllerの再評価を行わない。
 queryにrecord identityが含まれないため、非同期の古い応答は呼出し側のsession generation/request IDで拒否する。
@@ -225,6 +195,6 @@ Web側で物理・集計・scoreを再評価せず、確定Summaryと保存curso
 入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
 閉ループ減衰で検証する。数値積分と離散controlの刻み依存は、[量別step-halving](verification.md)で
 physics-onlyと連成の100/200/400 Hz比較へ分離する。局所増大・減衰は[離散線形化](hybrid-numerical-validation.md)で
-Jacobian/固有値と小摂動時系列を照合する。VersionOneのManual/Automaticには局所増大が残る。
-新Playableの明示的な入力列の受入はその基準と分離し、全状態・任意入力や実機の安定性を保証しない。aircraft-specific controllerと
+Jacobian/固有値と小摂動時系列を照合する。過去のmodel 1の局所増大観測は履歴値として区別する。
+現行Playableの明示的な入力列の受入と局所線形化は個別に検証し、全状態・任意入力や実機の安定性を保証しない。aircraft-specific controllerと
 aerodynamic derivativesのfidelity検証はBPG-035でM6完了後に扱い、M3〜M6をblockしない。

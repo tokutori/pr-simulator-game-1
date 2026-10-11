@@ -18,7 +18,7 @@ Lowでも低解像度environment reflectionを維持し、reflectionの更新頻
 WebではFlight SetupとPauseのSettingsからLow/Medium/Highを手動選択する。Screen・Phone VR・WebXRは同じ選択肢を表示する。AppModelは適用済み画質と要求中の画質を排他的な状態で保持し、rendererがmeshと波浪成分を交換した後に適用完了を確定する。準備に失敗した場合は適用済みresourcesを保持し、再選択できる。画質だけの変更ではdetail texture、空・機体反射、simulation timeを維持する。天候変更・Retry・表示backend切替でも画質の選択を保持し、物理・Difficulty・FlightRecord・Personal Bestの条件を変更しない。画質の自動調整、reflection更新頻度の最適化、性能目標の受入はBPG-012へ保持する。波面のJacobian・自己交差検査と実GPUのLow/High比較は、手動選択の接続とは独立した検証である。
 交換後の旧geometry解放に失敗した場合は、新しい画質を適用済みとして保持し、解放処理の診断を表示する。準備失敗と交換後cleanup失敗を区別し、実rendererとUIの適用済み画質を一致させる。
 
-試作湖面は有限fetch向けのJONSWAP形状と方向分散を持つ離散波浪成分、位相固定、Gerstner水平変位、非正弦波形、有限長の局所起伏、共有全天テクスチャの反射で構成する。全画質で同じ18成分の基準スペクトルを生成し、Low/Medium/Highで6/10/18成分を幾何波として描く。低画質の成分は全周波数帯を代表し、画質を上げると帯域ごとの方向成分を追加する。中短波の起伏は局所テクスチャで補い、画質に応じて水面mesh密度も変える。合成scenarioのWeather 5段階は描画専用の風向・風速・細部振幅・模様seedへ対応させ、天候選択時に波況を更新する。Mild以降の向きはscenario風に概ね合わせ、風速には過去の吹送で残った起伏を表す仮定を加える。Calmにも既存波を残す。登録済み環境metadataのwave inputsを使用し、600 m fetch等のlegacy条件は記録済みの仮定として保持する。飛行・リプレイでは確定した天候から同じ波浪状態を作り、simulation timeのみで位相を進める。この描画入力は琵琶湖の実測状態や瞬間風から計算した波浪予報ではない。太陽と空のreflectionは同じ環境sky inputsへ接続する。地形reflectionの高度化は後続の描画品質で扱う。
+試作湖面は有限fetch向けのJONSWAP形状と方向分散を持つ離散波浪成分、位相固定、Gerstner水平変位、非正弦波形、有限長の局所起伏、共有全天テクスチャの反射で構成する。全画質で同じ18成分の基準スペクトルを生成し、Low/Medium/Highで6/10/18成分を幾何波として描く。低画質の成分は全周波数帯を代表し、画質を上げると帯域ごとの方向成分を追加する。中短波の起伏は局所テクスチャで補い、画質に応じて水面mesh密度も変える。合成scenarioのWeather 5段階は描画専用の風向・風速・細部振幅・模様seedへ対応させ、天候選択時に波況を更新する。Mild以降の向きはscenario風に概ね合わせ、風速には過去の吹送で残った起伏を表す仮定を加える。Calmにも既存波を残す。登録済み環境metadataのwave inputsを使用し、Calm/Mild/Challenging/NearLimitの600 m fetchは描画用の仮定として保持する。飛行・リプレイでは確定した天候から同じ波浪状態を作り、simulation timeのみで位相を進める。この描画入力は琵琶湖の実測状態や瞬間風から計算した波浪予報ではない。太陽と空のreflectionは同じ環境sky inputsへ接続する。地形reflectionの高度化は後続の描画品質で扱う。
 
 Webの幾何波はadapter内部の共有GLSL projection kernelを使用する。水面meshは平行移動だけを許し、local XZから頂点間隔 $s=s_0+(14.4/N)\max(|x|,|z|)$ を導出する。中心の勾配は0、同率の軸では両側勾配の平均を用いる。波の振幅勾配はpacketとLOD visibilityの両方を含める。fragmentの補間済み頂点間隔は微小法線の表示配分に限定し、この解析勾配へ転用しない。
 CPUはquality補償後の実Float32振幅・方向・波数を用い、実meshの頂点間隔域で各成分の水平変位の微分上界 $B_i$ を計算する。方向norm、二段noiseのphase/packet勾配、LOD transitionのstationary pointと端点を含み、全域で非表示の成分は0とする。空間一定のchoppinessは $q=\min(4.5,0.56/\sum_i B_i)$ にFloat32用の数値余裕を加え、quality・Weatherの交換時に波と同時更新する。packet、phase、鉛直波形とdetail textureの表現は維持する。実数演算の解析上は水平変位のLipschitz上界が1未満となり、水平写像の反転を抑制する。
@@ -70,7 +70,7 @@ AW3D30に有効な標高がなくtransition meshを生成できない沖の白�
 ## 空・雲・haze
 
 BPG-008のWeb consumerは、Rustが現在のphaseとfull scenario identityから公開したsky metadataを使用する。太陽方位は北を0°とする時計回り、太陽高度は水平を0°とする。背景と水面reflectionは同一の全天テクスチャを参照し、DirectionalLightとsun glitterも同じ太陽方向を使用する。cloud fractionは既存の角度空間cloudの個数へ写像し、visibilityはterrainと水面の共通haze範囲へ接続する。haze開始距離はvisibilityの0.175倍とする描画上の近似である。
-旧recordのsky unavailable、未知の環境identity、未選択状態は欠損を維持する。この場合は方位に依存しないrender-only gradientと既定hazeを使用し、太陽照明・sun glitter・cloudを表示しない。現在の環境metadataへ補完しない。cloud baseはmetadataに保持し、cloudの幾何高度への反映と高品質な空・雲・hazeはM6で扱う。いずれも風場・接触面・物理tickを変更しない。
+recordのsky unavailable、未知の環境identity、未選択状態は欠損を維持する。この場合は方位に依存しないrender-only gradientと既定hazeを使用し、太陽照明・sun glitter・cloudを表示しない。現在の環境metadataへ補完しない。cloud baseはmetadataに保持し、cloudの幾何高度への反映と高品質な空・雲・hazeはM6で扱う。いずれも風場・接触面・物理tickを変更しない。
 
 全天テクスチャ、haze、world-anchoredな積雲のbillboard/impostor clusterを基本とする。
 雲は明るい上面、暖色寄りの太陽側、青灰色の下面を持つ。
@@ -80,17 +80,17 @@ volumetric raymarchは初期版の対象外である。
 
 ## 試作機体の外観
 
-機体は鳥人間大会の滑空機を想起させる架空の形状とする。主翼はNACA 4412に準じた翼型断面、テーパー、上反角と細い支持材を持つ。主翼前半は藍色の被覆、後縁側は薄い半透明フィルムと、その内側に見える水色のスタイロフォーム芯材、竹・バルサの薄茶色のリブと縁材で構成する。コックピットは写真を参考にした細い白いフレームを内部に持ち、前方を先細りの透明フィルム、後方を白い不透明なフェアリングで覆う。搭乗者モデルは表示しない。主要骨格は、翼幅方向にたわむ主翼桁と、その中央へT字に接続して尾部へ続く太い黒いカーボン管の2本で構成する。黒い構造材はこのT字のみとする。水平尾翼は固定の前部と可動のエレベーターに分け、垂直尾翼は全体をラダー舵角で回す。両尾翼も同じ藍色の前部、透明な後縁、水色の芯材、薄茶色のリブ・縁材で描く。可動翼面はエレベーターと垂直尾翼全体だけである。ライブ飛行と記録再生の舵角を描画契約へ渡す。
+機体は鳥人間大会の滑空機を想起させる架空の形状とする。主翼はNACA 4412に準じた翼型断面、テーパー、上反角と細い支持材を持つ。主翼前半は藍色の被覆、後縁側は薄い半透明フィルムと、その内側に見える水色のスタイロフォーム芯材、竹・バルサの薄茶色のリブと縁材で構成する。コックピットは写真を参考にした細い白いフレームを内部に持ち、前方を先細りの透明フィルム、後方を白い不透明なフェアリングで覆う。搭乗者モデルは表示しない。主要骨格は、翼幅方向にたわむ主翼桁と、その中央へT字に接続して尾部へ続く太い黒いカーボン管の2本で構成する。黒い構造材はこのT字のみとする。水平尾翼と垂直尾翼はそれぞれ全surfaceを取付角に従って回す。両尾翼も同じ藍色の前部、透明な後縁、水色の芯材、薄茶色のリブ・縁材で描く。ライブ飛行と記録再生のphysical tail incidenceを描画契約へ渡す。
 
 主翼の上反角は半翼幅の約60%と80%で勾配が増す二段構成とし、翼面・桁・芯材・縁材で同じ高さを使う。上向きのたわみは、その上反角に重ね、一様分布荷重を受ける片持ち梁の近似式で描画する。試作値はヤング率45 GPa、桁断面二次モーメント4×10⁻⁶ m⁴、支持質量110 kg、基準対気速度9.5 m/sである。速度の二乗を荷重の視覚的な代理値とし、極端な変形を避けるため倍率を制限する。これらは実機の構造諸元や強度の推定ではなく、飛行力学、操縦応答、衝突判定を変更しない。
 
 ## 二系統尾翼の表示
 
-`tail_incidence`の両尾翼はversion付きの公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-arm,y,0.1)` mの矩形surfaceである。`bpg041-rectangular-hybrid-mock`と`bpg041-zero-dihedral-oracle`のmodel version 1はarm 1.8 m、`bpg041-playable-hybrid-mock`のmodel version 2はarm 3.6 mとする。垂直尾翼は各version共通で面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDから表示座標への変換後の回転は水平`+X`、垂直`−Y`である。
+`tail_incidence`の両尾翼はversion付きの公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-arm,y,0.1)` mの矩形surfaceである。公開モデル`bpg041-playable-hybrid-mock` / model version 2のarmは3.6 mとする。垂直尾翼は面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDから表示座標への変換後の回転は水平`+X`、垂直`−Y`である。
 
-Webはliveのsealed snapshot identity、Result/Analysis/Replay/Attractは当該record contextのconfiguration IDとmodel versionからengine非依存の`TailPresentationGeometryAvailability`を導出する。未登録の組合せは`unavailable`として保持し、adapterは尾翼表示を拒否する。現在の既定モデルで旧recordのgeometryを置換しない。Bevyの既定機体表示は共有session準備と同じPlayableのcore `HybridMockDefinition`のsectionからanchorと矩形頂点を導出する。描画契約の寸法はengine adapterの投影だけへ使用し、physics state、record、係数、contact geometryを変更しない。
+Webはliveのsealed snapshot identity、Result/Analysis/Replay/Attractは当該record contextのconfiguration IDとmodel versionからengine非依存の`TailPresentationGeometryAvailability`を導出する。未登録の組合せは`unavailable`として保持し、adapterは尾翼表示を拒否する。未知のidentityを既定モデルのgeometryへ置換しない。Bevyの既定機体表示は共有session準備と同じPlayableのcore `HybridMockDefinition`のsectionからanchorと矩形頂点を導出する。描画契約の寸法はengine adapterの投影だけへ使用し、physics state、record、係数、contact geometryを変更しない。
 
-`legacy_three_axis`は従来の外観・hinge・符号を保持し、layout切替時には両表示系の回転をresetする。二系統尾翼の値を旧pitch/yaw actuatorへ変換しない。主翼・コックピット・構造材は既存のrender-only外観を共有する。これらの寸法とたわみはBPG-041の力学geometryを表す情報には使用しない。表示は実機CADや全機geometryの再現性を保証しない。
+主翼・コックピット・構造材はrender-only外観として共有する。その寸法とたわみは力学geometryの根拠へ流用せず、実機CADの再現性を保証しない。
 
 ## 画質
 

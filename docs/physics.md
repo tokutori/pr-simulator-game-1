@@ -95,7 +95,7 @@ momentを合成する。位置依存風場はBPG-004/005で別境界から接続
 momentの固定参照点$P$と軸、共通参照面積・span・MAC、7独立係数列のPWL補間は
 `aerodynamics.md`を正本とする。momentは次元化、beta-zero wind軸からbodyへの回転、
 $r_{OP}\times F$による一回の移送の順に評価する。
-`AerodynamicLoadProvider`は静的全機providerと既存element-only providerを排他的に選ぶ。
+`AerodynamicLoadProvider`はStaticPolarまたはHybridを排他的に選ぶ。
 FRD/NED、6DoF、一般慣性tensor、moving pilot、quaternion、RK4、100 Hz tickの契約は共通である。
 static providerの範囲外・wind sampling・非有限計算は元のcauseを保持してstep全体へ伝播する。
 新しいplayableへの適用と公開contractの切替はBPG-042で行う。
@@ -140,7 +140,7 @@ BPG-039のhybridは既存datum-based 6DoF、一般慣性tensor、moving pilot、
 全機staticとcurrent-reference normal-force差分の合成wrenchだけを同じload境界へ渡す。
 全4 stageでO・全proxyの風と小擾乱範囲を再評価し、`HybridError`のcause・site・limitを変えずstageを付与する。
 失敗時はactuator・pilot・tick indexを含む直前stateを保持し、部分的な積分結果を公開しない。
-旧ElementOnly・StaticPolarの原因観測、公開physics version、既定scenario・recordは維持する。
+StaticPolarとHybridの原因観測、公開physics version、既定scenario・recordを維持する。
 二系統playable制御はBPG-040、公開終端・default・ABI/record切替はBPG-042で扱う。
 
 不正値、非正定値慣性、空力適用範囲外は型付きエラーとして返す。

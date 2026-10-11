@@ -16,9 +16,8 @@ APIは概念的に `velocity_at(Point3<NedFrame>) -> Result<Vector3<NedFrame>, W
 coreでclockを参照しない。対地速度を積分stateに使用するため、風勾配に起因する別の加速度項を重複加算しない。
 `WindField`はno_std coreにあり、linear gradientは基準NED位置・風速と、行を風速成分、列を位置成分とする$3\times3$勾配で定義する。
 Gridのvelocity sampleはimmutableなsliceを借用し、coreで確保・複製しない。
-`SyntheticPlayableFlight::try_new_with_wind_field`は検証済み`WindField`を受け取り、
-fixtureと`into_parts`で返す`FlightScenario`へ借用期間を伝播する。
-呼出側がgrid sampleを所有し、無風・一様風の既存constructorと同じ機体・発進・controller構成を使用する。
+TailFlightScenarioは検証済みHybridAerodynamicLoadが借用するWindFieldを参照する。
+呼出側がgrid sampleを所有し、共有HybridSessionPreparationが機体・発進・controllerを組み立てる。
 grid範囲の確保は呼出側の責務であり、空力要素の評価時の範囲外errorには元の`WindError`と要素roleを保持する。
 `WindFieldAerodynamicLoad`は各RK4評価stageの全空力要素位置でfieldをqueryする。
 空力要素ごとの位置・回転速度は `aerodynamics.md` に従う。

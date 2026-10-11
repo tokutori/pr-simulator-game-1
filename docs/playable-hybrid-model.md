@@ -5,30 +5,25 @@ versionを分離した合成モデルとRust側の入力保護で改善する。
 `StaticPolar`の閉区間、既存6DoF式、moving pilot、100 Hz RK4、風、接触、scoreの契約を維持する。
 迎角・姿勢・速度・身体位置の物理stateを補正しない。
 
-## Identityと旧版
+## Identity
 
-| 用途 | configuration | model | catalog / scenario | controller |
-|---|---|---|---|---|
-| 旧独立mock | `bpg041-rectangular-hybrid-mock` | 1 | 保存identityを保持 | 保存identityを保持 |
-| 旧動的oracle | `bpg041-zero-dihedral-oracle` | 1 | 保存identityを保持 | 保存identityを保持 |
-| 新公開既定 | `bpg041-playable-hybrid-mock` | 2 | 3 / 3 | `bpg040-tail-rate-feedback` / 3 |
-
-`HybridMockConfiguration::Standard`と`ZeroDihedralOracle`の5節点、geometry、trim参照値、
-VersionOneを対象にした[#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)の数値試験を保持する。
-旧constructorによる`TailControlProfile`はalpha guardを無効とする。
-旧catalog 1/2とscenario 1/2のenvironment登録・保存snapshotの読取りを維持し、新モデルで再積分しない。
-新catalogのweather/environment対応は1/2/4/5/6のままである。Typicalは共有offline環境6を使用する。
-新旧identityはrecord、再積分互換判定、Personal Best比較で区別する。
+公開既定は bpg041-playable-hybrid-mock / model 2、catalog 3 / scenario 3、
+bpg040-tail-rate-feedback / controller 3である。
+Weatherのenvironment対応は1/2/4/5/6、Typicalは共有offline環境6を使用する。
+旧catalog・scenario・controllerの登録と保存schemaの互換処理は提供しない。
+snapshot保存値のqueryと現行モデルの再積分を区別する。
 
 ## Playableのgeometryとpolar
 
-主翼・fin・面積・span・dihedral・anchor・質量・慣性・身体移動範囲はVersionOneと同じである。
-水平尾翼だけbody quarter-chordのforward座標を-1.8 mから-3.6 mへ変更する。
+主翼は投影面積18 m²・span18 m・dihedral5°、水平尾翼は面積2.5 m²・span3.4 m、
+垂直尾翼は面積0.5 m²・span0.7 mとする。airframe24 kg・pilot70 kg、datum慣性diag(900,1000,980) kg m²、
+身体前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²である。
+水平尾翼のbody quarter-chordはforward座標-3.6 m、垂直尾翼は-1.8 mとする。
 尾翼の静的moment生成にも同じ3.6 mの腕を用いる。local flowのq由来寄与を含む通常hybrid式を変更せず、
 尾翼の静的復元と動的減衰の釣合いを合成geometryで改善する。
 
 全機参照はS=18 m²、b=18 m、c=1 m、datum O、`WindAtBetaZero`である。
-datum alphaの閉区間を[-0.18, +0.18] rad、約±10.31°とする。VersionOneの約±6.88°と区別する。
+datum alphaの閉区間を[-0.18, +0.18] rad、約±10.31°とする。
 finの参照span角±0.2 radの内側に置くが、actual local flowの余裕をこの差だけで保証しない。
 汎用hybridのbeta、local alpha/span/speed、controlled alpha differenceの制約を拡大しない。
 
@@ -130,8 +125,8 @@ pilot端点は移動後にHoldする列と、200tick以降も毎tick Set(±1)を
 
 全成功tickは製品経路で全RK4段と公開endpointの荷重検査を通す。
 回帰は保存sampleのactual local load再評価、要求report、両pitch符号、独立yaw、slew、
-guard無効時の一致、未定義alpha、First stageの風error、Hold/Set、旧archive identityを確認する。
-旧v1 polar/trim/oracle・離散線形化試験を、新Playableの受入と区別して保持する。
+guard無効時の一致、未定義alpha、First stageの風error、Hold/Set、未登録identityを確認する。
+独立polar/trim/oracle・離散線形化試験を、公開Playableの受入と区別する。
 
 ### 2026-10-09の実行結果
 

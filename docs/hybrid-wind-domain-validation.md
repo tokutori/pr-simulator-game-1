@@ -2,25 +2,28 @@
 
 ## 範囲
 
-BPG-043の風条件比較は、架空の標準矩形mockと既存の公開core方程式を用いる。
+BPG-043の風条件比較は、現行の架空Playable v2 mockと既存の公開core方程式を用いる。
 `tail_simulation/numerical_tests.rs`のdriverを共用し、Manual、Shared（FBW authority 0.5）、
-Automaticについて100、200、400 Hzを比較する。機体係数、controller係数、製品APIを変更しない。
-旧playable fixtureの飛距離条件や実機性能をこの検査へ適用しない。
+Automaticについて100、200、400 Hzを比較する。機体係数、公開controller係数、製品APIを変更しない。
+飛距離条件や実機性能は検査対象に含まない。
 
 physics-only比較は制御とpilot policyを100 Hzで評価し、その結果を物理substep間で保持する。
 coupled比較は制御とpilot policyも物理刻みで評価する。同じ物理時刻の入力を両比較に与え、
-100 Hzの結果は`advance_tail_flight_tick`と全状態で完全一致させる。
+100 Hzの結果は、同じtest-local configurationで呼び出した`advance_tail_flight_tick`と全状態で完全一致させる。
 
 ## 実行前に固定する条件
 
 密度1.225 kg/m³、重力9.80665 m/s²、trim基準速度9.7 m/s、開始CG位置NED `(0, 0, -50)` m、
-heading 0、controllerのq/r gain各0.2 s、slew 1 rad/sを共通とする。
+heading 0、yaw gain 0.2 s、slew 1 rad/sを共通とする。
+pitch gainは一様風・空間shearで0.2 s、static alpha上限近傍の数値fixtureで0.1 sとする。
+上限近傍のfixtureは、現行3.6 m尾翼と強い復元momentによる過渡応答に合わせて校正する。
+公開controllerのpitch/yaw gain各0.2 sと100 Hz物理tickは変更しない。
 
 | 条件 | 風と初期状態 | 共通比較区間 | 入力 |
 | --- | --- | --- | --- |
 | 一様風 | NED `(0.3, 0.1, -0.04)` m/s。既存driverの初期角速度 `(0.02, -0.04, 0.03)` rad/s | 0.5 s、50区間 | 既存SmoothChanged |
 | 空間shear | 基準位置NED `(0, 0, -50)` m、基準風は一様風と同じ。下記gradientを位置差へ適用する。初期角速度は一様風と同じ | 0.5 s、50区間 | 既存SmoothChanged |
-| static alpha上限近傍 | 零風、角速度0、pilotはtrim位置で静止。公開polarの上限から0.002 rad内側、標準mockではalpha 0.118 rad。body相対風の大きさ9.7 m/s | 0.05 s、5区間 | neutralとHold |
+| static alpha上限近傍 | 零風、角速度0、pilotはtrim位置で静止。公開polarの上限から0.002 rad内側、現行mockではalpha 0.178 rad。body相対風の大きさ9.7 m/s | 0.05 s、5区間 | neutralとHold |
 
 shearのgradientは、列がN/E/D位置差、行がN/E/D風速を表す。単位はs⁻¹である。
 
@@ -57,7 +60,7 @@ q/r target `(0.01, -0.005)` rad/s、0.20–0.30 sで符号を反転する。
 
 各RK stageで、datum速度からその地点の実風を差し引いたbody相対風のalphaを補助観測する。
 風2条件ではalphaを開区間 `(0, 0.06)` rad、上限近傍では公開polarの最終PWL区間の内部に保つ。
-0.06 radは標準mockの内部PWL節点であり、0.12 radの適用域上限とは異なる。
+0.06 radは現行mockの内部PWL節点であり、0.18 radの適用域上限と区別する。
 このdatum観測は選んだ補間segmentの補助チェックである。
 適用域の判定には毎stageの実`HybridAerodynamicLoad::evaluate_hybrid`を使い、
 static polar、global beta、全proxyの速度比・前向き流れ・局所角・controlled角を検査する。
@@ -75,4 +78,7 @@ datum downを-40 m未満に保ち、既存mock接触点より十分高い接触�
 
 本単位は局所的な風条件・適用域近傍の数値比較であり、全風領域、接触時刻、長時間安定性、
 実機fidelity、WASM実行、実ブラウザー/GPU、HMDの検証を含まない。
+上限近傍caseの合格範囲はtest-local pitch gain 0.1 sに限定する。
+公開controllerの0.2 s gainについて、同じ上限近傍で上表の100/400 Hz予算を満たすとは主張しない。
+旧modelの観測値は現行modelの検証結果へ転用しない。
 実行結果は検査後に報告する。

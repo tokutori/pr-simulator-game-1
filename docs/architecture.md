@@ -64,8 +64,8 @@ event handlerはMessageのみを送信する。非同期完了にはrequest ID�
 GameSessionの開始可否、domain phase、pause理由、終了・再試行規則、score、record確定値はRust coreが所有する。
 Webはimmutableなsession snapshotからScene・HUD・button availabilityを導出し、session変更intentをWASMへ送る。
 Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
-アプリの既定sessionは二系統tailとし、旧三軸APIは明示的な互換入口へ限定する。
-layout別facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
+アプリのlive sessionと保存recordは二系統tailへ統一する。
+単一facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
 query途中の変更と保存record自体の変更は別の世代で検査し、同recordの通常再生操作ではAnalysis datasetを再取得しない。
 Scene退出・BFCache退避は入力とclockの停止として扱い、owner置換・非復帰teardownで最終解放する。
 
@@ -73,13 +73,11 @@ Scene退出・BFCache退避は入力とclockの停止として扱い、owner置�
 
 simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatform adapterが管理する。
 物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
-Rust coreの `advance_flight_tick` は一つの入力sampleからauthority・actuator・pilot motion・6DoFを原子的に進める。
-`advance_flight_tick_with_contact`は水面接触時にfractional terminal sampleだけを返し、接触後stateを公開しない。
-二系統の`advance_tail_flight_tick_with_contact_report`は同じ力学・contactを共用し、physical incidenceと適用control reportを一度の評価から返す。
+Rust coreの二系統の`advance_tail_flight_tick_with_contact_report`は同じ力学・contactを共用し、physical incidenceと適用control reportを一度の評価から返す。
 Tail controllerはfixed-tick clockの更新完了後、確定snapshotをframe単位で描画し、Result通知を描画・HUD・入力停止から独立して発行する。
 同じcontrollerの通知は一度だけResultへの同期とrecord確定effectを発行し、adapterの失敗は元の終了理由・cause・scoreを維持した表示通知として扱う。
 通知内のreset/disposeが世代を変更した場合、旧frameの描画・cleanup・失敗通知を新しいcontroller状態へ適用しない。
-`FlightScenario`は検証済みAircraftModel・launch・aerodynamics・WindField・actuator・contact geometry・course axisを
+`TailFlightScenario`は検証済みAircraftModel・launch・hybrid aerodynamics・WindField・tail control・contact geometry・course axisを
 一つの不変構成へ組み立て、native CLIとWASM adapterが共通利用する。外部format decode・I/O・device inputから機器非依存pilot intentへの変換はadapter境界に置く。
 FBW rate feedbackはRust coreが直前tickの角速度から生成し、一tick内でpilot intentとともに適用する。
 同一モデル、scenario、機体・身体の初期状態、tickごとの舵・身体位置指令列に対する決定性を保つ。
@@ -116,24 +114,17 @@ native固有のPilot/Chase操作はpresentation状態とし、physics・configur
 
 BPG-038の`StaticPolar`はborrowed row・離散設定ID・解析方式・model version、
 moment軸・固定参照点・共通参照量を持つ。構築と評価にruntime heap・I/Oは不要である。
-`AerodynamicLoadProvider`は一つのproviderを借用して排他的に選び、全機staticと旧5要素荷重の重畳を防ぐ。
-既存element-only APIは独立software fixtureとして保持する。
+`AerodynamicLoadProvider`はStaticPolarまたはHybridを排他的に借用する。旧5要素と三軸制御の実行系は提供しない。
 BPG-039の`HybridModel`は全機staticを一度評価し、幾何・固定normal・current referenceに基づく局所差分だけを加える。
 `HybridError`はcause・surface/proxy・limitを保持し、RK4境界で失敗stageを付与する。
-`FlightScenarioParameters`を共通validatorとし、旧owned ElementOnly入口と新borrowed provider入口で
-launch・初期tick・contactの正本を共用する。風の正本は選択したproviderに一つだけ存在し、telemetryもこれを参照する。
-旧constructorの全3軸travel保証と検査順は保持する。新入口はgeneric tickとの互換境界であり、
-Hybridのphysical tail incidence二値に対するroll非0をtyped拒否する。
-新playableの二系統尾翼操作・authority・q/r FBWはBPG-040で接続する。
-Scenarioのprivate排他enumは旧owned load（Windows nativeで約2.8 KiB）に合わせたサイズを持ち、
-borrowed providerの小さい参照だけを選ぶ場合にも同じstorageを使用する。
-旧self-owned・Copy・allocation不要の契約を保持するtrade-offとして、このenumだけClippyのサイズ差をreason付きexpectで明示する。
-tick・telemetryの評価はScenario内のloadを参照し、評価ごとにowned modelをコピーしない。
+TailFlightScenarioは初期状態・launch・contact・courseを同じvalidated core境界へ接続する。
+風の正本は選択したproviderに一つだけ存在し、telemetryもこれを参照する。
+二系統尾翼操作・authority・q/r FBWはTailControlProfileで定義する。
 
 BPG-041（[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)）は公開用架空mockの定義・検証までとする。
 公開アプリの既定モデル切替はBPG-042（[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)）で、
 WASM/TypeScript・snapshot・Screen/VR入力、model/controller identity、record versionと同時に更新する。
-旧三系統recordを新モデルとして再計算しない。新モデルの合否に旧playability距離条件を使用しない。
+未対応schemaは明示的に拒否し、旧live経路・旧ABI・schema移行を維持しない。
 非公開xlsxと実機数値はrepo・Issue・PR・fixtureへ導入しない。詳しい単位・式・適用範囲は`aerodynamics.md`に従う。
 
 ## 参照元と現状
@@ -150,6 +141,6 @@ crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
 GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。
-保存v1〜5の三軸とv6の二系統を排他的に扱い、元cause・identity・stampを保持する。旧保存値を新mockへ再積分しない。
+保存schema 6の二系統state・cause・identity・stampを保持する。未対応schemaの既存データは自動削除しない。
 AppModelはbrowser/presentation状態とimmutableな表示snapshotを保持し、domain phase・score・再生clockを独自更新しない。
 開発原則は[設計指針](https://zenn.dev/bem130/articles/1b352797de94e7)に基づく。

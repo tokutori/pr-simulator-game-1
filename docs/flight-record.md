@@ -2,53 +2,30 @@
 
 ## 責務と不変性
 
-Result、Analysis、Replayは同一の確定済みFlightRecordを参照する。scoreとterminal dispositionもfinalization metadataに保持する。
-record型、tick sample追記、終端確定、domain validation、集計値はRust coreが所有する。
-Replay時刻・再生速度・再生状態もRust coreが所有する。Webは操作intentと経過wall-clock時間を送り、確定clock stateを表示へ投影する。
-秒単位のsample queryはRust coreでrecord時刻へ変換する。TypeScriptはsecondsをtick/fractionへ分解しない。
-recordはrendererのframe数に依存せず、成功したphysics tickに対応する値を保存する。
-coreはBriefing時に最大4,000 tick（4,001 state sample）の`Vec` capacityを予約し、simulation step中はallocationなしでappendする。現行layoutの`FlightRecordSample`はx86_64と`wasm32-unknown-unknown`で各424 byteであり、最大sample payloadは1,696,424 byte（約1.62 MiB）となる。legacy packed ABIの一括転送はsampleごとに51個の`f64`を別bufferへ展開し、最大payloadは1,632,408 byte（約1.56 MiB）である。このlegacy転送時、両bufferの論理payload合計は3,328,832 byte（約3.18 MiB）となる。named二系統JSON queryの容量へこの転送値を適用しない。allocator overhead、`FlightRecord`本体、wasm-bindgen境界のcopy、TypeScript解析配列、JSON encode/decode用memoryは含まない。実allocatorが要求capacityを超える領域を確保する可能性もある。layout変更時は回帰試験と本値を更新する。予約失敗は型付きerrorとしてReady遷移を拒否する。
-上限不足・capacity不整合は型付きerrorを返し、recordの部分更新を公開しない。
-公開fieldから構築した`FlightRecordHeader`も、`FlightRecord::try_new`のbuffer予約前に再検証する。
-最大tick数は1〜4,000、physics frequencyは`PHYSICS_HZ`と一致し、catalog・scenario・aircraft・environment・controllerの各versionは非0を必須とする。
-`FlightRecordHeader::try_new`とarchive復元は同じheader条件を用いる。scenario IDとseedの数値範囲は追加で制限せず、catalog解決は呼出し側の責務とする。
-不正headerは構築時に`InvalidHeader`、archive復元時に`InvalidArchive`となる。正当な容量の予約失敗は`AllocationFailed`とし、domain errorと区別する。
-`birdman-game-format`は外部schemaのversion・encode/decode・入力検証を担当し、保存I/OはCLI/Webが担当する。
-WASMはrecord append/finalizeをsimulation operationと一括処理し、snapshot・metrics・analysis queryを返す。Rust coreは固定tick時刻とfractionから保存済みsampleを補間し、summary metricsを生成する。既定の`HybridGameSessionBridge`はnamed sample・Summary・風queryと、保存v1〜5/v6の復元を同じcore recordへ接続する。旧`GameSessionBridge`のpacked queryはlegacy互換入口として保持する。validated JSON exportはWASMから行い、WebはResult確定時にIndexedDBへ原recordを保存する。Analysis datasetは同recordのcontextを照合して取得し、通常のReplay clock更新ではcursorだけをqueryする。毎frameの全record変換・Summary再集計を行わない。Titleは保存済みrecordの最新3件を表示し、Personal Best記録を識別する。選択recordをRust Replayとして開く。IndexedDB version 1〜3からのupgrade、metadata移行、version 4のindex revisionによる再構築はfake-indexeddbで検証する。限定Screen受入では保存・一覧・schema 5 archiveのReplay、CSV1と元JSON全文一致を確認した。条件は[検証契約](verification.md)に記載する。PB indexへの登録対象はschema version 5または6の、有効なcanonical keyを持つeligible recordに限る。version 1〜4のrecordは一覧・閲覧できるが、Personal Best比較対象にはならない。
-WASMは秒単位の`flight_record_sample_at_seconds` queryも公開し、record時刻からtick/fractionへの変換をRust coreへ委譲する。
-recordからRenderSnapshotへの変換を1か所へ集約し、graph・cameraからphysicsを呼ばない。
+Result、Analysis、Replayは同じ確定済みFlightRecordを参照する。
+Rust coreが型、tick sample追記、終端確定、domain validation、集計、Replay clockを所有する。
+Webとnativeは保存I/O、操作intent、表示を担当し、score・FBW・物理値を再計算しない。
+成功したphysics tickだけを保存し、描画frame数・画質・backendから独立する。
+Briefingで最大4,000 tickと初期状態に対応するsample capacityを予約する。予約失敗はReady遷移を拒否する。
+上限不足・不正header・capacity不整合は型付きerrorとし、部分recordを公開しない。
+headerは最大tick 1〜4,000、公開PHYSICS_HZ、非0のcatalog/scenario/aircraft/environment/controller versionを要求する。
+scenario IDとseedのcatalog解決は呼出側が担当する。
 
-## Header
+HybridGameSessionBridgeは同じcore recordからnamed sample・Summary・風query・schema 6 exportを返す。
+秒単位queryのtick/fraction変換・補間はRustで行う。通常のseekで全Analysis datasetを再生成しない。
+query変更とrecord source変更は別の世代で管理し、古い非同期結果を破棄する。
 
-外部保存形式は三軸の`FlightRecordDocument`（schema v1〜5）と二系統の`TailFlightRecordDocument`（schema v6）を用いる。
-physics model versionを含まないversion 1〜3 recordも読み込み対象とする。schema検証は
-`birdman-game-format`が担当する。Web保存repositoryはJSONを保持し、PB factoryはschema versionから対応するRust selectorを選択する。
-physics/model versionはschema versionから独立させる。decoderは16 MiBを超える入力、未知schema version、未知field、壊れたJSONを拒否する。
-`serde_json`は`float_roundtrip`を有効化し、f64 sampleのencode/decodeで値を完全一致させる。
+## Headerと外部schema
 
-schema version 1と2はscenario/model/environment/controller version、resolved presetと三軸、seed、tick上限、全sample、input、telemetry、finalization、scoreを保存する。version 2はCustom HUD profileを追加する。version 3はscore定義versionを追加する。version 4はphysics model versionを追加する。version 5はeligibleな記録にcanonical Personal Best keyを追加する。version 1〜3はphysics model versionが不明であり、version 1〜4はcanonical keyを持たないため、Personal Best比較対象から除外する。
-physics build・scenario・aircraft・environmentのsource hashはcanonical Personal Best keyへ集約する。個別hash、presentation policy、初期環境位相は記録しないため、個別検証や再構成が必要になった段階でschema拡張を検討する。
-
-- record schema、座標・単位契約、physics build/modelのversionとhash
-- AircraftModel、scenario/world asset、controller設定とversion、seed、機体・身体の初期状態と身体移動モデル
-- 解決済み三軸設定、score定義version、固定dt
-- 波の初期位相とsimulation時刻の基準、環境の再表示に必要なmetadata
-- 最大flight tick数、sample layout、追加diagnosticの有無
-- backend・端末情報等の任意metadata、presentation event列のschema
-
-同じIDでもhashが異なるassetを同一データとして扱わない。
-保存schemaとphysics versionの互換性を分離する。記録済み値の表示と再積分による検証は別操作である。
-schema 4以降のphysics model versionは既知の1から現行versionまでを読み込み対象とし、0、欠落、
-現行より新しいversionを拒否する。過去versionのJSON encode/decodeはversionと保存sampleを維持する。
-Personal Best候補は現行physics model versionとの一致も要求し、過去versionのcanonical keyが
-保存されていても比較対象にしない。
-physics model version 1は初期モデル、2は回復可能な身体移動状態を維持する目標制御、
-3はtick内保持値と終端actuatorの一致を表す。versionの更新は保存schemaを変更しない。
-元のphysics実行系が利用できなくても、schemaと必要assetに互換性があればsnapshot再生は可能とする。
-hybrid scenario version 1は従来の北向き発進、version 2は共有発進台の315°方位と一致する初期heading/course axisを識別する。
-保存schema・model/controller/physics versionは変更せず、旧記録のstate・score・cause・原JSONを維持する。
-再積分のscenario identity照合とPB keyのscenario version/source fingerprintにより、異なる発進条件を区別する。
-未知schema、破損、欠落、未対応追加項目の必須性は検証結果として通知する。
+外部保存形式はTailFlightRecordDocumentのschema 6に限定する。
+旧live実行系、旧packed ABI、schema 1〜5 decoder、schema migration、旧Personal Best selectorを提供しない。
+未対応schemaはUnsupportedSchemaVersionを返す。既存保存データの削除・変換・架空metadataの補完は行わない。
+decoderは16 MiBを超える入力、未知field、壊れたJSON、非有限値、単位quaternionと時系列の不整合を拒否する。
+serde_jsonのfloat_roundtripでf64のencode/decode値を保持する。
+score_definition_versionとphysics_model_versionは必須値であり、schema versionと独立して検証する。
+control_identityはaircraft configurationとcontroller profileのIDを持ち、versionはheaderに保持する。
+Personal Best keyは任意の保存fieldとし、適格性・比較条件をRustで判定する。
+未知保存環境はUnavailableとして扱い、現在の環境・地図へ置換しない。
 
 ## Samplingと容量
 
@@ -72,82 +49,40 @@ Distance score v1はWaterContact時にfractional terminal datum、TimeLimit時�
 
 ## Sampleと入力列
 
-BPG-042のcore制御契約は`FlightRecordControls`で旧三軸と二系統尾翼を排他的に表す。
-各variantは同方式のphysical actuatorとinterval inputを一組として保持する。
-二系統inputは正規化nose-up/right intent、body q/r target、身体Hold/Set指令、解決済身体目標、
-coreで一度評価したmanual/FBW/mixed incidenceを区別する。記録層でFBWや身体mappingを再計算しない。
-正の接触fractionはtick reportの保持incidenceを保存し、fraction=0は新しいinput/sampleを追加しない。
-`FlightRecordSample.controls`とplaybackの`actuators`は同じ判別型を使い、既存の時刻query・summaryを共用する。
-`begin_tail`と`append_tail_report`は同じ予約済bufferへ記録し、record内の制御方式混在を拒否する。
-schema v1–5と旧WASM packed layoutはlegacy値を維持し、二系統値を受けると型付き非互換を返す。
-既定のhybrid flightはv6 codecとnamed WASM queryへ接続し、legacy三軸と二系統を同じsample/query正本で扱う。
+FlightRecordControlsはTailIncidenceと任意のinput_from_previousを一組として保持する。
+初期sampleはinterval inputを持たず、後続sampleはnormalized nose-up/right intent、
+body q/r target、身体Hold/Set、resolved target、manual/FBW/mixed incidenceを記録する。
+記録層でFBWや身体mappingを再評価しない。
+begin_tailとappend_tail_reportは予約済みbufferを使用し、FlightRecordPlaybackSample.actuatorsはTailIncidenceを返す。
+正のcontact fractionは適用reportの保持incidenceを保存し、fraction=0では新input/sampleを追加しない。
+finalize_with_failureはTailFlightTickErrorを保持し、最新成功sampleと同じstampだけを確定する。
+v6 codecはcontrol/contact/dynamics/load原因とHybrid stage/site/limit/causeを保存する。
+原因・site・stage・終了理由の不一致、未知tag、余剰fieldを拒否する。
+失敗intervalの部分状態を追加しない。causeの欠落を仮定して補完しない。
 
-二系統の確定済archiveは`TailFlightRecordDocument`のschema v6で保存する。
-`control_identity`はaircraft configurationとcontroller profileのIDを保持し、各versionはheaderを正本とする。
-control payloadは`layout: tail_incidence`で判別し、水平尾翼・垂直尾翼の実効incidence、
-normalized manual intent、body q/r target、身体Hold/Set、manual/FBW/mixed commandを名前付きで保持する。
-`FlightRecordArchiveDocument`はv1–5とv6をversion別にdecodeし、同じcore queryへ保存snapshotを復元する。
-未知schema、未知field、余剰roll軸、破損値は型付きerrorで拒否する。旧recordのidentityと保存値は保持する。
-新hybrid再積分の互換性はsnapshot閲覧と独立に検査し、旧三軸またはmodel/controller/scenario/physicsの不一致を拒否する。
-archiveのPersonal Best比較はv6の適格な同identity・同canonical keyだけに限定し、旧三軸recordを混在させない。
-二系統canonical keyは専用domainで明示identity、各version、resolved difficulty、二軸profileのgain/slewとoptional alpha guard、
-course、content hash、初期physical incidence・姿勢・身体状態を保持する。三軸feedbackは使用しない。
-guardがある場合だけ専用の識別子とalpha帯の両端・trim alpha・preview時間・pitch gainの5値をhashする。
-guardがない旧二系統profileのhash入力列とkey、旧三軸canonical keyは変更しない。保存済keyを現profileで再生成しない。
-`TailPersonalBestSelection`はv6同identity・同keyの完全なWaterContactだけを比較し、tieは最初の既存recordを維持する。
-layout別archive/PB factoryはschemaを明示してRust decoder/selectorへ委譲し、未知schemaを拒否する。
-
-coreの`finalize_with_failure`は共通`SessionSimulationFailure`を保持し、causeの分類と終了理由、
-三軸・二系統のcontrol layoutを照合する。最新の成功sampleと一致するstampだけを確定し、
-失敗intervalの部分状態を追加しない。cause未対応のcodecは型付き非互換を返し、原因を欠落させない。
-v6 finalizationはtyped failureを明示し、元のcontrol/contact/dynamics/load原因と
-Hybridのstage/site/limit/causeを個別に保存する。OutOfValidEnvelopeには元causeを必須とし、
-原因と終了理由の不一致・未知tag・余剰fieldを拒否する。保存queryは最後の成功sampleを利用する。
-Hybrid診断のlimitはcauseとsiteへ照合し、Control incidenceはTailIncidenceのsiteと
-stage未指定、NonFiniteまたは水平・垂直尾翼のincidence限界へ限定する。
-
-f64の物理値を保存する。圧縮・量子化は後続format versionで誤差契約とともに導入する。
-
-| 項目 | 定義 |
-|---|---|
-| tick / terminal fraction | simulation時刻 |
-| position_ned_m | 機体構造datum $O$ の対地位置 |
-| composite_cg_position_ned_m | 合成重心 $G$ のNED位置。map軌跡の正本 |
-| velocity_ned_mps | datum $O$ の対地速度 |
-| attitude_body_to_ned | 単位quaternion。Euler角はderived |
-| angular_velocity_body_rad_s | body角速度 |
-| wind_at_cg_ned_mps | 同じ位置・時刻の重心風sample |
-| actuator_state | 初期sample `(0, 0)` は初期舵角、後続sampleはそのsampleへ進めた区間の保持舵角 |
-| pilot_motion_state | パイロットの実前後位置・相対速度 |
-| additional diagnostics | 合成重心offset・要素別荷重・実加速度等は現行schemaに保存しない |
-
-入力列にはtickごとの機器非依存な舵指令、身体目標位置、FBW舵出力、混合後舵commandを保存し、
-actuator stateと実身体位置を区別する。keyboardの押下やgamepadの生軸値を再現用入力の正本としない。
-各diagnosticの評価位置・stageを明記する。RK4内部stageの値を次tickの確定値として流用しない。
-重心風sampleはgrid範囲等を検証して保存し、取得不能をゼロ風へ置換しない。
-AoA等の未定義値はOption等で表し、NaNを欠損値として使用しない。
-追加diagnosticはschemaで有無を明示し、初期基本recordだけでmap・高度・速度とPilot再生が成立する構成とする。
+f64のstate、telemetry、controlsを保存する。圧縮・量子化は誤差契約を伴う後続schemaで扱う。
+datum位置・速度はNED、body角速度はFRD、姿勢はbody-to-NED quaternionである。
+合成重心の位置・高度・速度とdatumを区別し、保存telemetryを表示正本にする。
 
 ## 数値ログのdownload
 
 ResultとReplayでは同じ現在recordからCSVと元record JSONを取得する。
-`GameSessionBridge`と`HybridGameSessionBridge`の`export_flight_log_csv`・`export_current_flight_record_json`は
+`HybridGameSessionBridge`の`export_flight_log_csv`・`export_current_flight_record_json`は
 Result/Replay限定のqueryであり、physics、record、Replay clockを更新しない。
 通常recordのJSONは現行encoder、保存archiveのJSONはopen成功時に保持した検証済み原文を返す。
-Legacyの通常recordはschema 5、Tailはschema 6を使用する。保存schema 1〜6、未知環境、欠損metadataを
-現行機体・環境で再構成しない。未保存のsource hashを現在のbuildから補完しない。
+記録はschema 6を使用し、未知環境へ現在の環境metadataを流用しない。未保存のsource hashを現在のbuildから補完しない。
 
-Legacy CSV export version 1は従来の三軸舵列を維持し、Tailのversion 2は`control_layout=tail_incidence`と
+CSV export version 2は`control_layout=tail_incidence`と
 水平・垂直尾翼のphysical incidence、nose-up/right-turn intent、$q,r$ target、pilot Hold/Set、
 resolved target、manual/FBW/mixed incidenceを保存値から出力する。尾翼を旧三軸舵へ変換しない。
-両versionはUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
+CSVはUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
 全保存state、telemetry、区間input、metadataとfinalizationを列へ写し、unitsとNED/body座標を列名へ明記する。
 f64はroundtrip可能な十進文字列、欠損値は空欄とavailabilityで表す。難易度・終了理由は検証済みenum名を用いる。
 Tailの任意IDは`aircraft_configuration_id_json`・`controller_profile_id_json`、元failureは
 `terminal_failure_available`・`terminal_failure_json`で保持し、JSON文字列をCSVとしてescapeする。
 `tick_index`と`fraction`を独立して保持し、初期・fractional terminalを含めて標本を間引かない。
 
-両layoutは同じfinite-difference estimatorを使用し、加速度を保存値との差を明示した`estimated_*`列に出力する。
+finite-difference estimatorを使用し、加速度を保存値との差を明示した`estimated_*`列に出力する。
 datumのNED速度、body角速度$p,q,r$、
 body前方軸に対するパイロット相対速度から有限差分を導出する。NED加速度は重力を含む運動学的変化率であり、
 specific force、合成重心加速度、荷重・momentの再評価は行わない。Quaternion/Euler角の差分は使用しない。
@@ -193,30 +128,30 @@ Cross-track displacementは発進軸からの符号付き横偏位であり、�
 W_parallelは正が追い風方向、負が向かい風方向である。基準を瞬間headingへ変更する場合は別系列名とする。
 scoreのDistanceはversioned score定義に従い、水平累積経路長・直線距離・投影距離を混同しない。
 
-## FinalizationとReplay
+## Finalization、Personal Best、保存
 
-complete / interrupted / failedと終了理由、最後の有効tick、終端位置を保存する。
-finalizationは一度のみ実行し、その後はimmutableとする。
-失敗tickの状態は保存しない。初期化失敗で有効sampleがない場合はrecord unavailableとする。
-不完全recordも有効区間の解析に使用できるが、通常のPersonal Bestへ登録しない。
-初期Personal Best候補は、finalize済みの完全なWaterContact recordでscoreを持つものに限る。
-Rust coreの`personal_best_candidate_score()`は完了・WaterContact・scoreの適格性を判定する。formatの`personal_best_candidate_score()`は、さらに現行score definition versionとphysics model versionを要求する。Rust coreは同じcanonical keyを持つ適格scoreを比較し、formatは解決済みconfiguration、初期状態、course axis、各content hashからkeyを生成する。`PersonalBestSelection`は保存済みrecordを逐次評価し、tieでは既存recordを保持する。WASMの`PersonalBestSelectionBridge`はRustの選択状態を保持し、ブラウザーはIndexedDB transaction内で保存済みrecordを照会する。Repositoryとpersistence portにはRust selection factoryを必須で供給する。新規recordの保存とPersonal Best index更新を同じtransactionで確定する。
+complete / interrupted / failed、終了理由、最後の有効tick/fraction、score、元failureを一度だけ確定する。
+失敗tickは保存せず、初期化失敗で有効sampleがない場合はrecord unavailableとする。
+Personal Bestは完全なWaterContact、score、現行score/physics version、有効canonical keyを要求する。
+TailPersonalBestSelectionとTailPersonalBestSelectionBridgeが同identity・同keyの比較を所有し、同点は最初の既存recordを保持する。
+未対応schemaは比較対象から除外する。schema 6の破損は元errorを保持して拒否する。
+WebのIndexedDB名とversion 4は維持し、record追加・metadata・Personal Best更新を同じtransactionで確定する。
+新規DBはversion 4で生成する。version 1〜3の既存DBは明示的に拒否し、保存内容を保持する。
+旧DB移行、metadata backfill、互換revisionに基づくindex再構築を実行しない。
+既存record JSON・ID・保存日時は変更せず、旧record選択時には未対応schemaを通知する。
+失敗時はtransactionをrollbackし、Rust selectorを解放する。
 
-IndexedDB version 4のPB index修復revisionは`first-winner-layouts-v1-physics-v3`とする。Rust canonical keyのlayout・適格性契約が変わる場合は修復revisionも更新する。
-この完了markerがない場合、初回一覧・初回保存のどちらからも既存record全体をID昇順で再構築する。従来の`canonical-v1`、`first-winner-v1`、`first-winner-physics-v3`や過去physics versionの完了markerがあっても再構築し、schema v1〜5/v6を対応するRust selectorで検証する。各layoutの同identity・同canonical keyだけを比較し、同点は最初のwinnerを保持する。過去physics versionや不適格recordはPB indexから除外し、保存snapshotの閲覧を維持する。score比較と適格性判定をWebへ複製しない。record JSON・ID・保存日時は変更しない。
+Canonical keyは明示identity、model/controller/scenario/physics/score version、
+difficulty、profile gain/slew/optional alpha guard、course、content hash、初期状態をSHA-256へ入力する。
+負zeroはpositive zeroへ正規化し、finite f64をbig-endian IEEE-754で符号化する。
+画質とpresentation backendはkeyへ含めず、保存keyを現在のbuildから再生成しない。
 
-再構築・PB index・修復markerと、保存時のrecord・metadata追加は同一readwrite transactionで確定する。不適格candidateの保存も修復を先に完了する。失敗時は全変更をrollbackし、生成したselectionを解放する。以後の保存はindex先recordとのみ比較し、一覧取得は再構築を繰り返さない。
+## Replay
 
-Canonical key v1ではpreset labelを除外し、Information cue、ControllerProfileのmode・authority・version・gain・command limit、scenario identity・seed、aircraft/scenario/environment/physics content hash、course axis、physics・score version、tick契約、launch stateをSHA-256へ入力する。浮動小数点値は有限値に限定し、負のzeroをpositive zeroへ正規化してbig-endian IEEE-754 bit patternを符号化する。表示品質とpresentation backendはkeyに含めない。
-
-初期Replayはsnapshot再生とする。並進値を補間し、姿勢はquaternionの最短経路で補間する。
-pause、seek、速度変更、逆方向操作はplayback clockだけへ作用し、物理を再積分しない。
-graph cursorと再生位置は同じrecord時刻を参照する。
-保存済み入力からのnative/WASM再積分は検証機能として分離し、Replay表示と同一視しない。
-
-BPG-021の現行実装はRustのResult/Replay phase往復、記録時刻scrub、Result Analysis cursor同期、
-Rust補間sampleからのrender pose適用、連続playback clock、pause、0.5×/1×/2×速度選択、ScreenでのPilot/Chase選択までを含む。
-`1093d4cb`の限定Screen受入でReplay・Analysis操作を確認した。全Replay rigの網羅、VR・実端末の表示と操作はScene受入の残条件として保持する。
+snapshot再生はRust補間queryからstateを取得し、物理を再積分しない。
+pause、seek、速度変更は同じReplay clockへ作用し、graph cursorと3D描画が同record時刻を参照する。
+Resultへ戻る場合は元の確定state・finalizationを表示し、cursor stateへ置換しない。
+保存入力による再積分は検証機能として分離し、利用する現行model/controller/physics/scenarioと明示的に照合する。
 
 ## 検証
 
@@ -227,9 +162,6 @@ playback queryは整数tickと`[0, 1)`のfractionを受け取り、最短経路q
 身体状態の線形補間、telemetryと角度のwrap-aware補間を行う。actuatorはexact sample時刻でその保存値を返し、
 sample間の内点では終端側sampleの保持値を返す。fractional terminal区間にも同じ規則を適用する。
 queryは記録範囲外を拒否し、物理状態を変更しない。
-復元した旧recordにも同じactuator query規則を適用し、保存sampleと厳密な終端値は変更しない。
-旧recordの線形補間済みterminal actuatorから当時の荷重に用いた保持値を再構成することはできないため、
-その値の補正や再積分は行わない。
 
 recordの順序・範囲判定は整数tickとfractionの組で行い、`(n, 1)`と`(n + 1, 0)`を同一時刻として扱う。
 保存sampleとfinalization metadataの一致検査には保存したtick/fractionの厳密一致を用いる。

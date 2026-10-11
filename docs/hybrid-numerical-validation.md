@@ -7,9 +7,8 @@ BPG-043（[#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)）�
 
 ## 基準と状態座標
 
-`HybridMockDefinition::try_new(Standard)`と`HybridMockTrim::try_new`から基準を構築する。
-この基準はVersionOne/model 1であり、新公開既定のPlayable/model 2・controller 3へ置き換えない。
-新モデルの入力列と保護の受入は[playableモデル契約](playable-hybrid-model.md)へ分離する。
+`HybridMockDefinition::try_new()`と`HybridMockTrim::try_new`から現行Playable/model 2の基準を構築する。
+公開controller 3の入力列と保護の受入は[playableモデル契約](playable-hybrid-model.md)へ分離する。
 密度は1.225 kg/m³、重力は9.80665 m/s²、対気速度は9.7 m/s、風は一様な0 NED vectorである。
 headingは0、初期複合CGのNED位置は(0, 0, -100) mとする。trim値と右辺を試験へ転記しない。
 
@@ -92,9 +91,10 @@ cargo test -p birdman-game-core --test hybrid_linearization --locked -- --nocapt
 
 実行結果が出る前の条件を本書とtest定数で固定する。現時点のsource定義を検査成功や実機安定性の根拠にしない。
 
-## Windows nativeでの初回観測
+## 過去のWindows native観測
 
-2026-10-08の対象2試験は、上記の幅・予算・入力・係数を変更せず成功した。
+2026-10-08の対象2試験は、当時のmodel 1・幅・予算・入力・係数で成功した。
+次の数値は履歴値であり、現行model 2の検査結果へ流用しない。model 1の実行系は保持しない。
 固有値数は複素共役の各根を個別に数え、neutral/erasedの判定には上記1e-6の帯を使用した。
 
 | Mode | growing | decaying | neutral | erased | 最大固有値絶対値 |
@@ -114,7 +114,7 @@ native/WASM一致、非線形大擾乱、長時間安定性、実browser/GPU/実
 ## 表示条件の物理不変回帰
 
 `tools/game-check/tail-display-invariants.test.ts`は同じ生成WASM実装の公開既定Playable/model 2・controller 3を使う。
-VersionOneの上記Jacobian・固有値・刻み幅精度と、新Playableの入力列成立率の受入を置き換えない。
+Jacobian・固有値・刻み幅精度と、Playableの入力列成立率を個別に検証する。
 Manual/Shared/Automaticごとにmodel・Typical環境・seed・初期stateを固定し、Information 5種と
 Screen/合成WebXR/合成Phone VR、30/60/120 FPSの135条件を比較する。
 実`TailFlightController`と`PresentationRuntime`を通し、空間backendとrendererは型付きmockである。

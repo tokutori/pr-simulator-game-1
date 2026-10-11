@@ -15,12 +15,8 @@
 CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
 PauseReasonsの共有sourceを検証する独立Windows jobと正・負検証の固定ツール、TCB、未証明範囲は[形式検証契約](formal-verification.md)に記載する。
 browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
-BPG-007では旧playable synthetic flightのkeyboard/gamepad入力からWASM tick・snapshot・Screen描画までを検証する。決定性検証用`SyntheticFlight`と旧browser用`SyntheticPlayableFlight`は分離する。legacy playable fixtureは無風・neutral入力で200–300 mを15–35秒で飛行するRust core受入試験を持つ。WASM browser integrationはManual modeで100 msのpilot-position keyboard入力後に180–230 mで着水することも検証する。これらの距離・時間・係数は旧fixtureだけへ適用し、新hybrid mockの合否基準や実機性能に使用しない。
+BPG-007は現行Hybridのkeyboard/gamepad入力からWASM tick・named snapshot・Screen描画までを検証する。30/60/120 FPS独立性、入力ライフサイクル、pause/resume、座標変換、terminal同期を対象とする。旧fixtureの飛距離を現行modelの受入条件へ流用しない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
-
-### CLI検証flight
-
-`cargo run -p birdman-game-cli --locked -- verify-flight all` はRust coreの`FlightScenario::run_feedback`を使い、Manual・Shared(0.5)・AutomaticでTimeLimitとWaterContactの両終端を再現する。各modeは同じ固定tick pilot intent列を二度実行し、同一終端を確認する。FBWは各tickでcoreが直前stateからbody-rate feedbackを生成し、mode別の状態遷移へ適用する。空力は各element位置で固定空間wind gradientをsampleする。個別modeは `manual`、`shared`、`automatic` を指定する。scenarioの空力係数・wind gradient・feedback gainは統合経路のsoftware fixtureであり、実機同定値・公開機体のtuning・通常操縦でのゲーム成立を示さない。この再現可能なsynthetic flightがBPG-006のCLI受入条件であり、機体固有modelのsource調査・fidelity検証はBPG-035でM6完了後に行う。BPG-035はM3〜M6のsynthetic game開発をblockしない。
 
 ## 後続の物理検証
 
@@ -31,34 +27,31 @@ Manual/Shared/Automaticから同じ`GameSession`のhybrid tick・記録・終端
 各modeは短い固定入力列を二度実行し、v6 recordとnamed terminal JSONの決定性・保存controls・finalizationを照合する。
 保存queryには既存held-incidence則を適用し、身体targetのSet/Holdは舵authorityから独立させる。
 低初速の独立回帰は適用範囲終了時の元causeと直前成功recordだけを保持し、失敗stageのstateを出力しない。
-fixtureは架空Standard modelのtrim・明示zero windとnative-smoke controller identityを使用する。
-browser Typical環境、旧`verify-flight`、距離目標、長時間安定性、収束・実機検証を個別の検証範囲として維持する。
-旧CLIコマンド・公開default・WASM ABIの切替はこの検査単位に含めない。
+CLIは共有HybridSessionPreparationで公開Playable model・Calm環境・controller 3を生成する。browser Typical、距離目標、長時間安定性、収束・実機検証は個別に確認する。旧verify-flightコマンドを提供しない。
 
 ### BPG-042 アプリ統合
 
 既定の二系統flightはnamed schema 2 snapshot、保存schema 6、同じRust GameSessionの入力・記録・終了へ接続する。
-保存v1〜5は元のlegacy snapshotとして閲覧し、v6との排他layout・元identity・cause・stampを検査する。
-旧recordの新mock再積分、tailへのdummy roll、TSによるFBW・score再計算を拒否する。
+保存schema 6の元identity・cause・stampを検査する。未対応schemaはtyped拒否し、既存bytesを削除しない。TSによるFBW・score再計算を拒否する。
 単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
-Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、混在archive/PB routingを対象とする。
+Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、current archive/PB routingを対象とする。
 CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
 2026-10-08、`1093d4cb`（PR #235）をChromium 148・Playwright 1.60・AMD Radeon 860MのWebGLで確認した。
 ScreenのBoot→Setup→Briefing→Flight keyboard→Pause/Resume→Result→CSV2/JSON6→Analysis→Replay→Retryが成功した。
-Analysisは3chart×3viewport、ReplayのJSON全文一致、旧schema 5 archiveのCSV1と元JSON全文一致を確認した。
-自然終端の観測は12.33 sの`OutOfValidEnvelope`であり、WaterContact・旧飛距離条件の検査と分離する。
+Analysisは3chart×3viewportとReplayのJSON全文一致を確認した。
+自然終端の観測は12.33 sの`OutOfValidEnvelope`であり、WaterContactの検査と分離する。
 Phone VRは合成sensor境界とStereo Title/Menu/Setup/Briefingまでを確認した。
 Flight Head・実センサー・実スマートフォン・実HMDは未検証であり、[#15](https://github.com/tokutori/pr-simulator-game-1/issues/15)・[#16](https://github.com/tokutori/pr-simulator-game-1/issues/16)・[#161](https://github.com/tokutori/pr-simulator-game-1/issues/161)の受入を保持する。
 新mockの全mode安定性・長時間安定性・実機性能は、この限定受入の範囲に含めない。
 
 ### BPG-043 hybrid量別step-halving
 
-`tail_simulation::numerical_tests`はStandard架空mockの同一初期条件・入力列を、
+`tail_simulation::numerical_tests`は現行Playable架空mockの同一初期条件・入力列を、
 100/200/400 Hzのtest-only driverで比較する。製品tick・機体値・公開APIは100 Hzのまま維持する。
 既存のtrim参照値・決定性・解析解試験は再実装しない。
 
 - 演算はf64、無風、密度1.225 kg/m³、重力9.80665 m/s²、初速9.7 m/sとする。
-  seed・乱数・browser clockは使用しない。Standard trimの合成CG高度50 mから開始し、
+  seed・乱数・browser clockは使用しない。現行trimの合成CG高度50 mから開始し、
   body rateだけを$(p,q,r)=(0.02,-0.04,0.03)$ rad/sへ変更する。
   controllerはq/r gain各0.2 s・slew 1 rad/s、modeはManual/Shared(0.5)/Automaticを別に検査する。
   初期incidenceは各modeの初期rateに対応するcommandへ事前設定し、開始時のslew過渡を分離する。
@@ -125,7 +118,7 @@ CIは各PRのexact headで判定する。風・domain検査はPR #253で統合�
 | 9.3 F 局所応答 | `hybrid_linearization`のcentral Jacobian/固有値・小摂動、零風・静止pilot・接触前0.5 s | [#250](https://github.com/tokutori/pr-simulator-game-1/pull/250) / `9f87046` | 2試験/checker24、両OS CI成功。Manual/Automaticとも局所growingが3個残る |
 | 9.3 F event | `contact::tests::numerical`のballistic解析endpointと実RK4、4phase×100/200/400 Hz | [#251](https://github.com/tokutori/pr-simulator-game-1/pull/251) / `e406801` | 2試験・両OS CI成功。O(dt²)補間上限と積分丸めを分離し、hybrid着水へ転用しない |
 | 9.3–9.4 F 風・domain | `numerical_tests::wind_tests`の一様風/shear/上限近傍、全mode量別gate・境界外原子性 | [#253](https://github.com/tokutori/pr-simulator-game-1/pull/253) / `945ed389`、[#269](https://github.com/tokutori/pr-simulator-game-1/pull/269) / `f3f39e5` | merge済み・両OS検査成功。全風領域・長時間安定性は対象外 |
-| 9.4 B/C/E 範囲外・公開 | `hybrid::tests::envelope`の全stage/零速、`tail_control::tests`/`tail_tick`、`session-facade`/`named-record`/`main-tail-integration` | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#227](https://github.com/tokutori/pr-simulator-game-1/pull/227)、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | software・上記限定Screen受入成功。旧archiveを保存layoutで閲覧し、VR・実端末の未検証範囲を保持する |
+| 9.4 B/C/E 範囲外・公開 | `hybrid::tests::envelope`の全stage/零速、`tail_control::tests`/`tail_tick`、`session-facade`/`named-record`/`main-tail-integration` | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#227](https://github.com/tokutori/pr-simulator-game-1/pull/227)、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | software・上記限定Screen受入成功。現行recordを保存layoutで閲覧し、VR・実端末の未検証範囲を保持する |
 
 表示条件の物理不変は`tail-display-invariants.test.ts`で追加検査する。既存FPS回帰のtick数に加え、
 同一生成WASM・同mode・同じ物理時刻入力・100tick ManualAbortについて、Information 5種、
@@ -186,14 +179,14 @@ Windows 11の対象typecheck・eslintと135条件が成功した。合成空間b
 | 参照点 | 固定PとOの表現で同じdatum wrench、general tensor・moving pilot方程式の応答が一致。さらにalpha=beta=0を維持する軸方向drag+roll fixtureで二つの静的providerを100 tick実行し、位置・速度・角速度・quaternion各成分差 $\le10^{-12}$ |
 | datum flow | Pにoffsetがあり、rate・空間wind gradientがあってもOだけでstaticを評価。XCP/点速度の二重適用がない |
 | frame・風 | NEDからbodyへの逆回転、一様world速度と風の同量加算による荷重不変性 |
-| provider・error | 排他的選択で既存element-onlyの結果を保持。未対応の非neutral操舵を拒否。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
+| provider・error | StaticPolar/Hybridの排他的選択を検証。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
 | 借用・no_std | row借用のcompile-fail doctest、coreの`wasm32v1-none` build、外部allocation probeで構築・評価・RK stepのallocationを計測 |
 
 static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例は次節で検証する。
-mock trim、公開終端・旧record扱いはBPG-041〜043の試験とする。
+mock trim、公開終端・現行recordはBPG-041〜043の試験とする。
 単体polarの合格を、実機精度・wake・失速・Re依存・地面効果の検証として扱わない。
 公開mockはBPG-041で定義・検証し、既定切替はBPG-042の公開型・identity・記録version更新と同時に行う。
-旧BPG-007の距離・時間は既存fixtureの履歴・回帰条件として扱い、新hybridの空力調整targetにしない。
+過去のBPG-007の距離・時間は履歴値であり、現行hybridの空力調整targetへ適用しない。
 
 2026-10-05、Windows / Rust 1.97.0の独立したworktreeで上記12件と借用期間のdoctestが成功した。
 repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
@@ -247,7 +240,7 @@ strip数の増加による連続翼$-a_W/6$へのquadrature収束を別に確認
 | 閉境界 | global beta、tail incidence、raw/control込みalpha差、actual/reference span角、速度0.8V/1.2Vは境界を包含し直外を拒否。actual/reference forwardは厳密に正 |
 | 零速・fatal | 全点静止だけ0、O静止+回転流/差動windはUndefinedReference、後続wind errorも検査。微小正速度、算術overflow、非有限wind、密度errorの元causeを区別 |
 | RK/tick原子性 | actual providerを通す全4 stageでheld controlを観測し、各stageへenvelope/fatal/wind failureを注入。元cause/site/limit・失敗stageを保持し、actuator/pilot/tickの直前stateが不変 |
-| Scenario互換 | 同providerのwind正本をtelemetryとloadで使用。Hybrid初期roll・欠落tail・tail travel直外を拒否し、runtime rollも非commit。Static neutral-only、旧Element全3軸travel/検査順を保持 |
+| Scenario互換 | 同providerのwind正本をtelemetryとloadで使用。Hybrid初期roll・欠落tail・tail travel直外を拒否し、runtime rollも非commit。Staticはneutral荷重を提供し、二系統制御はphysical tail incidenceを保持する |
 
 ここで検証する対象はcore geometry/provider/Scenarioとload→dynamics/tick境界である。
 新playableのauthority・slew・FBW、公開terminal/Result/record/schema/default、実ブラウザー/HMD・実機精度は別gateである。
@@ -280,16 +273,16 @@ scenario構築ではactuatorの全travelがdomainに収まる場合を受理し�
 | 005 | 対称grid上昇流とroll相殺、右翼上昇流の解析roll、水平尾翼の解析pitch、垂直尾翼の解析yaw、回転局所速度、二重計上回避 |
 | 006 | lifecycle、身体位置指令・移動限界、接触補間と同時刻終端state、authority両端・Shared混合、actuator飽和・rate limit、決定的scenario、入力replay、空力・FBW・pilot motionを含む100/200 Hz step-halving収束 |
 | 026 | position targetの加速・制動・収束、最大速度・加速度・移動範囲、復帰不能境界のtyped error、同条件決定性、6DoF internal-mass接続 |
-| 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral互換、stage error時の状態不変 |
+| 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral荷重、stage error時の状態不変 |
 | 028 | Manual / Shared / Automaticの統合tick、pilot target・actuator・6DoF一括更新、決定性、load error時の不変性、tick overflow |
-| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical補間・actuator保持、geometry・tick・actuator error |
-| 030 | controlled tickからcontact終端への統合、airborne state返却、post-contact state非公開、contact/dynamics typed error、正負3軸の全RK4保持値・正の接触fractionでの終端actuator一致・fraction 0での旧state保持、record終端・exact時刻・区間内Replayの保持規則 |
+| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical補間・actuator保持、geometry・tick error |
+| 030 | controlled tickからcontact終端への統合、airborne state返却、post-contact state非公開、contact/dynamics typed error、二系統の全RK4保持incidence・正の接触fractionでの終端actuator一致・fraction 0での旧state保持、record終端・exact時刻・区間内Replayの保持規則 |
 | 031 | configurable body-rate feedbackの符号・axis別飽和・極端な有限rate・無効設定、および合成roll momentを介した6DoF減衰。実機tuningの検証とは区別する |
 | 032 | course-distance score v1の北・東・斜行・逆行・高度不変性、cross-track/net horizontal解析値、極端軸正規化、無効軸・差分overflowのtyped error |
 | 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
 | 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
-| 007 | legacy `SyntheticPlayableFlight`のneutral glideが150–300 m・15–35秒で接触すること、native core参照軌道とWASM adapter snapshotの許容差、生成WASMの実Node実行、30/60/120 FPS独立性、pause/resume、keyboard/gamepad binding・切断・中立確認、NED pose変換、tick入力からsnapshot・Screen表示契約までのsynthetic試験。この距離条件を新hybrid mockへ適用しない。実ブラウザーのWebGLで滑空時間・操作応答・着水を別途確認する |
-| 008 | playable fixtureへのborrowed WindField注入、3操縦modeでの定数gridと既存一様風の軌道一致、重心位置の風速が0となるshear gridのroll応答と解析場との一致、RK stageのgrid範囲外error・要素role保持・部分state非公開、fixture/Scenarioの借用期間、WASMのimmutable環境所有/typed cache、metadataのsource/完全identity/seed words/bounded input/legacy値/未知archive再生保持。登録env6の選択・sky/waves consumer、native太陽方向一致、archiveの会場表示境界と実GPU確認は以下のBPG-008節に範囲を記載する |
+| 007 | 現行Hybrid inputからnative/WASMのtick・named snapshot・Screenへ接続する。量別許容差、30/60/120 FPS独立性、pause/resume、keyboard/gamepad lifecycle、NED pose変換を検査する。実WebGLの操縦・終端・表示受入は独立に確認する |
+| 008 | Hybrid WindFieldのuniform/grid・局所差分・RK stage error/原因保持・partial state非公開、immutable環境所有/cache、完全identity/seed words/bounded metadata query、env6と現4presetのsky/waves consumer、未知保存環境への代替禁止を検査する |
 | 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
 | 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |
 | 016 | 全SceneのPhone VR UI、同期absolute権限要求・重力較正待ち・relative-only起動失敗・ModelのScreen復帰・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectの初回pitch/roll・非Flight水平復帰・Eye mount・全anchor/gaze・yaw-only recenter・listener例外時の全cleanup。relative重力sourceのbrowser接続と実スマートフォン/GPUは別途受入 |
@@ -322,7 +315,7 @@ nativeのTypicalへ接続する。metadata欠損は補完せず、cloud baseの�
   Windows 11 / AMD Radeon 860M / Vulkanのnativeで開始・操縦・Pilot/Chase・Pause/Resume・Result・Retry、10枚のcaptureとexit 0を確認した。
   同じheadのproduction WebをChromium 148 / ANGLE D3D11でTitleからFlight・Pause・Result・Retryまで確認し、sky/water/PBRの登録条件一致を検査した。
 - PR #285の`c0f3ddba`はWeb verify（95 files / 1763 tests）が成功した。actual WASMから純粋投影・actual Three groupへ接続し、
-  登録env6・未知env99・原点未記録legacy、current Calm/Mild・Result/Replay/Retry、archive→Title→Attract、frame stagingを検査した。
+  登録env6・未知env99・原点未記録preset、current Calm/Mild・Result/Replay/Retry、archive→Title→Attract、frame stagingを検査した。
   Windows 11 / AMD Radeon 860M / Chromium 148 / ANGLE D3D11のproduction WebGLで、保存一覧→各archiveのReplay→Titleを確認した。
   登録会場の表示、未知・原点未記録archiveの汎用背景、Title展示の復帰を確認した。必須CI成功・mergeは別の統合gateである。
 

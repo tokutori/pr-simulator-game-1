@@ -5,7 +5,7 @@
 ResultはSummaryとAnalysisのtab、およびRetry / Replay / Setup / Titleの操作を持つ。
 主要GameSceneは追加しない。Replayへ移動する場合は選択時刻を渡し、復帰時にtabとcursorを維持する。
 すべての表示は `flight-record.md` のimmutable recordを参照する。
-WebのAnalysis Modelはlegacy packed queryまたはcontext付きnamed datasetの元値だけを保持する。
+WebのAnalysis Modelはcontext付きnamed datasetの元値だけを保持する。
 グラフとcamera用の共通Viewは純粋な投影で導出し、named sample・Summary・風断面・cursorの保存contextを照合する。
 保存済み合成重心とtelemetryを使用し、元finalization/causeおよびAoA・score・風断面の欠損理由を保持する。
 風断面の未要求と未登録環境・登録領域外を区別する。Attractの確定距離と再生cursor位置も区別する。

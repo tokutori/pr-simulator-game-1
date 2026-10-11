@@ -45,7 +45,7 @@ gamepadは新規flightとPauseからの復帰時に中立確認を要求する�
 launch eventを一度だけ処理し、tick 0の初期snapshotを保存してから、tick 0の入力で最初のstepを実行する。
 Countdown時計はUI用であり、Flightのsimulation timeと分離する。
 非表示化やtracking中断でCountdownを停止し、明示的な再開なしに発進しない。
-Rust coreの`run_flight`は開始済みinitial stateとsealed tick input列を実行し、WaterContactまたはTimeLimitで終端する。両終端理由に対して最後の有効datumからscore v1を確定する。Webはtick inputを提供しoutcome snapshotを表示する。
+Rust coreの`TailFlightScenario::run`は開始済みinitial stateとsealed tick input列を実行し、WaterContactまたはTimeLimitで終端する。両終端理由に対して最後の有効datumからscore v1を確定する。Webはtick inputを提供しoutcome snapshotを表示する。
 
 ## Overlayと停止
 
@@ -95,7 +95,7 @@ TimeLimitはscenarioの明示的な最大tick数に達した場合であり、�
 致命的なboot/assetエラーは架空のFlightResultを生成しない。
 
 Resultの背景は最後の有効snapshotで固定する。Summary、Analysis、Replayは同じimmutable recordを参照する。
-既定flightはtail二系統、保存閲覧はlegacy三軸/v6二系統を判別型で保持する。
+live flightとschema 6の保存閲覧はtail二系統を使用する。
 Resultの確定score・元cause・終端stampと、Replay/Attractの任意cursorを分離する。
 Rust terminal確定後は、描画・HUD・入力cleanupの成否から独立してResult通知を一度送る。
 live描画とResult通知はfixed-tick clockの更新完了後に行い、描画・通知中のresetやdispose後へ旧frameの描画・cleanupを適用しない。

@@ -2,7 +2,7 @@
 
 ## 条件と分離
 
-`contact::tests::numerical`は既存contact試験の架空AircraftModel・actuator limits・geometry構築を再利用する。
+`contact::tests::numerical`は既存contact試験の架空AircraftModel・tail incidence・geometry構築を再利用する。
 外部荷重0、pilot静止、定姿勢、NED水平速度$(6,8)$ m/s、初期down速度$w_0=2$ m/s、$g=9.81$ m/s²とする。
 接触点はdatumとbody down offset 0.4 mの二点であり、後者が最初に静水面へ到達する。
 有効高さ$h$はそのoffsetを除いた初期clearanceである。
@@ -48,10 +48,10 @@ scoreは公開`course_distance_score`のnorth courseを使用する。course/cro
 ## 同時刻stateと検証範囲
 
 実`WaterContactSample`のinterval index・fraction・contact point・state getterを使用する。
-水平位置と鉛直速度は同じ$\hat t_c$へ対応し、定姿勢・body rate・pilot位置/速度・legacy ActuatorStateを保持する。
+水平位置と鉛直速度は同じ$\hat t_c$へ対応し、定姿勢・body rate・pilot位置/速度・TailIncidenceを保持する。
 鉛直位置は線形chord上の水面接触値であり、解析的ballistic位置との差を補間誤差として扱う。
 APIが返さないTail controlsを生成しない。control保持則の境界は既存
 `contact_inside_tick_returns_consistent_fractional_state`と
 `externally_constructed_endpoints_use_held_actuators_after_the_start_boundary`に対応する。
-接触後state・旧飛距離target・実機精度・新hybridのevent成立率はこの試験の対象外である。
+接触後state・実機精度・新hybridのevent成立率はこの試験の対象外である。
 結果とcommit/toolchain/環境は検査実行時に報告する。
