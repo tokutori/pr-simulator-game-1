@@ -79,6 +79,9 @@ Issue #311の次cutでは、near/far/fine/rippleの4層micro-normalをWeb基準�
 4点subpixel filteringで平均勾配と二次momentを保持し、未解像varianceからWebと同じroughnessを導出する。このcutはcompile・Clippy・Native 101試験と同じWindows/Vulkan scripted GPU検査が合格した。readonlyでWebの回転・勾配・二次moment・roughnessとの対応を確認した。固定条件の描画品質比較とrelease性能計測は未完了である。
 Issue #311のwater shading cutでは、WebのsRGB paletteをBevyの既存color APIでlinearへ変換し、facet Fresnel、micro-normal momentに基づくsun glitter、crest/compressionの明暗・白波、wave height tint、距離hazeを移植した。daylightとhaze距離は確定したsky metadataから導出し、sky欠損時はdaylight 0とWebと同じ既定hazeを保持する。cloud fractionを水面shadowとして代用しない。
 このcutはfmt・compile・Clippy・Native 103試験とWindows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）に合格した。WaterContactはtick 2512・169.069 m、failureはなく、実画像上の水面描画を確認した。固定条件のWeb比較、物理キー・マウスの受入、release 80 FPSの計測は未完了である。
-天空radianceは既存Nativeのanalytic背景を参照しており、Web全天textureとの同一化、機体mirror pass、水面shadowは後続のrender-resource cutへ保持する。
+全天texture cutでは、固定Web基準の1024×512 sRGB RGBA生成を `birdman-game-session::lake_sky` へ移植した。固定LCG、cumulusの形状・noise、horizon gradientとsun glowを保持し、sky欠損時は同じ方位非依存の中立gradientを生成する。
+固定Web関数をNode.js 24で直接実行した独立oracleから、2条件・14画素のRGBAを回帰試験へ固定した。各channelの許容差は1 byteとし、無条件のbitwise一致を要求しない。
+NativeはBevyの既存color変換でlinear `Rgba16Float` へ投影し、正式対応する公式mip生成を再利用する。S方向はRepeat、T方向はClampToEdge、filterはlinear/trilinearとし、背景と水面radianceは同じ全天画像を参照する。環境交換で3枚のowned画像を原子的に交換し、quality変更は既存画像を保持する。Web consumerの画像生成処理はこのcutで変更しない。
+全天texture cutはfmt・compile・Clippy・Native 105試験・共有session 26試験に合格した。追加した独立Web画素比較を含むsky 6試験とClippyも合格した。Windows 11/AMD Radeon 860M/Vulkan・800×600のscripted GPU検査（13 capture）が合格し、実Title・Chase画像で積雲と水面radianceを確認した。固定条件のWeb描画比較、物理マウス受入、release 80 FPSの計測は未完了である。機体mirror passと水面shadowは後続のrender-resource cutへ保持する。
 phase 1のnear/far detailとcrest/compression入力だけで描画品質の移植完了を扱わない。
 共通スペクトルの完成をnativeの描画品質改善の完了へ読み替えない。

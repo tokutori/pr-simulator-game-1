@@ -36,6 +36,8 @@ use bevy::{
     },
     shader::{ShaderCacheError, ShaderRef},
 };
+use birdman_game_format::SkyStateDocument;
+use birdman_game_session::lake_sky::generate_lake_sky;
 use birdman_game_session::lake_water::{
     LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
     production_lake_detail_configs,
@@ -72,7 +74,11 @@ pub(crate) struct WaterMaterial {
     water_palette: [Vec4; 4],
     #[uniform(12)]
     haze_parameters: Vec4,
+    #[texture(13)]
+    #[sampler(14)]
+    sky_texture: Option<Handle<Image>>,
     visual_condition: LakeVisualCondition,
+    sky_condition: Option<SkyStateDocument>,
     displacement_bounds: Vec2,
 }
 
@@ -177,7 +183,9 @@ impl WaterMaterial {
             ]
             .map(|[red, green, blue]| Color::srgb_u8(red, green, blue).to_linear().to_vec4()),
             haze_parameters: Vec4::new(haze_start, visibility, daylight, 0.0),
+            sky_texture: None,
             visual_condition,
+            sky_condition: condition.sky,
             displacement_bounds,
         };
         material.apply_profile(WaterQuality::High)?;
@@ -231,10 +239,55 @@ impl WaterMaterial {
 
     pub(crate) fn upload_detail(&mut self, images: &mut Assets<Image>) -> Result<(), String> {
         let [near, far] = prepare_detail_images(self.visual_condition)?;
+        let sky = prepare_sky_image(self.sky_condition)?;
         self.detail_near = Some(images.add(near));
         self.detail_far = Some(images.add(far));
+        self.sky_texture = Some(images.add(sky));
         Ok(())
     }
+}
+
+fn prepare_sky_image(condition: Option<SkyStateDocument>) -> Result<Image, String> {
+    let panorama = generate_lake_sky(condition)
+        .map_err(|cause| format!("共有天空画像を準備できない: {cause:?}"))?;
+    let width = panorama.width();
+    let height = panorama.height();
+    let mut image = Image::new(
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        vec![0; (width * height * 8) as usize],
+        TextureFormat::Rgba16Float,
+        RenderAssetUsages::default(),
+    );
+    for (index, pixel) in panorama.rgba().chunks_exact(4).enumerate() {
+        image
+            .set_color_at(
+                index as u32 % width,
+                index as u32 / width,
+                Color::srgb_u8(pixel[0], pixel[1], pixel[2]),
+            )
+            .map_err(|cause| format!("天空画像をlinear GPU表現へ変換できない: {cause}"))?;
+    }
+    image.texture_descriptor.mip_level_count = width.max(height).ilog2() + 1;
+    image.texture_descriptor.usage |= TextureUsages::STORAGE_BINDING;
+    let allocated_bytes = (0..image.texture_descriptor.mip_level_count)
+        .map(|level| (width >> level).max(1) as usize * (height >> level).max(1) as usize * 8)
+        .sum();
+    image
+        .data
+        .as_mut()
+        .expect("Generated panorama retains its upload bytes")
+        .resize(allocated_bytes, 0);
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        ..ImageSamplerDescriptor::linear()
+    });
+    Ok(image)
 }
 
 fn prepare_detail_images(condition: LakeVisualCondition) -> Result<[Image; 2], String> {
@@ -358,9 +411,13 @@ pub(crate) fn extract_detail_mips(
 ) {
     state.active.clear();
     for (_, material) in materials.iter() {
-        for handle in [&material.detail_near, &material.detail_far]
-            .into_iter()
-            .flatten()
+        for handle in [
+            &material.detail_near,
+            &material.detail_far,
+            &material.sky_texture,
+        ]
+        .into_iter()
+        .flatten()
         {
             if !state.active.contains(&handle.id()) {
                 state.active.push(handle.id());
@@ -399,26 +456,42 @@ pub(crate) fn generate_detail_mips(
     let Some(pipelines) = pipelines else {
         return;
     };
-    let Some(shader) = shaders.general.get(&TextureFormat::Rgba8Unorm) else {
-        return;
-    };
     let mut all_ready = true;
-    for entry in ["downsample_first", "downsample_second"] {
-        let mut ready = false;
-        for pipeline in cache.pipelines() {
-            let PipelineDescriptor::ComputePipelineDescriptor(descriptor) = &pipeline.descriptor
-            else {
-                continue;
-            };
-            match mip_pipeline_ready(descriptor, &pipeline.state, shader, entry, &state.active) {
-                Ok(available) => ready |= available,
-                Err(cause) => {
-                    state.failure = Some(cause);
-                    return;
+    for format in [TextureFormat::Rgba8Unorm, TextureFormat::Rgba16Float] {
+        let affected: Vec<_> = phase
+            .iter()
+            .copied()
+            .filter(|image| {
+                state.active.contains(image)
+                    && images
+                        .get(*image)
+                        .is_some_and(|gpu| gpu.texture_descriptor.format == format)
+            })
+            .collect();
+        if affected.is_empty() {
+            continue;
+        }
+        let Some(shader) = shaders.general.get(&format) else {
+            return;
+        };
+        for entry in ["downsample_first", "downsample_second"] {
+            let mut ready = false;
+            for pipeline in cache.pipelines() {
+                let PipelineDescriptor::ComputePipelineDescriptor(descriptor) =
+                    &pipeline.descriptor
+                else {
+                    continue;
+                };
+                match mip_pipeline_ready(descriptor, &pipeline.state, shader, entry, &affected) {
+                    Ok(available) => ready |= available,
+                    Err(cause) => {
+                        state.failure = Some(cause);
+                        return;
+                    }
                 }
             }
+            all_ready &= ready;
         }
-        all_ready &= ready;
     }
     if !all_ready {
         return;
@@ -542,9 +615,13 @@ pub(crate) fn apply_environment(
                 .ok_or(EnvironmentFailure::MaterialUnavailable(role))?;
             prepared[role.index()].camera_time = current.camera_time;
             prepared[role.index()].geometry_patch = current.geometry_patch;
-            for image in [&current.detail_near, &current.detail_far]
-                .into_iter()
-                .flatten()
+            for image in [
+                &current.detail_near,
+                &current.detail_far,
+                &current.sky_texture,
+            ]
+            .into_iter()
+            .flatten()
             {
                 if !previous_images.contains(&image.id()) {
                     previous_images.push(image.id());
@@ -563,6 +640,8 @@ pub(crate) fn apply_environment(
             .map_err(|_| EnvironmentFailure::SunUnavailable)?;
         let [near_image, far_image] = prepare_detail_images(high.visual_condition)
             .map_err(EnvironmentFailure::WavePreparation)?;
+        let sky_image =
+            prepare_sky_image(high.sky_condition).map_err(EnvironmentFailure::WavePreparation)?;
         let direction = prepared[EnvironmentSurface::Sky.index()]
             .sun_cloud
             .truncate();
@@ -573,9 +652,11 @@ pub(crate) fn apply_environment(
         };
         let near_image = images.add(near_image);
         let far_image = images.add(far_image);
+        let sky_image = images.add(sky_image);
         for material in &mut prepared {
             material.detail_near = Some(near_image.clone());
             material.detail_far = Some(far_image.clone());
+            material.sky_texture = Some(sky_image.clone());
         }
         for (role, handle, current_bounds) in &mut surfaces {
             *materials
@@ -667,6 +748,7 @@ pub(crate) fn apply_quality(
         prepared_material.geometry_patch = current_material.geometry_patch;
         prepared_material.detail_near = current_material.detail_near.clone();
         prepared_material.detail_far = current_material.detail_far.clone();
+        prepared_material.sky_texture = current_material.sky_texture.clone();
         prepared_far
             .apply_profile(requested)
             .map_err(WaterQualityFailure::WavePreparation)?;
@@ -825,7 +907,7 @@ mod tests {
         let condition = target.resolve().unwrap().condition();
         let high = WaterMaterial::from_environment(condition, false).unwrap();
         let images = app.world().resource::<Assets<Image>>();
-        assert_eq!(images.len(), 2);
+        assert_eq!(images.len(), 3);
         assert!(
             original_images
                 .into_iter()
@@ -927,6 +1009,7 @@ mod tests {
                 );
                 assert_eq!(material.detail_near, before[role.index()].detail_near);
                 assert_eq!(material.detail_far, before[role.index()].detail_far);
+                assert_eq!(material.sky_texture, before[role.index()].sky_texture);
                 assert_eq!(
                     material.geometry_motion,
                     if role != EnvironmentSurface::Sky {
@@ -956,7 +1039,7 @@ mod tests {
                 app.world().get::<Aabb>(near).unwrap().half_extents,
                 high.near_bounds().half_extents
             );
-            assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), 3);
         }
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
@@ -1093,6 +1176,7 @@ mod tests {
                 );
                 assert_eq!(retained.detail_near, initial[role.index()].detail_near);
                 assert_eq!(retained.detail_far, initial[role.index()].detail_far);
+                assert_eq!(retained.sky_texture, initial[role.index()].sky_texture);
                 assert_eq!(
                     retained.geometry_waves,
                     initial[role.index()].geometry_waves
@@ -1167,6 +1251,7 @@ mod tests {
                 retained.haze_parameters,
                 materials[role.index()].haze_parameters
             );
+            assert_eq!(retained.sky_texture, materials[role.index()].sky_texture);
             assert_eq!(
                 retained.geometry_waves,
                 materials[role.index()].geometry_waves
@@ -1415,6 +1500,7 @@ mod tests {
             assert_eq!(updated.haze_parameters, material.haze_parameters);
             assert_eq!(updated.detail_near, material.detail_near);
             assert_eq!(updated.detail_far, material.detail_far);
+            assert_eq!(updated.sky_texture, material.sky_texture);
             let far = materials.get(far_material.id()).unwrap();
             assert_eq!(far.geometry_waves, updated.geometry_waves);
             assert_eq!(far.geometry_motion, updated.geometry_motion);
@@ -1424,7 +1510,8 @@ mod tests {
             assert_eq!(far.haze_parameters, material.haze_parameters);
             assert_eq!(far.detail_near, material.detail_near);
             assert_eq!(far.detail_far, material.detail_far);
-            assert_eq!(app.world().resource::<Assets<Image>>().len(), 2);
+            assert_eq!(far.sky_texture, material.sky_texture);
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), 3);
             assert_eq!(
                 materials.get(far_material.id()).unwrap().geometry_patch,
                 Vec4::ZERO
@@ -1764,19 +1851,58 @@ mod tests {
     }
 
     #[test]
+    fn native_sky_upload_preserves_web_srgb_radiance_and_panorama_orientation() {
+        let reference = generate_lake_sky(None).unwrap();
+        let image = prepare_sky_image(None).unwrap();
+        assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba16Float);
+        assert_eq!(image.texture_descriptor.size.width, reference.width());
+        assert_eq!(image.texture_descriptor.size.height, reference.height());
+        assert_eq!(image.texture_descriptor.mip_level_count, 11);
+        assert!(
+            image
+                .texture_descriptor
+                .usage
+                .contains(TextureUsages::STORAGE_BINDING)
+        );
+        for (column, row) in [(0, 0), (512, 256), (1023, 511)] {
+            let offset = ((row * reference.width() + column) * 4) as usize;
+            let pixel = &reference.rgba()[offset..offset + 4];
+            let expected = Color::srgb_u8(pixel[0], pixel[1], pixel[2])
+                .to_linear()
+                .to_vec4();
+            let actual = image
+                .get_color_at(column, row)
+                .unwrap()
+                .to_linear()
+                .to_vec4();
+            assert!((actual - expected).abs().max_element() <= 0.0005);
+            assert_eq!(actual.w, 1.0);
+        }
+        let ImageSampler::Descriptor(sampler) = &image.sampler else {
+            panic!("Expected explicit panorama sampler");
+        };
+        assert_eq!(sampler.address_mode_u, ImageAddressMode::Repeat);
+        assert_eq!(sampler.address_mode_v, ImageAddressMode::ClampToEdge);
+        assert_eq!(sampler.min_filter, bevy::image::ImageFilterMode::Linear);
+        assert_eq!(sampler.mipmap_filter, bevy::image::ImageFilterMode::Linear);
+    }
+
+    #[test]
     fn detail_mip_admission_tracks_gpu_texture_generation_and_discards_retired_images() {
         let mut images = Assets::<Image>::default();
         let near = images.add(Image::default());
         let far = images.add(Image::default());
+        let sky = images.add(Image::default());
         let first_texture = TextureId::new();
         let replacement_texture = TextureId::new();
         let mut state = LakeDetailMips {
-            active: vec![near.id(), far.id()],
+            active: vec![near.id(), far.id(), sky.id()],
             recorded: Vec::new(),
             failure: None,
         };
         assert!(state.pending(near.id(), first_texture));
         state.recorded.push((near.id(), first_texture));
+        state.recorded.push((sky.id(), TextureId::new()));
         assert!(!state.pending(near.id(), first_texture));
         assert!(state.pending(near.id(), replacement_texture));
         state.active = vec![far.id()];
@@ -1897,7 +2023,7 @@ mod tests {
     #[test]
     fn wgsl_filters_four_web_micro_normal_bands_and_retains_their_variance() {
         let shader = include_str!("../assets/native_water.wgsl");
-        assert_eq!(shader.matches("@binding(").count(), 13);
+        assert_eq!(shader.matches("@binding(").count(), 15);
         assert_eq!(shader.matches("textureSampleGrad(").count(), 4);
         assert_eq!(shader.matches("lake_micro_detail(position ").count(), 4);
         assert_eq!(
@@ -2027,6 +2153,23 @@ mod tests {
                 assert!((0.0..=(0.16 + 0.07)).contains(&palette_weight));
             }
         }
+    }
+
+    #[test]
+    fn wgsl_shares_the_same_panorama_between_background_and_water_radiance() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        assert!(shader.contains("atan2(ray.z, ray.x) / 6.2831853 + 0.5"));
+        assert!(shader.contains("asin(clamp(ray.y, -1.0, 1.0)) / 3.1415927 + 0.5"));
+        assert_eq!(
+            shader
+                .matches("textureSample(sky_texture, sky_sampler, coordinate)")
+                .count(),
+            1
+        );
+        assert!(shader.contains("vec4<f32>(lake_sky_radiance(-view), 1.0)"));
+        assert!(shader.contains("let reflection = lake_sky_radiance(sky_ray);"));
+        assert!(!shader.contains("fn sky_background("));
+        assert!(!shader.contains("pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0)"));
     }
 
     #[test]

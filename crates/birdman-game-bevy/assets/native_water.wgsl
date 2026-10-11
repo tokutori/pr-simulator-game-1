@@ -17,6 +17,8 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(10) var detail_far_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(11) var<uniform> water_palette: array<vec4<f32>, 4>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(12) var<uniform> haze_parameters: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(13) var sky_texture: texture_2d<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(14) var sky_sampler: sampler;
 
 struct SurfaceProjection {
     offset: vec3<f32>,
@@ -188,17 +190,13 @@ fn vertex(vertex: Vertex) -> VertexOutput {
     return output;
 }
 
-fn sky_background(direction: vec3<f32>) -> vec3<f32> {
-    let horizon = vec3<f32>(0.68, 0.80, 0.88);
-    let zenith = vec3<f32>(0.13, 0.38, 0.67);
-    var color = mix(horizon, zenith, pow(clamp(direction.y, 0.0, 1.0), 0.45));
-    let cloud = smoothstep(0.3, 0.7, sin(direction.x * 15.0 + direction.z * 9.0) * sin(direction.z * 19.0 - direction.x * 5.0) * 0.5 + 0.5);
-    color = mix(color, vec3<f32>(0.91, 0.94, 0.95), cloud * sun_cloud.w * smoothstep(0.08, 0.35, direction.y));
-    return color;
-}
-
-fn sky_color(direction: vec3<f32>) -> vec3<f32> {
-    return sky_background(direction) + vec3<f32>(1.0, 0.84, 0.58) * pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0) * haze_parameters.z;
+fn lake_sky_radiance(direction: vec3<f32>) -> vec3<f32> {
+    let ray = normalize(direction);
+    let coordinate = vec2<f32>(
+        atan2(ray.z, ray.x) / 6.2831853 + 0.5,
+        asin(clamp(ray.y, -1.0, 1.0)) / 3.1415927 + 0.5
+    );
+    return textureSample(sky_texture, sky_sampler, coordinate).xyz;
 }
 
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
@@ -274,7 +272,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 #endif
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
-    if waves_sky.w > 0.5 { return vec4<f32>(sky_color(-view), 1.0); }
+    if waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
@@ -311,7 +309,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     if dot(sky_ray, sky_ray) < 1.0e-8 {
         sky_ray = vec3<f32>(1.0, 0.0, 0.0);
     }
-    let reflection = sky_background(normalize(sky_ray));
+    let reflection = lake_sky_radiance(sky_ray);
     let geometric_fresnel = 0.02 + 0.98 * pow(1.0 - geometric_ndv, 5.0);
     let facet_fresnel = 0.02 + 0.98 * pow(1.0 - max(facet_ndv, 0.0), 5.0);
     let fresnel = mix(geometric_fresnel, facet_fresnel, 0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));

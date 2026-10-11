@@ -7,6 +7,7 @@ mod environment;
 mod hybrid_session;
 mod launch_venue;
 
+pub mod lake_sky;
 pub mod lake_water;
 
 pub use environment::{
