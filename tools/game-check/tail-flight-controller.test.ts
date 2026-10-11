@@ -44,6 +44,19 @@ function fixture(mode = 0, initialTarget = 0) {
   return { session, controller, port, input, renderer, hud, onTerminal, key };
 }
 
+type CleanupSite = "input" | "session" | "pose" | "hud";
+const cleanupSites: readonly CleanupSite[] = ["input", "session", "pose", "hud"];
+
+function observeCleanup(trial: ReturnType<typeof fixture>, onCleanup: (site: CleanupSite) => void): void {
+  const disposeInput = trial.input.dispose.getMockImplementation();
+  const freeSession = trial.port.free.getMockImplementation();
+  if (disposeInput === undefined || freeSession === undefined) throw new Error("Expected real input and WASM cleanup implementations");
+  trial.input.dispose.mockImplementation(() => { disposeInput(); onCleanup("input"); });
+  trial.port.free.mockImplementation(() => { freeSession(); onCleanup("session"); });
+  trial.renderer.setFlightPose.mockImplementation(() => { onCleanup("pose"); });
+  trial.hud.setVisible.mockImplementation(() => { onCleanup("hud"); });
+}
+
 describe("two-tail controller through the Rust WASM port", () => {
   it.each([0, 1, 2])("connects keyboard intent, sealed profile and two physical tails in mode %s", (mode) => {
     const trial = fixture(mode);
@@ -173,6 +186,144 @@ describe("two-tail controller through the Rust WASM port", () => {
     } finally {
       other.free();
     }
+  });
+
+  it.each(cleanupSites)("tries every independent cleanup once after a %s failure and retains the original exception", (site) => {
+    const trial = fixture();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(10);
+    const retained = trial.controller.currentSnapshot;
+    const primary = new Error(`Injected ${site} cleanup failure`);
+    const attempts: CleanupSite[] = [];
+    observeCleanup(trial, (current) => {
+      attempts.push(current);
+      if (current === site) throw primary;
+    });
+    let caught: unknown;
+    try {
+      trial.controller.dispose();
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBe(primary);
+    expect(attempts).toEqual(cleanupSites);
+    expect(trial.input.dispose).toHaveBeenCalledTimes(1);
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
+    expect(trial.hud.setVisible).toHaveBeenCalledWith(false);
+    const queries = trial.port.snapshot_json.mock.calls.length;
+    const renders = trial.renderer.setFlightPose.mock.calls.length;
+    trial.controller.dispose();
+    trial.controller.resume();
+    trial.controller.suspend();
+    trial.controller.synchronizeSnapshot("not a snapshot");
+    trial.controller.renderCurrentSnapshot();
+    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(2_000);
+    expect(() => { trial.controller.reset("not a snapshot"); }).toThrow("Cannot reset a disposed tail controller");
+    expect(attempts).toEqual(cleanupSites);
+    expect(trial.port.snapshot_json).toHaveBeenCalledTimes(queries);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
+    expect(trial.input.readDemand).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.setFlightPose).toHaveBeenCalledTimes(renders);
+    expect(trial.controller.currentSnapshot).toBe(retained);
+    expect(trial.onTerminal).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+  });
+
+  it("preserves an undefined throw value and still attempts the remaining cleanup", () => {
+    const trial = fixture();
+    const attempts: CleanupSite[] = [];
+    const failure: unknown = undefined;
+    observeCleanup(trial, (site) => {
+      attempts.push(site);
+      if (site === "input") throw failure;
+    });
+    let thrown = false;
+    try {
+      trial.controller.dispose();
+    } catch (error: unknown) {
+      thrown = true;
+      expect(error).toBeUndefined();
+    }
+    expect(thrown).toBe(true);
+    expect(attempts).toEqual(cleanupSites);
+    trial.controller.dispose();
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+  });
+
+  it("aggregates all cleanup failures in attempt order without converting their causes", () => {
+    const trial = fixture();
+    const failures: Readonly<Record<CleanupSite, unknown>> = { input: new Error("Input cleanup failed"), session: { resource: "session" }, pose: undefined, hud: "HUD cleanup failed" };
+    const attempts: CleanupSite[] = [];
+    observeCleanup(trial, (site) => { attempts.push(site); throw failures[site]; });
+    let caught: unknown;
+    try {
+      trial.controller.dispose();
+    } catch (error: unknown) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    if (!(caught instanceof AggregateError)) throw new Error("Expected all cleanup failures");
+    expect(caught.message).toBe("Tail controller cleanup failed");
+    expect(caught.cause).toBe(failures.input);
+    expect(caught.errors).toEqual(cleanupSites.map((site) => failures[site]));
+    expect(attempts).toEqual(cleanupSites);
+    trial.controller.dispose();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(100);
+    expect(attempts).toEqual(cleanupSites);
+    expect(trial.input.dispose).toHaveBeenCalledTimes(1);
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+    expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+  });
+
+  it.each(cleanupSites)("prevents %s cleanup from reentrantly disposing or restarting the controller", (site) => {
+    const trial = fixture();
+    const attempts: CleanupSite[] = [];
+    const queries = trial.port.snapshot_json.mock.calls.length;
+    observeCleanup(trial, (current) => {
+      attempts.push(current);
+      if (current !== site) return;
+      trial.controller.dispose();
+      trial.controller.resume();
+      trial.controller.renderCurrentSnapshot();
+      trial.controller.onFrame(0);
+      trial.controller.onFrame(100);
+    });
+    trial.controller.dispose();
+    expect(attempts).toEqual(cleanupSites);
+    expect(trial.input.dispose).toHaveBeenCalledTimes(1);
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+    expect(trial.port.snapshot_json).toHaveBeenCalledTimes(queries);
+    expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+    expect(trial.input.readDemand).not.toHaveBeenCalled();
+    expect(trial.renderer.setFlightPose).toHaveBeenCalledTimes(2);
+    expect(trial.hud.render).toHaveBeenCalledTimes(1);
+    expect(trial.hud.setVisible).toHaveBeenCalledTimes(1);
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+  });
+
+  it("completes cleanup failures during terminal callback disposal without reviving the old frame", () => {
+    const trial = fixture();
+    trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
+    const attempts: CleanupSite[] = [];
+    observeCleanup(trial, (site) => {
+      attempts.push(site);
+      if (site === "input" || site === "pose") throw new Error(`Injected ${site} terminal cleanup failure`);
+    });
+    trial.onTerminal.mockImplementation(() => { trial.controller.dispose(); });
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(2_000);
+    expect(attempts).toEqual(cleanupSites);
+    expect(trial.onTerminal).toHaveBeenCalledTimes(1);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
+    expect(trial.port.free).toHaveBeenCalledTimes(1);
+    expect(trial.hud.render).toHaveBeenCalledTimes(1);
+    expect(trial.hud.setVisible).toHaveBeenCalledWith(false);
+    expect(trial.input.suspend).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
   });
 
   it.each(["pose", "hud", "input"] as const)("preserves a committed snapshot and closes reset failure at %s", (site) => {
