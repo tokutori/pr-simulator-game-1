@@ -434,6 +434,71 @@
       ],
       "type": "object"
     },
+    "FlightRecordAssistanceDocument": {
+      "description": "Stable assistance-level names in the external record format.",
+      "oneOf": [
+        {
+          "const": "strong",
+          "description": "Full FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "assisted",
+          "description": "Shared pilot and FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "description": "Limited FBW authority.",
+          "type": "string"
+        },
+        {
+          "const": "manual",
+          "description": "Pilot-only surface commands.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlightRecordDifficultyDocument": {
+      "additionalProperties": false,
+      "description": "Resolved setup settings required to interpret a recorded flight.",
+      "properties": {
+        "assistance": {
+          "$ref": "#/$defs/FlightRecordAssistanceDocument",
+          "description": "FBW assistance axis."
+        },
+        "hud_profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlightRecordHudProfileDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Explicit cue profile required by Custom information."
+        },
+        "information": {
+          "$ref": "#/$defs/FlightRecordInformationDocument",
+          "description": "Information display axis."
+        },
+        "preset": {
+          "$ref": "#/$defs/FlightRecordPresetDocument",
+          "description": "Preset selected before independent axis edits."
+        },
+        "weather": {
+          "$ref": "#/$defs/FlightRecordWeatherDocument",
+          "description": "Weather scenario axis."
+        }
+      },
+      "required": [
+        "preset",
+        "information",
+        "assistance",
+        "weather"
+      ],
+      "type": "object"
+    },
     "FlightRecordDispositionDocument": {
       "description": "Stable external completion classifications.",
       "oneOf": [
@@ -484,6 +549,105 @@
         }
       ]
     },
+    "FlightRecordHudProfileDocument": {
+      "additionalProperties": false,
+      "description": "Independently selected HUD cue visibility persisted with a Custom profile.",
+      "properties": {
+        "angle_of_attack": {
+          "description": "Whether angle-of-attack cues are visible.",
+          "type": "boolean"
+        },
+        "attitude": {
+          "description": "Whether attitude cues are visible.",
+          "type": "boolean"
+        },
+        "flight_path": {
+          "description": "Whether the flight-path marker is visible.",
+          "type": "boolean"
+        },
+        "telemetry": {
+          "description": "Whether numeric telemetry readouts are visible.",
+          "type": "boolean"
+        },
+        "warnings": {
+          "description": "Whether warning cues are visible.",
+          "type": "boolean"
+        },
+        "wind": {
+          "description": "Whether wind cues are visible.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "telemetry",
+        "attitude",
+        "wind",
+        "flight_path",
+        "angle_of_attack",
+        "warnings"
+      ],
+      "type": "object"
+    },
+    "FlightRecordInformationDocument": {
+      "description": "Stable information-level names in the external record format.",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Full telemetry and warnings.",
+          "type": "string"
+        },
+        {
+          "const": "standard",
+          "description": "Primary flight instruments.",
+          "type": "string"
+        },
+        {
+          "const": "minimal",
+          "description": "Altitude, distance, and elapsed time.",
+          "type": "string"
+        },
+        {
+          "const": "realistic",
+          "description": "Aircraft-configured instrumentation.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "Independently configured flight information cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlightRecordPresetDocument": {
+      "description": "Stable preset names in the external record format.",
+      "oneOf": [
+        {
+          "const": "beginner",
+          "description": "Full information, strong assistance, mild conditions.",
+          "type": "string"
+        },
+        {
+          "const": "standard",
+          "description": "Standard information, assisted control, typical conditions.",
+          "type": "string"
+        },
+        {
+          "const": "expert",
+          "description": "Minimal information, light assistance, challenging conditions.",
+          "type": "string"
+        },
+        {
+          "const": "realistic",
+          "description": "Realistic information and manual control.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "Independently selected axes.",
+          "type": "string"
+        }
+      ]
+    },
     "FlightRecordTailIdentityDocument": {
       "additionalProperties": false,
       "description": "Explicit model/controller names; their independent versions remain in the common header.",
@@ -502,6 +666,36 @@
         "controller_profile_id"
       ],
       "type": "object"
+    },
+    "FlightRecordWeatherDocument": {
+      "description": "Stable weather-class names in the external record format.",
+      "oneOf": [
+        {
+          "const": "calm",
+          "description": "Calm synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "mild",
+          "description": "Mild synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "typical",
+          "description": "Typical synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "challenging",
+          "description": "Challenging synthetic conditions.",
+          "type": "string"
+        },
+        {
+          "const": "near_limit",
+          "description": "Near-limit game classification.",
+          "type": "string"
+        }
+      ]
     },
     "GameUiAction": {
       "description": "UI message whose handling is shared by native and browser adapters.",

@@ -56,6 +56,7 @@ pub struct FlightRecordHeaderDocument {
 
 /// Resolved setup settings required to interpret a recorded flight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordDifficultyDocument {
     /// Preset selected before independent axis edits.
@@ -74,6 +75,7 @@ pub struct FlightRecordDifficultyDocument {
 
 /// Independently selected HUD cue visibility persisted with a Custom profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordHudProfileDocument {
     /// Whether numeric telemetry readouts are visible.
@@ -92,6 +94,7 @@ pub struct FlightRecordHudProfileDocument {
 
 /// Stable preset names in the external record format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordPresetDocument {
     /// Full information, strong assistance, mild conditions.
@@ -108,6 +111,7 @@ pub enum FlightRecordPresetDocument {
 
 /// Stable information-level names in the external record format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordInformationDocument {
     /// Full telemetry and warnings.
@@ -124,6 +128,7 @@ pub enum FlightRecordInformationDocument {
 
 /// Stable assistance-level names in the external record format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordAssistanceDocument {
     /// Full FBW authority.
@@ -138,6 +143,7 @@ pub enum FlightRecordAssistanceDocument {
 
 /// Stable weather-class names in the external record format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum FlightRecordWeatherDocument {
     /// Calm synthetic conditions.

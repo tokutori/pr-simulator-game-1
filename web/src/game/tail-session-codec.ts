@@ -6,9 +6,10 @@ import type { TailSnapshotDocument, TailStateDocument, TailTelemetryDocument, Ta
 import type { EnvironmentIdentity } from "../generated/tail-scenario.js";
 import type { FlightRecordTailIdentityDocument } from "../generated/tail-identity.js";
 import type { TailFlightRecordFinalizationDocument } from "../generated/tail-finalization.js";
+import type { FlightRecordDifficultyDocument, FlightRecordHudProfileDocument } from "../generated/record-difficulty.js";
 import { validateTailInputDocument, validateTailSnapshotDocument, validateTailPreparedLaunchDocument,
   validateEnvironmentIdentity, validateFlightRecordTailIdentityDocument, validateTailIncidenceDocument,
-  validateTailFlightRecordFinalizationDocument } from "../generated/game-ui-validators.js";
+  validateTailFlightRecordFinalizationDocument, validateFlightRecordDifficultyDocument } from "../generated/game-ui-validators.js";
 
 export const TAIL_SESSION_SCHEMA_VERSION: TailInputDocument["schema_version"] = 2;
 export type TailPilotPositionCommand = TailInputDocument["pilot_position_command"];
@@ -34,6 +35,18 @@ export interface TailControlIdentity {
   readonly aircraftConfigurationId: FlightRecordTailIdentityDocument["aircraft_configuration_id"];
   readonly controllerProfileId: FlightRecordTailIdentityDocument["controller_profile_id"];
 }
+export interface RecordedHudProfile {
+  readonly telemetry: FlightRecordHudProfileDocument["telemetry"];
+  readonly attitude: FlightRecordHudProfileDocument["attitude"];
+  readonly wind: FlightRecordHudProfileDocument["wind"];
+  readonly flightPath: FlightRecordHudProfileDocument["flight_path"];
+  readonly angleOfAttack: FlightRecordHudProfileDocument["angle_of_attack"];
+  readonly warnings: FlightRecordHudProfileDocument["warnings"];
+}
+export type RecordedDifficulty = Pick<FlightRecordDifficultyDocument, "preset" | "assistance" | "weather"> & (
+  | Readonly<{ information: Exclude<FlightRecordDifficultyDocument["information"], "custom">; hudProfile: null }>
+  | Readonly<{ information: "custom"; hudProfile: RecordedHudProfile }>
+);
 export type TailSessionIdentity =
   | Readonly<{ kind: "unprepared" }>
   | Readonly<{ kind: "prepared"; scenario: TailScenarioIdentity; controls: TailControlIdentity }>;
@@ -214,6 +227,22 @@ export function decodeTailControlIdentity(value: unknown): TailControlIdentity {
   if (!validateFlightRecordTailIdentityDocument(controls)) throw new RangeError("Invalid tail control identity");
   return Object.freeze({ aircraftConfigurationId: identityName(controls.aircraft_configuration_id),
     controllerProfileId: identityName(controls.controller_profile_id) });
+}
+
+export function decodeRecordedDifficulty(value: unknown): RecordedDifficulty {
+  const hasProfile = typeof value === "object" && value !== null && Object.hasOwn(value, "hud_profile");
+  const difficulty = ownBoundaryValue(value);
+  if (!validateFlightRecordDifficultyDocument(difficulty)) throw new RangeError("Invalid recorded difficulty");
+  const axes = { preset: difficulty.preset, assistance: difficulty.assistance, weather: difficulty.weather };
+  const information = difficulty.information;
+  if (information !== "custom") {
+    if (hasProfile) throw new RangeError("Explicit saved HUD profile requires Custom information");
+    return Object.freeze({ ...axes, information, hudProfile: null });
+  }
+  const profile = difficulty.hud_profile;
+  if (profile === undefined || profile === null) throw new RangeError("Custom information requires an explicit saved HUD profile");
+  return Object.freeze({ ...axes, information, hudProfile: Object.freeze({ telemetry: profile.telemetry, attitude: profile.attitude,
+    wind: profile.wind, flightPath: profile.flight_path, angleOfAttack: profile.angle_of_attack, warnings: profile.warnings }) });
 }
 
 function identityName(value: unknown): string {

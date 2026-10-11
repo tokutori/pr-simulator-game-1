@@ -12,6 +12,7 @@ import type { EnvironmentIdentity } from "./tail-scenario.js";
 import type { FlightRecordTailIdentityDocument } from "./tail-identity.js";
 import type { TailIncidenceDocument } from "./tail-incidence.js";
 import type { TailFlightRecordFinalizationDocument } from "./tail-finalization.js";
+import type { FlightRecordDifficultyDocument } from "./record-difficulty.js";
 export declare const validateGameUiView: ValidateFunction<GameUiView>;
 export declare const validateGameUiAction: ValidateFunction<GameUiAction>;
 export declare const validateGameUiPlatformInput: ValidateFunction<GameUiPlatformInput>;
@@ -24,3 +25,4 @@ export declare const validateEnvironmentIdentity: ValidateFunction<EnvironmentId
 export declare const validateFlightRecordTailIdentityDocument: ValidateFunction<FlightRecordTailIdentityDocument>;
 export declare const validateTailIncidenceDocument: ValidateFunction<TailIncidenceDocument>;
 export declare const validateTailFlightRecordFinalizationDocument: ValidateFunction<TailFlightRecordFinalizationDocument>;
+export declare const validateFlightRecordDifficultyDocument: ValidateFunction<FlightRecordDifficultyDocument>;
