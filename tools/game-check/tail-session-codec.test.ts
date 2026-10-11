@@ -2,9 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import { decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity,
+  decodeTailTerminalFinalization, encodeTailLogicalInput, parseTailPreparedLaunchSnapshot,
+  parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-session-codec.js";
-import { validateTailInputDocument } from "../../web/src/generated/game-ui-validators.js";
+import { validateTailInputDocument, validateTailSnapshotDocument } from "../../web/src/generated/game-ui-validators.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
@@ -48,6 +50,106 @@ function terminalDocument(failure: unknown = null, reason = "manual_abort") {
 }
 
 describe("versioned two-tail TypeScript boundary", () => {
+  it("generates snapshot structure and preserves required nullable values", () => {
+    const live = snapshotDocument();
+    const terminal = terminalDocument();
+    const terminalFrame = nested(terminal, "frame");
+    nested(terminalFrame, "finalization").score_m = null;
+    const telemetry = nested(terminalFrame, "telemetry");
+    telemetry.angle_of_attack_rad = null;
+    telemetry.sideslip_angle_rad = null;
+    for (const document of [live, terminal]) {
+      expect(validateTailSnapshotDocument(document)).toBe(true);
+      expect(() => parseTailSessionSnapshot(JSON.stringify(document))).not.toThrow();
+      const corruptions: readonly ((value: Record<string, unknown>) => void)[] = [
+        (value) => { delete value.scenario; },
+        (value) => { delete value.control_identity; },
+        (value) => { nested(nested(value, "frame"), "state").tick = Number.MAX_SAFE_INTEGER + 1; },
+        (value) => { nested(nested(value, "frame"), "state").datum_position_ned_m = [0, 0]; },
+        (value) => { nested(nested(value, "frame"), "state").pilot_position_target_normalized = 1.01; },
+        (value) => { delete nested(nested(value, "frame"), "telemetry").angle_of_attack_rad; },
+        (value) => { delete nested(nested(value, "frame"), "telemetry").sideslip_angle_rad; },
+        (value) => { nested(nested(value, "frame"), "telemetry").extra = 1; }
+      ];
+      for (const corrupt of corruptions) {
+        const invalid = structuredClone(document);
+        corrupt(invalid);
+        expect(validateTailSnapshotDocument(invalid)).toBe(false);
+        expect(() => parseTailSessionSnapshot(JSON.stringify(invalid))).toThrow(RangeError);
+      }
+    }
+    for (const field of ["score_m", "failure"]) {
+      const missing = structuredClone(terminal);
+      Reflect.deleteProperty(nested(nested(missing, "frame"), "finalization"), field);
+      expect(validateTailSnapshotDocument(missing)).toBe(false);
+    }
+  });
+
+  it("keeps independent query leaf guards and own-field projection", () => {
+    const live = snapshotDocument();
+    const finalization = nested(nested(terminalDocument(), "frame"), "finalization");
+    const cases = [
+      { value: nested(live, "scenario"), decode: decodeTailScenarioIdentity },
+      { value: nested(live, "control_identity"), decode: decodeTailControlIdentity },
+      { value: nested(nested(nested(live, "frame"), "state"), "physical_incidence"), decode: decodeTailPhysicalIncidence },
+      { value: finalization, decode: decodeTailTerminalFinalization }
+    ];
+    for (const { value, decode } of cases) {
+      const expected = decode(value);
+      expect(Object.isFrozen(expected)).toBe(true);
+      expect(() => decode({ ...value, extra: 1 })).toThrow(RangeError);
+      for (const field of Object.keys(value)) {
+        const missing = { ...value };
+        Reflect.deleteProperty(missing, field);
+        expect(() => decode(missing)).toThrow(RangeError);
+        const inherited = Object.assign(Object.create({ [field]: value[field] }) as Record<string, unknown>, missing);
+        expect(() => decode(inherited)).toThrow(RangeError);
+      }
+    }
+    const zeroScenario = { ...nested(live, "scenario"), scenario_id: 0 };
+    expect(decodeTailScenarioIdentity(zeroScenario).scenarioId).toBe(0);
+    const controls = nested(live, "control_identity");
+    for (const name of [" ", "\u0000", "あ".repeat(43)]) {
+      expect(() => decodeTailControlIdentity({ ...controls, aircraft_configuration_id: name })).toThrow(RangeError);
+    }
+    expect(decodeTailControlIdentity({ ...controls, aircraft_configuration_id: "あ".repeat(42) }).aircraftConfigurationId).toHaveLength(42);
+    const inheritedFailure = Object.assign(Object.create({ site: "tail_incidence" }) as Record<string, unknown>,
+      { cause: "non_finite", limit: null, stage: null });
+    expect(() => decodeTailTerminalFinalization({ ...finalization, reason: "fatal_simulation_error", disposition: "failed",
+      failure: { control: { incidence: inheritedFailure } } })).toThrow(RangeError);
+  });
+
+  it("rejects omitted query fields when Object.prototype contains a known field", () => {
+    const live = snapshotDocument();
+    const scenario = { ...nested(live, "scenario") };
+    delete scenario.catalog_version;
+    const missingStateTick = structuredClone(live);
+    delete nested(nested(missingStateTick, "frame"), "state").tick;
+    const missingFrame = { ...live };
+    delete missingFrame.frame;
+    const finalization = nested(nested(terminalDocument(), "frame"), "finalization");
+    const cases = [
+      { field: "catalog_version", inherited: 1, decode: () => decodeTailScenarioIdentity(scenario) },
+      { field: "tick", inherited: 0, decode: () => parseTailSessionSnapshot(JSON.stringify(missingStateTick)) },
+      { field: "frame", inherited: live.frame, decode: () => parseTailSessionSnapshot(JSON.stringify(missingFrame)) },
+      { field: "preview", inherited: { kind: "unavailable" }, decode: () => parseTailPreparedLaunchSnapshot(
+        JSON.stringify({ schema_version: 2, control_layout: "tail_incidence", phase_code: 0 }), physics_hz()) },
+      { field: "site", inherited: "tail_incidence", decode: () => decodeTailTerminalFinalization({ ...finalization,
+        reason: "fatal_simulation_error", disposition: "failed",
+        failure: { control: { incidence: { cause: "non_finite", limit: null, stage: null } } } }) }
+    ];
+    for (const { field, inherited, decode } of cases) {
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, field);
+      try {
+        Object.defineProperty(Object.prototype, field, { value: inherited, configurable: true });
+        expect(decode).toThrow(RangeError);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(Object.prototype, field);
+        else Object.defineProperty(Object.prototype, field, previous);
+      }
+    }
+  });
+
   it("retains Rust live progress for Flight and Pause and keeps terminal score separate", () => {
     const session = launch();
     try {

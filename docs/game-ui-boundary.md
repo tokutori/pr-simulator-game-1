@@ -20,7 +20,9 @@ npm run check:game-ui
 
 生成処理はCLIの`export-game-ui-schema bundle`からSerializeとDeserializeの共通定義を取得する。
 各groupは独立したSchemarsの`SchemaGenerator`を使用し、同じRust型を一度だけ`$defs`へ登録する。
-View、update、frameはSerialize、Action、platform input、TailInputはDeserializeの契約を使用する。
+View、update、frame、Tail snapshotとprepared launchはSerialize、Action、platform input、TailInputはDeserializeの契約を使用する。
+Tailのscenario/control identity、physical incidence、finalizationのquery入口も同じSerialize定義から構造検査を生成する。
+phaseとframe、exact stampと時刻、quaternion、距離の幾何、failureの整合、identityのUTF-8制約はWebの意味検査へ保持する。
 Ajvは各groupを`$id`で登録し、公開validatorを共通定義への参照から生成する。
 `allErrors`とnumeric formatsを維持し、同じgroupのvalidatorを再利用する。
 runtimeの深いreadonly型とstandalone validatorは`web/src/generated/`へ生成する。
