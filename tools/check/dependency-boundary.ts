@@ -55,6 +55,22 @@ function isNativeTextDependency(crate: string, dependency: Record<string, unknow
     && dependency.features.includes("complex-scripts");
 }
 
+function isSharedChartNumberDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-session"
+    && dependency.name === "ryu-js"
+    && dependency.kind === null
+    && dependency.target === null
+    && dependency.req === "=1.0.3"
+    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
+    && dependency.registry === null
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 0;
+}
+
 function isHostNumericalTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-core"
     && dependency.name === "nalgebra"
@@ -136,6 +152,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       }
       if (!permitted.includes(dependencyName)
         && !isNativeTextDependency(name, dependency)
+        && !isSharedChartNumberDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isSchemaGenerationDependency(name, dependency, pkg.features)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);

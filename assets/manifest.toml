@@ -1,6 +1,16 @@
 schema_version = 1
 
 [[assets]]
+path = "assets/ryu-js.LICENSE.txt"
+sha256 = "b066e653ce37f8edd592998935be3bf98e14c973fa2e3c49e0d0de5292e509f4"
+source = "https://github.com/boa-dev/ryu-js/blob/v1.0.3/LICENSE-BOOST"
+source_version = "ryu-js 1.0.3; exact Cargo dependency pin"
+license = "BSL-1.0"
+license_url = "https://github.com/boa-dev/ryu-js/blob/v1.0.3/LICENSE-BOOST"
+attribution = "ryu-js contributors; ECMAScript-compliant Ryū conversion"
+processing = "Complete upstream Boost Software License with dependency identity and selected license option; UTF-8 LF"
+
+[[assets]]
 path = "assets/game-ui-validators.LICENSE.txt"
 sha256 = "6ae8c77751f931c99a799e8e3990add63daed2f7f7c14596851a09bbbdea2e48"
 source = "https://github.com/ajv-validator/ajv/blob/v8.20.0/LICENSE; https://github.com/evanw/esbuild/blob/v0.28.2/LICENSE.md"

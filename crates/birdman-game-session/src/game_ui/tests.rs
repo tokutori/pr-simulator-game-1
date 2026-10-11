@@ -16,6 +16,7 @@ fn platform() -> GameUiPlatformInput {
             height: 720.0,
             root_font_size: 16.0,
         },
+        chart_extent: None,
         presentation_mode: GameUiPresentationMode::Screen,
         operation_pending: false,
         webxr_available: false,
@@ -336,23 +337,279 @@ fn full_chart_projection_matches_record_queries_and_preserves_the_finalized_reco
         if chart == GameUiAnalysisChart::Map {
             assert!(plot.equal_axis_scale);
             assert_eq!(
-                plot.cursor_points[0].y,
+                plot.cursor_points[0].point.y,
                 queried.telemetry.composite_cg_position_ned_m.components()[0]
             );
         }
         if chart == GameUiAnalysisChart::Altitude {
             assert!(!plot.equal_axis_scale);
-            assert_eq!(plot.cursor_points[0].y, queried.telemetry.altitude_m);
+            assert_eq!(plot.cursor_points[0].point.y, queried.telemetry.altitude_m);
             assert_eq!(plot.reference_lines[0].value, 0.0);
         }
         if chart == GameUiAnalysisChart::Speed {
             assert_eq!(plot.series.len(), 2);
-            assert_eq!(plot.cursor_points[0].y, queried.telemetry.airspeed_mps);
-            assert_eq!(plot.cursor_points[1].y, queried.telemetry.groundspeed_mps);
+            assert_eq!(
+                plot.cursor_points[0].point.y,
+                queried.telemetry.airspeed_mps
+            );
+            assert_eq!(
+                plot.cursor_points[1].point.y,
+                queried.telemetry.groundspeed_mps
+            );
+        }
+        for (cursor, series) in plot.cursor_points.iter().zip(&plot.series) {
+            assert_eq!(cursor.color, series.color);
         }
         assert_eq!(plot.series[0].points.len(), before.len());
     }
     assert_eq!(session.flight_record().unwrap().samples(), before);
+}
+
+#[test]
+fn shared_chart_layout_preserves_the_web_pixel_policy_and_observed_extent() {
+    let session = finalized();
+    let before = session.flight_record().unwrap().samples().to_vec();
+    let mut platform = platform();
+    for (width, height) in [
+        (1144.0, 190.0),
+        (298.0, 160.0),
+        (1144.0, 160.0),
+        (140.0, 100.0),
+    ] {
+        platform.chart_extent = Some(GameUiChartExtent { width, height });
+        for kind in [
+            GameUiAnalysisChart::Map,
+            GameUiAnalysisChart::Altitude,
+            GameUiAnalysisChart::Speed,
+        ] {
+            let state = GameUiState {
+                result_tab: GameUiResultTab::Analysis,
+                analysis_chart: kind,
+                ..GameUiState::default()
+            };
+            let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+            let GameUiControlContent::Chart { plot, .. } =
+                &control(&view, "game-analysis-plot").content
+            else {
+                panic!("expected chart");
+            };
+            let presentation = &plot.presentation;
+            let [left, top, right, bottom] = presentation.plot;
+            assert_eq!(presentation.viewport, GameUiChartExtent { width, height });
+            assert_eq!(presentation.tick_font_size, 14.0);
+            assert_eq!(presentation.axis_font_size, 16.0);
+            assert!(presentation.scroll_overflow);
+            assert!(left > 0.0 && top > 0.0 && right < width && bottom < height);
+            if kind == GameUiAnalysisChart::Map {
+                assert_eq!(right - left, bottom - top);
+                let guides = presentation.map_guides.as_ref().unwrap();
+                assert!(
+                    guides.scale_distance_m > 0.0
+                        && guides.scale_distance_m <= plot.x_maximum - plot.x_minimum
+                );
+                assert_eq!(guides.north_label.label, "N");
+                for segment in guides.scale_segments.iter().chain(&guides.north_segments) {
+                    for point in segment {
+                        assert!(
+                            point.x >= left
+                                && point.x <= right
+                                && point.y >= top
+                                && point.y <= bottom
+                        );
+                    }
+                }
+            } else {
+                assert_eq!(presentation.plot, [64.0, 26.0, width - 20.0, height - 48.0]);
+                assert!(presentation.map_guides.is_none());
+            }
+            assert!((2..=5).contains(&presentation.x_ticks.len()));
+            assert!((2..=5).contains(&presentation.y_ticks.len()));
+            assert_eq!(presentation.x_ticks.first().unwrap().value, plot.x_minimum);
+            assert_eq!(presentation.x_ticks.last().unwrap().value, plot.x_maximum);
+            assert_eq!(presentation.y_ticks.first().unwrap().value, plot.y_minimum);
+            assert_eq!(presentation.y_ticks.last().unwrap().value, plot.y_maximum);
+            assert_eq!(presentation.grid_lines.len(), 3);
+            assert_eq!(presentation.x_axis.position.y, height - 8.0);
+            assert_eq!(presentation.y_axis.position.x, 16.0);
+            assert_eq!(presentation.y_axis.rotation_degrees, -90.0);
+            assert_eq!(presentation.marker_labels.len(), plot.markers.len());
+            assert_eq!(
+                presentation.time_marker_labels.len(),
+                plot.time_markers.len()
+            );
+            assert_eq!(
+                presentation.reference_labels.len(),
+                plot.reference_lines.len()
+            );
+            for label in presentation
+                .marker_labels
+                .iter()
+                .chain(&presentation.time_marker_labels)
+            {
+                assert!(
+                    label.position.x >= 4.0
+                        && label.position.y >= 16.0
+                        && label.position.y <= height - 4.0
+                );
+            }
+            let labels: Vec<_> = plot
+                .series
+                .iter()
+                .map(|series| series.label.as_str())
+                .chain(plot.markers.iter().map(|marker| marker.label.as_str()))
+                .chain(
+                    plot.vectors
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, vector)| !vector.label.is_empty())
+                        .map(|(index, vector)| {
+                            if kind == GameUiAnalysisChart::Map && index == 0 {
+                                "選択sampleの風（矢印は空気の移動先）"
+                            } else {
+                                vector.label.as_str()
+                            }
+                        }),
+                )
+                .collect();
+            assert_eq!(
+                presentation
+                    .legend
+                    .iter()
+                    .map(|entry| entry.label.as_str())
+                    .collect::<Vec<_>>(),
+                labels
+            );
+        }
+    }
+    assert_eq!(session.flight_record().unwrap().samples(), before);
+}
+
+#[test]
+fn shared_chart_extent_rejects_invalid_measurements_and_has_one_initial_fallback() {
+    let session = finalized();
+    let state = GameUiState {
+        result_tab: GameUiResultTab::Analysis,
+        ..GameUiState::default()
+    };
+    let mut platform = platform();
+    let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    let GameUiControlContent::Chart { plot, .. } = &control(&view, "game-analysis-plot").content
+    else {
+        panic!("expected chart");
+    };
+    assert_eq!(
+        plot.presentation.viewport,
+        GameUiChartExtent {
+            width: 1000.0,
+            height: 520.0
+        }
+    );
+    for (width, height) in [
+        (f64::NAN, 160.0),
+        (298.0, f64::INFINITY),
+        (139.0, 160.0),
+        (298.0, 99.0),
+    ] {
+        platform.chart_extent = Some(GameUiChartExtent { width, height });
+        assert_eq!(
+            game_ui_view(&state, &context(&session, difficulty(), &platform)),
+            Err(GameUiError::InvalidViewport)
+        );
+    }
+}
+
+#[test]
+fn screen_analysis_flows_from_tabs_through_chart_to_navigation_while_vr_keeps_spatial_layout() {
+    let mut session = finalized();
+    let state = GameUiState {
+        result_tab: GameUiResultTab::Analysis,
+        replay_view: GameUiReplayView::Analysis,
+        ..GameUiState::default()
+    };
+    for replay in [false, true] {
+        if replay {
+            session.enter_replay().unwrap();
+        }
+        let before = session.snapshot();
+        for (width, height) in [(360.0, 300.0), (1280.0, 720.0)] {
+            let mut platform = platform();
+            platform.viewport.width = width;
+            platform.viewport.height = height;
+            let screen = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+            assert_eq!(screen.layout.shell, GameUiShell::Analysis);
+            assert!(screen.layout.scroll_y && !screen.layout.passthrough);
+            assert_eq!(screen.layout.maximum_height_px, height);
+            assert_eq!(screen.theme.button_min_height_px, 44.0);
+            let panel = &screen.panels[0];
+            assert_eq!(
+                panel
+                    .sections
+                    .iter()
+                    .map(|section| (section.id.as_str(), section.layout))
+                    .collect::<Vec<_>>(),
+                vec![
+                    ("analysis-tabs", GameUiSectionLayout::Row),
+                    ("analysis-chart", GameUiSectionLayout::Column),
+                    ("analysis-cursor", GameUiSectionLayout::Column),
+                    ("analysis-details", GameUiSectionLayout::Column),
+                    ("analysis-navigation", GameUiSectionLayout::Row),
+                ]
+            );
+            let ids: Vec<_> = panel
+                .controls
+                .iter()
+                .map(|control| control.id.as_str())
+                .collect();
+            let seek = if replay {
+                "game-replay-cursor"
+            } else {
+                "game-analysis-cursor"
+            };
+            let navigation = if replay {
+                "game-replay-return"
+            } else {
+                "game-result-title"
+            };
+            for pair in [
+                ("game-analysis-speed", "game-analysis-plot"),
+                ("game-analysis-plot", seek),
+                (seek, "game-analysis-cursor-values"),
+                ("game-analysis-cursor-values", navigation),
+            ] {
+                assert!(
+                    ids.iter().position(|id| *id == pair.0).unwrap()
+                        < ids.iter().position(|id| *id == pair.1).unwrap()
+                );
+            }
+            assert_eq!(control(&screen, navigation).section, "analysis-navigation");
+            for mode in [
+                GameUiPresentationMode::Webxr,
+                GameUiPresentationMode::PhoneVr,
+            ] {
+                platform.presentation_mode = mode;
+                let spatial =
+                    game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+                assert!(!spatial.layout.scroll_y && spatial.layout.passthrough);
+                assert!(
+                    spatial.panels[0]
+                        .sections
+                        .iter()
+                        .all(|section| section.layout == GameUiSectionLayout::Normalized)
+                );
+                assert_eq!(
+                    control(&spatial, "game-analysis-map").rect.y,
+                    if replay { 0.035 * 0.81 } else { 0.025 * 0.81 }
+                );
+                for item in &panel.controls {
+                    let counterpart = control(&spatial, &item.id);
+                    assert_eq!(item.label, counterpart.label);
+                    assert_eq!(item.enabled, counterpart.enabled);
+                    assert_eq!(item.content, counterpart.content);
+                }
+            }
+        }
+        assert_eq!(session.snapshot(), before);
+    }
 }
 
 #[test]
@@ -651,6 +908,9 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
         assert_eq!(frame.view_revision, 7);
         assert_eq!(cursor.cursor_x, plot.cursor_x);
         assert_eq!(cursor.cursor_points, plot.cursor_points);
+        for (cursor, series) in cursor.cursor_points.iter().zip(&plot.series) {
+            assert_eq!(cursor.color, series.color);
+        }
         assert_eq!(
             cursor.selected_wind_vector.as_ref(),
             if chart == GameUiAnalysisChart::Map {
@@ -674,6 +934,30 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
                 .value,
             value
         );
+        if chart == GameUiAnalysisChart::Map {
+            let GameUiControlContent::Chart { plot: original, .. } =
+                &control(&retained, "game-analysis-plot").content
+            else {
+                panic!("missing retained plot");
+            };
+            assert_eq!(original.presentation.legend, plot.presentation.legend);
+            assert!(
+                plot.presentation
+                    .legend
+                    .iter()
+                    .any(|entry| entry.label == "選択sampleの風（矢印は空気の移動先）")
+            );
+            assert!(
+                !plot
+                    .presentation
+                    .legend
+                    .iter()
+                    .any(|entry| entry.label.contains(" m/(m/s)"))
+            );
+            let selected = cursor.selected_wind_vector.as_ref().unwrap();
+            assert!(value.contains(&selected.label));
+            assert_eq!(plot.vectors.first().unwrap().label, selected.label);
+        }
         assert!(
             !serde_json::to_string(&frame)
                 .unwrap()
@@ -853,6 +1137,7 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Webxr,
     ] {
         let mut session = launched();
         let before = session.snapshot();
@@ -879,6 +1164,7 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
+        assert_eq!(view.hud.is_some(), mode == GameUiPresentationMode::Screen);
         assert!(!control(&view, "game-flight-resume").enabled);
         assert!(control(&view, "game-paused-abort").enabled);
         assert_eq!(
@@ -1060,6 +1346,76 @@ fn registered_weather_briefing_is_shared_and_unknown_identity_has_explicit_absen
             .unwrap()
             .contains("代表風情報を取得できない")
     );
+}
+
+#[test]
+fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Webxr,
+    ] {
+        let mut platform = platform();
+        platform.presentation_mode = mode;
+        let assert_presence = |session: &GameSession<'static>, state: &GameUiState, expected| {
+            let snapshot = session.snapshot();
+            let clock = session.playback_clock();
+            let context = context(session, difficulty(), &platform);
+            let view = game_ui_view(state, &context).unwrap();
+            let frame = game_ui_frame(state, &context, &view).unwrap();
+            assert_eq!(view.hud.is_some(), expected);
+            assert_eq!(frame.hud, view.hud);
+            assert_eq!(session.snapshot(), snapshot);
+            assert_eq!(session.playback_clock(), clock);
+        };
+        let mut session = launched();
+        let mut state = GameUiState::default();
+        assert_presence(&session, &state, true);
+        session
+            .advance_tail_flight_tick(TailFlightTickInput::new(
+                TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+                TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                TailPilotPositionCommand::Hold,
+            ))
+            .unwrap();
+        session.pause(PauseReason::Manual).unwrap();
+        assert_presence(&session, &state, mode == GameUiPresentationMode::Screen);
+        session.abort_flight().unwrap();
+        for tab in [GameUiResultTab::Summary, GameUiResultTab::Analysis] {
+            state.result_tab = tab;
+            assert_presence(&session, &state, false);
+        }
+        state.result_tab = GameUiResultTab::Summary;
+        state.technical_open = true;
+        let result = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        assert!(matches!(
+            &control(&result, "game-result-terminal").content,
+            GameUiControlContent::Status { value } if value == "操作により飛行を終了した"
+        ));
+        assert!(matches!(
+            &control(&result, "game-result-technical-content").content,
+            GameUiControlContent::Status { value } if value.contains("終了理由: ManualAbort")
+        ));
+        session.enter_replay().unwrap();
+        for view in [
+            GameUiReplayView::Cinematic,
+            GameUiReplayView::Telemetry,
+            GameUiReplayView::Analysis,
+        ] {
+            state.replay_view = view;
+            assert_presence(
+                &session,
+                &state,
+                mode == GameUiPresentationMode::Screen && view == GameUiReplayView::Telemetry,
+            );
+        }
+        session.leave_replay().unwrap();
+        let record = session.take_finalized_result_record().unwrap();
+        let mut attract = GameSession::new();
+        attract.install_attract_record(record).unwrap();
+        attract.enter_attract().unwrap();
+        assert_presence(&attract, &state, false);
+    }
 }
 
 #[test]

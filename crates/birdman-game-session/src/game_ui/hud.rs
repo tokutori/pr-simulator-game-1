@@ -1,6 +1,4 @@
-use birdman_game_core::{
-    FlightRecordPlaybackSample, SessionEndReason, SessionPhase, SessionSnapshot,
-};
+use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase, SessionSnapshot};
 use birdman_game_format::InformationLevel;
 
 use super::types::*;
@@ -11,9 +9,12 @@ pub(super) fn game_ui_hud(
 ) -> Result<Option<GameUiHud>, GameUiError> {
     let snapshot = context.session.snapshot();
     let phase = snapshot.phase();
-    let (sample, status, distance, target, warning) = match snapshot {
+    let (sample, status, distance, target) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
-        | SessionSnapshot::TailFlightPaused { state, .. } => {
+        | SessionSnapshot::TailFlightPaused { state, .. }
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen
+                || phase == SessionPhase::FlightRunning =>
+        {
             let telemetry = context
                 .session
                 .telemetry()
@@ -46,47 +47,12 @@ pub(super) fn game_ui_hud(
                 },
                 distance,
                 Some(state.pilot_position_target().position_m()),
-                None,
             )
         }
-        SessionSnapshot::Result(result) => {
-            let record = context.record.ok_or(GameUiError::ActionUnavailable)?;
-            let duration = record.duration_seconds().map_err(GameUiError::Record)?;
-            let sample = record
-                .sample_at_seconds(duration)
-                .map_err(GameUiError::Record)?;
-            let label = match result.reason {
-                SessionEndReason::WaterContact => "着水",
-                SessionEndReason::TimeLimit => "時間制限",
-                SessionEndReason::ManualAbort => "手動終了",
-                SessionEndReason::OutOfValidEnvelope => "空力モデルの適用範囲外",
-                SessionEndReason::FatalSimulationError => "シミュレーションエラー",
-            };
-            let warning = match result.reason {
-                SessionEndReason::OutOfValidEnvelope => Some("AERODYNAMIC ENVELOPE"),
-                SessionEndReason::FatalSimulationError => Some("SIMULATION FAILURE"),
-                _ => None,
-            };
-            let target = match result.state {
-                birdman_game_core::SessionTerminalState::TailTick(state) => {
-                    state.pilot_position_target().position_m()
-                }
-                birdman_game_core::SessionTerminalState::TailWaterContact(contact) => {
-                    contact.pilot_position_target().position_m()
-                }
-            };
-            (
-                sample,
-                label,
-                result.score.map_or_else(
-                    || "距離 unavailable".to_owned(),
-                    |score| format!("確定距離 {:.1} m", score.course_parallel_m()),
-                ),
-                Some(target),
-                warning,
-            )
-        }
-        SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
+        SessionSnapshot::Replay { .. }
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen
+                && state.replay_view == GameUiReplayView::Telemetry =>
+        {
             let record = context.record.ok_or(GameUiError::ActionUnavailable)?;
             let clock = context
                 .session
@@ -95,10 +61,7 @@ pub(super) fn game_ui_hud(
             let sample = record
                 .sample_at_seconds(clock.time_seconds())
                 .map_err(GameUiError::Record)?;
-            if phase == SessionPhase::Replay && state.replay_view != GameUiReplayView::Telemetry {
-                return Ok(None);
-            }
-            (sample, "記録再生", "保存標本".to_owned(), None, None)
+            (sample, "記録再生", "保存標本".to_owned(), None)
         }
         _ => return Ok(None),
     };
@@ -189,7 +152,7 @@ pub(super) fn game_ui_hud(
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = alpha_visible.then_some(alpha).flatten();
     let mut hud = GameUiHud { layout: hud_layout(context.platform), geometry: hud_geometry(attitude, path_angle, heading_degrees, angle_of_attack_degrees), heading_label: "HEADING".to_owned(), pilot_position_label: "PILOT CG".to_owned(), wind_label: "WIND N/E/D".to_owned(), angle_of_attack_label: "AoA".to_owned(), status: status.to_owned(), attitude,
-        flight_path_angle_degrees: path_angle, warning: if full || custom && profile.warnings() { warning.map(str::to_owned) } else { None },
+        flight_path_angle_degrees: path_angle, warning: None,
         heading_degrees, wind_direction_degrees: if wind_visible && (wind_north != 0.0 || wind_east != 0.0) { Some(wind_east.atan2(wind_north).to_degrees().rem_euclid(360.0)) } else { None },
         angle_of_attack_degrees, readouts: readouts.join("\n"), heading: attitude_visible.then(|| format!("{heading:.0}°")),
         pilot_position: (full || custom && profile.telemetry()).then(|| format!("{:+.2} m", sample.flight_state.pilot_position_m())),
@@ -266,6 +229,36 @@ fn rounded_bearing(value: f64) -> u32 {
         floor + 1.0
     };
     rounded.rem_euclid(360.0) as u32
+}
+
+fn hud_layout(platform: &GameUiPlatformInput) -> GameUiHudLayout {
+    let font = platform.viewport.root_font_size;
+    let compact = platform.viewport.width <= 600.0;
+    GameUiHudLayout {
+        offset_px: [0.75 * font; 2],
+        width_px: ((if compact { 19.0 } else { 25.0 }) * font)
+            .min((platform.viewport.width - if compact { 1.2 } else { 1.5 } * font).max(1.0)),
+        maximum_height_px: (platform.viewport.height - 5.0 * font).max(1.0),
+        padding_px: if compact {
+            [0.5 * font, 0.4 * font]
+        } else {
+            [0.65 * font, 0.55 * font]
+        },
+        gap_px: [0.65 * font, 0.25 * font],
+        attitude_size_px: if compact {
+            [5.5 * font, 4.2 * font]
+        } else {
+            [7.5 * font, 5.65 * font]
+        },
+        font_size_px: if compact { 0.65 * font } else { 0.72 * font },
+        opacity: if platform.presentation_mode == GameUiPresentationMode::Screen {
+            0.64
+        } else {
+            0.28
+        },
+        controls_visible: !compact,
+        instrument_columns: 2,
+    }
 }
 
 #[cfg(test)]
@@ -357,35 +350,5 @@ mod geometry_tests {
         assert!((y_ratio - (90.0 + 6.6) / 180.0).abs() < 1.0e-12);
         assert_eq!(geometry.adi.unwrap().horizon(), None);
         assert_eq!(geometry.adi.unwrap().flight_path_y_ratio(), Some(y_ratio));
-    }
-}
-
-fn hud_layout(platform: &GameUiPlatformInput) -> GameUiHudLayout {
-    let font = platform.viewport.root_font_size;
-    let compact = platform.viewport.width <= 600.0;
-    GameUiHudLayout {
-        offset_px: [0.75 * font; 2],
-        width_px: ((if compact { 19.0 } else { 25.0 }) * font)
-            .min((platform.viewport.width - if compact { 1.2 } else { 1.5 } * font).max(1.0)),
-        maximum_height_px: (platform.viewport.height - 5.0 * font).max(1.0),
-        padding_px: if compact {
-            [0.5 * font, 0.4 * font]
-        } else {
-            [0.65 * font, 0.55 * font]
-        },
-        gap_px: [0.65 * font, 0.25 * font],
-        attitude_size_px: if compact {
-            [5.5 * font, 4.2 * font]
-        } else {
-            [7.5 * font, 5.65 * font]
-        },
-        font_size_px: if compact { 0.65 * font } else { 0.72 * font },
-        opacity: if platform.presentation_mode == GameUiPresentationMode::Screen {
-            0.64
-        } else {
-            0.28
-        },
-        controls_visible: !compact,
-        instrument_columns: 2,
     }
 }

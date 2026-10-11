@@ -46,7 +46,7 @@
         "cursor_points": {
           "description": "Shared plot-space sample points.",
           "items": {
-            "$ref": "#/$defs/GameUiChartPoint"
+            "$ref": "#/$defs/GameUiChartCursorPoint"
           },
           "type": "array"
         },
@@ -79,6 +79,25 @@
         "cursor_x",
         "cursor_points",
         "selected_wind_vector"
+      ],
+      "type": "object"
+    },
+    "GameUiChartCursorPoint": {
+      "additionalProperties": false,
+      "description": "Record-interpolated position with its shared series colour.",
+      "properties": {
+        "color": {
+          "description": "Colour of the corresponding shared series.",
+          "type": "string"
+        },
+        "point": {
+          "$ref": "#/$defs/GameUiChartPoint",
+          "description": "Position in the chart axes."
+        }
+      },
+      "required": [
+        "point",
+        "color"
       ],
       "type": "object"
     },

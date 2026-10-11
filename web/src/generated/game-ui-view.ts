@@ -645,7 +645,7 @@ export interface GameUiChart {
     /**
      * Record-interpolated cursor positions.
      */
-    readonly cursor_points: readonly GameUiChartPoint[];
+    readonly cursor_points: readonly GameUiChartCursorPoint[];
     /**
      * Time cursor; maps use cursor points only.
      */
@@ -658,6 +658,7 @@ export interface GameUiChart {
      * Launch, terminal and venue markers.
      */
     readonly markers: readonly GameUiChartMarker[];
+    readonly presentation: GameUiChartPresentation;
     /**
      * Horizontal reference lines.
      */
@@ -700,7 +701,17 @@ export interface GameUiChart {
     readonly y_minimum: number;
 }
 /**
- * One chart-space point with units defined by the axes.
+ * Record-interpolated position with its shared series colour.
+ */
+export interface GameUiChartCursorPoint {
+    /**
+     * Colour of the corresponding shared series.
+     */
+    readonly color: string;
+    readonly point: GameUiChartPoint;
+}
+/**
+ * Position in the chart axes.
  */
 export interface GameUiChartPoint {
     /**
@@ -727,7 +738,7 @@ export interface GameUiChartMarker {
     readonly point: GameUiChartPoint1;
 }
 /**
- * One chart-space point with units defined by the axes.
+ * Chart coordinates.
  */
 export interface GameUiChartPoint1 {
     /**
@@ -738,6 +749,452 @@ export interface GameUiChartPoint1 {
      * Vertical component.
      */
     readonly y: number;
+}
+/**
+ * Shared chart layout and labels in logical display pixels.
+ */
+export interface GameUiChartPresentation {
+    /**
+     * Shared axis stroke colour.
+     */
+    readonly axes_color: string;
+    /**
+     * Axis font size in logical pixels.
+     */
+    readonly axis_font_size: number;
+    /**
+     * Shared grid stroke colour.
+     */
+    readonly grid_color: string;
+    /**
+     * Static grid segments in descriptor coordinates.
+     */
+    readonly grid_lines: readonly (readonly [
+        GameUiChartPoint2,
+        GameUiChartPoint2
+    ])[];
+    /**
+     * Grid stroke opacity.
+     */
+    readonly grid_opacity: number;
+    /**
+     * Ordered shared legend entries.
+     */
+    readonly legend: readonly GameUiChartLegend[];
+    /**
+     * Legend font size in root-font units.
+     */
+    readonly legend_font_rem: number;
+    /**
+     * Legend item gap in root-font units.
+     */
+    readonly legend_gap_rem: number;
+    /**
+     * Gradient swatch corner radius in root-font units.
+     */
+    readonly legend_gradient_radius_rem: number;
+    /**
+     * Gradient legend swatch dimensions in root-font units.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly legend_gradient_rem: readonly [
+        number,
+        number
+    ];
+    /**
+     * Gap after each legend swatch in root-font units.
+     */
+    readonly legend_swatch_gap_rem: number;
+    /**
+     * Solid legend swatch dimensions in root-font units.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly legend_swatch_rem: readonly [
+        number,
+        number
+    ];
+    /**
+     * Metre scale and north reference for equal-scale maps.
+     */
+    readonly map_guides: GameUiChartMapGuides | null;
+    /**
+     * Marker labels in the same order as the chart markers.
+     */
+    readonly marker_labels: readonly GameUiChartText2[];
+    readonly measurement_minimum: GameUiChartExtent;
+    /**
+     * Plot rectangle ordered left, top, right, bottom.
+     *
+     * @minItems 4
+     * @maxItems 4
+     */
+    readonly plot: readonly [
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Reference labels in the same order as the reference lines.
+     */
+    readonly reference_labels: readonly GameUiChartText2[];
+    /**
+     * Keeps caption, viewport and legend inside one scrollable chart host.
+     */
+    readonly scroll_overflow: boolean;
+    /**
+     * Tick font size in logical pixels.
+     */
+    readonly tick_font_size: number;
+    /**
+     * Recorded-time labels in the same order as the time markers.
+     */
+    readonly time_marker_labels: readonly GameUiChartText2[];
+    readonly viewport: GameUiChartExtent1;
+    /**
+     * Minimum viewport width and height in root-font units.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly viewport_minimum_rem: readonly [
+        number,
+        number
+    ];
+    readonly x_axis: GameUiChartText3;
+    /**
+     * Ordered horizontal ticks.
+     */
+    readonly x_ticks: readonly GameUiChartTick[];
+    readonly y_axis: GameUiChartText5;
+    /**
+     * Ordered vertical ticks.
+     */
+    readonly y_ticks: readonly GameUiChartTick[];
+}
+/**
+ * One chart-space point with units defined by the axes.
+ */
+export interface GameUiChartPoint2 {
+    /**
+     * Horizontal component.
+     */
+    readonly x: number;
+    /**
+     * Vertical component.
+     */
+    readonly y: number;
+}
+/**
+ * One ordered legend item with an optional progress gradient.
+ */
+export interface GameUiChartLegend {
+    /**
+     * Solid swatch colour.
+     */
+    readonly color: string;
+    /**
+     * Shared label.
+     */
+    readonly label: string;
+    /**
+     * First and last progress colours when the series uses a gradient.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly segment_gradient: readonly [
+        string,
+        string
+    ] | null;
+}
+/**
+ * Static map references in descriptor coordinates.
+ */
+export interface GameUiChartMapGuides {
+    readonly north_label: GameUiChartText;
+    /**
+     * North arrow shaft and its two head segments.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly north_segments: readonly [
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ],
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ],
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ]
+    ];
+    /**
+     * Represented distance in metres.
+     */
+    readonly scale_distance_m: number;
+    readonly scale_label: GameUiChartText1;
+    /**
+     * Scale bar and its two end caps.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly scale_segments: readonly [
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ],
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ],
+        readonly [
+            GameUiChartPoint2,
+            GameUiChartPoint2
+        ]
+    ];
+}
+/**
+ * North label.
+ */
+export interface GameUiChartText {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * One chart-space point with units defined by the axes.
+ */
+export interface GameUiChartPoint3 {
+    /**
+     * Horizontal component.
+     */
+    readonly x: number;
+    /**
+     * Vertical component.
+     */
+    readonly y: number;
+}
+/**
+ * Metre scale label.
+ */
+export interface GameUiChartText1 {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * Static label placement independent of the rendering engine.
+ */
+export interface GameUiChartText2 {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * Minimum usable measured dimensions in logical pixels.
+ */
+export interface GameUiChartExtent {
+    /**
+     * Content height.
+     */
+    readonly height: number;
+    /**
+     * Content width.
+     */
+    readonly width: number;
+}
+/**
+ * Coordinate extent of this descriptor.
+ */
+export interface GameUiChartExtent1 {
+    /**
+     * Content height.
+     */
+    readonly height: number;
+    /**
+     * Content width.
+     */
+    readonly width: number;
+}
+/**
+ * Static label placement independent of the rendering engine.
+ */
+export interface GameUiChartText3 {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * Tick value, placement and already formatted label.
+ */
+export interface GameUiChartTick {
+    /**
+     * Increasing-axis fraction between zero and one.
+     */
+    readonly ratio: number;
+    readonly text: GameUiChartText4;
+    /**
+     * Axis coordinate.
+     */
+    readonly value: number;
+}
+/**
+ * Static label placement independent of the rendering engine.
+ */
+export interface GameUiChartText4 {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
+}
+/**
+ * Static label placement independent of the rendering engine.
+ */
+export interface GameUiChartText5 {
+    /**
+     * Horizontal text anchor.
+     */
+    readonly anchor: "start" | "middle" | "end";
+    /**
+     * Shared text colour.
+     */
+    readonly color: string;
+    /**
+     * Font size in logical pixels.
+     */
+    readonly font_size: number;
+    /**
+     * CSS-compatible font weight.
+     */
+    readonly font_weight: number;
+    /**
+     * Already formatted content.
+     */
+    readonly label: string;
+    readonly position: GameUiChartPoint3;
+    /**
+     * Rotation around the baseline anchor in degrees.
+     */
+    readonly rotation_degrees: number;
 }
 /**
  * One horizontal plot reference.
@@ -771,7 +1228,7 @@ export interface GameUiChartSeries {
     /**
      * Ordered chart coordinates.
      */
-    readonly points: readonly GameUiChartPoint[];
+    readonly points: readonly GameUiChartPoint2[];
     /**
      * Per-segment colours; empty means the base colour.
      */
@@ -796,8 +1253,8 @@ export interface GameUiChartVector {
      * @maxItems 2
      */
     readonly segment: readonly [
-        GameUiChartPoint,
-        GameUiChartPoint
+        GameUiChartPoint2,
+        GameUiChartPoint2
     ] | null;
 }
 /**

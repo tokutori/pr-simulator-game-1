@@ -406,7 +406,7 @@
         "cursor_points": {
           "description": "Record-interpolated cursor positions.",
           "items": {
-            "$ref": "#/$defs/GameUiChartPoint"
+            "$ref": "#/$defs/GameUiChartCursorPoint"
           },
           "type": "array"
         },
@@ -428,6 +428,10 @@
             "$ref": "#/$defs/GameUiChartMarker"
           },
           "type": "array"
+        },
+        "presentation": {
+          "$ref": "#/$defs/GameUiChartPresentation",
+          "description": "Shared chart layout and labels in logical display pixels."
         },
         "reference_lines": {
           "description": "Horizontal reference lines.",
@@ -487,6 +491,7 @@
         }
       },
       "required": [
+        "presentation",
         "x_axis_label",
         "y_axis_label",
         "x_minimum",
@@ -501,6 +506,133 @@
         "reference_lines",
         "cursor_x",
         "cursor_points"
+      ],
+      "type": "object"
+    },
+    "GameUiChartCursorPoint": {
+      "additionalProperties": false,
+      "description": "Record-interpolated position with its shared series colour.",
+      "properties": {
+        "color": {
+          "description": "Colour of the corresponding shared series.",
+          "type": "string"
+        },
+        "point": {
+          "$ref": "#/$defs/GameUiChartPoint",
+          "description": "Position in the chart axes."
+        }
+      },
+      "required": [
+        "point",
+        "color"
+      ],
+      "type": "object"
+    },
+    "GameUiChartExtent": {
+      "additionalProperties": false,
+      "description": "Measured or initially assumed chart content dimensions in logical pixels.",
+      "properties": {
+        "height": {
+          "description": "Content height.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Content width.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "GameUiChartLegend": {
+      "additionalProperties": false,
+      "description": "One ordered legend item with an optional progress gradient.",
+      "properties": {
+        "color": {
+          "description": "Solid swatch colour.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Shared label.",
+          "type": "string"
+        },
+        "segment_gradient": {
+          "description": "First and last progress colours when the series uses a gradient.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "label",
+        "color",
+        "segment_gradient"
+      ],
+      "type": "object"
+    },
+    "GameUiChartMapGuides": {
+      "additionalProperties": false,
+      "description": "Static map references in descriptor coordinates.",
+      "properties": {
+        "north_label": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "North label."
+        },
+        "north_segments": {
+          "description": "North arrow shaft and its two head segments.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/GameUiChartPoint"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "scale_distance_m": {
+          "description": "Represented distance in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "scale_label": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "Metre scale label."
+        },
+        "scale_segments": {
+          "description": "Scale bar and its two end caps.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/GameUiChartPoint"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "scale_distance_m",
+        "scale_segments",
+        "scale_label",
+        "north_segments",
+        "north_label"
       ],
       "type": "object"
     },
@@ -546,6 +678,209 @@
       "required": [
         "x",
         "y"
+      ],
+      "type": "object"
+    },
+    "GameUiChartPresentation": {
+      "additionalProperties": false,
+      "description": "Shared static plot geometry and Web-baseline typography.",
+      "properties": {
+        "axes_color": {
+          "description": "Shared axis stroke colour.",
+          "type": "string"
+        },
+        "axis_font_size": {
+          "description": "Axis font size in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "grid_color": {
+          "description": "Shared grid stroke colour.",
+          "type": "string"
+        },
+        "grid_lines": {
+          "description": "Static grid segments in descriptor coordinates.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/GameUiChartPoint"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "grid_opacity": {
+          "description": "Grid stroke opacity.",
+          "format": "double",
+          "type": "number"
+        },
+        "legend": {
+          "description": "Ordered shared legend entries.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartLegend"
+          },
+          "type": "array"
+        },
+        "legend_font_rem": {
+          "description": "Legend font size in root-font units.",
+          "format": "double",
+          "type": "number"
+        },
+        "legend_gap_rem": {
+          "description": "Legend item gap in root-font units.",
+          "format": "double",
+          "type": "number"
+        },
+        "legend_gradient_radius_rem": {
+          "description": "Gradient swatch corner radius in root-font units.",
+          "format": "double",
+          "type": "number"
+        },
+        "legend_gradient_rem": {
+          "description": "Gradient legend swatch dimensions in root-font units.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "legend_swatch_gap_rem": {
+          "description": "Gap after each legend swatch in root-font units.",
+          "format": "double",
+          "type": "number"
+        },
+        "legend_swatch_rem": {
+          "description": "Solid legend swatch dimensions in root-font units.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "map_guides": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartMapGuides"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Metre scale and north reference for equal-scale maps."
+        },
+        "marker_labels": {
+          "description": "Marker labels in the same order as the chart markers.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartText"
+          },
+          "type": "array"
+        },
+        "measurement_minimum": {
+          "$ref": "#/$defs/GameUiChartExtent",
+          "description": "Minimum usable measured dimensions in logical pixels."
+        },
+        "plot": {
+          "description": "Plot rectangle ordered left, top, right, bottom.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "reference_labels": {
+          "description": "Reference labels in the same order as the reference lines.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartText"
+          },
+          "type": "array"
+        },
+        "scroll_overflow": {
+          "description": "Keeps caption, viewport and legend inside one scrollable chart host.",
+          "type": "boolean"
+        },
+        "tick_font_size": {
+          "description": "Tick font size in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "time_marker_labels": {
+          "description": "Recorded-time labels in the same order as the time markers.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartText"
+          },
+          "type": "array"
+        },
+        "viewport": {
+          "$ref": "#/$defs/GameUiChartExtent",
+          "description": "Coordinate extent of this descriptor."
+        },
+        "viewport_minimum_rem": {
+          "description": "Minimum viewport width and height in root-font units.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "x_axis": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "Horizontal axis title."
+        },
+        "x_ticks": {
+          "description": "Ordered horizontal ticks.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartTick"
+          },
+          "type": "array"
+        },
+        "y_axis": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "Vertical axis title."
+        },
+        "y_ticks": {
+          "description": "Ordered vertical ticks.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartTick"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "viewport",
+        "measurement_minimum",
+        "scroll_overflow",
+        "plot",
+        "tick_font_size",
+        "axis_font_size",
+        "x_ticks",
+        "y_ticks",
+        "grid_lines",
+        "axes_color",
+        "grid_color",
+        "grid_opacity",
+        "x_axis",
+        "y_axis",
+        "marker_labels",
+        "time_marker_labels",
+        "reference_labels",
+        "legend",
+        "map_guides",
+        "viewport_minimum_rem",
+        "legend_font_rem",
+        "legend_gap_rem",
+        "legend_swatch_rem",
+        "legend_swatch_gap_rem",
+        "legend_gradient_rem",
+        "legend_gradient_radius_rem"
       ],
       "type": "object"
     },
@@ -606,6 +941,101 @@
         "color",
         "points",
         "segment_colors"
+      ],
+      "type": "object"
+    },
+    "GameUiChartText": {
+      "additionalProperties": false,
+      "description": "Static label placement independent of the rendering engine.",
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/GameUiChartTextAnchor",
+          "description": "Horizontal text anchor."
+        },
+        "color": {
+          "description": "Shared text colour.",
+          "type": "string"
+        },
+        "font_size": {
+          "description": "Font size in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "font_weight": {
+          "description": "CSS-compatible font weight.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "Already formatted content.",
+          "type": "string"
+        },
+        "position": {
+          "$ref": "#/$defs/GameUiChartPoint",
+          "description": "Alphabetic-baseline position in logical pixels; adapters apply actual font metrics."
+        },
+        "rotation_degrees": {
+          "description": "Rotation around the baseline anchor in degrees.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "label",
+        "position",
+        "font_size",
+        "font_weight",
+        "rotation_degrees",
+        "anchor",
+        "color"
+      ],
+      "type": "object"
+    },
+    "GameUiChartTextAnchor": {
+      "description": "Horizontal alignment relative to a chart label's baseline anchor.",
+      "oneOf": [
+        {
+          "const": "start",
+          "description": "Left edge.",
+          "type": "string"
+        },
+        {
+          "const": "middle",
+          "description": "Horizontal centre.",
+          "type": "string"
+        },
+        {
+          "const": "end",
+          "description": "Right edge.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiChartTick": {
+      "additionalProperties": false,
+      "description": "Tick value, placement and already formatted label.",
+      "properties": {
+        "ratio": {
+          "description": "Increasing-axis fraction between zero and one.",
+          "format": "double",
+          "type": "number"
+        },
+        "text": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "Shared text and placement."
+        },
+        "value": {
+          "description": "Axis coordinate.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "ratio",
+        "text"
       ],
       "type": "object"
     },

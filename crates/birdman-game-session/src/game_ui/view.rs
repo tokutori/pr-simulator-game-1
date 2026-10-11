@@ -686,6 +686,47 @@ impl Menu {
         phase: SessionPhase,
         mode: GameUiPresentationMode,
     ) {
+        let screen_analysis = mode == GameUiPresentationMode::Screen
+            && (phase == SessionPhase::Result && state.result_tab == GameUiResultTab::Analysis
+                || phase == SessionPhase::Replay
+                    && state.replay_view == GameUiReplayView::Analysis);
+        if screen_analysis {
+            let groups = [
+                ("analysis-tabs", GameUiSectionLayout::Row),
+                ("analysis-chart", GameUiSectionLayout::Column),
+                ("analysis-cursor", GameUiSectionLayout::Column),
+                ("analysis-details", GameUiSectionLayout::Column),
+                ("analysis-navigation", GameUiSectionLayout::Row),
+            ];
+            for control in &mut self.controls {
+                control.section = match control.id.as_str() {
+                    "game-analysis-map" | "game-analysis-altitude" | "game-analysis-speed" => {
+                        groups[0].0
+                    }
+                    "game-analysis-plot" | "game-analysis-loading" => groups[1].0,
+                    "game-analysis-cursor"
+                    | "game-replay-cursor"
+                    | "game-analysis-cursor-values" => groups[2].0,
+                    _ if matches!(control.content, GameUiControlContent::Status { .. }) => {
+                        groups[3].0
+                    }
+                    _ => groups[4].0,
+                }
+                .to_owned();
+            }
+            self.controls
+                .sort_by_key(|control| groups.iter().position(|(id, _)| *id == control.section));
+            self.sections = groups
+                .into_iter()
+                .filter(|(id, _)| self.controls.iter().any(|control| control.section == *id))
+                .map(|(id, layout)| GameUiSection {
+                    id: id.to_owned(),
+                    label: String::new(),
+                    layout,
+                })
+                .collect();
+            return;
+        }
         let expanded_head_failure = phase == SessionPhase::FlightRunning
             && mode != GameUiPresentationMode::Screen
             && self
@@ -1311,7 +1352,26 @@ fn analysis(
                 step: 0.01,
             },
         );
-        let plot = super::chart::record_chart(record, state.analysis_chart, time)?;
+        let plot = super::chart::record_chart(
+            record,
+            state.analysis_chart,
+            time,
+            context.platform.chart_extent,
+        )?;
+        let sample = record
+            .sample_at_seconds(time)
+            .map_err(GameUiError::Record)?;
+        let selected_wind_label = if state.analysis_chart == GameUiAnalysisChart::Map {
+            plot.vectors.first().map(|vector| vector.label.as_str())
+        } else {
+            None
+        };
+        let readout = super::frame::analysis_cursor_readout(
+            sample,
+            time,
+            record.header().scenario,
+            selected_wind_label,
+        );
         menu.push(
             "game-analysis-plot",
             match state.analysis_chart {
@@ -1323,17 +1383,10 @@ fn analysis(
             "analysis",
             GameUiControlContent::Chart {
                 chart: state.analysis_chart,
-                plot,
+                plot: Box::new(plot),
             },
         );
-        let sample = record
-            .sample_at_seconds(time)
-            .map_err(GameUiError::Record)?;
-        menu.status(
-            "game-analysis-cursor-values",
-            "At cursor",
-            &super::frame::analysis_cursor_readout(sample, time, record.header().scenario),
-        );
+        menu.status("game-analysis-cursor-values", "At cursor", &readout);
     } else {
         menu.status(
             "game-analysis-loading",
@@ -1582,10 +1635,13 @@ fn layout(
             .floor()
             .max(1.0) as u32,
         compact,
-        scroll_y: shell != GameUiShell::Analysis
+        scroll_y: (shell != GameUiShell::Analysis
+            || context.platform.presentation_mode == GameUiPresentationMode::Screen)
             && !(shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning),
         clip_x: true,
-        passthrough: shell == GameUiShell::FlightBar || shell == GameUiShell::Analysis,
+        passthrough: shell == GameUiShell::FlightBar
+            || (shell == GameUiShell::Analysis
+                && context.platform.presentation_mode != GameUiPresentationMode::Screen),
     })
 }
 

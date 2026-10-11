@@ -1,5 +1,26 @@
 {
   "$defs": {
+    "GameUiChartExtent": {
+      "additionalProperties": false,
+      "description": "Measured or initially assumed chart content dimensions in logical pixels.",
+      "properties": {
+        "height": {
+          "description": "Content height.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Content width.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
     "GameUiPresentationMode": {
       "description": "Presentation mode supported by a platform adapter.",
       "oneOf": [
@@ -237,6 +258,17 @@
     "analysis_available": {
       "description": "Platform supports full record plots.",
       "type": "boolean"
+    },
+    "chart_extent": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GameUiChartExtent"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Measured chart content extent; absent before the platform has measured it."
     },
     "flight_controller_failure": {
       "description": "Captured flight-controller resource failure; the session retains its last valid state.",

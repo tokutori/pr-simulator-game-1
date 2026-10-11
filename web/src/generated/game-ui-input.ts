@@ -12,6 +12,10 @@ export interface GameUiPlatformInput {
      */
     readonly analysis_available: boolean;
     /**
+     * Measured chart content extent; absent before the platform has measured it.
+     */
+    readonly chart_extent?: GameUiChartExtent | null;
+    /**
      * Captured flight-controller resource failure; the session retains its last valid state.
      */
     readonly flight_controller_failure?: string | null;
@@ -96,6 +100,19 @@ export interface GameUiPlatformInput {
      * Browser WebXR support.
      */
     readonly webxr_available: boolean;
+}
+/**
+ * Measured or initially assumed chart content dimensions in logical pixels.
+ */
+export interface GameUiChartExtent {
+    /**
+     * Content height.
+     */
+    readonly height: number;
+    /**
+     * Content width.
+     */
+    readonly width: number;
 }
 /**
  * Persistence metadata, not an independent flight record.

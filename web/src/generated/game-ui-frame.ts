@@ -66,7 +66,7 @@ export interface GameUiChartCursor {
     /**
      * Shared plot-space sample points.
      */
-    readonly cursor_points: readonly GameUiChartPoint[];
+    readonly cursor_points: readonly GameUiChartCursorPoint[];
     /**
      * Time-axis cursor, absent for a horizontal map.
      */
@@ -81,7 +81,17 @@ export interface GameUiChartCursor {
     readonly selected_wind_vector: GameUiChartVector | null;
 }
 /**
- * One chart-space point with units defined by the axes.
+ * Record-interpolated position with its shared series colour.
+ */
+export interface GameUiChartCursorPoint {
+    /**
+     * Colour of the corresponding shared series.
+     */
+    readonly color: string;
+    readonly point: GameUiChartPoint;
+}
+/**
+ * Position in the chart axes.
  */
 export interface GameUiChartPoint {
     /**
@@ -112,9 +122,22 @@ export interface GameUiChartVector {
      * @maxItems 2
      */
     readonly segment: readonly [
-        GameUiChartPoint,
-        GameUiChartPoint
+        GameUiChartPoint1,
+        GameUiChartPoint1
     ] | null;
+}
+/**
+ * One chart-space point with units defined by the axes.
+ */
+export interface GameUiChartPoint1 {
+    /**
+     * Horizontal component.
+     */
+    readonly x: number;
+    /**
+     * Vertical component.
+     */
+    readonly y: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.

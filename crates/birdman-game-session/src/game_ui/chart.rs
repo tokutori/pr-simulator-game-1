@@ -12,6 +12,7 @@ pub(super) fn record_chart(
     record: &FlightRecord,
     kind: GameUiAnalysisChart,
     time: f64,
+    extent: Option<GameUiChartExtent>,
 ) -> Result<GameUiChart, GameUiError> {
     let samples = record.samples();
     let first = samples
@@ -25,6 +26,7 @@ pub(super) fn record_chart(
         .map_err(GameUiError::Record)?
         .max(0.01);
     let mut chart = GameUiChart {
+        presentation: initial_presentation(extent)?,
         x_axis_label: "Time (s)".to_owned(),
         y_axis_label: String::new(),
         x_minimum: 0.0,
@@ -111,7 +113,382 @@ pub(super) fn record_chart(
     if let Some(selected) = cursor.selected_wind_vector {
         chart.vectors.insert(0, selected);
     }
+    complete_presentation(&mut chart);
     Ok(chart)
+}
+
+fn initial_presentation(
+    extent: Option<GameUiChartExtent>,
+) -> Result<GameUiChartPresentation, GameUiError> {
+    let measurement_minimum = GameUiChartExtent {
+        width: 140.0,
+        height: 100.0,
+    };
+    let viewport = extent.unwrap_or(GameUiChartExtent {
+        width: 1000.0,
+        height: 520.0,
+    });
+    if !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width < measurement_minimum.width
+        || viewport.height < measurement_minimum.height
+    {
+        return Err(GameUiError::InvalidViewport);
+    }
+    let axis = chart_text(
+        String::new(),
+        point(0.0, 0.0),
+        16.0,
+        400,
+        GameUiChartTextAnchor::Middle,
+        "#d5e0dc",
+    );
+    Ok(GameUiChartPresentation {
+        viewport,
+        measurement_minimum,
+        scroll_overflow: true,
+        plot: [64.0, 26.0, viewport.width - 20.0, viewport.height - 48.0],
+        tick_font_size: 14.0,
+        axis_font_size: 16.0,
+        x_ticks: Vec::new(),
+        y_ticks: Vec::new(),
+        grid_lines: Vec::new(),
+        axes_color: "#9db8b8".to_owned(),
+        grid_color: "#456168".to_owned(),
+        grid_opacity: 1.0,
+        x_axis: axis.clone(),
+        y_axis: axis,
+        marker_labels: Vec::new(),
+        time_marker_labels: Vec::new(),
+        reference_labels: Vec::new(),
+        legend: Vec::new(),
+        map_guides: None,
+        viewport_minimum_rem: [14.0, 10.0],
+        legend_font_rem: 0.85,
+        legend_gap_rem: 0.75,
+        legend_swatch_rem: [0.75, 0.75],
+        legend_swatch_gap_rem: 0.35,
+        legend_gradient_rem: [2.0, 0.35],
+        legend_gradient_radius_rem: 0.2,
+    })
+}
+
+fn complete_presentation(chart: &mut GameUiChart) {
+    let presentation = &mut chart.presentation;
+    if chart.equal_axis_scale {
+        let [left, top, right, bottom] = presentation.plot;
+        let side = (right - left).min(bottom - top);
+        let centre_x = (left + right) / 2.0;
+        let centre_y = (top + bottom) / 2.0;
+        presentation.plot = [
+            centre_x - side / 2.0,
+            centre_y - side / 2.0,
+            centre_x + side / 2.0,
+            centre_y + side / 2.0,
+        ];
+    }
+    let [left, top, right, bottom] = presentation.plot;
+    let width = right - left;
+    let height = bottom - top;
+    let project = |position: GameUiChartPoint| {
+        point(
+            left + (position.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum) * width,
+            bottom - (position.y - chart.y_minimum) / (chart.y_maximum - chart.y_minimum) * height,
+        )
+    };
+    let tick_count_x = (width / 80.0).floor().clamp(1.0, 4.0) as u32;
+    let tick_count_y = (height / 32.0).floor().clamp(1.0, 4.0) as u32;
+    presentation.x_ticks = (0..=tick_count_x)
+        .map(|index| {
+            let ratio = f64::from(index) / f64::from(tick_count_x);
+            let value = chart.x_minimum + ratio * (chart.x_maximum - chart.x_minimum);
+            GameUiChartTick {
+                value,
+                ratio,
+                text: chart_text(
+                    format_chart_tick(value),
+                    point(left + ratio * width, bottom + 20.0),
+                    14.0,
+                    400,
+                    GameUiChartTextAnchor::Middle,
+                    "#d5e0dc",
+                ),
+            }
+        })
+        .collect();
+    presentation.y_ticks = (0..=tick_count_y)
+        .map(|index| {
+            let ratio = f64::from(index) / f64::from(tick_count_y);
+            let value = chart.y_minimum + ratio * (chart.y_maximum - chart.y_minimum);
+            GameUiChartTick {
+                value,
+                ratio,
+                text: chart_text(
+                    format_chart_tick(value),
+                    point(left - 10.0, bottom - ratio * height + 5.0),
+                    14.0,
+                    400,
+                    GameUiChartTextAnchor::End,
+                    "#d5e0dc",
+                ),
+            }
+        })
+        .collect();
+    presentation.grid_lines = (1..=3)
+        .map(|index| {
+            let y = top + height * f64::from(index) / 4.0;
+            [point(left, y), point(right, y)]
+        })
+        .collect();
+    presentation.x_axis = chart_text(
+        chart.x_axis_label.clone(),
+        point((left + right) / 2.0, presentation.viewport.height - 8.0),
+        16.0,
+        400,
+        GameUiChartTextAnchor::Middle,
+        "#d5e0dc",
+    );
+    presentation.y_axis = chart_text(
+        chart.y_axis_label.clone(),
+        point(16.0, (top + bottom) / 2.0),
+        16.0,
+        400,
+        GameUiChartTextAnchor::Middle,
+        "#d5e0dc",
+    );
+    presentation.y_axis.rotation_degrees = -90.0;
+    let marker_text = |marker: &GameUiChartMarker, offset: [f64; 2], weight| {
+        let position = project(marker.point);
+        let estimated_width = marker.label.encode_utf16().count() as f64 * 14.0 * 0.65;
+        let position = point(
+            (position.x + offset[0])
+                .min(presentation.viewport.width - estimated_width - 4.0)
+                .max(4.0),
+            (position.y + offset[1])
+                .min(presentation.viewport.height - 4.0)
+                .max(16.0),
+        );
+        chart_text(
+            marker.label.clone(),
+            position,
+            14.0,
+            weight,
+            GameUiChartTextAnchor::Start,
+            "#f3f4e8",
+        )
+    };
+    presentation.marker_labels = chart
+        .markers
+        .iter()
+        .map(|marker| marker_text(marker, [10.0, -8.0], 600))
+        .collect();
+    presentation.time_marker_labels = chart
+        .time_markers
+        .iter()
+        .map(|marker| marker_text(marker, [7.0, 18.0], 500))
+        .collect();
+    presentation.reference_labels = chart
+        .reference_lines
+        .iter()
+        .map(|line| {
+            chart_text(
+                line.label.clone(),
+                point(
+                    left + 8.0,
+                    project(point(chart.x_minimum, line.value)).y - 7.0,
+                ),
+                14.0,
+                500,
+                GameUiChartTextAnchor::Start,
+                "#f3f4e8",
+            )
+        })
+        .collect();
+    presentation.legend = chart
+        .series
+        .iter()
+        .map(|series| GameUiChartLegend {
+            label: series.label.clone(),
+            color: series.color.clone(),
+            segment_gradient: series
+                .segment_colors
+                .first()
+                .zip(series.segment_colors.last())
+                .map(|(first, last)| [first.clone(), last.clone()]),
+        })
+        .chain(chart.markers.iter().map(|marker| GameUiChartLegend {
+            label: marker.label.clone(),
+            color: marker.color.clone(),
+            segment_gradient: None,
+        }))
+        .chain(
+            chart
+                .vectors
+                .iter()
+                .enumerate()
+                .filter(|(_, vector)| !vector.label.is_empty())
+                .map(|(index, vector)| GameUiChartLegend {
+                    label: if chart.equal_axis_scale && index == 0 {
+                        "選択sampleの風（矢印は空気の移動先）".to_owned()
+                    } else {
+                        vector.label.clone()
+                    },
+                    color: vector.color.clone(),
+                    segment_gradient: None,
+                }),
+        )
+        .collect();
+    if chart.equal_axis_scale {
+        let distance = scale_bar_distance(chart.x_maximum - chart.x_minimum);
+        let scale_width = distance / (chart.x_maximum - chart.x_minimum) * width;
+        let scale_x = right - scale_width - 14.0;
+        let scale_y = bottom - 18.0;
+        let north_x = right - 22.0;
+        let north_top = (top + 18.0).min(bottom);
+        let north_length = (bottom - north_top).min(34.0);
+        let north_head_height = north_length.min(10.0);
+        let north_head_width = 6.0_f64.min(north_x - left).min(right - north_x);
+        presentation.map_guides = Some(GameUiChartMapGuides {
+            scale_distance_m: distance,
+            scale_segments: [
+                [
+                    point(scale_x, scale_y),
+                    point(scale_x + scale_width, scale_y),
+                ],
+                [point(scale_x, scale_y - 6.0), point(scale_x, scale_y + 3.0)],
+                [
+                    point(scale_x + scale_width, scale_y - 6.0),
+                    point(scale_x + scale_width, scale_y + 3.0),
+                ],
+            ],
+            scale_label: chart_text(
+                format!("{} m", format_chart_tick(distance)),
+                point(scale_x + scale_width / 2.0, scale_y - 8.0),
+                14.0,
+                600,
+                GameUiChartTextAnchor::Middle,
+                "#f3f4e8",
+            ),
+            north_segments: [
+                [
+                    point(north_x, north_top + north_length),
+                    point(north_x, north_top),
+                ],
+                [
+                    point(north_x, north_top),
+                    point(north_x - north_head_width, north_top + north_head_height),
+                ],
+                [
+                    point(north_x, north_top),
+                    point(north_x + north_head_width, north_top + north_head_height),
+                ],
+            ],
+            north_label: chart_text(
+                "N".to_owned(),
+                point(north_x, north_top - 6.0),
+                14.0,
+                600,
+                GameUiChartTextAnchor::Middle,
+                "#f3f4e8",
+            ),
+        });
+    }
+}
+
+fn chart_text(
+    label: String,
+    position: GameUiChartPoint,
+    font_size: f64,
+    font_weight: u16,
+    anchor: GameUiChartTextAnchor,
+    color: &str,
+) -> GameUiChartText {
+    GameUiChartText {
+        label,
+        position,
+        font_size,
+        font_weight,
+        rotation_degrees: 0.0,
+        anchor,
+        color: color.to_owned(),
+    }
+}
+
+fn format_chart_tick(value: f64) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    let magnitude = value.abs();
+    let digits = if magnitude >= 100.0 {
+        0
+    } else if magnitude >= 10.0 {
+        1
+    } else {
+        2
+    };
+    let mut buffer = ryu_js::Buffer::new();
+    let raw = buffer.format_to_fixed(value, digits);
+    let trimmed = if raw.contains('.') && !raw.contains('e') {
+        raw.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        raw
+    };
+    if trimmed == "-0" {
+        "0".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn scale_bar_distance(span: f64) -> f64 {
+    let desired = span / 4.0;
+    let magnitude = 10.0_f64.powf(desired.log10().floor());
+    let normalized = desired / magnitude;
+    let factor = if normalized >= 5.0 {
+        5.0
+    } else if normalized >= 2.0 {
+        2.0
+    } else {
+        1.0
+    };
+    factor * magnitude
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn tick_labels_preserve_ecmascript_fixed_rounding_and_negative_zero() {
+        for (value, expected) in [
+            (0.0, "0"),
+            (-0.0, "0"),
+            (-0.001, "0"),
+            (0.125, "0.13"),
+            (-0.125, "-0.13"),
+            (2.675, "2.67"),
+            (10.25, "10.3"),
+            (-10.25, "-10.3"),
+            (100.5, "101"),
+            (1.0e21, "1e+21"),
+            (1.2e30, "1.2e+30"),
+        ] {
+            assert_eq!(format_chart_tick(value), expected);
+        }
+    }
+
+    #[test]
+    fn map_scale_uses_the_web_one_two_five_policy() {
+        for (span, expected) in [
+            (4.0, 1.0),
+            (8.0, 2.0),
+            (20.0, 5.0),
+            (100.0, 20.0),
+            (1000.0, 200.0),
+        ] {
+            assert_eq!(scale_bar_distance(span), expected);
+        }
+    }
 }
 
 pub(super) fn chart_cursor(
@@ -131,7 +508,10 @@ pub(super) fn chart_cursor(
             cursor.cursor_x = None;
             let position = sample.telemetry.composite_cg_position_ned_m.components();
             let start = point(position[1], position[0]);
-            cursor.cursor_points.push(start);
+            cursor.cursor_points.push(GameUiChartCursorPoint {
+                point: start,
+                color: plot.series[0].color.clone(),
+            });
             let [north, east, _] = sample.telemetry.wind_velocity_ned_mps.components();
             let speed = north.hypot(east);
             let half_range = (plot.x_maximum - plot.x_minimum) * 0.75 / 2.0;
@@ -163,16 +543,19 @@ pub(super) fn chart_cursor(
                 },
             });
         }
-        GameUiAnalysisChart::Altitude => cursor
-            .cursor_points
-            .push(point(time, sample.telemetry.altitude_m)),
+        GameUiAnalysisChart::Altitude => cursor.cursor_points.push(GameUiChartCursorPoint {
+            point: point(time, sample.telemetry.altitude_m),
+            color: plot.series[0].color.clone(),
+        }),
         GameUiAnalysisChart::Speed => {
-            cursor
-                .cursor_points
-                .push(point(time, sample.telemetry.airspeed_mps));
-            cursor
-                .cursor_points
-                .push(point(time, sample.telemetry.groundspeed_mps));
+            cursor.cursor_points.push(GameUiChartCursorPoint {
+                point: point(time, sample.telemetry.airspeed_mps),
+                color: plot.series[0].color.clone(),
+            });
+            cursor.cursor_points.push(GameUiChartCursorPoint {
+                point: point(time, sample.telemetry.groundspeed_mps),
+                color: plot.series[1].color.clone(),
+            });
         }
     }
     cursor

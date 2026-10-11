@@ -400,6 +400,8 @@ pub struct GameUiUpdate {
 pub struct GameUiPlatformInput {
     /// Current physical display viewport.
     pub viewport: GameUiViewport,
+    /// Measured chart content extent; absent before the platform has measured it.
+    pub chart_extent: Option<GameUiChartExtent>,
     /// Actual active presentation mode.
     pub presentation_mode: GameUiPresentationMode,
     /// Blocks operations while the owning adapter is transitioning.
@@ -614,7 +616,7 @@ pub struct GameUiChartCursor {
     /// Time-axis cursor, absent for a horizontal map.
     pub cursor_x: Option<f64>,
     /// Shared plot-space sample points.
-    pub cursor_points: Vec<GameUiChartPoint>,
+    pub cursor_points: Vec<GameUiChartCursorPoint>,
     /// Selected-sample wind, replacing the first map vector only.
     pub selected_wind_vector: Option<GameUiChartVector>,
 }
@@ -939,7 +941,7 @@ pub enum GameUiControlContent {
         /// Plot selection.
         chart: GameUiAnalysisChart,
         /// Fully derived axes, geometry and cursor; adapters render this value.
-        plot: GameUiChart,
+        plot: Box<GameUiChart>,
     },
 }
 
@@ -948,6 +950,8 @@ pub enum GameUiControlContent {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiChart {
+    /// Shared chart layout and labels in logical display pixels.
+    pub presentation: GameUiChartPresentation,
     /// Horizontal axis label and unit.
     pub x_axis_label: String,
     /// Vertical axis label and unit.
@@ -975,7 +979,154 @@ pub struct GameUiChart {
     /// Time cursor; maps use cursor points only.
     pub cursor_x: Option<f64>,
     /// Record-interpolated cursor positions.
-    pub cursor_points: Vec<GameUiChartPoint>,
+    pub cursor_points: Vec<GameUiChartCursorPoint>,
+}
+
+/// Measured or initially assumed chart content dimensions in logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartExtent {
+    /// Content width.
+    pub width: f64,
+    /// Content height.
+    pub height: f64,
+}
+
+/// Shared static plot geometry and Web-baseline typography.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartPresentation {
+    /// Coordinate extent of this descriptor.
+    pub viewport: GameUiChartExtent,
+    /// Minimum usable measured dimensions in logical pixels.
+    pub measurement_minimum: GameUiChartExtent,
+    /// Keeps caption, viewport and legend inside one scrollable chart host.
+    pub scroll_overflow: bool,
+    /// Plot rectangle ordered left, top, right, bottom.
+    pub plot: [f64; 4],
+    /// Tick font size in logical pixels.
+    pub tick_font_size: f64,
+    /// Axis font size in logical pixels.
+    pub axis_font_size: f64,
+    /// Ordered horizontal ticks.
+    pub x_ticks: Vec<GameUiChartTick>,
+    /// Ordered vertical ticks.
+    pub y_ticks: Vec<GameUiChartTick>,
+    /// Static grid segments in descriptor coordinates.
+    pub grid_lines: Vec<[GameUiChartPoint; 2]>,
+    /// Shared axis stroke colour.
+    pub axes_color: String,
+    /// Shared grid stroke colour.
+    pub grid_color: String,
+    /// Grid stroke opacity.
+    pub grid_opacity: f64,
+    /// Horizontal axis title.
+    pub x_axis: GameUiChartText,
+    /// Vertical axis title.
+    pub y_axis: GameUiChartText,
+    /// Marker labels in the same order as the chart markers.
+    pub marker_labels: Vec<GameUiChartText>,
+    /// Recorded-time labels in the same order as the time markers.
+    pub time_marker_labels: Vec<GameUiChartText>,
+    /// Reference labels in the same order as the reference lines.
+    pub reference_labels: Vec<GameUiChartText>,
+    /// Ordered shared legend entries.
+    pub legend: Vec<GameUiChartLegend>,
+    /// Metre scale and north reference for equal-scale maps.
+    pub map_guides: Option<GameUiChartMapGuides>,
+    /// Minimum viewport width and height in root-font units.
+    pub viewport_minimum_rem: [f64; 2],
+    /// Legend font size in root-font units.
+    pub legend_font_rem: f64,
+    /// Legend item gap in root-font units.
+    pub legend_gap_rem: f64,
+    /// Solid legend swatch dimensions in root-font units.
+    pub legend_swatch_rem: [f64; 2],
+    /// Gap after each legend swatch in root-font units.
+    pub legend_swatch_gap_rem: f64,
+    /// Gradient legend swatch dimensions in root-font units.
+    pub legend_gradient_rem: [f64; 2],
+    /// Gradient swatch corner radius in root-font units.
+    pub legend_gradient_radius_rem: f64,
+}
+
+/// Tick value, placement and already formatted label.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartTick {
+    /// Axis coordinate.
+    pub value: f64,
+    /// Increasing-axis fraction between zero and one.
+    pub ratio: f64,
+    /// Shared text and placement.
+    pub text: GameUiChartText,
+}
+
+/// Static label placement independent of the rendering engine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartText {
+    /// Already formatted content.
+    pub label: String,
+    /// Alphabetic-baseline position in logical pixels; adapters apply actual font metrics.
+    pub position: GameUiChartPoint,
+    /// Font size in logical pixels.
+    pub font_size: f64,
+    /// CSS-compatible font weight.
+    pub font_weight: u16,
+    /// Rotation around the baseline anchor in degrees.
+    pub rotation_degrees: f64,
+    /// Horizontal text anchor.
+    pub anchor: GameUiChartTextAnchor,
+    /// Shared text colour.
+    pub color: String,
+}
+
+/// Horizontal alignment relative to a chart label's baseline anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiChartTextAnchor {
+    /// Left edge.
+    Start,
+    /// Horizontal centre.
+    Middle,
+    /// Right edge.
+    End,
+}
+
+/// One ordered legend item with an optional progress gradient.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartLegend {
+    /// Shared label.
+    pub label: String,
+    /// Solid swatch colour.
+    pub color: String,
+    /// First and last progress colours when the series uses a gradient.
+    pub segment_gradient: Option<[String; 2]>,
+}
+
+/// Static map references in descriptor coordinates.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartMapGuides {
+    /// Represented distance in metres.
+    pub scale_distance_m: f64,
+    /// Scale bar and its two end caps.
+    pub scale_segments: [[GameUiChartPoint; 2]; 3],
+    /// Metre scale label.
+    pub scale_label: GameUiChartText,
+    /// North arrow shaft and its two head segments.
+    pub north_segments: [[GameUiChartPoint; 2]; 3],
+    /// North label.
+    pub north_label: GameUiChartText,
 }
 
 /// One chart-space point with units defined by the axes.
@@ -987,6 +1138,17 @@ pub struct GameUiChartPoint {
     pub x: f64,
     /// Vertical component.
     pub y: f64,
+}
+
+/// Record-interpolated position with its shared series colour.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiChartCursorPoint {
+    /// Position in the chart axes.
+    pub point: GameUiChartPoint,
+    /// Colour of the corresponding shared series.
+    pub color: String,
 }
 
 /// One curve and its shared visual identity.

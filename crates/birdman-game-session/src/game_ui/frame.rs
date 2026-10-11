@@ -129,11 +129,20 @@ pub fn game_ui_frame(
         let sample = record
             .sample_at_seconds(time)
             .map_err(GameUiError::Record)?;
+        let cursor = super::chart::chart_cursor(*chart, plot, sample, time);
         frame.readouts.push(readout(
             "game-analysis-cursor-values",
-            analysis_cursor_readout(sample, time, record.header().scenario),
+            analysis_cursor_readout(
+                sample,
+                time,
+                record.header().scenario,
+                cursor
+                    .selected_wind_vector
+                    .as_ref()
+                    .map(|vector| vector.label.as_str()),
+            ),
         ));
-        frame.chart_cursor = Some(super::chart::chart_cursor(*chart, plot, sample, time));
+        frame.chart_cursor = Some(cursor);
     }
     Ok(frame)
 }
@@ -149,6 +158,7 @@ pub(super) fn analysis_cursor_readout(
     sample: FlightRecordPlaybackSample,
     time: f64,
     identity: SessionScenarioIdentity,
+    selected_wind_label: Option<&str>,
 ) -> String {
     let [north, east, _] = sample.telemetry.composite_cg_position_ned_m.components();
     let [wind_north, wind_east, wind_down] = sample.telemetry.wind_velocity_ned_mps.components();
@@ -160,6 +170,10 @@ pub(super) fn analysis_cursor_readout(
     );
     if !super::environment::registered(identity) {
         readout.push_str(" · 風場 unavailable (unregistered_environment_identity)");
+    }
+    if let Some(label) = selected_wind_label {
+        readout.push('\n');
+        readout.push_str(label);
     }
     readout
 }

@@ -24,6 +24,12 @@ const schemaDependency = {
   rename: null, optional: true, uses_default_features: false, features: ["derive"]
 };
 
+const chartNumberDependency = {
+  name: "ryu-js", kind: null, target: null, req: "=1.0.3",
+  source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
+  rename: null, optional: false, uses_default_features: false, features: []
+};
+
 function schemaProvider(
   name: "birdman-game-format" | "birdman-game-session",
   dependency: unknown = schemaDependency,
@@ -38,6 +44,23 @@ function core(dependency: unknown): unknown[] {
 }
 
 describe("Cargo dependency boundary", () => {
+  it("allows the fixed ECMAScript number formatter only in shared session", () => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [chartNumberDependency] }]); }).not.toThrow();
+  });
+
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
+    "rejects a direct chart-number dependency in %s", (name) => {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [chartNumberDependency] }]); }).toThrow("Forbidden dependency");
+    }
+  );
+
+  it.each([{ req: "^1.0.3" }, { req: "=1.0.4" }, { kind: "dev" }, { kind: "build" },
+    { target: 'cfg(target_arch = "wasm32")' }, { features: ["no-panic"] }, { uses_default_features: true },
+    { optional: true }, { rename: "formatter" }, { source: "git+https://example.invalid/ryu-js" }, { path: "../ryu-js" }])(
+    "rejects broader chart-number dependencies %j", (difference) => {
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [{ ...chartNumberDependency, ...difference }] }]); }).toThrow("Forbidden dependency");
+    }
+  );
   it("limits the native text patch to its excluded vendor directory", () => {
     expect(() => { assertNativeTextPatch({
       workspace: { exclude: ["vendor/parley"] },
