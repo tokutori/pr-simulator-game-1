@@ -263,6 +263,7 @@ fn read_input(
     } = ports;
     let focused = windows.iter().all(|window| window.focused);
     session.observe_frame(focused, time.delta() > MAX_FRAME_DELTA);
+    let controls_were_running = session.game.snapshot().phase() == SessionPhase::FlightRunning;
     if keys.just_pressed(KeyCode::KeyC)
         && !matches!(
             session.game.snapshot().phase(),
@@ -304,7 +305,7 @@ fn read_input(
         camera.look.y = (camera.look.y - motion.delta.y * 0.003).clamp(-1.2, 1.2);
     }
     let controls_active = focused && session.game.snapshot().phase() == SessionPhase::FlightRunning;
-    if !controls_active {
+    if !controls_active || !controls_were_running {
         accepted_controls.reset_all();
     }
     for event in keyboard.read() {
@@ -321,7 +322,11 @@ fn read_input(
         }
         match event.state {
             ButtonState::Pressed => {
-                if controls_active && !event.repeat && !held_controls.pressed(event.key_code) {
+                if controls_active
+                    && controls_were_running
+                    && !event.repeat
+                    && !held_controls.pressed(event.key_code)
+                {
                     accepted_controls.press(event.key_code);
                 }
                 held_controls.press(event.key_code);
@@ -529,8 +534,15 @@ mod tests {
 
     #[test]
     fn launch_and_resume_require_new_control_key_presses() {
-        let cases = [(false, 1.0), (true, 1.0), (false, -1.0), (true, -1.0)];
-        let observed = cases.map(|(resume, direction)| {
+        let cases = [
+            (false, 1.0, true),
+            (true, 1.0, true),
+            (false, -1.0, true),
+            (true, -1.0, true),
+            (true, 1.0, false),
+            (true, -1.0, false),
+        ];
+        let observed = cases.map(|(resume, direction, earlier_press)| {
             let (mut app, window) = input_app();
             app.add_plugins(bevy::time::TimePlugin)
                 .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
@@ -571,14 +583,16 @@ mod tests {
                     (KeyCode::KeyJ, Key::Character("j".into())),
                 ]
             };
-            for (key_code, logical_key) in &controls {
-                write_keyboard(
-                    &mut app,
-                    window,
-                    *key_code,
-                    logical_key.clone(),
-                    ButtonState::Pressed,
-                );
+            if earlier_press {
+                for (key_code, logical_key) in &controls {
+                    write_keyboard(
+                        &mut app,
+                        window,
+                        *key_code,
+                        logical_key.clone(),
+                        ButtonState::Pressed,
+                    );
+                }
             }
             if resume {
                 app.update();
@@ -620,6 +634,17 @@ mod tests {
                 .tail_flight_state()
                 .unwrap();
             assert_eq!(initial.tick_index(), 0);
+            if !earlier_press {
+                for (key_code, logical_key) in &controls {
+                    write_keyboard(
+                        &mut app,
+                        window,
+                        *key_code,
+                        logical_key.clone(),
+                        ButtonState::Pressed,
+                    );
+                }
+            }
             app.update();
             let intent = *app.world().resource::<FlightInput>();
             let session = app.world().resource::<NativeSession>();
@@ -691,7 +716,7 @@ mod tests {
             ));
             observed
         });
-        assert_eq!(observed, [(0.0, 0.0); 4]);
+        assert_eq!(observed, [(0.0, 0.0); 6]);
     }
 
     #[test]
