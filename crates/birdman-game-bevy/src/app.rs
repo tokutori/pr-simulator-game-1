@@ -24,7 +24,7 @@ mod world;
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
-    input::mouse::AccumulatedMouseMotion,
+    input::{ButtonState, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion},
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
 };
@@ -237,6 +237,7 @@ fn register_input(app: &mut App) {
 #[derive(SystemParam)]
 struct InputPorts<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
+    keyboard: MessageReader<'w, 's, KeyboardInput>,
     buttons: Res<'w, ButtonInput<MouseButton>>,
     motion: Res<'w, AccumulatedMouseMotion>,
     windows: Query<'w, 's, &'static Window>,
@@ -249,9 +250,12 @@ fn read_input(
     mut intent: ResMut<FlightInput>,
     mut camera: ResMut<CameraMode>,
     mut commands: Commands,
+    mut held_controls: Local<ButtonInput<KeyCode>>,
+    mut accepted_controls: Local<ButtonInput<KeyCode>>,
 ) {
     let InputPorts {
         keys,
+        mut keyboard,
         buttons,
         motion,
         windows,
@@ -299,18 +303,52 @@ fn read_input(
         camera.look.x -= motion.delta.x * 0.003;
         camera.look.y = (camera.look.y - motion.delta.y * 0.003).clamp(-1.2, 1.2);
     }
-    intent.nose_up = if focused {
-        f64::from(keys.pressed(KeyCode::ArrowUp)) - f64::from(keys.pressed(KeyCode::ArrowDown))
+    let controls_active = focused && session.game.snapshot().phase() == SessionPhase::FlightRunning;
+    if !controls_active {
+        accepted_controls.reset_all();
+    }
+    for event in keyboard.read() {
+        if !matches!(
+            event.key_code,
+            KeyCode::ArrowUp
+                | KeyCode::ArrowDown
+                | KeyCode::ArrowRight
+                | KeyCode::ArrowLeft
+                | KeyCode::KeyJ
+                | KeyCode::KeyL
+        ) {
+            continue;
+        }
+        match event.state {
+            ButtonState::Pressed => {
+                if controls_active && !event.repeat && !held_controls.pressed(event.key_code) {
+                    accepted_controls.press(event.key_code);
+                }
+                held_controls.press(event.key_code);
+            }
+            ButtonState::Released => {
+                held_controls.release(event.key_code);
+                accepted_controls.release(event.key_code);
+            }
+        }
+    }
+    intent.nose_up = if controls_active {
+        f64::from(accepted_controls.pressed(KeyCode::ArrowUp))
+            - f64::from(accepted_controls.pressed(KeyCode::ArrowDown))
     } else {
         0.0
     };
-    intent.turn_right = if focused {
-        f64::from(keys.pressed(KeyCode::ArrowRight)) - f64::from(keys.pressed(KeyCode::ArrowLeft))
+    intent.turn_right = if controls_active {
+        f64::from(accepted_controls.pressed(KeyCode::ArrowRight))
+            - f64::from(accepted_controls.pressed(KeyCode::ArrowLeft))
     } else {
         0.0
     };
-    intent.pilot = if focused {
-        Some(f64::from(keys.pressed(KeyCode::KeyL)) - f64::from(keys.pressed(KeyCode::KeyJ)))
+    intent.pilot = if controls_active {
+        Some(
+            f64::from(accepted_controls.pressed(KeyCode::KeyL))
+                - f64::from(accepted_controls.pressed(KeyCode::KeyJ)),
+        )
     } else {
         None
     };
@@ -439,7 +477,7 @@ mod tests {
 
     #[test]
     fn raw_keyboard_press_and_release_reach_intent_in_the_same_frame() {
-        let (mut app, window) = input_app();
+        let (mut app, window) = flight_input_app();
         for (keys, direction) in [
             (
                 [
@@ -487,6 +525,275 @@ mod tests {
             assert_eq!(intent.turn_right, 0.0);
             assert_eq!(intent.pilot, Some(0.0));
         }
+    }
+
+    #[test]
+    fn launch_and_resume_require_new_control_key_presses() {
+        let cases = [(false, 1.0), (true, 1.0), (false, -1.0), (true, -1.0)];
+        let observed = cases.map(|(resume, direction)| {
+            let (mut app, window) = input_app();
+            app.add_plugins(bevy::time::TimePlugin)
+                .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
+                .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_secs_f64(1.0 / f64::from(PHYSICS_HZ)),
+                ))
+                .init_resource::<world::RenderHistory>()
+                .add_systems(FixedUpdate, advance_physics)
+                .add_systems(Update, advance_presentation);
+            app.update();
+            {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                for action in [
+                    native_session::MenuAction::Start,
+                    native_session::MenuAction::Prepare,
+                    native_session::MenuAction::Launch,
+                ] {
+                    session.action(action).unwrap();
+                }
+                if resume {
+                    for _ in 0..3 {
+                        session.countdown(1.0);
+                    }
+                    session.action(native_session::MenuAction::Pause).unwrap();
+                }
+            }
+            let controls = if direction > 0.0 {
+                [
+                    (KeyCode::ArrowUp, Key::ArrowUp),
+                    (KeyCode::ArrowRight, Key::ArrowRight),
+                    (KeyCode::KeyL, Key::Character("l".into())),
+                ]
+            } else {
+                [
+                    (KeyCode::ArrowDown, Key::ArrowDown),
+                    (KeyCode::ArrowLeft, Key::ArrowLeft),
+                    (KeyCode::KeyJ, Key::Character("j".into())),
+                ]
+            };
+            for (key_code, logical_key) in &controls {
+                write_keyboard(
+                    &mut app,
+                    window,
+                    *key_code,
+                    logical_key.clone(),
+                    ButtonState::Pressed,
+                );
+            }
+            if resume {
+                app.update();
+                assert!(matches!(
+                    app.world()
+                        .resource::<NativeSession>()
+                        .game
+                        .snapshot()
+                        .phase(),
+                    SessionPhase::FlightPaused { .. }
+                ));
+                write_keyboard(
+                    &mut app,
+                    window,
+                    KeyCode::KeyP,
+                    Key::Character("p".into()),
+                    ButtonState::Pressed,
+                );
+            } else {
+                for _ in 0..=4 * PHYSICS_HZ {
+                    app.update();
+                    if app
+                        .world()
+                        .resource::<NativeSession>()
+                        .game
+                        .snapshot()
+                        .phase()
+                        == SessionPhase::FlightRunning
+                    {
+                        break;
+                    }
+                }
+            }
+            let initial = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            assert_eq!(initial.tick_index(), 0);
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            let session = app.world().resource::<NativeSession>();
+            let state = session.game.snapshot().tail_flight_state().unwrap();
+            let record = session.game.flight_record().unwrap();
+            assert_eq!(state.tick_index(), 1);
+            assert_eq!(record.sample_count(), 2);
+            let sample = record.samples().last().unwrap();
+            let input = sample.controls.input_from_previous.unwrap();
+            assert_eq!(sample.controls.actuators(), state.incidence());
+            assert_eq!((intent.nose_up, intent.turn_right), (0.0, 0.0));
+            assert_eq!(intent.pilot, Some(0.0));
+            assert_eq!(input.manual_intent().turn_right(), 0.0);
+            assert_eq!(
+                input.pilot_position_command(),
+                birdman_game_core::TailPilotPositionCommand::Hold,
+            );
+            let observed = (intent.nose_up, input.manual_intent().nose_up());
+            for (key_code, logical_key) in &controls {
+                app.world_mut().write_message(KeyboardInput {
+                    key_code: *key_code,
+                    logical_key: logical_key.clone(),
+                    state: ButtonState::Pressed,
+                    text: None,
+                    repeat: true,
+                    window,
+                });
+            }
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            assert_eq!((intent.nose_up, intent.turn_right), (0.0, 0.0));
+            assert_eq!(intent.pilot, Some(0.0));
+            for (key_code, logical_key) in &controls {
+                write_keyboard(
+                    &mut app,
+                    window,
+                    *key_code,
+                    logical_key.clone(),
+                    ButtonState::Released,
+                );
+                write_keyboard(
+                    &mut app,
+                    window,
+                    *key_code,
+                    logical_key.clone(),
+                    ButtonState::Pressed,
+                );
+            }
+            app.update();
+            let intent = *app.world().resource::<FlightInput>();
+            assert_eq!((intent.nose_up, intent.turn_right), (direction, direction));
+            assert_eq!(intent.pilot, Some(direction));
+            let session = app.world().resource::<NativeSession>();
+            let state = session.game.snapshot().tail_flight_state().unwrap();
+            let sample = session
+                .game
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap();
+            let input = sample.controls.input_from_previous.unwrap();
+            assert_eq!(sample.controls.actuators(), state.incidence());
+            assert_eq!(input.manual_intent().nose_up(), direction);
+            assert_eq!(input.manual_intent().turn_right(), direction);
+            assert!(matches!(
+                input.pilot_position_command(),
+                birdman_game_core::TailPilotPositionCommand::Set(_),
+            ));
+            observed
+        });
+        assert_eq!(observed, [(0.0, 0.0); 4]);
+    }
+
+    #[test]
+    fn control_holds_are_invalidated_by_focus_loss_and_opposite_keys_cancel() {
+        let (mut app, window) = flight_input_app();
+        let positive = [
+            (KeyCode::ArrowUp, Key::ArrowUp),
+            (KeyCode::ArrowRight, Key::ArrowRight),
+            (KeyCode::KeyL, Key::Character("l".into())),
+        ];
+        let negative = [
+            (KeyCode::ArrowDown, Key::ArrowDown),
+            (KeyCode::ArrowLeft, Key::ArrowLeft),
+            (KeyCode::KeyJ, Key::Character("j".into())),
+        ];
+        for (key_code, logical_key) in &positive {
+            write_keyboard(
+                &mut app,
+                window,
+                *key_code,
+                logical_key.clone(),
+                ButtonState::Pressed,
+            );
+        }
+        app.update();
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        app.world_mut()
+            .write_message(bevy::input::keyboard::KeyboardFocusLost);
+        app.update();
+        let intent = *app.world().resource::<FlightInput>();
+        assert_eq!(
+            (intent.nose_up, intent.turn_right, intent.pilot),
+            (0.0, 0.0, None)
+        );
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        write_keyboard(
+            &mut app,
+            window,
+            KeyCode::KeyP,
+            Key::Character("p".into()),
+            ButtonState::Pressed,
+        );
+        for (key_code, logical_key) in &positive {
+            write_keyboard(
+                &mut app,
+                window,
+                *key_code,
+                logical_key.clone(),
+                ButtonState::Pressed,
+            );
+        }
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase(),
+            SessionPhase::FlightRunning
+        );
+        let intent = *app.world().resource::<FlightInput>();
+        assert_eq!(
+            (intent.nose_up, intent.turn_right, intent.pilot),
+            (0.0, 0.0, Some(0.0))
+        );
+        for (key_code, logical_key) in positive.iter().chain(&negative) {
+            write_keyboard(
+                &mut app,
+                window,
+                *key_code,
+                logical_key.clone(),
+                ButtonState::Released,
+            );
+            write_keyboard(
+                &mut app,
+                window,
+                *key_code,
+                logical_key.clone(),
+                ButtonState::Pressed,
+            );
+        }
+        app.update();
+        let intent = *app.world().resource::<FlightInput>();
+        assert_eq!(
+            (intent.nose_up, intent.turn_right, intent.pilot),
+            (0.0, 0.0, Some(0.0))
+        );
+        for (key_code, logical_key) in &positive {
+            write_keyboard(
+                &mut app,
+                window,
+                *key_code,
+                logical_key.clone(),
+                ButtonState::Released,
+            );
+        }
+        app.update();
+        let intent = *app.world().resource::<FlightInput>();
+        assert_eq!(
+            (intent.nose_up, intent.turn_right, intent.pilot),
+            (-1.0, -1.0, Some(-1.0))
+        );
     }
 
     #[test]
@@ -588,13 +895,20 @@ mod tests {
     }
 
     #[test]
-    fn retry_and_new_flight_clear_previous_camera_look() {
+    fn retry_and_new_flight_clear_previous_camera_look_and_control_holds() {
         for return_action in [
             birdman_game_session::game_ui::GameUiSessionCommand::Retry {},
             birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {},
         ] {
             let (mut app, window) = flight_input_app();
             let initial = app.world().resource::<NativeSession>().physical_state();
+            write_keyboard(
+                &mut app,
+                window,
+                KeyCode::ArrowUp,
+                Key::ArrowUp,
+                ButtonState::Pressed,
+            );
             assert!(
                 app.world_mut()
                     .write_message(MouseButtonInput {
@@ -661,6 +975,12 @@ mod tests {
                     .phase(),
                 SessionPhase::FlightRunning
             );
+            assert_eq!(app.world().resource::<FlightInput>().nose_up, 0.0);
+            for state in [ButtonState::Released, ButtonState::Pressed] {
+                write_keyboard(&mut app, window, KeyCode::ArrowUp, Key::ArrowUp, state);
+            }
+            app.update();
+            assert_eq!(app.world().resource::<FlightInput>().nose_up, 1.0);
         }
     }
 
