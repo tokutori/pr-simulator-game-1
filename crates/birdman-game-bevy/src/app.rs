@@ -32,7 +32,9 @@ use birdman_game_core::{PHYSICS_HZ, SessionPhase};
 use native_session::{FlightInput, NativeSession};
 use std::{error::Error, path::PathBuf};
 
-const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(150);
+const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(
+    birdman_game_session::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS as u64,
+);
 
 #[derive(Resource)]
 struct NativeFont(Handle<Font>);
