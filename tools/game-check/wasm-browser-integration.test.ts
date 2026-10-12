@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Window as BrowserWindow } from "happy-dom";
-import { TailPersonalBestSelectionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { TailPersonalBestSelectionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { BrowserTailPilotInput } from "../../web/src/game/browser-tail-input.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
@@ -31,7 +31,7 @@ it("clears a DOM pilot target across terminal Result and Rust Retry", () => {
     launchCurrentSession(session);
     controller = new TailFlightController(session.flightPort, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
-    }, physics_hz(), () => []);
+    }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
     window.dispatchEvent(new window.KeyboardEvent("keydown", { code: "KeyL" }));
     controller.onFrame(0);
     controller.onFrame(100);
@@ -94,7 +94,7 @@ describe("current WebAssembly browser binding", () => {
     });
     const controller = new TailFlightController(session.flightPort, input, {
       setFlightPose: (pose): void => { if (pose !== null && port === "renderer" && session.readLifecycle().phaseCode === 7) throw failure; }
-    }, binding.port, physics_hz(), () => [], onTerminal);
+    }, binding.port, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal);
     try {
       controller.onFrame(0);
       for (let frame = 1; frame <= 4_000 && controller.currentSnapshot.phaseCode === 5; frame += 1) controller.onFrame(frame * 10);
@@ -167,7 +167,7 @@ describe("current WebAssembly browser binding", () => {
         readDemand: () => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" as const } }) };
       const controller = new TailFlightController(session.flightPort, input, { setFlightPose() {} }, {
         render() {}, setVisible() {}, fail(message) { throw new Error(message); }
-      }, physics_hz(), () => []);
+      }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
       try {
         controller.onFrame(0);
         for (let frame = 1; frame <= fps * 40 && controller.currentSnapshot.phaseCode === 5; frame += 1) {
@@ -191,7 +191,7 @@ describe("current WebAssembly browser binding", () => {
     let gamepads: readonly Gamepad[] = [neutral];
     const controller = new TailFlightController(session.flightPort, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
-    }, physics_hz(), () => gamepads);
+    }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => gamepads);
     try {
       controller.onFrame(0);
       controller.onFrame(10);

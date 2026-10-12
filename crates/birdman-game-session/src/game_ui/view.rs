@@ -1610,6 +1610,14 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
             "KeyboardまたはGamepadで操縦する。Physicsは{} Hzで独立して進む。",
             birdman_game_core::PHYSICS_HZ
         ),
+        SessionPhase::FlightPaused { reasons }
+            if reasons.contains(birdman_game_core::PauseReason::ProcessingDelay) =>
+        {
+            format!(
+                "処理遅延（ProcessingDelay）により飛行状態を保持して停止した。frame間隔の上限は{} msである。条件解消後、Resumeで再開する。",
+                crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
+            )
+        }
         SessionPhase::FlightPaused { .. } if can_resume => {
             "飛行状態を保持して停止している。Resumeで再開できる。".to_owned()
         }

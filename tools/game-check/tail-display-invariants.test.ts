@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import type { TailFlightHudPort, TailPilotInputPort, TailSessionPort } from "../../web/src/game/tail-flight-controller.js";
 import type { TailPilotDemand } from "../../web/src/game/tail-device-input.js";
@@ -81,6 +81,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     });
     const port: TailSessionPort = {
       snapshot_json: () => session.snapshot_json(), control_profile_json: () => session.control_profile_json(),
+      pause: (reason) => { session.pause(reason); }, clear_pause_reason: (reason) => { session.clear_pause_reason(reason); },
       advance_tick_json: advanceTick, free: () => undefined
     };
     let inputTick = 0;
@@ -103,7 +104,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     const failHud = vi.fn<TailFlightHudPort["fail"]>();
     const hud: TailFlightHudPort = { render: vi.fn(), fail: failHud, setVisible: vi.fn() };
     const onTerminal = vi.fn();
-    const activeController = new TailFlightController(port, input, renderer, hud, physics_hz(), () => [], onTerminal);
+    const activeController = new TailFlightController(port, input, renderer, hud, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal);
     controller = activeController;
     const activeRuntime = new PresentationRuntime(renderer, [
       new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 })),

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppMessage } from "../../web/src/app/app-state.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
@@ -31,6 +31,7 @@ function fixture() {
     effects.push(...next.effects);
   };
   const port = { snapshot_json: () => facade.flightPort.snapshot_json(), control_profile_json: () => facade.flightPort.control_profile_json(),
+    pause: (reason: number) => { facade.flightPort.pause(reason); }, clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
     advance_tick_json: vi.fn((json: string) => facade.flightPort.advance_tick_json(json)), free: () => { facade.dispose(); } };
   const input = { readDemand: vi.fn(() => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
     pilotPositionCommand: { kind: "hold" as const } })), reset: vi.fn(), suspend: vi.fn(), resume: vi.fn(), dispose: vi.fn() };
@@ -38,7 +39,7 @@ function fixture() {
   const display = { render: vi.fn<(snapshot: FlightDisplaySnapshot) => void>(), setVisible: vi.fn<(visible: boolean) => void>() };
   const bindings = new FlightControllerUiBindings();
   const binding = bindings.bindAppDisplay(port, display, () => facade.readGameSessionProjection(), () => controller.currentDisplaySnapshot, dispatch);
-  const controller = new TailFlightController(port, input, renderer, binding.port, physics_hz(), () => [], binding.onTerminal);
+  const controller = new TailFlightController(port, input, renderer, binding.port, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], binding.onTerminal);
   dispatch({ type: "flight-controller-ready", identity: binding.identity });
   disposals.push(() => { controller.dispose(); });
   const abortAtNextTick = (): void => {
@@ -103,7 +104,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     if (site === "input") trial.input.suspend.mockImplementation(() => { throw primary; });
     if (site === "pose-and-cleanup") trial.input.suspend.mockImplementation(() => { throw new Error("Injected cleanup failure"); });
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     const result = trial.facade.readGameSessionProjection();
     if (result.phaseCode !== 7 || result.display.kind !== "available") throw new Error("Expected the original Rust Result");
     expect(trial.model().gameSession).toMatchObject({ kind: "result", phaseCode: 7 });

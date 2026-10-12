@@ -6,7 +6,7 @@ import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { readFileSync } from "node:fs";
-import { initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { currentFlightDisplayFixture } from "./current-session-fixture.js";
@@ -213,6 +213,8 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
     if (model !== previous) observeShared();
   };
   const session = {
+    pause: (reason: number) => { facade.flightPort.pause(reason); },
+    clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
     snapshot_json: () => facade.flightPort.snapshot_json(),
     control_profile_json: () => facade.flightPort.control_profile_json(),
     advance_tick_json: vi.fn((json: string) => {
@@ -241,7 +243,7 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   };
   const onTerminal = vi.fn(() => { syncPhase(7); });
   const controller = new TailFlightController(session, input, { setFlightPose: vi.fn() }, binding.port,
-    physics_hz(), readGamepads, onTerminal);
+    physics_hz(), maximum_flight_frame_gap_milliseconds(), readGamepads, onTerminal);
   update({ type: "flight-controller-ready", identity: binding.identity });
   disposals.push(() => { controller.dispose(); });
   return {
