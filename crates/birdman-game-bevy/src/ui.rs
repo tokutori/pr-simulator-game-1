@@ -4203,6 +4203,7 @@ mod tests {
     fn replay_entry_reapplies_the_shared_camera_after_return_keys_and_retry() {
         let mut app = app(1280.0, 720.0);
         app.init_resource::<super::super::native_session::FlightInput>()
+            .add_message::<bevy::input::keyboard::KeyboardInput>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
             .add_systems(PreUpdate, super::super::read_input);
