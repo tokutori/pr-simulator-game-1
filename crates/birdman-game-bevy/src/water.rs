@@ -34,7 +34,7 @@ use bevy::{
         renderer::RenderContext,
         texture::GpuImage,
     },
-    shader::{ShaderCacheError, ShaderRef},
+    shader::{ShaderCacheError, ShaderDefVal, ShaderRef},
 };
 use birdman_game_session::lake_sky::{LakeSkyRenderCondition, generate_lake_sky};
 use birdman_game_session::lake_water::{
@@ -374,7 +374,16 @@ fn mip_pipeline_matches(
     shader: &Handle<Shader>,
     entry: &str,
 ) -> bool {
-    descriptor.shader == *shader && descriptor.entry_point.as_deref() == Some(entry)
+    descriptor.shader == *shader
+        && descriptor.entry_point.as_deref() == Some(entry)
+        && descriptor
+            .shader_defs
+            .iter()
+            .all(|definition| match definition {
+                ShaderDefVal::Bool(name, _)
+                | ShaderDefVal::Int(name, _)
+                | ShaderDefVal::UInt(name, _) => name != "ARRAY_TEXTURE",
+            })
 }
 
 fn mip_pipeline_ready(
@@ -2076,7 +2085,7 @@ mod tests {
     }
 
     #[test]
-    fn detail_mips_match_only_the_official_shader_and_pass_entry_points() {
+    fn detail_mips_match_only_the_official_d2_shader_and_pass_entry_points() {
         let mut shaders = Assets::<Shader>::default();
         let official = shaders.add(Shader::from_wgsl("", "official"));
         let other = shaders.add(Shader::from_wgsl("", "other"));
@@ -2100,6 +2109,27 @@ mod tests {
             &other,
             "downsample_first"
         ));
+        for (entry, separate_pass) in [
+            ("downsample_first", "FIRST_PASS"),
+            ("downsample_second", "SECOND_PASS"),
+        ] {
+            for combined in [false, true] {
+                descriptor.entry_point = Some(entry.into());
+                descriptor.shader_defs = vec![
+                    ShaderDefVal::Int("SUBGROUP_SUPPORT".into(), 1),
+                    ShaderDefVal::Int(
+                        if combined {
+                            "COMBINE_BIND_GROUP"
+                        } else {
+                            separate_pass
+                        }
+                        .into(),
+                        1,
+                    ),
+                ];
+                assert!(mip_pipeline_matches(&descriptor, &official, entry));
+            }
+        }
         descriptor.entry_point = None;
         assert!(!mip_pipeline_matches(
             &descriptor,
@@ -2124,6 +2154,10 @@ mod tests {
         let active = [near.id()];
         for pending in [
             CachedPipelineState::Queued,
+            CachedPipelineState::Creating(
+                bevy::tasks::AsyncComputeTaskPool::get_or_init(bevy::tasks::TaskPool::new)
+                    .spawn(async { Err(ShaderCacheError::ShaderImportNotYetAvailable) }),
+            ),
             CachedPipelineState::Err(ShaderCacheError::ShaderNotLoaded(official.id())),
             CachedPipelineState::Err(ShaderCacheError::ShaderImportNotYetAvailable),
         ] {
@@ -2165,6 +2199,61 @@ mod tests {
         state.retain_active();
         assert!(state.failure.is_none());
         assert!(state.pending(replacement.id(), TextureId::new()));
+    }
+
+    #[test]
+    fn detail_mip_readiness_ignores_foreign_array_variants_while_d2_is_queued() {
+        let mut shaders = Assets::<Shader>::default();
+        let official = shaders.add(Shader::from_wgsl("", "official"));
+        let active = [Handle::<Image>::default().id()];
+        for entry in ["downsample_first", "downsample_second"] {
+            let descriptor = ComputePipelineDescriptor {
+                shader: official.clone(),
+                shader_defs: vec![
+                    ShaderDefVal::Int("SUBGROUP_SUPPORT".into(), 1),
+                    ShaderDefVal::Int("COMBINE_BIND_GROUP".into(), 1),
+                ],
+                entry_point: Some(entry.into()),
+                ..default()
+            };
+            let failed = CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
+                "target d2 validation cause".into(),
+            ));
+            let cause =
+                mip_pipeline_ready(&descriptor, &failed, &official, entry, &active).unwrap_err();
+            assert_eq!(cause.entry, entry);
+            assert!(cause.cause.contains("target d2 validation cause"));
+            for array_definition in [
+                ShaderDefVal::Bool("ARRAY_TEXTURE".into(), true),
+                ShaderDefVal::Bool("ARRAY_TEXTURE".into(), false),
+                ShaderDefVal::Int("ARRAY_TEXTURE".into(), 1),
+                ShaderDefVal::UInt("ARRAY_TEXTURE".into(), 1),
+            ] {
+                let mut foreign = descriptor.clone();
+                foreign.shader_defs.push(array_definition);
+                assert!(!mip_pipeline_matches(&foreign, &official, entry));
+                let mut ready = mip_pipeline_ready(
+                    &descriptor,
+                    &CachedPipelineState::Queued,
+                    &official,
+                    entry,
+                    &active,
+                )
+                .unwrap();
+                for state in [
+                    CachedPipelineState::Queued,
+                    CachedPipelineState::Err(ShaderCacheError::ShaderNotLoaded(official.id())),
+                    CachedPipelineState::Err(ShaderCacheError::ShaderImportNotYetAvailable),
+                    CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
+                        "foreign array validation cause".into(),
+                    )),
+                ] {
+                    ready |=
+                        mip_pipeline_ready(&foreign, &state, &official, entry, &active).unwrap();
+                }
+                assert!(!ready);
+            }
+        }
     }
 
     #[test]
