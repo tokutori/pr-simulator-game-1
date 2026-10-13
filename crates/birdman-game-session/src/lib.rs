@@ -30,6 +30,8 @@ pub const DEFAULT_SESSION_SEED: u64 = (0x5f98_u64 << 32) | 0x55aa;
 pub const DEFAULT_MAXIMUM_FLIGHT_TICKS: u64 = 4_000;
 #[doc = "Maximum active flight frame interval in milliseconds before ProcessingDelay pauses the session."]
 pub const MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS: u32 = 150;
+#[doc = "Shared default vertical field of view in degrees for ordinary Screen presentation."]
+pub const SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES: f64 = 60.0;
 /// Default registered weather selected by the public hybrid model.
 pub const DEFAULT_WEATHER: WeatherClass = WeatherClass::Typical;
 

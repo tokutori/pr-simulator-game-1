@@ -148,7 +148,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   beforeAll(() => {
     const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
-    bundle = createThreeRenderer(canvas, canvas, null, "low", canvas);
+    bundle = createThreeRenderer(canvas, canvas, null, 60, "low", canvas);
     if (capture.driver === null) throw new Error("Recording driver was not constructed");
     driver = capture.driver;
   });
@@ -276,7 +276,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   it("rejects an unfinished staged quality command on disposal", async () => {
     const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
-    const trial = createThreeRenderer(canvas, canvas, null, "low", canvas);
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", canvas);
     const localDriver = capture.driver;
     if (localDriver === null) throw new Error("Missing private recording driver");
     let request: Promise<LakeWaterQualityCleanupResult> | null = null;
@@ -686,7 +686,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       driver.draws.length = 0;
       bundle.renderer.render(frame({ panel: testPanel(panel, panelPose), viewport: size }));
       expect(driver.draws).toHaveLength(2);
-      const basis = poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y)).multiply(new Matrix4().makeRotationX(Math.PI / 30));
+      const basis = poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y, 60)).multiply(new Matrix4().makeRotationX(Math.PI / 30));
       for (const [index, draw] of driver.draws.entries()) {
         const eye = new Matrix4().makeTranslation((index === 0 ? -1 : 1) * PHONE_VR_OPTICAL_PROFILE.eyeSeparationMeters / 2, 0, 0);
         expectMatrix(draw.camera, basis.clone().multiply(eye));
@@ -709,8 +709,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const headFrame = frame({ cameraPose: turnedHead, panel: testPanel({ ...panel, anchor: "head" }, panelPose) });
     expect(bundle.renderer.transformTrackingPose(turnedHead)).toBe(turnedHead);
     bundle.renderer.render(headFrame);
-    const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(turnedHead));
-    const expectedPanel = poseMatrix(titleScreenCameraPoseForViewport(1280, 720)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(panelPose));
+    const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720, 60)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(turnedHead));
+    const expectedPanel = poseMatrix(titleScreenCameraPoseForViewport(1280, 720, 60)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(panelPose));
     expect(driver.draws).toHaveLength(2);
     expectMatrix(centerEye(driver.draws), expectedCenter);
     for (const draw of driver.draws) {
@@ -770,13 +770,61 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   it("preserves Screen composition and the native XR reference", () => {
     bundle.renderer.render(frame({ panel: { kind: "absent" } }));
-    expectMatrix(singleDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(1280, 720)));
+    expectMatrix(singleDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(1280, 720, 60)));
     driver.draws.length = 0;
     driver.xr.isPresenting = true;
     const current = frame();
     bundle.renderer.render(current);
     expectMatrix(singleDraw(driver).camera, new Matrix4());
     expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
+  });
+
+  it("uses the injected Screen optics for Pilot, fallback cameras, and return from Phone VR", () => {
+    const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
+    const fieldOfView = 75;
+    const trial = createThreeRenderer(canvas, canvas, null, fieldOfView, "low");
+    const localDriver = capture.driver;
+    if (localDriver === null) throw new Error("Missing private recording driver");
+    const assertProjection = (degrees: number, size: BackendFrame["viewport"]): void => {
+      localDriver.draws.length = 0;
+      trial.renderer.render(frame({ viewport: size }));
+      const draw = singleDraw(localDriver);
+      const cotangent = 1 / Math.tan(degrees * Math.PI / 360);
+      expect(draw.projection.elements[5]).toBeCloseTo(cotangent, 10);
+      expect(draw.projection.elements[0]).toBeCloseTo(cotangent * size.y / size.x, 10);
+      for (const point of [new Vector3(0, 0, -10), new Vector3(1, 2, -10), new Vector3(-5, -3, -10)]) {
+        const projected = point.clone().applyMatrix4(draw.projection);
+        expect(projected.x).toBeCloseTo(point.x * cotangent * size.y / size.x / -point.z, 10);
+        expect(projected.y).toBeCloseTo(point.y * cotangent / -point.z, 10);
+      }
+    };
+    try {
+      for (const size of [viewport, { x: 360, y: 300, pixelRatio: 1 }]) {
+        trial.renderer.setFlightCameraMode("pilot");
+        trial.renderer.setFlightPose(null);
+        assertProjection(fieldOfView, size);
+        expectMatrix(singleDraw(localDriver).camera, poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y, fieldOfView)));
+        trial.renderer.setFlightPose({
+          datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+          pilotPositionMeters: 0, initialPilotPositionMeters: 0
+        });
+        assertProjection(fieldOfView, size);
+        trial.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
+        localDriver.draws.length = 0;
+        trial.renderer.render(frame({ viewport: size }));
+        expect(localDriver.draws).toHaveLength(2);
+        expect(localDriver.draws[0]?.projection.elements[5]).toBeCloseTo(1 / Math.tan(PHONE_VR_OPTICAL_PROFILE.verticalFieldOfViewDegrees * Math.PI / 360), 10);
+        trial.renderer.setStereoPresentation(null);
+        assertProjection(fieldOfView, size);
+        trial.renderer.setFlightCameraMode("platform");
+        trial.renderer.setCinematicCameraView({ pose: IDENTITY_POSE, verticalFieldOfViewDegrees: 48 });
+        assertProjection(48, size);
+        trial.renderer.setCinematicCameraView(null);
+        assertProjection(fieldOfView, size);
+        trial.renderer.setFlightCameraMode("chase");
+        assertProjection(fieldOfView, size);
+      }
+    } finally { trial.renderer.dispose(); }
   });
 
   it.each(["screen", "phone-vr", "webxr"] as const)("keeps the %s menu camera and anchors fixed while showing the sealed launch pose", (mode) => {
