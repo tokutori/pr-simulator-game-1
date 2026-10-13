@@ -143,7 +143,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
 
 function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTimestampMilliseconds: number,
   maximumElapsedMilliseconds: number): void {
-  const frameMilliseconds = 200;
+  const frameMilliseconds = 100;
   for (let elapsed = frameMilliseconds; elapsed < maximumElapsedMilliseconds && trial.scene() === "Flight"; elapsed += frameMilliseconds) {
     trial.frame(initialTimestampMilliseconds + elapsed);
   }
@@ -156,7 +156,7 @@ async function manualReplayFixture() {
   trial.click("game-title-start");
   trial.click("game-setup-start");
   trial.launch();
-  for (let timestamp = 0; timestamp <= 1000; timestamp += 200) trial.frame(timestamp);
+  for (let timestamp = 0; timestamp <= 1000; timestamp += 100) trial.frame(timestamp);
   expect(trial.scene()).toBe("Flight");
   trial.click("game-flight-abort");
   let nowMilliseconds = 0;
@@ -183,6 +183,41 @@ async function manualReplayFixture() {
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("projects ProcessingDelay, preserves ticks and requires explicit Resume without catch-up", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(15);
+    expect(trial.tick).toHaveBeenCalledTimes(1);
+    trial.frame(1_015);
+    expect(trial.tick).toHaveBeenCalledTimes(1);
+    expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("ProcessingDelay");
+    const resume = (): HTMLButtonElement => {
+      const button = trial.documentRef.querySelector<HTMLButtonElement>('button[data-control-id="game-flight-resume"]');
+      if (button === null) throw new Error("ProcessingDelay must expose explicit Resume");
+      return button;
+    };
+    expect(resume().disabled).toBe(true);
+    trial.frame(2_015);
+    expect(resume().disabled).toBe(true);
+    trial.frame(2_025);
+    expect(resume().disabled).toBe(false);
+    expect(trial.tick).toHaveBeenCalledTimes(1);
+    trial.click("game-flight-resume");
+    trial.frame(10_000);
+    trial.frame(10_005);
+    expect(trial.tick).toHaveBeenCalledTimes(1);
+    trial.frame(10_010);
+    expect(trial.tick).toHaveBeenCalledTimes(2);
+    trial.click("game-flight-abort");
+    expect(trial.scene()).toBe("Result");
+    expect(trial.exportRecord).toHaveReturned();
+    const saved: unknown = JSON.parse(trial.exportRecord.mock.results.at(-1)?.value as string);
+    expect(saved).toMatchObject({ samples: [{ tick_index: 0 }, { tick_index: 1 }, { tick_index: 2 }], finalization: { terminal_tick: 2 } });
+  });
   it.each([
     ["loading", "保存記録を読み込んでいる"],
     ["failed", "FlightRecord一覧を取得できない: Injected record listing failure"],
@@ -281,6 +316,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
         trial.click("game-result-retry");
         trial.launch();
         trial.frame(2000);
+        trial.frame(2100);
         trial.frame(2200);
         trial.click("game-flight-abort");
       }

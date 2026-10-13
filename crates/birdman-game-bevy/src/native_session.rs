@@ -326,6 +326,13 @@ impl NativeSession {
             self.countdown_elapsed = 0.0;
             return;
         }
+        if !self.frame_available {
+            self.countdown_elapsed = 0.0;
+            if let Err(error) = self.execute_ui_command(GameUiSessionCommand::CancelCountdown {}) {
+                self.notice = Some(error);
+            }
+            return;
+        }
         self.countdown_elapsed += elapsed;
         if self.countdown_elapsed < 1.0 {
             return;
@@ -453,6 +460,115 @@ mod tests {
     }
     use super::*;
     use birdman_game_format::AssistanceLevel;
+
+    #[test]
+    fn unfocused_countdown_returns_to_briefing_and_requires_explicit_restart() {
+        let mut app = App::new();
+        app.add_plugins((bevy::input::InputPlugin, bevy::time::TimePlugin))
+            .init_resource::<NativeSession>()
+            .init_resource::<FlightInput>()
+            .init_resource::<super::super::CameraMode>()
+            .init_resource::<super::super::world::RenderHistory>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(
+                birdman_game_core::PHYSICS_HZ,
+            )))
+            .insert_resource(Time::<Virtual>::from_max_delta(
+                super::super::MAX_FRAME_DELTA,
+            ))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
+            ))
+            .add_systems(FixedUpdate, super::super::advance_physics)
+            .add_systems(Update, super::super::advance_presentation);
+        super::super::register_input(&mut app);
+        let window = app.world_mut().spawn(Window::default()).id();
+        app.update();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+        }
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+        }
+        let session = app.world().resource::<NativeSession>();
+        assert!(!session.frame_available);
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+        assert_eq!(session.countdown_elapsed, 0.0);
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        let identity = session.game.configuration_identity();
+        let initial = session.game.prepared_launch_state().unwrap();
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+        }
+        let session = app.world().resource::<NativeSession>();
+        assert!(session.frame_available);
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+        assert_eq!(session.game.configuration_identity(), identity);
+        assert_eq!(session.game.prepared_launch_state(), Some(initial));
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Launch)
+            .unwrap();
+        for _ in 0..=4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+            if app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase()
+                == SessionPhase::FlightRunning
+            {
+                break;
+            }
+        }
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().tail_flight_state(), Some(initial));
+        assert_eq!(session.game.configuration_identity(), identity);
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(
+            session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index(),
+            1
+        );
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 2);
+    }
+
+    #[test]
+    fn countdown_cancellation_discards_partial_time_for_unavailable_frames() {
+        for (focused, processing_delayed) in [(false, false), (true, true), (false, true)] {
+            let mut session = NativeSession::default();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+            session.countdown(0.75);
+            session.observe_frame(focused, processing_delayed);
+            session.countdown(0.5);
+            assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+            assert_eq!(session.countdown_elapsed, 0.0);
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            session.observe_frame(true, false);
+            session.action(MenuAction::Launch).unwrap();
+            session.countdown(0.5);
+            assert_eq!(
+                session.game.snapshot().phase(),
+                SessionPhase::Countdown { remaining_ticks: 3 }
+            );
+            assert_eq!(session.countdown_elapsed, 0.5);
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        }
+    }
 
     #[test]
     fn bounded_native_input_sequences_keep_terminal_record_and_retry_consistent() {

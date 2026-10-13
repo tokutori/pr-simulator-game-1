@@ -283,6 +283,29 @@ fn briefing_technical_disclosure_is_ui_only_and_countdown_admission_is_domain_de
 }
 
 #[test]
+fn processing_delay_description_and_resume_follow_the_authoritative_reason() {
+    let mut session = launched();
+    let before = session.flight_record().unwrap().samples().to_vec();
+    session.pause(PauseReason::ProcessingDelay).unwrap();
+    let platform = platform();
+    let state = GameUiState::default();
+    let blocked = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(blocked.description.contains("ProcessingDelay"));
+    assert!(blocked.description.contains("150 ms"));
+    assert!(!control(&blocked, "game-flight-resume").enabled);
+    session
+        .clear_pause_reason(PauseReason::ProcessingDelay)
+        .unwrap();
+    let recovered = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(control(&recovered, "game-flight-resume").enabled);
+    assert!(matches!(
+        session.snapshot().phase(),
+        SessionPhase::FlightPaused { .. }
+    ));
+    assert_eq!(session.flight_record().unwrap().samples(), before);
+}
+
+#[test]
 fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics() {
     let mut session = launched();
     session.pause(PauseReason::DocumentHidden).unwrap();

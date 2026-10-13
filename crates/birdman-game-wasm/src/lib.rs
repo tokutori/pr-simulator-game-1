@@ -29,6 +29,12 @@ pub fn physics_hz() -> u32 {
     birdman_game_core::PHYSICS_HZ
 }
 
+#[wasm_bindgen]
+#[doc = "Exposes the shared ProcessingDelay frame interval limit in milliseconds."]
+pub fn maximum_flight_frame_gap_milliseconds() -> u32 {
+    birdman_game_session::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
+}
+
 /// Queries immutable environment metadata by a strict JSON-encoded complete identity.
 /// This query does not select or prepare a scenario in any session.
 #[wasm_bindgen]

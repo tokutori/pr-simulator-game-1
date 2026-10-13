@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window as BrowserWindow } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { installBrowserPageLifecycle } from "../../web/src/app/browser-page-lifecycle.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
@@ -38,7 +38,7 @@ describe("browser cache to Rust session boundary", () => {
     };
     const controller = new TailFlightController(session, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
-    }, physics_hz(), () => []);
+    }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
       suspend: () => { suspendPageFlight(session, controller, () => {}, synchronize); },
@@ -60,6 +60,8 @@ describe("browser cache to Rust session boundary", () => {
         controller.onFrame(40_000 + roundTrip * 50_000);
         event("pageshow", true);
         expect(session.phase_code()).toBe(6);
+        expect(session.can_resume()).toBe(false);
+        controller.onFrame(40_010 + roundTrip * 50_000);
         expect(session.can_resume()).toBe(true);
         expect(readState()).toEqual(before);
         expect(free).not.toHaveBeenCalled();

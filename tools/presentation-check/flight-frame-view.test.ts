@@ -13,7 +13,7 @@ import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { Window } from "happy-dom";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync, maximum_flight_frame_gap_milliseconds } from "../../web/pkg/birdman_game_wasm.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { launchCurrentSession } from "../game-check/current-session-fixture.js";
@@ -110,7 +110,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       render: () => { hud.render(createFlightUiHudModel(model)); },
       fail: (message) => { failures.push(message); },
       setVisible: (visible) => { hud.setVisible(visible); }
-    }, 100, () => []);
+    }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
     try {
       expect(() => { controller.reset(session.flightPort.snapshot_json()); }).not.toThrow();
       expect(() => { controller.synchronizeSnapshot(session.flightPort.snapshot_json()); }).not.toThrow();
@@ -157,7 +157,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
     }, renderer, { render: () => { hud.render(createFlightUiHudModel(model)); },
-      fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, () => []);
+      fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
       (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentDisplaySnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });

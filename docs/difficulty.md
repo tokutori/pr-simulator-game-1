@@ -48,8 +48,8 @@ Flight Setupはプリセットによる三軸の一括選択と、各軸の直�
 候補一覧・現在値・説明をScreen/VR共通のviewへ投影し、設定変更は既存GameSession setterへ送る。
 Custom presetは個別変更済みの表示とし、選択候補に含めない。
 Briefingは飛行条件・操縦方法・準備結果を確認する画面とする。version/seedは初期状態で閉じた技術情報へ格納し、
-開閉はAppModelと純粋なupdateで管理する。代表風・地点・高度・空間変動はWASMのenvironment snapshotを表示し、
-取得不能を明示する。風速・風向・発進可否をWeatherの名称から推定しない。
+開閉は共有Rustの`GameUiState`と純粋な`update_game_ui`で管理する。代表風・地点・高度・空間変動は共有Rustの登録環境から導出し、
+Web/Bevyは同じreadoutを表示する。取得不能を明示する。風速・風向・発進可否をWeatherの名称から推定しない。
 代表水平風速と風向は公開されたN/E成分の純粋な表示導出とする。風向は真北を0°とする時計回りの方位で、
 [NOAA/NWSの定義](https://www.weather.gov/ggw/GlossaryW)に従い吹いてくる方向を示す。水平風が0の場合は方向なしと表示し、鉛直流は上昇・下降を別記する。
 FlightはPilot視点に固定する。Replay/Attractのcamera選択はInformation presetから独立させる。

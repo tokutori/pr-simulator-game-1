@@ -39,6 +39,7 @@ import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
 import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "./game/browser-tail-input.js";
 import { TailFlightController } from "./game/tail-flight-controller.js";
+import { maximum_flight_frame_gap_milliseconds } from "../pkg/birdman_game_wasm.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
 import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
@@ -889,7 +890,8 @@ function createFlightController(session: TailAppSessionFacade): void {
     keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz } });
   let controller: TailFlightController;
   try {
-    controller = new TailFlightController(session.flightPort, input, renderer, binding.port, physicsHz, undefined, binding.onTerminal);
+    controller = new TailFlightController(session.flightPort, input, renderer, binding.port, physicsHz,
+      maximum_flight_frame_gap_milliseconds(), undefined, binding.onTerminal, syncGameSession);
   } catch (error: unknown) {
     let failure = error;
     try { input.dispose(); }

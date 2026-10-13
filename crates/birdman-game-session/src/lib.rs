@@ -28,6 +28,8 @@ pub const DEFAULT_CONTROL_MODE: ControlMode = ControlMode::Manual;
 pub const DEFAULT_SESSION_SEED: u64 = (0x5f98_u64 << 32) | 0x55aa;
 /// Existing public flight duration limit in fixed physics ticks.
 pub const DEFAULT_MAXIMUM_FLIGHT_TICKS: u64 = 4_000;
+#[doc = "Maximum active flight frame interval in milliseconds before ProcessingDelay pauses the session."]
+pub const MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS: u32 = 150;
 /// Default registered weather selected by the public hybrid model.
 pub const DEFAULT_WEATHER: WeatherClass = WeatherClass::Typical;
 

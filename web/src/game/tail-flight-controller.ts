@@ -16,6 +16,8 @@ export interface TailSessionPort {
   snapshot_json(): string;
   control_profile_json(): string;
   advance_tick_json(json: string): string;
+  pause(reason: number): void;
+  clear_pause_reason(reason: number): void;
   free(): void;
 }
 export interface TailPilotInputPort {
@@ -43,12 +45,13 @@ export class TailFlightController {
   private generation = Symbol("tail controller generation");
 
   constructor(private readonly session: TailSessionPort, private readonly input: TailPilotInputPort,
-    private readonly renderer: FlightPosePort, private hud: TailFlightHudPort, physicsHz: number,
+    private readonly renderer: FlightPosePort, private hud: TailFlightHudPort, physicsHz: number, maximumFrameGapMilliseconds: number,
     private readonly readGamepads: () => readonly (Gamepad | null)[] = availableGamepads,
-    private onTerminal: (snapshot: TailResultSnapshot) => void = () => undefined) {
+    private onTerminal: (snapshot: TailResultSnapshot) => void = () => undefined,
+    private readonly onPauseChanged: () => void = () => undefined) {
     if (!Number.isSafeInteger(physicsHz) || physicsHz <= 0) throw new RangeError("Tail physics frequency must be a positive integer");
     this.physicsHz = physicsHz;
-    this.clock = new FixedTickClock(1_000 / physicsHz);
+    this.clock = new FixedTickClock(1_000 / physicsHz, maximumFrameGapMilliseconds);
     this.snapshotValue = this.decodeSnapshot(session.snapshot_json());
     this.profile = parseTailControlProfile(session.control_profile_json(), this.snapshotValue);
     this.initialPilotPositionMeters = this.snapshotValue.frame.state.pilotPositionMeters;
@@ -66,7 +69,7 @@ export class TailFlightController {
   }
 
   onFrame(timestampMs: number): void {
-    if (this.execution !== "running" || this.snapshotValue.phaseCode !== 5) return;
+    if (this.execution === "failed" || this.execution === "disposed" || this.snapshotValue.phaseCode === 7) return;
     const generation = this.generation;
     const completion: { value: Readonly<{ kind: "none" }> | Readonly<{ kind: "terminal"; snapshot: TailResultSnapshot }> } = { value: { kind: "none" } };
     try {
@@ -82,12 +85,26 @@ export class TailFlightController {
         }
         return next.phaseCode === 5;
       });
+      if (advancedTicks.kind === "processing-delay") {
+        if (advancedTicks.blocked) {
+          this.suspend();
+          if (!this.isCurrentGeneration(generation)) return;
+          this.session.pause(3);
+        } else {
+          this.session.clear_pause_reason(3);
+        }
+        if (!this.isCurrentGeneration(generation)) return;
+        this.synchronizeSnapshot(this.session.snapshot_json());
+        if (!this.isCurrentGeneration(generation)) return;
+        this.onPauseChanged();
+        return;
+      }
       const completed = completion.value;
       if (completed.kind === "terminal") {
         this.onTerminal(completed.snapshot);
         if (!this.isCurrentFrame(generation, completed.snapshot)) return;
       }
-      if (advancedTicks === 0 || !this.isCurrentGeneration(generation)) return;
+      if (advancedTicks.count === 0 || !this.isCurrentGeneration(generation)) return;
       const committed = this.snapshotValue;
       if (!this.isCurrentFrame(generation, committed)) return;
       this.renderer.setFlightPose(projectFlightRenderPose(displaySnapshot(committed), this.initialPilotPositionMeters));
@@ -113,8 +130,8 @@ export class TailFlightController {
   suspend(): void {
     if (this.execution === "disposed") return;
     this.clock.suspend();
-    this.input.suspend();
     if (this.execution !== "failed") this.execution = "suspended";
+    this.input.suspend();
   }
 
   resume(): void {

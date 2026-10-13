@@ -219,6 +219,8 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     super(port, physicsHz);
     this.flightPort = Object.freeze({ snapshot_json: () => this.observe(() => port.snapshot_json()),
       control_profile_json: () => this.observe(() => port.control_profile_json()),
+      pause: (reason: number) => { this.change(() => { port.pause(reason); }, "retain_record"); },
+      clear_pause_reason: (reason: number) => { this.clearPauseReason(reason); },
       advance_tick_json: (json: string) => this.change(() => port.advance_tick_json(json)), free: () => { this.dispose(); } });
   }
 

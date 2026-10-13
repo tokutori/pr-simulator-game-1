@@ -70,6 +70,8 @@ FlightのSettingsを閉じるとPause menuへ戻る。overlay終了だけでphys
 pause中はtick・controller・actuator・記録sample・波のsimulation timeを進めない。
 描画、UI操作、必要なhead trackingは継続してよい。
 再開時にwall-clock差を加算せず、accumulatorと入力境界を再設定して次tickから進める。
+Screenのframe間隔が共有上限150 msを超えた場合、tickと入力取得の前にProcessingDelayで停止する。
+正常なframe観測で当該理由を解消し、明示Resumeまで停止を維持する。停止境界では半tickの残余も破棄する。
 非表示化時の押下状態を解除し、device再接続後の入力を再取得する。
 
 BFCacheへの退避ではRust session、記録、rendererを保持する。Countdownは取消し、Flightは非表示理由で停止する。

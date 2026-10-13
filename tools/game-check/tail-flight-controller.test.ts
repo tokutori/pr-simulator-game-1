@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "../../web/src/game/browser-tail-input.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import type { TailResultSnapshot } from "../../web/src/game/tail-flight-controller.js";
@@ -34,14 +34,16 @@ function fixture(mode = 0, initialTarget = 0) {
   const input = { readDemand: vi.fn(browserInput.readDemand.bind(browserInput)), reset: vi.fn(browserInput.reset.bind(browserInput)),
     suspend: vi.fn(browserInput.suspend.bind(browserInput)), resume: vi.fn(browserInput.resume.bind(browserInput)), dispose: vi.fn(browserInput.dispose.bind(browserInput)) };
   const port = { snapshot_json: vi.fn(() => session.snapshot_json()), control_profile_json: vi.fn(() => session.control_profile_json()),
+    pause: vi.fn((reason: number) => { session.pause(reason); }), clear_pause_reason: vi.fn((reason: number) => { session.clear_pause_reason(reason); }),
     advance_tick_json: vi.fn((json: string) => session.advance_tick_json(json)), free: vi.fn(() => { session.free(); }) };
   const renderer = { setFlightPose: vi.fn<(pose: FlightRenderPose | null) => void>() };
   const hud = { render: vi.fn<(snapshot: FlightDisplaySnapshot) => void>(), fail: vi.fn<(message: string) => void>(), setVisible: vi.fn<(visible: boolean) => void>() };
   const onTerminal = vi.fn<(snapshot: TailResultSnapshot) => void>();
-  const controller = new TailFlightController(port, input, renderer, hud, physics_hz(), () => [], onTerminal);
+  const onPauseChanged = vi.fn();
+  const controller = new TailFlightController(port, input, renderer, hud, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal, onPauseChanged);
   disposals.push(() => { controller.dispose(); });
   const key = (type: string, code: string) => browser.dispatchEvent(new browser.KeyboardEvent(type, { code, cancelable: true }));
-  return { session, controller, port, input, renderer, hud, onTerminal, key };
+  return { session, controller, port, input, renderer, hud, onTerminal, onPauseChanged, key };
 }
 
 type CleanupSite = "input" | "session" | "pose" | "hud";
@@ -58,6 +60,116 @@ function observeCleanup(trial: ReturnType<typeof fixture>, onCleanup: (site: Cle
 }
 
 describe("two-tail controller through the Rust WASM port", () => {
+  it.each([149.999, 150, 150.001])("applies the shared frame gap boundary before sampling input (%s ms)", (gap) => {
+    const trial = fixture();
+    expect(maximum_flight_frame_gap_milliseconds()).toBe(150);
+    trial.controller.onFrame(0);
+    trial.key("keydown", "ArrowUp");
+    trial.controller.onFrame(gap);
+    if (gap > maximum_flight_frame_gap_milliseconds()) {
+      expect(trial.session.phase_code()).toBe(6);
+      expect(trial.port.pause).toHaveBeenCalledExactlyOnceWith(3);
+      expect(trial.input.readDemand).not.toHaveBeenCalled();
+      expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+      expect(trial.controller.currentSnapshot.frame.state.tick).toBe(0);
+    } else {
+      expect(trial.session.phase_code()).toBe(5);
+      expect(trial.port.pause).not.toHaveBeenCalled();
+      expect(trial.input.readDemand).toHaveBeenCalledTimes(Math.floor(gap / 10));
+    }
+  });
+
+  it("preserves the record and paused state across repeated stalls, recovery and explicit Resume", () => {
+    const trial = fixture();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(15);
+    const retained = trial.controller.currentSnapshot.frame;
+    trial.key("keydown", "ArrowUp");
+    trial.key("keydown", "KeyL");
+    trial.controller.onFrame(1_015);
+    expect(trial.controller.currentSnapshot.phaseCode).toBe(6);
+    expect(trial.controller.currentSnapshot.frame).toEqual(retained);
+    expect(trial.session.can_resume()).toBe(false);
+    trial.controller.onFrame(2_015);
+    expect(trial.port.pause).toHaveBeenCalledTimes(1);
+    expect(trial.port.clear_pause_reason).not.toHaveBeenCalled();
+    expect(trial.session.can_resume()).toBe(false);
+    trial.controller.onFrame(2_025);
+    expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
+    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.session.can_resume()).toBe(true);
+    trial.controller.onFrame(2_035);
+    expect(trial.input.readDemand).toHaveBeenCalledTimes(1);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
+    expect(trial.onPauseChanged).toHaveBeenCalledTimes(2);
+    trial.session.resume();
+    trial.controller.resume();
+    trial.controller.onFrame(10_000);
+    trial.controller.onFrame(10_005);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
+    trial.controller.onFrame(10_010);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(2);
+    const resumed: unknown = JSON.parse(trial.port.advance_tick_json.mock.calls[1]?.[0] ?? "{}");
+    expect(resumed).toMatchObject({ nose_up: 0, turn_right: 0, pilot_position_command: { kind: "hold" } });
+    trial.controller.synchronizeSnapshot(trial.session.abort());
+    const record: unknown = JSON.parse(trial.session.export_flight_record_json());
+    expect(record).toMatchObject({ samples: [{ tick_index: 0 }, { tick_index: 1 }, { tick_index: 2 }], finalization: { terminal_tick: 2 } });
+    trial.controller.onFrame(20_000);
+    expect(trial.port.pause).toHaveBeenCalledTimes(1);
+    expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears only ProcessingDelay and retains the independent visibility reason", () => {
+    const trial = fixture();
+    trial.controller.onFrame(0);
+    trial.controller.onFrame(1_000);
+    trial.session.pause(1);
+    trial.controller.onFrame(1_010);
+    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.session.can_resume()).toBe(false);
+    expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
+    trial.session.clear_pause_reason(1);
+    expect(trial.session.can_resume()).toBe(true);
+    expect(trial.session.phase_code()).toBe(6);
+  });
+
+  it.each(["pause", "clear_pause_reason"] as const)("retains the last flight state when processing delay %s fails", (operation) => {
+    const trial = fixture();
+    trial.controller.onFrame(0);
+    const initial = trial.controller.currentSnapshot.frame.state;
+    trial.port[operation].mockImplementationOnce(() => { throw new Error(`Injected ${operation} failure`); });
+    trial.controller.onFrame(1_000);
+    if (operation === "clear_pause_reason") trial.controller.onFrame(1_010);
+    expect(trial.hud.fail).toHaveBeenCalledWith(`Injected ${operation} failure`);
+    expect(trial.controller.currentSnapshot.frame.state).toEqual(initial);
+    trial.controller.onFrame(2_000);
+    expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+    expect(trial.input.readDemand).not.toHaveBeenCalled();
+  });
+
+  it.each(["reset", "dispose"] as const)("rejects stale processing-delay work when input suspension reenters %s", (operation) => {
+    const trial = fixture();
+    trial.controller.onFrame(0);
+    trial.input.suspend.mockImplementationOnce(() => {
+      if (operation === "reset") trial.controller.reset(trial.session.snapshot_json());
+      else trial.controller.dispose();
+    });
+    trial.controller.onFrame(1_000);
+    expect(trial.port.pause).not.toHaveBeenCalled();
+    expect(trial.port.clear_pause_reason).not.toHaveBeenCalled();
+    expect(trial.onPauseChanged).not.toHaveBeenCalled();
+    expect(trial.hud.fail).not.toHaveBeenCalled();
+    trial.controller.onFrame(2_000);
+    trial.controller.onFrame(2_010);
+    if (operation === "reset") {
+      expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
+      expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
+    } else {
+      expect(trial.port.free).toHaveBeenCalledTimes(1);
+      expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+    }
+  });
+
   it.each([0, 1, 2])("connects keyboard intent, sealed profile and two physical tails in mode %s", (mode) => {
     const trial = fixture(mode);
     trial.key("keydown", "ArrowUp");
@@ -93,7 +205,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.resume();
     expect(trial.controller.currentSnapshot.phaseCode).toBe(6);
     const polls = trial.input.readDemand.mock.calls.length;
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     expect(trial.input.readDemand).toHaveBeenCalledTimes(polls);
     trial.session.clear_pause_reason(0);
     trial.session.resume();
@@ -119,7 +231,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     const trial = fixture();
     trial.port.advance_tick_json.mockImplementationOnce(() => trial.session.abort());
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     trial.controller.onFrame(2_000);
     trial.controller.resume();
     const terminal = trial.controller.currentSnapshot;
@@ -314,7 +426,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     });
     trial.onTerminal.mockImplementation(() => { trial.controller.dispose(); });
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     trial.controller.onFrame(2_000);
     expect(attempts).toEqual(cleanupSites);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
@@ -382,7 +494,7 @@ describe("two-tail controller through the Rust WASM port", () => {
       if (throws) throw new Error("Old terminal callback failure after reset");
     });
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
     expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
     expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0, fraction: 0 } });
@@ -402,7 +514,7 @@ describe("two-tail controller through the Rust WASM port", () => {
       if (throws) throw new Error("Old terminal callback failure after disposal");
     });
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     trial.controller.onFrame(2_000);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
     expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
@@ -424,7 +536,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(reset);
     else trial.hud.render.mockImplementationOnce(reset);
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
     expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0 } });
     expect(trial.input.suspend).not.toHaveBeenCalled();
@@ -462,7 +574,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(dispose);
     else trial.hud.render.mockImplementationOnce(dispose);
     trial.controller.onFrame(0);
-    trial.controller.onFrame(1_000);
+    trial.controller.onFrame(100);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
     expect(trial.input.suspend).not.toHaveBeenCalled();
     expect(trial.hud.fail).not.toHaveBeenCalled();
