@@ -1874,7 +1874,13 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     );
     assert!(hud.geometry.adi.unwrap().flight_path_y_ratio().is_some());
     assert!(hud.geometry.angle_of_attack_ratio.is_some());
-    assert!(hud.readouts.contains("IAS") && hud.readouts.contains("PITCH"));
+    let airspeed = format!("対気速度 {:.1} m/s", telemetry.airspeed_mps);
+    assert!(hud.readouts.contains(&airspeed) && hud.readouts.contains("PITCH"));
+    assert!(!hud.readouts.contains("IAS"));
+    assert!(
+        hud.telemetry
+            .contains(&format!("対地速度 {:.1} m/s", telemetry.groundspeed_mps))
+    );
     assert!(hud.wind.is_some());
     assert_eq!(hud.supplementary_readouts.len(), 3);
     let minimal = game_ui_view(
@@ -1917,7 +1923,23 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         custom.geometry.adi.unwrap().flight_path_y_ratio().is_some()
             && custom.geometry.angle_of_attack_ratio.is_some()
     );
-    assert!(custom.readouts.contains("IAS") && !custom.readouts.contains("PITCH"));
+    assert!(custom.readouts.contains(&airspeed) && !custom.readouts.contains("PITCH"));
+    let realistic = game_ui_view(
+        &GameUiState::default(),
+        &context(
+            &session,
+            difficulty().with_information(InformationLevel::Realistic),
+            &platform,
+        ),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert!(realistic.readouts.contains(&airspeed));
+    assert_eq!(
+        realistic.telemetry,
+        "代表計器表示 · 対象機の実機構成は未確認"
+    );
 }
 
 #[test]
