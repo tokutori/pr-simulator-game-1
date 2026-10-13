@@ -112,6 +112,7 @@ Replay cameraは共通候補順序を保持し、nativeのcapabilityでPilot・C
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。
 空と天空反射は共有Rustが生成したWeb基準の全天textureを共用する。生成入力は実環境の太陽方位・仰角、雲量、visibilityの4項目とし、cloud baseを補完しない。NativeはsRGB画像をBevyの既存APIでlinearへ変換し、公式mip生成と同じequirectangular samplingを使用する。機体mirror passは水面で鏡映したcameraからairframeだけを透明textureへ描画し、Webと同じprojective UV・slope offset・alpha/Fresnel合成を使用する。DirectionalLightの公式cascade shadowを水面へ接続する。追加後のfmt・Clippy・Native 114試験とWindows 11/Vulkanのscripted GPU検査13 captureが合格した。固定条件の描画品質・時間的aliasing・optic flow・80 FPS達成は実GPUで別途評価する。
+Bevy 0.19.1のカラーmipmapは、初回Extract前に既存の`Rgba8Unorm`・`Rgba16Float` shaderのsampling位置を2×2平均の中心へ補正する。公式のpipeline・後続平均・同じshader handleを保持し、depthと別formatは変更しない。既知WGSL表現に適合しない依存更新は、原因を示して起動を停止する。
 空・水面反射・PBRのDirectionalLightは登録環境の太陽方位・仰角を共用する。
 NEDから描画座標へ変換した太陽への方向を水面・空へ渡し、DirectionalLightのforwardをその負方向へ向ける。
 方向の符号、基準方位・仰角、実際のworld初期化経路の一致をnative回帰試験で検査する。
