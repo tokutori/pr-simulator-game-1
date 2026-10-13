@@ -35,6 +35,12 @@ pub fn maximum_flight_frame_gap_milliseconds() -> u32 {
     birdman_game_session::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
 }
 
+#[wasm_bindgen]
+#[doc = "Exposes the shared ordinary Screen vertical field of view in degrees."]
+pub fn screen_vertical_field_of_view_degrees() -> f64 {
+    birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
+}
+
 /// Queries immutable environment metadata by a strict JSON-encoded complete identity.
 /// This query does not select or prepare a scenario in any session.
 #[wasm_bindgen]

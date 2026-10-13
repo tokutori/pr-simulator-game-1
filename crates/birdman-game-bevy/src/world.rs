@@ -506,7 +506,7 @@ pub(crate) fn setup_world(
         Tonemapping::Reinhard,
         Projection::Perspective(PerspectiveProjection {
             far: 200_000.0,
-            fov: 70.0_f32.to_radians(),
+            fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32,
             ..default()
         }),
         Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
@@ -1077,6 +1077,38 @@ mod tests {
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
         app.update();
+        let mut cameras = app.world_mut().query::<(&WorldProjection, &Projection)>();
+        let Projection::Perspective(projection) = cameras
+            .iter(app.world())
+            .find_map(|(kind, projection)| {
+                (*kind == WorldProjection::FlightCamera).then_some(projection)
+            })
+            .unwrap()
+        else {
+            panic!("Flight camera requires a perspective projection");
+        };
+        assert_eq!(
+            projection.fov,
+            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+        );
+        use bevy::camera::CameraProjection;
+        for (width, height) in [(1280.0, 720.0), (360.0, 300.0)] {
+            let mut projection = projection.clone();
+            projection.update(width, height);
+            let scale = 1.0 / (projection.fov / 2.0).tan();
+            for point in [
+                Vec4::new(0.0, 0.0, -10.0, 1.0),
+                Vec4::new(1.0, 2.0, -10.0, 1.0),
+                Vec4::new(-5.0, -3.0, -10.0, 1.0),
+            ] {
+                let clip = projection.get_clip_from_view() * point;
+                assert!(
+                    (clip.x / clip.w - point.x * scale / projection.aspect_ratio / -point.z).abs()
+                        < 1.0e-6
+                );
+                assert!((clip.y / clip.w - point.y * scale / -point.z).abs() < 1.0e-6);
+            }
+        }
         let expected = Vec3::new(0.405_579_78, 0.819_152_06, 0.405_579_78);
         let mut lights = app.world_mut().query::<(&DirectionalLight, &Transform)>();
         let (light, transform) = lights.single(app.world()).unwrap();

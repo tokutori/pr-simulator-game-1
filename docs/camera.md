@@ -4,6 +4,8 @@
 
 通常FlightはPilot viewを既定とする。BPG-007の最初のbrowser接続からこの規則を適用する。
 視点は機体構造datumからの基準body offsetと取付姿勢を持つPilotEyePointとしてモデルmetadataへ保存する。
+通常Screenの既定vertical FOVは共有Rustの`SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES`を正本とする60°である。
+WebはWASM初期化時に取得してrendererへ注入し、Bevyは同じ値をradiansへ変換する。XRとPhone VRは既存の眼別projection・optical profileを使用する。
 身体の前後移動による眼位置変化は、`pilot-motion.md` の実身体位置から導出する。
 初期眼位置 $r_{eye,0}^B$ と初期身体位置 $x_{p,0}$ をmetadataへ記録し、
 $r_{eye}^B=r_{eye,0}^B+(x_p-x_{p,0},0,0)$ とする。Replayも記録された実身体位置を使用する。
