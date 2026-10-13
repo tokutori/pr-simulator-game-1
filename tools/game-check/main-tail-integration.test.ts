@@ -97,6 +97,8 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
   const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
+  const pause = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "pause");
+  const clearPauseReason = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "clear_pause_reason");
   const sharedView = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "game_ui_view_json");
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
   const advancePlayback = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_playback");
@@ -135,7 +137,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     while (countdown.length > 0 && count < 10) { countdown.shift()?.(); count += 1; }
     expect(scene()).toBe("Flight");
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, tick, advancePlayback, playbackClock, replayTicks,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, replayTicks,
     countdownTick: () => { countdown.shift()?.(); },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
@@ -484,6 +486,56 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.documentRef.querySelector('[data-control-id="game-attract-return"]')).not.toBeNull();
     expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
     expect(trial.free).not.toHaveBeenCalled();
+  });
+
+  it.each(["running", "paused"] as const)("keeps the %s shared Abort Result inert across delayed frames", async (phase) => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    if (phase === "paused") trial.click("game-flight-pause");
+    trial.click(phase === "paused" ? "game-paused-abort" : "game-flight-abort");
+    expect(trial.scene()).toBe("Result");
+    const ticks = trial.tick.mock.calls.length;
+    await vi.waitFor(() => { expect(trial.exportRecord).toHaveBeenCalledTimes(1); });
+    const record = trial.exportRecord.mock.results[0]?.value as string;
+    expect(JSON.parse(record)).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort" } });
+    trial.frame(1_000);
+    trial.frame(1_010);
+    trial.frame(5_000);
+    expect(trial.pause).not.toHaveBeenCalled();
+    expect(trial.clearPauseReason).not.toHaveBeenCalled();
+    expect(trial.tick).toHaveBeenCalledTimes(ticks);
+    expect(trial.exportRecord).toHaveBeenCalledTimes(1);
+    expect(trial.browser.document.body.textContent).not.toContain("InvalidTransition");
+    expect(trial.sharedCommand.mock.calls.filter(([json]) => {
+      const command: unknown = JSON.parse(json);
+      return typeof command === "object" && command !== null && "kind" in command && command.kind === "abort";
+    })).toHaveLength(1);
+  });
+
+  it("retains a manual Result and its original snapshot-rendering failure without replaying domain commands", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    trial.renderer.setFlightPose.mockImplementationOnce(() => { throw new Error("Injected terminal snapshot rendering failure"); });
+    trial.click("game-flight-abort");
+    expect(trial.scene()).toBe("Result");
+    expect(trial.browser.document.body.textContent).toContain("Injected terminal snapshot rendering failure");
+    expect(trial.exportRecord).toHaveBeenCalledTimes(1);
+    expect(trial.summary).toHaveBeenCalled();
+    expect(JSON.parse(trial.exportRecord.mock.results[0]?.value as string)).toMatchObject({ finalization: { reason: "manual_abort" } });
+    trial.frame(1_000);
+    expect(trial.pause).not.toHaveBeenCalled();
+    expect(trial.clearPauseReason).not.toHaveBeenCalled();
+    expect(trial.exportRecord).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the original initialization failure and frees the owner even if renderer cleanup throws", async () => {
