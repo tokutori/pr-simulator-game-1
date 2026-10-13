@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity,
+import { decodeRecordedDifficulty, decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity,
   decodeTailTerminalFinalization, encodeTailLogicalInput, parseTailPreparedLaunchSnapshot,
   parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-session-codec.js";
@@ -12,6 +12,8 @@ const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm"
 initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
 const neutral: TailLogicalInput = Object.freeze({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: Object.freeze({ kind: "hold" }) });
+const recordedDifficulty = { preset: "standard", information: "standard", assistance: "assisted", weather: "typical" } as const;
+const recordedHudProfile = { telemetry: false, attitude: true, wind: false, flight_path: true, angle_of_attack: false, warnings: true };
 
 function launch(mode = 0): HybridGameSessionBridge {
   const session = new HybridGameSessionBridge(mode, 0xffff_ffff, 0xffff_ffff);
@@ -82,6 +84,111 @@ describe("versioned two-tail TypeScript boundary", () => {
       const missing = structuredClone(terminal);
       Reflect.deleteProperty(nested(nested(missing, "frame"), "finalization"), field);
       expect(validateTailSnapshotDocument(missing)).toBe(false);
+    }
+  });
+
+  it.each([
+    ["preset", ["beginner", "standard", "expert", "realistic", "custom"]],
+    ["information", ["full", "standard", "minimal", "realistic", "custom"]],
+    ["assistance", ["strong", "assisted", "light", "manual"]],
+    ["weather", ["calm", "mild", "typical", "challenging", "near_limit"]]
+  ] as const)("decodes every Rust recorded difficulty %s variant", (field, tags) => {
+    for (const tag of tags) {
+      const value = { ...recordedDifficulty, [field]: tag,
+        ...(field === "information" && tag === "custom" ? { hud_profile: recordedHudProfile } : {}) };
+      const decoded = decodeRecordedDifficulty(value);
+      expect(decoded[field]).toBe(tag);
+      expect(Object.isFrozen(decoded)).toBe(true);
+    }
+    expect(() => decodeRecordedDifficulty({ ...recordedDifficulty, [field]: "unknown" })).toThrow(RangeError);
+  });
+
+  it("rejects missing, surplus and invalid recorded difficulty fields and HUD cues", () => {
+    for (const value of [null, [], true, { ...recordedDifficulty, extra: 1 },
+      { ...recordedDifficulty, toJSON: () => recordedDifficulty }]) {
+      expect(() => decodeRecordedDifficulty(value)).toThrow(RangeError);
+    }
+    for (const [field, original] of Object.entries(recordedDifficulty)) {
+      const missing: Record<string, unknown> = { ...recordedDifficulty };
+      Reflect.deleteProperty(missing, field);
+      expect(() => decodeRecordedDifficulty(missing)).toThrow(RangeError);
+      expect(() => decodeRecordedDifficulty(Object.assign(Object.create({ [field]: original }) as Record<string, unknown>, missing)))
+        .toThrow(RangeError);
+      expect(() => decodeRecordedDifficulty({ ...recordedDifficulty, [field]: null })).toThrow(RangeError);
+    }
+    const custom = { ...recordedDifficulty, information: "custom", hud_profile: recordedHudProfile };
+    for (const [field, original] of Object.entries(recordedHudProfile)) {
+      const missing: Record<string, unknown> = { ...recordedHudProfile };
+      Reflect.deleteProperty(missing, field);
+      for (const profile of [missing, Object.assign(Object.create({ [field]: original }) as Record<string, unknown>, missing),
+        { ...recordedHudProfile, [field]: 1 }, { ...recordedHudProfile, [field]: null }]) {
+        expect(() => decodeRecordedDifficulty({ ...custom, hud_profile: profile })).toThrow(RangeError);
+      }
+    }
+    expect(() => decodeRecordedDifficulty({ ...custom, hud_profile: { ...recordedHudProfile, extra: false } })).toThrow(RangeError);
+  });
+
+  it("preserves Custom profile ownership and non-Custom omission semantics", () => {
+    expect(decodeRecordedDifficulty(recordedDifficulty).hudProfile).toBeNull();
+    for (const value of [
+      { ...recordedDifficulty, hud_profile: null }, { ...recordedDifficulty, hud_profile: undefined },
+      { ...recordedDifficulty, hud_profile: recordedHudProfile },
+      { ...recordedDifficulty, information: "custom" },
+      { ...recordedDifficulty, information: "custom", hud_profile: null },
+      { ...recordedDifficulty, information: "custom", hud_profile: undefined },
+      Object.assign(Object.create({ hud_profile: recordedHudProfile }) as Record<string, unknown>,
+        { ...recordedDifficulty, information: "custom" }),
+      Object.defineProperty({ ...recordedDifficulty }, "hud_profile", { value: null }),
+      Object.defineProperty({ ...recordedDifficulty, information: "custom" }, "hud_profile", { value: recordedHudProfile })
+    ]) expect(() => decodeRecordedDifficulty(value)).toThrow(RangeError);
+  });
+
+  it("projects recorded difficulty and nested HUD getters once into frozen values", () => {
+    let informationReads = 0;
+    let profileReads = 0;
+    let windReads = 0;
+    const profile = { ...recordedHudProfile, get wind() { windReads += 1; return windReads === 1 ? false : "invalid"; } };
+    const decoded = decodeRecordedDifficulty({ ...recordedDifficulty,
+      get information() { informationReads += 1; return informationReads === 1 ? "custom" : "unknown"; },
+      get hud_profile() { profileReads += 1; return profileReads === 1 ? profile : null; } });
+    expect(decoded).toEqual({ ...recordedDifficulty, information: "custom", hudProfile: {
+      telemetry: false, attitude: true, wind: false, flightPath: true, angleOfAttack: false, warnings: true } });
+    expect([informationReads, profileReads, windReads]).toEqual([1, 1, 1]);
+    expect(Object.isFrozen(decoded)).toBe(true);
+    expect(Object.isFrozen(decoded.hudProfile)).toBe(true);
+  });
+
+  it("isolates recorded difficulty guards from global prototype fields and toJSON", () => {
+    const missingPreset: Record<string, unknown> = { ...recordedDifficulty };
+    Reflect.deleteProperty(missingPreset, "preset");
+    const missingWind: Record<string, unknown> = { ...recordedHudProfile };
+    Reflect.deleteProperty(missingWind, "wind");
+    for (const { field, inherited, decode } of [
+      { field: "preset", inherited: "standard", decode: () => decodeRecordedDifficulty(missingPreset) },
+      { field: "wind", inherited: false, decode: () => decodeRecordedDifficulty({ ...recordedDifficulty,
+        information: "custom", hud_profile: missingWind }) }
+    ]) {
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, field);
+      try {
+        Object.defineProperty(Object.prototype, field, { value: inherited, configurable: true });
+        expect(decode).toThrow(RangeError);
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(Object.prototype, field);
+        else Object.defineProperty(Object.prototype, field, previous);
+      }
+    }
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    let calls = 0;
+    try {
+      Object.defineProperty(Object.prototype, "toJSON", { configurable: true, value: () => { calls += 1; return null; } });
+      const value = Object.defineProperty({ ...recordedDifficulty }, "toJSON", { value: () => { calls += 1; return null; } });
+      expect(decodeRecordedDifficulty(value)).toEqual({ ...recordedDifficulty, hudProfile: null });
+      expect(decodeRecordedDifficulty({ ...recordedDifficulty, information: "custom", hud_profile: recordedHudProfile }).hudProfile)
+        .toMatchObject({ wind: false, flightPath: true, angleOfAttack: false });
+      expect(calls).toBe(0);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(Object.prototype, "toJSON");
+      else Object.defineProperty(Object.prototype, "toJSON", previous);
     }
   });
 

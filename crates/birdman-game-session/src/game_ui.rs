@@ -33,6 +33,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<GameUiFrame>();
     output.subschema_for::<birdman_game_format::TailSnapshotDocument<'_>>();
     output.subschema_for::<birdman_game_format::TailPreparedLaunchDocument<'_>>();
+    output.subschema_for::<birdman_game_format::FlightRecordDifficultyDocument>();
     let mut input = schemars::generate::SchemaSettings::draft2020_12()
         .for_deserialize()
         .into_generator();

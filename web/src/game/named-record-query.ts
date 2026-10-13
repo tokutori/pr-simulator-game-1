@@ -1,7 +1,9 @@
 import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
-import { decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
-import type { TailControlIdentity, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
+import { decodeRecordedDifficulty, decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
+import type { RecordedDifficulty, TailControlIdentity, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
 import type { PhysicalFlightControls } from "../render/contracts/flight-controls.js";
+
+export type { RecordedDifficulty, RecordedHudProfile } from "./tail-session-codec.js";
 
 type Vector3 = readonly [number, number, number];
 export type RecordedPhysicalControls = PhysicalFlightControls;
@@ -25,23 +27,6 @@ export interface NamedRecordSample {
 }
 export type RecordQueryContext = Readonly<{ controlLayout: "tail_incidence"; scenario: TailScenarioIdentity;
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
-interface RecordedDifficultyAxes {
-  readonly preset: "beginner" | "standard" | "expert" | "realistic" | "custom";
-  readonly assistance: "strong" | "assisted" | "light" | "manual";
-  readonly weather: "calm" | "mild" | "typical" | "challenging" | "near_limit";
-}
-export interface RecordedHudProfile {
-  readonly telemetry: boolean;
-  readonly attitude: boolean;
-  readonly wind: boolean;
-  readonly flightPath: boolean;
-  readonly angleOfAttack: boolean;
-  readonly warnings: boolean;
-}
-export type RecordedDifficulty = RecordedDifficultyAxes & (
-  | Readonly<{ information: "full" | "standard" | "minimal" | "realistic"; hudProfile: null }>
-  | Readonly<{ information: "custom"; hudProfile: RecordedHudProfile }>
-);
 interface PlaybackEnvelope {
   readonly schemaVersion: 2;
   readonly scenario: TailScenarioIdentity;
@@ -186,23 +171,6 @@ function decodeSavedState(value: unknown): NamedRecordState {
       angleOfAttackRadians: angle(telemetry.angle_of_attack_rad), sideslipAngleRadians: angle(telemetry.sideslip_angle_rad),
       attitudeEulerRadians: vector3(telemetry.attitude_euler_rad)
     }) });
-}
-
-function decodeRecordedDifficulty(value: unknown): RecordedDifficulty {
-  const hasProfile = typeof value === "object" && value !== null && Object.hasOwn(value, "hud_profile");
-  const difficulty = boundaryObject(value, hasProfile ? ["preset", "information", "assistance", "weather", "hud_profile"] : ["preset", "information", "assistance", "weather"]);
-  const axes: RecordedDifficultyAxes = { preset: boundaryTag(difficulty.preset, ["beginner", "standard", "expert", "realistic", "custom"]),
-    assistance: boundaryTag(difficulty.assistance, ["strong", "assisted", "light", "manual"]),
-    weather: boundaryTag(difficulty.weather, ["calm", "mild", "typical", "challenging", "near_limit"]) };
-  const information = boundaryTag(difficulty.information, ["full", "standard", "minimal", "realistic", "custom"]);
-  if (information !== "custom") {
-    if (hasProfile) throw new RangeError("Explicit saved HUD profile requires Custom information");
-    return Object.freeze({ ...axes, information, hudProfile: null });
-  }
-  const profile = boundaryObject(difficulty.hud_profile, ["telemetry", "attitude", "wind", "flight_path", "angle_of_attack", "warnings"]);
-  const boolean = (value: unknown) => { if (typeof value !== "boolean") throw new RangeError("Saved HUD cues must be boolean"); return value; };
-  return Object.freeze({ ...axes, information, hudProfile: Object.freeze({ telemetry: boolean(profile.telemetry), attitude: boolean(profile.attitude),
-    wind: boolean(profile.wind), flightPath: boolean(profile.flight_path), angleOfAttack: boolean(profile.angle_of_attack), warnings: boolean(profile.warnings) }) });
 }
 
 function terminalTime(physicsHz: number, context: RecordQueryContext): number {

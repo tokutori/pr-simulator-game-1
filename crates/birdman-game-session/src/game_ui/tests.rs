@@ -2411,3 +2411,48 @@ fn tail_snapshot_schema_preserves_nullable_output_and_shared_query_leaves() {
         assert!(definitions[name].is_object());
     }
 }
+
+#[cfg(feature = "schema")]
+#[test]
+fn recorded_difficulty_schema_preserves_optional_nullable_hud_profile() {
+    let bundle: serde_json::Value =
+        serde_json::from_str(&export_game_ui_schema("bundle").unwrap()).unwrap();
+    let definitions = &bundle["serialize"]["$defs"];
+    let difficulty = &definitions["FlightRecordDifficultyDocument"];
+    assert_eq!(difficulty["additionalProperties"], false);
+    assert_eq!(
+        difficulty["required"],
+        serde_json::json!(["preset", "information", "assistance", "weather"])
+    );
+    assert_eq!(
+        difficulty["properties"]["hud_profile"]["anyOf"],
+        serde_json::json!([
+            {"$ref": "#/$defs/FlightRecordHudProfileDocument"},
+            {"type": "null"}
+        ])
+    );
+    let profile = &definitions["FlightRecordHudProfileDocument"];
+    assert_eq!(profile["additionalProperties"], false);
+    assert_eq!(profile["required"].as_array().unwrap().len(), 6);
+    for field in [
+        "telemetry",
+        "attitude",
+        "wind",
+        "flight_path",
+        "angle_of_attack",
+        "warnings",
+    ] {
+        assert!(
+            profile["required"]
+                .as_array()
+                .unwrap()
+                .contains(&field.into())
+        );
+        assert_eq!(profile["properties"][field]["type"], "boolean");
+    }
+    assert!(
+        bundle["deserialize"]["$defs"]
+            .get("FlightRecordDifficultyDocument")
+            .is_none()
+    );
+}
