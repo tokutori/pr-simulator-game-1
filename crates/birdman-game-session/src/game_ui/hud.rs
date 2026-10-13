@@ -85,7 +85,7 @@ pub(super) fn game_ui_hud(
     let heading = telemetry.heading_rad.to_degrees().rem_euclid(360.0);
     let time =
         (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ);
-    let airspeed = format!("IAS {:.1} m/s", telemetry.airspeed_mps);
+    let airspeed = format!("対気速度 {:.1} m/s", telemetry.airspeed_mps);
     let altitude = format!("ALT {:.1} m", telemetry.altitude_m);
     let attitude_text = format!("PITCH {pitch:.0}° · ROLL {roll:.0}°");
     let duration = format!("時間 {time:.1} s");

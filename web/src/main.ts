@@ -807,7 +807,10 @@ function runSharedGameSessionCommand(command: GameUiSessionCommand, requestId: n
     if (command.kind === "pause") flightController?.suspend();
     if (command.kind === "resume") flightController?.resume();
     if (result.kind === "aborted") {
-      runSideEffects([() => { completeGameOperation(requestId); }, () => { flightController?.suspend(); }]);
+      runSideEffects([
+        () => { flightController?.synchronizeSnapshot(session.flightPort.snapshot_json()); },
+        () => { completeGameOperation(requestId); }
+      ]);
       return;
     }
     completeGameOperation(requestId);
