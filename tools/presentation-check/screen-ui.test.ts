@@ -11,6 +11,94 @@ import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 
 describe("screen UI DOM patching", () => {
+  it("retains temporarily disabled focus until the same enabled node returns without resetting user scroll", async () => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+    const documentRef = window.document as unknown as Document;
+    const root = documentRef.createElement("main");
+    documentRef.body.append(root);
+    const adapter = new ScreenUiAdapter(root, () => undefined);
+    const initial = createSceneFixture("FlightSetup");
+    try {
+      adapter.render(initial);
+      const button = required(root, "button");
+      const shell = required(root, ".screen-ui-shell");
+      const pending: UiViewModel = { ...initial, panels: initial.panels.map((panel) => ({ ...panel,
+        controls: panel.controls.map((control) => ({ ...control, enabled: false })) })) };
+      button.focus();
+      shell.scrollTop = 24;
+      adapter.render(pending);
+      button.removeAttribute("disabled");
+      button.blur();
+      button.setAttribute("disabled", "");
+      const focus = vi.spyOn(button, "focus");
+      adapter.render(pending);
+      expect(documentRef.activeElement).toBe(documentRef.body);
+      expect(focus).not.toHaveBeenCalled();
+      shell.scrollTop = 77;
+      adapter.render(initial);
+      expect(required(root, "button")).toBe(button);
+      expect(documentRef.activeElement).toBe(button);
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ preventScroll: true });
+      expect(shell.scrollTop).toBe(77);
+      adapter.render(initial);
+      expect(focus).toHaveBeenCalledTimes(1);
+    } finally {
+      root.remove();
+      adapter.render(initial);
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
+  it.each(["external-focus", "external-focus-then-blur", "pointerdown", "keydown", "window-blur",
+    "changed-scene", "changed-overlay", "replaced", "detached", "hidden"] as const)(
+    "discards temporarily disabled focus after %s, including a later return to the original view", async (change) => {
+      const window = new Window();
+      Object.assign(globalThis, { window, document: window.document });
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const root = documentRef.createElement("main");
+      const external = documentRef.createElement("button");
+      documentRef.body.append(root, external);
+      const adapter = new ScreenUiAdapter(root, () => undefined);
+      const initial = createSceneFixture("FlightSetup");
+      try {
+        adapter.render(initial);
+        const button = required(root, "button");
+        const pending: UiViewModel = { ...initial, panels: initial.panels.map((panel) => ({ ...panel,
+          controls: panel.controls.map((control) => ({ ...control, enabled: false })) })) };
+        button.focus();
+        adapter.render(pending);
+        button.removeAttribute("disabled");
+        button.blur();
+        button.setAttribute("disabled", "");
+        const focus = vi.spyOn(button, "focus");
+        const EventConstructor = window.Event as unknown as typeof Event;
+        if (change === "external-focus" || change === "external-focus-then-blur") external.focus();
+        if (change === "external-focus-then-blur") external.blur();
+        if (change === "pointerdown") external.dispatchEvent(new EventConstructor("pointerdown", { bubbles: true }));
+        if (change === "keydown") documentRef.dispatchEvent(new EventConstructor("keydown", { bubbles: true }));
+        if (change === "window-blur") window.dispatchEvent(new window.Event("blur"));
+        if (change === "changed-scene") adapter.render({ ...pending, scene: "Briefing" });
+        if (change === "changed-overlay") adapter.render({ ...pending, activeOverlay: "settings" });
+        if (change === "replaced") adapter.render({ ...pending, panels: [] });
+        if (change === "detached") root.remove();
+        if (change === "hidden") adapter.render(pending, false);
+        adapter.render(initial);
+        expect(focus).not.toHaveBeenCalled();
+        expect(documentRef.activeElement).toBe(change === "external-focus" ? external : documentRef.body);
+      } finally {
+        root.remove();
+        adapter.render(initial);
+        await window.happyDOM.abort();
+        Reflect.deleteProperty(globalThis, "window");
+        Reflect.deleteProperty(globalThis, "document");
+      }
+    });
+
   it("suppresses hidden events and restores the connected range, focus, scroll, and current values", async () => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
@@ -76,7 +164,7 @@ describe("screen UI DOM patching", () => {
     Reflect.deleteProperty(globalThis, "document");
   });
 
-  it.each(["external-focus", "disabled", "replaced", "changed-scene"] as const)("does not restore obsolete focus after %s", async (change) => {
+  it.each(["external-focus", "disabled", "replaced", "changed-scene", "changed-scene-roundtrip", "changed-overlay-roundtrip"] as const)("does not restore obsolete focus after %s", async (change) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
@@ -94,6 +182,8 @@ describe("screen UI DOM patching", () => {
     let updated = initial;
     if (change === "external-focus") external.focus();
     if (change === "changed-scene") updated = createSceneFixture("Result");
+    if (change === "changed-scene-roundtrip") adapter.render({ ...initial, scene: "Result" }, false);
+    if (change === "changed-overlay-roundtrip") adapter.render({ ...initial, activeOverlay: "settings" }, false);
     if (change === "disabled") {
       updated = { ...initial, panels: initial.panels.map((panel) => ({
         ...panel, controls: panel.controls.map((control) => ({ ...control, enabled: false }))

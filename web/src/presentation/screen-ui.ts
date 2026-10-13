@@ -16,6 +16,7 @@ import type { VNode, VNodeData } from "snabbdom";
 const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
 
 interface RetainedScreenDom {
+  readonly reason: "hidden" | "disabled";
   readonly focus: HTMLElement | null;
   readonly shell: HTMLElement;
   readonly scene: string | undefined;
@@ -58,9 +59,19 @@ export class ScreenUiAdapter {
 
   render(viewModel: UiViewModel, visible = true): void {
     this.currentViewModel = viewModel;
-    if (this.visible && !visible) this.retainDom();
+    const wasVisible = this.visible;
+    if (wasVisible && !visible) {
+      this.retainDom("hidden");
+      this.retainedDom?.focus?.blur();
+    }
     this.visible = visible;
     this.controls = new Map(viewModel.panels.flatMap((panel) => panel.controls.map((control) => [control.id, control])));
+    const active = this.root.ownerDocument.activeElement;
+    const controlId = active?.getAttribute("data-control-id");
+    if (wasVisible && visible && this.retainedDom === null && active !== null && this.mount.contains(active)
+        && controlId !== null && controlId !== undefined && this.controls.get(controlId)?.enabled === false) {
+      this.retainDom("disabled");
+    }
     const data = viewModel.sharedPresentation === undefined ? {} : sharedPresentationData(viewModel.sharedPresentation);
     const dataset: NonNullable<VNodeData["dataset"]> = { ...data.dataset, scene: viewModel.scene };
     if (viewModel.sharedPresentation === undefined) {
@@ -78,7 +89,7 @@ export class ScreenUiAdapter {
       attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
     }, [shell]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
-    if (visible) this.restoreDom();
+    this.restoreDom();
     this.observeCharts();
   }
 
@@ -120,7 +131,8 @@ export class ScreenUiAdapter {
     if (changed) this.chartExtentChanged();
   };
 
-  private retainDom(): void {
+  private retainDom(reason: RetainedScreenDom["reason"]): void {
+    this.discardRetainedDom();
     const shell = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
     if (shell === null) return;
     const active = this.root.ownerDocument.activeElement;
@@ -129,26 +141,50 @@ export class ScreenUiAdapter {
       ? active
       : null;
     this.retainedDom = {
-      focus, shell, scene: shell.dataset.scene, overlay: shell.dataset.overlay,
+      reason, focus, shell, scene: shell.dataset.scene, overlay: shell.dataset.overlay,
       scrollTop: shell.scrollTop, scrollLeft: shell.scrollLeft
     };
-    focus?.blur();
+    this.root.ownerDocument.addEventListener("focusin", this.discardRetainedDom);
+    this.root.ownerDocument.addEventListener("pointerdown", this.discardRetainedDom);
+    this.root.ownerDocument.addEventListener("keydown", this.discardRetainedDom);
+    this.root.ownerDocument.defaultView?.addEventListener("blur", this.discardRetainedDom);
   }
 
   private restoreDom(): void {
     const retained = this.retainedDom;
-    this.retainedDom = null;
-    if (retained === null || !this.mount.contains(retained.shell) ||
-        retained.shell.dataset.scene !== retained.scene || retained.shell.dataset.overlay !== retained.overlay) return;
-    retained.shell.scrollTop = retained.scrollTop;
-    retained.shell.scrollLeft = retained.scrollLeft;
+    if (retained === null) return;
     const active = this.root.ownerDocument.activeElement;
     const focus = retained.focus;
-    if ((active === null || active === this.root.ownerDocument.body) && focus !== null && focus.isConnected &&
-        this.mount.contains(focus) && !focus.matches(":disabled") && focus.closest("[hidden], [inert]") === null) {
+    if (!retained.shell.isConnected || !this.mount.contains(retained.shell)
+        || retained.shell.dataset.scene !== retained.scene || retained.shell.dataset.overlay !== retained.overlay
+        || (focus !== null && (!focus.isConnected || !this.mount.contains(focus)))) {
+      this.discardRetainedDom();
+      return;
+    }
+    if (!this.visible) return;
+    if ((active !== null && active !== this.root.ownerDocument.body && active !== focus)
+        || (focus !== null && focus.closest("[hidden], [inert]") !== null)) {
+      this.discardRetainedDom();
+      return;
+    }
+    if (retained.reason === "disabled" && focus?.matches(":disabled")) return;
+    this.discardRetainedDom();
+    if (retained.reason === "hidden") {
+      retained.shell.scrollTop = retained.scrollTop;
+      retained.shell.scrollLeft = retained.scrollLeft;
+    }
+    if (focus !== null && !focus.matches(":disabled")) {
       focus.focus({ preventScroll: true });
     }
   }
+
+  private readonly discardRetainedDom = (): void => {
+    this.retainedDom = null;
+    this.root.ownerDocument.removeEventListener("focusin", this.discardRetainedDom);
+    this.root.ownerDocument.removeEventListener("pointerdown", this.discardRetainedDom);
+    this.root.ownerDocument.removeEventListener("keydown", this.discardRetainedDom);
+    this.root.ownerDocument.defaultView?.removeEventListener("blur", this.discardRetainedDom);
+  };
 
   private readonly onClick = (event: Event): void => {
     if (!this.visible) return;
