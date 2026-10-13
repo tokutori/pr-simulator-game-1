@@ -56,13 +56,14 @@ Web実行コードとNode.js用build/toolコードは別tsconfigで型検査し�
 配布assetの入口とVite build graphの検査は `data-sources.md` に従う。
 失敗は判別可能な型で保持し、状態遷移はdiscriminated unionと網羅的分岐で表現する。
 
-Web UIはThe Elm Architectureの原則を採用する。単一の不変`AppModel`を状態の正本とし、
+Web UIはThe Elm Architectureの原則を採用する。単一の不変`AppModel`をbrowser/platform状態の正本とし、
 純粋な`update(model, message)`が次状態と副作用要求を返す。DOMと各backendのviewはModelから導出し、
 event handlerはMessageのみを送信する。非同期完了にはrequest IDを付け、現在状態と一致しない結果を破棄する。
 物理状態はcore/WASMの正本を参照し、UIに複製しない。外部API・描画engine・物理実行の副作用はeffect portへ隔離する。
 このAppModelはbrowserのresource lifecycle、表示状態、編集途中のform、focus等を所有する。
 GameSessionの開始可否、domain phase、pause理由、終了・再試行規則、score、record確定値はRust coreが所有する。
-Webはimmutableなsession snapshotからScene・HUD・button availabilityを導出し、session変更intentをWASMへ送る。
+共通ゲームUIの状態・更新・View導出は[共通UI境界](game-ui-boundary.md)に従い共有Rustが所有する。
+WebはimmutableなViewをAppModelへ観測値として保持し、actionをWASMへ送る。
 Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
 アプリのlive sessionと保存recordは二系統tailへ統一する。
 単一facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
