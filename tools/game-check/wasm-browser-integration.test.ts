@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { Window as BrowserWindow } from "happy-dom";
-import { TailPersonalBestSelectionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { TailPersonalBestSelectionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { BrowserTailPilotInput } from "../../web/src/game/browser-tail-input.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
@@ -19,6 +19,11 @@ import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 beforeAll(() => {
   const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
+});
+
+it("exposes the shared Screen presentation field of view without changing the physics frequency", () => {
+  expect(screen_vertical_field_of_view_degrees()).toBe(60);
+  expect(physics_hz()).toBe(100);
 });
 
 it("clears a DOM pilot target across terminal Result and Rust Retry", () => {

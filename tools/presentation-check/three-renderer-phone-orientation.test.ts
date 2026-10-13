@@ -87,7 +87,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
 
   beforeAll(() => {
     const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
-    bundle = createThreeRenderer(canvas, canvas, null, "low");
+    bundle = createThreeRenderer(canvas, canvas, null, 60, "low");
     if (capture.driver === null) throw new Error("Recording driver was not constructed");
     driver = capture.driver;
   });
@@ -214,7 +214,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
   it.each(orientations)("preserves nonzero startup tilt and returns every non-Flight camera to horizontal at screen $screen degrees", async (orientation) => {
     bundle.renderer.setFlightPose(null);
     bundle.renderer.resize(viewport);
-    const screenBase = poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y));
+    const screenBase = poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60));
     const phoneBase = screenBase.clone().multiply(new Matrix4().makeRotationX(6 * Math.PI / 180));
     for (const pitch of [-30, 30]) {
       for (const roll of [-20, 20]) {

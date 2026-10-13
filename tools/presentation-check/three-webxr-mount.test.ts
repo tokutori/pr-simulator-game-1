@@ -231,7 +231,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     session = new BrowserXrSession();
     const system = { requestSession: () => Promise.resolve(session), isSessionSupported: () => Promise.resolve(true) } as unknown as XRSystem;
     const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
-    bundle = createThreeRenderer(canvas, canvas, system, "low", canvas);
+    bundle = createThreeRenderer(canvas, canvas, system, 60, "low", canvas);
     if (capture.driver === null) throw new Error("Recording driver not constructed");
     driver = capture.driver;
     actions = [];
@@ -661,7 +661,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expectMatrix(poseMatrix(bundle.webxr.transformTrackingPose(head)), poseMatrix(head));
     await backend.stop();
     bundle.renderer.render(screenFrame(viewport));
-    expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y)));
+    expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60)));
     expect(lastDraw(driver).eyes).toHaveLength(0);
   });
 
@@ -695,7 +695,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       expect(viewTimestamps).toEqual([100, 200, 300]);
       expect(driver.draws).toHaveLength(drawCount + 2);
       expect(runtime.currentMode).toBe("screen");
-      expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y)));
+      expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60)));
       expect(lastDraw(driver).eyes).toHaveLength(0);
       expect(lastDraw(driver).panel).toBeNull();
     } finally {

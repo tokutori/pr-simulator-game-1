@@ -71,23 +71,25 @@ export interface ThreeRendererBundle {
 // Place Takeshima just outside the centered title panel at every viewport
 // aspect ratio. Its bearing is computed from the OSM island outline.
 const TITLE_SCREEN_ISLAND_BEARING_RADIANS = 272.16851686166876 * Math.PI / 180;
-const TITLE_SCREEN_VERTICAL_FOV_RADIANS = 60 * Math.PI / 180;
 const TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS = 42 * 16;
 const TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS = 32;
 const TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS = 24;
 const TITLE_SCREEN_PITCH_HALF_RADIANS = 3 * Math.PI / 180;
 const PANEL_OVERLAY_RENDER_ORDER = 2000;
 
-export function titleScreenCameraPoseForViewport(width: number, height: number): Pose {
-  return titleCameraPoseForViewport(width, height, -TITLE_SCREEN_PITCH_HALF_RADIANS);
+export function titleScreenCameraPoseForViewport(width: number, height: number, verticalFieldOfViewDegrees: number): Pose {
+  return titleCameraPoseForViewport(width, height, -TITLE_SCREEN_PITCH_HALF_RADIANS, verticalFieldOfViewDegrees);
 }
 
-function titleCameraPoseForViewport(width: number, height: number, pitchHalfRadians: number): Pose {
+function titleCameraPoseForViewport(width: number, height: number, pitchHalfRadians: number, verticalFieldOfViewDegrees: number): Pose {
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
     throw new RangeError("Viewport dimensions must be positive");
   }
+  if (!Number.isFinite(verticalFieldOfViewDegrees) || verticalFieldOfViewDegrees <= 0 || verticalFieldOfViewDegrees >= 180) {
+    throw new RangeError("Screen vertical field of view must be finite and between zero and 180 degrees");
+  }
   const aspectRatio = width / height;
-  const horizontalHalfFov = Math.atan(Math.tan(TITLE_SCREEN_VERTICAL_FOV_RADIANS / 2) * aspectRatio);
+  const horizontalHalfFov = Math.atan(Math.tan(verticalFieldOfViewDegrees * Math.PI / 360) * aspectRatio);
   const panelWidth = Math.min(TITLE_SCREEN_PANEL_MAX_WIDTH_PIXELS, width - TITLE_SCREEN_PANEL_ROOT_PADDING_PIXELS);
   const panelHalfWidthNdc = panelWidth / width;
   const targetIslandX = -Math.min(0.98, panelHalfWidthNdc + TITLE_SCREEN_PANEL_ISLAND_GAP_PIXELS / width);
@@ -156,9 +158,12 @@ export function createThreeRenderer(
   canvas: HTMLCanvasElement,
   panelCanvas: HTMLCanvasElement,
   xrSystem: XRSystem | null,
+  screenVerticalFieldOfViewDegrees: number,
   lakeQuality: LakeWaterQuality = "high",
   headHudCanvas?: HTMLCanvasElement
 ): ThreeRendererBundle {
+  let titleCameraPose = titleScreenCameraPoseForViewport(1, 1, screenVerticalFieldOfViewDegrees);
+  let titlePhoneCameraPose = titleCameraPoseForViewport(1, 1, 0, screenVerticalFieldOfViewDegrees);
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
   renderer.shadowMap.enabled = true;
   const stereoEffect = new StereoEffect(renderer);
@@ -365,13 +370,11 @@ export function createThreeRenderer(
   });
   const trackingOrigin = new Group();
   aircraftRoot.add(trackingOrigin);
-  const camera = new PerspectiveCamera(60, 1, 0.05, 100_000);
+  const camera = new PerspectiveCamera(screenVerticalFieldOfViewDegrees, 1, 0.05, 100_000);
   trackingOrigin.add(camera);
-  let titleCameraPose = titleScreenCameraPoseForViewport(1, 1);
-  let titlePhoneCameraPose = titleCameraPoseForViewport(1, 1, 0);
   const externalCameraRig = new Group();
   scene.add(externalCameraRig);
-  const fixedCamera = new PerspectiveCamera(60, 1, 0.05, 100_000);
+  const fixedCamera = new PerspectiveCamera(screenVerticalFieldOfViewDegrees, 1, 0.05, 100_000);
   externalCameraRig.add(fixedCamera);
   let disposed = false;
   let loopRunning = false;
@@ -697,7 +700,7 @@ export function createThreeRenderer(
       }
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ stereo: profile }); return; }
       stereoPresentation = profile;
-      camera.fov = profile?.verticalFieldOfViewDegrees ?? 60;
+      camera.fov = profile?.verticalFieldOfViewDegrees ?? screenVerticalFieldOfViewDegrees;
       camera.focus = profile?.focusDistanceMeters ?? 10;
       if (profile !== null) stereoEffect.setEyeSeparation(profile.eyeSeparationMeters);
       camera.updateProjectionMatrix();
@@ -948,7 +951,7 @@ export function createThreeRenderer(
 
   function updateFixedCameraProjection(): void {
     const fixedView = currentExternalCameraPose() !== null && flightCameraMode !== "chase" ? fixedCameraView : null;
-    const fieldOfView = fixedView?.verticalFieldOfViewDegrees ?? 60;
+    const fieldOfView = fixedView?.verticalFieldOfViewDegrees ?? screenVerticalFieldOfViewDegrees;
     if (fixedCamera.fov === fieldOfView) return;
     fixedCamera.fov = fieldOfView;
     fixedCamera.updateProjectionMatrix();
@@ -964,8 +967,8 @@ export function createThreeRenderer(
     else renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    titleCameraPose = titleScreenCameraPoseForViewport(width, height);
-    titlePhoneCameraPose = titleCameraPoseForViewport(width, height, 0);
+    titleCameraPose = titleScreenCameraPoseForViewport(width, height, screenVerticalFieldOfViewDegrees);
+    titlePhoneCameraPose = titleCameraPoseForViewport(width, height, 0, screenVerticalFieldOfViewDegrees);
     fixedCamera.aspect = width / height;
     fixedCamera.updateProjectionMatrix();
   }
