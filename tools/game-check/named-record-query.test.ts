@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { parseNamedAnalysisSamples, parseNamedAttractContext, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
+import { decodeNamedRecordContext, parseNamedAnalysisSamples, parseNamedAttractContext, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
   tailResultRecordContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 
@@ -16,9 +16,13 @@ function nested(parent: Record<string, unknown>, key: string): Record<string, un
   return parent[key] as Record<string, unknown>;
 }
 
-function tailResult(ticks = 2): HybridGameSessionBridge {
+function tailResult(ticks = 2, customHud = false): HybridGameSessionBridge {
   const session = new HybridGameSessionBridge(0, 11, 12);
   session.open_setup();
+  if (customHud) {
+    session.set_information_level(4);
+    for (let cue = 0; cue < 6; cue += 1) session.set_information_cue(cue, cue % 2 === 1);
+  }
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
@@ -40,7 +44,7 @@ describe("named saved-record query boundary", () => {
       expect(context).toMatchObject({ phase: "attract", controlLayout: "tail_incidence",
         scenario: { catalogVersion: 3, scenarioVersion: 3, aircraftModelVersion: 2, controllerProfileVersion: 3, environmentVersion: 1 },
         controlIdentity: { aircraftConfigurationId: "bpg041-playable-hybrid-mock" },
-        difficulty: { information: "minimal", assistance: "strong", weather: "calm" } });
+        difficulty: { information: "minimal", assistance: "strong", weather: "calm", hudProfile: null } });
       expect(context.controlIdentity.aircraftConfigurationId.length).toBeGreaterThan(0);
       expect(() => session.snapshot_json()).toThrow();
       expect(() => session.export_flight_record_json()).toThrow();
@@ -133,6 +137,31 @@ describe("named saved-record query boundary", () => {
     }
   });
 
+
+  it("projects the Rust Custom HUD leaf across Result, current Replay and v6 archived Replay", () => {
+    const source = tailResult(2, true);
+    const archived = new HybridGameSessionBridge(2, 99, 100);
+    try {
+      const snapshot = source.snapshot_json();
+      const record = source.export_flight_record_json();
+      const result = decodeNamedRecordContext(nested(jsonObject(source.flight_record_summary_json()), "context"));
+      expect(result.phase).toBe("result");
+      expect(result.difficulty).toMatchObject({ information: "custom", hudProfile: {
+        telemetry: false, attitude: true, wind: false, flightPath: true, angleOfAttack: false, warnings: true } });
+      expect(Object.isFrozen(result.difficulty)).toBe(true);
+      expect(Object.isFrozen(result.difficulty.hudProfile)).toBe(true);
+      source.enter_replay();
+      expect(parseNamedReplayContext(source.playback_context_json()).difficulty).toEqual(result.difficulty);
+      archived.open_archived_flight_record(record);
+      expect(parseNamedReplayContext(archived.playback_context_json()).difficulty).toEqual(result.difficulty);
+      expect(source.export_flight_record_json()).toBe(record);
+      source.leave_replay();
+      expect(source.snapshot_json()).toBe(snapshot);
+    } finally {
+      archived.free();
+      source.free();
+    }
+  });
 
   it("views v6 archives from their saved context while retaining original nested failure causes", () => {
     const source = tailResult();

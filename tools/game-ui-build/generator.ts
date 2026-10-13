@@ -21,7 +21,8 @@ export const schemaEntries = [
   { key: "tail_scenario", name: "EnvironmentIdentity", filename: "tail-scenario", group: "serialize" },
   { key: "tail_identity", name: "FlightRecordTailIdentityDocument", filename: "tail-identity", group: "serialize" },
   { key: "tail_incidence", name: "TailIncidenceDocument", filename: "tail-incidence", group: "serialize" },
-  { key: "tail_finalization", name: "TailFlightRecordFinalizationDocument", filename: "tail-finalization", group: "serialize" }
+  { key: "tail_finalization", name: "TailFlightRecordFinalizationDocument", filename: "tail-finalization", group: "serialize" },
+  { key: "record_difficulty", name: "FlightRecordDifficultyDocument", filename: "record-difficulty", group: "serialize" }
 ] as const;
 
 const schemaGroups = ["serialize", "deserialize"] as const;
