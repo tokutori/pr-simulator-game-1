@@ -14,7 +14,7 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 
 function launch(session: AppSessionFacade): void {
   session.executeOperation("open-setup"); session.executeOperation("prepare"); session.executeOperation("start-flight");
-  session.advanceCountdown(); session.advanceCountdown(); session.advanceCountdown(); session.launch();
+  session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true);
 }
 
 function verifyReturnViews(session: TailAppSessionFacade, expected: ReplayReturnTarget): void {

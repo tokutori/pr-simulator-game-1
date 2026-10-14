@@ -45,6 +45,35 @@ beforeAll(() => {
 });
 
 describe("Screen UI to current WebAssembly GameSession transitions", () => {
+  it.each(["webxr", "phone-vr"] as const)("stops the actual Rust Replay clock during %s interruption", (mode) => {
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
+    try {
+      launchCurrentSession(session);
+      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advance_tick_json(neutralTailInput);
+      session.executeOperation("abort");
+      session.executeOperation("enter-replay");
+      session.setPlaybackPlaying(true);
+      const record = session.exportRecordJson();
+      const initial = updateApp(createInitialAppModel(), { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
+      const active: AppModel = { ...initial, presentation: { type: "ready", mode },
+        replayClock: { ...initial.replayClock, generation: 7,
+          observation: { ...initial.replayClock.observation, playing: true } } };
+      const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking lost" });
+      const pause = recovery.effects.find((effect) => effect.type === "control-replay-clock");
+      if (pause?.type !== "control-replay-clock" || pause.command.kind !== "pause") throw new Error("Interruption did not stop Replay");
+      const clock = session.setPlaybackPlaying(false);
+      expect(clock.kind).toBe("paused");
+      expect(session.advancePlayback(10).timeSeconds).toBe(clock.timeSeconds);
+      expect(updateApp(recovery.model, { type: "replay-clock-tick", generation: 7, elapsedSeconds: 10 }).model).toBe(recovery.model);
+      const paused = updateApp(recovery.model, { type: "replay-clock-command-completed", requestId: pause.requestId, generation: pause.generation,
+        state: { timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: false } });
+      expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
+      expect(session.readLifecycle().phaseCode).toBe(9);
+      expect(session.exportRecordJson()).toBe(record);
+    } finally { session.dispose(); }
+  });
+
   it.each(["manual_abort", "water_contact"] as const)("loads Result cursor effects through WASM after %s", (terminal) => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
@@ -193,8 +222,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       expect(model.gameSession.kind).toBe("countdown");
       activate("game-countdown-cancel");
       activate("game-briefing-start");
-      while (session.advanceCountdown() > 0) continue;
-      session.launch();
+      session.observeCountdown(session.captureCountdownToken(), 3, true);
       synchronize();
       activate("game-flight-pause");
       activate("game-pause-open-settings");

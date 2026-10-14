@@ -31,9 +31,8 @@ describe("sealed initial launch presentation", () => {
         session.executeOperation("start-flight");
         for (let step = 0; step < 3; step++) {
           expect(session.readPreparedLaunchPose()).toEqual(initial);
-          session.advanceCountdown();
+          session.observeCountdown(session.captureCountdownToken(), 1, true);
         }
-        session.launch();
         expect(session.readPreparedLaunchPose()).toBeNull();
         const live = parseTailSessionSnapshot(bridge.snapshot_json(), physics_hz());
         const display = projectTailFlightSnapshot(live);

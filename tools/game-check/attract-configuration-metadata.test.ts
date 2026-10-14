@@ -17,7 +17,7 @@ function selection(session: HybridGameSessionBridge) {
 }
 
 function startFlight(session: HybridGameSessionBridge): void {
-  session.prepare(); session.mark_briefing_ready(); session.start_countdown(1); session.advance_countdown(); session.launch();
+  session.prepare(); session.mark_briefing_ready(); session.start_countdown(1); session.observe_countdown(session.countdown_token(), 1, true);
 }
 
 it("reports the independent Custom/Minimal/Automatic demonstration identity", () => {
@@ -106,7 +106,7 @@ it("keeps configuration queries observational through Briefing, pause, Result an
     };
     stableQuery(); session.fail_briefing(0); stableQuery(); session.retry_briefing(); stableQuery();
     session.mark_briefing_ready(); stableQuery(); session.start_countdown(1); stableQuery();
-    session.advance_countdown(); session.launch(); stableQuery(); session.pause(0); stableQuery();
+    session.observe_countdown(session.countdown_token(), 1, true); stableQuery(); session.pause(0); stableQuery();
     session.clear_pause_reason(0); session.resume(); session.advance_tick_json(neutralTailInput); session.abort(); stableQuery();
     const json = session.export_flight_record_json();
     const best = new TailPersonalBestSelectionBridge(json);

@@ -24,8 +24,7 @@ describe("browser cache to Rust session boundary", () => {
   it("retains the same Flight session across two cache round trips without catch-up", async () => {
     const window = new BrowserWindow();
     const session = preparedSession();
-    session.advance_countdown();
-    session.launch();
+    session.observe_countdown(session.countdown_token(), 1, true);
     const free = vi.spyOn(session, "free");
     const readState = () => {
       const snapshot = parseTailSessionSnapshot(session.snapshot_json(), physics_hz());
@@ -41,7 +40,7 @@ describe("browser cache to Rust session boundary", () => {
     }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(session, controller, () => {}, synchronize); },
+      suspend: () => { suspendPageFlight(session, controller, synchronize); },
       restore: () => { session.clear_pause_reason(1); synchronize(); },
       dispose: () => { controller.dispose(); }
     });
@@ -86,10 +85,10 @@ describe("browser cache to Rust session boundary", () => {
   it("cancels Countdown before caching even without a visibilitychange event", async () => {
     const window = new BrowserWindow();
     const session = preparedSession();
-    const invalidate = vi.fn();
+    const token = session.countdown_token();
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(session, null, invalidate, synchronize); },
+      suspend: () => { suspendPageFlight(session, null, synchronize); },
       restore: synchronize,
       dispose: () => { session.free(); }
     });
@@ -98,9 +97,8 @@ describe("browser cache to Rust session boundary", () => {
       Object.defineProperty(event, "persisted", { value: true });
       window.dispatchEvent(event);
       expect(session.phase_code()).toBe(3);
-      expect(invalidate).toHaveBeenCalledOnce();
       expect(synchronize).toHaveBeenCalledOnce();
-      expect(() => session.advance_countdown()).toThrow();
+      expect(session.observe_countdown(token, 1, true)).toBe(0);
     } finally {
       window.dispatchEvent(new window.Event("pagehide"));
       await window.happyDOM.abort();

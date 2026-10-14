@@ -53,8 +53,7 @@ async function fixture(archive = false) {
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
+  session.observe_countdown(session.countdown_token(), 1, true);
   const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
   session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
     desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
@@ -215,8 +214,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     assertRejected(3);
     trial.session.start_countdown(1);
     assertRejected(4);
-    trial.session.advance_countdown();
-    trial.session.launch();
+    trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
     assertRejected(5);
     trial.session.pause(0);
     assertRejected(6);

@@ -205,7 +205,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     app.send({
       type: "game-session-synced", phaseCode: 5, controlModeCode: 0,
       difficulty: app.model().difficulty, configurationMetadata: null,
-      countdownRemaining: 0, display: { kind: "available", value: snapshot }, canResume: false, controlLayout: "tail_incidence"
+      countdownRemainingSeconds: 0, display: { kind: "available", value: snapshot }, canResume: false, controlLayout: "tail_incidence"
     });
     const observation = currentSharedGameUiFixture(5);
     if (observation.hud === null) throw new Error("Missing shared HUD");

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
 import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import type { WebXrSessionPort } from "../../web/src/presentation/webxr-contracts.js";
+import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 const teardowns: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -15,7 +17,7 @@ afterEach(async () => {
 });
 
 async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false, captureReplayTicks = false,
-  recordListMode: "normal" | "loading" | "failed" = "normal") {
+  recordListMode: "normal" | "loading" | "failed" = "normal", webXrAvailable = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
@@ -29,6 +31,9 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   vi.stubGlobal("HTMLElement", browser.HTMLElement);
   vi.stubGlobal("HTMLInputElement", browser.HTMLInputElement);
   vi.stubGlobal("HTMLSelectElement", browser.HTMLSelectElement);
+  vi.spyOn(browser.document, "hasFocus").mockReturnValue(true);
+  let nowMilliseconds = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => nowMilliseconds);
   const persistence = new IDBFactory();
   Object.defineProperty(browser, "indexedDB", { value: persistence });
   vi.stubGlobal("indexedDB", persistence);
@@ -37,9 +42,9 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const replayTicks: (() => void)[] = [];
   const timeout = browser.setTimeout.bind(browser);
   vi.spyOn(browser, "setTimeout").mockImplementation((handler, delay, ...args) => {
-    if ((delay === 800 || captureReplayTicks && delay === 50) && typeof handler === "function") {
+    if ((delay === 1000 || captureReplayTicks && delay === 50) && typeof handler === "function") {
       const callback = handler as (...values: unknown[]) => void;
-      (delay === 800 ? countdown : replayTicks).push(() => { callback(...args); });
+      (delay === 1000 ? countdown : replayTicks).push(() => { callback(...args); });
       const handle = timeout(() => undefined, 0);
       browser.clearTimeout(handle);
       return handle;
@@ -62,8 +67,17 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
   } satisfies RendererAdapter;
+  let sessionEndHandler: (() => void) | null = null;
+  const webxr: WebXrSessionPort = {
+    transformTrackingPose: (pose) => pose,
+    checkAvailability: () => Promise.resolve({ supported: webXrAvailable, message: "Headless WebXR test port" }),
+    requestSessionFromUserGesture: () => Promise.resolve({ ok: true }),
+    startSession: () => Promise.resolve(), endSession: () => Promise.resolve(),
+    setSessionEndHandler: (handler) => { sessionEndHandler = handler; },
+    setReferenceSpaceResetHandler: () => undefined
+  };
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
-    createThreeRenderer: () => ({ renderer, webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) } })
+    createThreeRenderer: () => ({ renderer, webxr })
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -76,8 +90,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       archived.prepare();
       archived.mark_briefing_ready();
       archived.start_countdown(1);
-      archived.advance_countdown();
-      archived.launch();
+      archived.observe_countdown(archived.countdown_token(), 1, true);
       const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
       const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
@@ -97,6 +110,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
   const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
+  const observeCountdown = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "observe_countdown");
   const pause = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "pause");
   const clearPauseReason = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "clear_pause_reason");
   const sharedView = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "game_ui_view_json");
@@ -115,6 +129,8 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       return gate;
     });
   }
+  const factory = await import("../../web/src/app/session-factory.js");
+  const initializeSession = vi.spyOn(factory, "initializeAppSession");
   await import("../../web/src/main.js");
   const scene = () => documentRef.querySelector<HTMLElement>(".screen-ui-shell")?.dataset.scene;
   const page = (type: "pagehide" | "pageshow", persisted: boolean): void => {
@@ -132,13 +148,34 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     button.click();
   };
   const launch = (): void => {
+    frame(nowMilliseconds, unavailableViewerFrame("not-stereo"));
     click("game-briefing-start");
     let count = 0;
-    while (countdown.length > 0 && count < 10) { countdown.shift()?.(); count += 1; }
+    while (countdown.length > 0 && count < 10) { countdownTick(); count += 1; }
     expect(scene()).toBe("Flight");
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, replayTicks,
-    countdownTick: () => { countdown.shift()?.(); },
+  const countdownTick = (elapsedMilliseconds = 1000, callback = countdown.shift(), framesAvailable = true): void => {
+    const nextMilliseconds = nowMilliseconds + elapsedMilliseconds;
+    if (framesAvailable) {
+      while (nowMilliseconds < nextMilliseconds) {
+        nowMilliseconds = Math.min(nowMilliseconds + 100, nextMilliseconds);
+        frame(nowMilliseconds, unavailableViewerFrame("not-stereo"));
+      }
+    } else nowMilliseconds = nextMilliseconds;
+    callback?.();
+  };
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, replayTicks, observeCountdown,
+    countdownTick, countdown,
+    advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
+    sessionOwner: () => {
+      const result = initializeSession.mock.results[0];
+      if (result?.type !== "return") throw new Error("Main session owner is unavailable");
+      return result.value;
+    },
+    endWebXr: () => {
+      if (sessionEndHandler === null) throw new Error("WebXR session end handler is unavailable");
+      sessionEndHandler();
+    },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
     frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
 }
@@ -161,8 +198,6 @@ async function manualReplayFixture() {
   for (let timestamp = 0; timestamp <= 1000; timestamp += 100) trial.frame(timestamp);
   expect(trial.scene()).toBe("Flight");
   trial.click("game-flight-abort");
-  let nowMilliseconds = 0;
-  vi.spyOn(performance, "now").mockImplementation(() => nowMilliseconds);
   trial.click("game-result-replay");
   trial.click("game-replay-play-pause");
   expect(trial.documentRef.querySelector('[data-control-id="game-replay-play-pause"]')?.textContent).toBe("Pause");
@@ -178,13 +213,115 @@ async function manualReplayFixture() {
     },
     tickReplay: (callback = trial.replayTicks.shift()): void => {
       if (callback === undefined) throw new Error("Replay timer is missing");
-      nowMilliseconds += 50;
+      trial.advanceClock(50);
       callback();
     }
   };
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("cancels the actual Rust Countdown on WebXR end delivery before UI phase synchronization", async () => {
+    const trial = await fixture(false, false, false, false, "normal", true);
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("boot-enter-webxr");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="boot-exit-vr"]')).not.toBeNull(); });
+    const owner = await trial.sessionOwner();
+    owner.executeSharedSessionCommand({ kind: "open_setup" });
+    owner.executeSharedSessionCommand({ kind: "prepare" });
+    owner.executeSharedSessionCommand({ kind: "start_countdown" });
+    const obsolete = owner.captureCountdownToken();
+    expect(owner.readLifecycle().phaseCode).toBe(4);
+    trial.endWebXr();
+    await vi.waitFor(() => { expect(owner.readLifecycle().phaseCode).toBe(3); });
+    expect(owner.observeCountdown(obsolete, 3, true)).toEqual({ kind: "ignored" });
+    expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
+    expect(trial.tick).not.toHaveBeenCalled();
+  });
+
+  it.each(["ui-update", "rejected-ui-update"] as const)("continues the same Countdown after query invalidation by %s", async (operation) => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.click("game-briefing-start");
+    const owner = await trial.sessionOwner();
+    const query = owner.captureQueryToken();
+    if (operation === "ui-update") {
+      const update = owner.updateSharedUi({ kind: "session", command: { kind: "cancel_countdown" } }, sharedGameUiPlatform());
+      expect(update.effects).toContainEqual({ kind: "session", command: { kind: "cancel_countdown" } });
+    } else expect(() => owner.updateSharedUi({ kind: "toggle_technical" }, sharedGameUiPlatform())).toThrow();
+    expect(owner.acceptQuery(query, undefined).kind).toBe("stale");
+    expect(owner.readLifecycle().phaseCode).toBe(4);
+    trial.countdownTick(800);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("3 秒");
+    trial.countdownTick(200);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("2 秒");
+    trial.countdownTick(2000);
+    expect(trial.scene()).toBe("Flight");
+    expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(1);
+  });
+
+  it("uses monotonic elapsed instead of timer callback counts and rejects a duplicate callback", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.click("game-briefing-start");
+    const duplicate = trial.countdown.shift();
+    if (duplicate === undefined) throw new Error("Countdown observation is missing");
+    trial.countdownTick(800, duplicate);
+    expect(trial.scene()).toBe("Countdown");
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("3 秒");
+    duplicate();
+    expect(trial.observeCountdown).toHaveBeenCalledTimes(1);
+    trial.countdownTick(200);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("2 秒");
+    const completed = trial.countdown.shift();
+    trial.countdownTick(2000, completed);
+    expect(trial.scene()).toBe("Flight");
+    completed?.();
+    expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(1);
+    expect(trial.tick).not.toHaveBeenCalled();
+  });
+
+  it("rejects an old Countdown callback after cancel and restart", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.click("game-briefing-start");
+    const obsolete = trial.countdown.shift();
+    trial.click("game-countdown-cancel");
+    trial.click("game-briefing-start");
+    trial.countdownTick(800, obsolete);
+    expect(trial.scene()).toBe("Countdown");
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("3 秒");
+    expect(trial.observeCountdown).not.toHaveBeenCalled();
+    trial.countdownTick(200);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("2 秒");
+  });
+
+  it.each(["no-frames", "blur", "hidden", "late-frame"] as const)("cancels Countdown for %s without timer-driven launch", async (interruption) => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.frame(0);
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.click("game-briefing-start");
+    if (interruption === "blur") trial.browser.dispatchEvent(new trial.browser.Event("blur"));
+    if (interruption === "hidden") {
+      Object.defineProperty(trial.browser.document, "visibilityState", { value: "hidden", configurable: true });
+      trial.browser.document.dispatchEvent(new trial.browser.Event("visibilitychange"));
+    }
+    if (interruption === "late-frame") {
+      trial.advanceClock(151);
+      trial.frame(151);
+    }
+    trial.countdownTick(3000, undefined, false);
+    expect(trial.scene()).toBe("Briefing");
+    expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
+    expect(trial.tick).not.toHaveBeenCalled();
+  });
   it("projects ProcessingDelay, preserves ticks and requires explicit Resume without catch-up", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

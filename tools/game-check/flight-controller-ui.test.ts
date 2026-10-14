@@ -139,8 +139,7 @@ describe("Flight controller shared stop diagnosis", () => {
     expect(trial.controller.currentSnapshot.phaseCode).toBe(7);
     trial.facade.executeOperation("retry");
     trial.facade.executeOperation("start-flight");
-    while (trial.facade.advanceCountdown() > 0) continue;
-    trial.facade.launch();
+    trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     const replacement = trial.bind();
     trial.controller.reset(trial.session.snapshot_json(), replacement.port);
     trial.update({ type: "flight-controller-ready", identity: replacement.identity });
@@ -175,8 +174,7 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   }
   facade.executeOperation("prepare");
   facade.executeOperation("start-flight");
-  while (facade.advanceCountdown() > 0) continue;
-  facade.launch();
+  facade.observeCountdown(facade.captureCountdownToken(), 3, true);
   const initial = createInitialAppModel();
   let model: AppModel = { ...updateApp(initial, { type: "game-session-synced", ...facade.readGameSessionProjection() }).model,
     presentation: { type: "ready", mode } };

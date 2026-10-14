@@ -976,7 +976,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.action(MenuAction::Pause).unwrap();
         }
@@ -1119,7 +1119,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.tick(FlightInput::default());
             session.action(MenuAction::Pause).unwrap();
@@ -1454,7 +1454,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.action(MenuAction::Pause).unwrap();
         }

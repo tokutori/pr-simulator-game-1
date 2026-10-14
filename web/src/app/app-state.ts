@@ -135,7 +135,7 @@ export type GameSessionUiState = { readonly kind: "boot"; readonly phaseCode: -1
   | { readonly kind: "setup"; readonly phaseCode: 1 }
   | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
   | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
-  | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemaining: number }
+  | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemainingSeconds: number }
   | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
   | { readonly kind: "replay"; readonly phaseCode: 9; readonly returnTarget: ReplayReturnTarget; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
 ))
@@ -251,7 +251,7 @@ interface SessionSelectionProjection {
   readonly controlModeCode: number;
   readonly difficulty: DifficultyUiState;
   readonly configurationMetadata: ConfigurationMetadataUiState | null;
-  readonly countdownRemaining: number;
+  readonly countdownRemainingSeconds: number;
 }
 export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
   | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
@@ -415,12 +415,12 @@ export function gameSessionSnapshot(session: GameSessionUiState): FlightDisplayS
 }
 
 export function gameSessionCountdown(session: GameSessionUiState): number {
-  return session.kind === "countdown" ? session.countdownRemaining : 0;
+  return session.kind === "countdown" ? session.countdownRemainingSeconds : 0;
 }
 
 export function gameSessionState(
   phaseCode: number,
-  countdownRemaining: number,
+  countdownRemainingSeconds: number,
   snapshotInput: FlightSnapshotInput | null,
   canResume = false,
   controlLayout: SessionControlLayout = "tail_incidence",
@@ -436,8 +436,8 @@ export function gameSessionState(
     case 2: return { ...selection, kind: "briefing-preparing", phaseCode: 2 };
     case 3: return { ...selection, kind: "briefing-ready", phaseCode: 3 };
     case 4:
-      return Number.isSafeInteger(countdownRemaining) && countdownRemaining >= 0
-        ? { ...selection, kind: "countdown", phaseCode: 4, countdownRemaining }
+      return Number.isSafeInteger(countdownRemainingSeconds) && countdownRemainingSeconds >= 0
+        ? { ...selection, kind: "countdown", phaseCode: 4, countdownRemainingSeconds }
         : null;
     case 5: {
       const live = snapshot === null ? null : liveSessionProjection(snapshot, phaseCode);
@@ -748,7 +748,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemainingSeconds, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
       if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
       const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
       const nextPhaseCode = gameSessionPhaseCode(gameSession);
@@ -773,7 +773,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemaining, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
+      const gameSession = gameSessionState(message.phaseCode, message.countdownRemainingSeconds, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
       if (gameSession === null) return transition(withModel(model, {
         pendingGameRequestId: null,
@@ -1320,13 +1320,17 @@ function updateBackendCompletion(
 }
 
 function beginScreenRecovery(model: AppModel, origin: ScreenRecoveryOrigin): AppTransition {
+  const playback = origin.origin === "backend-fault" && (model.gameSession.kind === "replay" || model.gameSession.kind === "attract")
+    ? beginReplayClockCommand(withModel(model, { replayClock: stopReplayClock(model.replayClock) }), { kind: "pause" }, false)
+    : transition(model);
+  model = playback.model;
   const requestId = model.nextRequestId;
   const message = origin.origin === "backend-fault" ? origin.cause : "Page restored";
   return transition(withModel(model, {
     presentation: Object.freeze({ type: "transitioning", ...origin, requestId, to: "screen", phase: "stopping" }),
     nextRequestId: requestId + 1,
     status: `${message}; restoring Screen`
-  }), [{ type: "switch-backend", mode: "screen", requestId }]);
+  }), [...playback.effects, { type: "switch-backend", mode: "screen", requestId }]);
 }
 
 function canRequestPresentation(state: PresentationUiState): boolean {

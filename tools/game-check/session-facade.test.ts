@@ -17,10 +17,9 @@ function launch(facade: AppSessionFacade): void {
   facade.executeOperation("prepare");
   expect(facade.readLifecycle().phaseCode).toBe(3);
   expect(facade.executeOperation("start-flight").kind).toBe("countdown-started");
-  expect(facade.advanceCountdown()).toBe(2);
-  expect(facade.advanceCountdown()).toBe(1);
-  expect(facade.advanceCountdown()).toBe(0);
-  facade.launch();
+  expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
+  expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 1 });
+  expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "launched" });
 }
 
 function advance(facade: AppSessionFacade): void {

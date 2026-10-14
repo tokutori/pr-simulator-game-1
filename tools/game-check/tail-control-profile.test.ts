@@ -29,8 +29,8 @@ describe("Rust-owned two-tail controller metadata", () => {
         expect(Object.isFrozen(profile.desiredBodyRateLimitRadiansPerSecond)).toBe(true);
         session.mark_briefing_ready();
         session.start_countdown(1);
-        session.advance_countdown();
-        const initial = parseTailSessionSnapshot(session.launch());
+        session.observe_countdown(session.countdown_token(), 1, true);
+        const initial = parseTailSessionSnapshot(session.snapshot_json());
         const demand = tailKeyboardDemand(new Set(["ArrowUp", "ArrowRight", "KeyL"])).demand;
         const input = tailInputFromControlProfile(demand, profile, initial);
         expect(input.desiredPitchRateRadiansPerSecond).toBe(profile.desiredBodyRateLimitRadiansPerSecond.pitch);

@@ -2143,7 +2143,10 @@ fn require_unstarted_countdown(
         || session.game.configuration_identity() != Some(header.scenario)
         || session.game.prepared_launch_state() != Some(initial)
         || initial.tick_index() != 0
-        || session.countdown_elapsed != 0.0
+        || session
+            .game
+            .countdown_elapsed_seconds()
+            .is_some_and(|elapsed| elapsed != 0.0)
         || record.sample_count() != 0
         || record.finalization().is_some()
     {
@@ -2180,7 +2183,9 @@ fn start_countdown(
     session.action(MenuAction::Launch)?;
     require_phase(
         session.game.snapshot().phase(),
-        SessionPhase::Countdown { remaining_ticks: 3 },
+        SessionPhase::Countdown {
+            remaining_seconds: 3,
+        },
     )?;
     verification.countdown_attempts += 1;
     verification.countdown_started = Some(elapsed);
@@ -2530,7 +2535,7 @@ mod tests {
         assert_eq!(session.game.configuration_identity(), identity);
         assert_eq!(session.game.prepared_launch_state(), initial);
         assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
-        assert_eq!(session.countdown_elapsed, 0.0);
+        assert_eq!(session.game.countdown_token(), None);
         assert!(
             session
                 .game
@@ -2576,7 +2581,9 @@ mod tests {
         let session = app.world().resource::<NativeSession>();
         assert_eq!(
             session.game.snapshot().phase(),
-            SessionPhase::Countdown { remaining_ticks: 3 }
+            SessionPhase::Countdown {
+                remaining_seconds: 3
+            }
         );
         assert_eq!(session.game.configuration_identity(), identity);
         assert_eq!(session.game.prepared_launch_state(), initial);
@@ -3130,7 +3137,9 @@ mod tests {
             ("game-setup-start", SessionPhase::BriefingReady),
             (
                 "game-briefing-start",
-                SessionPhase::Countdown { remaining_ticks: 3 },
+                SessionPhase::Countdown {
+                    remaining_seconds: 3,
+                },
             ),
         ] {
             queue_ui_control(&mut app.world_mut().commands(), id, None);
@@ -3148,7 +3157,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.tick(super::super::native_session::FlightInput::default());
             session.action(MenuAction::Abort).unwrap();
@@ -3224,7 +3233,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.tick(super::super::native_session::FlightInput::default());
             session.action(MenuAction::Abort).unwrap();
@@ -3448,7 +3457,7 @@ mod tests {
                     session.action(action).unwrap();
                 }
                 for _ in 0..3 {
-                    session.countdown(1.0);
+                    session.presentation_frame(1.0);
                 }
                 session.game.pause(reason).unwrap();
                 session.game.snapshot().phase()
@@ -3661,7 +3670,7 @@ mod tests {
             session.action(action).unwrap();
         }
         for _ in 0..3 {
-            session.countdown(1.0);
+            session.presentation_frame(1.0);
         }
         let state = session.game.snapshot().tail_flight_state().unwrap();
         let sample_count = session.game.flight_record().unwrap().sample_count();
@@ -3763,7 +3772,7 @@ mod tests {
                 session.action(action).unwrap();
             }
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.game.pause(PauseReason::ProcessingDelay).unwrap();
             let mut observed = additional.is_some();
@@ -3800,7 +3809,7 @@ mod tests {
             session.action(action).unwrap();
         }
         for _ in 0..3 {
-            session.countdown(1.0);
+            session.presentation_frame(1.0);
         }
         let mut observed = false;
         let readiness = RenderReadiness::default();

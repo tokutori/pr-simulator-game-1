@@ -25,8 +25,7 @@ function result(ticks = 3, seed = 41): TailAppSessionFacade {
   bridge.prepare();
   bridge.mark_briefing_ready();
   bridge.start_countdown(1);
-  bridge.advance_countdown();
-  bridge.launch();
+  bridge.observe_countdown(bridge.countdown_token(), 1, true);
   for (let index = 0; index < ticks; index += 1) bridge.advance_tick_json(neutral);
   bridge.abort();
   return new TailAppSessionFacade(bridge, physics_hz());

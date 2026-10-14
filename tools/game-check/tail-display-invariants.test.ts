@@ -63,8 +63,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     session.prepare();
     session.mark_briefing_ready();
     session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
+    session.observe_countdown(session.countdown_token(), 1, true);
     const initial = parseTailSessionSnapshot(session.snapshot_json());
     if (initial.phaseCode !== 5) throw new Error("Expected a prepared flight");
     expect(initial.identity).toMatchObject({ kind: "prepared", scenario: { catalogVersion: 3, scenarioVersion: 3,

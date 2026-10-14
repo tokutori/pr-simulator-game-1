@@ -191,7 +191,7 @@ describe("Boot application state", () => {
   it("accepts a global record-list completion after a Scene change", () => {
     const pending = readyModel();
     const projection = { controlLayout: "tail_incidence", canResume: false, controlModeCode: pending.controlModeCode,
-      difficulty: pending.difficulty, configurationMetadata: pending.configurationMetadata, countdownRemaining: 0,
+      difficulty: pending.difficulty, configurationMetadata: pending.configurationMetadata, countdownRemainingSeconds: 0,
       display: { kind: "unavailable", reason: "menu_phase" } } as const;
     const setup = updateApp(pending, { type: "game-session-synced", phaseCode: 1, ...projection }).model;
     expect(setup.recordList).toBe(pending.recordList);
@@ -234,7 +234,7 @@ describe("Boot application state", () => {
     const entered = updateApp(opening.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 9, controlModeCode: 0,
       returnTarget: "title",
-      difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      difficulty: opening.model.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.effects).toEqual([
       {
@@ -260,7 +260,7 @@ describe("Boot application state", () => {
     ]);
     const entered = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 10, controlModeCode: 0,
-      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.model.gameSession.phaseCode).toBe(10);
     expect(entered.model.replayClock.observation.playing).toBe(false);
@@ -310,7 +310,7 @@ describe("Boot application state", () => {
     ]);
     const returned = updateApp(returning.model, { canResume: false,
       type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 0, controlModeCode: 0,
-      difficulty: title.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
+      difficulty: title.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(returned.model.gameSession.phaseCode).toBe(0);
     expect(returned.model.replayClock.observation.playing).toBe(false);
@@ -380,6 +380,24 @@ describe("Boot application state", () => {
     const screen = readyModel();
     const stale = updateApp(screen, { type: "backend-ended", mode: "webxr", message: "Late end" });
     expect(stale.model).toBe(screen);
+  });
+
+  it.each(["webxr", "phone-vr"] as const)("pauses Replay before %s recovery and rejects obsolete clock ticks", (mode) => {
+    const initial = readyModel(9);
+    const active: AppModel = { ...initial, presentation: { type: "ready", mode },
+      replayClock: { ...initial.replayClock, generation: 7,
+        observation: { ...initial.replayClock.observation, playing: true } } };
+    const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking lost" });
+    expect(recovery.model.replayClock.observation.playing).toBe(false);
+    expect(recovery.model.replayClock.generation).toBe(8);
+    expect(recovery.effects).toEqual([
+      { type: "control-replay-clock", requestId: 1, generation: 8, command: { kind: "pause" } },
+      { type: "switch-backend", mode: "screen", requestId: 2 }
+    ]);
+    expect(updateApp(recovery.model, { type: "replay-clock-tick", generation: 7, elapsedSeconds: 1 }).model).toBe(recovery.model);
+    const paused = updateApp(recovery.model, { type: "replay-clock-command-completed", requestId: 1, generation: 8,
+      state: { timeSeconds: 0, rateCode: 1, playing: false } });
+    expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
   });
 
   it.each(["webxr", "phone-vr"] as const)("hands the %s fault cause to its matching Screen completion", (mode) => {
@@ -521,7 +539,7 @@ describe("Boot application state", () => {
     const recovery = updateApp(active, { type: "backend-ended", mode, message: "Tracking lost" });
     const paused = updateApp(recovery.model, {
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
-      difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
+      difficulty: active.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0,
       display: { kind: "available", value: currentFlightDisplayFixture(6) }, canResume: false
     });
     expect(paused.model.presentation).toBe(recovery.model.presentation);
@@ -533,7 +551,7 @@ describe("Boot application state", () => {
     expect(createGameViewModel(currentSharedGameUiFixture(6, { pauseReason: 1 })).panels[0]?.controls.find((control) => control.id === "game-flight-resume")?.enabled).toBe(false);
     const synchronized = updateApp(completed.model, {
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
-      difficulty: active.difficulty, configurationMetadata: null, countdownRemaining: 0,
+      difficulty: active.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0,
       display: { kind: "available", value: currentFlightDisplayFixture(6) }, canResume: true
     });
     expect(synchronized.model.status).toBe("Tracking lost; Screen is active");
@@ -687,7 +705,7 @@ describe("Boot application state", () => {
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 0,
       difficulty: { presetCode: 1, informationCode: 1, hudProfile: fullHudProfile, assistanceCode: 1, weatherCode: 2 },
       configurationMetadata: null,
-      countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
+      countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(completed.model.gameSession.phaseCode).toBe(1);
     expect(completed.model.pendingGameRequestId).toBeNull();
@@ -695,7 +713,7 @@ describe("Boot application state", () => {
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 2,
       difficulty: { presetCode: 0, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 1 },
       configurationMetadata: null,
-      countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(stale.model).toBe(completed.model);
   });
@@ -705,7 +723,7 @@ describe("Boot application state", () => {
     const synced = updateApp(model, {
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 6, controlModeCode: 0,
       difficulty: model.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
+      countdownRemainingSeconds: 0, canResume: false, display: { kind: "available", value: currentFlightDisplayFixture(6) }
     });
     expect(synced.model.gameSession).toEqual({
       kind: "paused-flight", phaseCode: 6, controlLayout: "tail_incidence", snapshot: currentFlightDisplayFixture(6), canResume: false
@@ -755,7 +773,7 @@ describe("Boot application state", () => {
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 2,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 0, weatherCode: 0 },
       configurationMetadata: null,
-      countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
+      countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     expect(completed.model.controlModeCode).toBe(2);
     expect(completed.model.difficulty.assistanceCode).toBe(0);
@@ -786,7 +804,7 @@ describe("Boot application state", () => {
     const completed = updateApp(title, { canResume: false,
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 2, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 4 },
-      configurationMetadata, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      configurationMetadata, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(completed.model.configurationMetadata).toEqual(configurationMetadata);
   });
@@ -796,7 +814,7 @@ describe("Boot application state", () => {
     const terminal = updateApp(flight, { canResume: false,
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
-      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(terminal.effects).toEqual([
       { type: "persist-flight-record" },
@@ -806,7 +824,7 @@ describe("Boot application state", () => {
     const duplicate = updateApp(terminal.model, { canResume: false,
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: terminal.model.difficulty,
-      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(duplicate.effects).toEqual([]);
   });
@@ -943,7 +961,7 @@ describe("Boot application state", () => {
       analysisCursor: { kind: "loading", requestId: 8, nextRequestId: 9, retained: currentNamedCursorFixture(data) } };
     const exited = updateApp(initial, { type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 1,
       controlModeCode: 0, difficulty: initial.difficulty, configurationMetadata: null,
-      countdownRemaining: 0, canResume: false, display: { kind: "unavailable", reason: "menu_phase" } }).model;
+      countdownRemainingSeconds: 0, canResume: false, display: { kind: "unavailable", reason: "menu_phase" } }).model;
     expect(exited.analysis).toEqual({ kind: "idle", nextRequestId: 5 });
     expect(exited.analysisCursor).toEqual({ kind: "idle", nextRequestId: 9 });
     expect(updateApp(exited, { type: "flight-analysis-loaded", requestId: 4, data }).model).toBe(exited);
@@ -974,7 +992,7 @@ describe("Boot application state", () => {
     const entered = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 9, controlModeCode: 0,
       returnTarget: "result",
-      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      difficulty: result.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(entered.model.gameSession.phaseCode).toBe(9);
     expect(entered.model.resultTab).toBe("analysis");
@@ -1029,7 +1047,7 @@ describe("Boot application state", () => {
     expect(leave.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "leave_replay" }, requestId: 3 }]);
     const returnedTransition = updateApp(leave.model, { canResume: false,
       type: "game-operation-completed", requestId: 3, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
-      difficulty: result.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      difficulty: result.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     const freshResult = withSharedGameUiSession(7, { ticks: 200, actions: [
       { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }
@@ -1303,7 +1321,7 @@ describe("Boot application state", () => {
     const projection = phaseCode === 7
       ? { phaseCode: 7 as const, display: { kind: "unavailable" as const, reason: "record_not_loaded" as const } }
       : { phaseCode: 0 as const, display: { kind: "unavailable" as const, reason: "menu_phase" as const } };
-    const exited = updateApp(initial, { type: "game-operation-completed", requestId: 8, ...projection, countdownRemaining: 0,
+    const exited = updateApp(initial, { type: "game-operation-completed", requestId: 8, ...projection, countdownRemainingSeconds: 0,
       canResume: false, controlLayout: "tail_incidence", controlModeCode: 0, difficulty: initial.difficulty, configurationMetadata: null,
     });
     expect(exited.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
@@ -1311,7 +1329,7 @@ describe("Boot application state", () => {
       observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
     const reopened = updateApp({ ...exited.model, pendingGameRequestId: 9 }, {
       type: "game-operation-completed", requestId: 9, phaseCode: 9, returnTarget: phaseCode === 0 ? "title" : "result",
-      countdownRemaining: 0, canResume: false, controlLayout: "tail_incidence", controlModeCode: 0,
+      countdownRemainingSeconds: 0, canResume: false, controlLayout: "tail_incidence", controlModeCode: 0,
       difficulty: initial.difficulty, configurationMetadata: null, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(reopened.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
@@ -1362,7 +1380,7 @@ describe("Boot application state", () => {
     const completed = updateApp(requested.model, { canResume: false,
       type: "game-operation-completed", requestId: 2, controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
       difficulty: { presetCode: 4, informationCode: 0, hudProfile: fullHudProfile, assistanceCode: 3, weatherCode: 0 },
-      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     expect(completed.effects).toEqual([
       { type: "persist-flight-record" },
@@ -1374,11 +1392,11 @@ describe("Boot application state", () => {
     const flight = readyModel(5);
     const terminal = updateApp(flight, { canResume: false,
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 7, controlModeCode: 0,
-      difficulty: flight.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
+      difficulty: flight.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" }
     });
     const setup = updateApp(terminal.model, { canResume: false,
       type: "game-session-synced", controlLayout: "tail_incidence", phaseCode: 1, controlModeCode: 0,
-      difficulty: terminal.model.difficulty, configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }
+      difficulty: terminal.model.difficulty, configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }
     });
     const stale = updateApp(setup.model, {
       type: "flight-analysis-failed", requestId: 1, message: "stale"
@@ -1393,7 +1411,7 @@ describe("Boot application state", () => {
     const countdown = gameSessionState(4, 3, null);
 
     expect(setup).toEqual({ kind: "setup", phaseCode: 1, controlLayout: "tail_incidence" });
-    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, controlLayout: "tail_incidence", countdownRemaining: 3 });
+    expect(countdown).toEqual({ kind: "countdown", phaseCode: 4, controlLayout: "tail_incidence", countdownRemainingSeconds: 3 });
     expect(gameSessionState(4, -1, null)).toBeNull();
     expect(gameSessionState(5, 0, null)).toBeNull();
     expect(gameSessionState(11, 0, null)).toBeNull();
@@ -1408,7 +1426,7 @@ describe("Boot application state", () => {
       controlModeCode: 0,
       difficulty: model.difficulty,
       configurationMetadata: null,
-      countdownRemaining: 0,
+      countdownRemainingSeconds: 0,
       display: { kind: "unavailable", reason: "menu_phase" }
     } as unknown as AppMessage);
 
@@ -1430,7 +1448,7 @@ describe("Boot application state", () => {
         controlModeCode: 0,
         difficulty: requested.model.difficulty,
         configurationMetadata: null,
-        countdownRemaining: 0,
+        countdownRemainingSeconds: 0,
         display: { kind: "unavailable", reason: "menu_phase" },
         canResume: false
       }
@@ -1476,7 +1494,7 @@ describe("Boot application state", () => {
         controlModeCode: 0,
         difficulty: requested.model.difficulty,
         configurationMetadata: null,
-        countdownRemaining: 0,
+        countdownRemainingSeconds: 0,
         display: { kind: "available", value: terminalFlightSnapshot },
         canResume: false
       }

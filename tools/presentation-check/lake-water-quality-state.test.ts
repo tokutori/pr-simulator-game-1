@@ -83,7 +83,7 @@ describe("manual lake water quality ownership", () => {
     const selected = updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "medium", cleanup: { kind: "complete" } }).model;
     const synchronized = updateApp(selected, {
       type: "game-session-synced", phaseCode: 3, controlModeCode: 0, difficulty: selected.difficulty,
-      configurationMetadata: null, countdownRemaining: 0, display: { kind: "unavailable", reason: "menu_phase" }, canResume: false, controlLayout: "tail_incidence"
+      configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }, canResume: false, controlLayout: "tail_incidence"
     }).model;
     expect(synchronized.lakeWaterQuality).toBe(selected.lakeWaterQuality);
     const transition = updateApp({ ...selected, presentation: { type: "ready", mode: "phone-vr" } }, {

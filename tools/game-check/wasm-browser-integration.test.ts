@@ -49,8 +49,7 @@ it("clears a DOM pilot target across terminal Result and Rust Retry", () => {
     expect(resultPress.defaultPrevented).toBe(false);
     session.executeOperation("retry");
     session.executeOperation("start-flight");
-    while (session.advanceCountdown() > 0) continue;
-    session.launch();
+    session.observeCountdown(session.captureCountdownToken(), 3, true);
     controller.reset(session.flightPort.snapshot_json());
     controller.onFrame(1000);
     controller.onFrame(1010);

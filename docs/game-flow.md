@@ -43,8 +43,16 @@ Countdown中は操縦入力を取得・積分せず、launch時に初期snapshot
 keyboardの保留押下はlaunch時に破棄し、発進後の新規押下を操縦入力として採用する。
 gamepadは新規flightとPauseからの復帰時に中立確認を要求する。
 launch eventを一度だけ処理し、tick 0の初期snapshotを保存してから、tick 0の入力で最初のstepを実行する。
-Countdown時計はUI用であり、Flightのsimulation timeと分離する。
-非表示化やtracking中断でCountdownを停止し、明示的な再開なしに発進しない。
+Countdownの時間規則はRust coreの既存GameSessionに保持する。準備済みconfigurationから秒単位のdurationと試行tokenを一度生成し、受理済みelapsedを`core::time::Duration`で蓄積する。
+`observe_countdown(token, elapsed_seconds, frame_available)`のelapsedは、adapterが連続する単調時計の観測時刻から求めた秒単位の差分とする。累積時刻やcallback回数を渡さない。
+同時刻の再観測は0とし、負値、NaN、無限大、Duration変換・加算overflowはphase・物理状態・record・受理済みelapsedを変更せず拒否する。差分はRust標準APIで最近接nanosecondへ丸める。
+残り秒`remaining_seconds`はdurationと唯一のelapsedから切り上げで導出する。3秒Countdownは800 msで3、1秒で2を表示し、3秒に達した最初の有効な観測で一度だけlaunchする。
+同じ観測でtick 0の初期recordを確定してRunningへ移る。表示変換の失敗を理由にlaunchを再実行しない。launch後や取消済みのtokenは無作用とし、再開始では新しいtokenを使用する。tokenはwrapさせず、枯渇時は開始を拒否する。
+時計取得はadapterに限定する。Webは`performance.now()`から差分を求め、1秒timerを観測の起床要求として使う。timerの遅延時は実測elapsedを使用し、最初の有効な観測までlaunchを遅らせる。Nativeは既存`Time<Real>`のframe境界を時間原点とし、PreUpdateでそのframe開始時の試行tokenを観測する。UpdateのUI admissionで開始したframeは0秒とし、以後はReal frame差分を渡す。同frameの取消・再開始へ受理前の差分を転用しない。frame観測tokenは一度消費し、FixedUpdateの100 Hz physicsと既存ReplayのVirtual elapsedは維持する。
+時計の単調性は[High Resolution Time](https://www.w3.org/TR/hr-time-3/#monotonic-clock)、timerの起床条件は[HTML Standard](https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#timers)、差分変換とoverflow検査は[Rust Duration](https://doc.rust-lang.org/core/time/struct.Duration.html#method.try_from_secs_f64)に従う。
+frame可用性は外部観測とする。Webのpresentation frame到着・focus・可視性と、Nativeのfocus・Real frame間隔を観測し、共有150 ms上限を超えたframeや非表示化、tracking中断でCountdownを取消して同じBriefingへ戻す。1秒timer間隔そのものをframe処理遅延と判定しない。
+Webの各timer closureは配送を先に一度消費し、同じ正差分の二重送信や失敗後の再配送を拒否する。callback実行時の同一facade owner・現在Core試行tokenを検査し、最新query tokenで観測を送る。UI-only更新や更新前に拒否された操作によるquery世代変更で時間観測を停止しない。次callbackは直前の観測時刻を捕捉する。取消・owner置換後のcallbackは無作用とし、別のphaseやremaining正本を設けない。
+中断後は明示的な再開始を要求し、自動発進しない。共有command executor全体の移行は#380とし、時間規則#379と分離する。
 Rust coreの`TailFlightScenario::run`は開始済みinitial stateとsealed tick input列を実行し、WaterContactまたはTimeLimitで終端する。両終端理由に対して最後の有効datumからscore v1を確定する。Webはtick inputを提供しoutcome snapshotを表示する。
 
 ## Overlayと停止

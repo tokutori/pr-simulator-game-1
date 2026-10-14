@@ -14,8 +14,7 @@ function launch(session: HybridGameSessionBridge): void {
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
+  session.observe_countdown(session.countdown_token(), 1, true);
 }
 
 describe("control-layout-aware display snapshots", () => {

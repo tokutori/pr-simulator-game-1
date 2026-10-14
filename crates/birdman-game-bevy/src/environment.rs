@@ -259,7 +259,9 @@ mod tests {
         for phase in [
             SessionPhase::BriefingPreparing,
             SessionPhase::BriefingReady,
-            SessionPhase::Countdown { remaining_ticks: 3 },
+            SessionPhase::Countdown {
+                remaining_seconds: 3,
+            },
             SessionPhase::FlightRunning,
             SessionPhase::Result,
             SessionPhase::Replay,

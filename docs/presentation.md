@@ -74,6 +74,7 @@ Bootでも、最小rendererとVR入口が準備できた後はWASM・assetの読
 renderer/session自体が利用不能な場合はScreenで原因を表示する。対応するVR実行系がある状態で
 BootやResultのためだけにScreenへ戻すことを禁止する。
 XR終了・tracking喪失では現在のGameSceneを保持し、Flight/Countdown/Replayは停止して復帰先を表示する。
+Countdownは共有GameSessionの試行tokenを失効させて同じBriefingへ戻し、旧callbackでの発進を拒否する。Replay/Attractは既存playback clockをpauseし、Webのclock request世代を更新して旧timerを拒否する。Screen復帰を自動再生や再発進として扱わない。接続回帰は#142、共有elapsed規則は#379で追跡する。
 
 BPG-014〜016をBPG-001直後に実施する。全Sceneのview model fixtureで表示・選択・復帰を検証し、
 BPG-015ではnative WebXR sessionへ接続する。BPG-017でgame flowを実flight stateへ接続する際、

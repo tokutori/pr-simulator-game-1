@@ -73,8 +73,7 @@ export function withSharedGameUiSession<Value>(phaseCode: number, options: Share
           if (phaseCode >= 4) {
             bridge.start_countdown(phaseCode === 4 ? 3 : 1);
             if (phaseCode >= 5) {
-              bridge.advance_countdown();
-              bridge.launch();
+              bridge.observe_countdown(bridge.countdown_token(), 1, true);
               const ticks = options.ticks ?? 2;
               if (!Number.isSafeInteger(ticks) || ticks < 0) throw new RangeError("Fixture tick count must be a nonnegative integer");
               for (let index = 0; index < ticks && bridge.phase_code() === 5; index += 1) bridge.advance_tick_json(neutralTailInput);

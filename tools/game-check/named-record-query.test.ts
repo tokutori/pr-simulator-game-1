@@ -26,8 +26,7 @@ function tailResult(ticks = 2, customHud = false): HybridGameSessionBridge {
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
+  session.observe_countdown(session.countdown_token(), 1, true);
   for (let index = 0; index < ticks; index += 1) session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence",
     noseUp: 0.5, turnRight: -0.5, desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
   session.abort();

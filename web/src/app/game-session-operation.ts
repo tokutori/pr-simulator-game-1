@@ -20,5 +20,5 @@ export interface GameSessionOperationPort {
   set_assistance_level(code: number): void;
   set_weather_class(code: number): void;
   set_information_cue(code: number, visible: boolean): void;
-  start_countdown(ticks: number): void;
+  start_countdown(durationSeconds: number): void;
 }
