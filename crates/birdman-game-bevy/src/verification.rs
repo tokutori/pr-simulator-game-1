@@ -27,8 +27,8 @@ use bevy::{
     ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
-    PHYSICS_HZ, PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult,
-    SessionSnapshot, TailFlightTickState,
+    FlightRecordControls, FlightRecordHeader, PHYSICS_HZ, PauseReason, PauseReasons,
+    SessionEndReason, SessionPhase, SessionResult, SessionSnapshot, TailFlightTickState,
 };
 use birdman_game_format::WeatherClass;
 use birdman_game_session::{
@@ -46,6 +46,7 @@ use std::{
 
 const READY_CONFIRMATION_FRAMES: usize = 5;
 const MOTION_DURATION: Duration = Duration::from_secs(2);
+const MAX_COUNTDOWN_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WaterVerificationCase {
@@ -597,7 +598,9 @@ pub(crate) struct Verification {
     stage: VerificationStage,
     started: Option<Instant>,
     stage_started: Instant,
-    countdown_started: Option<Instant>,
+    countdown_started: Option<Duration>,
+    countdown_attempts: usize,
+    countdown_header: Option<FlightRecordHeader>,
     scene_shaders: [Handle<Shader>; 2],
     readiness: RenderReadiness,
     processing_delay_reported: bool,
@@ -643,6 +646,8 @@ impl Verification {
                 started: None,
                 stage_started: Instant::now(),
                 countdown_started: None,
+                countdown_attempts: 0,
+                countdown_header: None,
                 scene_shaders: [asset_server.load("native_water.wgsl"), material_shader],
                 readiness: RenderReadiness::default(),
                 processing_delay_reported: false,
@@ -1051,7 +1056,8 @@ pub(crate) fn advance(
         &mut session,
         &mut presentation,
         &windows,
-        time.delta() <= MAX_FRAME_DELTA,
+        time.delta(),
+        time.elapsed(),
         &mut commands,
     );
     match result {
@@ -1104,7 +1110,8 @@ fn advance_step(
     session: &mut NativeSession,
     presentation: &mut VerificationPresentation,
     windows: &Query<&Window>,
-    normal_frame: bool,
+    frame_delta: Duration,
+    elapsed: Duration,
     commands: &mut Commands,
 ) -> Result<(), String> {
     if let Some(MotionInterval::Interrupted { metrics, phase }) = verification.motion_interval {
@@ -1148,8 +1155,20 @@ fn advance_step(
     if let Some(error) = &verification.readiness.error {
         return Err(error.clone());
     }
-    let focused = windows.iter().any(|window| window.focused);
-    if !focused {
+    let normal_frame = frame_delta <= MAX_FRAME_DELTA;
+    let focused = windows.iter().next().is_some() && windows.iter().all(|window| window.focused);
+    let phase = session.game.snapshot().phase();
+    let waiting_for_countdown = matches!(
+        verification.stage,
+        VerificationStage::Launch | VerificationStage::InputTrialLaunch
+    ) || countdown_stage(verification.stage);
+    if !focused
+        && !(waiting_for_countdown
+            && matches!(
+                phase,
+                SessionPhase::BriefingReady | SessionPhase::Countdown { .. }
+            ))
+    {
         if verification.stage == VerificationStage::Title
             && started.elapsed() < Duration::from_secs(3)
         {
@@ -1159,7 +1178,40 @@ fn advance_step(
             "Verification requires a focused native window; focus safety remains enabled".into(),
         );
     }
-    let phase = session.game.snapshot().phase();
+    if countdown_stage(verification.stage) && phase == SessionPhase::BriefingReady {
+        require_unstarted_countdown(verification, session)?;
+        if verification.countdown_started.take().is_some() {
+            println!(
+                "Countdown attempt {} canceled safely: phase={phase:?}, focused={focused}, Real delta={frame_delta:?}; preparation and unstarted record retained",
+                verification.countdown_attempts
+            );
+        }
+        if verification.capture.pending() {
+            let identity = verification.capture_identity();
+            let Some(saved) = verification.capture.poll(identity)? else {
+                return Ok(());
+            };
+            println!(
+                "Discarding canceled Countdown capture after save completion: {}, serial={}",
+                saved.path.display(),
+                identity.serial
+            );
+        }
+        if verification.countdown_attempts >= MAX_COUNTDOWN_ATTEMPTS {
+            return Err(format!(
+                "Countdown acceptance exhausted {MAX_COUNTDOWN_ATTEMPTS} explicit attempts; focused={focused}, Real delta={frame_delta:?}"
+            ));
+        }
+        verification.next(
+            if verification.stage == VerificationStage::InputTrialCountdown {
+                VerificationStage::InputTrialLaunch
+            } else {
+                VerificationStage::Launch
+            },
+        );
+        return Ok(());
+    }
+    observe_countdown_launch(verification, session, elapsed)?;
     if recover_processing_delay(
         &mut verification.processing_delay_reported,
         verification.stage,
@@ -1370,17 +1422,7 @@ fn advance_step(
             }
         }
         VerificationStage::Launch => {
-            session.action(MenuAction::Launch)?;
-            require_phase(
-                session.game.snapshot().phase(),
-                SessionPhase::Countdown { remaining_ticks: 3 },
-            )?;
-            verification.countdown_started = Some(Instant::now());
-            verification.next(if verification.water_case.is_some() {
-                VerificationStage::Countdown
-            } else {
-                VerificationStage::CountdownCapture
-            });
+            start_countdown(verification, session, focused && normal_frame, elapsed)?
         }
         VerificationStage::CountdownCapture => {
             if !matches!(phase, SessionPhase::Countdown { .. }) {
@@ -1393,18 +1435,6 @@ fn advance_step(
         VerificationStage::Countdown => match session.game.snapshot() {
             SessionSnapshot::Countdown { .. } => {}
             SessionSnapshot::TailFlightRunning { state, .. } => {
-                if verification
-                    .countdown_started
-                    .ok_or("Missing countdown start observation")?
-                    .elapsed()
-                    < Duration::from_millis(2800)
-                    || state.tick_index() != 0
-                {
-                    return Err(
-                        "Countdown must precede physics for three presentation seconds".into(),
-                    );
-                }
-                verification.launch_state = Some(state);
                 if verification.water_case.is_some() {
                     let flight = state.flight_state();
                     verification.observer_base = Some(camera_transform(
@@ -1804,6 +1834,9 @@ fn advance_step(
                         verification.next(VerificationStage::Finished);
                     } else {
                         verification.input_trial = true;
+                        verification.countdown_attempts = 0;
+                        verification.countdown_header = None;
+                        verification.launch_state = None;
                         verification.next(VerificationStage::InputTrialLaunch);
                     }
                 }
@@ -1815,22 +1848,11 @@ fn advance_step(
             }
         }
         VerificationStage::InputTrialLaunch => {
-            session.action(MenuAction::Launch)?;
-            verification.countdown_started = Some(Instant::now());
-            verification.next(VerificationStage::InputTrialCountdown);
+            start_countdown(verification, session, focused && normal_frame, elapsed)?
         }
         VerificationStage::InputTrialCountdown => match session.game.snapshot() {
             SessionSnapshot::Countdown { .. } => {}
-            SessionSnapshot::TailFlightRunning { state, .. } => {
-                if state.tick_index() != 0
-                    || verification
-                        .countdown_started
-                        .ok_or("Missing input-trial countdown start")?
-                        .elapsed()
-                        < Duration::from_millis(2800)
-                {
-                    return Err("Input-trial countdown did not precede physics".into());
-                }
+            SessionSnapshot::TailFlightRunning { .. } => {
                 verification.next(VerificationStage::InputTrialFlight);
             }
             snapshot => return Err(format!("Input-trial countdown ended with {snapshot:?}")),
@@ -1963,6 +1985,143 @@ fn processing_delay_only(reasons: PauseReasons) -> bool {
         .any(|reason| reasons.contains(reason))
 }
 
+fn countdown_stage(stage: VerificationStage) -> bool {
+    matches!(
+        stage,
+        VerificationStage::CountdownCapture
+            | VerificationStage::Countdown
+            | VerificationStage::InputTrialCountdown
+    )
+}
+
+fn require_unstarted_countdown(
+    verification: &Verification,
+    session: &NativeSession,
+) -> Result<(), String> {
+    let header = verification
+        .countdown_header
+        .ok_or("Missing countdown configuration observation")?;
+    let initial = verification
+        .launch_state
+        .ok_or("Missing prepared launch observation")?;
+    let record = session
+        .game
+        .flight_record()
+        .ok_or("Missing unstarted countdown record")?;
+    if record.header() != header
+        || session.game.configuration_identity() != Some(header.scenario)
+        || session.game.prepared_launch_state() != Some(initial)
+        || initial.tick_index() != 0
+        || session.countdown_elapsed != 0.0
+        || record.sample_count() != 0
+        || record.finalization().is_some()
+    {
+        return Err("Countdown preparation, initial state, or unstarted record changed".into());
+    }
+    Ok(())
+}
+
+fn start_countdown(
+    verification: &mut Verification,
+    session: &mut NativeSession,
+    available: bool,
+    elapsed: Duration,
+) -> Result<(), String> {
+    require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
+    if !available || !verification.readiness.can_capture() {
+        return Ok(());
+    }
+    if verification.countdown_attempts == 0 {
+        verification.countdown_header = Some(
+            session
+                .game
+                .flight_record()
+                .ok_or("Missing prepared record")?
+                .header(),
+        );
+        verification.launch_state = session.game.prepared_launch_state();
+    }
+    require_unstarted_countdown(verification, session)?;
+    if verification.countdown_attempts >= MAX_COUNTDOWN_ATTEMPTS {
+        return Err("Countdown attempt bound exceeded".into());
+    }
+    let input_trial = verification.stage == VerificationStage::InputTrialLaunch;
+    session.action(MenuAction::Launch)?;
+    require_phase(
+        session.game.snapshot().phase(),
+        SessionPhase::Countdown { remaining_ticks: 3 },
+    )?;
+    verification.countdown_attempts += 1;
+    verification.countdown_started = Some(elapsed);
+    println!(
+        "Explicit Countdown attempt {} started after normal focused frame and render readiness",
+        verification.countdown_attempts
+    );
+    verification.next(if input_trial {
+        VerificationStage::InputTrialCountdown
+    } else if verification.water_case.is_some() {
+        VerificationStage::Countdown
+    } else {
+        VerificationStage::CountdownCapture
+    });
+    Ok(())
+}
+
+fn observe_countdown_launch(
+    verification: &mut Verification,
+    session: &NativeSession,
+    elapsed: Duration,
+) -> Result<(), String> {
+    if !countdown_stage(verification.stage)
+        || !matches!(
+            session.game.snapshot().phase(),
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        )
+    {
+        return Ok(());
+    }
+    let Some(started) = verification.countdown_started else {
+        return Ok(());
+    };
+    let header = verification
+        .countdown_header
+        .ok_or("Missing launch configuration observation")?;
+    let initial = verification
+        .launch_state
+        .ok_or("Missing prepared launch observation")?;
+    let record = session
+        .game
+        .flight_record()
+        .ok_or("Missing launched record")?;
+    let first = record
+        .samples()
+        .first()
+        .ok_or("Missing launch record initial sample")?;
+    if elapsed.saturating_sub(started) < Duration::from_millis(2800)
+        || record.header() != header
+        || session.game.configuration_identity() != Some(header.scenario)
+        || first.tick_index != 0
+        || first.fraction != 0.0
+        || first.flight_state != initial.flight_state()
+        || first.controls != FlightRecordControls::initial_tail(initial)
+    {
+        return Err(
+            "Countdown duration or authoritative launch record initial sample differs".into(),
+        );
+    }
+    println!(
+        "Countdown launch observed independently of capture save: Real elapsed={:?}, current tick={:?}, initial record tick=0",
+        elapsed.saturating_sub(started),
+        session
+            .game
+            .snapshot()
+            .tail_flight_state()
+            .map(|state| state.tick_index())
+    );
+    verification.countdown_started = None;
+    Ok(())
+}
+
 fn recover_processing_delay(
     observed: &mut bool,
     stage: VerificationStage,
@@ -1976,7 +2135,10 @@ fn recover_processing_delay(
     };
     if !matches!(
         stage,
-        VerificationStage::Pilot
+        VerificationStage::CountdownCapture
+            | VerificationStage::Countdown
+            | VerificationStage::InputTrialCountdown
+            | VerificationStage::Pilot
             | VerificationStage::Chase
             | VerificationStage::Pause
             | VerificationStage::Abort
@@ -2133,6 +2295,651 @@ mod tests {
     use birdman_game_core::{PauseReason, SessionPhase};
     use birdman_game_session::game_ui::{GameUiAnalysisChart, GameUiResultTab};
     use std::time::Duration;
+
+    fn countdown_driver_app() -> App {
+        use bevy::{asset::AssetApp, input::InputPlugin, prelude::*};
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            InputPlugin,
+            bevy::asset::AssetPlugin::default(),
+        ))
+        .init_asset::<Shader>()
+        .init_asset_loader::<bevy::shader::ShaderLoader>()
+        .init_resource::<NativeSession>()
+        .init_resource::<super::FlightInput>()
+        .init_resource::<super::CameraMode>()
+        .init_resource::<super::super::world::RenderHistory>()
+        .init_resource::<WaterQualitySelection>()
+        .init_resource::<Assets<super::WaterMaterial>>()
+        .init_resource::<InputFocus>()
+        .insert_resource(super::NativeEnvironment::try_default().unwrap())
+        .insert_resource(Time::<Fixed>::from_hz(f64::from(
+            birdman_game_core::PHYSICS_HZ,
+        )))
+        .insert_resource(Time::<Virtual>::from_max_delta(super::MAX_FRAME_DELTA))
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
+        ))
+        .add_message::<AppExit>()
+        .add_systems(FixedUpdate, super::super::advance_physics)
+        .add_systems(
+            Update,
+            (super::super::advance_presentation, super::advance).chain(),
+        );
+        super::super::register_input(&mut app);
+        app.add_systems(
+            PreUpdate,
+            super::supply_input.after(super::super::read_input),
+        );
+        app.add_systems(
+            PreUpdate,
+            |mut verification: ResMut<super::Verification>| {
+                verification.readiness.confirm_frame();
+            },
+        );
+        app.world_mut().spawn(Window::default());
+        let (mut verification, _) = super::Verification::try_new(
+            std::env::temp_dir(),
+            app.world().resource::<AssetServer>(),
+            None,
+        )
+        .unwrap();
+        verification.stage = VerificationStage::Finished;
+        verification.readiness = RenderReadiness {
+            assets_loaded: true,
+            water_pipelines: 1,
+            material_pipelines: 1,
+            confirmation_frames: READY_CONFIRMATION_FRAMES,
+            ..Default::default()
+        };
+        app.insert_resource(verification);
+        app.update();
+        for action in [MenuAction::Start, MenuAction::Prepare] {
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .action(action)
+                .unwrap();
+        }
+        app.world_mut().resource_mut::<super::Verification>().stage = VerificationStage::Launch;
+        app
+    }
+
+    fn assert_countdown_driver_recovers_cancellation(focused: bool, delta: Duration) {
+        let mut app = countdown_driver_app();
+        let identity = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .configuration_identity();
+        let initial = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .prepared_launch_state();
+        app.update();
+        assert!(matches!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase(),
+            SessionPhase::Countdown { .. }
+        ));
+        {
+            let world = app.world_mut();
+            for mut window in world.query::<&mut Window>().iter_mut(world) {
+                window.focused = focused;
+            }
+            world.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(delta));
+        }
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
+        assert_eq!(session.game.configuration_identity(), identity);
+        assert_eq!(session.game.prepared_launch_state(), initial);
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        assert_eq!(session.countdown_elapsed, 0.0);
+        assert!(
+            session
+                .game
+                .flight_record()
+                .unwrap()
+                .finalization()
+                .is_none()
+        );
+        assert!(
+            app.world()
+                .resource::<super::Verification>()
+                .failure
+                .is_none()
+        );
+        {
+            let world = app.world_mut();
+            for mut window in world.query::<&mut Window>().iter_mut(world) {
+                window.focused = true;
+            }
+            world.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
+            ));
+        }
+        for _ in 0..20 {
+            app.update();
+            if matches!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::Countdown { .. }
+            ) {
+                break;
+            }
+        }
+        assert!(
+            app.world()
+                .resource::<super::Verification>()
+                .failure
+                .is_none()
+        );
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(
+            session.game.snapshot().phase(),
+            SessionPhase::Countdown { remaining_ticks: 3 }
+        );
+        assert_eq!(session.game.configuration_identity(), identity);
+        assert_eq!(session.game.prepared_launch_state(), initial);
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+    }
+
+    #[test]
+    fn countdown_driver_starts_only_after_normal_ready_frames() {
+        for delayed in [false, true] {
+            let mut app = countdown_driver_app();
+            if delayed {
+                app.world_mut()
+                    .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                        super::MAX_FRAME_DELTA + Duration::from_millis(1),
+                    ));
+            } else {
+                app.world_mut()
+                    .resource_mut::<super::Verification>()
+                    .readiness
+                    .pending_pipelines = 1;
+            }
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::BriefingReady
+            );
+            assert!(
+                app.world()
+                    .resource::<super::Verification>()
+                    .failure
+                    .is_none()
+            );
+            app.world_mut()
+                .resource_mut::<super::Verification>()
+                .readiness
+                .pending_pipelines = 0;
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
+                ));
+            for _ in 0..READY_CONFIRMATION_FRAMES + 1 {
+                app.update();
+            }
+            assert!(matches!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::Countdown { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn countdown_driver_recovers_focus_cancellation_without_changing_preparation() {
+        assert_countdown_driver_recovers_cancellation(false, Duration::from_millis(16));
+    }
+
+    #[test]
+    fn countdown_driver_recovers_processing_delay_cancellation_without_changing_preparation() {
+        assert_countdown_driver_recovers_cancellation(
+            true,
+            super::MAX_FRAME_DELTA + Duration::from_millis(1),
+        );
+    }
+
+    #[test]
+    fn countdown_driver_accepts_capture_saving_across_launch_without_freezing_ticks() {
+        let mut app = countdown_driver_app();
+        app.update();
+        let pool = TaskPoolBuilder::new().num_threads(1).build();
+        let identity = {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.capture_serial += 1;
+            let identity = verification.capture_identity();
+            verification.capture = CaptureState::Saving {
+                identity,
+                task: pool.spawn(std::future::pending()),
+            };
+            identity
+        };
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+        }
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert!(
+            session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index()
+                > 0
+        );
+        assert_eq!(
+            session.game.flight_record().unwrap().samples()[0].tick_index,
+            0
+        );
+        app.world_mut()
+            .resource_mut::<super::Verification>()
+            .capture = CaptureState::Completed(CaptureCompletion {
+            identity,
+            result: Ok(super::SavedCapture {
+                path: "saved-countdown.png".into(),
+                width: 1280,
+                height: 720,
+            }),
+        });
+        app.update();
+        app.update();
+        let verification = app.world().resource::<super::Verification>();
+        assert!(verification.failure.is_none(), "{:?}", verification.failure);
+        assert_eq!(verification.stage, VerificationStage::Pilot);
+    }
+
+    #[test]
+    fn countdown_driver_drains_canceled_capture_before_reusing_its_filename() {
+        for saving in [false, true] {
+            let mut app = countdown_driver_app();
+            app.update();
+            let pool = TaskPoolBuilder::new().num_threads(1).build();
+            let identity = {
+                let mut verification = app.world_mut().resource_mut::<super::Verification>();
+                verification.capture_serial += 1;
+                let identity = verification.capture_identity();
+                verification.capture = if saving {
+                    CaptureState::Saving {
+                        identity,
+                        task: pool.spawn(std::future::pending()),
+                    }
+                } else {
+                    CaptureState::Requested(identity)
+                };
+                identity
+            };
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    super::MAX_FRAME_DELTA + Duration::from_millis(1),
+                ));
+            app.update();
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    Duration::from_millis(16),
+                ));
+            for _ in 0..10 {
+                app.update();
+            }
+            let verification = app.world().resource::<super::Verification>();
+            assert_eq!(verification.capture_identity(), identity);
+            assert_eq!(verification.countdown_attempts, 1);
+            assert!(verification.capture.pending());
+            assert!(verification.failure.is_none());
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::BriefingReady
+            );
+            app.world_mut()
+                .resource_mut::<super::Verification>()
+                .capture = CaptureState::Completed(CaptureCompletion {
+                identity,
+                result: Ok(super::SavedCapture {
+                    path: "canceled-countdown.png".into(),
+                    width: 1280,
+                    height: 720,
+                }),
+            });
+            app.update();
+            assert_eq!(
+                app.world().resource::<super::Verification>().stage,
+                VerificationStage::Launch
+            );
+            assert!(
+                !app.world()
+                    .resource::<super::Verification>()
+                    .capture
+                    .pending()
+            );
+            for _ in 0..2 * READY_CONFIRMATION_FRAMES + 2 {
+                app.update();
+            }
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert_eq!(verification.countdown_attempts, 2);
+            assert_eq!(verification.capture_serial, identity.serial + 1);
+            assert!(
+                !verification
+                    .capture
+                    .accepts(identity, verification.capture_identity())
+            );
+        }
+    }
+
+    #[test]
+    fn countdown_driver_preserves_save_and_gpu_failures_without_retrying() {
+        for gpu in [false, true] {
+            let mut app = countdown_driver_app();
+            app.update();
+            {
+                let mut verification = app.world_mut().resource_mut::<super::Verification>();
+                if gpu {
+                    verification.readiness.error = Some("original GPU/asset failure".into());
+                } else {
+                    let identity = verification.capture_identity();
+                    verification.capture = CaptureState::Completed(CaptureCompletion {
+                        identity,
+                        result: Err("original capture I/O failure".into()),
+                    });
+                }
+            }
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    super::MAX_FRAME_DELTA + Duration::from_millis(1),
+                ));
+            app.update();
+            let verification = app.world().resource::<super::Verification>();
+            assert_eq!(
+                verification.failure.as_deref(),
+                Some(if gpu {
+                    "original GPU/asset failure"
+                } else {
+                    "original capture I/O failure"
+                })
+            );
+            assert_eq!(verification.countdown_attempts, 1);
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::BriefingReady
+            );
+        }
+    }
+
+    #[test]
+    fn countdown_driver_bounds_explicit_attempts_and_never_restarts_continuous_motion() {
+        let mut app = countdown_driver_app();
+        for attempt in 1..=super::MAX_COUNTDOWN_ATTEMPTS {
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    Duration::from_millis(16),
+                ));
+            for _ in 0..READY_CONFIRMATION_FRAMES + 2 {
+                app.update();
+                if matches!(
+                    app.world()
+                        .resource::<NativeSession>()
+                        .game
+                        .snapshot()
+                        .phase(),
+                    SessionPhase::Countdown { .. }
+                ) {
+                    break;
+                }
+            }
+            assert_eq!(
+                app.world()
+                    .resource::<super::Verification>()
+                    .countdown_attempts,
+                attempt
+            );
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    super::MAX_FRAME_DELTA + Duration::from_millis(1),
+                ));
+            app.update();
+        }
+        let verification = app.world().resource::<super::Verification>();
+        assert!(
+            verification
+                .failure
+                .as_ref()
+                .unwrap()
+                .contains("exhausted 3 explicit attempts")
+        );
+        assert_eq!(verification.countdown_attempts, 3);
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
+        let mut app = countdown_driver_app();
+        app.update();
+        app.world_mut()
+            .resource_mut::<super::Verification>()
+            .motion_interval = Some(MotionInterval::Interrupted {
+            metrics: MotionMetrics::default(),
+            phase: SessionPhase::BriefingReady,
+        });
+        app.world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                super::MAX_FRAME_DELTA + Duration::from_millis(1),
+            ));
+        app.update();
+        let verification = app.world().resource::<super::Verification>();
+        assert!(
+            verification
+                .failure
+                .as_ref()
+                .unwrap()
+                .contains("Continuous water motion was interrupted")
+        );
+        assert_eq!(verification.countdown_attempts, 1);
+    }
+
+    #[test]
+    fn countdown_driver_gates_initial_focus_and_retries_the_input_trial_explicitly() {
+        for stage in [
+            VerificationStage::Launch,
+            VerificationStage::InputTrialLaunch,
+        ] {
+            let mut app = countdown_driver_app();
+            app.world_mut().resource_mut::<super::Verification>().stage = stage;
+            let window = app
+                .world_mut()
+                .spawn(Window {
+                    focused: false,
+                    ..Default::default()
+                })
+                .id();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::BriefingReady
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<super::Verification>()
+                    .countdown_attempts,
+                0
+            );
+            app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<super::Verification>()
+                    .countdown_attempts,
+                1
+            );
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    super::MAX_FRAME_DELTA + Duration::from_millis(1),
+                ));
+            app.update();
+            assert_eq!(app.world().resource::<super::Verification>().stage, stage);
+            app.world_mut()
+                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    Duration::from_millis(16),
+                ));
+            for _ in 0..READY_CONFIRMATION_FRAMES + 1 {
+                app.update();
+            }
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert_eq!(verification.countdown_attempts, 2);
+        }
+    }
+
+    #[test]
+    fn countdown_driver_resumes_processing_delay_after_launch_without_changing_the_record() {
+        let mut app = countdown_driver_app();
+        app.update();
+        {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.capture_serial += 1;
+            verification.capture = CaptureState::Requested(verification.capture_identity());
+        }
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+            if app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .snapshot()
+                .phase()
+                == SessionPhase::FlightRunning
+            {
+                break;
+            }
+        }
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        let state = session.game.snapshot().tail_flight_state().unwrap();
+        let sample = session.game.flight_record().unwrap().samples()[0];
+        let samples = session.game.flight_record().unwrap().sample_count();
+        let identity = app
+            .world()
+            .resource::<super::Verification>()
+            .capture_identity();
+        app.world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                super::MAX_FRAME_DELTA + Duration::from_millis(1),
+            ));
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert!(
+            matches!(session.game.snapshot().phase(), SessionPhase::FlightPaused { reasons } if reasons.contains(PauseReason::ProcessingDelay))
+        );
+        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            samples
+        );
+        app.world_mut()
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ));
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
+        assert_eq!(
+            session.game.flight_record().unwrap().sample_count(),
+            samples
+        );
+        assert_eq!(session.game.flight_record().unwrap().samples()[0], sample);
+        let verification = app.world().resource::<super::Verification>();
+        assert!(verification.failure.is_none());
+        assert_eq!(verification.capture_identity(), identity);
+        assert_eq!(verification.countdown_attempts, 1);
+    }
+
+    #[test]
+    fn countdown_driver_retains_zero_attempts_until_focus_and_readiness_or_the_existing_timeout() {
+        for unfocused in [false, true] {
+            let mut app = countdown_driver_app();
+            if unfocused {
+                let world = app.world_mut();
+                for mut window in world.query::<&mut Window>().iter_mut(world) {
+                    window.focused = false;
+                }
+            } else {
+                app.world_mut()
+                    .resource_mut::<super::Verification>()
+                    .readiness
+                    .pending_pipelines = 1;
+            }
+            for _ in 0..20 {
+                app.update();
+            }
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert_eq!(verification.countdown_attempts, 0);
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .snapshot()
+                    .phase(),
+                SessionPhase::BriefingReady
+            );
+            app.world_mut()
+                .resource_mut::<super::Verification>()
+                .started = Some(std::time::Instant::now() - Duration::from_secs(91));
+            app.update();
+            let verification = app.world().resource::<super::Verification>();
+            assert!(
+                verification
+                    .failure
+                    .as_ref()
+                    .unwrap()
+                    .contains("Verification timeout in Launch")
+            );
+            assert_eq!(verification.countdown_attempts, 0);
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
+        }
+    }
 
     #[test]
     fn briefing_capture_focuses_published_navigation_without_starting_countdown() {
