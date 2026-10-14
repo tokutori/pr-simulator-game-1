@@ -116,6 +116,8 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
     for (var component: u32 = 0u; component < 24u; component += 1u) {
         if component < u32(geometry_parameters.x) {
             let wave = geometry_waves[component];
+            slope_energy += wave.z * wave.w;
+            if wave.z * spacing >= 2.5 { continue; }
             let timing = geometry_motion[component];
             let visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
             let transition = clamp((wave.z * spacing - 1.3) / 1.2, 0.0, 1.0);
@@ -138,7 +140,6 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
             height_gradient += amplitude * 3.0 * crest_basis * crest_basis * phase_cosine * phase_gradient
                 + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * amplitude_gradient;
             crest += phase_sine * wave.z * amplitude;
-            slope_energy += wave.z * wave.w;
         }
     }
     let determinant = horizontal_jacobian.x * horizontal_jacobian.w - horizontal_jacobian.y * horizontal_jacobian.z;

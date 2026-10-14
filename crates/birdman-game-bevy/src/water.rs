@@ -2257,6 +2257,67 @@ mod tests {
     }
 
     #[test]
+    fn geometry_exact_zero_guard_keeps_nonzero_transition_derivative_inside_boundary() {
+        for product in [
+            f32::from_bits(2.5_f32.to_bits() - 1),
+            2.5,
+            f32::from_bits(2.5_f32.to_bits() + 1),
+        ] {
+            let shared =
+                birdman_game_session::lake_water::lake_wave_visibility(1.0, f64::from(product));
+            let transition = ((product - 1.3) / 1.2).clamp(0.0, 1.0);
+            let visibility = 1.0 - transition * transition * (3.0 - 2.0 * transition);
+            let visibility_gradient = -6.0 / 1.2 * transition * (1.0 - transition);
+            if product < 2.5 {
+                assert_eq!(visibility, 0.0);
+                assert_ne!(visibility_gradient, 0.0);
+                assert!(shared.value > 0.0);
+                assert_ne!(shared.derivative, 0.0);
+                continue;
+            }
+            assert_eq!(visibility, 0.0);
+            assert_eq!(visibility_gradient, 0.0);
+            assert_eq!(shared.value, 0.0);
+            assert_eq!(shared.derivative, 0.0);
+        }
+    }
+
+    #[test]
+    fn geometry_exact_zero_guard_retains_every_selected_slope_energy_in_order() {
+        let shader = include_str!("../assets/native_water.wgsl");
+        let geometry = shader.split("@vertex").next().unwrap();
+        let energy = geometry.find("slope_energy += wave.z * wave.w;").unwrap();
+        let guard = geometry
+            .find("if wave.z * spacing >= 2.5 { continue; }")
+            .unwrap();
+        let packet = geometry
+            .find("let modulation = lake_wave_modulation")
+            .unwrap();
+        assert!(energy < guard && guard < packet);
+        assert_eq!(geometry.matches("slope_energy +=").count(), 1);
+        assert!(geometry.contains("surface.crest = crest / max(slope_energy, 0.001);"));
+        for quality in WaterQuality::ALL {
+            let material = WaterMaterial::registered_for_quality(quality).unwrap();
+            let shared =
+                LakeWaveProjection::try_new(material.visual_condition, quality.shared()).unwrap();
+            let waves = &material.geometry_waves[..shared.wave_count()];
+            let original = waves
+                .iter()
+                .fold(0.0_f32, |energy, wave| energy + wave.z * wave.w);
+            let mut retained = 0.0_f32;
+            let mut skipped = 0;
+            for wave in waves {
+                retained += wave.z * wave.w;
+                if wave.z * shared.spacing().maximum() as f32 >= 2.5 {
+                    skipped += 1;
+                }
+            }
+            assert!(skipped > 0);
+            assert_eq!(retained.to_bits(), original.to_bits());
+        }
+    }
+
+    #[test]
     fn wgsl_uses_shared_packet_gradients_and_unresolved_wave_transfer() {
         let shader = include_str!("../assets/native_water.wgsl");
         assert_eq!(shader.matches("array<vec4<f32>, 24>").count(), 2);
