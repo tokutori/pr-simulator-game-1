@@ -341,7 +341,7 @@ pub(crate) fn project_main_wing(
             .attribute(Mesh::ATTRIBUTE_NORMAL)
             .expect("主翼normalがない");
         for handle in &surface.material_meshes {
-            let mesh = meshes.get_mut(handle).expect("主翼meshがない");
+            let mut mesh = meshes.get_mut(handle).expect("主翼meshがない");
             let bevy::mesh::VertexAttributeValues::Float32x3(values) = mesh
                 .attribute_mut(Mesh::ATTRIBUTE_POSITION)
                 .expect("主翼positionsがない")
