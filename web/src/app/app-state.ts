@@ -757,7 +757,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
       const analysis = flightAnalysisData(model.analysis);
       const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
-        || (returningReplay && analysis === null));
+        || (returningReplay && analysis === null) || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.analysis.nextRequestId : null;
       const effects: AppEffect[] = enteringResult && analysisRequestId !== null
         ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
@@ -797,7 +797,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           observation: Object.freeze({ ...model.replayClock.observation, playing: false }) });
       const analysis = flightAnalysisData(model.analysis);
       const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (message.analysisSourceInvalidated === true
-        || analysisPhaseMismatch(analysis, nextPhaseCode) || (returningReplay && analysis === null));
+        || analysisPhaseMismatch(analysis, nextPhaseCode) || (returningReplay && analysis === null)
+        || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && analysis === null)
         ? model.analysis.nextRequestId
         : null;
@@ -1351,9 +1352,7 @@ function observeAnalysisPhase(state: FlightAnalysisState, phaseCode: number, req
   const data = keepData ? flightAnalysisData(state) : null;
   if (requestId !== null) return Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1, retained: data });
   if (!keepData) return Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId });
-  if (state.kind !== "loading") return state;
-  return data === null ? Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId })
-    : Object.freeze({ kind: "ready", nextRequestId: state.nextRequestId, data });
+  return state;
 }
 
 function settleAnalysisCursor(state: AnalysisCursorState): AnalysisCursorState {
