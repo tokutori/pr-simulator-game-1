@@ -10,7 +10,7 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::{NoFrustumCulling, RenderLayers},
     core_pipeline::tonemapping::Tonemapping,
-    light::CascadeShadowConfigBuilder,
+    light::{CascadeShadowConfigBuilder, NotShadowCaster},
     mesh::Indices,
     prelude::*,
     render::render_resource::PrimitiveTopology,
@@ -581,13 +581,16 @@ pub(crate) fn setup_world(
                         WingMaterial::Underside => wing_underside.clone(),
                         WingMaterial::Film => wing_film.clone(),
                     };
-                    parent.spawn((
+                    let mut child = parent.spawn((
                         Mesh3d(handle),
                         MeshMaterial3d(material),
                         Transform::IDENTITY,
                         NoFrustumCulling,
                         RenderLayers::layer(0).with(1),
                     ));
+                    if range.material == WingMaterial::Film {
+                        child.insert(NotShadowCaster);
+                    }
                 }
                 wing_surfaces.push(MainWingSurface {
                     complete_mesh,
@@ -1318,19 +1321,34 @@ mod tests {
             .add_systems(Startup, setup_world);
         app.update();
         let world = app.world_mut();
-        let mut meshes =
-            world.query::<(&Mesh3d, Option<&RenderLayers>, Option<&EnvironmentSurface>)>();
+        let mut meshes = world.query::<(
+            &Mesh3d,
+            Option<&RenderLayers>,
+            Option<&EnvironmentSurface>,
+            Option<&NotShadowCaster>,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+        )>();
         let mut reflected_meshes = 0;
+        let mut transparent_films = 0;
         let mut excluded_meshes = 0;
-        for (_, layers, water) in meshes.iter(world) {
+        let materials = world.resource::<Assets<StandardMaterial>>();
+        for (_, layers, water, shadow_exclusion, material) in meshes.iter(world) {
             if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
                 assert!(water.is_none());
+                let material = materials.get(&material.unwrap().0).unwrap();
+                if material.alpha_mode == AlphaMode::Blend {
+                    assert!(shadow_exclusion.is_some());
+                    transparent_films += 1;
+                } else {
+                    assert!(shadow_exclusion.is_none());
+                }
                 reflected_meshes += 1;
             } else {
                 excluded_meshes += 1;
             }
         }
         assert_eq!(reflected_meshes, 12);
+        assert_eq!(transparent_films, 2);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(
