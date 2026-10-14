@@ -46,8 +46,8 @@ pub use flight_record::{
     FlightRecordTailInput, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
 };
 pub use game_session::{
-    BriefingFailure, GameSession, GameSessionConfiguration, GameSessionError, PauseReason,
-    PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
+    BriefingFailure, CountdownProgress, GameSession, GameSessionConfiguration, GameSessionError,
+    PauseReason, PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
 pub use hybrid_mock::{HybridMockDefinition, HybridMockError, HybridMockTrim};

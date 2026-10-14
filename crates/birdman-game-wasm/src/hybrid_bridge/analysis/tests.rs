@@ -8,8 +8,9 @@ fn complete(weather_code: u32) -> HybridGameSessionBridge {
     bridge.prepare_internal().unwrap();
     bridge.mark_briefing_ready().unwrap();
     bridge.start_countdown(1).unwrap();
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
+    bridge
+        .observe_countdown(bridge.countdown_token(), 1.0, true)
+        .unwrap();
     let input = json!({
         "schema_version": 2,
         "control_layout": "tail_incidence",

@@ -1,8 +1,9 @@
 use birdman_game_core::{
-    ControlMode, CourseAxis, DistanceScoreError, DynamicsError, FlightState, GameSession,
-    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
-    TailControlError, TailControlProfile, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    ControlMode, CountdownProgress, CourseAxis, DistanceScoreError, DynamicsError, FlightState,
+    GameSession, GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot,
+    SessionTerminalState, TailControlError, TailControlProfile, TailFlightTickInput,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping,
+    TailRateTarget,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
@@ -202,17 +203,34 @@ impl HybridGameSessionBridge {
     }
 
     /// Starts a presentation countdown without advancing physics.
-    pub fn start_countdown(&mut self, ticks: u32) -> Result<(), JsValue> {
+    pub fn start_countdown(&mut self, duration_seconds: u32) -> Result<(), JsValue> {
         self.session
-            .start_countdown(ticks)
+            .start_countdown(duration_seconds)
             .map_err(crate::game_session_error)
     }
 
-    /// Advances one presentation countdown tick.
-    pub fn advance_countdown(&mut self) -> Result<u32, JsValue> {
-        self.session
-            .advance_countdown()
-            .map_err(crate::game_session_error)
+    /// Returns the active Rust attempt token, or zero outside Countdown.
+    pub fn countdown_token(&self) -> u32 {
+        self.session.countdown_token().unwrap_or(0)
+    }
+
+    /// Observes elapsed presentation seconds and availability through the shared policy.
+    pub fn observe_countdown(
+        &mut self,
+        token: u32,
+        elapsed_seconds: f64,
+        frame_available: bool,
+    ) -> Result<u32, JsValue> {
+        let progress = self
+            .session
+            .observe_countdown(token, elapsed_seconds, frame_available)
+            .map_err(crate::game_session_error)?;
+        Ok(match progress {
+            CountdownProgress::Ignored => 0,
+            CountdownProgress::Cancelled => 1,
+            CountdownProgress::Waiting { .. } => 2,
+            CountdownProgress::Launched => 3,
+        })
     }
 
     /// Cancels countdown while retaining the prepared configuration.
@@ -220,12 +238,6 @@ impl HybridGameSessionBridge {
         self.session
             .cancel_countdown()
             .map_err(crate::game_session_error)
-    }
-
-    /// Launches the existing GameSession and returns its versioned two-tail snapshot.
-    pub fn launch(&mut self) -> Result<String, JsValue> {
-        self.session.launch().map_err(crate::game_session_error)?;
-        self.snapshot_json()
     }
 
     /// Validates a schema-two input before atomically advancing the Rust-owned tail tick.
@@ -285,10 +297,10 @@ impl HybridGameSessionBridge {
         }
     }
 
-    /// Returns Rust's remaining countdown ticks, or zero outside Countdown.
-    pub fn countdown_remaining(&self) -> u32 {
+    /// Returns Rust's rounded-up remaining seconds, or zero outside Countdown.
+    pub fn countdown_remaining_seconds(&self) -> u32 {
         match self.session.snapshot().phase() {
-            SessionPhase::Countdown { remaining_ticks } => remaining_ticks,
+            SessionPhase::Countdown { remaining_seconds } => remaining_seconds,
             _ => 0,
         }
     }

@@ -168,8 +168,10 @@ fn main() {
             session.prepare_flight(configuration).unwrap();
             session.mark_briefing_ready().unwrap();
             session.start_countdown(1).unwrap();
-            session.advance_countdown().unwrap();
-            let initial = session.launch().unwrap().tail_flight_state().unwrap();
+            session
+                .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+                .unwrap();
+            let initial = session.snapshot().tail_flight_state().unwrap();
             let initial_alpha = datum_alpha(initial.flight_state(), wind);
             println!(
                 "initial,{label},{sequence:?},identity={identity:?},datum_alpha={initial_alpha:?},cg_alpha={:?}",

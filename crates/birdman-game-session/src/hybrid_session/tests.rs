@@ -14,8 +14,9 @@ fn launch(configuration: GameSessionConfiguration<'static>) -> GameSession<'stat
     session.prepare_flight(configuration).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
-    session.advance_countdown().unwrap();
-    session.launch().unwrap();
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
     session
 }
 

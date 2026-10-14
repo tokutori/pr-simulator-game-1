@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
 use crate::flight_record::{
@@ -106,8 +108,8 @@ pub enum SessionPhase {
     },
     /// Countdown time remains; physics time is frozen.
     Countdown {
-        /// Number of remaining presentation ticks; zero permits launch.
-        remaining_ticks: u32,
+        /// Whole seconds remaining, rounded up while physics is frozen.
+        remaining_seconds: u32,
     },
     /// Flight physics accepts one input per fixed tick.
     FlightRunning,
@@ -208,8 +210,8 @@ pub enum SessionSnapshot {
     Countdown {
         /// Sealed scenario identity.
         scenario: SessionScenarioIdentity,
-        /// Remaining presentation ticks before launch.
-        remaining_ticks: u32,
+        /// Whole seconds remaining, rounded up while physics is frozen.
+        remaining_seconds: u32,
     },
     /// Hybrid physics advances from one complete two-incidence state.
     TailFlightRunning {
@@ -253,8 +255,8 @@ impl SessionSnapshot {
             Self::BriefingReady { .. } => SessionPhase::BriefingReady,
             Self::BriefingFailed { reason, .. } => SessionPhase::BriefingFailed { reason },
             Self::Countdown {
-                remaining_ticks, ..
-            } => SessionPhase::Countdown { remaining_ticks },
+                remaining_seconds, ..
+            } => SessionPhase::Countdown { remaining_seconds },
             Self::TailFlightRunning { .. } => SessionPhase::FlightRunning,
             Self::TailFlightPaused { reasons, .. } => SessionPhase::FlightPaused { reasons },
             Self::Result(_) => SessionPhase::Result,
@@ -287,8 +289,12 @@ impl SessionSnapshot {
 pub enum GameSessionError {
     /// An intent is not permitted in the current phase.
     InvalidTransition,
-    /// Countdown must contain at least one UI tick.
+    /// Countdown must contain at least one whole second.
     InvalidCountdown,
+    /// Countdown elapsed seconds must be nonnegative and finite.
+    InvalidCountdownElapsed,
+    /// Countdown attempt tokens cannot be reused after exhaustion.
+    CountdownTokenExhausted,
     /// A flight requires a positive explicit maximum tick count.
     InvalidFlightTickLimit,
     /// Every resolved scenario, aircraft, environment, and controller version must be positive.
@@ -309,6 +315,36 @@ pub enum GameSessionError {
     PlaybackQuery(FlightRecordQueryError),
     /// Required center-of-mass telemetry could not be sampled.
     Telemetry(FlightTelemetryError),
+}
+
+/// Outcome of one externally timed observation of the current Countdown attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CountdownProgress {
+    /// The attempt is obsolete or Countdown is no longer active.
+    Ignored,
+    /// An unavailable presentation frame cancelled the attempt back to Briefing.
+    Cancelled,
+    /// Elapsed presentation time has not yet reached the sealed duration.
+    Waiting {
+        /// Whole seconds remaining, rounded up.
+        remaining_seconds: u32,
+    },
+    /// The observation launched the initial state exactly once, at physical tick zero.
+    Launched,
+}
+
+#[derive(Clone, Copy)]
+struct CountdownState {
+    token: u32,
+    duration_seconds: u32,
+    elapsed: Duration,
+}
+
+impl CountdownState {
+    const fn remaining_seconds(self) -> u32 {
+        self.duration_seconds
+            .saturating_sub(self.elapsed.as_secs() as u32)
+    }
 }
 
 #[expect(
@@ -342,9 +378,7 @@ enum ConfiguredPhase {
     Failed {
         reason: BriefingFailure,
     },
-    Countdown {
-        remaining_ticks: u32,
-    },
+    Countdown(CountdownState),
     Running {
         state: TailFlightTickState,
     },
@@ -365,6 +399,7 @@ enum ConfiguredPhase {
 pub struct GameSession<'a> {
     lifecycle: SessionLifecycle<'a>,
     attract_record: Option<FlightRecord>,
+    countdown_token: u32,
 }
 
 impl<'a> GameSession<'a> {
@@ -373,6 +408,7 @@ impl<'a> GameSession<'a> {
         Self {
             lifecycle: SessionLifecycle::Title,
             attract_record: None,
+            countdown_token: 0,
         }
     }
 
@@ -389,9 +425,9 @@ impl<'a> GameSession<'a> {
                     ConfiguredPhase::Failed { reason } => {
                         SessionSnapshot::BriefingFailed { scenario, reason }
                     }
-                    ConfiguredPhase::Countdown { remaining_ticks } => SessionSnapshot::Countdown {
+                    ConfiguredPhase::Countdown(countdown) => SessionSnapshot::Countdown {
                         scenario,
-                        remaining_ticks,
+                        remaining_seconds: countdown.remaining_seconds(),
                     },
                     ConfiguredPhase::Running { state } => {
                         SessionSnapshot::TailFlightRunning { scenario, state }
@@ -428,9 +464,9 @@ impl<'a> GameSession<'a> {
                 ConfiguredPhase::Preparing => SessionPhase::BriefingPreparing,
                 ConfiguredPhase::Ready => SessionPhase::BriefingReady,
                 ConfiguredPhase::Failed { reason } => SessionPhase::BriefingFailed { reason },
-                ConfiguredPhase::Countdown { remaining_ticks } => {
-                    SessionPhase::Countdown { remaining_ticks }
-                }
+                ConfiguredPhase::Countdown(countdown) => SessionPhase::Countdown {
+                    remaining_seconds: countdown.remaining_seconds(),
+                },
                 ConfiguredPhase::Running { .. } => SessionPhase::FlightRunning,
                 ConfiguredPhase::Paused { reasons, .. } => SessionPhase::FlightPaused { reasons },
                 ConfiguredPhase::Result { .. } => SessionPhase::Result,
@@ -865,41 +901,86 @@ impl<'a> GameSession<'a> {
         Ok(())
     }
 
-    /// Starts a UI countdown without advancing physical time.
-    pub fn start_countdown(&mut self, countdown_ticks: u32) -> Result<(), GameSessionError> {
+    /// Starts a whole-second presentation countdown without advancing physical time.
+    pub fn start_countdown(&mut self, duration_seconds: u32) -> Result<(), GameSessionError> {
         if self.phase() != SessionPhase::BriefingReady {
             return Err(GameSessionError::InvalidTransition);
         }
-        if countdown_ticks == 0 {
+        if duration_seconds == 0 {
             return Err(GameSessionError::InvalidCountdown);
         }
-        self.configured_mut()?.phase = ConfiguredPhase::Countdown {
-            remaining_ticks: countdown_ticks,
-        };
+        let token = self
+            .countdown_token
+            .checked_add(1)
+            .ok_or(GameSessionError::CountdownTokenExhausted)?;
+        self.configured_mut()?.phase = ConfiguredPhase::Countdown(CountdownState {
+            token,
+            duration_seconds,
+            elapsed: Duration::ZERO,
+        });
+        self.countdown_token = token;
         Ok(())
     }
 
-    /// Advances only the UI countdown; zero permits one explicit launch intent.
-    pub fn advance_countdown(&mut self) -> Result<u32, GameSessionError> {
-        let configured = self.configured_mut()?;
-        let ConfiguredPhase::Countdown { remaining_ticks } = configured.phase else {
-            return Err(GameSessionError::InvalidTransition);
-        };
-        let next = remaining_ticks.saturating_sub(1);
-        configured.phase = ConfiguredPhase::Countdown {
-            remaining_ticks: next,
-        };
-        Ok(next)
+    /// Returns the current attempt token; cancellation or launch makes it unavailable.
+    pub const fn countdown_token(&self) -> Option<u32> {
+        match self.configured() {
+            Some(ConfiguredSession {
+                phase: ConfiguredPhase::Countdown(countdown),
+                ..
+            }) => Some(countdown.token),
+            _ => None,
+        }
     }
 
-    /// Launches exactly once after countdown reaches zero.
-    pub fn launch(&mut self) -> Result<SessionSnapshot, GameSessionError> {
+    /// Projects accepted elapsed presentation seconds from the active attempt.
+    pub const fn countdown_elapsed_seconds(&self) -> Option<f64> {
+        match self.configured() {
+            Some(ConfiguredSession {
+                phase: ConfiguredPhase::Countdown(countdown),
+                ..
+            }) => Some(countdown.elapsed.as_secs_f64()),
+            _ => None,
+        }
+    }
+
+    /// Observes monotonic elapsed seconds separately from presentation availability.
+    ///
+    /// The adapter supplies consecutive nonnegative clock deltas in seconds.
+    /// Reobserving the same timestamp supplies zero; a regressive timestamp
+    /// supplies a negative delta and is rejected without changing the state.
+    /// Deltas are rounded to nanoseconds by `Duration::try_from_secs_f64`.
+    /// An obsolete token cannot progress or cancel a later attempt. Availability
+    /// reflects actual frames and interruption signals, never the timer interval.
+    pub fn observe_countdown(
+        &mut self,
+        token: u32,
+        elapsed_seconds: f64,
+        frame_available: bool,
+    ) -> Result<CountdownProgress, GameSessionError> {
+        if self.countdown_token() != Some(token) {
+            return Ok(CountdownProgress::Ignored);
+        }
         let configured = self.configured_mut()?;
-        if !matches!(
-            configured.phase,
-            ConfiguredPhase::Countdown { remaining_ticks: 0 }
-        ) {
-            return Err(GameSessionError::InvalidTransition);
+        let ConfiguredPhase::Countdown(mut countdown) = configured.phase else {
+            return Ok(CountdownProgress::Ignored);
+        };
+        let elapsed = Duration::try_from_secs_f64(elapsed_seconds)
+            .map_err(|_| GameSessionError::InvalidCountdownElapsed)?;
+        let advanced = countdown
+            .elapsed
+            .checked_add(elapsed)
+            .ok_or(GameSessionError::InvalidCountdownElapsed)?;
+        if !frame_available {
+            configured.phase = ConfiguredPhase::Ready;
+            return Ok(CountdownProgress::Cancelled);
+        }
+        if advanced < Duration::from_secs(u64::from(countdown.duration_seconds)) {
+            countdown.elapsed = advanced;
+            configured.phase = ConfiguredPhase::Countdown(countdown);
+            return Ok(CountdownProgress::Waiting {
+                remaining_seconds: countdown.remaining_seconds(),
+            });
         }
         let configuration = &configured.configuration;
         let initial = configuration.initial_state();
@@ -911,7 +992,7 @@ impl<'a> GameSession<'a> {
             .begin_tail(initial, telemetry)
             .map_err(GameSessionError::Record)?;
         configured.phase = ConfiguredPhase::Running { state: initial };
-        Ok(self.snapshot())
+        Ok(CountdownProgress::Launched)
     }
 
     /// Cancels Countdown and returns to the same ready Briefing.
