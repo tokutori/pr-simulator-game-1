@@ -62,6 +62,19 @@ score・cause・終端stampはRust出力を保持する。
 Replayのcursor stampとrecord finalizationを区別し、保存controlsを新モデルの入力として再解釈しない。
 `FlightRenderPose.controls`も同じphysical incidenceを保持する。
 巨大なSceneを毎frame直列化せず、world/asset作成とtick/frame更新を分離する。
+主翼の断面、翼弦、前縁、60%/80%の二段上反角、skin/film topology・UV・material範囲、
+rib/spar/foam/stringerのsample・anchorは共有sessionの`wing_geometry`が所有する。
+右・上・後方を主翼ローカル基底とし、単位はmである。Web基準はmain `392a38b4`の
+`birdman-airframe.ts` blob `040d65b54cd3e4eb87ffa614da60a818c4e20936`である。
+全幅20.863 mは提示図面の記載値であり、翼弦1.13/0.38 m等は比率推定を維持する。
+E=45e9 Pa、I=4e-6 m⁴、支持質量110 kg、基準速度9.5 m/s、荷重係数0.3〜1.6は描画専用の仮定である。
+Flight/Resultは既存core telemetry、Replay/Attractは保存sample telemetry、Title/準備中は基準速度を使う。
+共有frameは0.03 m/sを超える速度変化でpositionsと全anchorを更新し、topologyを再生成しない。
+surfaceのbase/spanは既存Webと同じFloat32丸めを保ち、構造材anchorは倍精度で供給する。
+WASMは既存Lake系と同じ所有型typed-arrayを返し、Three.js/BevyはGPU resourceとmaterialを所有する。
+法線は完全な半翼topologyに既存area-weighted APIを適用し、material分割後もその法線を使う。
+Webの藍染textureと透明filmを保持し、Nativeの主翼skin/filmを共有形状へ投影する。
+Nativeの藍染texture、cockpit・rodの全面移植とVR・描画性能の受入は後続範囲であり、主翼cutで#96全体を完了扱いにしない。
 GPU resource handleはadapter内部に保持し、上位ではasset IDを使用する。
 dispose・resize・world load・frame描画・capability取得の所有者と失敗時状態を定義する。
 PresentationRuntimeのdisposeはloop停止・backend停止・renderer解放を独立して全試行する。

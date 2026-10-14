@@ -10,6 +10,7 @@ mod launch_venue;
 
 pub mod lake_sky;
 pub mod lake_water;
+pub mod wing_geometry;
 
 pub use environment::{
     PresetEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,

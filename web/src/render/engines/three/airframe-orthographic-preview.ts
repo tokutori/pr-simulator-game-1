@@ -3,6 +3,9 @@ import {
   Scene, WebGLRenderer
 } from "three";
 import { createBirdmanAirframe } from "./birdman-airframe.js";
+import init from "../../../../pkg/birdman_game_wasm.js";
+
+await init();
 
 type ViewName = "top" | "side" | "front";
 interface ViewSpec {
