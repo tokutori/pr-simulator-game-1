@@ -44,13 +44,16 @@ describe("layout-discriminated application session facade", () => {
       const raw = flightAnalysisData(model.analysis);
       if (raw === null || !("kind" in raw)) throw new Error("Expected the original named Model dataset");
       expect(raw).toBe(dataset);
+      expect(facade.isAnalysisDatasetCurrent(raw)).toBe(true);
       expect(facade.queryAnalysisCursor(0.005, raw).context).toBe(dataset.context);
       const foreign = other.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       expect(foreign.context).toEqual(dataset.context);
+      expect(facade.isAnalysisDatasetCurrent(foreign)).toBe(false);
       const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
       expect(() => facade.queryAnalysisCursor(0.005, foreign)).toThrow("stale");
       const plain = Object.freeze({ kind: "named_record" as const, context: dataset.context, summary: dataset.summary,
         samples: dataset.samples, windGrid: dataset.windGrid });
+      expect(facade.isAnalysisDatasetCurrent(plain)).toBe(false);
       expect(() => facade.queryAnalysisCursor(0.005, plain)).toThrow("observed dataset");
       expect(read).not.toHaveBeenCalled();
     } finally { facade.dispose(); other.dispose(); }
@@ -73,6 +76,7 @@ describe("layout-discriminated application session facade", () => {
         expect(facade.readRecordSummary().context).toEqual(observed.context);
       } else if (operation === "retry") facade.executeOperation("retry");
       else facade.dispose();
+      expect(facade.isAnalysisDatasetCurrent(observed)).toBe(false);
       expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow(operation === "dispose" ? "disposed" : "stale");
       expect(read).not.toHaveBeenCalled();
     } finally { facade.dispose(); }
@@ -102,6 +106,7 @@ describe("layout-discriminated application session facade", () => {
         const pending = facade.captureQueryToken();
         const clock = operation();
         expect(facade.acceptQuery(pending, "old clock").kind).toBe("stale");
+        expect(facade.isAnalysisDatasetCurrent(observed)).toBe(true);
         expect(facade.queryAnalysisCursor(clock.timeSeconds, observed).context).toBe(observed.context);
       }
       expect(samples).toHaveBeenCalledTimes(1);
