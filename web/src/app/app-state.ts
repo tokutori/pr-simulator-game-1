@@ -323,7 +323,7 @@ export type AppMessage =
   | { readonly type: "page-suspended" }
   | { readonly type: "page-restored" }
   | (Readonly<{ type: "game-session-synced" }> & GameSessionProjection)
-  | (Readonly<{ type: "game-operation-completed"; requestId: number }> & GameSessionProjection)
+  | (Readonly<{ type: "game-operation-completed"; requestId: number; analysisSourceInvalidated?: boolean }> & GameSessionProjection)
   | { readonly type: "game-session-status"; readonly message: string }
   | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisInput }
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
@@ -350,6 +350,7 @@ export type AppMessage =
       readonly requestId: number;
       readonly message: string;
       readonly currentSession?: GameSessionProjection;
+      readonly analysisSourceInvalidated?: boolean;
     };
 
 export type AppEffect =
@@ -795,8 +796,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         : Object.freeze({ ...model.replayClock,
           observation: Object.freeze({ ...model.replayClock.observation, playing: false }) });
       const analysis = flightAnalysisData(model.analysis);
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
-        || (returningReplay && analysis === null));
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (message.analysisSourceInvalidated === true
+        || analysisPhaseMismatch(analysis, nextPhaseCode) || (returningReplay && analysis === null));
       const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && analysis === null)
         ? model.analysis.nextRequestId
         : null;
@@ -829,7 +830,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
         analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
-        replayPose: enteringPlayback || ![9, 10].includes(nextPhaseCode)
+        replayPose: enteringPlayback || ![9, 10].includes(nextPhaseCode) || message.analysisSourceInvalidated === true
           ? Object.freeze({ kind: "idle", nextRequestId: model.replayPose.nextRequestId }) : model.replayPose,
         replayClock
       }), effects);
@@ -971,6 +972,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         const completed = updateApp(model, {
           type: "game-operation-completed",
           requestId: message.requestId,
+          analysisSourceInvalidated: message.analysisSourceInvalidated === true,
           ...message.currentSession
         });
         if (completed.model.status === "GameSessionから不正な状態snapshotを受信した") return completed;
@@ -978,7 +980,13 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }
       return transition(withModel(model, {
         pendingGameRequestId: null,
-        status: message.message
+        status: message.message,
+        analysis: message.analysisSourceInvalidated === true
+          ? observeAnalysisPhase(model.analysis, 0, null, true) : model.analysis,
+        analysisCursor: message.analysisSourceInvalidated === true
+          ? Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }) : model.analysisCursor,
+        replayPose: message.analysisSourceInvalidated === true
+          ? Object.freeze({ kind: "idle", nextRequestId: model.replayPose.nextRequestId }) : model.replayPose
       }));
     }
     case "page-hidden": {

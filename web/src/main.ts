@@ -829,6 +829,7 @@ function dispatchGameOperationFailure(
     dispatch({ type: "game-operation-failed", requestId, message });
     return;
   }
+  const dataset = flightAnalysisData(model.analysis);
   try {
     const currentSession = readRuntimeSessionProjection(session);
     const phaseCode = currentSession.phaseCode;
@@ -839,11 +840,13 @@ function dispatchGameOperationFailure(
     const failureMessage = context === undefined
       ? message
       : `${context.command.kind} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
-    dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession });
+    dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession,
+      analysisSourceInvalidated: dataset !== null && !session.isAnalysisDatasetCurrent(dataset) });
   } catch (syncError: unknown) {
     dispatch({
       type: "game-operation-failed",
       requestId,
+      analysisSourceInvalidated: dataset !== null && !session.isAnalysisDatasetCurrent(dataset),
       message: `${message}; GameSession resync failed: ${errorMessage(syncError)}`
     });
   }
