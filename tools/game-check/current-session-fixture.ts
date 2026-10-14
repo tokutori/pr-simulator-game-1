@@ -12,8 +12,7 @@ export function launchCurrentSession(session: AppSessionFacade): void {
   session.executeOperation("open-setup");
   session.executeOperation("prepare");
   session.executeOperation("start-flight");
-  while (session.advanceCountdown() > 0) continue;
-  session.launch();
+  session.observeCountdown(session.captureCountdownToken(), 3, true);
 }
 
 export function currentRecordFixture(eligible = true): string {

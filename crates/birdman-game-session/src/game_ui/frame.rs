@@ -34,10 +34,10 @@ pub fn game_ui_frame(
         button_labels: Vec::new(),
         chart_cursor: None,
     };
-    if let SessionPhase::Countdown { remaining_ticks } = phase {
+    if let SessionPhase::Countdown { remaining_seconds } = phase {
         frame.readouts.push(readout(
             "game-countdown-status",
-            format!("{remaining_ticks} 秒"),
+            format!("{remaining_seconds} 秒"),
         ));
     }
     if !matches!(

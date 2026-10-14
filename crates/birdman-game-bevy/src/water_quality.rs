@@ -174,7 +174,7 @@ mod tests {
             session.action(action).unwrap();
         }
         for _ in 0..3 {
-            session.countdown(1.0);
+            session.presentation_frame(1.0);
         }
         session.action(MenuAction::Pause).unwrap();
         for phase in [SessionPhase::FlightSetup, session.game.snapshot().phase()] {

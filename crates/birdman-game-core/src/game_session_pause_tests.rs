@@ -9,8 +9,7 @@ fn every_pause_set_preserves_other_causes_and_requires_explicit_resume() {
     for selected_bits in 0u8..16 {
         let mut current = session(100);
         current.start_countdown(1).unwrap();
-        current.advance_countdown().unwrap();
-        current.launch().unwrap();
+        current.observe_countdown(current.countdown_token().unwrap(), 1.0, true).unwrap();
         current
             .advance_tail_flight_tick(neutral_input(&current))
             .unwrap();
@@ -92,8 +91,7 @@ fn resume_rejects_nonpaused_phases_and_never_clears_terminal_record() {
     current.start_countdown(1).unwrap();
     assert!(!current.can_resume());
     assert_eq!(current.resume(), Err(GameSessionError::NotPaused));
-    current.advance_countdown().unwrap();
-    current.launch().unwrap();
+    current.observe_countdown(current.countdown_token().unwrap(), 1.0, true).unwrap();
     current.pause(PauseReason::ProcessingDelay).unwrap();
     let terminal = current.abort_flight().unwrap();
     let previous_count = current.flight_record().unwrap().sample_count();

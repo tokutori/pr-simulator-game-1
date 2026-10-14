@@ -26,8 +26,7 @@ function launch(session: TailAppSessionFacade): void {
   session.executeOperation("open-setup");
   session.executeOperation("prepare");
   session.executeOperation("start-flight");
-  while (session.advanceCountdown() > 0) continue;
-  session.launch();
+  session.observeCountdown(session.captureCountdownToken(), 3, true);
 }
 
 function session(): TailAppSessionFacade {
@@ -72,8 +71,7 @@ describe("single Rust snapshot application projection", () => {
       expect(sharedView(model).panels.flatMap((panel) => panel.controls).some((control) =>
         control.kind === "status" && control.value.includes("独立したroll"))).toBe(true);
       facade.executeOperation("start-flight");
-      while (facade.advanceCountdown() > 0) continue;
-      facade.launch();
+      facade.observeCountdown(facade.captureCountdownToken(), 3, true);
       for (const expectedPhase of [5, 6, 7] as const) {
         const current = projection(facade);
         expect(current.phaseCode).toBe(expectedPhase);

@@ -87,7 +87,7 @@ let flightController: TailFlightController | null = null;
 let gameSession: TailAppSessionFacade | null = null;
 let physicsHz = 0;
 let flightRenderer: RendererAdapter | null = null;
-let countdownGeneration = 0;
+let lastPresentationFrameMilliseconds: number | null = null;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
@@ -643,7 +643,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       bundle.renderer,
       [screenBackend, webXrBackend, phoneVrBackend],
         currentFrameViewModel,
-        (timestampMs) => flightController?.onFrame(timestampMs),
+        observePresentationFrame,
         (mode, reason) => {
           const frameModel = model;
           queueMicrotask(() => {
@@ -658,6 +658,7 @@ async function initializePresentation(requestId: number): Promise<void> {
     if (!started.ok) throw new Error(`Renderer initialization failed: ${runtimeErrorMessage(started)}`);
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
     window.addEventListener("resize", onResize);
+    window.addEventListener("blur", cancelUnavailableCountdown);
     const [webXrAvailability, phoneVrAvailability] = await Promise.all([
       webXrBackend.checkAvailability(),
       phoneVrBackend.checkAvailability()
@@ -674,6 +675,7 @@ async function initializePresentation(requestId: number): Promise<void> {
     syncGameSession();
   } catch (error) {
     window.removeEventListener("resize", onResize);
+    window.removeEventListener("blur", cancelUnavailableCountdown);
     const ownedPresentation = presentationOwner;
     const controller = flightController;
     const session = gameSession;
@@ -796,12 +798,11 @@ function runSharedGameSessionCommand(command: GameUiSessionCommand, requestId: n
     return;
   }
   try {
-    if (command.kind === "cancel_countdown") countdownGeneration += 1;
     const result = session.executeSharedSessionCommand(command);
     if (result.kind === "countdown-started") {
+      const observedAt = performance.now();
       completeGameOperation(requestId);
-      countdownGeneration += 1;
-      scheduleCountdownTick(countdownGeneration);
+      scheduleCountdownObservation(session, observedAt);
       return;
     }
     if (command.kind === "pause") flightController?.suspend();
@@ -862,30 +863,59 @@ function completeGameOperation(requestId: number): void {
   });
 }
 
-function scheduleCountdownTick(generation: number): void {
-  const owner = gameSession;
-  if (owner === null) return;
-  const token = owner.captureQueryToken();
+function scheduleCountdownObservation(owner: TailAppSessionFacade, previousMilliseconds: number): void {
+  const token = owner.captureCountdownToken();
+  if (token === null) return;
+  let consumed = false;
   window.setTimeout(() => {
-    const session = gameSession;
-    if (session !== owner || owner.acceptQuery(token, generation).kind === "stale" || generation !== countdownGeneration
-        || owner.readLifecycle().phaseCode !== 4) return;
+    if (consumed) return;
+    consumed = true;
+    if (gameSession !== owner) return;
     try {
-      const remainingTicks = owner.advanceCountdown();
+      const currentToken = owner.captureCountdownToken();
+      if (currentToken === null || currentToken.attempt !== token.attempt) return;
+      const observedAt = performance.now();
+      const frameAvailable = document.visibilityState !== "hidden" && document.hasFocus()
+        && model.presentation.type === "ready" && runtime !== null && runtime.currentMode !== null
+        && lastPresentationFrameMilliseconds !== null
+        && observedAt - lastPresentationFrameMilliseconds <= maximum_flight_frame_gap_milliseconds();
+      const progress = owner.observeCountdown(currentToken, (observedAt - previousMilliseconds) / 1000, frameAvailable);
+      if (progress.kind === "ignored") return;
       syncGameSession();
-      if (remainingTicks === 0) {
-        owner.launch();
-        syncGameSession();
+      if (progress.kind === "launched") {
         if (flightController === null) createFlightController(owner);
         else resetFlightController();
-      } else {
-        scheduleCountdownTick(generation);
+      } else if (progress.kind === "waiting") {
+        scheduleCountdownObservation(owner, observedAt);
       }
     } catch (error: unknown) {
       syncGameSession();
       dispatch({ type: "game-session-status", message: `発進準備に失敗した: ${errorMessage(error)}` });
     }
-  }, 800);
+  }, 1000);
+}
+
+function observePresentationFrame(timestampMilliseconds: number): void {
+  const observedAt = performance.now();
+  const available = document.visibilityState !== "hidden" && document.hasFocus()
+    && (lastPresentationFrameMilliseconds === null
+      || observedAt - lastPresentationFrameMilliseconds <= maximum_flight_frame_gap_milliseconds());
+  lastPresentationFrameMilliseconds = observedAt;
+  if (!available) cancelUnavailableCountdown();
+  flightController?.onFrame(timestampMilliseconds);
+}
+
+function cancelUnavailableCountdown(): void {
+  const session = gameSession;
+  if (session === null) return;
+  const token = session.captureCountdownToken();
+  if (token === null) return;
+  try {
+    session.observeCountdown(token, 0, false);
+    syncGameSession();
+  } catch (error: unknown) {
+    dispatch({ type: "game-session-status", message: `発進準備の取消に失敗した: ${errorMessage(error)}` });
+  }
 }
 
 function createFlightController(session: TailAppSessionFacade): void {
@@ -1019,6 +1049,7 @@ function onResize(): void {
 function onPageHide(): void {
   flightLogDownload.dispose();
   window.removeEventListener("resize", onResize);
+  window.removeEventListener("blur", cancelUnavailableCountdown);
   document.removeEventListener("visibilitychange", onVisibilityChange);
   const controller = flightController;
   const session = gameSession;
@@ -1055,7 +1086,7 @@ function suspendPageFlightState(): void {
         session.pauseForReason("page_hidden");
       }
     };
-    suspendPageFlight(pagePort, flightController, () => { countdownGeneration += 1; }, syncGameSession);
+    suspendPageFlight(pagePort, flightController, syncGameSession);
   } catch (error: unknown) {
     dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
   }
@@ -1071,6 +1102,7 @@ function onPageRestore(): void {
 }
 
 function pauseForPresentationTransition(): void {
+  cancelUnavailableCountdown();
   pauseSessionForReason("presentation_transition");
 }
 

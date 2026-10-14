@@ -101,8 +101,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
     expect(record(parse(session.environment_snapshot_json()).projection)).toEqual({ ...selected, source: "sealed" });
     session.mark_briefing_ready();
     session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
+    session.observe_countdown(session.countdown_token(), 1, true);
     const before = session.snapshot_json();
     session.environment_snapshot_json();
     expect(session.snapshot_json()).toEqual(before);
@@ -129,8 +128,7 @@ it("retains archived samples when environment metadata is unavailable", () => {
     session.prepare();
     session.mark_briefing_ready();
     session.start_countdown(1);
-    session.advance_countdown();
-    session.launch();
+    session.observe_countdown(session.countdown_token(), 1, true);
     session.advance_tick_json(neutralTailInput);
     session.abort();
     const document = parse(session.export_flight_record_json());

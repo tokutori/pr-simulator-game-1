@@ -23,10 +23,9 @@ function prepared() {
 
 function launch(session: TailAppSessionFacade): void {
   session.executeOperation("start-flight");
-  expect(session.advanceCountdown()).toBe(2);
-  expect(session.advanceCountdown()).toBe(1);
-  expect(session.advanceCountdown()).toBe(0);
-  session.launch();
+  expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
+  expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 1 });
+  expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "launched" });
 }
 
 function jsonObject(json: string): Record<string, unknown> {
@@ -85,7 +84,7 @@ describe("application runtime session projection", () => {
     const session = prepared();
     try {
       archived.open_setup(); archived.prepare(); archived.mark_briefing_ready();
-      archived.start_countdown(1); archived.advance_countdown(); archived.launch();
+      archived.start_countdown(1); archived.observe_countdown(archived.countdown_token(), 1, true);
       archived.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.05, turnRight: -0.05,
         desiredPitchRateRadiansPerSecond: 0.01, desiredYawRateRadiansPerSecond: -0.01,
         pilotPositionCommand: { kind: "set", normalized: 0.25 } }));
@@ -131,7 +130,7 @@ describe("registered environment and venue projection", () => {
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
       session.executeOperation("start-flight");
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.advanceCountdown(); session.advanceCountdown(); session.advanceCountdown(); session.launch();
+      session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
       session.executeOperation("pause");
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });

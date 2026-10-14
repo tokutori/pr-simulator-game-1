@@ -63,10 +63,12 @@ fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), BoundaryError>
         .mark_briefing_ready()
         .map_err(BoundaryError::Session)?;
     builder.start_countdown(1).map_err(BoundaryError::Session)?;
+    let token = builder
+        .countdown_token()
+        .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
     builder
-        .advance_countdown()
+        .observe_countdown(token, 1.0, true)
         .map_err(BoundaryError::Session)?;
-    builder.launch().map_err(BoundaryError::Session)?;
     let input = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).map_err(BoundaryError::Control)?,
         TailRateTarget::try_new(0.0, 0.0).map_err(BoundaryError::Control)?,

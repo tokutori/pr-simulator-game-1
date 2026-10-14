@@ -72,8 +72,9 @@ fn launched() -> GameSession<'static> {
     .unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
-    session.advance_countdown().unwrap();
-    session.launch().unwrap();
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
     session
 }
 fn finalized() -> GameSession<'static> {
@@ -815,8 +816,9 @@ fn retained_preflight_and_initial_flight_frames_do_not_query_record_duration() {
             session.start_countdown(1).unwrap();
         }
         if phase_code == 5 {
-            session.advance_countdown().unwrap();
-            session.launch().unwrap();
+            session
+                .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+                .unwrap();
         }
         let platform = platform();
         let state = GameUiState::default();
@@ -1015,8 +1017,9 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
     prepare_game_ui_flight(&mut session, difficulty(), 100, 42).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
-    session.advance_countdown().unwrap();
-    session.launch().unwrap();
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
     let input = TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),

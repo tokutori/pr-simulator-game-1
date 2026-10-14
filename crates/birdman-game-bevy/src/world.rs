@@ -884,7 +884,7 @@ mod tests {
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             assert_eq!(
                 session.game.snapshot().phase(),
@@ -999,13 +999,13 @@ mod tests {
         for _step in 0..2 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
             app.update();
             assert_sample_projection(&mut app, initial, false);
         }
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .countdown(1.0);
+            .presentation_frame(1.0);
         app.update();
         assert_sample_projection(&mut app, initial, true);
         *app.world_mut().resource_mut::<FlightInput>() = FlightInput {
@@ -1078,7 +1078,7 @@ mod tests {
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
         }
         let initial = RenderSample::from_display(
@@ -1149,7 +1149,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
         }
         app.update();
@@ -1175,7 +1175,7 @@ mod tests {
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
         }
         for _step in 0..birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS {
@@ -1254,7 +1254,7 @@ mod tests {
             assert!(main_wing_airspeed(&session).is_nan());
             session.action(MenuAction::Launch).unwrap();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             assert_eq!(
                 main_wing_airspeed(&session),
@@ -1447,7 +1447,7 @@ mod tests {
         for _step in 0..2 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
             app.update();
             assert_eq!(
                 *app.world().entity(aircraft).get::<Transform>().unwrap(),
@@ -1469,7 +1469,7 @@ mod tests {
         }
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .countdown(1.0);
+            .presentation_frame(1.0);
         app.update();
         assert_eq!(
             *app.world().entity(aircraft).get::<Transform>().unwrap(),

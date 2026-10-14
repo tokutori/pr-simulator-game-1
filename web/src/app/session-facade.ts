@@ -37,6 +37,12 @@ export interface SessionQueryToken {
   readonly [queryGeneration]: symbol;
 }
 export type SessionQueryAcceptance<Value> = Readonly<{ kind: "accepted"; value: Value }> | Readonly<{ kind: "stale" }>;
+export interface CountdownObservationToken {
+  readonly query: SessionQueryToken;
+  readonly attempt: number;
+}
+export type CountdownProgress = Readonly<{ kind: "ignored" }> | Readonly<{ kind: "cancelled" }>
+  | Readonly<{ kind: "waiting"; remainingSeconds: number }> | Readonly<{ kind: "launched" }>;
 interface RecordSourceToken {
   readonly [queryOwner]: symbol;
   readonly [recordSourceGeneration]: symbol;
@@ -51,9 +57,10 @@ export interface ObservedNamedAnalysisDataset extends NamedAnalysisDataset {
 export interface SessionResourcePort extends SessionSelectionPort, FlightLogExportPort {
   phase_code(): number;
   control_mode_code(): number;
-  countdown_remaining(): number;
+  countdown_remaining_seconds(): number;
   can_resume(): boolean;
-  advance_countdown(): number;
+  countdown_token(): number;
+  observe_countdown(token: number, elapsedSeconds: number, frameAvailable: boolean): number;
   clear_pause_reason(reason: number): void;
   environment_snapshot_json(): string;
   export_flight_record_json(): string;
@@ -66,7 +73,6 @@ export type TailAppSessionOperation = GameSessionOperation;
 export type TailAppSessionPort = SessionResourcePort & TailSessionPort
   & Omit<GameSessionOperationPort, "abort"> & {
     abort(): string;
-    launch(): string;
     prepared_launch_snapshot_json(): string;
     game_ui_view_json(platformJson: string): string;
     game_ui_frame_json(expectedRevision: number, platformJson: string): string;
@@ -90,7 +96,7 @@ export type TailAppOperationResult = CompletedOperation
 export interface SessionLifecycleProjection {
   readonly phaseCode: number;
   readonly controlModeCode: 0 | 1 | 2;
-  readonly countdownRemaining: number;
+  readonly countdownRemainingSeconds: number;
   readonly canResume: boolean;
 }
 export type TailTitleProjection = Readonly<{ kind: "idle"; phaseCode: 0 }>
@@ -131,7 +137,7 @@ abstract class SessionResourceOwner {
       if (typeof canResume !== "boolean") throw new RangeError("Rust resume projection requires a boolean");
       return Object.freeze({ phaseCode: boundaryInteger(this.resource.phase_code(), 0, 10),
         controlModeCode: boundaryInteger(this.resource.control_mode_code(), 0, 2) as 0 | 1 | 2,
-        countdownRemaining: boundaryInteger(this.resource.countdown_remaining()), canResume });
+        countdownRemainingSeconds: boundaryInteger(this.resource.countdown_remaining_seconds()), canResume });
     });
   }
 
@@ -143,8 +149,26 @@ abstract class SessionResourceOwner {
     return this.observe(() => decodePreparedUiConfiguration(this.readLifecycle().phaseCode, () => this.resource.configuration_metadata()));
   }
 
-  advanceCountdown(): number {
-    return this.change(() => boundaryInteger(this.resource.advance_countdown()));
+  captureCountdownToken(): CountdownObservationToken | null {
+    return this.observe(() => {
+      const attempt = boundaryInteger(this.resource.countdown_token());
+      if (attempt === 0) return null;
+      return Object.freeze({ query: this.captureQueryToken(), attempt });
+    });
+  }
+
+  observeCountdown(token: CountdownObservationToken | null, elapsedSeconds: number, frameAvailable: boolean): CountdownProgress {
+    if (token === null || this.acceptQuery(token.query, token.attempt).kind === "stale") return Object.freeze({ kind: "ignored" });
+    return this.change(() => {
+      const code = boundaryInteger(this.resource.observe_countdown(token.attempt, elapsedSeconds, frameAvailable), 0, 3);
+      switch (code) {
+        case 0: return Object.freeze({ kind: "ignored" });
+        case 1: return Object.freeze({ kind: "cancelled" });
+        case 2: return Object.freeze({ kind: "waiting", remainingSeconds: boundaryInteger(this.resource.countdown_remaining_seconds()) });
+        case 3: return Object.freeze({ kind: "launched" });
+        default: throw new RangeError("Rust Countdown progress is unsupported");
+      }
+    });
   }
 
   clearPauseReason(reason: number): void {
@@ -301,10 +325,6 @@ export class TailAppSessionFacade extends SessionResourceOwner {
       return projectTailGameSession(this.readSnapshot(), lifecycle, this.readDifficulty(),
         configuration.kind === "available" ? configuration.value : null);
     });
-  }
-
-  launch(): TailSessionSnapshot {
-    return this.change(() => parseTailSessionSnapshot(this.port.launch(), this.physicsHz));
   }
 
   readReplayContext(): NamedReplayContext {

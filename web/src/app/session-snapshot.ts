@@ -66,7 +66,7 @@ export function projectTailGameSession(snapshot: TailSessionSnapshot, lifecycle:
     throw new RangeError("Rust session lifecycle and snapshot disagree");
   }
   const common = { controlLayout: "tail_incidence" as const, controlModeCode: lifecycle.controlModeCode,
-    difficulty, configurationMetadata, countdownRemaining: lifecycle.countdownRemaining, canResume: lifecycle.canResume };
+    difficulty, configurationMetadata, countdownRemainingSeconds: lifecycle.countdownRemainingSeconds, canResume: lifecycle.canResume };
   const display = projectTailFlightSnapshot(snapshot);
   if (snapshot.phaseCode === 5 || snapshot.phaseCode === 6) {
     if (display.kind !== "available" || display.value.kind !== "tail_flight" || display.value.phaseCode !== snapshot.phaseCode) throw new RangeError("Rust flight projection requires a live tail snapshot");

@@ -23,8 +23,8 @@ pub(crate) struct NativeSession {
     pub(crate) ui: GameUiState,
     pub(crate) notice: Option<String>,
     pub(crate) initial_pilot_position_m: f64,
-    pub(crate) countdown_elapsed: f64,
     frame_available: bool,
+    countdown_frame_token: Option<u32>,
 }
 
 impl Default for NativeSession {
@@ -35,8 +35,8 @@ impl Default for NativeSession {
             ui: GameUiState::default(),
             notice: None,
             initial_pilot_position_m: 0.0,
-            countdown_elapsed: 0.0,
             frame_available: true,
+            countdown_frame_token: None,
         }
     }
 }
@@ -53,6 +53,7 @@ pub(crate) enum MenuAction {
 
 impl NativeSession {
     pub(crate) fn observe_frame(&mut self, focused: bool, processing_delayed: bool) {
+        self.countdown_frame_token = Some(self.game.countdown_token().unwrap_or(0));
         self.frame_available = focused && !processing_delayed;
         if !matches!(
             self.game.snapshot().phase(),
@@ -199,10 +200,7 @@ impl NativeSession {
                 .map_err(|error| format!("準備に失敗した: {error:?}"))?;
                 self.game.mark_briefing_ready()
             }
-            GameUiSessionCommand::StartCountdown {} => {
-                self.countdown_elapsed = 0.0;
-                self.game.start_countdown(3)
-            }
+            GameUiSessionCommand::StartCountdown {} => self.game.start_countdown(3),
             GameUiSessionCommand::Pause {} => self.game.pause(PauseReason::Manual),
             GameUiSessionCommand::Resume {} => self
                 .game
@@ -322,33 +320,35 @@ impl NativeSession {
             }
             return;
         }
-        if !matches!(self.game.snapshot(), SessionSnapshot::Countdown { .. }) {
-            self.countdown_elapsed = 0.0;
-            return;
-        }
-        if !self.frame_available {
-            self.countdown_elapsed = 0.0;
-            if let Err(error) = self.execute_ui_command(GameUiSessionCommand::CancelCountdown {}) {
-                self.notice = Some(error);
+        if let Some(token) = self.countdown_frame_token.take() {
+            if token == 0 {
+                if let Some(current) = self.game.countdown_token() {
+                    self.observe_countdown(current, 0.0);
+                }
+            } else {
+                self.observe_countdown(token, elapsed);
             }
-            return;
         }
-        self.countdown_elapsed += elapsed;
-        if self.countdown_elapsed < 1.0 {
-            return;
-        }
-        self.countdown_elapsed -= 1.0;
-        let result = self.game.advance_countdown().and_then(|remaining| {
-            if remaining == 0 {
-                let snapshot = self.game.launch()?;
-                if let SessionSnapshot::TailFlightRunning { state, .. } = snapshot {
+    }
+
+    #[cfg(test)]
+    pub(crate) fn presentation_frame(&mut self, elapsed: f64) {
+        self.countdown_frame_token = Some(self.game.countdown_token().unwrap_or(0));
+        self.countdown(elapsed);
+    }
+
+    fn observe_countdown(&mut self, token: u32, elapsed_seconds: f64) {
+        match self
+            .game
+            .observe_countdown(token, elapsed_seconds, self.frame_available)
+        {
+            Ok(birdman_game_core::CountdownProgress::Launched) => {
+                if let SessionSnapshot::TailFlightRunning { state, .. } = self.game.snapshot() {
                     self.initial_pilot_position_m = state.flight_state().pilot_position_m();
                 }
             }
-            Ok(())
-        });
-        if let Err(error) = result {
-            self.notice = Some(format!("発進に失敗した: {error:?}"));
+            Ok(_) => {}
+            Err(error) => self.notice = Some(format!("発進に失敗した: {error:?}")),
         }
     }
 
@@ -431,14 +431,14 @@ mod tests {
         assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
         session.action(MenuAction::Launch).unwrap();
         for _step in 0..2 {
-            session.countdown(1.0);
+            session.presentation_frame(1.0);
             let countdown = session.prepared_display_state().unwrap();
             assert_eq!(countdown.state, initial.state);
             assert_eq!(countdown.incidence, initial.incidence);
             assert!(session.display_state().is_none());
             assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
         }
-        session.countdown(1.0);
+        session.presentation_frame(1.0);
         assert!(session.prepared_display_state().is_none());
         let launched = session.display_state().unwrap();
         assert_eq!(launched.state, initial.state);
@@ -496,7 +496,7 @@ mod tests {
         let session = app.world().resource::<NativeSession>();
         assert!(!session.frame_available);
         assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-        assert_eq!(session.countdown_elapsed, 0.0);
+        assert_eq!(session.game.countdown_token(), None);
         assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
         let identity = session.game.configuration_identity();
         let initial = session.game.prepared_launch_state().unwrap();
@@ -546,26 +546,159 @@ mod tests {
     }
 
     #[test]
+    fn native_update_countdown_projects_elapsed_seconds_and_keeps_fixed_physics_frozen() {
+        let mut app = App::new();
+        app.add_plugins((bevy::input::InputPlugin, bevy::time::TimePlugin))
+            .init_resource::<NativeSession>()
+            .init_resource::<FlightInput>()
+            .init_resource::<super::super::CameraMode>()
+            .init_resource::<super::super::world::RenderHistory>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(
+                birdman_game_core::PHYSICS_HZ,
+            )))
+            .insert_resource(Time::<Virtual>::from_max_delta(
+                super::super::MAX_FRAME_DELTA,
+            ))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(100),
+            ))
+            .add_systems(FixedUpdate, super::super::advance_physics)
+            .add_systems(Update, super::super::advance_presentation);
+        super::super::register_input(&mut app);
+        app.world_mut().spawn(Window::default());
+        app.update();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+        }
+        for (frames, remaining_seconds) in [(8, 3), (2, 2), (19, 1)] {
+            for _frame in 0..frames {
+                app.update();
+            }
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(
+                session.game.snapshot().phase(),
+                SessionPhase::Countdown { remaining_seconds }
+            );
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        }
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(
+            session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index(),
+            0
+        );
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(session.game.countdown_token(), None);
+    }
+
+    #[test]
+    fn native_countdown_rejects_obsolete_attempts_and_launches_once_after_irregular_elapsed() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
+        }
+        let obsolete = session.game.countdown_token().unwrap();
+        session.presentation_frame(0.8);
+        session
+            .execute_ui_command(GameUiSessionCommand::CancelCountdown {})
+            .unwrap();
+        session.action(MenuAction::Launch).unwrap();
+        session.observe_countdown(obsolete, 3.0);
+        assert_eq!(
+            session.game.snapshot().phase(),
+            SessionPhase::Countdown {
+                remaining_seconds: 3
+            }
+        );
+        session.presentation_frame(0.8);
+        assert_eq!(
+            session.game.snapshot().phase(),
+            SessionPhase::Countdown {
+                remaining_seconds: 3
+            }
+        );
+        session.presentation_frame(0.2);
+        assert_eq!(
+            session.game.snapshot().phase(),
+            SessionPhase::Countdown {
+                remaining_seconds: 2
+            }
+        );
+        session.presentation_frame(2.0);
+        let initial = session.game.snapshot();
+        assert_eq!(initial.phase(), SessionPhase::FlightRunning);
+        assert_eq!(initial.tail_flight_state().unwrap().tick_index(), 0);
+        session.presentation_frame(3.0);
+        session.observe_countdown(obsolete, 3.0);
+        assert_eq!(session.game.snapshot(), initial);
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+    }
+
+    #[test]
+    fn native_countdown_consumes_one_frame_observation_and_ignores_same_frame_restart_delta() {
+        let mut session = NativeSession::default();
+        session.action(MenuAction::Start).unwrap();
+        session.action(MenuAction::Prepare).unwrap();
+        session.observe_frame(true, false);
+        session.action(MenuAction::Launch).unwrap();
+        session.countdown(0.1);
+        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        session.countdown(3.0);
+        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        session.observe_frame(true, false);
+        session
+            .execute_ui_command(GameUiSessionCommand::CancelCountdown {})
+            .unwrap();
+        session.action(MenuAction::Launch).unwrap();
+        session.countdown(0.1);
+        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        assert_eq!(
+            session.game.snapshot().phase(),
+            SessionPhase::Countdown {
+                remaining_seconds: 3
+            }
+        );
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+    }
+
+    #[test]
     fn countdown_cancellation_discards_partial_time_for_unavailable_frames() {
         for (focused, processing_delayed) in [(false, false), (true, true), (false, true)] {
             let mut session = NativeSession::default();
             for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
                 session.action(action).unwrap();
             }
-            session.countdown(0.75);
+            session.presentation_frame(0.75);
             session.observe_frame(focused, processing_delayed);
-            session.countdown(0.5);
+            session.presentation_frame(0.5);
             assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-            assert_eq!(session.countdown_elapsed, 0.0);
+            assert_eq!(session.game.countdown_token(), None);
             assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
             session.observe_frame(true, false);
             session.action(MenuAction::Launch).unwrap();
-            session.countdown(0.5);
+            session.presentation_frame(0.5);
             assert_eq!(
                 session.game.snapshot().phase(),
-                SessionPhase::Countdown { remaining_ticks: 3 }
+                SessionPhase::Countdown {
+                    remaining_seconds: 3
+                }
             );
-            assert_eq!(session.countdown_elapsed, 0.5);
+            session.presentation_frame(0.5);
+            assert_eq!(
+                session.game.snapshot().phase(),
+                SessionPhase::Countdown {
+                    remaining_seconds: 2
+                }
+            );
             assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
         }
     }
@@ -590,7 +723,7 @@ mod tests {
                 assert_eq!(sealed_identity.seed, DEFAULT_SESSION_SEED);
                 session.action(MenuAction::Launch).unwrap();
                 for _step in 0..3 {
-                    session.countdown(1.0);
+                    session.presentation_frame(1.0);
                 }
                 let initial_state = session.game.snapshot().tail_flight_state().unwrap();
                 let mut last_successful_state = initial_state;
@@ -665,7 +798,7 @@ mod tests {
                 assert!(session.notice.is_none());
                 session.action(MenuAction::Launch).unwrap();
                 for _step in 0..3 {
-                    session.countdown(1.0);
+                    session.presentation_frame(1.0);
                 }
                 assert_eq!(
                     session.game.snapshot().tail_flight_state(),
@@ -682,7 +815,7 @@ mod tests {
         session.action(MenuAction::Prepare).unwrap();
         session.action(MenuAction::Launch).unwrap();
         for _step in 0..3 {
-            session.countdown(1.0);
+            session.presentation_frame(1.0);
         }
         session.tick(FlightInput::default());
         let before = session.game.snapshot();
@@ -738,7 +871,7 @@ mod tests {
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             let before = session.game.snapshot().tail_flight_state().unwrap();
             session.observe_frame(focused, processing_delayed);
@@ -780,7 +913,7 @@ mod tests {
                     session.action(action).unwrap();
                 }
                 for _step in 0..3 {
-                    session.countdown(1.0);
+                    session.presentation_frame(1.0);
                 }
                 session.game.pause(PauseReason::Manual).unwrap();
                 session
@@ -840,7 +973,7 @@ mod tests {
             session.action(MenuAction::Prepare).unwrap();
             session.action(MenuAction::Launch).unwrap();
             for _step in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             let mode = session.control_mode();
             let header = session.game.flight_record().unwrap().header();

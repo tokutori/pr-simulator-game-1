@@ -21,8 +21,9 @@ fn launch(mode: ControlMode, maximum_ticks: u64) -> HybridGameSessionBridge {
     bridge.prepare_internal().unwrap();
     bridge.mark_briefing_ready().unwrap();
     bridge.start_countdown(1).unwrap();
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
+    bridge
+        .observe_countdown(bridge.countdown_token(), 1.0, true)
+        .unwrap();
     bridge
 }
 
@@ -74,9 +75,10 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
                 assert_eq!(countdown["phase_code"], 4);
                 assert_eq!(countdown["preview"]["state"], initial);
                 assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
-                bridge.advance_countdown().unwrap();
+                bridge
+                    .observe_countdown(bridge.countdown_token(), 1.0, true)
+                    .unwrap();
             }
-            bridge.launch().unwrap();
             assert_eq!(snapshot(&bridge)["frame"]["state"], initial);
             let live: Value =
                 serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
@@ -146,10 +148,12 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
             native.mark_briefing_ready().unwrap();
             bridge.start_countdown(1).unwrap();
             native.start_countdown(1).unwrap();
-            bridge.advance_countdown().unwrap();
-            native.advance_countdown().unwrap();
-            bridge.launch().unwrap();
-            native.launch().unwrap();
+            bridge
+                .observe_countdown(bridge.countdown_token(), 1.0, true)
+                .unwrap();
+            native
+                .observe_countdown(native.countdown_token().unwrap(), 1.0, true)
+                .unwrap();
             assert_eq!(
                 bridge.session.configuration_identity(),
                 native.configuration_identity()
@@ -471,8 +475,9 @@ fn held_position_projection_survives_hold_pause_result_and_resets_to_sealed_trim
         );
         bridge.retry().unwrap();
         bridge.start_countdown(1).unwrap();
-        bridge.advance_countdown().unwrap();
-        bridge.launch().unwrap();
+        bridge
+            .observe_countdown(bridge.countdown_token(), 1.0, true)
+            .unwrap();
         assert_eq!(
             snapshot(&bridge)["frame"]["state"]["pilot_position_target_normalized"],
             0.0
@@ -518,8 +523,9 @@ fn all_authorities_keep_one_core_lifecycle_and_consistent_terminal_time() {
         );
         bridge.retry().unwrap();
         bridge.start_countdown(1).unwrap();
-        bridge.advance_countdown().unwrap();
-        bridge.launch().unwrap();
+        bridge
+            .observe_countdown(bridge.countdown_token(), 1.0, true)
+            .unwrap();
         assert_eq!(snapshot(&bridge)["frame"]["state"]["tick"], 0);
         assert_eq!(snapshot(&bridge)["scenario"]["seed_high"], u32::MAX);
     }
@@ -554,8 +560,9 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
         );
         bridge.mark_briefing_ready().unwrap();
         bridge.start_countdown(1).unwrap();
-        bridge.advance_countdown().unwrap();
-        bridge.launch().unwrap();
+        bridge
+            .observe_countdown(bridge.countdown_token(), 1.0, true)
+            .unwrap();
         let telemetry = bridge.session.telemetry().unwrap().unwrap();
         if version == 6 {
             assert_eq!(
@@ -690,7 +697,9 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
         snapshot(&bridge)["control_identity"],
         sealed_snapshot["control_identity"]
     );
-    bridge.advance_countdown().unwrap();
+    bridge
+        .observe_countdown(bridge.countdown_token(), 1.0, true)
+        .unwrap();
     bridge.cancel_countdown().unwrap();
     assert_eq!(bridge.phase_code(), 3);
     assert_eq!(bridge.session.configuration_identity(), identity);

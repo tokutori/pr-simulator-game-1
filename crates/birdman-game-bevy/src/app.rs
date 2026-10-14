@@ -408,8 +408,20 @@ fn advance_physics(
     }
 }
 
-fn advance_presentation(mut session: ResMut<NativeSession>, time: Res<Time>) {
-    session.countdown(time.delta_secs_f64());
+fn advance_presentation(
+    mut session: ResMut<NativeSession>,
+    time: Res<Time>,
+    real: Res<Time<Real>>,
+) {
+    let elapsed = if matches!(
+        session.game.snapshot().phase(),
+        SessionPhase::Countdown { .. }
+    ) {
+        real.delta_secs_f64()
+    } else {
+        time.delta_secs_f64()
+    };
+    session.countdown(elapsed);
 }
 
 #[cfg(test)]
@@ -468,7 +480,7 @@ mod tests {
                 session.action(action).unwrap();
             }
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
         }
         (app, window)
@@ -580,7 +592,7 @@ mod tests {
                 }
                 if resume {
                     for _ in 0..3 {
-                        session.countdown(1.0);
+                        session.presentation_frame(1.0);
                     }
                     session.action(native_session::MenuAction::Pause).unwrap();
                 }
@@ -922,7 +934,7 @@ mod tests {
         for _ in 0..3 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
         }
         let snapshot = app.world().resource::<NativeSession>().game.snapshot();
         assert_eq!(snapshot.phase(), SessionPhase::FlightRunning);
@@ -999,7 +1011,7 @@ mod tests {
             for _ in 0..3 {
                 app.world_mut()
                     .resource_mut::<NativeSession>()
-                    .countdown(1.0);
+                    .presentation_frame(1.0);
             }
             app.update();
             assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);

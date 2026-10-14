@@ -26,8 +26,7 @@ function fixture(mode = 0, initialTarget = 0) {
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
+  session.observe_countdown(session.countdown_token(), 1, true);
   if (initialTarget !== 0) session.advance_tick_json(encodeTailLogicalInput({ ...hold, pilotPositionCommand: { kind: "set", normalized: initialTarget } }));
   const browserInput = new BrowserTailPilotInput(browser as unknown as Window, { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION,
     keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz: physics_hz() } });
@@ -245,8 +244,8 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(archive).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort", terminal_tick: 0 } });
     trial.session.retry();
     trial.session.start_countdown(1);
-    trial.session.advance_countdown();
-    trial.controller.reset(trial.session.launch());
+    trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
+    trial.controller.reset(trial.session.snapshot_json());
     expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
     expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(0);
   });
@@ -278,7 +277,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     const trial = fixture();
     const other = new HybridGameSessionBridge(0, 99, 100);
     try {
-      other.open_setup(); other.prepare(); other.mark_briefing_ready(); other.start_countdown(1); other.advance_countdown(); other.launch();
+      other.open_setup(); other.prepare(); other.mark_briefing_ready(); other.start_countdown(1); other.observe_countdown(other.countdown_token(), 1, true);
       const retained = trial.controller.currentSnapshot;
       trial.port.advance_tick_json.mockImplementationOnce(() => other.snapshot_json());
       trial.controller.onFrame(0);
@@ -489,8 +488,8 @@ describe("two-tail controller through the Rust WASM port", () => {
       trial.controller.onFrame(20_000);
       trial.session.retry();
       trial.session.start_countdown(1);
-      trial.session.advance_countdown();
-      trial.controller.reset(trial.session.launch());
+      trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
+      trial.controller.reset(trial.session.snapshot_json());
       if (throws) throw new Error("Old terminal callback failure after reset");
     });
     trial.controller.onFrame(0);
@@ -530,8 +529,8 @@ describe("two-tail controller through the Rust WASM port", () => {
     const reset = (): void => {
       trial.session.retry();
       trial.session.start_countdown(1);
-      trial.session.advance_countdown();
-      trial.controller.reset(trial.session.launch());
+      trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
+      trial.controller.reset(trial.session.snapshot_json());
     };
     if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(reset);
     else trial.hud.render.mockImplementationOnce(reset);
@@ -552,8 +551,8 @@ describe("two-tail controller through the Rust WASM port", () => {
       trial.session.abort();
       trial.session.retry();
       trial.session.start_countdown(1);
-      trial.session.advance_countdown();
-      trial.controller.reset(trial.session.launch());
+      trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
+      trial.controller.reset(trial.session.snapshot_json());
     };
     trial.renderer.setFlightPose.mockImplementationOnce(restart);
     trial.controller.onFrame(0);

@@ -11,8 +11,9 @@ fn complete() -> HybridGameSessionBridge {
     bridge.prepare_internal().unwrap();
     bridge.mark_briefing_ready().unwrap();
     bridge.start_countdown(1).unwrap();
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
+    bridge
+        .observe_countdown(bridge.countdown_token(), 1.0, true)
+        .unwrap();
     let input = json!({
         "schema_version":2,
         "control_layout":"tail_incidence",
@@ -160,8 +161,9 @@ fn log_exports_reject_nonrecord_scenes_and_attract_without_changing_the_owner() 
     rejects(&bridge);
     bridge.start_countdown(1).unwrap();
     rejects(&bridge);
-    bridge.advance_countdown().unwrap();
-    bridge.launch().unwrap();
+    bridge
+        .observe_countdown(bridge.countdown_token(), 1.0, true)
+        .unwrap();
     rejects(&bridge);
     bridge.pause(0).unwrap();
     rejects(&bridge);

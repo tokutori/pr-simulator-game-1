@@ -335,7 +335,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         session.executeOperation("open-setup");
         session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: recordKind === "registered-archive" || recordKind === "unknown-archive" ? 2 : 0 });
         session.executeOperation("prepare"); session.executeOperation("start-flight");
-        session.advanceCountdown(); session.advanceCountdown(); session.advanceCountdown(); session.launch(); session.executeOperation("abort");
+        session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.executeOperation("abort");
         let saved = session.exportRecordJson();
         if (recordKind === "unknown-archive") {
           const document = JSON.parse(saved) as { header: { environment_version: number } };

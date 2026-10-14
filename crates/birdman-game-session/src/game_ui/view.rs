@@ -176,12 +176,12 @@ pub fn game_ui_view(
             }
             menu.preparation_rects();
         }
-        SessionPhase::Countdown { remaining_ticks } => {
+        SessionPhase::Countdown { remaining_seconds } => {
             progress(&mut menu, phase);
             menu.status(
                 "game-countdown-status",
                 "発進まで",
-                &format!("{remaining_ticks} 秒"),
+                &format!("{remaining_seconds} 秒"),
             );
             menu.session(
                 "game-countdown-cancel",
@@ -1603,8 +1603,8 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         SessionPhase::BriefingFailed { .. } => {
             "Briefing準備に失敗した。再試行または設定変更を選択する。".to_owned()
         }
-        SessionPhase::Countdown { remaining_ticks } => {
-            format!("物理時間を停止している。発進まで {remaining_ticks}。")
+        SessionPhase::Countdown { remaining_seconds } => {
+            format!("物理時間を停止している。発進まで {remaining_seconds}。")
         }
         SessionPhase::FlightRunning => format!(
             "KeyboardまたはGamepadで操縦する。Physicsは{} Hzで独立して進む。",

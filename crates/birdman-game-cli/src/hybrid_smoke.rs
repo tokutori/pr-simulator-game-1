@@ -77,8 +77,9 @@ fn run_configuration(
         .mark_briefing_ready()
         .map_err(super::display_error)?;
     session.start_countdown(1).map_err(super::display_error)?;
-    session.advance_countdown().map_err(super::display_error)?;
-    session.launch().map_err(super::display_error)?;
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .map_err(super::display_error)?;
     for tick in 0..TICK_LIMIT {
         match session.advance_tail_flight_tick(input(tick)?) {
             Ok(_) => {}

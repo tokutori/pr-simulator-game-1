@@ -18,6 +18,12 @@ browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する
 BPG-007は現行Hybridのkeyboard/gamepad入力からWASM tick・named snapshot・Screen描画までを検証する。30/60/120 FPS独立性、入力ライフサイクル、pause/resume、座標変換、terminal同期を対象とする。旧fixtureの飛距離を現行modelの受入条件へ流用しない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
 
+## 共有elapsed Countdown
+
+#379の時間規則はcore、実際の生成WASM/facade/Web main、NativeのUpdate接続で検査する。800 msの表示3秒、1秒の表示2秒、3秒の一度だけのlaunch、不規則差分、同時刻・重複callback、負・非有限・overflow、取消後の旧token、stale owner、frame不可用時の安全取消を対象とする。
+Coreの3回呼出しだけをadapter時間の根拠にしない。Nativeは150 ms以内の実Update列と100 Hz FixedUpdateを通し、Countdown中のrecord未開始とlaunch時のtick 0を確認する。Webは1秒wake-upとは独立したpresentation frame列を使い、frame停止・blur・非表示化による取消を確認する。
+既存#142のVR中断はCountdownの取消とReplayのclock停止・旧timer拒否へ接続する。headlessの実WASM検査、Native GPU描画、実VR機器の受入、release性能の計測を区別して報告する。
+
 ## 後続の物理検証
 
 ### BPG-042 native hybrid smoke

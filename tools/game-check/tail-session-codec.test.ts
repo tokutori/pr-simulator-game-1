@@ -21,8 +21,7 @@ function launch(mode = 0): HybridGameSessionBridge {
   session.prepare();
   session.mark_briefing_ready();
   session.start_countdown(1);
-  session.advance_countdown();
-  session.launch();
+  session.observe_countdown(session.countdown_token(), 1, true);
   return session;
 }
 

@@ -14,7 +14,7 @@ export function readRuntimeSessionProjection(session: TailAppSessionFacade): Tai
     const context = session.readPlaybackContext();
     const common = { controlLayout: "tail_incidence" as const, controlModeCode: lifecycle.controlModeCode,
       difficulty: session.readDifficulty(), configurationMetadata: null,
-      countdownRemaining: lifecycle.countdownRemaining, canResume: lifecycle.canResume };
+      countdownRemainingSeconds: lifecycle.countdownRemainingSeconds, canResume: lifecycle.canResume };
     const display = session.queryRecordDisplay(session.readPlaybackClock().timeSeconds);
     if (context.phase === "attract") {
       if (display.kind !== "tail_record") throw new RangeError("Attract requires its two-tail demonstration record");

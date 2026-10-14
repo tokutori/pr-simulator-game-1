@@ -19,8 +19,7 @@ function fixture() {
   facade.executeOperation("open-setup");
   facade.executeOperation("prepare");
   facade.executeOperation("start-flight");
-  while (facade.advanceCountdown() > 0) continue;
-  facade.launch();
+  facade.observeCountdown(facade.captureCountdownToken(), 3, true);
   let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
   const effects: AppEffect[] = [];
   const messages: AppMessage[] = [];
@@ -61,8 +60,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     if (previousResult.phaseCode !== 7) throw new Error("Expected the first Rust Result");
     trial.facade.executeOperation("retry");
     trial.facade.executeOperation("start-flight");
-    while (trial.facade.advanceCountdown() > 0) continue;
-    trial.facade.launch();
+    trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     trial.dispatch({ type: "game-session-synced", ...trial.facade.readGameSessionProjection() });
     const binding = trial.bindings.bindAppDisplay(trial.port, trial.display, () => trial.facade.readGameSessionProjection(),
       () => trial.controller.currentDisplaySnapshot, trial.dispatch);

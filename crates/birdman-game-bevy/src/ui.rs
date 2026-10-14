@@ -2511,6 +2511,73 @@ mod tests {
     }
 
     #[test]
+    fn native_ui_admission_starts_countdown_at_zero_before_real_update_elapsed() {
+        let mut app = app(1280.0, 720.0);
+        app.add_plugins(bevy::input::InputPlugin)
+            .init_resource::<super::super::native_session::FlightInput>()
+            .init_resource::<super::super::world::RenderHistory>()
+            .insert_resource(Time::<Fixed>::from_hz(f64::from(
+                birdman_game_core::PHYSICS_HZ,
+            )))
+            .insert_resource(Time::<Virtual>::from_max_delta(
+                super::super::MAX_FRAME_DELTA,
+            ))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(100),
+            ))
+            .add_systems(FixedUpdate, super::super::advance_physics)
+            .add_systems(
+                Update,
+                super::super::advance_presentation
+                    .after(button_actions)
+                    .before(update_ui),
+            );
+        super::super::register_input(&mut app);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        let node = app.world().resource::<RetainedUi>().widgets["game-briefing-start"].node;
+        app.world_mut()
+            .entity_mut(node)
+            .insert(Interaction::Pressed);
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        assert_eq!(
+            session.game.snapshot().phase(),
+            birdman_game_core::SessionPhase::Countdown {
+                remaining_seconds: 3
+            }
+        );
+        for (frames, remaining_seconds) in [(8, 3), (2, 2), (19, 1)] {
+            for _frame in 0..frames {
+                app.update();
+            }
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(
+                session.game.snapshot().phase(),
+                birdman_game_core::SessionPhase::Countdown { remaining_seconds }
+            );
+            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        }
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(
+            session.game.snapshot().phase(),
+            birdman_game_core::SessionPhase::FlightRunning
+        );
+        assert_eq!(
+            session
+                .game
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+                .tick_index(),
+            0
+        );
+        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+    }
+
+    #[test]
     fn hidden_hud_frame_projection_preserves_node_change_tick() {
         let mut app = app(1280.0, 720.0);
         let shell = app.world().resource::<RetainedUi>().hud.shell;
@@ -2710,7 +2777,7 @@ mod tests {
         for _ in 0..3 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
         }
         app.update();
         assert_eq!(
@@ -2894,7 +2961,7 @@ mod tests {
         for _ in 0..3 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
         }
         app.world_mut()
             .resource_mut::<NativeSession>()
@@ -2957,7 +3024,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             for _ in 0..20 {
                 session.tick(super::super::native_session::FlightInput::default());
@@ -3473,7 +3540,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             for _ in 0..30 {
                 session.tick(super::super::native_session::FlightInput::default());
@@ -3589,7 +3656,7 @@ mod tests {
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
                 for _ in 0..3 {
-                    session.countdown(1.0);
+                    session.presentation_frame(1.0);
                 }
                 session.action(MenuAction::Pause).unwrap();
             }
@@ -4069,7 +4136,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
         }
         app.update();
@@ -4268,7 +4335,7 @@ mod tests {
         for _ in 0..3 {
             app.world_mut()
                 .resource_mut::<NativeSession>()
-                .countdown(1.0);
+                .presentation_frame(1.0);
         }
         app.update();
         let retained = app.world().resource::<RetainedUi>();
@@ -4386,7 +4453,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.tick(super::super::native_session::FlightInput::default());
         }
@@ -4420,7 +4487,7 @@ mod tests {
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             for _ in 0..3 {
-                session.countdown(1.0);
+                session.presentation_frame(1.0);
             }
             session.tick(super::super::native_session::FlightInput::default());
         }
