@@ -9,6 +9,8 @@ const numericalDependency = {
 
 const nativeEngineDependency = {
   name: "bevy", kind: null, target: NATIVE_SCREEN_TARGET, req: "=0.19.1", uses_default_features: false,
+  source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
+  rename: null, optional: false,
   features: ["std", "bevy_pbr", "bevy_winit", "bevy_ui_render"]
 };
 
@@ -19,9 +21,7 @@ const nativeTextDependency = {
 };
 
 const nativeTestFontDependency = {
-  ...nativeEngineDependency, kind: "dev", features: ["default_font"],
-  source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
-  rename: null, optional: false
+  ...nativeEngineDependency, kind: "dev", features: ["default_font"]
 };
 
 const schemaDependency = {
@@ -49,7 +49,51 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
+function versionedPackages(difference: Readonly<Record<string, unknown>>): unknown[] {
+  return [
+    ...core({ ...numericalDependency, ...difference }),
+    { name: "birdman-game-session", dependencies: [{ ...chartNumberDependency, ...difference }] },
+    { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] },
+    { name: "birdman-game-bevy", dependencies: [{ ...nativeTestFontDependency, ...difference }] },
+    ...schemaProvider("birdman-game-format", { ...schemaDependency, ...difference }),
+    ...schemaProvider("birdman-game-session", { ...schemaDependency, ...difference })
+  ];
+}
+
 describe("Cargo dependency boundary", () => {
+  it.each(["=9.8.7", "=9.8.7-rc.1"])("accepts a different complete manifest pin %s without changing the design boundary", (req) => {
+    expect(() => { assertDependencyBoundary(versionedPackages({ req })); }).not.toThrow();
+  });
+
+  it.each(["^9.8.7", "~9.8.7", "9.8.7", "=9.8", "=9", "*", "=9.8.7, =9.8.8"])(
+    "rejects an incomplete or non-exact pin %s", (req) => {
+      for (const pkg of versionedPackages({ req })) expect(() => { assertDependencyBoundary([pkg]); }).toThrow();
+    }
+  );
+
+  it.each(["registry+https://index.crates.io/opaque-source-id", "sparse+https://index.crates.io/"])(
+    "accepts the documented default-registry source kind without fixing its opaque ID (%s)", (source) => {
+      expect(() => { assertDependencyBoundary([
+        ...versionedPackages({ source }),
+        { name: "birdman-game-bevy", dependencies: [{ ...nativeTextDependency, source }] }
+      ]); }).not.toThrow();
+    }
+  );
+
+  it.each([{ source: "git+https://example.invalid/dependency" }, { source: "local+unknown" }, { source: "registry+" },
+    { source: null }, { registry: "other" }, { path: "../dependency" }, { rename: "other" }])(
+    "rejects a non-default, substituted or unknown source %j", (difference) => {
+      for (const pkg of [...versionedPackages(difference),
+        { name: "birdman-game-bevy", dependencies: [{ ...nativeTextDependency, ...difference }] }]) {
+        expect(() => { assertDependencyBoundary([pkg]); }).toThrow();
+      }
+    }
+  );
+
+  it("rejects a WASM ABI dependency in no_std core", () => {
+    expect(() => { assertDependencyBoundary(core({ name: "wasm-bindgen" })); }).toThrow("Forbidden dependency");
+  });
+
   it("allows the fixed ECMAScript number formatter only in shared session", () => {
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [chartNumberDependency] }]); }).not.toThrow();
   });
@@ -60,7 +104,7 @@ describe("Cargo dependency boundary", () => {
     }
   );
 
-  it.each([{ req: "^1.0.3" }, { req: "=1.0.4" }, { kind: "dev" }, { kind: "build" },
+  it.each([{ req: "^1.0.3" }, { kind: "dev" }, { kind: "build" },
     { target: 'cfg(target_arch = "wasm32")' }, { features: ["no-panic"] }, { uses_default_features: true },
     { optional: true }, { rename: "formatter" }, { source: "git+https://example.invalid/ryu-js" }, { path: "../ryu-js" }])(
     "rejects broader chart-number dependencies %j", (difference) => {
@@ -111,7 +155,7 @@ describe("Cargo dependency boundary", () => {
   );
 
   it.each([
-    { req: "^1.2.2" }, { req: "=1.2.3" }, { kind: "dev" }, { kind: "build" },
+    { req: "^1.2.2" }, { kind: "dev" }, { kind: "build" },
     { target: HOST_NUMERICAL_TEST_TARGET }, { optional: false }, { uses_default_features: true },
     { source: "git+https://example.invalid/schemars" }, { registry: "other" },
     { path: "../schemars" }, { rename: "other" }, { features: [] }, { features: ["std"] },
@@ -149,6 +193,39 @@ describe("Cargo dependency boundary", () => {
       features: { schema: ["birdman-game-session/schema"] }
     }]); }).not.toThrow();
   });
+
+  it("allows unrelated features without duplicating the entire manifest feature table", () => {
+    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+      expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, {
+        schema: name === "birdman-game-format" ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"],
+        default: [], audit: []
+      })); }).not.toThrow();
+    }
+    for (const name of ["birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"]) {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [], features: {
+        ...(name === "birdman-game-cli" ? { schema: ["birdman-game-session/schema"] } : {}), default: [], audit: []
+      } }]); }).not.toThrow();
+    }
+  });
+
+  it.each(["schema", "schemars", "dep:schemars", "schemars/derive", "schemars?/derive",
+    "birdman-game-format/schema", "birdman-game-format?/schema", "birdman-game-session/schema"])(
+    "rejects schema generation through another feature (%s)", (feature) => {
+      for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+        expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, {
+          schema: name === "birdman-game-format" ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"],
+          audit: [feature]
+        })); }).toThrow("Forbidden dependency");
+      }
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [], features: {
+        schema: ["birdman-game-session/schema"], audit: [feature]
+      } }]); }).toThrow("Forbidden schema feature boundary");
+      for (const name of ["birdman-game-wasm", "birdman-game-bevy"]) {
+        expect(() => { assertDependencyBoundary([{ name, dependencies: [], features: { audit: [feature] } }]); })
+          .toThrow("Forbidden runtime schema feature");
+      }
+    }
+  );
 
   it.each([
     { schema: [] }, { schema: ["birdman-game-format/schema"] },
@@ -206,7 +283,7 @@ describe("Cargo dependency boundary", () => {
   );
 
   it.each([
-    { req: "^0.9.0" }, { kind: "dev" }, { kind: "build" }, { target: null },
+    { req: "^0.9.0" }, { req: "=0.9.1" }, { name: "other-text-engine" }, { kind: "dev" }, { kind: "build" }, { target: null },
     { target: 'cfg(target_arch = "wasm32")' }, { uses_default_features: true },
     { features: ["std"] }, { features: ["complex-scripts"] },
     { features: ["std", "complex-scripts", "system"] }, { optional: true },

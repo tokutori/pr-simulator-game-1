@@ -143,13 +143,15 @@ no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計�
 既存stateの並進速度はbody表現、本ゲームはNED表現を採用するため、式を直接転記しない。
 係数と検証ケースはBPG-002以降で適用範囲を再確認する。coreの依存はno_std対応で役割の明確なものに限り、
 crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
-局所線形化のhost検査だけはWindows/Linux/macOS対象のdev依存として固定`nalgebra 0.35.0`のstd featureを使用し、core製品依存・no_std/WASM buildとは分離する。repository checkerはこのcrate/name/kind/target/version/featuresの組合せだけを許可する。
-UIおよびTailInputのSchema生成はformat/sessionの非既定`schema` featureから固定`schemars 1.2.2`のoptional依存とderive featureだけを有効化し、CLI exporterで使用する。
-repository checkerはこのfeature wiringと依存宣言を限定許可し、WASM/Bevyの通常依存とfeatureからSchema生成を有効化する経路を拒否する。coreの依存とformatの`no_std`は維持する。
+局所線形化のhost検査だけはWindows/Linux/macOS対象のdev依存として固定`nalgebra`のstd featureを使用し、core製品依存・no_std/WASM buildとは分離する。repository checkerはこのcrate/name/kind/target/完全version pin/featuresの組合せだけを許可する。
+UIおよびTailInputのSchema生成はformat/sessionの非既定`schema` featureから固定`schemars`のoptional依存とderive featureだけを有効化し、CLI exporterで使用する。
+repository checkerはこのfeature wiringと依存宣言を限定許可し、WASM/Bevyの通常依存とfeatureからSchema生成を有効化する経路を拒否する。無関係なfeatureは許容し、別feature経由でSchema生成を有効化する経路は拒否する。coreの依存とformatの`no_std`は維持する。
+具体的なdependency versionはCargo.toml/Cargo.lockを正本とする。Native textのParleyは`vendor/parley`の同版Japanese segmentation backportを適用する独立互換性条件として`=0.9.0`を維持し、vendor限定patchとworkspace除外を検査する。
+registryのsource IDはopaqueであり、checkerは文書化されたregistry/sparse種別と既定registry fieldを検査する。未知種別・git/path/rename/alternate-registryを拒否し、IDの完全一致を依存原点の実証とは扱わない。`cargo metadata --no-deps`は全targetの宣言境界を検査し、active targetの解決・buildは各targetのCIで確認する。
 TailInputのwire型・ControlLayout・Hold/Setはformatを正本とし、既存generatorからreadonly TS型と構造validatorを生成する。
 camelCase入力のexact field検査はWeb adapterに保持し、wireのfield・variant・finite・normalized範囲は生成validatorへ委譲する。
 rate目標のdomain上限、WASMの1024-byte上限、decode完了前のtick更新禁止はRust境界で維持する。snapshot/queryと保存schemaの生成はこの入力契約から独立した移行対象である。
-Web基準のECMAScript `Number.toFixed` 書式は共有sessionの固定`ryu-js 1.0.3`で保持する。通常依存は同crateへ限定し、他crateへの直接重複配置をrepository checkerで拒否する。
+Web基準のECMAScript `Number.toFixed` 書式は共有sessionの固定`ryu-js`で保持する。通常依存は同crateへ限定し、他crateへの直接重複配置をrepository checkerで拒否する。
 
 BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
 GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。
