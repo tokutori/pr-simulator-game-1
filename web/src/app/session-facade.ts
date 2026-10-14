@@ -378,6 +378,12 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     });
   }
 
+  isAnalysisDatasetCurrent(dataset: NamedAnalysisDataset): boolean {
+    if (!(analysisObservation in dataset) || !isAnalysisObservationProof(dataset[analysisObservation])) return false;
+    const proof = dataset[analysisObservation];
+    return this.recordSourceIsCurrent(proof.source) && sameNamedRecordContext(dataset.context, proof.context);
+  }
+
   queryAnalysisCursor(seconds: number, expectedDataset: NamedAnalysisDataset): NamedAnalysisCursor {
     return this.observeRecordQuery(() => {
       if (!(analysisObservation in expectedDataset) || !isAnalysisObservationProof(expectedDataset[analysisObservation])) {

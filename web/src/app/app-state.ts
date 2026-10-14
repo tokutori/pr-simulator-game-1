@@ -323,7 +323,7 @@ export type AppMessage =
   | { readonly type: "page-suspended" }
   | { readonly type: "page-restored" }
   | (Readonly<{ type: "game-session-synced" }> & GameSessionProjection)
-  | (Readonly<{ type: "game-operation-completed"; requestId: number }> & GameSessionProjection)
+  | (Readonly<{ type: "game-operation-completed"; requestId: number; analysisSourceInvalidated?: boolean }> & GameSessionProjection)
   | { readonly type: "game-session-status"; readonly message: string }
   | { readonly type: "flight-analysis-loaded"; readonly requestId: number; readonly data: FlightAnalysisInput }
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
@@ -350,6 +350,7 @@ export type AppMessage =
       readonly requestId: number;
       readonly message: string;
       readonly currentSession?: GameSessionProjection;
+      readonly analysisSourceInvalidated?: boolean;
     };
 
 export type AppEffect =
@@ -756,7 +757,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
       const analysis = flightAnalysisData(model.analysis);
       const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
-        || (returningReplay && analysis === null));
+        || (returningReplay && analysis === null) || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.analysis.nextRequestId : null;
       const effects: AppEffect[] = enteringResult && analysisRequestId !== null
         ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
@@ -795,8 +796,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         : Object.freeze({ ...model.replayClock,
           observation: Object.freeze({ ...model.replayClock.observation, playing: false }) });
       const analysis = flightAnalysisData(model.analysis);
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
-        || (returningReplay && analysis === null));
+      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (message.analysisSourceInvalidated === true
+        || analysisPhaseMismatch(analysis, nextPhaseCode) || (returningReplay && analysis === null)
+        || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && analysis === null)
         ? model.analysis.nextRequestId
         : null;
@@ -829,7 +831,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
         analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
           ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
-        replayPose: enteringPlayback || ![9, 10].includes(nextPhaseCode)
+        replayPose: enteringPlayback || ![9, 10].includes(nextPhaseCode) || message.analysisSourceInvalidated === true
           ? Object.freeze({ kind: "idle", nextRequestId: model.replayPose.nextRequestId }) : model.replayPose,
         replayClock
       }), effects);
@@ -971,6 +973,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         const completed = updateApp(model, {
           type: "game-operation-completed",
           requestId: message.requestId,
+          analysisSourceInvalidated: message.analysisSourceInvalidated === true,
           ...message.currentSession
         });
         if (completed.model.status === "GameSessionから不正な状態snapshotを受信した") return completed;
@@ -978,7 +981,13 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }
       return transition(withModel(model, {
         pendingGameRequestId: null,
-        status: message.message
+        status: message.message,
+        analysis: message.analysisSourceInvalidated === true
+          ? observeAnalysisPhase(model.analysis, 0, null, true) : model.analysis,
+        analysisCursor: message.analysisSourceInvalidated === true
+          ? Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }) : model.analysisCursor,
+        replayPose: message.analysisSourceInvalidated === true
+          ? Object.freeze({ kind: "idle", nextRequestId: model.replayPose.nextRequestId }) : model.replayPose
       }));
     }
     case "page-hidden": {
@@ -1347,9 +1356,7 @@ function observeAnalysisPhase(state: FlightAnalysisState, phaseCode: number, req
   const data = keepData ? flightAnalysisData(state) : null;
   if (requestId !== null) return Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1, retained: data });
   if (!keepData) return Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId });
-  if (state.kind !== "loading") return state;
-  return data === null ? Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId })
-    : Object.freeze({ kind: "ready", nextRequestId: state.nextRequestId, data });
+  return state;
 }
 
 function settleAnalysisCursor(state: AnalysisCursorState): AnalysisCursorState {

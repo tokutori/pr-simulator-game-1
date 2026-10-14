@@ -999,6 +999,18 @@ fn set_text(world: &mut World, entity: Entity, value: String) {
     }
 }
 
+fn retained_node(world: &mut World, entity: Entity) -> Mut<'_, Node> {
+    world
+        .get_mut::<Node>(entity)
+        .expect("retained UI node exists")
+}
+
+fn retained_ui_transform(world: &mut World, entity: Entity) -> Mut<'_, UiTransform> {
+    world
+        .get_mut::<UiTransform>(entity)
+        .expect("retained UI transform exists")
+}
+
 fn project_hud(
     world: &mut World,
     retained: &mut RetainedHud,
@@ -1009,7 +1021,8 @@ fn project_hud(
         world
             .get_mut::<Node>(retained.shell)
             .expect("HUD shell is retained")
-            .display = Display::None;
+            .map_unchanged(|node| &mut node.display)
+            .set_if_neq(Display::None);
         retained.previous = None;
         return Ok(());
     };
@@ -1018,22 +1031,21 @@ fn project_hud(
     }
     let layout = &hud.layout;
     let ink = color(&theme.text, 1.0)?;
-    world.entity_mut(retained.shell).insert((
-        Node {
-            position_type: PositionType::Absolute,
-            left: px(layout.offset_px[0]),
-            top: px(layout.offset_px[1]),
-            width: px(layout.width_px),
-            max_height: px(layout.maximum_height_px),
-            padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(layout.gap_px[1]),
-            overflow: Overflow::scroll_y(),
-            ..default()
-        },
-        BackgroundColor(color(&theme.panel_background, layout.opacity)?),
-    ));
-    world.entity_mut(retained.instruments).insert(Node {
+    let background = BackgroundColor(color(&theme.panel_background, layout.opacity)?);
+    retained_node(world, retained.shell).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        left: px(layout.offset_px[0]),
+        top: px(layout.offset_px[1]),
+        width: px(layout.width_px),
+        max_height: px(layout.maximum_height_px),
+        padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(layout.gap_px[1]),
+        overflow: Overflow::scroll_y(),
+        ..default()
+    });
+    world.entity_mut(retained.shell).insert(background);
+    retained_node(world, retained.instruments).set_if_neq(Node {
         display: Display::Grid,
         width: percent(100),
         grid_template_columns: vec![RepeatedGridTrack::flex(
@@ -1046,44 +1058,45 @@ fn project_hud(
     });
     let horizon = hud.geometry.adi.and_then(|adi| adi.horizon());
     let flight_path_y_ratio = hud.geometry.adi.and_then(|adi| adi.flight_path_y_ratio());
-    world.entity_mut(retained.attitude).insert((
-        Node {
-            display: if hud.geometry.adi.is_some() {
-                Display::Flex
-            } else {
-                Display::None
-            },
-            width: px(layout.attitude_size_px[0]),
-            height: px(layout.attitude_size_px[1]),
-            overflow: Overflow::clip(),
-            flex_shrink: 0.0,
-            margin: UiRect::right(px(layout.gap_px[0])),
-            ..default()
+    retained_node(world, retained.attitude).set_if_neq(Node {
+        display: if hud.geometry.adi.is_some() {
+            Display::Flex
+        } else {
+            Display::None
         },
-        BackgroundColor(if horizon.is_some() {
+        width: px(layout.attitude_size_px[0]),
+        height: px(layout.attitude_size_px[1]),
+        overflow: Overflow::clip(),
+        flex_shrink: 0.0,
+        margin: UiRect::right(px(layout.gap_px[0])),
+        ..default()
+    });
+    world
+        .entity_mut(retained.attitude)
+        .insert(BackgroundColor(if horizon.is_some() {
             Color::srgb(0.224, 0.490, 0.604)
         } else {
             Color::NONE
-        }),
-    ));
+        }));
     world
         .get_mut::<Node>(retained.horizon)
         .expect("HUD horizon node is retained")
-        .display = if horizon.is_some() {
-        Display::Flex
-    } else {
-        Display::None
-    };
+        .map_unchanged(|node| &mut node.display)
+        .set_if_neq(if horizon.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        });
     if let Some(attitude) = horizon {
         let offset = attitude.pitch_offset_ratio * layout.attitude_size_px[1];
         let rotation = attitude.rotation_degrees.to_radians();
-        world.entity_mut(retained.horizon).insert(UiTransform {
+        retained_ui_transform(world, retained.horizon).set_if_neq(UiTransform {
             translation: Val2::px(-offset * rotation.sin(), offset * rotation.cos()),
             rotation: Rot2::degrees(attitude.rotation_degrees as f32),
             ..default()
         });
     }
-    world.entity_mut(retained.flight_path).insert(Node {
+    retained_node(world, retained.flight_path).set_if_neq(Node {
         position_type: PositionType::Absolute,
         display: if flight_path_y_ratio.is_some() {
             Display::Flex
@@ -1103,7 +1116,7 @@ fn project_hud(
     }
     for (index, (line, label)) in retained.heading_ticks.iter().copied().enumerate() {
         let tick = hud.geometry.heading_ticks.get(index);
-        world.entity_mut(line).insert(Node {
+        retained_node(world, line).set_if_neq(Node {
             position_type: PositionType::Absolute,
             display: if tick.is_some() {
                 Display::Flex
@@ -1124,7 +1137,7 @@ fn project_hud(
             }),
             ..default()
         });
-        world.entity_mut(label).insert(Node {
+        retained_node(world, label).set_if_neq(Node {
             position_type: PositionType::Absolute,
             display: if tick.is_some_and(|tick| tick.major) {
                 Display::Flex
@@ -1141,23 +1154,21 @@ fn project_hud(
             tick.map_or_else(String::new, |tick| tick.label.clone()),
         );
     }
-    world.entity_mut(retained.wind_needle).insert((
-        Node {
-            position_type: PositionType::Absolute,
-            display: if hud.wind_direction_degrees.is_some() {
-                Display::Flex
-            } else {
-                Display::None
-            },
-            width: percent(100),
-            height: percent(100),
-            ..default()
+    retained_node(world, retained.wind_needle).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        display: if hud.wind_direction_degrees.is_some() {
+            Display::Flex
+        } else {
+            Display::None
         },
-        UiTransform::from_rotation(Rot2::degrees(
-            hud.wind_direction_degrees.unwrap_or(0.0) as f32
-        )),
+        width: percent(100),
+        height: percent(100),
+        ..default()
+    });
+    retained_ui_transform(world, retained.wind_needle).set_if_neq(UiTransform::from_rotation(
+        Rot2::degrees(hud.wind_direction_degrees.unwrap_or(0.0) as f32),
     ));
-    world.entity_mut(retained.angle_indicator).insert(Node {
+    retained_node(world, retained.angle_indicator).set_if_neq(Node {
         position_type: PositionType::Absolute,
         display: if hud.geometry.angle_of_attack_ratio.is_some() {
             Display::Flex
@@ -1219,11 +1230,12 @@ fn project_hud(
         world
             .get_mut::<Node>(retained.instrument_cards[key])
             .expect("HUD instrument card is retained")
-            .display = if visible {
-            Display::Flex
-        } else {
-            Display::None
-        };
+            .map_unchanged(|node| &mut node.display)
+            .set_if_neq(if visible {
+                Display::Flex
+            } else {
+                Display::None
+            });
     }
     for (key, value) in values {
         let entity = retained.fields[key];
@@ -1239,11 +1251,12 @@ fn project_hud(
         world
             .get_mut::<Node>(entity)
             .expect("HUD node is retained")
-            .display = if value.is_empty() {
-            Display::None
-        } else {
-            Display::Flex
-        };
+            .map_unchanged(|node| &mut node.display)
+            .set_if_neq(if value.is_empty() {
+                Display::None
+            } else {
+                Display::Flex
+            });
     }
     let supplementary = hud.supplementary_readouts.join("\n");
     let entity = retained.fields["supplementary"];
@@ -1255,11 +1268,12 @@ fn project_hud(
     world
         .get_mut::<Node>(entity)
         .expect("HUD node is retained")
-        .display = if supplementary.is_empty() {
-        Display::None
-    } else {
-        Display::Flex
-    };
+        .map_unchanged(|node| &mut node.display)
+        .set_if_neq(if supplementary.is_empty() {
+            Display::None
+        } else {
+            Display::Flex
+        });
     let entities = retained
         .fields
         .values()
@@ -2165,23 +2179,23 @@ fn chart_line(world: &mut World, parent: Entity, start: Vec2, end: Vec2, ink: Co
 fn set_chart_line(world: &mut World, entity: Entity, start: Vec2, end: Vec2, ink: Color) {
     let difference = end - start;
     let midpoint = (start + end) * 0.5;
-    world.entity_mut(entity).insert((
-        Node {
-            display: if difference.length() < 0.001 {
-                Display::None
-            } else {
-                Display::Flex
-            },
-            position_type: PositionType::Absolute,
-            left: px(midpoint.x - difference.length() * 0.5),
-            top: px(midpoint.y - 0.75),
-            width: px(difference.length()),
-            height: px(1.5),
-            ..default()
+    retained_node(world, entity).set_if_neq(Node {
+        display: if difference.length() < 0.001 {
+            Display::None
+        } else {
+            Display::Flex
         },
-        UiTransform::from_rotation(Rot2::radians(difference.y.atan2(difference.x))),
-        BackgroundColor(ink),
-    ));
+        position_type: PositionType::Absolute,
+        left: px(midpoint.x - difference.length() * 0.5),
+        top: px(midpoint.y - 0.75),
+        width: px(difference.length()),
+        height: px(1.5),
+        ..default()
+    });
+    retained_ui_transform(world, entity).set_if_neq(UiTransform::from_rotation(Rot2::radians(
+        difference.y.atan2(difference.x),
+    )));
+    world.entity_mut(entity).insert(BackgroundColor(ink));
 }
 
 fn project_chart_cursor(
@@ -2230,7 +2244,7 @@ fn project_chart_cursor(
     for (index, entity) in retained.points.iter().enumerate() {
         let sample = cursor.cursor_points.get(index);
         let point = sample.map(|sample| position(sample.point));
-        world.entity_mut(*entity).insert(Node {
+        retained_node(world, *entity).set_if_neq(Node {
             display: if point.is_some() {
                 Display::Flex
             } else {
@@ -2561,6 +2575,25 @@ mod tests {
             0
         );
         assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+    }
+
+    #[test]
+    fn hidden_hud_frame_projection_preserves_node_change_tick() {
+        let mut app = app(1280.0, 720.0);
+        let shell = app.world().resource::<RetainedUi>().hud.shell;
+        let previous = app
+            .world()
+            .entity(shell)
+            .get_ref::<Node>()
+            .unwrap()
+            .last_changed();
+        for _ in 0..3 {
+            app.update();
+            let entity = app.world().entity(shell);
+            let node = entity.get_ref::<Node>().unwrap();
+            assert_eq!(node.display, Display::None);
+            assert_eq!(node.last_changed(), previous);
+        }
     }
 
     #[test]
@@ -4013,6 +4046,32 @@ mod tests {
                 app.world().get::<RetainedChart>(chart).unwrap().cursor,
             )
         };
+        let projected = app.world().get::<RetainedChart>(chart).unwrap();
+        let cursor_entities = std::iter::once(projected.cursor)
+            .chain(projected.points.iter().copied())
+            .chain(projected.wind)
+            .collect::<Vec<_>>();
+        let geometry = |world: &World| {
+            cursor_entities
+                .iter()
+                .map(|entity| {
+                    let entity = world.entity(*entity);
+                    let node = entity.get_ref::<Node>().unwrap();
+                    let transform = entity.get_ref::<UiTransform>().unwrap();
+                    (
+                        (*node).clone(),
+                        node.last_changed(),
+                        *transform,
+                        transform.last_changed(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let previous_geometry = geometry(app.world());
+        for _ in 0..3 {
+            app.update();
+            assert_eq!(geometry(app.world()), previous_geometry);
+        }
         let platform = platform_input(app.world_mut());
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
@@ -4021,6 +4080,19 @@ mod tests {
                 .unwrap();
         }
         app.update();
+        let current_geometry = geometry(app.world());
+        assert!(
+            previous_geometry
+                .iter()
+                .zip(&current_geometry)
+                .any(|(previous, current)| previous.0 != current.0 || previous.2 != current.2)
+        );
+        assert!(
+            previous_geometry
+                .iter()
+                .zip(&current_geometry)
+                .any(|(previous, current)| previous.1 != current.1 || previous.3 != current.3)
+        );
         assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
         assert_eq!(
             app.world()
@@ -4052,6 +4124,7 @@ mod tests {
         let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
         assert!(project_frame(app.world_mut(), &mut retained, &frame).is_err());
         app.world_mut().insert_resource(retained);
+        assert_eq!(geometry(app.world()), current_geometry);
     }
 
     #[test]
@@ -4097,7 +4170,6 @@ mod tests {
             assert_eq!(app.world().get::<Text>(*label).unwrap().0, tick.label);
         }
         let mut projected = hud.clone();
-        projected.wind_direction_degrees = Some(90.0);
         let mut theme = retained.view.as_ref().unwrap().theme.clone();
         let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
         let mut themed_view = retained.view.as_ref().unwrap().clone();
@@ -4130,6 +4202,46 @@ mod tests {
                 .0,
             color(&theme.panel_background, unchanged_hud.layout.opacity).unwrap()
         );
+        projected.wind_direction_degrees = Some(0.0);
+        project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        let stable_node_entities = [
+            retained.hud.shell,
+            retained.hud.instruments,
+            retained.hud.attitude,
+            retained.hud.horizon,
+            retained.hud.flight_path,
+            retained.hud.wind_needle,
+            retained.hud.angle_indicator,
+            retained.hud.readouts,
+        ]
+        .into_iter()
+        .chain(retained.hud.instrument_cards.values().copied())
+        .chain(retained.hud.fields.values().copied())
+        .chain(ticks.iter().flat_map(|(line, label)| [*line, *label]))
+        .collect::<Vec<_>>();
+        let geometry = |world: &World| {
+            stable_node_entities
+                .iter()
+                .map(|entity| {
+                    let entity = world.entity(*entity);
+                    let node = entity.get_ref::<Node>().unwrap();
+                    let transform = entity.get_ref::<UiTransform>().unwrap();
+                    (
+                        (*node).clone(),
+                        node.last_changed(),
+                        *transform,
+                        transform.last_changed(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let previous_geometry = geometry(app.world());
+        let previous_needle = app
+            .world()
+            .entity(needle)
+            .get_ref::<UiTransform>()
+            .unwrap()
+            .last_changed();
         let stable_text_entities = [
             retained.hud.readouts,
             retained.hud.fields["controls"],
@@ -4141,6 +4253,7 @@ mod tests {
             let font = entity.get_ref::<TextFont>().unwrap();
             (text.0.clone(), text.last_changed(), font.last_changed())
         });
+        projected.wind_direction_degrees = Some(90.0);
         app.world_mut().increment_change_tick();
         project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
         let current_text = stable_text_entities.map(|entity| {
@@ -4152,6 +4265,27 @@ mod tests {
         assert_eq!(
             current_text, previous_text,
             "Changing only wind geometry must preserve identical text and font change ticks"
+        );
+        let current_geometry = geometry(app.world());
+        for ((entity, previous), current) in stable_node_entities
+            .iter()
+            .zip(&previous_geometry)
+            .zip(&current_geometry)
+        {
+            assert_eq!(current.0, previous.0);
+            assert_eq!(current.1, previous.1);
+            if *entity != needle {
+                assert_eq!(current.2, previous.2);
+                assert_eq!(current.3, previous.3);
+            }
+        }
+        assert_ne!(
+            app.world()
+                .entity(needle)
+                .get_ref::<UiTransform>()
+                .unwrap()
+                .last_changed(),
+            previous_needle
         );
         assert_eq!(
             app.world().get::<UiTransform>(needle).unwrap().rotation,
