@@ -7,13 +7,18 @@ use super::{
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    asset::RenderAssetUsages, camera::visibility::RenderLayers,
-    core_pipeline::tonemapping::Tonemapping, light::CascadeShadowConfigBuilder, mesh::Indices,
-    prelude::*, render::render_resource::PrimitiveTopology,
+    asset::RenderAssetUsages,
+    camera::visibility::{NoFrustumCulling, RenderLayers},
+    core_pipeline::tonemapping::Tonemapping,
+    light::CascadeShadowConfigBuilder,
+    mesh::Indices,
+    prelude::*,
+    render::render_resource::PrimitiveTopology,
 };
 use birdman_game_core::{
     HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
 };
+use birdman_game_session::wing_geometry::{WingFrame, WingGeometry, WingMaterial, WingSurface};
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
 
@@ -263,6 +268,92 @@ struct TailSurfaceProjection {
     vertices: [[f32; 3]; 4],
 }
 
+#[derive(Resource)]
+pub(crate) struct MainWingProjection {
+    geometry: WingGeometry,
+    frame: WingFrame,
+    surfaces: Vec<MainWingSurface>,
+}
+
+struct MainWingSurface {
+    complete_mesh: Mesh,
+    material_meshes: Vec<Handle<Mesh>>,
+}
+
+fn main_wing_mesh(surface: &WingSurface, positions: &[[f32; 3]]) -> Mesh {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions.to_vec());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, surface.uvs().to_vec());
+    mesh.insert_indices(Indices::U32(surface.indices().to_vec()));
+    mesh.compute_area_weighted_normals();
+    mesh
+}
+
+fn main_wing_airspeed(session: &NativeSession) -> f64 {
+    let speed = match session.game.snapshot().phase() {
+        birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract => {
+            session.game.playback_clock().and_then(|clock| {
+                session
+                    .game
+                    .playback_sample_at_seconds(clock.time_seconds())
+                    .ok()
+                    .map(|sample| sample.telemetry.airspeed_mps)
+            })
+        }
+        _ => session
+            .game
+            .telemetry()
+            .ok()
+            .flatten()
+            .map(|telemetry| telemetry.airspeed_mps),
+    };
+    speed.unwrap_or(f64::NAN)
+}
+
+pub(crate) fn project_main_wing(
+    session: Res<NativeSession>,
+    mut wing: ResMut<MainWingProjection>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let MainWingProjection {
+        geometry,
+        frame,
+        surfaces,
+    } = &mut *wing;
+    if !geometry.update_frame(frame, main_wing_airspeed(&session)) {
+        return;
+    }
+    for (surface, positions) in surfaces.iter_mut().zip(frame.surface_positions()) {
+        let bevy::mesh::VertexAttributeValues::Float32x3(values) = surface
+            .complete_mesh
+            .attribute_mut(Mesh::ATTRIBUTE_POSITION)
+            .expect("主翼positionsがない")
+        else {
+            panic!("主翼positionsはFloat32x3を要する");
+        };
+        values.copy_from_slice(positions);
+        surface.complete_mesh.compute_area_weighted_normals();
+        let normals = surface
+            .complete_mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .expect("主翼normalがない");
+        for handle in &surface.material_meshes {
+            let mesh = meshes.get_mut(handle).expect("主翼meshがない");
+            let bevy::mesh::VertexAttributeValues::Float32x3(values) = mesh
+                .attribute_mut(Mesh::ATTRIBUTE_POSITION)
+                .expect("主翼positionsがない")
+            else {
+                panic!("主翼positionsはFloat32x3を要する");
+            };
+            values.copy_from_slice(positions);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals.clone());
+        }
+    }
+}
+
 fn project_tail_surface(
     geometry: HybridSurfaceGeometry<'_>,
 ) -> Result<TailSurfaceProjection, &'static str> {
@@ -418,6 +509,28 @@ pub(crate) fn setup_world(
         ..default()
     });
     let frame = materials.add(Color::srgb(0.13, 0.15, 0.18));
+    let wing_cover = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(42, 63, 86),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    let wing_underside = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(242, 243, 237),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    let wing_film = materials.add(StandardMaterial {
+        base_color: Color::srgba(213.0 / 255.0, 221.0 / 255.0, 217.0 / 255.0, 0.22),
+        alpha_mode: AlphaMode::Blend,
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    let wing_geometry = WingGeometry::new();
+    let wing_frame = wing_geometry.frame();
+    let mut wing_surfaces = Vec::new();
     let definition = HybridMockDefinition::try_new().expect("登録機体geometryが不正");
     let surfaces = definition.surfaces().expect("登録surface geometryが不正");
     let tail_projection = |role| {
@@ -449,28 +562,37 @@ pub(crate) fn setup_world(
                 Transform::from_xyz(0.0, -0.35, -0.25),
                 RenderLayers::layer(0).with(1),
             ));
-            let mut wing_vertices = Vec::new();
-            for side in [-1.0_f32, 1.0] {
-                for strip in 0..24 {
-                    let inner = strip as f32 / 24.0;
-                    let outer = (strip + 1) as f32 / 24.0;
-                    let chord = |ratio: f32| 1.13 + (0.38 - 1.13) * ratio.powf(1.6);
-                    let points = [
-                        [side * inner * 10.4315, inner * 0.38, -chord(inner) * 0.25],
-                        [side * outer * 10.4315, outer * 0.38, -chord(outer) * 0.25],
-                        [side * outer * 10.4315, outer * 0.38, chord(outer) * 0.75],
-                        [side * inner * 10.4315, inner * 0.38, chord(inner) * 0.75],
-                    ];
-                    wing_vertices.push(points);
+            for (surface, positions) in wing_geometry
+                .surfaces()
+                .iter()
+                .zip(wing_frame.surface_positions())
+            {
+                let complete_mesh = main_wing_mesh(surface, positions);
+                let mut material_meshes = Vec::new();
+                for range in surface.material_ranges() {
+                    let mut mesh = complete_mesh.clone();
+                    mesh.insert_indices(Indices::U32(
+                        surface.indices()[range.start..range.start + range.count].to_vec(),
+                    ));
+                    let handle = meshes.add(mesh);
+                    material_meshes.push(handle.clone());
+                    let material = match range.material {
+                        WingMaterial::Cover => wing_cover.clone(),
+                        WingMaterial::Underside => wing_underside.clone(),
+                        WingMaterial::Film => wing_film.clone(),
+                    };
+                    parent.spawn((
+                        Mesh3d(handle),
+                        MeshMaterial3d(material),
+                        Transform::IDENTITY,
+                        NoFrustumCulling,
+                        RenderLayers::layer(0).with(1),
+                    ));
                 }
-            }
-            for vertices in wing_vertices {
-                parent.spawn((
-                    Mesh3d(meshes.add(rectangular_surface(vertices))),
-                    MeshMaterial3d(white.clone()),
-                    Transform::IDENTITY,
-                    RenderLayers::layer(0).with(1),
-                ));
+                wing_surfaces.push(MainWingSurface {
+                    complete_mesh,
+                    material_meshes,
+                });
             }
             parent
                 .spawn((
@@ -499,6 +621,11 @@ pub(crate) fn setup_world(
                     ));
                 });
         });
+    commands.insert_resource(MainWingProjection {
+        geometry: wing_geometry,
+        frame: wing_frame,
+        surfaces: wing_surfaces,
+    });
     commands.spawn((
         WorldProjection::FlightCamera,
         Camera3d::default(),
@@ -596,6 +723,43 @@ mod tests {
     use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
     use birdman_game_session::game_ui::GameUiSessionCommand;
+
+    fn assert_main_wing_projection(world: &World) {
+        let wing = world.resource::<MainWingProjection>();
+        let meshes = world.resource::<Assets<Mesh>>();
+        assert_eq!(wing.surfaces.len(), 4);
+        for (surface, positions) in wing.surfaces.iter().zip(wing.frame.surface_positions()) {
+            let expected_normals = surface
+                .complete_mesh
+                .attribute(Mesh::ATTRIBUTE_NORMAL)
+                .unwrap()
+                .as_float3()
+                .unwrap();
+            assert!(
+                expected_normals
+                    .iter()
+                    .flatten()
+                    .all(|value| value.is_finite())
+            );
+            for handle in &surface.material_meshes {
+                let mesh = meshes.get(handle).unwrap();
+                assert_eq!(
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap(),
+                    positions
+                );
+                assert_eq!(
+                    mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap(),
+                    expected_normals
+                );
+            }
+        }
+    }
 
     fn projection_app() -> App {
         let mut app = App::new();
@@ -1075,8 +1239,27 @@ mod tests {
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
-            .add_systems(Startup, setup_world);
+            .init_resource::<NativeSession>()
+            .add_systems(Startup, setup_world)
+            .add_systems(Update, project_main_wing);
         app.update();
+        assert_main_wing_projection(app.world());
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            assert!(main_wing_airspeed(&session).is_nan());
+            session.action(MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.countdown(1.0);
+            }
+            assert_eq!(
+                main_wing_airspeed(&session),
+                session.game.telemetry().unwrap().unwrap().airspeed_mps
+            );
+        }
+        app.update();
+        assert_main_wing_projection(app.world());
         let mut cameras = app.world_mut().query::<(&WorldProjection, &Projection)>();
         let Projection::Perspective(projection) = cameras
             .iter(app.world())
@@ -1147,7 +1330,7 @@ mod tests {
                 excluded_meshes += 1;
             }
         }
-        assert_eq!(reflected_meshes, 52);
+        assert_eq!(reflected_meshes, 12);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(

@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   BufferGeometry,
   CylinderGeometry,
   DataTexture,
@@ -16,56 +17,7 @@ import {
   Vector3
 } from "three";
 import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
-
-// tokutori_2026 three-view reference: measured tip-to-tip span is 20,863 mm.
-const HALF_SPAN_METERS = 20.863 / 2;
-// Chords, tail span, and longitudinal stations are scaled estimates from the
-// supplied orthographic images; only the full wing span has a stated dimension.
-const WING_ROOT_CHORD_METERS = 1.13;
-const WING_TIP_CHORD_METERS = 0.38;
-const WING_TAPER_EXPONENT = 1.6;
-const WING_ROOT_LEADING_Z = -0.42;
-const WING_LEADING_SWEEP_METERS = 0.24;
-const WING_ROOT_SPAR_Z = WING_ROOT_LEADING_Z + 0.25 * WING_ROOT_CHORD_METERS;
-const WING_COVERED_CHORD_FRACTION = 0.50;
-const REFERENCE_AIRSPEED_METERS_PER_SECOND = 9.5;
-const YOUNGS_MODULUS_PASCALS = 45e9;
-const SPAR_SECOND_MOMENT_METERS_FOURTH = 4e-6;
-const VISUAL_SUPPORTED_MASS_KILOGRAMS = 110;
-const GRAVITY_METERS_PER_SECOND_SQUARED = 9.81;
-
-interface AirfoilHalf {
-  readonly mesh: Mesh<BufferGeometry, MeshLambertMaterial | MeshLambertMaterial[]>;
-  readonly baseY: Float32Array;
-  readonly span: Float32Array;
-}
-
-interface AirfoilShape {
-  readonly side: -1 | 1;
-  readonly halfSpan: number;
-  readonly rootChord: number;
-  readonly tipChord: number;
-  readonly taperExponent?: number;
-  readonly leadingZ: number;
-  readonly sweep: number;
-  readonly baseY: number;
-  readonly dihedral: number;
-  readonly camber: number;
-  readonly camberPosition: number;
-  readonly thickness: number;
-  readonly chordStart: number;
-  readonly chordEnd: number;
-  readonly flex: boolean;
-}
-
-function mainWingChord(span: number): number {
-  return WING_ROOT_CHORD_METERS +
-    (WING_TIP_CHORD_METERS - WING_ROOT_CHORD_METERS) * (span / HALF_SPAN_METERS) ** WING_TAPER_EXPONENT;
-}
-
-function mainWingLeadingZ(span: number): number {
-  return WING_ROOT_LEADING_Z + WING_LEADING_SWEEP_METERS * span / HALF_SPAN_METERS;
-}
+import { WingGeometryBridge } from "../../../../pkg/birdman_game_wasm.js";
 
 function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTexture {
   const width = 1024;
@@ -161,154 +113,15 @@ export interface BirdmanAirframe {
 export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout: "absent" }>;
 export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const);
 
+function bulkNumber(values: Float32Array | Float64Array | Uint32Array, index: number): number {
+  const value = values[index];
+  if (value === undefined) throw new RangeError("Incomplete shared main-wing bulk output");
+  return value;
+}
+
 function registeredHorizontalTailArmMeters(kind: string, armMeters: number): number {
   if (kind === "bpg041_playable_version_two" && armMeters === 3.6) return armMeters;
   throw new RangeError("Tail presentation requires registered aircraft geometry");
-}
-
-/** Visual cantilever approximation; these assumptions do not enter flight physics. */
-export function wingDeflectionMeters(spanMeters: number, airspeedMetersPerSecond: number): number {
-  const span = Math.max(0, Math.min(HALF_SPAN_METERS, spanMeters));
-  const speed = Number.isFinite(airspeedMetersPerSecond)
-    ? Math.max(0, airspeedMetersPerSecond) : REFERENCE_AIRSPEED_METERS_PER_SECOND;
-  // Speed is a bounded visual load proxy because the render pose has no spanwise
-  // lift distribution. One reference g supports the chosen pilot and airframe mass.
-  const loadFactor = Math.max(0.3, Math.min(1.6,
-    (speed / REFERENCE_AIRSPEED_METERS_PER_SECOND) ** 2));
-  const loadPerHalfSpan = VISUAL_SUPPORTED_MASS_KILOGRAMS * GRAVITY_METERS_PER_SECOND_SQUARED
-    * loadFactor / (2 * HALF_SPAN_METERS);
-  const length = HALF_SPAN_METERS;
-  return loadPerHalfSpan * span * span *
-    (6 * length * length - 4 * length * span + span * span) /
-    (24 * YOUNGS_MODULUS_PASCALS * SPAR_SECOND_MOMENT_METERS_FOURTH);
-}
-
-export function wingDihedralMeters(spanMeters: number): number {
-  const span = Math.max(0, Math.min(HALF_SPAN_METERS, spanMeters));
-  const firstBreak = 0.6 * HALF_SPAN_METERS;
-  const secondBreak = 0.8 * HALF_SPAN_METERS;
-  return 0.008 * Math.min(span, firstBreak) +
-    0.045 * Math.max(0, Math.min(span, secondBreak) - firstBreak) +
-    0.12 * Math.max(0, span - secondBreak);
-}
-
-function sectionProfile(chordFraction: number, camber: number, camberPosition: number, thickness: number):
-  Readonly<{ upperX: number; upperY: number; lowerX: number; lowerY: number }> {
-  const x = chordFraction;
-  const p = camberPosition;
-  const mean = x < p ? camber * (2 * p * x - x * x) / (p * p)
-    : camber * ((1 - 2 * p) + 2 * p * x - x * x) / ((1 - p) * (1 - p));
-  const slope = x < p ? 2 * camber * (p - x) / (p * p)
-    : 2 * camber * (p - x) / ((1 - p) * (1 - p));
-  const halfThickness = 5 * thickness *
-    (0.2969 * Math.sqrt(x) - 0.1260 * x - 0.3516 * x * x +
-      0.2843 * x ** 3 - 0.1036 * x ** 4);
-  const angle = Math.atan(slope);
-  return {
-    upperX: x - halfThickness * Math.sin(angle),
-    upperY: mean + halfThickness * Math.cos(angle),
-    lowerX: x + halfThickness * Math.sin(angle),
-    lowerY: mean - halfThickness * Math.cos(angle)
-  };
-}
-
-function airfoilHalf(shape: AirfoilShape, material: MeshLambertMaterial,
-  undersideMaterial?: MeshLambertMaterial): AirfoilHalf {
-  // Thirty sections place vertices exactly at the 60% and 80% dihedral breaks.
-  const spanSteps = shape.flex ? 30 : 10;
-  const chordSteps = 16;
-  const rowSize = chordSteps + 1;
-  const surfaceSize = (spanSteps + 1) * rowSize;
-  const vertices: number[] = [];
-  const uvs: number[] = [];
-  const baseY: number[] = [];
-  const span: number[] = [];
-  const indices: number[] = [];
-  for (const upper of [true, false]) {
-    for (let section = 0; section <= spanSteps; section++) {
-      const fraction = section / spanSteps;
-      const distance = shape.halfSpan * fraction;
-      const chord = shape.rootChord + (shape.tipChord - shape.rootChord) * fraction ** (shape.taperExponent ?? 1);
-      const leadingZ = shape.leadingZ + shape.sweep * fraction;
-      for (let station = 0; station <= chordSteps; station++) {
-        const distribution = (1 - Math.cos(Math.PI * station / chordSteps)) * 0.5;
-        const x = shape.chordStart + (shape.chordEnd - shape.chordStart) * distribution;
-        const profile = sectionProfile(x, shape.camber, shape.camberPosition, shape.thickness);
-        const y = shape.baseY + (shape.flex ? wingDihedralMeters(distance) : shape.dihedral * distance) +
-          (upper ? profile.upperY : profile.lowerY) * chord;
-        const z = leadingZ + (upper ? profile.upperX : profile.lowerX) * chord;
-        vertices.push(shape.side * distance, y, z);
-        uvs.push(fraction, x);
-        baseY.push(y);
-        span.push(shape.flex ? distance : 0);
-      }
-    }
-  }
-  for (let surface = 0; surface < 2; surface++) {
-    const upper = surface === 0;
-    const base = surface * surfaceSize;
-    for (let section = 0; section < spanSteps; section++) {
-      for (let station = 0; station < chordSteps; station++) {
-        const a = base + section * rowSize + station;
-        const b = a + rowSize;
-        const c = a + 1;
-        const d = b + 1;
-        if ((shape.side === 1) === upper) indices.push(a, c, b, c, d, b);
-        else indices.push(a, b, c, c, b, d);
-      }
-    }
-  }
-  // Close the exposed root, tip, and hinge edges of a cropped airfoil.
-  const lowerOffset = surfaceSize;
-  for (let section = 0; section < spanSteps; section++) {
-    for (const station of [0, chordSteps]) {
-      const a = section * rowSize + station;
-      const b = a + rowSize;
-      indices.push(a, b, lowerOffset + a, b, lowerOffset + b, lowerOffset + a);
-    }
-  }
-  for (const section of [0, spanSteps]) {
-    for (let station = 0; station < chordSteps; station++) {
-      const a = section * rowSize + station;
-      const b = a + 1;
-      indices.push(a, lowerOffset + a, b, b, lowerOffset + a, lowerOffset + b);
-    }
-  }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
-  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  if (undersideMaterial !== undefined) {
-    const surfaceIndexCount = spanSteps * chordSteps * 6;
-    geometry.addGroup(0, surfaceIndexCount, 0);
-    geometry.addGroup(surfaceIndexCount, surfaceIndexCount, 1);
-    geometry.addGroup(surfaceIndexCount * 2, indices.length - surfaceIndexCount * 2, 1);
-  }
-  geometry.computeVertexNormals();
-  const mesh = new Mesh(geometry, undersideMaterial === undefined ? material : [material, undersideMaterial]);
-  mesh.frustumCulled = false;
-  return { mesh, baseY: Float32Array.from(baseY), span: Float32Array.from(span) };
-}
-
-function extrudedOutlineGeometry(outline: readonly (readonly [number, number])[], halfThickness: number): BufferGeometry {
-  const points: number[] = [];
-  for (const lateral of [-halfThickness, halfThickness]) {
-    for (const [vertical, longitudinal] of outline) points.push(lateral, vertical, longitudinal);
-  }
-  const indices: number[] = [];
-  const count = outline.length;
-  for (let index = 1; index < count - 1; index++) {
-    indices.push(0, index + 1, index, count, count + index, count + index + 1);
-  }
-  for (let index = 0; index < count; index++) {
-    const next = (index + 1) % count;
-    indices.push(index, next, count + index, next, count + next, count + index);
-  }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new Float32BufferAttribute(points, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
 }
 
 interface CanopyStation {
@@ -365,43 +178,6 @@ function addRod(parent: Group, from: Vector3, to: Vector3, radius: number, mater
   return rod;
 }
 
-function wingRibPoint(side: -1 | 1, span: number, chordFraction: number, speed: number): Vector3 {
-  const chord = mainWingChord(span);
-  const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
-  const meanY = (profile.upperY + profile.lowerY) * 0.5;
-  return new Vector3(
-    side * span,
-    -0.73 + wingDihedralMeters(span) + meanY * chord + wingDeflectionMeters(span, speed),
-    mainWingLeadingZ(span) + chordFraction * chord
-  );
-}
-
-function wingSparPoint(side: -1 | 1, span: number, speed: number): Vector3 {
-  const chord = mainWingChord(span);
-  return new Vector3(
-    side * span,
-    -0.73 + wingDihedralMeters(span) + wingDeflectionMeters(span, speed),
-    mainWingLeadingZ(span) + 0.25 * chord
-  );
-}
-
-function foamRibGeometry(span: number): BufferGeometry {
-  const chord = mainWingChord(span);
-  const leadingZ = mainWingLeadingZ(span);
-  const baseY = -0.73 + wingDihedralMeters(span);
-  const stations = [WING_COVERED_CHORD_FRACTION, 0.75, 0.995];
-  const outline: [number, number][] = [];
-  for (const chordFraction of stations) {
-    const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
-    outline.push([baseY + profile.upperY * chord, leadingZ + profile.upperX * chord]);
-  }
-  for (const chordFraction of [...stations].reverse()) {
-    const profile = sectionProfile(chordFraction, 0.04, 0.4, 0.12);
-    outline.push([baseY + profile.lowerY * chord, leadingZ + profile.lowerX * chord]);
-  }
-  return extrudedOutlineGeometry(outline, 0.013);
-}
-
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
@@ -427,71 +203,71 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   });
   const canopyRim = new MeshLambertMaterial({ color: 0xb8c5c7 });
   const fairingSkin = new MeshLambertMaterial({ color: 0xe1e3db, side: DoubleSide });
-  const wings: AirfoilHalf[] = [];
+  const sharedWing = new WingGeometryBridge();
+  const positions = sharedWing.surface_positions();
+  const uvs = sharedWing.surface_uvs();
+  const indices = sharedWing.surface_indices();
+  const vertexCount = sharedWing.surface_vertex_count;
+  const indexCount = sharedWing.surface_index_count;
+  const skinRanges = sharedWing.skin_material_ranges();
+  const wings: Mesh<BufferGeometry, MeshLambertMaterial | MeshLambertMaterial[]>[] = [];
   const wingSpar = new Group();
   wingSpar.name = "main-wing-spar";
   root.add(wingSpar);
-  const sparSegments: { rod: Mesh; side: -1 | 1; from: number; to: number }[] = [];
-  const ribs: { rod: Mesh; side: -1 | 1; span: number; from: number; to: number }[] = [];
-  const foamRibs: { mesh: Mesh; span: number }[] = [];
-  const stringers: { rod: Mesh; side: -1 | 1; from: number; to: number; chordFraction: number }[] = [];
-  for (const side of [-1, 1] as const) {
-    const wingShape = {
-      side, halfSpan: HALF_SPAN_METERS, rootChord: WING_ROOT_CHORD_METERS, tipChord: WING_TIP_CHORD_METERS,
-      taperExponent: WING_TAPER_EXPONENT,
-      leadingZ: WING_ROOT_LEADING_Z, sweep: WING_LEADING_SWEEP_METERS, baseY: -0.73, dihedral: 0,
-      camber: 0.04, camberPosition: 0.4, thickness: 0.12,
-      flex: true
-    };
-    const leadingWing = airfoilHalf({ ...wingShape, chordStart: 0, chordEnd: WING_COVERED_CHORD_FRACTION },
-      side < 0 ? wingSkins.left : wingSkins.right, whiteWingUnderside);
-    leadingWing.mesh.name = side === -1 ? "left-wing" : "right-wing";
-    root.add(leadingWing.mesh);
-    const film = airfoilHalf({ ...wingShape,
-      chordStart: WING_COVERED_CHORD_FRACTION, chordEnd: 1
-    }, trailingFilm);
-    film.mesh.name = side === -1 ? "left-trailing-film" : "right-trailing-film";
-    root.add(film.mesh);
-    wings.push(leadingWing, film);
-    for (let section = 0; section < 12; section++) {
-      const from = HALF_SPAN_METERS * section / 12;
-      const to = HALF_SPAN_METERS * (section + 1) / 12;
-      const radius = 0.055 + (0.018 - 0.055) * (section + 0.5) / 12;
-      const rod = addRod(wingSpar,
-        wingSparPoint(side, from, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-        wingSparPoint(side, to, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-        radius, carbon);
-      sparSegments.push({ rod, side, from, to });
-    }
-    for (let ribIndex = 1; ribIndex <= 22; ribIndex++) {
-      const span = HALF_SPAN_METERS * ribIndex / 23;
-      const foam = new Mesh(foamRibGeometry(span), styrofoam);
-      foam.name = side === -1 ? "left-styrofoam-rib" : "right-styrofoam-rib";
-      foam.position.set(side * span, wingDeflectionMeters(span, REFERENCE_AIRSPEED_METERS_PER_SECOND), 0);
-      root.add(foam);
-      foamRibs.push({ mesh: foam, span });
-      for (const [from, to] of [[WING_COVERED_CHORD_FRACTION, 0.75], [0.75, 1]] as const) {
-        const rod = addRod(root,
-          wingRibPoint(side, span, from, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-          wingRibPoint(side, span, to, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-          0.012, ribMaterial);
-        rod.name = side === -1 ? "left-trailing-rib" : "right-trailing-rib";
-        ribs.push({ rod, side, span, from, to });
+  for (let surface = 0; surface < 4; surface++) {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(
+      positions.subarray(surface * vertexCount * 3, (surface + 1) * vertexCount * 3), 3));
+    geometry.setAttribute("uv", new Float32BufferAttribute(
+      uvs.subarray(surface * vertexCount * 2, (surface + 1) * vertexCount * 2), 2));
+    geometry.setIndex(new BufferAttribute(indices.slice(surface * indexCount, (surface + 1) * indexCount), 1));
+    const film = surface % 2 === 1;
+    if (!film) {
+      for (let range = 0; range < skinRanges.length / 2; range++) {
+        geometry.addGroup(bulkNumber(skinRanges, range * 2), bulkNumber(skinRanges, range * 2 + 1), range === 0 ? 0 : 1);
       }
     }
-    for (const chordFraction of [WING_COVERED_CHORD_FRACTION, 0.995]) {
-      for (let section = 0; section < 12; section++) {
-        const from = HALF_SPAN_METERS * section / 12;
-        const to = HALF_SPAN_METERS * (section + 1) / 12;
-        const rod = addRod(root,
-          wingRibPoint(side, from, chordFraction, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-          wingRibPoint(side, to, chordFraction, REFERENCE_AIRSPEED_METERS_PER_SECOND),
-          0.006, ribMaterial);
-        rod.name = "balsa-stringer";
-        stringers.push({ rod, side, from, to, chordFraction });
-      }
-    }
+    geometry.computeVertexNormals();
+    const material = film ? trailingFilm : [surface < 2 ? wingSkins.left : wingSkins.right, whiteWingUnderside];
+    const mesh = new Mesh(geometry, material);
+    mesh.name = `${surface < 2 ? "left" : "right"}-${film ? "trailing-film" : "wing"}`;
+    mesh.frustumCulled = false;
+    root.add(mesh);
+    wings.push(mesh);
   }
+  const rodKinds = sharedWing.rod_kinds();
+  const rodRadii = sharedWing.rod_radii();
+  const rodEndpoints = sharedWing.rod_endpoints();
+  const rods: Mesh[] = [];
+  for (let index = 0; index < rodKinds.length; index++) {
+    const kind = bulkNumber(rodKinds, index);
+    const rod = addRod(kind === 0 ? wingSpar : root,
+      new Vector3().fromArray(rodEndpoints, index * 6),
+      new Vector3().fromArray(rodEndpoints, index * 6 + 3),
+      bulkNumber(rodRadii, index), kind === 0 ? carbon : ribMaterial);
+    rod.name = kind === 0 ? "main-wing-spar-segment" : kind === 2 ? "balsa-stringer" :
+      `${bulkNumber(rodEndpoints, index * 6 + 3) < 0 ? "left" : "right"}-trailing-rib`;
+    rods.push(rod);
+  }
+  const foamVertices = sharedWing.foam_vertices();
+  const foamIndices = sharedWing.foam_indices();
+  const foamPositions = sharedWing.foam_positions();
+  const foamCount = foamPositions.length / 3;
+  const foamStride = foamVertices.length / foamCount;
+  const foamRibs: Mesh[] = [];
+  for (let index = 0; index < foamCount; index++) {
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(
+      foamVertices.subarray(index * foamStride, (index + 1) * foamStride), 3));
+    geometry.setIndex(new BufferAttribute(foamIndices.slice(), 1));
+    geometry.computeVertexNormals();
+    const foam = new Mesh(geometry, styrofoam);
+    foam.position.fromArray(foamPositions, index * 3);
+    foam.name = `${foam.position.x < 0 ? "left" : "right"}-styrofoam-rib`;
+    root.add(foam);
+    foamRibs.push(foam);
+  }
+
   const cockpitFrame = new Group();
   cockpitFrame.name = "open-cockpit-frame";
   root.add(cockpitFrame);
@@ -512,7 +288,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       new Vector3(0.15, -1.36, z), 0.008, whiteFrame);
   }
   const mainBeam = addRod(root,
-    new Vector3(0, -0.73, WING_ROOT_SPAR_Z), new Vector3(0, -0.57, 4.75), 0.075, carbon);
+    new Vector3().fromArray(rodEndpoints, 0), new Vector3(0, -0.57, 4.75), 0.075, carbon);
   mainBeam.name = "single-carbon-main-beam";
   const clearCanopyStations: readonly CanopyStation[] = [
     { z: -1.10, centerY: -1.08, halfWidth: 0.025, halfHeight: 0.035 },
@@ -564,7 +340,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   ], skin));
   root.add(verticalIncidence);
 
-  let currentSpeed = Number.NaN;
+  let disposed = false;
   const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
     if (controls.layout === "tail_incidence" &&
         (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
@@ -576,36 +352,24 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       const geometry = tailGeometry.value;
       horizontalTailArmMeters = registeredHorizontalTailArmMeters(geometry.kind, geometry.horizontalTailArmMeters);
     }
-    const speed = airspeedMetersPerSecond ?? REFERENCE_AIRSPEED_METERS_PER_SECOND;
-    if (!Number.isFinite(currentSpeed) || Math.abs(speed - currentSpeed) > 0.03) {
-      currentSpeed = speed;
-      for (const wing of wings) {
-        const position = wing.mesh.geometry.getAttribute("position");
-        for (let vertex = 0; vertex < wing.baseY.length; vertex++) {
-          position.setY(vertex, (wing.baseY[vertex] ?? 0) + wingDeflectionMeters(wing.span[vertex] ?? 0, speed));
-        }
+    if (sharedWing.update(airspeedMetersPerSecond ?? Number.NaN)) {
+      const nextPositions = sharedWing.surface_positions();
+      for (let surface = 0; surface < wings.length; surface++) {
+        const wing = wings[surface];
+        if (wing === undefined) throw new RangeError("Incomplete main-wing surface projection");
+        const position = wing.geometry.getAttribute("position");
+        position.array.set(nextPositions.subarray(surface * vertexCount * 3, (surface + 1) * vertexCount * 3));
         position.needsUpdate = true;
-        wing.mesh.geometry.computeVertexNormals();
+        wing.geometry.computeVertexNormals();
       }
-      for (const rib of ribs) {
-        pointRod(rib.rod,
-          wingRibPoint(rib.side, rib.span, rib.from, speed),
-          wingRibPoint(rib.side, rib.span, rib.to, speed));
+      const endpoints = sharedWing.rod_endpoints();
+      for (const [index, rod] of rods.entries()) {
+        pointRod(rod, new Vector3().fromArray(endpoints, index * 6), new Vector3().fromArray(endpoints, index * 6 + 3));
       }
-      for (const spar of sparSegments) {
-        pointRod(spar.rod,
-          wingSparPoint(spar.side, spar.from, speed),
-          wingSparPoint(spar.side, spar.to, speed));
-      }
-      for (const foam of foamRibs) {
-        foam.mesh.position.y = wingDeflectionMeters(foam.span, speed);
-      }
-      for (const stringer of stringers) {
-        pointRod(stringer.rod,
-          wingRibPoint(stringer.side, stringer.from, stringer.chordFraction, speed),
-          wingRibPoint(stringer.side, stringer.to, stringer.chordFraction, speed));
-      }
+      const translations = sharedWing.foam_positions();
+      for (const [index, foam] of foamRibs.entries()) foam.position.fromArray(translations, index * 3);
     }
+
     horizontalIncidence.position.z = horizontalTailArmMeters;
     horizontalIncidence.visible = controls.layout === "tail_incidence";
     verticalIncidence.visible = controls.layout === "tail_incidence";
@@ -625,6 +389,9 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     root,
     setVisualState,
     dispose() {
+      if (disposed) return;
+      disposed = true;
+      sharedWing.free();
       const geometries = new Set<BufferGeometry>();
       const materials = new Set<MeshLambertMaterial | MeshBasicMaterial>();
       root.traverse((part) => {

@@ -1,3 +1,4 @@
+import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { Group, Mesh, Vector3 } from "three";
 import type { Object3D } from "three";

@@ -178,6 +178,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 water::apply_quality,
                 advance_presentation,
                 world::project_world,
+                world::project_main_wing,
                 water_reflection::project_reflection,
                 ui::update_ui,
             )
