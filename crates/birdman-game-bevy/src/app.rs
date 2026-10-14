@@ -4,6 +4,8 @@
 mod environment;
 #[path = "frame_rate.rs"]
 mod frame_rate;
+#[path = "mip_filter.rs"]
+mod mip_filter;
 #[path = "native_session.rs"]
 mod native_session;
 #[path = "projection.rs"]
@@ -136,6 +138,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .init_resource::<FlightInput>()
     .init_resource::<water_quality::WaterQualitySelection>()
     .init_resource::<CameraMode>();
+    mip_filter::configure(app.world_mut())?;
     app.init_resource::<frame_rate::FrameRate>();
     let render_app = app
         .get_sub_app_mut(bevy::render::RenderApp)
