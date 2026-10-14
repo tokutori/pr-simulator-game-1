@@ -11,7 +11,7 @@ use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
-    diagnostic::DiagnosticsStore,
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex},
     material::descriptor::PipelineDescriptor,
     prelude::*,
@@ -47,6 +47,7 @@ use std::{
 const READY_CONFIRMATION_FRAMES: usize = 5;
 const MOTION_DURATION: Duration = Duration::from_secs(2);
 const MAX_COUNTDOWN_ATTEMPTS: usize = 3;
+const TIMING_HISTORY_LIMIT: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WaterVerificationCase {
@@ -195,20 +196,172 @@ impl MotionInterval {
     }
 }
 
+fn timing_kind(diagnostic: &Diagnostic) -> Option<&'static str> {
+    if diagnostic.path() == &FrameTimeDiagnosticsPlugin::FRAME_TIME {
+        return Some("real_frame_cycle");
+    }
+    match diagnostic.path().as_str().rsplit('/').next() {
+        Some("elapsed_cpu") => Some("render_cpu"),
+        Some("elapsed_gpu") => Some("render_gpu"),
+        _ => None,
+    }
+}
+
+pub(crate) fn maintain_timing_history(mut diagnostics: ResMut<DiagnosticsStore>) {
+    for diagnostic in diagnostics.iter_mut() {
+        if timing_kind(diagnostic).is_some()
+            && diagnostic.get_max_history_length() < TIMING_HISTORY_LIMIT
+        {
+            let placeholder = Diagnostic::new(diagnostic.path().clone());
+            let owned = std::mem::replace(diagnostic, placeholder);
+            *diagnostic = owned.with_max_history_length(TIMING_HISTORY_LIMIT);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct TimingSummary {
+    received_count: usize,
+    invalid_count: usize,
+    sample_span_ms: Option<f64>,
+    history_limit: usize,
+    history_incomplete: bool,
+    mean_ms: Option<f64>,
+    p95_ms: Option<f64>,
+    maximum_ms: Option<f64>,
+}
+
+impl TimingSummary {
+    fn is_complete(&self) -> bool {
+        self.received_count > 0 && self.invalid_count == 0 && !self.history_incomplete
+    }
+}
+
+fn summarize_timing(diagnostic: &Diagnostic, start: Instant, end: Instant) -> TimingSummary {
+    let history_limit = diagnostic.get_max_history_length();
+    let history_incomplete = diagnostic.history_len() >= history_limit
+        && diagnostic
+            .measurements()
+            .next()
+            .is_some_and(|measurement| measurement.time >= start);
+    let mut values = Vec::new();
+    let mut received_count = 0;
+    let mut invalid_count = 0;
+    let mut first = None;
+    let mut last = None;
+    for measurement in diagnostic
+        .measurements()
+        .filter(|measurement| measurement.time >= start && measurement.time <= end)
+    {
+        received_count += 1;
+        first.get_or_insert(measurement.time);
+        last = Some(measurement.time);
+        if measurement.value.is_finite() && measurement.value >= 0.0 {
+            values.push(measurement.value);
+        } else {
+            invalid_count += 1;
+        }
+    }
+    values.sort_unstable_by(f64::total_cmp);
+    TimingSummary {
+        received_count,
+        invalid_count,
+        sample_span_ms: first
+            .zip(last)
+            .map(|(first, last)| last.duration_since(first).as_secs_f64() * 1000.0),
+        history_limit,
+        history_incomplete,
+        mean_ms: (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64),
+        p95_ms: (!values.is_empty()).then(|| values[values.len() - values.len() / 20 - 1]),
+        maximum_ms: values.last().copied(),
+    }
+}
+
+fn report_motion_timings(
+    verification: &Verification,
+    motion: WaterMotion,
+    interval: MotionInterval,
+    diagnostics: Option<&DiagnosticsStore>,
+    windows: &Query<&Window>,
+) {
+    let end = Instant::now();
+    println!(
+        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
+        verification.water_case,
+        motion.label(),
+        end.duration_since(verification.stage_started).as_secs_f64() * 1000.0,
+        cfg!(debug_assertions),
+    );
+    for window in windows {
+        println!(
+            "Motion timing window: physical={}x{} scale_factor={} present_mode={:?}",
+            window.physical_width(),
+            window.physical_height(),
+            window.scale_factor(),
+            window.present_mode,
+        );
+    }
+    let mut available = [false; 3];
+    if let Some(diagnostics) = diagnostics {
+        let mut paths: Vec<_> = diagnostics
+            .iter()
+            .filter(|diagnostic| timing_kind(diagnostic).is_some())
+            .collect();
+        paths.sort_unstable_by(|left, right| left.path().as_str().cmp(right.path().as_str()));
+        for diagnostic in paths {
+            let kind = timing_kind(diagnostic).unwrap();
+            let summary = summarize_timing(diagnostic, verification.stage_started, end);
+            if summary.received_count > summary.invalid_count {
+                available[match kind {
+                    "real_frame_cycle" => 0,
+                    "render_cpu" => 1,
+                    _ => 2,
+                }] = true;
+            }
+            println!(
+                "Motion timing path={} kind={kind} arrival_distribution_complete={} valid_only_statistics={summary:?}",
+                diagnostic.path().as_str(),
+                summary.is_complete(),
+            );
+        }
+    }
+    for (kind, available) in ["real_frame_cycle", "render_cpu", "render_gpu"]
+        .into_iter()
+        .zip(available)
+    {
+        if !available {
+            println!(
+                "Motion timing {kind} unavailable: no valid sample received within the interval; GPU timestamp features were not forced"
+            );
+        }
+    }
+}
+
 pub(crate) fn project_observer(
     mut verification: ResMut<Verification>,
     session: Res<NativeSession>,
     time: Res<Time<Real>>,
     observer: Option<ResMut<VerificationObserver>>,
+    diagnostics: Option<Res<DiagnosticsStore>>,
+    windows: Query<&Window>,
     mut commands: Commands,
 ) {
-    if matches!(
-        verification.stage,
-        VerificationStage::WaterMotion(_, MotionEndpoint::End)
-    ) && let Some(interval) = verification.motion_interval
+    if let VerificationStage::WaterMotion(motion, MotionEndpoint::End) = verification.stage
+        && let Some(interval) = verification.motion_interval
     {
-        verification.motion_interval =
-            Some(interval.observe(session.game.snapshot().phase(), time.delta()));
+        let observed = interval.observe(session.game.snapshot().phase(), time.delta());
+        verification.motion_interval = Some(observed);
+        if matches!(interval, MotionInterval::Observing(_))
+            && !matches!(observed, MotionInterval::Observing(_))
+        {
+            report_motion_timings(
+                &verification,
+                motion,
+                observed,
+                diagnostics.as_deref(),
+                &windows,
+            );
+        }
     }
     if verification.failure.is_none()
         && session.game.snapshot().phase() == SessionPhase::FlightRunning
@@ -987,7 +1140,6 @@ pub(crate) struct VerificationPresentation<'w, 's> {
             &'static MeshMaterial3d<WaterMaterial>,
         ),
     >,
-    diagnostics: Option<Res<'w, DiagnosticsStore>>,
     focus: Res<'w, InputFocus>,
     ui_controls: Query<'w, 's, (Entity, &'static Name), With<TabIndex>>,
 }
@@ -1067,27 +1219,6 @@ pub(crate) fn advance(
                 println!(
                     "Water case {case:?} completed: camera-only observation, actual sealed Weather/quality and core Pause/Resume/Retry. Visual temporal acceptance and physical input are separate."
                 );
-                let mut available = false;
-                if let Some(diagnostics) = &presentation.diagnostics {
-                    for diagnostic in diagnostics
-                        .iter()
-                        .filter(|diagnostic| diagnostic.path().as_str().ends_with("elapsed_gpu"))
-                    {
-                        if let Some(value) = diagnostic.value().filter(|value| value.is_finite()) {
-                            println!(
-                                "GPU diagnostic {}: latest={value:.3} ms, samples={} (verification scene/pass, not release frame budget)",
-                                diagnostic.path().as_str(),
-                                diagnostic.history_len()
-                            );
-                            available = true;
-                        }
-                    }
-                }
-                if !available {
-                    println!(
-                        "GPU elapsed_gpu diagnostics unavailable; timestamp features were not forced."
-                    );
-                }
             } else {
                 println!(
                     "GPU captures and scripted logical-input core loop completed; visual review and physical keyboard/mouse acceptance are separate."
@@ -3341,6 +3472,186 @@ mod tests {
                 interrupted
             );
         }
+    }
+
+    fn timing_diagnostic(
+        start: std::time::Instant,
+        capacity: usize,
+        samples: &[(u64, f64)],
+    ) -> bevy::diagnostic::Diagnostic {
+        use bevy::diagnostic::{Diagnostic, DiagnosticMeasurement, FrameTimeDiagnosticsPlugin};
+        let mut diagnostic = Diagnostic::new(FrameTimeDiagnosticsPlugin::FRAME_TIME)
+            .with_max_history_length(capacity);
+        for &(milliseconds, value) in samples {
+            diagnostic.add_measurement(DiagnosticMeasurement {
+                time: start + Duration::from_millis(milliseconds),
+                value,
+            });
+        }
+        diagnostic
+    }
+
+    #[test]
+    fn timing_summary_selects_closed_arrival_window_and_nearest_rank_p95() {
+        let base = std::time::Instant::now();
+        let start = base + Duration::from_secs(1);
+        let end = start + MOTION_DURATION;
+        let mut samples = vec![(0, 500.0)];
+        samples.extend((1..=19).map(|index| (1000 + (index - 1) * 100, index as f64)));
+        samples.extend([(3000, 20.0), (3001, 1000.0)]);
+        let diagnostic = timing_diagnostic(base, super::TIMING_HISTORY_LIMIT, &samples);
+        let summary = super::summarize_timing(&diagnostic, start, end);
+        assert_eq!(summary.received_count, 20);
+        assert_eq!(summary.invalid_count, 0);
+        assert_eq!(summary.sample_span_ms, Some(2000.0));
+        assert_eq!(summary.mean_ms, Some(10.5));
+        assert_eq!(summary.p95_ms, Some(19.0));
+        assert_eq!(summary.maximum_ms, Some(20.0));
+        assert!(summary.is_complete());
+        let diagnostic = timing_diagnostic(base, 120, &[(1000, 2.0), (1001, 1.0), (1002, 3.0)]);
+        let summary = super::summarize_timing(&diagnostic, start, end);
+        assert_eq!(summary.p95_ms, Some(3.0));
+        assert_eq!(summary.mean_ms, Some(2.0));
+    }
+
+    #[test]
+    fn timing_summary_marks_truncated_history_incomplete_at_eighty_fps() {
+        let start = std::time::Instant::now();
+        let samples: Vec<_> = (0..160).map(|index| (index * 12, 12.5)).collect();
+        for (capacity, expected_count, incomplete) in [(120, 120, true), (4096, 160, false)] {
+            let diagnostic = timing_diagnostic(start, capacity, &samples);
+            let summary = super::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
+            assert_eq!(summary.received_count, expected_count);
+            assert_eq!(summary.history_incomplete, incomplete);
+            assert_eq!(summary.is_complete(), !incomplete);
+            assert_eq!(summary.p95_ms, Some(12.5));
+        }
+        let diagnostic = timing_diagnostic(start, 4, &[(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)]);
+        assert!(
+            super::summarize_timing(&diagnostic, start, start + MOTION_DURATION).history_incomplete
+        );
+        let summary = super::summarize_timing(
+            &diagnostic,
+            start + Duration::from_millis(2),
+            start + MOTION_DURATION,
+        );
+        assert!(!summary.history_incomplete);
+        assert_eq!(summary.received_count, 2);
+    }
+
+    #[test]
+    fn timing_summary_keeps_invalid_samples_and_unavailable_distinct() {
+        let start = std::time::Instant::now();
+        let diagnostic = timing_diagnostic(
+            start,
+            super::TIMING_HISTORY_LIMIT,
+            &[(0, f64::NAN), (1, f64::INFINITY), (2, -1.0), (3, 0.0)],
+        );
+        let summary = super::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
+        assert_eq!(summary.received_count, 4);
+        assert_eq!(summary.invalid_count, 3);
+        assert_eq!(summary.sample_span_ms, Some(3.0));
+        assert_eq!(summary.mean_ms, Some(0.0));
+        assert_eq!(summary.p95_ms, Some(0.0));
+        assert_eq!(summary.maximum_ms, Some(0.0));
+        assert!(!summary.is_complete());
+        let summary = super::summarize_timing(
+            &diagnostic,
+            start + MOTION_DURATION,
+            start + MOTION_DURATION * 2,
+        );
+        assert_eq!(summary.received_count, 0);
+        assert_eq!(summary.invalid_count, 0);
+        assert_eq!(summary.sample_span_ms, None);
+        assert_eq!(summary.mean_ms, None);
+        assert_eq!(summary.p95_ms, None);
+        assert_eq!(summary.maximum_ms, None);
+        assert!(!summary.is_complete());
+    }
+
+    #[test]
+    fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measurement() {
+        use bevy::{diagnostic::*, prelude::*};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, FrameTimeDiagnosticsPlugin::default()))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                Duration::from_millis(16),
+            ))
+            .add_systems(
+                Update,
+                super::maintain_timing_history.after(FrameTimeDiagnosticsPlugin::diagnostic_system),
+            )
+            .add_systems(
+                Update,
+                (|store: Res<DiagnosticsStore>, time: Res<Time<Real>>| {
+                    if time.delta() > Duration::ZERO {
+                        assert_eq!(
+                            store
+                                .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+                                .unwrap()
+                                .value(),
+                            Some(time.delta_secs_f64() * 1000.0),
+                        );
+                    }
+                })
+                .after(super::maintain_timing_history),
+            );
+        let path = DiagnosticPath::const_new("render/test/elapsed_gpu");
+        let mut diagnostic = Diagnostic::new(path.clone()).with_suffix("ms");
+        diagnostic.add_measurement(DiagnosticMeasurement {
+            time: std::time::Instant::now(),
+            value: 3.0,
+        });
+        diagnostic.is_enabled = false;
+        app.world_mut()
+            .resource_mut::<DiagnosticsStore>()
+            .add(diagnostic);
+        app.update();
+        app.update();
+        let store = app.world().resource::<DiagnosticsStore>();
+        let diagnostic = store.get(&path).unwrap();
+        assert_eq!(
+            diagnostic.get_max_history_length(),
+            super::TIMING_HISTORY_LIMIT
+        );
+        assert_eq!(diagnostic.history_len(), 1);
+        assert_eq!(diagnostic.suffix, "ms");
+        assert!(!diagnostic.is_enabled);
+        assert_eq!(diagnostic.average(), Some(3.0));
+        assert_eq!(diagnostic.smoothed(), Some(3.0));
+        assert_eq!(
+            store
+                .get(&FrameTimeDiagnosticsPlugin::FPS)
+                .unwrap()
+                .get_max_history_length(),
+            120
+        );
+        assert_eq!(
+            store
+                .get(&FrameTimeDiagnosticsPlugin::FRAME_COUNT)
+                .unwrap()
+                .get_max_history_length(),
+            0
+        );
+        let late = DiagnosticPath::const_new("render/new/elapsed_cpu");
+        app.world_mut()
+            .resource_mut::<DiagnosticsStore>()
+            .add(Diagnostic::new(late.clone()));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<DiagnosticsStore>()
+                .get(&late)
+                .unwrap()
+                .get_max_history_length(),
+            super::TIMING_HISTORY_LIMIT,
+        );
+        assert_eq!(
+            super::timing_kind(&Diagnostic::new(DiagnosticPath::const_new(
+                "render/invalid_elapsed_gpu"
+            ))),
+            None,
+        );
     }
 
     #[test]

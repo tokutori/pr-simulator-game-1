@@ -191,7 +191,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {
         if water_verification.is_some() {
-            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+            app.add_plugins((
+                bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
+                bevy::render::diagnostic::RenderDiagnosticsPlugin,
+            ))
+            .add_systems(
+                Update,
+                verification::maintain_timing_history
+                    .after(bevy::diagnostic::FrameTimeDiagnosticsPlugin::diagnostic_system)
+                    .before(verification::project_observer),
+            );
         }
         let (verification, completion) = verification::Verification::try_new(
             directory,
