@@ -190,8 +190,13 @@ observerはPause・Result・Retryで無効化する。Pause中のcore state・re
 画像変換・RGB変換・PNG圧縮と保存は既存`AsyncComputeTaskPool`で実行する。
 保持するsave taskは1件とし、case・stage・serialを照合した保存完了後だけ次段階へ進む。
 区間外のProcessingDelayは既存の安全停止と明示的な回復経路を維持する。GPU readbackの負荷は別途計測する。
-検証processだけにBevyの[RenderDiagnosticsPlugin](https://docs.rs/bevy/0.19.1/bevy/render/diagnostic/struct.RenderDiagnosticsPlugin.html)を追加し、
-完了時に取得済み`elapsed_gpu`のscene/pass別値をmsで出力する。timestamp featureの強制要求は行わず、未取得を明記する。
+水面検証processだけに公式`FrameTimeDiagnosticsPlugin`と`RenderDiagnosticsPlugin`を追加する。
+`frame_time`と各`elapsed_cpu`/`elapsed_gpu`の既存履歴を4096件へ拡張し、Motion区間終了時、撮影要求前に
+既存stage開始時刻以後に受領した標本のcount・時間幅・mean・nearest-rank p95・maxをmsで出力する。
+履歴が満杯で最古標本が開始境界以後にある場合、容量不足として分布不完全を明記する。非finite・負値を除いた
+補助統計と未取得も区分し、中断区間は既存の失敗を保持する。`frame_time`はVSync・OS待機を含むReal frame周期である。
+render CPU/GPUの時刻はMainへの診断受領時刻であり、同Motion内に実行された全render frameとの対応を保証しない。
+各passは合算しない。timestamp featureの強制要求、通常のFifo/VSync・画質・physics・150 ms安全停止の変更は行わない。
 画像の時間的aliasing・optic flow・白波OFF/ONは、native表示の直接観測と実GPU画像で評価する。
 開始・終了画像だけを連続表示の受入根拠にしない。
 このcamera-only観測とscene/pass計測は、物理入力応答、描画FPS非依存性、80 FPSやrelease予算の達成を証明しない。
