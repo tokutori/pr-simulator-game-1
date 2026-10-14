@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window } from "happy-dom";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { analysisCursorData, createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
@@ -10,7 +10,7 @@ import type { AppEffect, AppModel } from "../../web/src/app/app-state.js";
 import { queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
-import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 
 function observeSharedUi(session: TailAppSessionFacade, model: AppModel): AppModel {
@@ -45,6 +45,138 @@ beforeAll(() => {
 });
 
 describe("Screen UI to current WebAssembly GameSession transitions", () => {
+  it.each(["allocation", "display", "resync", "resync_retry"] as const)("resynchronizes the observed Result record after a Retry %s failure", (failure) => {
+    const bridge = new HybridGameSessionBridge(0, 0, 0);
+    const session = new TailAppSessionFacade(bridge, physics_hz());
+    const free = vi.spyOn(bridge, "free");
+    const resyncFailure = failure === "resync" || failure === "resync_retry";
+    try {
+      launchCurrentSession(session);
+      session.flightPort.advance_tick_json(neutralTailInput);
+      session.executeOperation("abort");
+      const initial: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } };
+      const entered = updateApp(initial, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
+      const initialLoad = entered.effects.find((effect) => effect.type === "load-flight-analysis");
+      if (initialLoad?.type !== "load-flight-analysis") throw new Error("Result did not request Analysis");
+      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const loaded = updateApp(entered.model, { type: "flight-analysis-loaded", requestId: initialLoad.requestId, data: dataset });
+      const initialCursor = loaded.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
+      if (initialCursor?.type !== "load-flight-analysis-cursor") throw new Error("Result did not request its cursor");
+      let model = updateApp(loaded.model, { type: "flight-analysis-cursor-loaded", requestId: initialCursor.requestId,
+        sample: session.queryAnalysisCursor(initialCursor.timeSeconds, dataset) }).model;
+      model = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-open-analysis" }).model;
+      const sought = sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: 0.005 });
+      const oldCursor = sought.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
+      if (oldCursor?.type !== "load-flight-analysis-cursor") throw new Error("Analysis did not request its cursor");
+      const oldSample = session.queryAnalysisCursor(oldCursor.timeSeconds, dataset);
+      const requested = sharedUiTransition(session, sought.model, { type: "activate", controlId: "game-result-retry" });
+      const operation = requested.effects.find((effect) => effect.type === "shared-game-session-command");
+      if (operation?.type !== "shared-game-session-command") throw new Error("Result did not request Retry");
+      expect(operation.command).toEqual({ kind: "retry" });
+      const before = session.flightPort.snapshot_json();
+      const record = session.exportRecordJson();
+      const token = session.captureQueryToken();
+      if (failure === "display") {
+        session.executeSharedSessionCommand(operation.command);
+        vi.spyOn(bridge, "snapshot_json").mockReturnValueOnce("[]");
+        expect(() => readRuntimeSessionProjection(session)).toThrow();
+      } else {
+        vi.spyOn(bridge, "apply_game_ui_session_command_json").mockImplementationOnce((command) => {
+          expect(JSON.parse(command)).toEqual({ kind: "retry" });
+          throw new RangeError("Record(AllocationFailed)");
+        });
+        expect(() => session.executeSharedSessionCommand(operation.command)).toThrow("Record(AllocationFailed)");
+      }
+      expect(session.acceptQuery(token, "old completion").kind).toBe("stale");
+      expect(session.isAnalysisDatasetCurrent(dataset)).toBe(false);
+      expect(() => session.queryAnalysisCursor(0.005, dataset)).toThrow("stale");
+      const message = failure === "display" ? "Snapshot display conversion failed" : "Record(AllocationFailed)";
+      if (resyncFailure) {
+        vi.spyOn(bridge, "snapshot_json").mockReturnValueOnce("[]");
+        expect(() => readRuntimeSessionProjection(session)).toThrow();
+      }
+      const rejected = updateApp(requested.model, { type: "game-operation-failed", requestId: operation.requestId, message,
+        analysisSourceInvalidated: !session.isAnalysisDatasetCurrent(dataset),
+        ...(resyncFailure ? {} : { currentSession: readRuntimeSessionProjection(session) }) });
+      expect(rejected.model.pendingGameRequestId).toBeNull();
+      expect(rejected.model.status).toBe(message);
+      expect(flightAnalysisData(rejected.model.analysis)).toBeNull();
+      expect(analysisCursorData(rejected.model.analysisCursor)).toBeNull();
+      expect(updateApp(rejected.model, { type: "flight-analysis-cursor-loaded", requestId: oldCursor.requestId,
+        sample: oldSample }).model).toBe(rejected.model);
+      if (failure === "display") {
+        expect(session.readLifecycle().phaseCode).toBe(3);
+        expect(rejected.model.gameSession.kind).toBe("briefing-ready");
+        expect(rejected.effects).toEqual([]);
+      } else {
+        expect(session.readLifecycle().phaseCode).toBe(7);
+        expect(session.flightPort.snapshot_json()).toBe(before);
+        expect(session.exportRecordJson()).toBe(record);
+        expect(rejected.model.gameSession.kind).toBe("result");
+        expect(rejected.model.resultTab).toBe("summary");
+        expect(rejected.model.analysisCursorTimeSeconds).toBe(0);
+        {
+          let recovered = rejected;
+          if (resyncFailure) {
+            expect(rejected.effects).toEqual([]);
+            if (failure === "resync_retry") {
+              const retried = sharedUiTransition(session, rejected.model, { type: "activate", controlId: "game-result-retry" });
+              const retry = retried.effects.find((effect) => effect.type === "shared-game-session-command");
+              if (retry?.type !== "shared-game-session-command") throw new Error("Result did not allow another Retry");
+              vi.spyOn(bridge, "apply_game_ui_session_command_json").mockImplementationOnce(() => {
+                throw new RangeError("Record(AllocationFailed)");
+              });
+              expect(() => session.executeSharedSessionCommand(retry.command)).toThrow("Record(AllocationFailed)");
+              expect(flightAnalysisData(retried.model.analysis)).toBeNull();
+              recovered = updateApp(retried.model, { type: "game-operation-failed", requestId: retry.requestId, message,
+                analysisSourceInvalidated: false, currentSession: readRuntimeSessionProjection(session) });
+            } else {
+              recovered = updateApp(rejected.model, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
+            }
+          }
+          const reload = recovered.effects.find((effect) => effect.type === "load-flight-analysis");
+          if (reload?.type !== "load-flight-analysis") throw new Error("Failed Retry did not refresh stale Analysis");
+          expect(recovered.effects).toEqual([reload]);
+          const repeated = updateApp(recovered.model, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
+          expect(repeated.effects).toEqual([]);
+          expect(repeated.model.analysis).toBe(recovered.model.analysis);
+          expect(updateApp(repeated.model, { type: "flight-analysis-loaded", requestId: initialLoad.requestId,
+            data: dataset }).model).toBe(repeated.model);
+          expect(() => session.queryAnalysisCursor(0.005, dataset)).toThrow("stale");
+          const invalidatedLoading = updateApp({ ...repeated.model, pendingGameRequestId: operation.requestId }, {
+            type: "game-operation-failed", requestId: operation.requestId, message,
+            analysisSourceInvalidated: !session.isAnalysisDatasetCurrent(dataset), currentSession: readRuntimeSessionProjection(session)
+          });
+          expect(invalidatedLoading.effects).toEqual([{ type: "load-flight-analysis", requestId: repeated.model.analysis.nextRequestId }]);
+          expect(invalidatedLoading.model.analysis).toEqual({ kind: "loading", requestId: repeated.model.analysis.nextRequestId,
+            nextRequestId: repeated.model.analysis.nextRequestId + 1, retained: null });
+          expect(updateApp(invalidatedLoading.model, { type: "flight-analysis-loaded", requestId: reload.requestId,
+            data: dataset }).model).toBe(invalidatedLoading.model);
+          const currentDataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+          expect(currentDataset.context).toEqual(dataset.context);
+          expect(currentDataset.summary).toEqual(dataset.summary);
+          const reloaded = updateApp(repeated.model, { type: "flight-analysis-loaded", requestId: reload.requestId, data: currentDataset });
+          const cursor = reloaded.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
+          if (cursor?.type !== "load-flight-analysis-cursor") throw new Error("Refreshed Analysis did not request its cursor");
+          model = updateApp(reloaded.model, { type: "flight-analysis-cursor-loaded", requestId: cursor.requestId,
+            sample: session.queryAnalysisCursor(cursor.timeSeconds, currentDataset) }).model;
+          expect(flightAnalysisData(model.analysis)).toBe(currentDataset);
+          model = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-open-analysis" }).model;
+          const continued = sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: 0.005 });
+          const continuedCursor = continued.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
+          if (continuedCursor?.type !== "load-flight-analysis-cursor") throw new Error("Failed Retry did not allow Analysis seek");
+          model = updateApp(continued.model, { type: "flight-analysis-cursor-loaded", requestId: continuedCursor.requestId,
+            sample: session.queryAnalysisCursor(continuedCursor.timeSeconds, currentDataset) }).model;
+          expect(analysisCursorData(model.analysisCursor)?.timeSeconds).toBe(0.005);
+          const retryAgain = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-retry" });
+          expect(retryAgain.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "retry" },
+            requestId: retryAgain.model.pendingGameRequestId }]);
+        }
+      }
+    } finally { session.dispose(); session.dispose(); }
+    expect(free).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["manual_abort", "water_contact"] as const)("loads Result cursor effects through WASM after %s", (terminal) => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
