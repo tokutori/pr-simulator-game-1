@@ -1031,6 +1031,7 @@ fn project_hud(
     }
     let layout = &hud.layout;
     let ink = color(&theme.text, 1.0)?;
+    let background = BackgroundColor(color(&theme.panel_background, layout.opacity)?);
     retained_node(world, retained.shell).set_if_neq(Node {
         position_type: PositionType::Absolute,
         left: px(layout.offset_px[0]),
@@ -1043,12 +1044,7 @@ fn project_hud(
         overflow: Overflow::scroll_y(),
         ..default()
     });
-    world
-        .entity_mut(retained.shell)
-        .insert(BackgroundColor(color(
-            &theme.panel_background,
-            layout.opacity,
-        )?));
+    world.entity_mut(retained.shell).insert(background);
     retained_node(world, retained.instruments).set_if_neq(Node {
         display: Display::Grid,
         width: percent(100),
