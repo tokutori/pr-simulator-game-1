@@ -17,6 +17,15 @@ const excludedNativeFeatures = new Set([
   "bevy_gilrs", "web", "webgl2", "webgpu"
 ]);
 
+function isCompleteVersionPin(value: unknown): boolean {
+  return typeof value === "string" && /^=\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value);
+}
+
+function isDefaultRegistrySource(dependency: Record<string, unknown>): boolean {
+  return dependency.registry === null && typeof dependency.source === "string"
+    && /^(registry|sparse)\+.+$/.test(dependency.source);
+}
+
 export function assertNativeTextPatch(workspace: unknown): void {
   const manifest = record(workspace);
   const patch = record(record(manifest.patch)["crates-io"]);
@@ -31,28 +40,27 @@ export function assertNativeTextPatch(workspace: unknown): void {
 function isNativeEngineDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
     && dependency.target === NATIVE_SCREEN_TARGET
-    && dependency.req === "=0.19.1"
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
     && dependency.uses_default_features === false
     && Array.isArray(dependency.features)
     && (dependency.kind === null
       && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature))
       || dependency.kind === "dev"
       && dependency.features.length === 1
-      && dependency.features[0] === "default_font"
-      && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
-      && dependency.registry === null
-      && dependency.path === undefined
-      && dependency.rename === null
-      && dependency.optional === false);
+      && dependency.features[0] === "default_font");
 }
 
 function isNativeTextDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
+    && dependency.name === "parley"
     && dependency.kind === null
     && dependency.target === NATIVE_SCREEN_TARGET
     && dependency.req === "=0.9.0"
-    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
-    && dependency.registry === null
+    && isDefaultRegistrySource(dependency)
     && dependency.path === undefined
     && dependency.rename === null
     && dependency.optional === false
@@ -68,9 +76,8 @@ function isSharedChartNumberDependency(crate: string, dependency: Record<string,
     && dependency.name === "ryu-js"
     && dependency.kind === null
     && dependency.target === null
-    && dependency.req === "=1.0.3"
-    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
-    && dependency.registry === null
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
     && dependency.path === undefined
     && dependency.rename === null
     && dependency.optional === false
@@ -84,9 +91,8 @@ function isHostNumericalTestDependency(crate: string, dependency: Record<string,
     && dependency.name === "nalgebra"
     && dependency.kind === "dev"
     && dependency.target === HOST_NUMERICAL_TEST_TARGET
-    && dependency.req === "=0.35.0"
-    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
-    && dependency.registry === null
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
     && dependency.path === undefined
     && dependency.rename === null
     && dependency.optional === false
@@ -96,14 +102,20 @@ function isHostNumericalTestDependency(crate: string, dependency: Record<string,
     && dependency.features[0] === "std";
 }
 
+function activatesSchema(feature: unknown): boolean {
+  return typeof feature === "string" && (feature === "schema" || feature === "schemars" || feature === "dep:schemars"
+    || feature.startsWith("schemars/") || feature.startsWith("schemars?/") || feature.endsWith("/schema"));
+}
+
 function hasSchemaFeature(features: unknown, expected: readonly string[]): boolean {
   if (typeof features !== "object" || features === null || Array.isArray(features)) return false;
   const values = record(features);
   const schema = values.schema;
-  return Object.keys(values).length === 1
-    && Array.isArray(schema)
+  return Array.isArray(schema)
     && schema.length === expected.length
-    && expected.every((feature) => schema.includes(feature));
+    && expected.every((feature) => schema.includes(feature))
+    && Object.entries(values).every(([name, enabled]) => name === "schema" || Array.isArray(enabled)
+      && enabled.every((feature: unknown) => typeof feature === "string" && !activatesSchema(feature)));
 }
 
 function isSchemaGenerationDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
@@ -114,9 +126,8 @@ function isSchemaGenerationDependency(crate: string, dependency: Record<string, 
     && dependency.name === "schemars"
     && dependency.kind === null
     && dependency.target === null
-    && dependency.req === "=1.2.2"
-    && dependency.source === "registry+https://github.com/rust-lang/crates.io-index"
-    && dependency.registry === null
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
     && dependency.path === undefined
     && dependency.rename === null
     && dependency.optional === true
@@ -135,8 +146,7 @@ function assertSchemaFeatureBoundary(crate: string, features: unknown): void {
   if (crate !== "birdman-game-wasm" && crate !== "birdman-game-bevy") return;
   const values = record(features);
   if ("schema" in values || Object.values(values).some((value) => Array.isArray(value)
-    && value.some((feature: unknown) => typeof feature === "string"
-      && (feature === "schema" || feature.endsWith("/schema"))))) {
+    && value.some(activatesSchema))) {
     throw new Error(`Forbidden runtime schema feature in ${crate}`);
   }
 }
