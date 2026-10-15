@@ -23,8 +23,8 @@ use birdman_game_session::game_ui::{
     GameUiChartPoint, GameUiChartText, GameUiChartTextAnchor, GameUiControl, GameUiControlContent,
     GameUiEffect, GameUiEmphasis, GameUiFrame, GameUiHud, GameUiLayout, GameUiPlatformCommand,
     GameUiPlatformInput, GameUiPresentationMode, GameUiRangeTarget, GameUiReplayCamera,
-    GameUiSectionLayout, GameUiShell, GameUiState, GameUiTheme, GameUiView, GameUiViewport,
-    GameUiWaterQuality, GameUiWaterQualityOperation,
+    GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport, GameUiWaterQuality,
+    GameUiWaterQualityOperation,
 };
 use std::collections::BTreeMap;
 
@@ -70,20 +70,9 @@ struct RetainedUi {
     description: Entity,
     content: Entity,
     view: Option<GameUiView>,
-    source: Option<NativeUiSource>,
-    revision: u32,
     sections: BTreeMap<String, Entity>,
     widgets: BTreeMap<String, Widget>,
     hud: RetainedHud,
-}
-
-#[derive(PartialEq)]
-struct NativeUiSource {
-    phase: birdman_game_core::SessionPhase,
-    difficulty: birdman_game_format::DifficultySettings,
-    identity: Option<birdman_game_core::SessionScenarioIdentity>,
-    selections: GameUiState,
-    platform: GameUiPlatformInput,
 }
 
 #[derive(Component, Clone)]
@@ -165,8 +154,6 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
         description,
         content,
         view: None,
-        source: None,
-        revision: 0,
         sections: BTreeMap::new(),
         widgets: BTreeMap::new(),
         hud,
@@ -880,35 +867,32 @@ pub(crate) fn update_ui(world: &mut World) {
     let mut retained = world
         .remove_resource::<RetainedUi>()
         .expect("UI owner exists during exclusive projection");
-    let session = world.resource::<NativeSession>();
-    let mut selections = session.ui.clone();
-    selections.analysis_time_seconds = 0.0;
-    let source = NativeUiSource {
-        phase: session.game.core_session().snapshot().phase(),
-        difficulty: session.game.display_difficulty(),
-        identity: session.ui_identity(),
-        selections,
-        platform: platform.clone(),
-    };
-    let projected = if retained.source.as_ref() != Some(&source) || retained.view.is_none() {
-        session.ui_view(&platform).and_then(|mut view| {
-            let revision = retained
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| "UI view revisionが範囲を超えた".to_owned())?;
-            view.view_revision = revision;
-            project_view(world, &mut retained, &view, &font)?;
-            project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)?;
-            retained.revision = revision;
-            retained.source = Some(source);
-            Ok(())
-        })
-    } else {
-        let view = retained.view.as_ref().expect("published view exists");
-        session
-            .ui_frame(&platform, view)
-            .and_then(|frame| project_frame(world, &mut retained, &frame))
-    };
+    let projected = world
+        .resource_mut::<NativeSession>()
+        .ui_revision(&platform)
+        .and_then(|revision| {
+            if retained
+                .view
+                .as_ref()
+                .is_none_or(|view| view.view_revision != revision)
+            {
+                let view = world.resource::<NativeSession>().ui_view(&platform)?;
+                project_view(world, &mut retained, &view, &font)?;
+                project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)?;
+                retained
+                    .view
+                    .as_mut()
+                    .expect("projected view exists")
+                    .view_revision = revision;
+                Ok(())
+            } else {
+                let view = retained.view.as_ref().expect("published view exists");
+                let frame = world
+                    .resource::<NativeSession>()
+                    .ui_frame(&platform, view, revision)?;
+                project_frame(world, &mut retained, &frame)
+            }
+        });
     let theme = retained.view.as_ref().map(|view| view.theme.clone());
     world.insert_resource(retained);
     if let Err(error) = projected {
@@ -2763,7 +2747,7 @@ mod tests {
             .ui_view(&platform)
             .unwrap();
         let retained = app.world().resource::<RetainedUi>();
-        shared.view_revision = retained.revision;
+        shared.view_revision = retained.view.as_ref().unwrap().view_revision;
         assert_eq!(retained.view.as_ref(), Some(&shared));
         assert_eq!(
             retained.sections.len(),
@@ -3517,7 +3501,13 @@ mod tests {
         let retained = app.world().get::<RetainedChart>(chart).unwrap().clone();
         assert_eq!(expected.len(), 2);
         assert_ne!(expected[0].color, expected[1].color);
-        let revision = app.world().resource::<RetainedUi>().revision;
+        let revision = app
+            .world()
+            .resource::<RetainedUi>()
+            .view
+            .as_ref()
+            .unwrap()
+            .view_revision;
         for (entity, expected) in retained.points.iter().zip(&expected) {
             assert_eq!(
                 app.world().get::<BackgroundColor>(*entity).unwrap().0,
@@ -3531,7 +3521,15 @@ mod tests {
             .update_ui_action(GameUiAction::SeekAnalysis { time_seconds: 0.1 }, &platform)
             .unwrap();
         app.update();
-        assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+        assert_eq!(
+            app.world()
+                .resource::<RetainedUi>()
+                .view
+                .as_ref()
+                .unwrap()
+                .view_revision,
+            revision
+        );
         assert_eq!(
             app.world().get::<RetainedChart>(chart).unwrap().points,
             retained.points
@@ -3613,7 +3611,7 @@ mod tests {
                 "game-analysis-cursor"
             };
             let retained = app.world().resource::<RetainedUi>();
-            let revision = retained.revision;
+            let revision = retained.view.as_ref().unwrap().view_revision;
             let widget = &retained.widgets[id];
             let node = widget.node;
             let text = widget.text;
@@ -3668,7 +3666,15 @@ mod tests {
                 };
                 assert_eq!(authoritative_time, time_seconds);
                 app.update();
-                assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+                assert_eq!(
+                    app.world()
+                        .resource::<RetainedUi>()
+                        .view
+                        .as_ref()
+                        .unwrap()
+                        .view_revision,
+                    revision
+                );
                 assert_eq!(
                     app.world().get::<MenuRange>(node).unwrap().value,
                     authoritative_time
@@ -4119,7 +4125,7 @@ mod tests {
             let surface = app.world().get::<RetainedChart>(chart).unwrap().surface;
             (
                 chart,
-                retained.revision,
+                retained.view.as_ref().unwrap().view_revision,
                 app.world()
                     .get::<Children>(chart)
                     .unwrap()
@@ -4181,7 +4187,15 @@ mod tests {
                 .zip(&current_geometry)
                 .any(|(previous, current)| previous.1 != current.1 || previous.3 != current.3)
         );
-        assert_eq!(app.world().resource::<RetainedUi>().revision, revision);
+        assert_eq!(
+            app.world()
+                .resource::<RetainedUi>()
+                .view
+                .as_ref()
+                .unwrap()
+                .view_revision,
+            revision
+        );
         assert_eq!(
             app.world()
                 .get::<Children>(chart)
@@ -4206,13 +4220,96 @@ mod tests {
         let mut frame = app
             .world()
             .resource::<NativeSession>()
-            .ui_frame(&platform, view)
+            .ui_frame(&platform, view, view.view_revision)
             .unwrap();
         frame.view_revision += 1;
         let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
         assert!(project_frame(app.world_mut(), &mut retained, &frame).is_err());
         app.world_mut().insert_resource(retained);
         assert_eq!(geometry(app.world()), current_geometry);
+    }
+
+    #[test]
+    fn failed_hud_projection_keeps_the_view_unacknowledged_and_recovers_with_full_projection() {
+        let mut app = app(1280.0, 720.0);
+        press(&mut app, "game-title-start");
+        press(&mut app, "game-setup-start");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+        }
+        app.update();
+        let snapshot = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        let (revision, ticks) = {
+            let mut retained = app.world_mut().resource_mut::<RetainedUi>();
+            retained.hud.previous = None;
+            (
+                retained.view.as_ref().unwrap().view_revision,
+                std::mem::take(&mut retained.hud.heading_ticks),
+            )
+        };
+        app.world_mut().resource_mut::<NativeSession>().notice =
+            Some("構造を再投影する".to_owned());
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<RetainedUi>()
+                .view
+                .as_ref()
+                .unwrap()
+                .view_revision,
+            0
+        );
+        assert!(
+            app.world()
+                .resource::<NativeSession>()
+                .notice
+                .as_ref()
+                .unwrap()
+                .contains("heading tape")
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
+            snapshot
+        );
+        app.world_mut()
+            .resource_mut::<RetainedUi>()
+            .hud
+            .heading_ticks = ticks;
+        app.world_mut().resource_mut::<NativeSession>().notice = None;
+        app.update();
+        let recovered = app
+            .world()
+            .resource::<RetainedUi>()
+            .view
+            .as_ref()
+            .unwrap()
+            .view_revision;
+        assert!(recovered > revision);
+        assert!(app.world().resource::<RetainedUi>().hud.previous.is_some());
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<RetainedUi>()
+                .view
+                .as_ref()
+                .unwrap()
+                .view_revision,
+            recovered
+        );
+        assert!(app.world().resource::<NativeSession>().notice.is_none());
     }
 
     #[test]

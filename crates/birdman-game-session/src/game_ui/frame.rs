@@ -7,22 +7,10 @@ pub fn game_ui_frame(
     state: &GameUiState,
     context: &GameUiContext<'_, '_>,
     retained: &GameUiView,
+    current_revision: u32,
 ) -> Result<GameUiFrame, GameUiError> {
     let phase = context.session.snapshot().phase();
-    let mut structural_state = state.clone();
-    structural_state.analysis_time_seconds = retained.selections.analysis_time_seconds;
-    let overlay = match phase {
-        SessionPhase::FlightPaused { .. } => Some(match state.pause_overlay {
-            GameUiPauseOverlay::Menu => GameUiOverlay::Pause,
-            GameUiPauseOverlay::Settings => GameUiOverlay::PauseSettings,
-            GameUiPauseOverlay::Help => GameUiOverlay::PauseHelp,
-        }),
-        _ => None,
-    };
-    if structural_state != retained.selections
-        || view::scene(phase) != retained.scene
-        || overlay != retained.active_overlay
-    {
+    if retained.view_revision != current_revision {
         return Err(GameUiError::StaleView);
     }
     let mut frame = GameUiFrame {

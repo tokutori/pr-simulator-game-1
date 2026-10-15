@@ -418,6 +418,8 @@ pub struct GameUiContext<'view, 'session> {
 /// Finite UI boundary, record or action-admission failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameUiError {
+    /// The structural view revision cannot advance without wrapping.
+    RevisionExhausted,
     /// A lightweight observation targets a superseded structural view.
     StaleView,
     /// Viewport dimensions are not positive finite logical pixels.
