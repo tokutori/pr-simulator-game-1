@@ -119,6 +119,46 @@ mod pause_reasons {
         }
     }
 
+    #[verus_spec(
+        requires reasons.0 & 240u8 == 0,
+    )]
+    fn verify_resume_admission(reasons: PauseReasons) {
+        let original_bits = reasons.0;
+        let allowed = reasons.can_resume_after_manual();
+        let outcome = reasons.request_resume();
+        match outcome {
+            Ok(()) => {
+                proof! {
+                    assert(allowed);
+                    assert(original_bits & !1u8 == 0);
+                }
+            }
+            Err(remaining) => {
+                let remaining_bits = remaining.0;
+                let manual_after = remaining.contains(PauseReason::Manual);
+                let repeated = remaining.request_resume();
+                proof! {
+                    assert(!allowed);
+                    assert(remaining_bits == (original_bits & !1u8));
+                    assert(remaining_bits != 0);
+                    assert((remaining_bits & 1u8) == 0) by (bit_vector)
+                        requires remaining_bits == (original_bits & !1u8);
+                    assert(!manual_after);
+                    assert((remaining_bits & !1u8) == remaining_bits) by (bit_vector)
+                        requires remaining_bits == (original_bits & !1u8);
+                }
+                match repeated {
+                    Ok(()) => {
+                        proof! { assert(false); }
+                    }
+                    Err(repeated_reasons) => {
+                        proof! { assert(repeated_reasons.0 == remaining_bits); }
+                    }
+                }
+            }
+        }
+    }
+
     #[verus_spec]
     fn verify_empty_set() {
         let empty = empty_pause_reasons();

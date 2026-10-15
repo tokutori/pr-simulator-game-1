@@ -90,10 +90,30 @@ impl PauseReasons {
     }
 
     #[cfg_attr(verus_only, verus_spec(result =>
+        ensures match result {
+            Ok(()) => self.bits() & !PauseReason::Manual.mask() == 0,
+            Err(remaining) =>
+                remaining.bits() == (self.bits() & !PauseReason::Manual.mask())
+                    && remaining.bits() != 0,
+        },
+    ))]
+    pub(crate) const fn request_resume(self) -> Result<(), Self> {
+        let remaining = self.remaining_after_manual();
+        if remaining.is_empty() {
+            Ok(())
+        } else {
+            Err(remaining)
+        }
+    }
+
+    #[cfg_attr(verus_only, verus_spec(result =>
         ensures result == (self.bits() & !PauseReason::Manual.mask() == 0),
     ))]
     pub(crate) const fn can_resume_after_manual(self) -> bool {
-        self.remaining_after_manual().is_empty()
+        match self.request_resume() {
+            Ok(()) => true,
+            Err(_) => false,
+        }
     }
 }
 

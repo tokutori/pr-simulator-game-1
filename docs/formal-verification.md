@@ -6,21 +6,33 @@
 対象は実際のcoreが使用する整数・集合操作であり、全GameSessionや飛行modelの正しさへ一般化しない。
 Bevy統合後に独立PRとして導入し、製品toolchain、公開API、物理係数、保存schemaを変更しない。
 
-Windows 11でtracked checkerを実行し、module-level constructorを含む正driverは`37 verified, 0 errors`、
+#268導入時にWindows 11でtracked checkerを実行し、module-level constructorを含む正driverは`37 verified, 0 errors`、
 負driverは指定した`assert(still_present)`で`14 verified, 1 errors`となった。整形後にも同じcheckerを再実行して成功した。
 core 301、format 78、session 14、WASM 65 unit testsと関連integration/doctest、Clippy、
 no_std/WASM build、rustdocが成功した。CIとWeb全検査の結果はPRで別途記録する。
+
+#382の初回cutではWindowsの同checkerで全体`41 verified, 0 errors`、必須4群をそれぞれ`12 / 8 / 3 / 3 verified, 0 errors`で確認した。
+renameと旧宣言コメントを含むfixtureのexact inventory拒否、必須名欠落の診断、指定assert負例2件の各`15 verified, 1 error`も確認した。
+通常RustのPauseReasons 2件、GameSession 30件、共有application 6件の選択回帰、core all-targets Clippy、
+`wasm32v1-none`のno_std build、formatとdiff検査が成功した。GPUやGameSession全体の証明へ一般化しない。
 
 ## 製品と証明が共有するsource
 
 - `crates/birdman-game-core/src/pause_reasons.rs`がPauseReason、PauseReasonsと実行bodyを所有する。
 - `game_session.rs`は同moduleの公開型を再exportし、pause、can_resume、resumeから実関数を呼ぶ。
-- `proofs/pause_reasons.rs`と`proofs/pause_reasons_negative.rs`は同じtracked moduleをそれぞれ一度includeする。
+- 正driverと二つの負driverは同じtracked moduleをそれぞれ一度includeする。
 - `tools/verus/check-pause-reasons.ps1`はinclude先と検査前後のsource/toolchain hashを照合する。
 
 公開の4原因、privateなu8表現、contains/is_emptyを維持する。空集合はprivateなmodule-level
 `empty_pause_reasons`の同じbodyから生成する。Resumeの許可は元bitsから導き、独立したboolを保持しない。
 失敗したResumeではManualだけを除去して外部原因を保存し、clearだけでは飛行を再開しない既存契約を維持する。
+
+[#382](https://github.com/tokutori/pr-simulator-game-1/issues/382)の初回cutでは、実行関数`PauseReasons::request_resume`が
+`Result<(), PauseReasons>`で認可結果を返す。`GameSession::resume`はOkをRunning、Errの残存理由をPausedへ投影し、
+`can_resume_after_manual`も同じ認可結果から導出する。OkはManual以外の理由が空であることと同値であり、
+ErrはManualだけを除去した非空の理由を保持する。拒否後の再要求でも残存理由と拒否を維持する。
+GameSessionのphase代入、物理payload・tick・recordの保持、非Paused時の拒否は既存の接続回帰とreviewの対象であり、
+この認可結果の証明をGameSession全体の証明へ一般化しない。#382のCountdown、Retry、Replay、終端化は後続範囲として残る。
 
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
@@ -54,10 +66,20 @@ GameSession全体の形式証明ではない。
 [固定release](https://github.com/verus-lang/verus/releases/tag/release/0.2026.10.04.426d8b0)、
 [導入手順](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/INSTALL.md)、
 [専用toolchain](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/rust-toolchain.toml)を基準とする。
-scriptは解凍・実行前にdigestを照合し、compiler/verifier versionを確認する。
-全義務を`--no-cheating --num-threads 1`で検証し、対象を限定・免除するflagは使用しない。
+scriptは解凍・実行前にdigestを照合し、compiler/verifier versionを確認する。導入済みの専用Rustは再利用し、未導入の場合だけ追加する。
+全義務を`--no-cheating --num-threads 1`で検証する。全体のpositive検証を維持したうえで、
+`verify_set_operations`、`verify_resume_predicate`、`verify_resume_admission`、`verify_empty_set`を名前別にも実検証する。
+必須名は`--verify-only-module pause_reasons --verify-function <name>`で選択し、各対象のexit 0、正のverified件数、0 errorsを要求する。
+全体positiveの公式JSON `func-details`からcompilerが解決した完全修飾名をexactに確認し、selectorのsubstring fallbackを通じた別名関数の受理を防ぐ。
+JSON stdoutとstderr diagnosticsを分離し、PowerShell標準`ConvertFrom-Json`を使用する。sourceのregex inventory、追加scope anchor、独自parserは導入しない。
+必須関数を別名へ変更して旧宣言をblock comment中へ残した一時fixtureは、全体proofが成功してもexact inventoryで拒否する。
+総件数や名前の文字列存在だけを検証範囲の保証に使用しない。
+同じproduction moduleをincludeし、必須driverを持たない既存の負driverへ名前選択を適用し、指定functionの欠落診断で拒否することも確認する。
+構文・起動失敗や別のassertion失敗は、この欠落検出の成功に含めない。
 正検証はexit 0、verified件数が正、0 errorsを必須とする。負検証は非zero exit、verified件数が正、1 error、
 指定assertのファイル・行と`assertion failed`を必須とし、コンパイル・起動失敗を成功と数えない。
+`proofs/resume_admission_negative.rs`は実関数へDocumentHiddenを渡しても再開できると意図的に主張し、
+指定した`assert(admitted)`だけが拒否されることを同じrunnerで確認する。
 
 Check workflowの独立したWindows jobが次のscriptを実行する。
 Pagesは従来のmain/manual/boolean条件に加え、VerifyとPauseReasons proofの双方の成功を必要とする。

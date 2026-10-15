@@ -1042,13 +1042,16 @@ impl<'a> GameSession<'a> {
         let ConfiguredPhase::Paused { state, reasons } = configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        let reasons = reasons.remaining_after_manual();
-        if !reasons.is_empty() {
-            configured.phase = ConfiguredPhase::Paused { state, reasons };
-            return Err(GameSessionError::PauseConditionsRemain);
+        match reasons.request_resume() {
+            Ok(()) => {
+                configured.phase = ConfiguredPhase::Running { state };
+                Ok(())
+            }
+            Err(reasons) => {
+                configured.phase = ConfiguredPhase::Paused { state, reasons };
+                Err(GameSessionError::PauseConditionsRemain)
+            }
         }
-        configured.phase = ConfiguredPhase::Running { state };
-        Ok(())
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.
