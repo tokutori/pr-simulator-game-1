@@ -175,9 +175,9 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const trailingFilm = new MeshLambertMaterial({
     color: 0xd5ddd9, side: DoubleSide, transparent: true, opacity: 0.22, depthWrite: false
   });
-  const ribMaterial = new MeshLambertMaterial({ color: 0xcdb483 });
-  const styrofoam = new MeshLambertMaterial({ color: 0x77b5d0, side: DoubleSide });
   const sharedWing = new WingGeometryBridge();
+  const ribMaterial = new MeshLambertMaterial({ color: sharedWing.rib_color });
+  const styrofoam = new MeshLambertMaterial({ color: sharedWing.foam_color, side: DoubleSide });
   const carbon = new MeshLambertMaterial({ color: sharedWing.carbon_color });
   const positions = sharedWing.surface_positions();
   const uvs = sharedWing.surface_uvs();

@@ -1,5 +1,5 @@
 use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, MAIN_BEAM_RADIUS, WingFrame, WingGeometry, WingRodKind,
+    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, WingFrame, WingGeometry, WingRodKind,
 };
 use wasm_bindgen::prelude::*;
 
@@ -135,6 +135,18 @@ impl WingGeometryBridge {
     #[wasm_bindgen(getter)]
     pub fn carbon_color(&self) -> u32 {
         CARBON_COLOR
+    }
+
+    #[doc = "Existing Web sRGB colour of balsa ribs and stringers."]
+    #[wasm_bindgen(getter)]
+    pub fn rib_color(&self) -> u32 {
+        RIB_COLOR
+    }
+
+    #[doc = "Existing Web sRGB colour of trailing foam ribs."]
+    #[wasm_bindgen(getter)]
+    pub fn foam_color(&self) -> u32 {
+        FOAM_COLOR
     }
 
     #[doc = "Copies all static extruded foam vertices, twelve right/up/aft positions per rib."]

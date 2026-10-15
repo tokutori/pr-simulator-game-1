@@ -17,6 +17,12 @@ const SURFACE_SIZE: usize = (SPAN_STEPS + 1) * ROW_SIZE;
 #[doc = "Existing Web sRGB colour of the T-shaped carbon main structure."]
 pub const CARBON_COLOR: u32 = 0x303b3a;
 
+#[doc = "Existing Web sRGB colour of balsa trailing ribs and stringers."]
+pub const RIB_COLOR: u32 = 0xcdb483;
+
+#[doc = "Existing Web sRGB colour of extruded trailing foam ribs."]
+pub const FOAM_COLOR: u32 = 0x77b5d0;
+
 #[doc = "Existing Web longitudinal main-beam radius in metres."]
 pub const MAIN_BEAM_RADIUS: f64 = 0.075;
 

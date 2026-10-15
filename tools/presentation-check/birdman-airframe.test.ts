@@ -185,6 +185,8 @@ describe("synthetic Birdman airframe", () => {
       const rib = airframe.root.getObjectByName("left-trailing-rib") as Mesh;
       const foam = airframe.root.getObjectByName("left-styrofoam-rib") as Mesh;
       const stringer = airframe.root.getObjectByName("balsa-stringer") as Mesh;
+      expect((rib.material as MeshLambertMaterial).color.getHex()).toBe(0xcdb483);
+      expect((foam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
       const position = wing.geometry.getAttribute("position");
       if (!(position instanceof BufferAttribute)) throw new Error("Main-wing positions require a BufferAttribute");
       const version = position.version;

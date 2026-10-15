@@ -21,7 +21,8 @@ use birdman_game_core::{
 };
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, MAIN_BEAM_RADIUS, WingFrame, WingGeometry, WingMaterial, WingRodKind, WingSurface,
+    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, WingFrame, WingGeometry, WingMaterial,
+    WingRodKind, WingSurface,
 };
 use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
@@ -278,7 +279,8 @@ pub(crate) struct MainWingProjection {
     geometry: WingGeometry,
     frame: WingFrame,
     surfaces: Vec<MainWingSurface>,
-    spar_rods: Vec<(usize, Entity)>,
+    rods: Vec<Entity>,
+    foam: Vec<Entity>,
 }
 
 struct MainWingSurface {
@@ -386,16 +388,25 @@ pub(crate) fn project_main_wing(
         geometry,
         frame,
         surfaces,
-        spar_rods,
+        rods,
+        foam,
     } = &mut *wing;
     if !geometry.update_frame(frame, main_wing_airspeed(&session)) {
         return;
     }
-    for (index, entity) in spar_rods {
+    for ((entity, rod), endpoints) in rods.iter().zip(geometry.rods()).zip(frame.rod_endpoints()) {
         transforms
             .get_mut(*entity)
-            .expect("主翼spar entityがない")
-            .set_if_neq(carbon_rod_transform(frame.rod_endpoints()[*index]));
+            .expect("主翼rod entityがない")
+            .set_if_neq(wing_rod_transform(*endpoints, rod.radius() as f32));
+    }
+    for (entity, position) in foam.iter().zip(frame.foam_positions()) {
+        transforms
+            .get_mut(*entity)
+            .expect("主翼foam entityがない")
+            .set_if_neq(Transform::from_translation(Vec3::from_array(
+                position.map(|value| value as f32),
+            )));
     }
     for (surface, positions) in surfaces.iter_mut().zip(frame.surface_positions()) {
         let bevy::mesh::VertexAttributeValues::Float32x3(values) = surface
@@ -425,12 +436,16 @@ pub(crate) fn project_main_wing(
     }
 }
 
-fn carbon_rod_transform(endpoints: [[f64; 3]; 2]) -> Transform {
+fn wing_rod_transform(endpoints: [[f64; 3]; 2], radius: f32) -> Transform {
     let [from, to] = endpoints.map(|point| Vec3::from_array(point.map(|value| value as f32)));
     let direction = to - from;
     Transform::from_translation((from + to) * 0.5)
         .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction.normalize()))
-        .with_scale(Vec3::new(1.0, direction.length(), 1.0))
+        .with_scale(Vec3::new(radius, direction.length(), radius))
+}
+
+fn wing_color(value: u32) -> Color {
+    Color::srgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }
 
 fn project_tail_surface(
@@ -587,11 +602,15 @@ pub(crate) fn setup_world(
         cull_mode: None,
         ..default()
     });
-    let frame = materials.add(Color::srgb_u8(
-        (CARBON_COLOR >> 16) as u8,
-        (CARBON_COLOR >> 8) as u8,
-        CARBON_COLOR as u8,
-    ));
+    let frame = materials.add(wing_color(CARBON_COLOR));
+    let balsa = materials.add(wing_color(RIB_COLOR));
+    let foam_material = materials.add(StandardMaterial {
+        base_color: wing_color(FOAM_COLOR),
+        double_sided: true,
+        cull_mode: None,
+        ..default()
+    });
+    let rod_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(8));
     let wing_cover = wing_cover_images().map(|image| {
         materials.add(StandardMaterial {
             base_color: Color::WHITE,
@@ -638,7 +657,8 @@ pub(crate) fn setup_world(
         })
     });
     let mut wing_surfaces = Vec::new();
-    let mut spar_rods = Vec::new();
+    let mut wing_rods = Vec::new();
+    let mut wing_foam = Vec::new();
     let definition = HybridMockDefinition::try_new().expect("登録機体geometryが不正");
     let surfaces = definition.surfaces().expect("登録surface geometryが不正");
     let tail_projection = |role| {
@@ -660,37 +680,73 @@ pub(crate) fn setup_world(
         .with_children(|parent| {
             parent.spawn((
                 Name::new("single-carbon-main-beam"),
-                Mesh3d(
-                    meshes.add(
-                        Cylinder::new(MAIN_BEAM_RADIUS as f32, 1.0)
-                            .mesh()
-                            .resolution(8),
-                    ),
-                ),
+                Mesh3d(rod_mesh.clone()),
                 MeshMaterial3d(frame.clone()),
-                carbon_rod_transform(wing_geometry.main_beam_endpoints()),
+                wing_rod_transform(wing_geometry.main_beam_endpoints(), MAIN_BEAM_RADIUS as f32),
                 RenderLayers::layer(0).with(1),
             ));
-            for (index, (rod, endpoints)) in wing_geometry
-                .rods()
-                .iter()
-                .zip(wing_frame.rod_endpoints())
-                .enumerate()
-                .filter(|(_, (rod, _))| rod.kind() == WingRodKind::Spar)
-            {
+            for (rod, endpoints) in wing_geometry.rods().iter().zip(wing_frame.rod_endpoints()) {
+                let name = match rod.kind() {
+                    WingRodKind::Spar => "main-wing-spar",
+                    WingRodKind::Stringer => "balsa-stringer",
+                    WingRodKind::Rib if endpoints[1][0] < 0.0 => "left-trailing-rib",
+                    WingRodKind::Rib => "right-trailing-rib",
+                };
                 let entity = parent
                     .spawn((
-                        Name::new("main-wing-spar"),
-                        Mesh3d(
-                            meshes
-                                .add(Cylinder::new(rod.radius() as f32, 1.0).mesh().resolution(8)),
-                        ),
-                        MeshMaterial3d(frame.clone()),
-                        carbon_rod_transform(*endpoints),
+                        Name::new(name),
+                        Mesh3d(rod_mesh.clone()),
+                        MeshMaterial3d(if rod.kind() == WingRodKind::Spar {
+                            frame.clone()
+                        } else {
+                            balsa.clone()
+                        }),
+                        wing_rod_transform(*endpoints, rod.radius() as f32),
                         RenderLayers::layer(0).with(1),
                     ))
                     .id();
-                spar_rods.push((index, entity));
+                wing_rods.push(entity);
+            }
+            let mut foam_meshes: Vec<Handle<Mesh>> = Vec::new();
+            for (index, (foam, position)) in wing_geometry
+                .foam()
+                .iter()
+                .zip(wing_frame.foam_positions())
+                .enumerate()
+            {
+                let duplicate = wing_geometry.foam()[..index].iter().position(|previous| {
+                    previous.vertices() == foam.vertices() && previous.indices() == foam.indices()
+                });
+                let handle = if let Some(previous) = duplicate {
+                    foam_meshes[previous].clone()
+                } else {
+                    let mut mesh = Mesh::new(
+                        PrimitiveTopology::TriangleList,
+                        RenderAssetUsages::default(),
+                    )
+                    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, foam.vertices().to_vec())
+                    .with_inserted_indices(Indices::U32(foam.indices().to_vec()));
+                    mesh.compute_area_weighted_normals();
+                    meshes.add(mesh)
+                };
+                foam_meshes.push(handle.clone());
+                wing_foam.push(
+                    parent
+                        .spawn((
+                            Name::new(if position[0] < 0.0 {
+                                "left-styrofoam-rib"
+                            } else {
+                                "right-styrofoam-rib"
+                            }),
+                            Mesh3d(handle),
+                            MeshMaterial3d(foam_material.clone()),
+                            Transform::from_translation(Vec3::from_array(
+                                position.map(|value| value as f32),
+                            )),
+                            RenderLayers::layer(0).with(1),
+                        ))
+                        .id(),
+                );
             }
             for rod in &cockpit.rods {
                 let [from, to] = rod
@@ -810,7 +866,8 @@ pub(crate) fn setup_world(
         geometry: wing_geometry,
         frame: wing_frame,
         surfaces: wing_surfaces,
-        spar_rods,
+        rods: wing_rods,
+        foam: wing_foam,
     });
     commands.spawn((
         WorldProjection::FlightCamera,
@@ -1010,14 +1067,16 @@ mod tests {
         }
     }
 
-    fn assert_main_spar_projection(world: &World) {
+    fn assert_main_wing_structure_projection(world: &World) {
         let wing = world.resource::<MainWingProjection>();
         let materials = world.resource::<Assets<StandardMaterial>>();
         let meshes = world.resource::<Assets<Mesh>>();
-        assert_eq!(wing.spar_rods.len(), 24);
-        for (index, entity) in &wing.spar_rods {
+        assert_eq!(wing.rods.len(), 160);
+        assert_eq!(wing.foam.len(), 44);
+        let shared_rod_mesh = &world.get::<Mesh3d>(wing.rods[0]).unwrap().0;
+        for (index, entity) in wing.rods.iter().enumerate() {
             let transform = world.get::<Transform>(*entity).unwrap();
-            let expected = wing.frame.rod_endpoints()[*index];
+            let expected = wing.frame.rod_endpoints()[index];
             for (height, point) in [-0.5, 0.5].into_iter().zip(expected) {
                 let actual = transform.transform_point(Vec3::new(0.0, height, 0.0));
                 assert!(actual.distance(Vec3::from_array(point.map(|value| value as f32))) < 2e-6);
@@ -1029,7 +1088,11 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 materials.get(&material.0).unwrap().base_color,
-                Color::srgb_u8(48, 59, 58)
+                if wing.geometry.rods()[index].kind() == WingRodKind::Spar {
+                    Color::srgb_u8(48, 59, 58)
+                } else {
+                    Color::srgb_u8(205, 180, 131)
+                }
             );
             let mesh = meshes
                 .get(&world.get::<Mesh3d>(*entity).unwrap().0)
@@ -1042,8 +1105,74 @@ mod tests {
                 .iter()
                 .map(|point| point[0].hypot(point[2]))
                 .fold(0.0, f32::max);
-            assert!((radius - wing.geometry.rods()[*index].radius() as f32).abs() < 1e-6);
+            assert!(
+                (radius * transform.scale.x - wing.geometry.rods()[index].radius() as f32).abs()
+                    < 1e-6
+            );
+            assert_eq!(&world.get::<Mesh3d>(*entity).unwrap().0, shared_rod_mesh);
+            assert_eq!(
+                *world.get::<RenderLayers>(*entity).unwrap(),
+                RenderLayers::layer(0).with(1)
+            );
+            assert!(world.get::<NotShadowCaster>(*entity).is_none());
         }
+        let mut foam_meshes = std::collections::HashSet::new();
+        for ((entity, foam), position) in wing
+            .foam
+            .iter()
+            .zip(wing.geometry.foam())
+            .zip(wing.frame.foam_positions())
+        {
+            assert_eq!(
+                world.get::<Transform>(*entity).unwrap().translation,
+                Vec3::from_array(position.map(|value| value as f32))
+            );
+            let handle = &world.get::<Mesh3d>(*entity).unwrap().0;
+            foam_meshes.insert(handle.id());
+            let mesh = meshes.get(handle).unwrap();
+            assert_eq!(
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap(),
+                foam.vertices()
+            );
+            assert_eq!(
+                mesh.indices().unwrap().iter().collect::<Vec<_>>(),
+                foam.indices()
+                    .iter()
+                    .map(|index| *index as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap()
+                    .iter()
+                    .flatten()
+                    .all(|value| value.is_finite())
+            );
+            let parent = world.get::<ChildOf>(*entity).unwrap().parent();
+            assert!(*world.get::<WorldProjection>(parent).unwrap() == WorldProjection::Aircraft);
+            let material = materials
+                .get(
+                    &world
+                        .get::<MeshMaterial3d<StandardMaterial>>(*entity)
+                        .unwrap()
+                        .0,
+                )
+                .unwrap();
+            assert_eq!(material.base_color, Color::srgb_u8(119, 181, 208));
+            assert!(material.double_sided);
+            assert_eq!(material.cull_mode, None);
+            assert_eq!(
+                *world.get::<RenderLayers>(*entity).unwrap(),
+                RenderLayers::layer(0).with(1)
+            );
+            assert!(world.get::<NotShadowCaster>(*entity).is_none());
+        }
+        assert_eq!(foam_meshes.len(), 22);
     }
 
     fn projection_app() -> App {
@@ -1572,7 +1701,9 @@ mod tests {
             .add_systems(Update, project_main_wing);
         app.update();
         assert_main_wing_projection(app.world());
-        assert_main_spar_projection(app.world());
+        assert_main_wing_structure_projection(app.world());
+        let mesh_count = app.world().resource::<Assets<Mesh>>().len();
+        let material_count = app.world().resource::<Assets<StandardMaterial>>().len();
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Start).unwrap();
@@ -1595,7 +1726,12 @@ mod tests {
         }
         app.update();
         assert_main_wing_projection(app.world());
-        assert_main_spar_projection(app.world());
+        assert_main_wing_structure_projection(app.world());
+        assert_eq!(app.world().resource::<Assets<Mesh>>().len(), mesh_count);
+        assert_eq!(
+            app.world().resource::<Assets<StandardMaterial>>().len(),
+            material_count
+        );
         let mut cameras = app.world_mut().query::<(&WorldProjection, &Projection)>();
         let Projection::Perspective(projection) = cameras
             .iter(app.world())
@@ -1738,6 +1874,7 @@ mod tests {
         )>();
         let mut reflected_meshes = 0;
         let mut reflected_spars = 0;
+        let mut reflected_internals = 0;
         let mut main_beams = 0;
         let mut transparent_films = 0;
         let mut excluded_meshes = 0;
@@ -1754,6 +1891,17 @@ mod tests {
                 }
                 if name.is_some_and(|name| name.as_str() == "main-wing-spar") {
                     reflected_spars += 1;
+                } else if name.is_some_and(|name| {
+                    matches!(
+                        name.as_str(),
+                        "balsa-stringer"
+                            | "left-trailing-rib"
+                            | "right-trailing-rib"
+                            | "left-styrofoam-rib"
+                            | "right-styrofoam-rib"
+                    )
+                }) {
+                    reflected_internals += 1;
                 } else {
                     reflected_meshes += 1;
                 }
@@ -1777,6 +1925,7 @@ mod tests {
         }
         assert_eq!(reflected_meshes, 43);
         assert_eq!(reflected_spars, 24);
+        assert_eq!(reflected_internals, 180);
         assert_eq!(main_beams, 1);
         assert_eq!(transparent_films, 3);
         assert!(excluded_meshes >= 5);
