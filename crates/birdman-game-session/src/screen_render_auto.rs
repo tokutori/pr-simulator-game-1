@@ -28,15 +28,6 @@ pub enum ScreenRenderSelection {
     },
 }
 
-/// Known delivery coverage, separate from validity of the GPU measurement.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScreenGpuCoverage {
-    /// No additional delivery gap was detected by the adapter.
-    Complete,
-    /// At least one source observation was lost.
-    Gapped,
-}
-
 /// One newly completed measurement from the current rendering configuration.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenGpuSample {
@@ -48,8 +39,6 @@ pub struct ScreenGpuSample {
     pub source_ms: f64,
     /// GPU command-span duration, excluding presentation waiting.
     pub gpu_work_ms: f64,
-    /// Delivery observations supplied by the adapter.
-    pub coverage: ScreenGpuCoverage,
 }
 
 /// Identity of a rendering-resource change awaiting acknowledgment.
@@ -106,6 +95,23 @@ pub struct ScreenRenderAutoSnapshot {
     pub status: ScreenRenderAutoStatus,
 }
 
+impl ScreenRenderAutoSnapshot {
+    /// Builds a confirmed manual observation for startup and adapter fixtures.
+    pub const fn manual(scale: ScreenRenderScale) -> Self {
+        Self {
+            selection: ScreenRenderSelection::Manual { scale },
+            applied: scale,
+            status: ScreenRenderAutoStatus::Manual,
+        }
+    }
+}
+
+impl Default for ScreenRenderAutoSnapshot {
+    fn default() -> Self {
+        Self::manual(ScreenRenderScale::default())
+    }
+}
+
 /// Events that invalidate measurements without changing flight state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenRenderInvalidation {
@@ -143,14 +149,30 @@ struct RetainedSample {
     last_source_ms: f64,
     gpu_work_ms: f64,
     valid_frames: u64,
-    gapped: bool,
+}
+
+enum ResourceState {
+    Ready,
+    Applying(ScreenRenderScaleRequest),
+    Failed(String),
+}
+
+#[derive(PartialEq)]
+enum MeasurementState {
+    Measuring,
+    Ready,
+    CoverageLimited,
+    Unsupported(String),
+    Interrupted,
 }
 
 /// Owns one render lifetime's selection, measurements, and application handshake.
 pub struct ScreenRenderAutoController {
-    snapshot: ScreenRenderAutoSnapshot,
+    selection: ScreenRenderSelection,
+    applied: ScreenRenderScale,
+    resource: ResourceState,
+    measurement: MeasurementState,
     epoch: u32,
-    pending: Option<ScreenRenderScaleRequest>,
     samples: VecDeque<RetainedSample>,
     last_frame: Option<u32>,
     last_source_ms: Option<f64>,
@@ -164,13 +186,11 @@ impl ScreenRenderAutoController {
     /// Starts with the backend's confirmed resolution and manual selection.
     pub fn new(applied: ScreenRenderScale) -> Self {
         Self {
-            snapshot: ScreenRenderAutoSnapshot {
-                selection: ScreenRenderSelection::Manual { scale: applied },
-                applied,
-                status: ScreenRenderAutoStatus::Manual,
-            },
+            selection: ScreenRenderSelection::Manual { scale: applied },
+            applied,
+            resource: ResourceState::Ready,
+            measurement: MeasurementState::Measuring,
             epoch: 1,
-            pending: None,
             samples: VecDeque::new(),
             last_frame: None,
             last_source_ms: None,
@@ -183,7 +203,29 @@ impl ScreenRenderAutoController {
 
     /// Returns the immutable UI observation without measurement history.
     pub fn snapshot(&self) -> ScreenRenderAutoSnapshot {
-        self.snapshot.clone()
+        let status = match &self.resource {
+            ResourceState::Applying(request) => ScreenRenderAutoStatus::Applying {
+                requested: request.scale,
+            },
+            ResourceState::Failed(cause) => ScreenRenderAutoStatus::Failed {
+                cause: cause.clone(),
+            },
+            ResourceState::Ready if !self.automatic() => ScreenRenderAutoStatus::Manual,
+            ResourceState::Ready => match &self.measurement {
+                MeasurementState::Measuring => ScreenRenderAutoStatus::Measuring,
+                MeasurementState::Ready => ScreenRenderAutoStatus::Ready,
+                MeasurementState::CoverageLimited => ScreenRenderAutoStatus::CoverageLimited,
+                MeasurementState::Unsupported(cause) => ScreenRenderAutoStatus::Unsupported {
+                    cause: cause.clone(),
+                },
+                MeasurementState::Interrupted => ScreenRenderAutoStatus::Interrupted,
+            },
+        };
+        ScreenRenderAutoSnapshot {
+            selection: self.selection,
+            applied: self.applied,
+            status,
+        }
     }
 
     /// Returns the current generation for newly started GPU queries.
@@ -193,7 +235,10 @@ impl ScreenRenderAutoController {
 
     /// Returns the outstanding resource request, if any.
     pub const fn requested(&self) -> Option<ScreenRenderScaleRequest> {
-        self.pending
+        match self.resource {
+            ResourceState::Applying(request) => Some(request),
+            _ => None,
+        }
     }
 
     /// Chooses manual resolution and stops automatic changes.
@@ -203,14 +248,15 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if self.snapshot.selection == (ScreenRenderSelection::Manual { scale })
-            && !matches!(self.snapshot.status, ScreenRenderAutoStatus::Failed { .. })
+        if self.selection == (ScreenRenderSelection::Manual { scale })
+            && !matches!(self.resource, ResourceState::Failed(_))
         {
-            return Ok(self.pending);
+            return Ok(self.requested());
         }
         self.reset_window(now_ms)?;
-        self.snapshot.selection = ScreenRenderSelection::Manual { scale };
-        self.pending = None;
+        self.selection = ScreenRenderSelection::Manual { scale };
+        self.resource = ResourceState::Ready;
+        self.measurement = MeasurementState::Measuring;
         Ok(self.request(scale))
     }
 
@@ -221,24 +267,22 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        match (enabled, self.snapshot.selection) {
+        match (enabled, self.selection) {
             (true, ScreenRenderSelection::Manual { scale }) => {
                 self.reset_window(now_ms)?;
-                self.snapshot.selection = ScreenRenderSelection::Auto {
+                self.selection = ScreenRenderSelection::Auto {
                     manual_scale: scale,
                 };
-                self.snapshot.status = match self.pending {
-                    Some(request) => ScreenRenderAutoStatus::Applying {
-                        requested: request.scale,
-                    },
-                    None => ScreenRenderAutoStatus::Measuring,
-                };
+                if matches!(self.resource, ResourceState::Failed(_)) {
+                    self.resource = ResourceState::Ready;
+                }
+                self.measurement = MeasurementState::Measuring;
                 Ok(None)
             }
             (false, ScreenRenderSelection::Auto { manual_scale }) => {
                 self.select_manual(manual_scale, now_ms)
             }
-            _ => Ok(self.pending),
+            _ => Ok(self.requested()),
         }
     }
 
@@ -249,7 +293,7 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if !self.measuring()
+        if !self.measurement_enabled()
             || sample.epoch != self.epoch
             || self.last_frame.is_some_and(|frame| sample.frame <= frame)
         {
@@ -269,10 +313,6 @@ impl ScreenRenderAutoController {
         if now_ms - sample.source_ms > 500.0 {
             return self.pending(now_ms);
         }
-        let gapped = sample.coverage == ScreenGpuCoverage::Gapped
-            || self
-                .last_frame
-                .is_some_and(|previous| u64::from(sample.frame) != u64::from(previous) + 1);
         self.last_frame = Some(sample.frame);
         self.last_source_ms = Some(sample.source_ms);
         if let Some(last) = self
@@ -283,7 +323,6 @@ impl ScreenRenderAutoController {
             last.last_frame = sample.frame;
             last.last_source_ms = sample.source_ms;
             last.valid_frames += 1;
-            last.gapped |= gapped;
             last.gpu_work_ms = last.gpu_work_ms.max(sample.gpu_work_ms);
         } else {
             self.samples.push_back(RetainedSample {
@@ -293,7 +332,6 @@ impl ScreenRenderAutoController {
                 last_source_ms: sample.source_ms,
                 gpu_work_ms: sample.gpu_work_ms,
                 valid_frames: 1,
-                gapped,
             });
         }
         self.evaluate(now_ms)
@@ -316,30 +354,20 @@ impl ScreenRenderAutoController {
     ) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         self.reset_window(now_ms)?;
-        let unsupported_retained = matches!(
-            self.snapshot.status,
-            ScreenRenderAutoStatus::Unsupported { .. }
-        ) && !matches!(
-            reason,
-            ScreenRenderInvalidation::BackendChanged | ScreenRenderInvalidation::ContextRestored
-        );
-        if !matches!(self.snapshot.status, ScreenRenderAutoStatus::Failed { .. })
-            && !unsupported_retained
-        {
-            self.snapshot.status = match self.pending {
-                Some(request) => ScreenRenderAutoStatus::Applying {
-                    requested: request.scale,
-                },
-                None if !self.automatic() => ScreenRenderAutoStatus::Manual,
-                None if matches!(
-                    reason,
-                    ScreenRenderInvalidation::BackendChanged
-                        | ScreenRenderInvalidation::Interrupted
-                ) =>
-                {
-                    ScreenRenderAutoStatus::Interrupted
-                }
-                None => ScreenRenderAutoStatus::Measuring,
+        let unsupported_retained = matches!(self.measurement, MeasurementState::Unsupported(_))
+            && !matches!(
+                reason,
+                ScreenRenderInvalidation::BackendChanged
+                    | ScreenRenderInvalidation::ContextRestored
+            );
+        if !unsupported_retained {
+            self.measurement = if matches!(
+                reason,
+                ScreenRenderInvalidation::BackendChanged | ScreenRenderInvalidation::Interrupted
+            ) {
+                MeasurementState::Interrupted
+            } else {
+                MeasurementState::Measuring
             };
         }
         Ok(())
@@ -348,13 +376,9 @@ impl ScreenRenderAutoController {
     /// Retains an explicit capability failure without treating it as zero work.
     pub fn unsupported(&mut self, cause: String, now_ms: f64) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if self.snapshot.status
-            != (ScreenRenderAutoStatus::Unsupported {
-                cause: cause.clone(),
-            })
-        {
+        if self.measurement != MeasurementState::Unsupported(cause.clone()) {
             self.reset_window(now_ms)?;
-            self.snapshot.status = ScreenRenderAutoStatus::Unsupported { cause };
+            self.measurement = MeasurementState::Unsupported(cause);
         }
         Ok(())
     }
@@ -366,17 +390,15 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if self.pending != Some(request) {
+        if self.requested() != Some(request) {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window(now_ms)?;
-        self.pending = None;
-        self.snapshot.applied = request.scale;
-        self.snapshot.status = if self.automatic() {
-            ScreenRenderAutoStatus::Measuring
-        } else {
-            ScreenRenderAutoStatus::Manual
-        };
+        self.resource = ResourceState::Ready;
+        self.applied = request.scale;
+        if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            self.measurement = MeasurementState::Measuring;
+        }
         self.cooldown_until_ms = now_ms + COOLDOWN_MS;
         Ok(())
     }
@@ -389,26 +411,23 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if self.pending != Some(request) {
+        if self.requested() != Some(request) {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window(now_ms)?;
-        self.pending = None;
-        self.snapshot.status = ScreenRenderAutoStatus::Failed { cause };
+        self.resource = ResourceState::Failed(cause);
         Ok(())
     }
 
     fn automatic(&self) -> bool {
-        matches!(self.snapshot.selection, ScreenRenderSelection::Auto { .. })
+        matches!(self.selection, ScreenRenderSelection::Auto { .. })
     }
 
-    fn measuring(&self) -> bool {
+    /// Projects whether the policy currently accepts a new GPU measurement.
+    pub fn measurement_enabled(&self) -> bool {
         self.automatic()
-            && self.pending.is_none()
-            && !matches!(
-                self.snapshot.status,
-                ScreenRenderAutoStatus::Unsupported { .. } | ScreenRenderAutoStatus::Failed { .. }
-            )
+            && matches!(self.resource, ResourceState::Ready)
+            && !matches!(self.measurement, MeasurementState::Unsupported(_))
     }
 
     fn check_time(&mut self, now_ms: f64) -> Result<(), ScreenRenderAutoError> {
@@ -433,20 +452,14 @@ impl ScreenRenderAutoController {
     }
 
     fn request(&mut self, scale: ScreenRenderScale) -> Option<ScreenRenderScaleRequest> {
-        if scale == self.snapshot.applied {
-            self.snapshot.status = if self.automatic() {
-                ScreenRenderAutoStatus::Measuring
-            } else {
-                ScreenRenderAutoStatus::Manual
-            };
+        if scale == self.applied {
             None
         } else {
             let request = ScreenRenderScaleRequest {
                 epoch: self.epoch,
                 scale,
             };
-            self.pending = Some(request);
-            self.snapshot.status = ScreenRenderAutoStatus::Applying { requested: scale };
+            self.resource = ResourceState::Applying(request);
             Some(request)
         }
     }
@@ -455,7 +468,7 @@ impl ScreenRenderAutoController {
         &mut self,
         now_ms: f64,
     ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
-        if !self.measuring() {
+        if !self.measurement_enabled() {
             return Ok(None);
         }
         while self
@@ -473,19 +486,18 @@ impl ScreenRenderAutoController {
         }
         self.last_evaluated_ms = now_ms;
         let (Some(first), Some(last)) = (self.samples.front(), self.samples.back()) else {
-            self.snapshot.status = ScreenRenderAutoStatus::Measuring;
+            self.measurement = MeasurementState::Measuring;
             return Ok(None);
         };
         let span = last.last_source_ms - first.first_source_ms;
         let freshness = now_ms - last.last_source_ms;
         let valid_frames: u64 = self.samples.iter().map(|sample| sample.valid_frames).sum();
         let expected_frames = u64::from(last.last_frame) - u64::from(first.first_frame) + 1;
-        let complete = !self.samples.iter().any(|sample| sample.gapped)
-            && valid_frames as f64 >= expected_frames as f64 * 0.9;
-        self.snapshot.status = if complete {
-            ScreenRenderAutoStatus::Ready
+        let complete = valid_frames as f64 >= expected_frames as f64 * 0.9;
+        self.measurement = if complete {
+            MeasurementState::Ready
         } else {
-            ScreenRenderAutoStatus::CoverageLimited
+            MeasurementState::CoverageLimited
         };
         if now_ms - self.window_started_ms < WINDOW_MS
             || now_ms < self.cooldown_until_ms
@@ -504,7 +516,7 @@ impl ScreenRenderAutoController {
         let percentile = work[(work.len() * 95).div_ceil(100) - 1];
         let current = ScreenRenderScale::ALL
             .iter()
-            .position(|scale| *scale == self.snapshot.applied)
+            .position(|scale| *scale == self.applied)
             .unwrap();
         let next = if percentile > 12.5 {
             ScreenRenderScale::ALL.get(current + 1).copied()
@@ -538,14 +550,12 @@ mod tests {
         frame: u32,
         source_ms: f64,
         gpu_work_ms: f64,
-        coverage: ScreenGpuCoverage,
     ) -> ScreenGpuSample {
         ScreenGpuSample {
             epoch: controller.epoch(),
             frame,
             source_ms,
             gpu_work_ms,
-            coverage,
         }
     }
 
@@ -606,13 +616,7 @@ mod tests {
         let mut request = None;
         for index in 0..=10 {
             let now_ms = f64::from(index) * 200.0;
-            let observation = sample(
-                &controller,
-                index * 3,
-                now_ms,
-                20.0,
-                ScreenGpuCoverage::Gapped,
-            );
+            let observation = sample(&controller, index * 3, now_ms, 20.0);
             request = controller.observe(observation, now_ms).unwrap();
             if request.is_some() {
                 break;
@@ -635,13 +639,7 @@ mod tests {
         ));
         for index in 0..=13 {
             let now_ms = applied_ms + 100.0 + f64::from(index) * 200.0;
-            let observation = sample(
-                &controller,
-                index,
-                now_ms,
-                20.0,
-                ScreenGpuCoverage::Complete,
-            );
+            let observation = sample(&controller, index, now_ms, 20.0);
             assert_eq!(controller.observe(observation, now_ms).unwrap(), None);
         }
     }
@@ -652,13 +650,7 @@ mod tests {
         controller.select_auto(true, 0.0).unwrap();
         for index in 0..=100 {
             let now_ms = f64::from(index) * 20.0;
-            let observation = sample(
-                &controller,
-                index * 2,
-                now_ms,
-                4.0,
-                ScreenGpuCoverage::Gapped,
-            );
+            let observation = sample(&controller, index * 2, now_ms, 4.0);
             assert_eq!(controller.observe(observation, now_ms).unwrap(), None);
         }
         assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
@@ -675,7 +667,7 @@ mod tests {
         let mut request = None;
         for frame in 0..=2_000 {
             let now_ms = f64::from(frame);
-            let observation = sample(&controller, frame, now_ms, 4.0, ScreenGpuCoverage::Complete);
+            let observation = sample(&controller, frame, now_ms, 4.0);
             request = controller.observe(observation, now_ms).unwrap();
             if request.is_some() {
                 break;
@@ -693,13 +685,7 @@ mod tests {
         for frame in 0..=2_000 {
             let now_ms = f64::from(frame);
             let work = if frame % 8 == 0 { 4.0 } else { 20.0 };
-            let observation = sample(
-                &controller,
-                frame,
-                now_ms,
-                work,
-                ScreenGpuCoverage::Complete,
-            );
+            let observation = sample(&controller, frame, now_ms, work);
             request = controller.observe(observation, now_ms).unwrap();
             if request.is_some() {
                 break;
@@ -712,12 +698,12 @@ mod tests {
     fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality() {
         let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
         controller.select_auto(true, 0.0).unwrap();
-        let old = sample(&controller, 0, 0.0, 1.0, ScreenGpuCoverage::Complete);
+        let old = sample(&controller, 0, 0.0, 1.0);
         controller
             .invalidate(ScreenRenderInvalidation::Disjoint, 1.0)
             .unwrap();
         assert_eq!(controller.observe(old, 1.0).unwrap(), None);
-        let fresh = sample(&controller, 1, 1.0, 4.0, ScreenGpuCoverage::Complete);
+        let fresh = sample(&controller, 1, 1.0, 4.0);
         controller.observe(fresh, 1.0).unwrap();
         assert_eq!(controller.observe(fresh, 2.0).unwrap(), None);
         assert_eq!(
@@ -728,7 +714,7 @@ mod tests {
             controller.pending(1.0),
             Err(ScreenRenderAutoError::InvalidTime)
         );
-        let stale = sample(&controller, 2, 2.0, 0.0, ScreenGpuCoverage::Complete);
+        let stale = sample(&controller, 2, 2.0, 0.0);
         assert_eq!(controller.observe(stale, 1_000.0).unwrap(), None);
         controller
             .unsupported("timestamp queries unavailable".to_owned(), 1_001.0)
@@ -772,5 +758,79 @@ mod tests {
                 manual_scale: ScreenRenderScale::ThreeQuarters
             }
         ));
+    }
+
+    #[test]
+    fn received_frame_coverage_allows_small_loss_and_rejects_insufficient_delivery() {
+        for (drop_every, can_upgrade) in [(0, true), (10, true), (9, false), (5, false)] {
+            let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
+            controller.select_auto(true, 0.0).unwrap();
+            let mut request = None;
+            for frame in 0..=120 {
+                if drop_every > 0 && frame % drop_every == drop_every / 2 {
+                    continue;
+                }
+                let now_ms = f64::from(frame) * 20.0;
+                request = controller
+                    .observe(sample(&controller, frame, now_ms, 4.0), now_ms)
+                    .unwrap();
+                if request.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(request.is_some(), can_upgrade, "drop interval {drop_every}");
+        }
+    }
+
+    #[test]
+    fn threshold_boundaries_hold_and_cooldown_limits_each_step_and_bounds() {
+        for (start, work, change) in [
+            (ScreenRenderScale::Full, 12.5, false),
+            (ScreenRenderScale::Full, 12.500_001, true),
+            (ScreenRenderScale::Half, 9.5, false),
+            (ScreenRenderScale::Half, 9.499_999, true),
+        ] {
+            let mut controller = ScreenRenderAutoController::new(start);
+            controller.select_auto(true, 0.0).unwrap();
+            let mut request = None;
+            for frame in 0..=120 {
+                let now_ms = f64::from(frame) * 20.0;
+                request = controller
+                    .observe(sample(&controller, frame, now_ms, work), now_ms)
+                    .unwrap();
+                if request.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(request.is_some(), change);
+        }
+        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        let mut changes = Vec::new();
+        for frame in 0..=400 {
+            let now_ms = f64::from(frame) * 50.0;
+            let work = if now_ms < 8_000.0 { 20.0 } else { 4.0 };
+            if let Some(request) = controller
+                .observe(sample(&controller, frame, now_ms, work), now_ms)
+                .unwrap()
+            {
+                changes.push((now_ms, request.scale));
+                controller.applied(request, now_ms).unwrap();
+            }
+        }
+        assert_eq!(
+            changes.iter().map(|change| change.1).collect::<Vec<_>>(),
+            vec![
+                ScreenRenderScale::ThreeQuarters,
+                ScreenRenderScale::Half,
+                ScreenRenderScale::ThreeQuarters,
+                ScreenRenderScale::Full
+            ]
+        );
+        assert!(
+            changes
+                .windows(2)
+                .all(|pair| pair[1].0 - pair[0].0 >= COOLDOWN_MS)
+        );
     }
 }
