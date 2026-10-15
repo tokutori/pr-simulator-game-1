@@ -212,13 +212,23 @@ fn begin_work(world: &mut World) {
     world
         .resource_mut::<PendingCommandBuffers>()
         .push([encoder.finish()]);
+    if !world.resource::<FullDiagnostics>().0 {
+        world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
+    }
 }
 
 fn end_work(world: &mut World) {
     if !world.resource::<TimingPacket>().active
-        || !world.contains_resource::<DiagnosticsRecorder>()
         || !supported(world.resource::<RenderDevice>().features())
     {
+        return;
+    }
+    if !world.contains_resource::<DiagnosticsRecorder>()
+        && let Some(recorder) = world.resource_mut::<ParkedRecorder>().0.take()
+    {
+        world.insert_resource(recorder);
+    }
+    if !world.contains_resource::<DiagnosticsRecorder>() {
         return;
     }
     let mut encoder =
@@ -471,5 +481,162 @@ mod tests {
         );
         render_app.world_mut().run_schedule(RenderGraph);
         assert_eq!(render_app.world().resource::<UnrelatedRuns>().0, 2);
+    }
+
+    #[derive(Resource, Default)]
+    struct RecorderStages {
+        render_present: Option<bool>,
+        resolve_present: Option<bool>,
+        fail_render: bool,
+    }
+
+    fn record_probe(
+        mut context: bevy::render::renderer::RenderContext,
+        mut stages: ResMut<RecorderStages>,
+    ) -> Result<(), BevyError> {
+        let recorder = context.diagnostic_recorder();
+        stages.render_present = Some(recorder.is_some());
+        let recorder_ref = recorder.as_deref();
+        let span = recorder_ref.time_span(context.command_encoder(), "root_only_probe");
+        span.end(context.command_encoder());
+        if stages.fail_render {
+            return Err("expected render failure".into());
+        }
+        Ok(())
+    }
+
+    fn observe_resolve(
+        recorder: Option<Res<DiagnosticsRecorder>>,
+        mut stages: ResMut<RecorderStages>,
+    ) {
+        stages.resolve_present = Some(recorder.is_some());
+    }
+
+    fn submit_probe(mut commands: bevy::render::renderer::FlushCommands) {
+        commands.flush();
+    }
+
+    #[test]
+    #[ignore = "requires a native GPU with encoder timestamp queries"]
+    fn real_recorder_preserves_root_only_full_and_failure_schedule_paths() {
+        use bevy::render::{
+            RenderStartup,
+            render_resource::PollType,
+            renderer::initialize_renderer,
+            settings::{Backends, WgpuSettings},
+        };
+
+        for timestamp_queries in [true, false] {
+            let options = WgpuSettings {
+                disabled_features: (!timestamp_queries).then_some(
+                    WgpuFeatures::TIMESTAMP_QUERY
+                        | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
+                        | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES,
+                ),
+                ..default()
+            };
+            let resources =
+                bevy::tasks::block_on(initialize_renderer(Backends::VULKAN, None, &options));
+            println!(
+                "Recorder regression adapter={} backend={:?} driver={} features={:?}",
+                resources.2.name,
+                resources.2.backend,
+                resources.2.driver_info,
+                resources.0.features()
+            );
+            assert_eq!(supported(resources.0.features()), timestamp_queries);
+            for (full_diagnostics, active, fail_render) in [
+                (false, false, false),
+                (false, true, false),
+                (true, false, false),
+                (false, true, true),
+            ] {
+                let enabled = full_diagnostics || (active && timestamp_queries);
+                let mut app = App::new();
+                app.init_resource::<DiagnosticsStore>();
+                let mut render_app = SubApp::new();
+                render_app
+                    .add_schedule(Render::base_schedule())
+                    .add_schedule(RenderGraph::base_schedule())
+                    .add_schedule(Schedule::new(RenderStartup));
+                render_app.world_mut().insert_resource(resources.0.clone());
+                render_app.world_mut().insert_resource(resources.1.clone());
+                render_app.world_mut().insert_resource(resources.2.clone());
+                render_app.init_resource::<PendingCommandBuffers>();
+                render_app.world_mut().insert_resource(RecorderStages {
+                    fail_render,
+                    ..default()
+                });
+                app.insert_sub_app(RenderApp, render_app);
+                app.set_error_handler(|error, _| {
+                    assert_eq!(error.to_string(), "expected render failure")
+                });
+                let plugin = ScreenTimingPlugin { full_diagnostics };
+                plugin.build(&mut app);
+                plugin.finish(&mut app);
+                let render_app = app.get_sub_app_mut(RenderApp).unwrap();
+                render_app.add_systems(
+                    RenderGraph,
+                    (
+                        record_probe.in_set(RenderGraphSystems::Render),
+                        observe_resolve.after(end_work).before(resolve_encoder),
+                        submit_probe.in_set(RenderGraphSystems::Submit),
+                    ),
+                );
+                render_app.world_mut().run_schedule(RenderStartup);
+                render_app.world_mut().insert_resource(TimingPacket {
+                    active,
+                    epoch: 7,
+                    frame: 42,
+                    source_ms: (1_u64 << 32) + 123,
+                });
+                for _ in 0..2 {
+                    let render_app = app.get_sub_app_mut(RenderApp).unwrap();
+                    render_app.world_mut().run_schedule(Render);
+                    render_app.world_mut().run_schedule(RenderGraph);
+                    resources
+                        .0
+                        .poll(PollType::Wait {
+                            submission_index: None,
+                            timeout: Some(Duration::from_secs(2)),
+                        })
+                        .expect("bounded recorder GPU completion");
+                    app.world_mut().run_schedule(PreUpdate);
+                }
+                let render_world = app.get_sub_app(RenderApp).unwrap().world();
+                let stages = render_world.resource::<RecorderStages>();
+                assert_eq!(stages.render_present, Some(full_diagnostics));
+                assert_eq!(stages.resolve_present, Some(enabled));
+                assert_eq!(
+                    render_world.contains_resource::<DiagnosticsRecorder>(),
+                    enabled
+                );
+                assert_eq!(
+                    render_world.resource::<ParkedRecorder>().0.is_some(),
+                    !enabled
+                );
+                let store = app.world().resource::<DiagnosticsStore>();
+                assert_eq!(
+                    store
+                        .iter()
+                        .any(|diagnostic| diagnostic.path().as_str().contains("root_only_probe")),
+                    full_diagnostics
+                );
+                if active && timestamp_queries {
+                    let sample = TimingReadout::default()
+                        .read(store, 7)
+                        .unwrap()
+                        .expect("actual root GPU batch");
+                    assert_eq!(sample.epoch, 7);
+                    assert_eq!(sample.frame, 42);
+                    assert_eq!(sample.source_ms, ((1_u64 << 32) + 123) as f64);
+                    assert!(sample.gpu_work_ms.is_finite() && sample.gpu_work_ms >= 0.0);
+                    assert!(TimingReadout::default().read(store, 8).unwrap().is_none());
+                    assert_eq!(store.iter().count(), METADATA.len() + 2);
+                } else {
+                    assert!(store.get(&GPU_WORK).is_none());
+                }
+            }
+        }
     }
 }
