@@ -36,6 +36,17 @@ $suites = @(
             @{ Path = Join-Path $repository 'proofs/countdown_early_launch_negative.rs'; Assertion = 'admitted' },
             @{ Path = Join-Path $repository 'proofs/countdown_stale_token_negative.rs'; Assertion = 'advanced' }
         )
+    },
+    @{
+        Name = 'flight_execution'
+        SharedModule = Join-Path $repository 'crates/birdman-game-core/src/flight_execution.rs'
+        PositiveDriver = Join-Path $repository 'proofs/flight_execution.rs'
+        RequiredProofs = @('verify_pause_execution', 'verify_clear_execution', 'verify_resume_execution', 'verify_running_rejection')
+        RenamedProof = 'verify_resume_execution'
+        NegativeChecks = @(
+            @{ Path = Join-Path $repository 'proofs/flight_execution_resume_negative.rs'; Assertion = 'resumed' },
+            @{ Path = Join-Path $repository 'proofs/flight_execution_clear_negative.rs'; Assertion = 'running' }
+        )
     }
 )
 
@@ -220,6 +231,8 @@ try {
         throw 'The rename fixture did not remove the designated proof symbol.'
     }
     $renamedSource = $renamedSource.Replace($expectedInclude, $sharedModule.Replace('\', '/'))
+    $sharedDirectory = (Join-Path $repository 'crates/birdman-game-core/src/').Replace('\', '/')
+    $renamedSource = $renamedSource.Replace('../crates/birdman-game-core/src/', $sharedDirectory)
     $renamedSource += "`n/*`nfn $renamedProof() {}`n*/`n"
     $renamedDriver = Join-Path $toolRoot "$($suite.Name)_renamed.rs"
     [System.IO.File]::WriteAllText($renamedDriver, $renamedSource, [System.Text.UTF8Encoding]::new($false))
@@ -265,5 +278,5 @@ foreach ($path in $sourceHashes.Keys) {
         throw "Proof input or product toolchain changed during execution: $path"
     }
 }
-Write-Host 'Production pause and countdown proof suites completed.'
+Write-Host 'Production pause, countdown, and flight execution proof suites completed.'
 exit 0

@@ -3,11 +3,11 @@ use core::time::Duration;
 use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
+use crate::flight_execution::{FlightExecution, FlightExecutionError};
 use crate::flight_record::{
     FlightRecord, FlightRecordError, FlightRecordHeader, FlightRecordQueryError,
     MAX_FLIGHT_RECORD_TICKS,
 };
-use crate::pause_reasons::empty_pause_reasons;
 pub use crate::pause_reasons::{PauseReason, PauseReasons};
 use crate::replay_clock::{ReplayClock, ReplayClockError};
 use crate::scenario::{FlightTelemetry, FlightTelemetryError};
@@ -318,6 +318,15 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
+impl From<FlightExecutionError> for GameSessionError {
+    fn from(error: FlightExecutionError) -> Self {
+        match error {
+            FlightExecutionError::NotPaused => Self::NotPaused,
+            FlightExecutionError::PauseConditionsRemain => Self::PauseConditionsRemain,
+        }
+    }
+}
+
 /// Outcome of one externally timed observation of the current Countdown attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CountdownProgress {
@@ -366,12 +375,9 @@ enum ConfiguredPhase {
         reason: BriefingFailure,
     },
     Countdown(CountdownState),
-    Running {
+    Flight {
         state: TailFlightTickState,
-    },
-    Paused {
-        state: TailFlightTickState,
-        reasons: PauseReasons,
+        execution: FlightExecution,
     },
     Result {
         result: SessionResult,
@@ -416,16 +422,18 @@ impl<'a> GameSession<'a> {
                         scenario,
                         remaining_seconds: countdown.remaining_seconds(),
                     },
-                    ConfiguredPhase::Running { state } => {
-                        SessionSnapshot::TailFlightRunning { scenario, state }
-                    }
-                    ConfiguredPhase::Paused { state, reasons } => {
-                        SessionSnapshot::TailFlightPaused {
-                            scenario,
-                            state,
-                            reasons,
-                        }
-                    }
+                    ConfiguredPhase::Flight {
+                        state,
+                        execution: FlightExecution::Running,
+                    } => SessionSnapshot::TailFlightRunning { scenario, state },
+                    ConfiguredPhase::Flight {
+                        state,
+                        execution: FlightExecution::Paused { reasons },
+                    } => SessionSnapshot::TailFlightPaused {
+                        scenario,
+                        state,
+                        reasons,
+                    },
                     ConfiguredPhase::Result { result } => SessionSnapshot::Result(result),
                     ConfiguredPhase::Replay { result, .. } => SessionSnapshot::Replay {
                         scenario: result.scenario,
@@ -454,8 +462,14 @@ impl<'a> GameSession<'a> {
                 ConfiguredPhase::Countdown(countdown) => SessionPhase::Countdown {
                     remaining_seconds: countdown.remaining_seconds(),
                 },
-                ConfiguredPhase::Running { .. } => SessionPhase::FlightRunning,
-                ConfiguredPhase::Paused { reasons, .. } => SessionPhase::FlightPaused { reasons },
+                ConfiguredPhase::Flight {
+                    execution: FlightExecution::Running,
+                    ..
+                } => SessionPhase::FlightRunning,
+                ConfiguredPhase::Flight {
+                    execution: FlightExecution::Paused { reasons },
+                    ..
+                } => SessionPhase::FlightPaused { reasons },
                 ConfiguredPhase::Result { .. } => SessionPhase::Result,
                 ConfiguredPhase::Replay { .. } => SessionPhase::Replay,
             },
@@ -757,9 +771,7 @@ impl<'a> GameSession<'a> {
             return Ok(None);
         };
         let state = match configured.phase {
-            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => {
-                Some(state.flight_state())
-            }
+            ConfiguredPhase::Flight { state, .. } => Some(state.flight_state()),
             ConfiguredPhase::Result { result } | ConfiguredPhase::Replay { result, .. } => {
                 Some(result.state.flight_state())
             }
@@ -776,7 +788,7 @@ impl<'a> GameSession<'a> {
             return Ok(None);
         };
         let state = match configured.phase {
-            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => state,
+            ConfiguredPhase::Flight { state, .. } => state,
             _ => return Ok(None),
         };
         course_distance_score(
@@ -979,7 +991,10 @@ impl<'a> GameSession<'a> {
             .record
             .begin_tail(initial, telemetry)
             .map_err(GameSessionError::Record)?;
-        configured.phase = ConfiguredPhase::Running { state: initial };
+        configured.phase = ConfiguredPhase::Flight {
+            state: initial,
+            execution: FlightExecution::Running,
+        };
         Ok(CountdownProgress::Launched)
     }
 
@@ -995,15 +1010,10 @@ impl<'a> GameSession<'a> {
     /// Adds a pause cause while running or already paused.
     pub fn pause(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
         let configured = self.configured_mut()?;
-        let (state, reasons) = match configured.phase {
-            ConfiguredPhase::Running { state } => (state, empty_pause_reasons()),
-            ConfiguredPhase::Paused { state, reasons } => (state, reasons),
-            _ => return Err(GameSessionError::InvalidTransition),
+        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
+            return Err(GameSessionError::InvalidTransition);
         };
-        configured.phase = ConfiguredPhase::Paused {
-            state,
-            reasons: reasons.insert(reason),
-        };
+        execution.pause(reason);
         Ok(())
     }
 
@@ -1012,14 +1022,12 @@ impl<'a> GameSession<'a> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
         };
-        let ConfiguredPhase::Paused { state, reasons } = configured.phase else {
+        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        configured.phase = ConfiguredPhase::Paused {
-            state,
-            reasons: reasons.remove(reason),
-        };
-        Ok(())
+        execution
+            .clear_pause_reason(reason)
+            .map_err(GameSessionError::from)
     }
 
     /// Resumes only after every pause cause has cleared and Resume is explicit.
@@ -1027,19 +1035,10 @@ impl<'a> GameSession<'a> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
         };
-        let ConfiguredPhase::Paused { state, reasons } = configured.phase else {
+        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        match reasons.request_resume() {
-            Ok(()) => {
-                configured.phase = ConfiguredPhase::Running { state };
-                Ok(())
-            }
-            Err(reasons) => {
-                configured.phase = ConfiguredPhase::Paused { state, reasons };
-                Err(GameSessionError::PauseConditionsRemain)
-            }
-        }
+        execution.resume().map_err(GameSessionError::from)
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.
@@ -1048,7 +1047,11 @@ impl<'a> GameSession<'a> {
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
         let configured = self.configured_mut()?;
-        let ConfiguredPhase::Running { state: previous } = configured.phase else {
+        let ConfiguredPhase::Flight {
+            state: previous,
+            execution: FlightExecution::Running,
+        } = configured.phase
+        else {
             return Err(GameSessionError::InvalidTransition);
         };
         let configuration = &configured.configuration;
@@ -1082,7 +1085,10 @@ impl<'a> GameSession<'a> {
         }
         match report.outcome() {
             TailFlightTickOutcome::Advanced(next) => {
-                configured.phase = ConfiguredPhase::Running { state: next };
+                configured.phase = ConfiguredPhase::Flight {
+                    state: next,
+                    execution: FlightExecution::Running,
+                };
                 if next.tick_index() >= maximum_ticks {
                     self.finalize_tick(SessionEndReason::TimeLimit, next)?;
                 }
@@ -1101,7 +1107,7 @@ impl<'a> GameSession<'a> {
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
         let state = match self.configured_mut()?.phase {
-            ConfiguredPhase::Running { state } | ConfiguredPhase::Paused { state, .. } => state,
+            ConfiguredPhase::Flight { state, .. } => state,
             _ => return Err(GameSessionError::InvalidTransition),
         };
         self.finalize_tick(SessionEndReason::ManualAbort, state)?;

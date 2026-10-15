@@ -12,6 +12,7 @@ mod contact;
 mod countdown;
 mod dynamics;
 mod flight_control;
+mod flight_execution;
 mod flight_record;
 mod game_session;
 mod hybrid_mock;

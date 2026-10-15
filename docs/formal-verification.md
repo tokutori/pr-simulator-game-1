@@ -31,12 +31,11 @@ renameと旧宣言コメントを含むfixtureのexact inventory拒否、必須�
 `Result<(), PauseReasons>`で認可結果を返す。`GameSession::resume`はOkをRunning、Errの残存理由をPausedへ投影し、
 `can_resume_after_manual`も同じ認可結果から導出する。OkはManual以外の理由が空であることと同値であり、
 ErrはManualだけを除去した非空の理由を保持する。拒否後の再要求でも残存理由と拒否を維持する。
-GameSessionのphase代入、物理payload・tick・recordの保持、非Paused時の拒否は既存の接続回帰とreviewの対象であり、
-この認可結果の証明をGameSession全体の証明へ一般化しない。#382のCountdown、Retry、Replay、終端化は後続範囲として残る。
+この認可結果の証明をGameSession全体の証明へ一般化しない。以降のcutでCountdownと実行状態の本番遷移へ接続する。
 
 ### Countdownの本番遷移
 
-次のcutは`crates/birdman-game-core/src/countdown.rs`の本番`CountdownState`を直接includeする。
+Countdownのcutは`crates/birdman-game-core/src/countdown.rs`の本番`CountdownState`を直接includeする。
 正の秒数と非wrap token、obsolete tokenの無視、時刻検査と可用性の優先順、取消、待機、時間到達による発進認可を対象とする。
 待機中の公開残秒は正であり、観測後の経過時間が所定時間へ到達した場合に発進を認可する。
 公開Countdownが残秒0で存在することを前提としない。
@@ -55,6 +54,20 @@ GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetr
 renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
 Countdownの負例は期限前の発進とobsolete tokenによる進行を意図的に主張し、指定assertで拒否されることを要求する。
 検証結果は対象headのPRへ記録し、sourceを追加した段階で合格を主張しない。
+
+### FlightExecutionの本番遷移
+
+`crates/birdman-game-core/src/flight_execution.rs`はRunning/Pausedと停止理由を単独所有する。
+GameSessionは従来の二つのvariantを`Flight { state, execution }`へ置換し、pause、clear、resumeから同moduleを直接更新する。
+新APIの可変参照はexecutionだけを指し、飛行payload、tick、configuration、recordを受け取らない。
+これらの値は移動・再構築の対象から外れ、通常Rustの所有分離と実GameSessionの接続回帰で保持を確認する。
+浮動小数値の等価性や任意の不透明payloadについての形式証明は主張しない。
+
+本番の可変参照更新をそのままincludeし、pauseによるPaused遷移と理由追加、clear後のPaused維持、
+Manual解除後の再開認可、外的理由が残る場合のPaused維持、Runningでのclear/resume拒否と実行状態保持を検証する。
+必須4群のexact inventory・名前別検証・rename fixture・missing-target検査を既存runnerへ追加する。
+負例は外的理由を残したResumeの成功と、最後の理由をclearした時点の自動再開を意図的に主張する。
+GameSession wrapperの全分岐、record初期化・Retry・Replay・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
 
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
@@ -77,6 +90,11 @@ bitvector queryへ渡す前提は通常の検証で実関数の契約から確�
 外部原因が残る間の拒否、明示Resume、pause中のstate/record不変を確認する。
 非Pause phaseのResume拒否とResultの確定record保持も対象とする。これらはcallerの通常回帰であり、
 GameSession全体の形式証明ではない。
+
+FlightExecutionのcutでは固定Verusをreadonlyで再利用し、既存runnerの検証部分で正driverの`24 verified, 0 errors`、
+必須4群の各`1 verified, 0 errors`、exact inventoryとrename/missing検査、指定負例2件の各`20 verified, 1 errors`を確認した。
+既存PauseReasonsとCountdownのsuiteも同時に成功した。ZIP取得・digest照合・展開を含むbootstrap全体はCIで検査する。
+GameSessionの通常回帰32件、core all-targets Clippy、`wasm32v1-none`のno_std build、formatとdiff検査が成功した。
 
 ## 固定ツールとCI
 
@@ -120,7 +138,7 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 | 優先度 | 契約・対象body | 適性と現在の根拠 | 残る境界 |
 |---|---|---|---|
 | P0 | PauseReasonsの4bit集合・Resume predicate | 同一bodyのtracked checkerで正37義務と指定負検証を確認した | 外部原因の発生条件は未証明 |
-| P0 | GameSessionのphase遷移・caller・確定record保持 | 離散状態遷移は次の形式化候補。今回の実GameSession通常回帰で接続を確認する | phase遷移全体、入力admission、終端原子性は未証明 |
+| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可とFlightExecutionの本番更新を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、物理payload・record保持、Retry/Replay、終端原子性は未証明 |
 | P1 | record/finalization・codec・identity・PB分離 | 純粋な整合性判定とschema別分岐は候補となる。保存値とlayoutを仕様として固定する必要がある | 現在の通常回帰は形式証明ではなく、既存archive全体も未証明 |
 | P1 | tick原子性・bounded保護候補探索 | 副作用commit条件・探索回数は離散契約として扱える | 浮動小数点、全RK stageの荷重域、安全な候補の存在は未証明 |
 | P1 | owner世代・stale query・資源解放 | immutableな観測tokenと有限lifecycleは候補となる | browser/Bevyの再入・非同期・OS資源は環境仮定が必要であり未証明 |
