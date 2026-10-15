@@ -286,6 +286,7 @@ class RecordingRenderer implements RendererAdapter {
   transformTrackingPose(value: Pose): Pose { return composePose(this.mount, value); }
   resize(): void {}
   setStereoPresentation(value: StereoPresentationProfile | null): void { this.stereo = value; }
+  setScreenRenderScale(): void {}
   setSelectRayHandler(): void {}
   dispose(): void {}
 }

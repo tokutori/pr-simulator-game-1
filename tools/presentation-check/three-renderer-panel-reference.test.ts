@@ -2,8 +2,8 @@ import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Vector3, Vector4 } from "three";
-import type { Camera, Color, Object3D, Scene, Vector2 } from "three";
+import { BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Texture, Vector2, Vector3, Vector4 } from "three";
+import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
 import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
@@ -63,6 +63,10 @@ interface RecordingDriver {
   readonly draws: RecordedDraw[];
   readonly scene: Scene | null;
   readonly xr: { isPresenting: boolean; enabled: boolean };
+  readonly resizeCalls: number;
+  getPixelRatio(): number;
+  getSize(target: Vector2): Vector2;
+  getDrawingBufferSize(target: Vector2): Vector2;
   tick(timestamp: number, viewer: XRViewerPose | null): void;
 }
 
@@ -86,9 +90,13 @@ vi.mock("three", async (importOriginal) => {
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
     getClearColor(target: Color): Color { return target.copy(this.clearColor); }
     getClearAlpha(): number { return this.clearAlpha; }
-    setPixelRatio(): void {}
-    setSize(width: number, height: number): void { this.size.set(width, height); }
+    private pixelRatio = 1;
+    resizeCalls = 0;
+    setPixelRatio(value: number): void { this.pixelRatio = value; }
+    getPixelRatio(): number { return this.pixelRatio; }
+    setSize(width: number, height: number): void { this.size.set(width, height); this.resizeCalls += 1; }
     getSize(target: Vector2): Vector2 { return target.copy(this.size); }
+    getDrawingBufferSize(target: Vector2): Vector2 { return target.copy(this.size).multiplyScalar(this.pixelRatio).floor(); }
     setViewport(): void {}
     setScissor(): void {}
     setScissorTest(): void {}
@@ -156,6 +164,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   beforeEach(() => {
     driver.xr.isPresenting = false;
     bundle.renderer.setStereoPresentation(null);
+    bundle.renderer.setScreenRenderScale(1);
     bundle.renderer.setFlightPose(null);
     bundle.renderer.setPreparedFlightPose(null);
     bundle.renderer.setLakeSkyCondition(null);
@@ -166,6 +175,94 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it("changes only drawing pixels and reflection size while retaining the logical viewport and camera", () => {
+    const viewport = { x: 1919, y: 1079, pixelRatio: 1.25 };
+    bundle.renderer.render(frame({ viewport }));
+    const original = singleDraw(driver).projection;
+    const reflection: unknown = lakeDrawResources(driver).foreground.material.uniforms.uReflectionTexture?.value;
+    expect(reflection).toBeInstanceOf(Texture);
+    for (const factor of [0.75, 0.5, 1]) {
+      bundle.renderer.setScreenRenderScale(factor);
+      driver.draws.length = 0;
+      bundle.renderer.render(frame({ viewport }));
+      expect(driver.getPixelRatio()).toBe(viewport.pixelRatio * factor);
+      expect(driver.getSize(new Vector2()).toArray()).toEqual([viewport.x, viewport.y]);
+      expect(driver.getDrawingBufferSize(new Vector2()).toArray()).toEqual([
+        Math.floor(viewport.x * viewport.pixelRatio * factor), Math.floor(viewport.y * viewport.pixelRatio * factor)
+      ]);
+      expectMatrix(singleDraw(driver).projection, original);
+      if (!(reflection instanceof Texture)) throw new Error("Missing reflection texture");
+      expect(reflection.image).toMatchObject({ width: Math.min(1024, Math.ceil(viewport.x * viewport.pixelRatio * factor / 2)),
+        height: Math.ceil(viewport.y * viewport.pixelRatio * factor / 2) });
+      const resizes = driver.resizeCalls;
+      bundle.renderer.setScreenRenderScale(factor);
+      bundle.renderer.render(frame({ viewport }));
+      expect(driver.resizeCalls).toBe(resizes);
+    }
+    bundle.renderer.setScreenRenderScale(0.5);
+    bundle.renderer.resize({ x: 1201, y: 701, pixelRatio: 2 });
+    expect(driver.getDrawingBufferSize(new Vector2()).toArray()).toEqual([1201, 701]);
+    const retainedSize = driver.getDrawingBufferSize(new Vector2()).toArray();
+    const resizes = driver.resizeCalls;
+    const tiny = { x: 1, y: 1, pixelRatio: 1 };
+    bundle.renderer.resize(tiny);
+    driver.draws.length = 0;
+    bundle.renderer.render(frame({ viewport: tiny }));
+    expect(driver.resizeCalls).toBe(resizes);
+    expect(driver.getDrawingBufferSize(new Vector2()).toArray()).toEqual(retainedSize);
+    const projection = singleDraw(driver).projection.elements;
+    expect(projection[0]).toBeCloseTo(projection[5], 10);
+    bundle.renderer.resize({ x: 0, y: 0, pixelRatio: 1 });
+    expect(driver.resizeCalls).toBe(resizes);
+    bundle.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
+    expect(driver.getDrawingBufferSize(new Vector2()).toArray()).toEqual([640, 360]);
+    for (const invalid of [0, -1, 1.01, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => { bundle.renderer.setScreenRenderScale(invalid); }).toThrow(RangeError);
+    }
+  });
+
+  it("restores full Phone VR pixels and the retained Screen factor after normal exit", async () => {
+    const viewport = { x: 1280, y: 720, pixelRatio: 2 };
+    bundle.renderer.resize(viewport);
+    bundle.renderer.setScreenRenderScale(0.5);
+    const phone = await startPhone(bundle, viewport);
+    try {
+      expect(driver.getPixelRatio()).toBe(2);
+      expect(driver.getSize(new Vector2()).toArray()).toEqual([1280, 720]);
+      bundle.renderer.render(frame({ viewport }));
+      const reflection: unknown = lakeDrawResources(driver).foreground.material.uniforms.uReflectionTexture?.value;
+      if (!(reflection instanceof Texture)) throw new Error("Missing reflection texture");
+      expect(reflection.image).toMatchObject({ width: 1024, height: 720 });
+    } finally {
+      await phone.backend.stop();
+    }
+    expect(driver.getPixelRatio()).toBe(1);
+    bundle.renderer.render(frame({ viewport }));
+    const reflection: unknown = lakeDrawResources(driver).foreground.material.uniforms.uReflectionTexture?.value;
+    if (!(reflection instanceof Texture)) throw new Error("Missing reflection texture");
+    expect(reflection.image).toMatchObject({ width: 640, height: 360 });
+  });
+
+  it("restores the retained Screen pixels when Phone VR startup fails after stereo was enabled", async () => {
+    const viewport = { x: 1280, y: 720, pixelRatio: 2 };
+    bundle.renderer.resize(viewport);
+    bundle.renderer.setScreenRenderScale(0.75);
+    const failure = new Error("sensor startup failed");
+    const sensors: PhoneVrSensorPort = {
+      checkAvailability: () => Promise.resolve({ supported: true, message: "Available" }),
+      requestPermissionFromUserGesture: () => Promise.resolve({ ok: true }),
+      getScreenOrientationAngle: () => 90,
+      startListening: () => { throw failure; },
+      stopListening: () => undefined
+    };
+    const backend = new PhoneVrPresentationBackend(sensors, bundle.renderer, () => viewport, () => undefined, () => undefined);
+    await backend.requestPermissionFromUserGesture();
+    await expect(backend.start()).rejects.toBe(failure);
+    expect(driver.getPixelRatio()).toBe(1.5);
+    expect(driver.getDrawingBufferSize(new Vector2()).toArray()).toEqual([1920, 1080]);
+    await backend.stop();
+  });
 
   it("exchanges quality geometry and wave budgets without regenerating detail or reflection resources", async () => {
     bundle.renderer.setFlightPose({ datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,

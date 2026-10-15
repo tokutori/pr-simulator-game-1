@@ -343,6 +343,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Changes only the Screen 3D drawing resolution.",
+          "properties": {
+            "kind": {
+              "const": "set_screen_render_scale",
+              "type": "string"
+            },
+            "scale": {
+              "$ref": "#/$defs/ScreenRenderScale",
+              "description": "Requested fraction of each physical rendering dimension."
+            }
+          },
+          "required": [
+            "kind",
+            "scale"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Changes render-only mesh quality.",
           "properties": {
             "kind": {
@@ -538,6 +557,10 @@
           "description": "Platform supports recorded scenic playback.",
           "type": "boolean"
         },
+        "screen_render_scale": {
+          "$ref": "#/$defs/ScreenRenderScale",
+          "description": "Retained Screen-only resolution preference, independent of the active VR mode."
+        },
         "stored_records": {
           "description": "Persistence results associated with this owner.",
           "items": {
@@ -587,6 +610,7 @@
         "flight_log_pending",
         "water_quality",
         "water_quality_operation",
+        "screen_render_scale",
         "notification",
         "stored_records"
       ],
@@ -917,6 +941,26 @@
         {
           "const": "custom",
           "description": "Independently configured flight information cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "ScreenRenderScale": {
+      "description": "Supported manual Screen rendering scales, with full resolution as the default.",
+      "oneOf": [
+        {
+          "const": "100",
+          "description": "Original physical rendering resolution.",
+          "type": "string"
+        },
+        {
+          "const": "75",
+          "description": "Three quarters of each physical rendering dimension.",
+          "type": "string"
+        },
+        {
+          "const": "50",
+          "description": "Half of each physical rendering dimension.",
           "type": "string"
         }
       ]

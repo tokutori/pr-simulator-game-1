@@ -180,6 +180,50 @@ describe("manual lake water quality ownership", () => {
   });
 });
 
+describe("Screen render scale preference", () => {
+  function selectScale(model: AppModel, scale: GameUiPlatformInput["screen_render_scale"]): AppTransition {
+    return updateApp(model, { type: "shared-game-ui-effect", effect: {
+      kind: "platform", command: { kind: "set_screen_render_scale", scale }
+    } });
+  }
+
+  it("keeps one preference while preserving domain state and other render settings", () => {
+    const initial = readyModel();
+    expect(initial.screenRenderScale).toBe("100");
+    let selected = initial;
+    for (const scale of ["75", "50", "100"] as const) {
+      const updated = selectScale(selected, scale);
+      expect(updated.model.screenRenderScale).toBe(scale);
+      expect(updated.effects).toEqual([]);
+      expect(updated.model.gameSession).toBe(initial.gameSession);
+      expect(updated.model.lakeWaterQuality).toBe(initial.lakeWaterQuality);
+      expect(updated.model.difficulty).toBe(initial.difficulty);
+      expect(updated.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
+      selected = updated.model;
+    }
+    expect(selectScale(readyModel(6), "50").model.screenRenderScale).toBe("50");
+  });
+
+  it("rejects stale changes outside Screen settings and retains the preference across VR exit", () => {
+    const selected = selectScale(readyModel(), "75").model;
+    for (const phase of [0, 2, 3, 4, 5, 7, 8, 9, 10]) {
+      const model = { ...readyModel(phase), screenRenderScale: selected.screenRenderScale };
+      expect(selectScale(model, "50").model).toBe(model);
+    }
+    for (const mode of ["phone-vr", "webxr"] as const) {
+      const model = { ...readyModel(1, mode), screenRenderScale: selected.screenRenderScale };
+      expect(selectScale(model, "50").model).toBe(model);
+      const ended = updateApp(model, { type: "backend-ended", mode, message: "session ended" }).model;
+      expect(ended.screenRenderScale).toBe("75");
+    }
+    const switching = updateApp(selected, { type: "shared-game-ui-effect", effect: {
+      kind: "platform", command: { kind: "set_presentation", mode: "phone_vr" }
+    } }).model;
+    expect(selectScale(switching, "50").model).toBe(switching);
+    expect(switching.screenRenderScale).toBe("75");
+  });
+});
+
 function select(model: AppModel, quality: LakeWaterQuality): AppTransition {
   const transition = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: `presentation-water-quality-${quality}` } });
   const requested = transition.effects.find((effect) => effect.type === "update-shared-game-ui");

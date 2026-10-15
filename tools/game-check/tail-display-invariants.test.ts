@@ -98,7 +98,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
       setFlightPose, setPreparedFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
       setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: (value) => value,
-      resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
+      resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
     };
     const failHud = vi.fn<TailFlightHudPort["fail"]>();
     const hud: TailFlightHudPort = { render: vi.fn(), fail: failHud, setVisible: vi.fn() };

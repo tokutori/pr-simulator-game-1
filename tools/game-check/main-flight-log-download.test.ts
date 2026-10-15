@@ -41,7 +41,7 @@ async function fixture(archive = false) {
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
-    resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
+    resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
   } satisfies RendererAdapter;
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
     createThreeRenderer: () => ({ renderer, webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) } })

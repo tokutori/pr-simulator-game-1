@@ -31,6 +31,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         flight_log_pending: false,
         water_quality: GameUiWaterQuality::High,
         water_quality_operation: GameUiWaterQualityOperation::Idle {},
+        screen_render_scale: crate::screen_render_scale::ScreenRenderScale::default(),
         notification: String::new(),
         flight_controller_failure: None,
         head_hud_failure: None,
@@ -2205,6 +2206,110 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
         assert_eq!(session.playback_clock(), clock);
         assert_eq!(frame.selections, state);
     }
+}
+
+#[test]
+fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings() {
+    use crate::screen_render_scale::ScreenRenderScale;
+    let mut setup = GameSession::new();
+    setup.open_setup().unwrap();
+    let mut paused = launched();
+    paused.pause(PauseReason::Manual).unwrap();
+    let record = paused.flight_record().unwrap().samples().to_vec();
+    let state = GameUiState {
+        pause_overlay: GameUiPauseOverlay::Settings,
+        ..GameUiState::default()
+    };
+    for session in [&setup, &paused] {
+        let before = session.snapshot();
+        for mode in [
+            GameUiPresentationMode::Screen,
+            GameUiPresentationMode::Webxr,
+            GameUiPresentationMode::PhoneVr,
+        ] {
+            for scale in ScreenRenderScale::ALL {
+                let mut platform = platform();
+                platform.presentation_mode = mode;
+                platform.screen_render_scale = scale;
+                let inputs = context(session, difficulty(), &platform);
+                let view = game_ui_view(&state, &inputs).unwrap();
+                if mode != GameUiPresentationMode::Screen {
+                    assert!(
+                        !view
+                            .panels
+                            .iter()
+                            .flat_map(|panel| &panel.controls)
+                            .any(|control| control.id.starts_with("presentation-render-scale-"))
+                    );
+                    assert!(
+                        update_game_ui(
+                            &state,
+                            GameUiAction::Platform {
+                                command: GameUiPlatformCommand::SetScreenRenderScale { scale }
+                            },
+                            &inputs
+                        )
+                        .is_err()
+                    );
+                    continue;
+                }
+                for choice in ScreenRenderScale::ALL {
+                    let control = control(
+                        &view,
+                        &format!("presentation-render-scale-{}", choice.percent()),
+                    );
+                    assert_eq!(control.label, choice.label());
+                    assert_eq!(control.enabled, mode == GameUiPresentationMode::Screen);
+                    let GameUiControlContent::Button {
+                        action,
+                        presentation: GameUiButtonPresentation::Choice { selected, .. },
+                    } = &control.content
+                    else {
+                        panic!("missing shared scale choice")
+                    };
+                    assert_eq!(*selected, scale == choice);
+                    let admitted = update_game_ui(&state, action.clone(), &inputs);
+                    assert_eq!(admitted.is_ok(), mode == GameUiPresentationMode::Screen);
+                    if let Ok(update) = admitted {
+                        assert_eq!(
+                            update.effects,
+                            vec![GameUiEffect::Platform {
+                                command: GameUiPlatformCommand::SetScreenRenderScale {
+                                    scale: choice
+                                }
+                            }]
+                        );
+                    }
+                }
+                platform.operation_pending = true;
+                assert!(
+                    update_game_ui(
+                        &state,
+                        GameUiAction::Platform {
+                            command: GameUiPlatformCommand::SetScreenRenderScale { scale }
+                        },
+                        &context(session, difficulty(), &platform)
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert_eq!(session.snapshot(), before);
+    }
+    assert_eq!(paused.flight_record().unwrap().samples(), record);
+    let running = launched();
+    assert!(
+        update_game_ui(
+            &state,
+            GameUiAction::Platform {
+                command: GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half
+                }
+            },
+            &context(&running, difficulty(), &platform())
+        )
+        .is_err()
+    );
 }
 
 #[test]

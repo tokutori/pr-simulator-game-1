@@ -41,7 +41,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
     transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
-    resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
+    resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => {
       if (options.failCleanup === true) throw new Error("Injected renderer cleanup failure");
     })

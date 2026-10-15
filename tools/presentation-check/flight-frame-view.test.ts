@@ -146,7 +146,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       beginViewFrame() {}, stopLoop() { evidence.loop = null; }, render() { evidence.frames++; },
       setFlightPose() {}, setPreparedFlightPose() {}, setLakeVisualCondition() {}, setLakeSkyCondition() {}, setLakeVenueVisible() {}, setFlightCameraMode() {}, setCinematicCameraView() {},
       setLakeWaterQuality: () => Promise.resolve({ kind: "complete" }),
-      transformTrackingPose: (value) => value, resize() {}, setStereoPresentation() {}, setSelectRayHandler() {}, dispose() {}
+      transformTrackingPose: (value) => value, resize() {}, setStereoPresentation() {}, setScreenRenderScale() {}, setSelectRayHandler() {}, dispose() {}
     };
     initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
