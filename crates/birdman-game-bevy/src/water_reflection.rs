@@ -45,12 +45,16 @@ fn reflected_camera(
     camera: Transform,
     projection: PerspectiveProjection,
     size: UVec2,
+    logical_extent: Option<UVec2>,
 ) -> (Transform, PerspectiveProjection, Mat4) {
     let reflected_matrix = Mat4::from_mat3a(reflection_matrix(Vec3::Y)) * camera.to_matrix();
     let reflected = Transform::from_matrix(reflected_matrix);
     let near_clip_plane = reflected_matrix.transpose() * Vec3::Y.extend(0.0);
     let projection = PerspectiveProjection {
-        aspect_ratio: size.x as f32 / size.y as f32,
+        aspect_ratio: {
+            let extent = logical_extent.unwrap_or(size);
+            extent.x as f32 / extent.y as f32
+        },
         near: camera.translation.y,
         near_clip_plane,
         ..projection
@@ -97,7 +101,13 @@ pub(crate) fn setup_reflection(
 
 pub(crate) fn project_reflection(
     main: Query<
-        (&WorldProjection, &Camera, &Transform, &Projection),
+        (
+            &WorldProjection,
+            &Camera,
+            &Transform,
+            &Projection,
+            &RenderTarget,
+        ),
         Without<LakeReflectionCamera>,
     >,
     mut reflection: Query<
@@ -120,33 +130,40 @@ pub(crate) fn project_reflection(
     };
     let main = main
         .iter()
-        .find(|(role, _, _, _)| **role == WorldProjection::FlightCamera);
-    let projected = main.and_then(|(_, main_camera, main_transform, main_projection)| {
-        let Projection::Perspective(main_projection) = main_projection else {
-            return None;
-        };
-        let viewport = main_camera.viewport.as_ref().map_or_else(
-            || {
-                windows
-                    .single()
-                    .ok()
-                    .map(|window| window.resolution.physical_size())
-            },
-            |viewport| Some(viewport.physical_size),
-        )?;
-        Some((
-            *main_transform,
-            main_projection.clone(),
-            target_size(viewport)?,
-        ))
-    });
-    let Some((main_transform, main_projection, size)) = projected else {
+        .find(|(role, _, _, _, _)| **role == WorldProjection::FlightCamera);
+    let projected = main.and_then(
+        |(_, main_camera, main_transform, main_projection, target)| {
+            let Projection::Perspective(main_projection) = main_projection else {
+                return None;
+            };
+            let window_extent = windows.single().ok()?.resolution.physical_size();
+            if window_extent.min_element() == 0 {
+                return None;
+            }
+            let viewport = main_camera.viewport.as_ref().map_or_else(
+                || match target {
+                    RenderTarget::Image(image) => images.get(image.handle.id()).map(Image::size),
+                    RenderTarget::Window(_) => Some(window_extent),
+                    _ => None,
+                },
+                |viewport| Some(viewport.physical_size),
+            )?;
+            Some((
+                *main_transform,
+                main_projection.clone(),
+                target_size(viewport)?,
+                main_camera.sub_camera_view,
+            ))
+        },
+    );
+    let Some((main_transform, main_projection, size, sub_view)) = projected else {
         camera.is_active = false;
         for (_, material) in materials.iter_mut() {
             material.reflection_parameters.x = 0.0;
         }
         return;
     };
+    camera.sub_camera_view = sub_view;
     if images.get(owned.image.id()).is_none() {
         if camera.is_active {
             error!("水面反射画像が欠損した: {:?}", owned.image.id());
@@ -176,8 +193,12 @@ pub(crate) fn project_reflection(
         }
         return;
     }
-    let (reflected, reflected_projection, clip_from_world) =
-        reflected_camera(main_transform, main_projection, size);
+    let (reflected, reflected_projection, clip_from_world) = reflected_camera(
+        main_transform,
+        main_projection,
+        size,
+        sub_view.map(|view| view.full_size),
+    );
     *transform = reflected;
     *projection = Projection::Perspective(reflected_projection);
     for (_, material) in materials.iter_mut() {
@@ -227,7 +248,7 @@ mod tests {
             );
         let size = UVec2::new(640, 360);
         let (reflected, projection, clip_from_world) =
-            reflected_camera(camera, PerspectiveProjection::default(), size);
+            reflected_camera(camera, PerspectiveProjection::default(), size, None);
         assert!(reflected.translation.distance(Vec3::new(4.0, -10.0, 18.0)) < 1.0e-5);
         assert!(reflected.to_matrix().determinant() < 0.0);
         let mirror = Mat4::from_mat3a(reflection_matrix(Vec3::Y));
@@ -319,7 +340,7 @@ mod tests {
                 projection.far,
             ) * web_world.inverse();
             let (native, _, native_clip_from_world) =
-                reflected_camera(main, projection.clone(), size);
+                reflected_camera(main, projection.clone(), size, None);
             let native_world = native.to_matrix();
             assert!(native_world.transform_vector3(Vec3::X).distance(-web_right) < 1.0e-5);
             assert!(native_world.transform_vector3(Vec3::Y).distance(web_up) < 1.0e-5);
@@ -356,6 +377,7 @@ mod tests {
             camera,
             PerspectiveProjection::default(),
             UVec2::new(640, 360),
+            None,
         );
         assert_eq!(projection.near, 10.0);
         for height in [-1.0, 0.0, 1.0] {

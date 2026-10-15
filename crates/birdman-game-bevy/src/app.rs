@@ -10,6 +10,8 @@ mod mip_filter;
 mod native_session;
 #[path = "projection.rs"]
 mod projection;
+#[path = "screen_render.rs"]
+mod screen_render;
 #[path = "ui.rs"]
 mod ui;
 #[path = "verification.rs"]
@@ -26,10 +28,12 @@ mod world;
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
+    camera::CameraUpdateSystems,
+    ecs::schedule::common_conditions::any_match_filter,
     input::{ButtonState, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion},
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
-    window::PresentMode,
+    window::{PresentMode, PrimaryWindow},
 };
 use birdman_game_core::{PHYSICS_HZ, SessionPhase};
 use native_session::{FlightInput, NativeSession};
@@ -136,6 +140,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .init_resource::<NativeSession>()
     .init_resource::<FlightInput>()
     .init_resource::<water_quality::WaterQualitySelection>()
+    .init_resource::<screen_render::NativeScreenRender>()
     .init_resource::<CameraMode>();
     mip_filter::configure(app.world_mut())?;
     app.init_resource::<frame_rate::FrameRate>();
@@ -173,6 +178,8 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             (
                 frame_rate::observe_frame,
                 ui::button_actions,
+                screen_render::synchronize
+                    .run_if(any_match_filter::<(With<PrimaryWindow>, Changed<Window>)>),
                 water::apply_environment,
                 water::apply_quality,
                 advance_presentation,
@@ -187,6 +194,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_systems(
         PostUpdate,
         ui::scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+    );
+    app.add_systems(
+        PostUpdate,
+        screen_render::preserve_logical_projection
+            .after(CameraUpdateSystems)
+            .before(bevy::camera::visibility::update_frusta),
     );
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {

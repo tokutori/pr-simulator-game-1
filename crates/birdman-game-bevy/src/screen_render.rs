@@ -1,0 +1,619 @@
+use super::{native_session::NativeSession, world::WorldProjection};
+use bevy::ecs as bevy_ecs;
+use bevy::{
+    camera::{RenderTarget, SubCameraView},
+    core_pipeline::tonemapping::Tonemapping,
+    image::{ImageSampler, ImageSamplerDescriptor},
+    picking::Pickable,
+    prelude::*,
+    render::render_resource::TextureFormat,
+    window::PrimaryWindow,
+};
+use birdman_game_session::screen_render_scale::ScreenRenderScale;
+
+#[derive(Clone)]
+struct ReducedTarget {
+    scale: ScreenRenderScale,
+    image: Handle<Image>,
+    extent: UVec2,
+    window_extent: UVec2,
+    composition_camera: Entity,
+    image_node: Entity,
+}
+
+#[derive(Clone, Default)]
+enum ScreenTarget {
+    #[default]
+    Direct,
+    Reduced(ReducedTarget),
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct NativeScreenRender {
+    target: ScreenTarget,
+}
+
+impl NativeScreenRender {
+    pub(crate) fn applied(&self) -> ScreenRenderScale {
+        match &self.target {
+            ScreenTarget::Direct => ScreenRenderScale::Full,
+            ScreenTarget::Reduced(target) => target.scale,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ScreenRenderFailure {
+    WindowUnavailable,
+    WindowHasNoArea,
+    FlightCameraUnavailable,
+    FlightProjectionUnavailable,
+    ImagesUnavailable,
+    OwnedImageUnavailable,
+    CompositionCameraUnavailable,
+    CompositionImageUnavailable,
+}
+
+fn render_image(extent: UVec2) -> Image {
+    let mut image = Image::new_target_texture(
+        extent.x,
+        extent.y,
+        TextureFormat::Rgba8Unorm,
+        Some(TextureFormat::Rgba8UnormSrgb),
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    image
+}
+
+pub(crate) fn apply_scale(
+    world: &mut World,
+    scale: ScreenRenderScale,
+) -> Result<(), ScreenRenderFailure> {
+    let current = world.resource::<NativeScreenRender>().target.clone();
+    if scale == ScreenRenderScale::Full && matches!(current, ScreenTarget::Direct) {
+        return Ok(());
+    }
+    let window_extent = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .map_err(|_| ScreenRenderFailure::WindowUnavailable)?
+        .resolution
+        .physical_size();
+    if scale != ScreenRenderScale::Full && window_extent.min_element() == 0 {
+        return Err(ScreenRenderFailure::WindowHasNoArea);
+    }
+    let camera_entity = world
+        .query::<(Entity, &WorldProjection, &Camera, &Projection)>()
+        .iter(world)
+        .find_map(|(entity, role, _, projection)| {
+            (*role == WorldProjection::FlightCamera).then_some((entity, projection))
+        })
+        .ok_or(ScreenRenderFailure::FlightCameraUnavailable)?;
+    if !matches!(camera_entity.1, Projection::Perspective(_)) {
+        return Err(ScreenRenderFailure::FlightProjectionUnavailable);
+    }
+    let camera_entity = camera_entity.0;
+    world
+        .get_resource::<Assets<Image>>()
+        .ok_or(ScreenRenderFailure::ImagesUnavailable)?;
+    if scale == ScreenRenderScale::Full {
+        world
+            .entity_mut(camera_entity)
+            .insert((RenderTarget::default(), IsDefaultUiCamera));
+        world
+            .get_mut::<Camera>(camera_entity)
+            .unwrap()
+            .sub_camera_view = None;
+        if let ScreenTarget::Reduced(target) = current {
+            world.despawn(target.image_node);
+            world.despawn(target.composition_camera);
+            world
+                .resource_mut::<Assets<Image>>()
+                .remove(target.image.id());
+        }
+        world.resource_mut::<NativeScreenRender>().target = ScreenTarget::Direct;
+        return Ok(());
+    }
+    let images = world
+        .get_resource::<Assets<Image>>()
+        .ok_or(ScreenRenderFailure::ImagesUnavailable)?;
+    if let ScreenTarget::Reduced(target) = &current {
+        if images.get(target.image.id()).is_none() {
+            return Err(ScreenRenderFailure::OwnedImageUnavailable);
+        }
+        if world.get::<Camera2d>(target.composition_camera).is_none() {
+            return Err(ScreenRenderFailure::CompositionCameraUnavailable);
+        }
+        if world.get::<ImageNode>(target.image_node).is_none() {
+            return Err(ScreenRenderFailure::CompositionImageUnavailable);
+        }
+        if target.scale == scale && target.window_extent == window_extent {
+            return Ok(());
+        }
+    }
+    let extent = UVec2::from_array(scale.physical_size(window_extent.x, window_extent.y));
+    let image = match &current {
+        ScreenTarget::Reduced(target) if target.extent == extent => target.image.clone(),
+        _ => world
+            .resource_mut::<Assets<Image>>()
+            .add(render_image(extent)),
+    };
+    let (composition_camera, image_node) = match &current {
+        ScreenTarget::Reduced(target) => (target.composition_camera, target.image_node),
+        ScreenTarget::Direct => {
+            let composition_camera = world
+                .spawn((
+                    Camera2d,
+                    Camera {
+                        order: 1,
+                        ..default()
+                    },
+                    IsDefaultUiCamera,
+                    Tonemapping::None,
+                    Msaa::Off,
+                ))
+                .id();
+            let image_node = world
+                .spawn((
+                    ImageNode::new(image.clone()),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(0),
+                        top: px(0),
+                        width: percent(100),
+                        height: percent(100),
+                        ..default()
+                    },
+                    UiTargetCamera(composition_camera),
+                    GlobalZIndex(i32::MIN),
+                    Pickable::IGNORE,
+                ))
+                .id();
+            (composition_camera, image_node)
+        }
+    };
+    world.get_mut::<ImageNode>(image_node).unwrap().image = image.clone();
+    world
+        .entity_mut(camera_entity)
+        .remove::<IsDefaultUiCamera>()
+        .insert(RenderTarget::Image(image.clone().into()));
+    world
+        .get_mut::<Camera>(camera_entity)
+        .unwrap()
+        .sub_camera_view = Some(SubCameraView {
+        full_size: window_extent,
+        size: window_extent,
+        offset: Vec2::ZERO,
+    });
+    if let Projection::Perspective(projection) =
+        &mut *world.get_mut::<Projection>(camera_entity).unwrap()
+    {
+        projection.aspect_ratio = window_extent.x as f32 / window_extent.y as f32;
+    }
+    if let ScreenTarget::Reduced(target) = current
+        && target.image != image
+    {
+        world
+            .resource_mut::<Assets<Image>>()
+            .remove(target.image.id());
+    }
+    world.resource_mut::<NativeScreenRender>().target = ScreenTarget::Reduced(ReducedTarget {
+        scale,
+        image,
+        extent,
+        window_extent,
+        composition_camera,
+        image_node,
+    });
+    Ok(())
+}
+
+pub(crate) fn synchronize(world: &mut World) {
+    let scale = world.resource::<NativeScreenRender>().applied();
+    if scale == ScreenRenderScale::Full {
+        return;
+    }
+    if world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .is_ok_and(|window| window.resolution.physical_size().min_element() == 0)
+    {
+        return;
+    }
+    if let Err(cause) = apply_scale(world, scale) {
+        world
+            .resource_mut::<NativeSession>()
+            .notice
+            .get_or_insert_with(|| format!("3D描画倍率を適用できない: {cause:?}"));
+    }
+}
+
+pub(crate) fn preserve_logical_projection(
+    rendering: Res<NativeScreenRender>,
+    mut cameras: Query<(&Camera, &mut Projection)>,
+) {
+    if rendering.applied() == ScreenRenderScale::Full {
+        return;
+    }
+    for (camera, mut projection) in &mut cameras {
+        if let Some(sub_view) = camera.sub_camera_view
+            && let Projection::Perspective(perspective) = projection.bypass_change_detection()
+        {
+            perspective.aspect_ratio = sub_view.full_size.x as f32 / sub_view.full_size.y as f32;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        native_session::{FlightInput, MenuAction},
+        water::WaterMaterial,
+        water_reflection::{self, LakeReflectionCamera},
+    };
+    use super::*;
+    use bevy::{
+        camera::{primitives::Frustum, visibility::update_frusta},
+        ecs::schedule::common_conditions::any_match_filter,
+        input_focus::{FocusCause, InputFocus},
+        render::{camera::camera_system, texture::ManualTextureViews},
+        window::{WindowCreated, WindowResized, WindowScaleFactorChanged},
+    };
+
+    fn app() -> (App, Entity, Entity, Handle<WaterMaterial>) {
+        let mut app = App::new();
+        app.init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .init_resource::<ManualTextureViews>()
+            .init_resource::<NativeScreenRender>()
+            .init_resource::<NativeSession>()
+            .init_resource::<InputFocus>()
+            .add_message::<WindowCreated>()
+            .add_message::<WindowResized>()
+            .add_message::<WindowScaleFactorChanged>()
+            .add_message::<AssetEvent<Image>>()
+            .add_systems(Startup, water_reflection::setup_reflection)
+            .add_systems(
+                Update,
+                (
+                    synchronize.run_if(any_match_filter::<(With<PrimaryWindow>, Changed<Window>)>),
+                    water_reflection::project_reflection,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                PostUpdate,
+                (camera_system, preserve_logical_projection, update_frusta).chain(),
+            );
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    resolution: (1281, 721).into(),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        let transform = Transform::from_xyz(2.0, 10.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y);
+        let camera = app
+            .world_mut()
+            .spawn((
+                WorldProjection::FlightCamera,
+                Camera3d::default(),
+                transform,
+                GlobalTransform::from(transform),
+                Projection::Perspective(PerspectiveProjection {
+                    fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
+                        as f32,
+                    far: 200_000.0,
+                    ..default()
+                }),
+                IsDefaultUiCamera,
+            ))
+            .id();
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .add(WaterMaterial::registered(false).unwrap());
+        app.update();
+        (app, window, camera, material)
+    }
+
+    fn reduced(world: &World) -> ReducedTarget {
+        let ScreenTarget::Reduced(target) = &world.resource::<NativeScreenRender>().target else {
+            panic!("expected reduced target");
+        };
+        target.clone()
+    }
+
+    #[test]
+    fn scale_changes_keep_ui_and_flight_state_and_retire_only_owned_resources() {
+        let (mut app, window, camera, _) = app();
+        let button = app
+            .world_mut()
+            .spawn((
+                Button,
+                Node {
+                    width: px(160),
+                    ..default()
+                },
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(button, FocusCause::Pressed);
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            session.observe_frame(true, false);
+            session.tick(FlightInput::default());
+            session.action(MenuAction::Pause).unwrap();
+        }
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        let samples = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .to_vec();
+        let image_count = app.world().resource::<Assets<Image>>().len();
+        let unrelated = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(render_image(UVec2::ONE));
+        for scale in [ScreenRenderScale::ThreeQuarters, ScreenRenderScale::Half] {
+            apply_scale(app.world_mut(), scale).unwrap();
+            app.update();
+            let target = reduced(app.world());
+            assert_eq!(
+                app.world()
+                    .get::<Window>(window)
+                    .unwrap()
+                    .resolution
+                    .physical_size(),
+                UVec2::new(1281, 721)
+            );
+            assert_eq!(app.world().resource::<InputFocus>().get(), Some(button));
+            assert_eq!(app.world().get::<Node>(button).unwrap().width, px(160));
+            assert_eq!(
+                app.world().get::<Pickable>(target.image_node),
+                Some(&Pickable::IGNORE)
+            );
+            assert_eq!(
+                app.world()
+                    .get::<UiTargetCamera>(target.image_node)
+                    .unwrap()
+                    .entity(),
+                target.composition_camera
+            );
+            let mut defaults = app
+                .world_mut()
+                .query_filtered::<Entity, With<IsDefaultUiCamera>>();
+            assert_eq!(
+                defaults.single(app.world()).unwrap(),
+                target.composition_camera
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
+                before
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .samples(),
+                samples
+            );
+        }
+        let target = reduced(app.world());
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        app.update();
+        assert!(matches!(
+            app.world().get::<RenderTarget>(camera),
+            Some(RenderTarget::Window(_))
+        ));
+        assert!(app.world().get::<IsDefaultUiCamera>(camera).is_some());
+        assert!(
+            app.world()
+                .get::<Camera>(camera)
+                .unwrap()
+                .sub_camera_view
+                .is_none()
+        );
+        assert!(app.world().get_entity(target.composition_camera).is_err());
+        assert!(app.world().get_entity(target.image_node).is_err());
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(target.image.id())
+                .is_none()
+        );
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(unrelated.id())
+                .is_some()
+        );
+        assert_eq!(
+            app.world().resource::<Assets<Image>>().len(),
+            image_count + 1
+        );
+        assert_eq!(app.world().resource::<InputFocus>().get(), Some(button));
+    }
+
+    #[test]
+    fn odd_resize_minimize_and_restore_preserve_logical_projection_without_self_updates() {
+        let (mut app, window, camera, material) = app();
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        app.update();
+        let first = reduced(app.world());
+        assert_eq!(first.extent, UVec2::new(960, 540));
+        let image = app
+            .world()
+            .resource::<Assets<Image>>()
+            .get(first.image.id())
+            .unwrap();
+        assert_eq!(image.texture_descriptor.format, TextureFormat::Rgba8Unorm);
+        assert_eq!(
+            image.texture_view_descriptor.as_ref().unwrap().format,
+            Some(TextureFormat::Rgba8UnormSrgb)
+        );
+        let changed = app
+            .world()
+            .entity(camera)
+            .get_ref::<Projection>()
+            .unwrap()
+            .last_changed();
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(camera)
+                .get_ref::<Projection>()
+                .unwrap()
+                .last_changed(),
+            changed
+        );
+        assert_eq!(reduced(app.world()).image, first.image);
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set_physical_resolution(1280, 720);
+        app.update();
+        assert_eq!(reduced(app.world()).image, first.image);
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set_physical_resolution(0, 0);
+        app.update();
+        assert_eq!(reduced(app.world()).image, first.image);
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set_physical_resolution(1919, 1079);
+        app.update();
+        let final_target = reduced(app.world());
+        assert_eq!(final_target.extent, UVec2::new(1439, 809));
+        assert_ne!(final_target.image, first.image);
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(first.image.id())
+                .is_none()
+        );
+        assert_eq!(final_target.composition_camera, first.composition_camera);
+        assert_eq!(final_target.image_node, first.image_node);
+        let world = app.world();
+        let projection = world.get::<Projection>(camera).unwrap();
+        let Projection::Perspective(perspective) = projection else {
+            panic!("perspective");
+        };
+        assert_eq!(perspective.aspect_ratio, 1919.0 / 1079.0);
+        assert_eq!(
+            perspective.fov,
+            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+        );
+        assert!(
+            world
+                .get::<Camera>(camera)
+                .unwrap()
+                .computed
+                .clip_from_view
+                .abs_diff_eq(projection.get_clip_from_view(), 1.0e-5)
+        );
+        let expected = projection.compute_frustum(world.get::<GlobalTransform>(camera).unwrap());
+        for (actual, expected) in world
+            .get::<Frustum>(camera)
+            .unwrap()
+            .half_spaces
+            .iter()
+            .zip(expected.half_spaces)
+        {
+            assert!(actual.normal_d().abs_diff_eq(expected.normal_d(), 1.0e-5));
+        }
+        let mut reflection = app.world_mut().query_filtered::<(&Camera, &Projection, &Transform, &RenderTarget), With<LakeReflectionCamera>>();
+        let (reflection_camera, reflection_projection, transform, render_target) =
+            reflection.single(app.world()).unwrap();
+        let RenderTarget::Image(image) = render_target else {
+            panic!("reflection image");
+        };
+        assert_eq!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(image.handle.id())
+                .unwrap()
+                .size(),
+            UVec2::new(720, 405)
+        );
+        assert!(
+            reflection_camera
+                .computed
+                .clip_from_view
+                .abs_diff_eq(reflection_projection.get_clip_from_view(), 1.0e-5)
+        );
+        let material = app
+            .world()
+            .resource::<Assets<WaterMaterial>>()
+            .get(material.id())
+            .unwrap();
+        assert!(material.reflection_clip_from_world.abs_diff_eq(
+            reflection_camera.computed.clip_from_view * transform.to_matrix().inverse(),
+            1.0e-5
+        ));
+    }
+
+    #[test]
+    fn missing_image_rejects_partial_changes_and_full_resolution_recovers() {
+        let (mut app, _, camera, _) = app();
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        let previous = reduced(app.world());
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .remove(previous.image.id());
+        let count = app.world().resource::<Assets<Image>>().len();
+        assert_eq!(
+            apply_scale(app.world_mut(), ScreenRenderScale::Half),
+            Err(ScreenRenderFailure::OwnedImageUnavailable)
+        );
+        assert_eq!(reduced(app.world()).scale, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(reduced(app.world()).image, previous.image);
+        assert_eq!(app.world().resource::<Assets<Image>>().len(), count);
+        app.world_mut().resource_mut::<NativeSession>().notice =
+            Some("original failure".to_owned());
+        synchronize(app.world_mut());
+        assert_eq!(
+            app.world().resource::<NativeSession>().notice.as_deref(),
+            Some("original failure")
+        );
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().applied(),
+            ScreenRenderScale::Full
+        );
+        assert!(app.world().get::<IsDefaultUiCamera>(camera).is_some());
+        assert!(app.world().get_entity(previous.image_node).is_err());
+    }
+}

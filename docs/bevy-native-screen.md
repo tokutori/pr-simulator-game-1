@@ -60,6 +60,9 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 既定のTypical環境を維持し、気象選択は共有Rustの設定解決と準備処理へ接続する。
 
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
+Screenの3D描画倍率は同じ設定経路で100%・75%・50%から選択し、既定100%を維持する。
+縮小時は3Dと反射の内部bufferだけを変更し、UI・入力座標・Window・画角を原寸に保持する。0寸法では既存資源を維持し、復帰時に再適用する。
+倍率による画素数削減、表示同期の要求、12.5 msの処理予算を個別に評価する。手動倍率の追加を80 FPS達成として扱わない。
 波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。
 GPUへの投影、mesh、WGSLはBevy adapterが所有する。
 水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。波と全天画像の生成は共有Rustへ集約し、Web/BevyはGPU投影を担当する。検証境界と未完了項目は[共有モデル](shared-lake-render-model.md#検証境界と残作業)へ記載する。
