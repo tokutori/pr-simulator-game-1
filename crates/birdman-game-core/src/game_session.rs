@@ -1,5 +1,6 @@
 use core::time::Duration;
 
+use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
 use crate::flight_record::{
@@ -331,20 +332,6 @@ pub enum CountdownProgress {
     },
     /// The observation launched the initial state exactly once, at physical tick zero.
     Launched,
-}
-
-#[derive(Clone, Copy)]
-struct CountdownState {
-    token: u32,
-    duration_seconds: u32,
-    elapsed: Duration,
-}
-
-impl CountdownState {
-    const fn remaining_seconds(self) -> u32 {
-        self.duration_seconds
-            .saturating_sub(self.elapsed.as_secs() as u32)
-    }
 }
 
 #[expect(
@@ -906,19 +893,14 @@ impl<'a> GameSession<'a> {
         if self.phase() != SessionPhase::BriefingReady {
             return Err(GameSessionError::InvalidTransition);
         }
-        if duration_seconds == 0 {
-            return Err(GameSessionError::InvalidCountdown);
-        }
-        let token = self
-            .countdown_token
-            .checked_add(1)
-            .ok_or(GameSessionError::CountdownTokenExhausted)?;
-        self.configured_mut()?.phase = ConfiguredPhase::Countdown(CountdownState {
-            token,
-            duration_seconds,
-            elapsed: Duration::ZERO,
-        });
-        self.countdown_token = token;
+        let countdown = CountdownState::try_start(self.countdown_token, duration_seconds).map_err(
+            |error| match error {
+                CountdownStartError::InvalidDuration => GameSessionError::InvalidCountdown,
+                CountdownStartError::TokenExhausted => GameSessionError::CountdownTokenExhausted,
+            },
+        )?;
+        self.configured_mut()?.phase = ConfiguredPhase::Countdown(countdown);
+        self.countdown_token = countdown.token();
         Ok(())
     }
 
@@ -928,7 +910,7 @@ impl<'a> GameSession<'a> {
             Some(ConfiguredSession {
                 phase: ConfiguredPhase::Countdown(countdown),
                 ..
-            }) => Some(countdown.token),
+            }) => Some(countdown.token()),
             _ => None,
         }
     }
@@ -939,7 +921,7 @@ impl<'a> GameSession<'a> {
             Some(ConfiguredSession {
                 phase: ConfiguredPhase::Countdown(countdown),
                 ..
-            }) => Some(countdown.elapsed.as_secs_f64()),
+            }) => Some(Duration::from_nanos(countdown.elapsed_nanos()).as_secs_f64()),
             _ => None,
         }
     }
@@ -958,29 +940,35 @@ impl<'a> GameSession<'a> {
         elapsed_seconds: f64,
         frame_available: bool,
     ) -> Result<CountdownProgress, GameSessionError> {
-        if self.countdown_token() != Some(token) {
-            return Ok(CountdownProgress::Ignored);
-        }
-        let configured = self.configured_mut()?;
-        let ConfiguredPhase::Countdown(mut countdown) = configured.phase else {
+        let Some(configured) = self.configured() else {
             return Ok(CountdownProgress::Ignored);
         };
-        let elapsed = Duration::try_from_secs_f64(elapsed_seconds)
-            .map_err(|_| GameSessionError::InvalidCountdownElapsed)?;
-        let advanced = countdown
-            .elapsed
-            .checked_add(elapsed)
-            .ok_or(GameSessionError::InvalidCountdownElapsed)?;
-        if !frame_available {
-            configured.phase = ConfiguredPhase::Ready;
-            return Ok(CountdownProgress::Cancelled);
-        }
-        if advanced < Duration::from_secs(u64::from(countdown.duration_seconds)) {
-            countdown.elapsed = advanced;
-            configured.phase = ConfiguredPhase::Countdown(countdown);
-            return Ok(CountdownProgress::Waiting {
-                remaining_seconds: countdown.remaining_seconds(),
-            });
+        let ConfiguredPhase::Countdown(countdown) = configured.phase else {
+            return Ok(CountdownProgress::Ignored);
+        };
+        let advanced = Duration::try_from_secs_f64(elapsed_seconds)
+            .ok()
+            .and_then(|elapsed| {
+                Duration::from_nanos(countdown.elapsed_nanos()).checked_add(elapsed)
+            })
+            .map(|elapsed| elapsed.as_nanos());
+        let advance = countdown
+            .observe(token, advanced, frame_available)
+            .map_err(|()| GameSessionError::InvalidCountdownElapsed)?;
+        let configured = self.configured_mut()?;
+        match advance {
+            CountdownAdvance::Ignored => return Ok(CountdownProgress::Ignored),
+            CountdownAdvance::Cancelled => {
+                configured.phase = ConfiguredPhase::Ready;
+                return Ok(CountdownProgress::Cancelled);
+            }
+            CountdownAdvance::Waiting(countdown) => {
+                configured.phase = ConfiguredPhase::Countdown(countdown);
+                return Ok(CountdownProgress::Waiting {
+                    remaining_seconds: countdown.remaining_seconds(),
+                });
+            }
+            CountdownAdvance::LaunchReady => {}
         }
         let configuration = &configured.configuration;
         let initial = configuration.initial_state();
