@@ -10,6 +10,7 @@ import { analysisCursorMatches, validateAnalysisInput } from "../game/flight-ana
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect } from "../generated/game-ui-effects.js";
+import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
 import type { SessionCommand } from "./game-ui-types.js";
 import { sharedGameUiAction } from "./game-view.js";
 
@@ -171,6 +172,7 @@ export type LakeWaterQualityUiState =
 export interface AppModel {
   readonly sharedGameUi: GameUiView | null;
   readonly lakeWaterQuality: LakeWaterQualityUiState;
+  readonly screenRenderScale: GameUiPlatformInput["screen_render_scale"];
   readonly flightLogDownload: FlightLogDownloadState;
   readonly nextFlightLogDownloadRequestId: number;
   readonly flightRecordSourceRevision: number;
@@ -390,7 +392,11 @@ export interface AppTransition {
 }
 
 export function canSelectLakeWaterQuality(model: AppModel): boolean {
-  return model.presentation.type === "ready" && model.pendingGameRequestId === null && model.lakeWaterQuality.kind !== "applying"
+  return model.lakeWaterQuality.kind !== "applying" && canSelectRenderingSettings(model);
+}
+
+function canSelectRenderingSettings(model: AppModel): boolean {
+  return model.presentation.type === "ready" && model.pendingGameRequestId === null
     && (model.gameSession.kind === "setup" || (model.gameSession.kind === "paused-flight"
       && model.sharedGameUi?.selections.pause_overlay === "settings" && model.flightExecution.kind !== "stopped"));
 }
@@ -475,6 +481,7 @@ export function createInitialAppModel(): AppModel {
   return freezeAppModel({
     sharedGameUi: null,
     lakeWaterQuality: Object.freeze({ kind: "ready", applied: "high", cleanup: Object.freeze({ kind: "complete" }) }),
+    screenRenderScale: "100",
     flightLogDownload: Object.freeze({ kind: "idle" }),
     nextFlightLogDownloadRequestId: 1,
     flightRecordSourceRevision: 0,
@@ -1138,6 +1145,10 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
   }
   const command = effect.command;
   switch (command.kind) {
+    case "set_screen_render_scale":
+      return model.presentation.type === "ready" && model.presentation.mode === "screen"
+          && canSelectRenderingSettings(model)
+        ? transition(withModel(model, { screenRenderScale: command.scale })) : transition(model);
     case "set_water_quality": {
       if (!canSelectLakeWaterQuality(model)
           || command.quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready"

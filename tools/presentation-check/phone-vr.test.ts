@@ -776,6 +776,7 @@ class FakeRenderer implements RendererAdapter {
   transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose { return pose; }
   resize(): void {}
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
+  setScreenRenderScale(): void {}
   setSelectRayHandler(): void {}
   dispose(): void {}
 

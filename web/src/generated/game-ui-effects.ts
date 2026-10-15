@@ -77,6 +77,12 @@ export type GameUiEffect = {
      * Operation to interpret at the platform boundary.
      */
     readonly command: {
+        readonly kind: "set_screen_render_scale";
+        /**
+         * Requested fraction of each physical rendering dimension.
+         */
+        readonly scale: "100" | "75" | "50";
+    } | {
         readonly kind: "set_water_quality";
         /**
          * Requested quality.

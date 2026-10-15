@@ -849,6 +849,7 @@ mod tests {
     fn environment_app() -> App {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
+            .init_resource::<super::super::screen_render::NativeScreenRender>()
             .init_resource::<CameraMode>()
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()

@@ -142,6 +142,7 @@ function runSideEffects(actions: readonly (() => void)[]): void {
 }
 
 function renderModel(): void {
+  flightRenderer?.setScreenRenderScale(Number(model.screenRenderScale) / 100);
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const domVisible = screenUiVisible(model.presentation);
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
@@ -759,6 +760,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
     flight_log_pending: model.flightLogDownload.kind === "pending",
     water_quality: quality.applied,
     water_quality_operation: waterQualityOperation,
+    screen_render_scale: model.screenRenderScale,
     notification,
     flight_controller_failure: model.flightExecution.kind === "stopped"
       && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,

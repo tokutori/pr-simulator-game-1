@@ -381,6 +381,7 @@ export function createThreeRenderer(
   let width = 0;
   let height = 0;
   let pixelRatio = 0;
+  let screenRenderScale = 1;
   let currentPanel: Extract<BackendFrame["panel"], { readonly kind: "visible" }>["panel"] | null = null;
   let stereoPresentation: StereoPresentationProfile | null = null;
   let xrState: ThreeWebXrState = { type: "idle" };
@@ -407,6 +408,7 @@ export function createThreeRenderer(
     cameraMode?: FlightCameraMode;
     cameraView?: CinematicCameraView | null;
     stereo?: StereoPresentationProfile | null;
+    screenRenderScale?: number;
     viewport?: ViewportSize;
     lake?: LakeVisualCondition;
     sky?: LakeSkyCondition | null;
@@ -505,6 +507,7 @@ export function createThreeRenderer(
             if (pending.cameraMode !== undefined) rendererAdapter.setFlightCameraMode(pending.cameraMode);
             if ("cameraView" in pending) rendererAdapter.setCinematicCameraView(pending.cameraView ?? null);
             if ("stereo" in pending) rendererAdapter.setStereoPresentation(pending.stereo ?? null);
+            if (pending.screenRenderScale !== undefined) rendererAdapter.setScreenRenderScale(pending.screenRenderScale);
             if (pending.viewport !== undefined) rendererAdapter.resize(pending.viewport);
             if (pending.lake !== undefined) rendererAdapter.setLakeVisualCondition(pending.lake);
             if ("sky" in pending) rendererAdapter.setLakeSkyCondition(pending.sky ?? null);
@@ -650,8 +653,9 @@ export function createThreeRenderer(
         reflectionCamera.projectionMatrixInverse.copy(viewCamera.projectionMatrixInverse);
         reflectionCamera.updateMatrixWorld(true);
         reflectionMatrix.multiplyMatrices(reflectionCamera.projectionMatrix, reflectionCamera.matrixWorldInverse);
-        reflectionTarget.setSize(Math.max(256, Math.min(1024, Math.ceil(width * pixelRatio / 2))),
-          Math.max(128, Math.min(1024, Math.ceil(height * pixelRatio / 2))));
+        const reflectionPixelRatio = pixelRatio * (renderer.xr.isPresenting || stereoPresentation !== null ? 1 : screenRenderScale);
+        reflectionTarget.setSize(Math.max(256, Math.min(1024, Math.ceil(width * reflectionPixelRatio / 2))),
+          Math.max(128, Math.min(1024, Math.ceil(height * reflectionPixelRatio / 2))));
         const previousTarget = renderer.getRenderTarget();
         const previousBackground = scene.background;
         const previousAlpha = renderer.getClearAlpha();
@@ -704,6 +708,15 @@ export function createThreeRenderer(
       camera.focus = profile?.focusDistanceMeters ?? 10;
       if (profile !== null) stereoEffect.setEyeSeparation(profile.eyeSeparationMeters);
       camera.updateProjectionMatrix();
+      if (width > 0 && height > 0 && !renderer.xr.isPresenting) resizeIfNeeded({ x: width, y: height, pixelRatio });
+    },
+    setScreenRenderScale(factor: number) {
+      ensureActive(disposed);
+      if (!Number.isFinite(factor) || factor <= 0 || factor > 1) throw new RangeError("Screen render scale must be within (0, 1]");
+      if (screenRenderScale === factor && pendingViewInputs?.screenRenderScale === undefined) return;
+      if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ screenRenderScale: factor }); return; }
+      screenRenderScale = factor;
+      if (width > 0 && height > 0 && !renderer.xr.isPresenting) resizeIfNeeded({ x: width, y: height, pixelRatio });
     },
     dispose() {
       if (disposed) return;
@@ -958,13 +971,18 @@ export function createThreeRenderer(
   }
 
   function resizeIfNeeded(viewport: ViewportSize): void {
-    if (viewport.x === width && viewport.y === height && viewport.pixelRatio === pixelRatio) return;
+    if (viewport.x <= 0 || viewport.y <= 0) return;
+    const drawingRatio = viewport.pixelRatio * (stereoPresentation !== null ? 1 : screenRenderScale);
+    const drawable = Math.floor(viewport.x * drawingRatio) > 0 && Math.floor(viewport.y * drawingRatio) > 0;
+    if (viewport.x === width && viewport.y === height && viewport.pixelRatio === pixelRatio && (!drawable || renderer.getPixelRatio() === drawingRatio)) return;
     width = viewport.x;
     height = viewport.y;
     pixelRatio = viewport.pixelRatio;
-    renderer.setPixelRatio(pixelRatio);
-    if (stereoPresentation !== null) stereoEffect.setSize(width, height);
-    else renderer.setSize(width, height, false);
+    if (drawable) {
+      renderer.setPixelRatio(drawingRatio);
+      if (stereoPresentation !== null) stereoEffect.setSize(width, height);
+      else renderer.setSize(width, height, false);
+    }
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     titleCameraPose = titleScreenCameraPoseForViewport(width, height, screenVerticalFieldOfViewDegrees);

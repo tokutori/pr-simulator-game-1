@@ -59,7 +59,9 @@ vi.mock("three", async (importOriginal) => {
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
     getClearColor(target: Color): Color { return target.copy(this.clearColor); }
     getClearAlpha(): number { return this.clearAlpha; }
-    setPixelRatio(): void {}
+    private pixelRatio = 1;
+    setPixelRatio(value: number): void { this.pixelRatio = value; }
+    getPixelRatio(): number { return this.pixelRatio; }
     setSize(width: number, height: number): void { this.size.set(width, height); }
     getSize(target: Vector2): Vector2 { return target.copy(this.size); }
     setViewport(): void {}

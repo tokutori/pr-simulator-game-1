@@ -99,6 +99,7 @@ export interface RendererAdapter {
   transformTrackingPose(pose: Pose): Pose;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
+  setScreenRenderScale(factor: number): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;
   dispose(): void;
 }

@@ -77,6 +77,12 @@ export type GameUiAction = {
      * Explicit capability-bound operation.
      */
     readonly command: {
+        readonly kind: "set_screen_render_scale";
+        /**
+         * Requested fraction of each physical rendering dimension.
+         */
+        readonly scale: "100" | "75" | "50";
+    } | {
         readonly kind: "set_water_quality";
         /**
          * Requested quality.

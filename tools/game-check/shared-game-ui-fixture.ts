@@ -39,6 +39,7 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
     flight_log_pending: false,
     water_quality: "high",
     water_quality_operation: Object.freeze({ kind: "idle" }),
+    screen_render_scale: "100",
     notification: "",
     flight_controller_failure: null,
     head_hud_failure: null,

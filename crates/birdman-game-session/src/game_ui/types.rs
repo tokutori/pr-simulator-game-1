@@ -207,6 +207,11 @@ pub enum GameUiPresentationMode {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
+    /// Changes only the Screen 3D drawing resolution.
+    SetScreenRenderScale {
+        /// Requested fraction of each physical rendering dimension.
+        scale: crate::screen_render_scale::ScreenRenderScale,
+    },
     /// Changes render-only mesh quality.
     SetWaterQuality {
         /// Requested quality.
@@ -361,6 +366,8 @@ pub struct GameUiPlatformInput {
     pub water_quality: GameUiWaterQuality,
     /// Actual resource preparation, commitment and cleanup observation.
     pub water_quality_operation: GameUiWaterQualityOperation,
+    /// Retained Screen-only resolution preference, independent of the active VR mode.
+    pub screen_render_scale: crate::screen_render_scale::ScreenRenderScale,
     /// Platform operation feedback.
     pub notification: String,
     /// Captured flight-controller resource failure; the session retains its last valid state.
