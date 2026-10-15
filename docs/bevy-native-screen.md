@@ -19,6 +19,15 @@ Windowsでの開発・確認用ディレクトリは`C:\projects\birdman\tokutor
 cargo run -p birdman-game-bevy --release --locked
 ```
 
+表示同期による上限と処理能力を区別する場合は、明示的に`--no-vsync`を指定する。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --no-vsync
+```
+
+通常はFifoを維持し、指定時だけAutoNoVsyncを要求する。GPU/OSの対応状況に応じてImmediate→Mailbox→Fifoを選択するため、同期解除は保証されない。
+tearingやGPU負荷・消費電力の増加が生じうる。物理tick・入力割当・画質・安全停止は同じ契約を使用する。
+
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
 [公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従うWindowsのnative build環境とGPU driverが必要である。
 Node.js、npm、TypeScript、ブラウザ、WASM runtimeはnative版の起動条件に含めない。
@@ -305,6 +314,8 @@ WebとBevyは右上に描画FPSを表示する。750 ms窓で集計し、起動�
 100 Hzの物理tickとは独立する。Bevyの値は実時間Updateの周期であり、GPU present完了を直接測定する値ではない。
 同じ派生labelのText更新を省略し、表示・入力・Rustの正本は維持する。
 PC Screenの目標は80 FPS相当・12.5 ms/frameである。現在の検査画面は60 Hzであり、80 FPSの実表示受入は未実施である。
+`--no-vsync`はNativeの提示方式の要求だけを変更する。既存診断のwindow.present_modeも要求値であり、GPU/OSが実際に選択した方式と区別する。
+Update頻度の増加、80 Hz以上の実表示、12.5 msの処理予算達成を個別に確認する。WebのrequestAnimationFrameには影響しない。
 FPSの単体試験、debug版の撮影、以前のrelease検査を、最新版の性能達成として扱わない。
 
 ### Playable model 2 / controller 3の確認

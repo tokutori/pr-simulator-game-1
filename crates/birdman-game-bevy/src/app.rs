@@ -29,6 +29,7 @@ use bevy::{
     input::{ButtonState, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion},
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
+    window::PresentMode,
 };
 use birdman_game_core::{PHYSICS_HZ, SessionPhase};
 use native_session::{FlightInput, NativeSession};
@@ -55,8 +56,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_directory = None;
     let mut verification_size = None;
     let mut water_verification = None;
+    let mut no_vsync = false;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            "--no-vsync" => no_vsync = true,
             "--font" => {
                 font_path = arguments
                     .next()
@@ -86,7 +89,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--verify DIR [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
+                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
                 );
                 return Ok(());
             }
@@ -116,11 +119,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Birdman native Screen — Bevy".into(),
-                    resolution: verification_size.unwrap_or((1280, 720)).into(),
-                    ..default()
-                }),
+                primary_window: Some(primary_window(verification_size, no_vsync)),
                 ..default()
             })
             .set(AssetPlugin {
@@ -230,6 +229,19 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("Native app exited with an error".into());
     }
     Ok(())
+}
+
+fn primary_window(verification_size: Option<(u32, u32)>, no_vsync: bool) -> Window {
+    Window {
+        title: "Birdman native Screen — Bevy".into(),
+        resolution: verification_size.unwrap_or((1280, 720)).into(),
+        present_mode: if no_vsync {
+            PresentMode::AutoNoVsync
+        } else {
+            PresentMode::Fifo
+        },
+        ..default()
+    }
 }
 
 fn parse_verification_size(value: &str) -> Result<(u32, u32), &'static str> {
@@ -434,6 +446,22 @@ mod tests {
         keyboard::{Key, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion},
     };
+
+    #[test]
+    fn primary_window_only_requests_no_vsync_when_explicitly_selected() {
+        for (no_vsync, expected_mode) in
+            [(false, PresentMode::Fifo), (true, PresentMode::AutoNoVsync)]
+        {
+            for (size, expected_size) in
+                [(None, (1280.0, 720.0)), (Some((800, 600)), (800.0, 600.0))]
+            {
+                let window = primary_window(size, no_vsync);
+                assert_eq!(window.present_mode, expected_mode);
+                assert_eq!(window.resolution.width(), expected_size.0);
+                assert_eq!(window.resolution.height(), expected_size.1);
+            }
+        }
+    }
 
     #[test]
     fn verification_size_accepts_explicit_positive_dimensions() {
