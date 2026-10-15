@@ -3,7 +3,7 @@ mod countdown {
 
     #[verus_spec]
     fn obsolete_token_cannot_advance_attempt() {
-        let started = CountdownState::try_start(0, 3);
+        let started = start_countdown(0, 3);
         if let Ok(state) = started {
             let observed = state.observe(0, Some(3_000_000_000), true);
             let advanced = match observed {

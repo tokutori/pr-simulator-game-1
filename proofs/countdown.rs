@@ -3,7 +3,7 @@ mod countdown {
 
     #[verus_spec]
     fn verify_countdown_start(previous_token: u32, duration_seconds: u32) {
-        let started = CountdownState::try_start(previous_token, duration_seconds);
+        let started = start_countdown(previous_token, duration_seconds);
         match started {
             Ok(state) => {
                 let remaining = state.remaining_seconds();

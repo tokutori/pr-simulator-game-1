@@ -37,8 +37,7 @@ verus! {
     }
 }
 
-impl CountdownState {
-    #[cfg_attr(verus_only, verus_spec(result =>
+#[cfg_attr(verus_only, verus_spec(result =>
         ensures match result {
             Ok(state) => state.valid()
                 && state.token_value() == previous_token as int + 1
@@ -48,24 +47,25 @@ impl CountdownState {
             Err(CountdownStartError::TokenExhausted) =>
                 duration_seconds > 0 && previous_token == u32::MAX,
         },
-    ))]
-    pub(crate) const fn try_start(
-        previous_token: u32,
-        duration_seconds: u32,
-    ) -> Result<Self, CountdownStartError> {
-        if duration_seconds == 0 {
-            return Err(CountdownStartError::InvalidDuration);
-        }
-        if previous_token == u32::MAX {
-            return Err(CountdownStartError::TokenExhausted);
-        }
-        Ok(Self {
-            token: previous_token + 1,
-            duration_seconds,
-            elapsed_nanos: 0,
-        })
+))]
+pub(crate) const fn start_countdown(
+    previous_token: u32,
+    duration_seconds: u32,
+) -> Result<CountdownState, CountdownStartError> {
+    if duration_seconds == 0 {
+        return Err(CountdownStartError::InvalidDuration);
     }
+    if previous_token == u32::MAX {
+        return Err(CountdownStartError::TokenExhausted);
+    }
+    Ok(CountdownState {
+        token: previous_token + 1,
+        duration_seconds,
+        elapsed_nanos: 0,
+    })
+}
 
+impl CountdownState {
     #[cfg_attr(verus_only, verus_spec(result =>
         ensures result == self.token_value(),
     ))]

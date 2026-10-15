@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState};
+use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
 use crate::flight_record::{
@@ -893,15 +893,12 @@ impl<'a> GameSession<'a> {
         if self.phase() != SessionPhase::BriefingReady {
             return Err(GameSessionError::InvalidTransition);
         }
-        let countdown =
-            CountdownState::try_start(self.countdown_token, duration_seconds).map_err(|error| {
-                match error {
-                    CountdownStartError::InvalidDuration => GameSessionError::InvalidCountdown,
-                    CountdownStartError::TokenExhausted => {
-                        GameSessionError::CountdownTokenExhausted
-                    }
-                }
-            })?;
+        let countdown = start_countdown(self.countdown_token, duration_seconds).map_err(
+            |error| match error {
+                CountdownStartError::InvalidDuration => GameSessionError::InvalidCountdown,
+                CountdownStartError::TokenExhausted => GameSessionError::CountdownTokenExhausted,
+            },
+        )?;
         self.configured_mut()?.phase = ConfiguredPhase::Countdown(countdown);
         self.countdown_token = countdown.token();
         Ok(())
