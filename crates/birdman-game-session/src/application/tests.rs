@@ -1,6 +1,7 @@
 use super::*;
 use birdman_game_core::{
-    SessionEndReason, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
+    FlightRecordQueryError, ReplayClockError, SessionEndReason, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget,
 };
 use birdman_game_format::{AssistanceLevel, InformationLevel};
 
@@ -38,6 +39,133 @@ fn neutral() -> TailFlightTickInput {
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
         TailPilotPositionCommand::Hold,
     )
+}
+
+#[test]
+fn record_commands_keep_the_four_wire_shapes_and_reject_other_ui_actions() {
+    for (command, json) in [
+        (
+            RecordCommand::SeekAnalysis { time_seconds: 0.01 },
+            r#"{"kind":"seek_analysis","time_seconds":0.01}"#,
+        ),
+        (
+            RecordCommand::SeekReplay { time_seconds: 0.01 },
+            r#"{"kind":"seek_replay","time_seconds":0.01}"#,
+        ),
+        (
+            RecordCommand::ToggleReplayPlaying {},
+            r#"{"kind":"toggle_replay_playing"}"#,
+        ),
+        (
+            RecordCommand::SetReplayRate { code: 2 },
+            r#"{"kind":"set_replay_rate","code":2}"#,
+        ),
+    ] {
+        assert_eq!(serde_json::to_string(&command).unwrap(), json);
+        assert_eq!(
+            serde_json::from_str::<RecordCommand>(json).unwrap(),
+            command
+        );
+    }
+    for json in [
+        r#"{"kind":"toggle_technical"}"#,
+        r#"{"kind":"session","command":{"kind":"pause"}}"#,
+        r#"{"kind":"toggle_replay_playing","code":1}"#,
+    ] {
+        assert!(serde_json::from_str::<RecordCommand>(json).is_err());
+    }
+}
+
+#[test]
+fn canonical_record_effects_keep_clock_results_record_content_and_classified_failures() {
+    let mut application = prepared();
+    assert_eq!(
+        application.execute_record(RecordCommand::SeekReplay { time_seconds: 0.0 }),
+        Err(ApplicationError::Session(
+            GameSessionError::InvalidTransition
+        ))
+    );
+    launch(&mut application);
+    for _ in 0..3 {
+        application.advance_tail_flight_tick(neutral()).unwrap();
+    }
+    execute(&mut application, SessionCommand::EnterReplay {});
+    let record = application.core_session().playback_record().unwrap();
+    let samples = record.samples().to_vec();
+    let finalization = record.finalization();
+    for (command, time, playing, rate) in [
+        (
+            RecordCommand::SeekAnalysis {
+                time_seconds: 0.015,
+            },
+            0.0,
+            false,
+            1,
+        ),
+        (
+            RecordCommand::SeekReplay { time_seconds: 0.01 },
+            0.01,
+            false,
+            1,
+        ),
+        (RecordCommand::ToggleReplayPlaying {}, 0.01, true, 1),
+        (RecordCommand::SetReplayRate { code: 2 }, 0.01, true, 2),
+        (RecordCommand::ToggleReplayPlaying {}, 0.01, false, 2),
+    ] {
+        application.execute_record(command).unwrap();
+        let clock = application.core_session().playback_clock().unwrap();
+        assert_eq!(
+            (
+                clock.time_seconds(),
+                clock.is_playing(),
+                clock.rate().code()
+            ),
+            (time, playing, rate)
+        );
+    }
+    for (command, expected) in [
+        (
+            RecordCommand::SeekAnalysis {
+                time_seconds: f64::NAN,
+            },
+            ApplicationError::Record(FlightRecordQueryError::InvalidTime),
+        ),
+        (
+            RecordCommand::SeekAnalysis {
+                time_seconds: f64::INFINITY,
+            },
+            ApplicationError::Record(FlightRecordQueryError::InvalidTime),
+        ),
+        (
+            RecordCommand::SeekAnalysis {
+                time_seconds: -0.01,
+            },
+            ApplicationError::Record(FlightRecordQueryError::InvalidTime),
+        ),
+        (
+            RecordCommand::SeekAnalysis { time_seconds: 0.04 },
+            ApplicationError::Record(FlightRecordQueryError::OutsideRecordedRange),
+        ),
+        (
+            RecordCommand::SeekReplay { time_seconds: 0.04 },
+            ApplicationError::Session(GameSessionError::PlaybackClock(
+                ReplayClockError::InvalidSeekTime,
+            )),
+        ),
+        (
+            RecordCommand::SetReplayRate { code: 99 },
+            ApplicationError::Session(GameSessionError::PlaybackClock(
+                ReplayClockError::UnsupportedRate,
+            )),
+        ),
+    ] {
+        let clock = application.core_session().playback_clock();
+        assert_eq!(application.execute_record(command), Err(expected));
+        assert_eq!(application.core_session().playback_clock(), clock);
+    }
+    let record = application.core_session().playback_record().unwrap();
+    assert_eq!(record.samples(), samples);
+    assert_eq!(record.finalization(), finalization);
 }
 
 #[test]

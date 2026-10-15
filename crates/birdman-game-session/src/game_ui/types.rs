@@ -1,4 +1,4 @@
-use crate::application::SessionCommand;
+use crate::application::{RecordCommand, SessionCommand};
 use birdman_game_core::{FlightRecord, GameSession, SessionScenarioIdentity};
 use birdman_game_format::{DifficultyPreset, DifficultySettings, HudCue};
 use serde::{Deserialize, Serialize};
@@ -313,7 +313,7 @@ pub enum GameUiEffect {
     /// Queries existing record or clock APIs.
     Record {
         /// Admitted seek, clock toggle or rate action.
-        action: GameUiAction,
+        action: RecordCommand,
     },
 }
 

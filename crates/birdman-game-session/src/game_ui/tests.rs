@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::commands::{control_mode, prepare_flight, resolve_difficulty};
-use crate::application::{ApplicationError, SessionCommand};
+use crate::application::{ApplicationError, RecordCommand, SessionCommand};
 use birdman_game_core::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, ControlMode, DynamicsError,
     GameSession, HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, PauseReason,
@@ -253,9 +253,22 @@ fn record_replacement_and_rejected_commands_invalidate_without_a_second_source_c
     assert_ne!(first.samples(), second.samples());
     application.open_archived_replay(first).unwrap();
     let original = revision(&mut application, &state, &platform);
-    application.seek_playback(0.005).unwrap();
-    application.set_playback_playing(true).unwrap();
-    application.set_playback_rate_code(2).unwrap();
+    application
+        .execute_record(RecordCommand::SeekAnalysis {
+            time_seconds: 0.005,
+        })
+        .unwrap();
+    application
+        .execute_record(RecordCommand::SeekReplay {
+            time_seconds: 0.005,
+        })
+        .unwrap();
+    application
+        .execute_record(RecordCommand::ToggleReplayPlaying {})
+        .unwrap();
+    application
+        .execute_record(RecordCommand::SetReplayRate { code: 2 })
+        .unwrap();
     application.advance_playback(0.001).unwrap();
     assert_eq!(revision(&mut application, &state, &platform), original);
     application
@@ -929,7 +942,7 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
     assert_eq!(
         update.effects,
         vec![GameUiEffect::Record {
-            action: GameUiAction::ToggleReplayPlaying {}
+            action: RecordCommand::ToggleReplayPlaying {}
         }]
     );
 }

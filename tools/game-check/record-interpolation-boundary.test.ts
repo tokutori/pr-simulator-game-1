@@ -46,6 +46,7 @@ describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
       const stored = archive.readFlightLog("json");
       const clock = archive.readPlaybackClock();
       for (const fraction of [0.25, 0.5, 0.75]) {
+        expect(() => archive.executeSharedRecordAction({ kind: "seek_analysis", time_seconds: fraction / 100 })).not.toThrow();
         expect(() => archive.queryRecordSample(fraction / 100)).toThrow(/NonFiniteInterpolation/);
       }
       expectAngle(archive.queryRecordSample(0), angle, start);

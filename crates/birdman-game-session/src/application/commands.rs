@@ -1,6 +1,6 @@
 use birdman_game_core::{
-    ActuatorError, ControlMode, CourseAxis, FbwAuthority, GameSession, GameSessionError,
-    SessionPhase, TailControlProfile,
+    ActuatorError, ControlMode, CourseAxis, FbwAuthority, FlightRecord, FlightRecordQueryError,
+    GameSession, GameSessionError, SessionPhase, TailControlProfile,
 };
 use birdman_game_format::{
     AssistanceLevel, ConfigurationError, DifficultyPreset, DifficultySettings,
@@ -72,6 +72,43 @@ pub enum SessionCommand {
         /// Requested visibility.
         visible: bool,
     },
+}
+
+/// Canonical operations on the retained record and its existing playback clock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecordCommand {
+    /// Validates an analysis cursor request without moving the playback clock.
+    SeekAnalysis {
+        /// Requested recorded time.
+        time_seconds: f64,
+    },
+    /// Moves the existing playback clock.
+    SeekReplay {
+        /// Requested recorded time.
+        time_seconds: f64,
+    },
+    /// Toggles the existing playback clock.
+    ToggleReplayPlaying {},
+    /// Selects the existing half, normal or double playback rate by stable code.
+    SetReplayRate {
+        /// Zero is half speed, one normal speed, two double speed.
+        code: u32,
+    },
+}
+
+pub(crate) fn validate_record_time(
+    record: &FlightRecord,
+    time_seconds: f64,
+) -> Result<(), FlightRecordQueryError> {
+    if !time_seconds.is_finite() || time_seconds < 0.0 {
+        return Err(FlightRecordQueryError::InvalidTime);
+    }
+    if time_seconds > record.duration_seconds()? {
+        return Err(FlightRecordQueryError::OutsideRecordedRange);
+    }
+    Ok(())
 }
 
 /// Shared selection and execution failure with its original classified cause.

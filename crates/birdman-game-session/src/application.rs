@@ -2,7 +2,7 @@
 
 pub(crate) mod commands;
 
-pub use commands::{ApplicationError, PreparedFlight, SessionCommand};
+pub use commands::{ApplicationError, PreparedFlight, RecordCommand, SessionCommand};
 
 use crate::game_ui::{GameUiError, GameUiStructureCache, GameUiStructureKey};
 use birdman_game_core::{
@@ -256,6 +256,40 @@ impl ApplicationSession {
         self.session.open_archived_replay(record)?;
         self.prepared = None;
         Ok(())
+    }
+
+    /// Executes an admitted record effect without replacing records or invalidating UI structure.
+    pub fn execute_record(&mut self, command: RecordCommand) -> Result<(), ApplicationError> {
+        match command {
+            RecordCommand::SeekAnalysis { time_seconds } => {
+                let record = self
+                    .session
+                    .playback_record()
+                    .ok_or(ApplicationError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+                commands::validate_record_time(record, time_seconds)
+                    .map_err(ApplicationError::Record)
+            }
+            RecordCommand::SeekReplay { time_seconds } => self
+                .seek_playback(time_seconds)
+                .map(|_| ())
+                .map_err(ApplicationError::Session),
+            RecordCommand::ToggleReplayPlaying {} => {
+                let playing = self
+                    .session
+                    .playback_clock()
+                    .ok_or(ApplicationError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?
+                    .is_playing();
+                self.set_playback_playing(!playing)
+                    .map_err(ApplicationError::Session)
+            }
+            RecordCommand::SetReplayRate { code } => self
+                .set_playback_rate_code(code)
+                .map_err(ApplicationError::Session),
+        }
     }
 
     /// Updates the core-owned playback clock without changing record ownership.

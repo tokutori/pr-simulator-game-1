@@ -2004,7 +2004,7 @@
           "description": "Queries existing record or clock APIs.",
           "properties": {
             "action": {
-              "$ref": "#/$defs/GameUiAction",
+              "$ref": "#/$defs/RecordCommand",
               "description": "Admitted seek, clock toggle or rate action."
             },
             "kind": {
@@ -3735,6 +3735,86 @@
           "const": "non_physical_inertia_tensor",
           "description": "Nonphysical mass inertia.",
           "type": "string"
+        }
+      ]
+    },
+    "RecordCommand": {
+      "description": "Canonical operations on the retained record and its existing playback clock.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Validates an analysis cursor request without moving the playback clock.",
+          "properties": {
+            "kind": {
+              "const": "seek_analysis",
+              "type": "string"
+            },
+            "time_seconds": {
+              "description": "Requested recorded time.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "time_seconds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Moves the existing playback clock.",
+          "properties": {
+            "kind": {
+              "const": "seek_replay",
+              "type": "string"
+            },
+            "time_seconds": {
+              "description": "Requested recorded time.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "time_seconds"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Toggles the existing playback clock.",
+          "properties": {
+            "kind": {
+              "const": "toggle_replay_playing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the existing half, normal or double playback rate by stable code.",
+          "properties": {
+            "code": {
+              "description": "Zero is half speed, one normal speed, two double speed.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "set_replay_rate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "code"
+          ],
+          "type": "object"
         }
       ]
     },
