@@ -129,6 +129,12 @@ vertex shaderでworld位置を変位させ、変位量を含むAabbを使用す�
 
 ## GPU接続の検査
 
+`--verify`は本番の`WaterMaterial`と同じ19 bindings・shader asset・import・vertexを使用し、平坦・Low・Medium・High・Farの固定入力を16×16の`Rgba32Float`へ描画してreadbackする。変位は本番vertexが渡したworld positionと平面の基準UVの差、法線は本番fragmentの導出結果を検査専用ShaderDefで取り出す。色は検査分岐を使わず元のfragment最終出力を使用する。通常起動には検査Material・camera・readbackを登録せず、通常shader variantには検査用の処理・bindingを追加しない。
+
+有限値、単位法線と上向き、共有投影から既に導出した変位上界、平坦入力の零変位、波の空間変動、昼間の黒一色・異常輝度を検査する。RGB8変換より前のfloat値を使用し、GPUの実行成功と色変換の成功を区別する。既存の資源・mip・quality交換・cleanup回帰は保持する。
+
+通常の`--verify`のTitle captureでは、既存の展示camera `(15,14,22) → (0,8,0)`、既定Typical、横長640×480以上で、左下の水面領域（横3–25%、縦86–96%）を検査する。menu・機体・地平線を含む他領域と他Sceneへ同じ基準を適用しない。平均RGB値と変動幅による重大な黒色化・飽和・一様面の検出であり、画質や美観の合格判定を意味しない。対象外の寸法ではこのROI検査をskipし、float probeを必須のまま維持する。
+
 ```sh
 cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 ```

@@ -47,6 +47,8 @@ const NEAR_WIDTH_M: f32 = 6000.0;
 const FAR_HALF_WIDTH_M: f32 = 90_000.0;
 const MIP_PHASE: MipGenerationPhaseId = MipGenerationPhaseId(0x4c414b45);
 
+pub(crate) mod verification;
+
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub(crate) struct WaterMaterial {
     #[uniform(0)]
@@ -2257,79 +2259,6 @@ mod tests {
     }
 
     #[test]
-    fn wgsl_uses_shared_packet_gradients_and_unresolved_wave_transfer() {
-        let shader = include_str!("../assets/native_water.wgsl");
-        assert_eq!(shader.matches("array<vec4<f32>, 24>").count(), 2);
-        assert!(shader.contains("component < u32(geometry_parameters.x)"));
-        assert!(shader.contains("packet.yz + packet.x * visibility_gradient"));
-        assert!(shader.contains("wave.z * wave.xy + warp.yz"));
-        assert!(shader.contains("horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient)"));
-        assert!(shader.contains("surface.represented_slope"));
-        assert!(shader.contains("(1.0 - geometric_visibility) * pixel_visibility * 0.65"));
-        assert!(shader.contains("1.0 - smoothstep(2.0, 5.0, fwidth(phase))"));
-        assert!(!shader.contains("phase_footprint"));
-        assert_eq!(shader.matches("lake_wave_slope(").count(), 2);
-        let vertex_stage = shader.split_once("@vertex").unwrap().1;
-        let vertex_stage = vertex_stage.split_once("fn lake_sky_radiance").unwrap().0;
-        for fragment_only in ["lake_wave_slope(", "fwidth(", "dpdx(", "dpdy("] {
-            assert!(!vertex_stage.contains(fragment_only));
-        }
-        assert!(shader.contains("textureSampleGrad(detail_near"));
-        assert!(shader.contains("textureSampleGrad(detail_far"));
-        assert!(shader.contains("textureSampleLevel(detail_near"));
-        assert!(!shader.contains("patch_fade"));
-        assert!(!shader.contains("array<vec4<f32>, 8>"));
-        assert!(shader.contains("return vec4<f32>(color, 1.0);"));
-    }
-
-    #[test]
-    fn wgsl_filters_four_web_micro_normal_bands_and_retains_their_variance() {
-        let shader = include_str!("../assets/native_water.wgsl");
-        assert_eq!(shader.matches("@binding(").count(), 19);
-        assert_eq!(shader.matches("textureSampleGrad(").count(), 4);
-        assert_eq!(shader.matches("lake_micro_detail(position ").count(), 4);
-        assert_eq!(
-            shader.matches("lake_wave_slope(position, spacing").count(),
-            1
-        );
-        for expected in [
-            "let fine_amplitude = 0.4;",
-            "let ripple_amplitude = 0.1;",
-            "(position - drift * 0.42) / 64.0",
-            "(position - drift * 0.89) / 288.0",
-            "let fine_drift = transpose(fine_rotation) * drift * 0.26;",
-            "let ripple_drift = transpose(ripple_rotation) * drift * 0.18;",
-            "fine_point / 64.0 + vec2<f32>(0.217, 0.631)",
-            "ripple_point / 64.0 + vec2<f32>(0.683, 0.173)",
-            "fine_rotation * footprint_x * (2.6 / 64.0), fine_rotation * footprint_y * (2.6 / 64.0)",
-            "ripple_rotation * footprint_x * (5.2 / 64.0), ripple_rotation * footprint_y * (5.2 / 64.0)",
-            "transpose(fine_rotation) * fine_raw_slope * (2.6 * fine_amplitude)",
-            "transpose(ripple_rotation) * ripple_raw_slope * (5.2 * ripple_amplitude)",
-            "+ 2.6 * 2.6 * fine_amplitude * fine_amplitude * fine_variance",
-            "+ 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance",
-            "slope_moment * scaled_strength * scaled_strength",
-            "max(micro_detail.z - dot(micro_detail.xy, micro_detail.xy), 0.0)",
-            "clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62)",
-        ] {
-            assert!(
-                shader.contains(expected),
-                "missing Web water contract: {expected}"
-            );
-        }
-        for offset in [
-            "position - quarter_x - quarter_y",
-            "position + quarter_x - quarter_y",
-            "position - quarter_x + quarter_y",
-            "position + quarter_x + quarter_y",
-        ] {
-            assert!(shader.contains(offset));
-        }
-        assert!(shader.contains(") * 0.25;"));
-        assert_eq!(shader.matches("detail.x -= mesh.color.x;").count(), 1);
-        assert_eq!(shader.matches("detail.y -= mesh.color.y;").count(), 1);
-    }
-
-    #[test]
     fn haze_and_daylight_follow_sealed_sky_and_preserve_missing_metadata() {
         let mut condition = EnvironmentTarget::DefaultExhibition
             .resolve()
@@ -2373,65 +2302,6 @@ mod tests {
             condition.sky.as_mut().unwrap().visibility_m = visibility;
             assert!(WaterMaterial::from_environment(condition, false).is_err());
         }
-    }
-
-    #[test]
-    fn wgsl_uses_web_fresnel_glitter_crest_color_and_haze() {
-        let shader = include_str!("../assets/native_water.wgsl");
-        for expected in [
-            "var<uniform> water_palette: array<vec4<f32>, 4>",
-            "var<uniform> haze_parameters: vec4<f32>",
-            "let patches = 0.5 + 0.5 * lake_value_noise(mesh.world_position.xz * 0.17 + vec2<f32>(2.3, -7.1)).x;",
-            "0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv)",
-            "mix(220.0, 45.0, roughness)",
-            "0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0)",
-            "smoothstep(0.35, 2.0, length(waves_sky.xy)) * sun_visibility * haze_parameters.z",
-            "smoothstep(0.42, 0.76, mesh.color.w)",
-            "smoothstep(0.05, 1.05, mesh.color.z) * sharp_crest * mix(0.35, 1.0, patches)",
-            "mix(water_palette[0].xyz, water_palette[1].xyz, diffuse * 0.72)",
-            "crest_light * 0.16 + patches * 0.07",
-            "base *= vec3<f32>(0.29, 0.34, 0.37)",
-            "clamp(geometry_parameters.z / 0.35, 0.0, 1.0)",
-            "vec3<f32>(1.0, 0.78, 0.52) * glitter * 0.15",
-            "vec3<f32>(0.38, 0.43, 0.43), detail.w * 0.28",
-            "smoothstep(haze_parameters.x, haze_parameters.y, distance_to_eye)",
-            "mix(color, water_palette[3].xyz, atmospheric_fade)",
-        ] {
-            assert!(
-                shader.contains(expected),
-                "missing Web shading contract: {expected}"
-            );
-        }
-        assert!(!shader.contains("1.0 - sun_cloud.w * 0.65"));
-        assert!(!shader.contains("roughness * 0.4"));
-        assert!(!shader.contains("let patches = lake_value_noise("));
-        for (noise, expected) in [(-1.0_f32, 0.0), (0.0, 0.5), (1.0, 1.0)] {
-            let patches = 0.5 + 0.5 * noise;
-            assert_eq!(patches, expected);
-            let crest_modulation = 0.35 + 0.65 * patches;
-            assert!((0.35..=1.0).contains(&crest_modulation));
-            for crest_gate in [0.0, 0.5, 1.0] {
-                let palette_weight = crest_gate * crest_modulation * 0.16 + patches * 0.07;
-                assert!((0.0..=(0.16 + 0.07)).contains(&palette_weight));
-            }
-        }
-    }
-
-    #[test]
-    fn wgsl_shares_the_same_panorama_between_background_and_water_radiance() {
-        let shader = include_str!("../assets/native_water.wgsl");
-        assert!(shader.contains("atan2(ray.z, ray.x) / 6.2831853 + 0.5"));
-        assert!(shader.contains("asin(clamp(ray.y, -1.0, 1.0)) / 3.1415927 + 0.5"));
-        assert_eq!(
-            shader
-                .matches("textureSample(sky_texture, sky_sampler, coordinate)")
-                .count(),
-            1
-        );
-        assert!(shader.contains("vec4<f32>(lake_sky_radiance(-view), 1.0)"));
-        assert!(shader.contains("let reflection = lake_sky_radiance(sky_ray);"));
-        assert!(!shader.contains("fn sky_background("));
-        assert!(!shader.contains("pow(max(dot(direction, sun_cloud.xyz), 0.0), 900.0)"));
     }
 
     #[test]

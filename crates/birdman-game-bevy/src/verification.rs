@@ -4,7 +4,7 @@ use super::{
     native_session::{FlightInput, MenuAction, NativeSession},
     projection::{VerificationObserver, aircraft_transform, camera_transform},
     ui::{MenuButton, UiPanel, UiText},
-    water::{NearWaterSurface, WaterMaterial},
+    water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
     water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
@@ -389,7 +389,9 @@ pub(crate) fn project_observer(
 pub(crate) struct VerificationRenderPlugin;
 
 impl Plugin for VerificationRenderPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        super::water::verification::install(app);
+    }
 
     fn finish(&self, app: &mut App) {
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
@@ -724,6 +726,44 @@ impl CaptureState {
     }
 }
 
+fn verify_title_water_roi(width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
+    if pixels.len() != width as usize * height as usize * 3 {
+        return Err("Title water ROI requires a complete RGB8 image".into());
+    }
+    if width < 640 || height < 480 || width as f64 / (height as f64) < 1.2 {
+        println!(
+            "Title water ROI skipped outside the fixed landscape layout ({width}x{height}); float shader probes remain required"
+        );
+        return Ok(());
+    }
+    let mut sum = 0.0;
+    let mut count = 0;
+    let mut minimum = f64::INFINITY;
+    let mut maximum = f64::NEG_INFINITY;
+    for row in height * 86 / 100..height * 96 / 100 {
+        for column in width * 3 / 100..width * 25 / 100 {
+            let offset = ((row * width + column) * 3) as usize;
+            let intensity = pixels[offset..offset + 3]
+                .iter()
+                .map(|&channel| f64::from(channel))
+                .sum::<f64>()
+                / 3.0;
+            minimum = minimum.min(intensity);
+            maximum = maximum.max(intensity);
+            sum += intensity;
+            count += 1;
+        }
+    }
+    let mean = sum / f64::from(count) / 255.0;
+    if !(0.005..0.75).contains(&mean) || maximum - minimum < 3.0 {
+        return Err(format!(
+            "Title production water ROI is black, clipped or lacks visible surface variation: mean={mean:.6}, range={minimum}..{maximum}"
+        ));
+    }
+    println!("Title production water ROI passed: mean={mean:.6}, range={minimum}..{maximum}");
+    Ok(())
+}
+
 fn save_capture(identity: CaptureIdentity, image: Image, path: PathBuf) -> CaptureCompletion {
     let result = image
         .try_into_dynamic()
@@ -732,6 +772,9 @@ fn save_capture(identity: CaptureIdentity, image: Image, path: PathBuf) -> Captu
             let image = image.to_rgb8();
             if image.width() == 0 || image.height() == 0 {
                 return Err("Screenshot has zero dimensions".into());
+            }
+            if identity.stage == VerificationStage::Title && identity.water_case.is_none() {
+                verify_title_water_roi(image.width(), image.height(), image.as_raw())?;
             }
             image
                 .save(&path)
@@ -1199,19 +1242,33 @@ pub(crate) fn advance(
     time: Res<Time<Real>>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
+    mut shader_verification: Option<ResMut<WaterShaderVerification>>,
 ) {
     if verification.stage == VerificationStage::Finished || verification.failure.is_some() {
         return;
     }
-    let result = advance_step(
-        &mut verification,
-        &mut session,
-        &mut presentation,
-        &windows,
-        time.delta(),
-        time.elapsed(),
-        &mut commands,
-    );
+    let shader_ready = shader_verification
+        .as_deref_mut()
+        .map_or(Ok(true), |probe| {
+            probe.ready(verification.readiness.can_capture())
+        });
+    let result = shader_ready.and_then(|ready| {
+        if !ready {
+            if verification.stage_started.elapsed() > Duration::from_secs(90) {
+                return Err("Production water shader readback timed out".into());
+            }
+            return Ok(());
+        }
+        advance_step(
+            &mut verification,
+            &mut session,
+            &mut presentation,
+            &windows,
+            time.delta(),
+            time.elapsed(),
+            &mut commands,
+        )
+    });
     match result {
         Ok(()) if verification.stage == VerificationStage::Finished => {
             verification.complete(Ok(()));
@@ -3409,6 +3466,72 @@ mod tests {
         assert!(matches!(capture, CaptureState::Saving { .. }));
         assert!(capture.pending());
         assert!(!capture.accepts(identity, identity));
+    }
+
+    #[test]
+    fn title_water_roi_rejects_black_clipped_or_missing_surface_and_ignores_other_pixels() {
+        let (width, height) = (800_u32, 600_u32);
+        for gray in [0, 64, 255] {
+            assert!(
+                super::verify_title_water_roi(
+                    width,
+                    height,
+                    &vec![gray; (width * height * 3) as usize]
+                )
+                .is_err()
+            );
+        }
+        assert!(
+            super::verify_title_water_roi(
+                width,
+                height,
+                &[24, 48, 72].repeat((width * height) as usize)
+            )
+            .is_err()
+        );
+        let mut pixels = vec![255; (width * height * 3) as usize];
+        for row in height * 86 / 100..height * 96 / 100 {
+            for column in width * 3 / 100..width * 25 / 100 {
+                let offset = ((row * width + column) * 3) as usize;
+                pixels[offset..offset + 3].fill(24 + (column % 16) as u8);
+            }
+        }
+        assert!(super::verify_title_water_roi(width, height, &pixels).is_ok());
+        assert!(super::verify_title_water_roi(width, height, &pixels[..pixels.len() - 1]).is_err());
+        assert!(super::verify_title_water_roi(320, 640, &vec![0; 320 * 640 * 3]).is_ok());
+    }
+
+    #[test]
+    fn title_capture_rejects_black_or_uniform_colored_water_before_saving() {
+        let identity = CaptureIdentity {
+            stage: VerificationStage::Title,
+            water_case: None,
+            serial: 1,
+        };
+        for rgba in [[0, 0, 0, 255], [24, 48, 72, 255]] {
+            let image = Image::new_fill(
+                bevy::render::render_resource::Extent3d {
+                    width: 800,
+                    height: 600,
+                    depth_or_array_layers: 1,
+                },
+                bevy::render::render_resource::TextureDimension::D2,
+                &rgba,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                bevy::asset::RenderAssetUsages::MAIN_WORLD,
+            );
+            let capture = save_capture(
+                identity,
+                image,
+                std::env::temp_dir().join("unused-water-capture.png"),
+            );
+            assert!(
+                capture
+                    .result
+                    .unwrap_err()
+                    .contains("Title production water ROI")
+            );
+        }
     }
 
     #[test]

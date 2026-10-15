@@ -283,6 +283,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
 #endif
+#ifdef VERIFY_WATER_DISPLACEMENT
+    return vec4<f32>(mesh.world_position.xyz - vec3<f32>(position.x, 0.0, position.y), 1.0);
+#else
     let quarter_x = footprint_x * 0.25;
     let quarter_y = footprint_y * 0.25;
     let micro_detail = (
@@ -307,6 +310,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let geometric_slope = -geometric_normal.xz / max(geometric_normal.y, 0.01);
     let total_slope = geometric_slope + detail.xy;
     let normal = normalize(vec3<f32>(-total_slope.x, 1.0, -total_slope.y));
+#ifdef VERIFY_WATER_NORMAL
+    return vec4<f32>(normal, 1.0);
+#else
     let geometric_ndv = max(dot(view, geometric_normal), 0.0);
     let facet_ndv = dot(view, normal);
     let facet_visibility = smoothstep(0.0, 0.18, facet_ndv);
@@ -358,4 +364,6 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let atmospheric_fade = smoothstep(haze_parameters.x, haze_parameters.y, distance_to_eye);
     color = mix(color, water_palette[3].xyz, atmospheric_fade);
     return vec4<f32>(color, 1.0);
+#endif
+#endif
 }
