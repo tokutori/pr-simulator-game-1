@@ -19,7 +19,7 @@ pub(crate) struct LakeReflection {
     size: UVec2,
 }
 
-fn target_size(viewport: UVec2) -> Option<UVec2> {
+pub(super) fn target_size(viewport: UVec2) -> Option<UVec2> {
     if viewport.x == 0 || viewport.y == 0 {
         return None;
     }

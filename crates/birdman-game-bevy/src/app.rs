@@ -199,6 +199,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         PostUpdate,
         screen_render::preserve_logical_projection
             .after(CameraUpdateSystems)
+            .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
             .before(bevy::camera::visibility::update_frusta),
     );
     let mut verification_completion = None;
