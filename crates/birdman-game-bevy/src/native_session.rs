@@ -6,7 +6,7 @@ use birdman_game_core::{
     TailPilotPositionIntent, TailRateTarget,
 };
 use birdman_game_session::application::{
-    ApplicationSession, BackendReadiness, ExternalPauseReason, SessionCommand,
+    ApplicationSession, BackendReadiness, ExternalPauseReason, RecordCommand, SessionCommand,
 };
 use birdman_game_session::game_ui::{
     GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState, GameUiStructureKey,
@@ -176,24 +176,13 @@ impl NativeSession {
             .map_err(|error| format!("操作に失敗した: {error:?}"))
     }
 
-    pub(crate) fn execute_ui_record_action(&mut self, action: GameUiAction) -> Result<(), String> {
-        let result = match action {
-            GameUiAction::SeekReplay { time_seconds } => {
-                self.game.seek_playback(time_seconds).map(|_| ())
-            }
-            GameUiAction::ToggleReplayPlaying {} => self.game.set_playback_playing(
-                !self
-                    .game
-                    .core_session()
-                    .playback_clock()
-                    .ok_or_else(|| "Replay clockが存在しない".to_owned())?
-                    .is_playing(),
-            ),
-            GameUiAction::SetReplayRate { code } => self.game.set_playback_rate_code(code),
-            GameUiAction::SeekAnalysis { .. } => Ok(()),
-            _ => return Err("記録操作として受理できない".into()),
-        };
-        result.map_err(|error| format!("記録操作に失敗した: {error:?}"))
+    pub(crate) fn execute_ui_record_action(
+        &mut self,
+        command: RecordCommand,
+    ) -> Result<(), String> {
+        self.game
+            .execute_record(command)
+            .map_err(|error| format!("記録操作に失敗した: {error:?}"))
     }
 
     #[cfg(test)]

@@ -51,10 +51,12 @@ describe("Rust game UI schema generation", () => {
     const files = await generateGameUiFiles(parseSchemaBundle(schemaBundle()), root);
     const declaration = files.find((file) => file.path === "web/src/generated/game-ui-view.ts");
     if (declaration === undefined) throw new Error("Missing generated view declarations");
-    const imports = 'import type { Coordinates, GameUiView } from "./generated.js";\nimport type { Nested } from "./nested.js";\n';
+    const imports = 'import type { Coordinates, GameUiView } from "./generated.js";\nimport type { Nested } from "./nested.js";\n'
+      + `import type { GameUiEffect } from ${JSON.stringify(resolve(root, "web/src/generated/game-ui-effects.js").replace(/\\/g, "/"))};\n`;
     const bindings = "declare const view: GameUiView;\ndeclare const nested: Nested;\n";
     const fixtures = [
-      { name: "positive", source: "const coordinates: Coordinates = [1, 2, 3];\nconst length: 3 = coordinates.length;\nconst position: number = nested.values[0]!.position[0]!;\nconst kind: 'fixture' = view.kind;", codes: [] },
+      { name: "positive", source: "const coordinates: Coordinates = [1, 2, 3];\nconst length: 3 = coordinates.length;\nconst position: number = nested.values[0]!.position[0]!;\nconst kind: 'fixture' = view.kind;\nconst effect: GameUiEffect = { kind: 'record', action: { kind: 'seek_analysis', time_seconds: 0 } };", codes: [] },
+      { name: "non-record-ui-action", source: "const effect: GameUiEffect = { kind: 'record', action: { kind: 'toggle_technical' } };", codes: [2322] },
       { name: "property-write", source: "view.coordinates = [1, 2, 3];", codes: [2540] },
       { name: "nested-property-write", source: "nested.values[0]!.position = [1, 2, 3];", codes: [2540] },
       { name: "nested-index-write", source: "nested.values[0]!.position[0] = 1;", codes: [2542] },

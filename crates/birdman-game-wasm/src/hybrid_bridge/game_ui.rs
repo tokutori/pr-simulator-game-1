@@ -1,4 +1,5 @@
 use super::*;
+use birdman_game_session::application::RecordCommand;
 use birdman_game_session::game_ui::{
     GameUiAction, GameUiContext, GameUiPlatformInput, GameUiStructureKey, game_ui_frame,
     game_ui_view, update_game_ui,
@@ -78,38 +79,8 @@ impl HybridGameSessionBridge {
 
     /// Executes only admitted query/clock effects through the existing record owner.
     pub fn apply_game_ui_record_action_json(&mut self, action_json: &str) -> Result<(), JsValue> {
-        let action: GameUiAction = decode(action_json)?;
-        match action {
-            GameUiAction::SeekAnalysis { time_seconds } => {
-                self.session
-                    .core_session()
-                    .playback_record()
-                    .ok_or_else(|| JsValue::from_str("record unavailable"))?
-                    .sample_at_seconds(time_seconds)
-                    .map_err(ui_error)?;
-                Ok(())
-            }
-            GameUiAction::SeekReplay { time_seconds } => self
-                .session
-                .seek_playback(time_seconds)
-                .map(|_| ())
-                .map_err(ui_error),
-            GameUiAction::ToggleReplayPlaying {} => {
-                let playing = self
-                    .session
-                    .core_session()
-                    .playback_clock()
-                    .ok_or_else(|| JsValue::from_str("playback clock unavailable"))?
-                    .is_playing();
-                self.session
-                    .set_playback_playing(!playing)
-                    .map_err(ui_error)
-            }
-            GameUiAction::SetReplayRate { code } => {
-                self.session.set_playback_rate_code(code).map_err(ui_error)
-            }
-            _ => Err(JsValue::from_str("action is not a record/clock operation")),
-        }
+        let command: RecordCommand = decode(action_json)?;
+        self.session.execute_record(command).map_err(ui_error)
     }
 }
 

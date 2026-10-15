@@ -2442,7 +2442,7 @@ fn scroll_content(
 mod tests {
     use super::super::native_session::MenuAction;
     use super::*;
-    use birdman_game_session::application::SessionCommand;
+    use birdman_game_session::application::{RecordCommand, SessionCommand};
     use birdman_game_session::game_ui::{GameUiPauseOverlay, GameUiResultTab};
 
     fn app(width: f32, height: f32) -> App {
@@ -3646,13 +3646,18 @@ mod tests {
                 let authoritative_time = {
                     let mut session = app.world_mut().resource_mut::<NativeSession>();
                     let update = session.update_ui_action(action.clone(), &platform).unwrap();
+                    let command = if replay {
+                        RecordCommand::SeekReplay { time_seconds }
+                    } else {
+                        RecordCommand::SeekAnalysis { time_seconds }
+                    };
                     assert_eq!(
                         update.effects,
                         [GameUiEffect::Record {
-                            action: action.clone()
+                            action: command.clone()
                         }]
                     );
-                    session.execute_ui_record_action(action).unwrap();
+                    session.execute_ui_record_action(command).unwrap();
                     if replay {
                         session
                             .game

@@ -1,5 +1,6 @@
 use super::{game_ui_view, types::*};
-use crate::application::SessionCommand;
+use crate::application::{RecordCommand, SessionCommand, commands::validate_record_time};
+use birdman_game_core::FlightRecordQueryError;
 
 /// Admits an action against the actual shared view and returns UI state plus effects.
 pub fn update_game_ui(
@@ -119,22 +120,30 @@ pub fn update_game_ui(
             });
         }
         GameUiAction::SeekAnalysis { time_seconds } | GameUiAction::SeekReplay { time_seconds } => {
-            let duration = context
-                .record
-                .ok_or(GameUiError::ActionUnavailable)?
-                .duration_seconds()
-                .map_err(GameUiError::Record)?;
-            if !time_seconds.is_finite() || time_seconds < 0.0 || time_seconds > duration {
-                return Err(GameUiError::InvalidTime);
-            }
-            if matches!(action, GameUiAction::SeekAnalysis { .. }) {
+            validate_record_time(
+                context.record.ok_or(GameUiError::ActionUnavailable)?,
+                time_seconds,
+            )
+            .map_err(|error| match error {
+                FlightRecordQueryError::InvalidTime
+                | FlightRecordQueryError::OutsideRecordedRange => GameUiError::InvalidTime,
+                error @ (FlightRecordQueryError::EmptyRecord
+                | FlightRecordQueryError::NonFiniteInterpolation) => GameUiError::Record(error),
+            })?;
+            let command = if matches!(action, GameUiAction::SeekAnalysis { .. }) {
                 next.analysis_time_seconds = time_seconds;
-            }
-            effects.push(GameUiEffect::Record { action });
+                RecordCommand::SeekAnalysis { time_seconds }
+            } else {
+                RecordCommand::SeekReplay { time_seconds }
+            };
+            effects.push(GameUiEffect::Record { action: command });
         }
-        GameUiAction::ToggleReplayPlaying {} | GameUiAction::SetReplayRate { .. } => {
-            effects.push(GameUiEffect::Record { action })
-        }
+        GameUiAction::ToggleReplayPlaying {} => effects.push(GameUiEffect::Record {
+            action: RecordCommand::ToggleReplayPlaying {},
+        }),
+        GameUiAction::SetReplayRate { code } => effects.push(GameUiEffect::Record {
+            action: RecordCommand::SetReplayRate { code },
+        }),
     }
     Ok(GameUiUpdate {
         state: next,

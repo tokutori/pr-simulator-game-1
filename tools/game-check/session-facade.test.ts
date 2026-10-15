@@ -6,6 +6,7 @@ import { createInitialAppModel, flightAnalysisData, updateApp } from "../../web/
 import type { AppSessionFacade, TailAppSessionPort } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import { parseGameUiUpdate } from "../../web/src/app/game-ui-codec.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const neutralTail = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
@@ -497,6 +498,32 @@ describe("layout-discriminated application session facade", () => {
       facade.dispose();
       other.dispose();
     }
+  });
+
+  it("rejects non-record effects in the generated boundary and the actual WASM executor", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const platform = sharedGameUiPlatform();
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      facade.executeOperation("enter-replay");
+      const state = facade.readSharedUi(platform).selections;
+      for (const action of [{ kind: "seek_analysis", time_seconds: 0.005 }, { kind: "seek_replay", time_seconds: 0.005 },
+        { kind: "toggle_replay_playing" }, { kind: "set_replay_rate", code: 2 }]) {
+        expect(parseGameUiUpdate(JSON.stringify({ state, effects: [{ kind: "record", action }] })).effects).toEqual([{ kind: "record", action }]);
+        bridge.apply_game_ui_record_action_json(JSON.stringify(action));
+      }
+      const clock = facade.readPlaybackClock();
+      for (const action of [{ kind: "toggle_technical" }, { kind: "session", command: { kind: "pause" } },
+        { kind: "toggle_replay_playing", code: 1 }]) {
+        expect(() => parseGameUiUpdate(JSON.stringify({ state, effects: [{ kind: "record", action }] }))).toThrow();
+        expect(() => { bridge.apply_game_ui_record_action_json(JSON.stringify(action)); }).toThrow();
+      }
+      expect(() => { bridge.apply_game_ui_record_action_json(JSON.stringify({ kind: "seek_analysis", time_seconds: 1 })); }).toThrow("OutsideRecordedRange");
+      expect(facade.readPlaybackClock()).toEqual(clock);
+    } finally { facade.dispose(); }
   });
 
   it("uses the Rust structural revision for countdown, telemetry and complete pause reasons", () => {
