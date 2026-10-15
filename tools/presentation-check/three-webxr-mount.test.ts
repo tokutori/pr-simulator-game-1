@@ -41,6 +41,8 @@ interface RecordingDriver {
   readonly xr: WebXRManager;
   readonly draws: RecordedDraw[];
   readonly normalFrames: BrowserWindowFrames;
+  getPixelRatio(): number;
+  getSize(target: Vector2): Vector2;
 }
 
 interface BrowserAnimation {
@@ -651,6 +653,26 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expectMatrix(panel, poseMatrix(composePose(mountedHead, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation))));
     session.select(10_000, head);
     expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+  });
+
+  it("preserves XR compositor sizing and restores the retained Screen drawing ratio on exit", async () => {
+    await backend.stop();
+    bundle.renderer.resize(viewport);
+    bundle.renderer.setScreenRenderScale(0.5);
+    expect(driver.getPixelRatio()).toBe(0.5);
+    await backend.requestSessionFromUserGesture();
+    await backend.start();
+    expect(driver.xr.isPresenting).toBe(true);
+    expect(driver.getPixelRatio()).toBe(1);
+    expect(driver.getSize(new Vector2()).toArray()).toEqual([1280, 720]);
+    bundle.renderer.setScreenRenderScale(0.75);
+    session.run(100, head);
+    expect(driver.getPixelRatio()).toBe(1);
+    expect(driver.getSize(new Vector2()).toArray()).toEqual([1280, 720]);
+    await backend.stop();
+    bundle.renderer.render(screenFrame(viewport));
+    expect(driver.getPixelRatio()).toBe(0.75);
+    expect(driver.getSize(new Vector2()).toArray()).toEqual([viewport.x, viewport.y]);
   });
 
   it("keeps native non-flight tracking unmounted and restores the Screen Title basis on session end", async () => {

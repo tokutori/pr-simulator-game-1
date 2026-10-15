@@ -2693,6 +2693,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Changes only the Screen 3D drawing resolution.",
+          "properties": {
+            "kind": {
+              "const": "set_screen_render_scale",
+              "type": "string"
+            },
+            "scale": {
+              "$ref": "#/$defs/ScreenRenderScale",
+              "description": "Requested fraction of each physical rendering dimension."
+            }
+          },
+          "required": [
+            "kind",
+            "scale"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Changes render-only mesh quality.",
           "properties": {
             "kind": {
@@ -3815,6 +3834,26 @@
             "code"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "ScreenRenderScale": {
+      "description": "Supported manual Screen rendering scales, with full resolution as the default.",
+      "oneOf": [
+        {
+          "const": "100",
+          "description": "Original physical rendering resolution.",
+          "type": "string"
+        },
+        {
+          "const": "75",
+          "description": "Three quarters of each physical rendering dimension.",
+          "type": "string"
+        },
+        {
+          "const": "50",
+          "description": "Half of each physical rendering dimension.",
+          "type": "string"
         }
       ]
     },

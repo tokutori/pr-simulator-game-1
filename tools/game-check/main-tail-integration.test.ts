@@ -64,7 +64,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
     setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
-    resize: vi.fn(), setStereoPresentation: vi.fn(), setSelectRayHandler: vi.fn(),
+    resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
   } satisfies RendererAdapter;
   let sessionEndHandler: (() => void) | null = null;
@@ -553,6 +553,39 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
     expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
     expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls?.layout).toBe("tail_incidence");
+  });
+
+  it("projects shared Screen scale choices through the real WASM UI and retains the preference through flight and Retry", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([1]);
+    trial.click("game-title-start");
+    for (const [scale, factor] of [["75", 0.75], ["50", 0.5], ["100", 1]] as const) {
+      trial.click(`presentation-render-scale-${scale}`);
+      expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([factor]);
+      expect(trial.documentRef.querySelector(`[data-control-id="presentation-render-scale-${scale}"]`)?.getAttribute("aria-pressed")).toBe("true");
+      expect(trial.tick).not.toHaveBeenCalled();
+    }
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    trial.click("game-flight-pause");
+    trial.click("game-pause-open-settings");
+    const before = trial.tick.mock.calls.length;
+    const back = trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-pause-settings-back"]');
+    back?.focus();
+    trial.click("presentation-render-scale-50");
+    expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([0.5]);
+    expect(trial.tick.mock.calls).toHaveLength(before);
+    expect(trial.documentRef.querySelector('[data-control-id="game-pause-settings-back"]')).toBe(back);
+    expect(trial.documentRef.activeElement).toBe(back);
+    trial.click("game-pause-settings-back");
+    trial.click("game-flight-resume");
+    trial.click("game-flight-abort");
+    trial.click("game-result-retry");
+    expect(trial.scene()).toBe("Briefing");
+    expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([0.5]);
   });
 
   it("projects the sealed aircraft throughout Briefing and Countdown and replaces it with the identical first live pose", async () => {

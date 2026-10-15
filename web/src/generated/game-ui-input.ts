@@ -52,6 +52,10 @@ export interface GameUiPlatformInput {
      */
     readonly replay_available: boolean;
     /**
+     * Retained Screen-only resolution preference, independent of the active VR mode.
+     */
+    readonly screen_render_scale: "100" | "75" | "50";
+    /**
      * Persistence results associated with this owner.
      */
     readonly stored_records: readonly GameUiStoredRecord[];

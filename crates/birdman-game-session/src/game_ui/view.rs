@@ -261,6 +261,7 @@ pub fn game_ui_view(
             GameUiPauseOverlay::Settings => {
                 menu.status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。");
                 water_quality(&mut menu, context);
+                screen_render_scale(&mut menu, context);
                 menu.action(
                     "game-pause-settings-back",
                     "Pauseへ戻る",
@@ -694,16 +695,17 @@ impl Menu {
             ) || phase == SessionPhase::Replay
                 && state.replay_view != GameUiReplayView::Analysis)
         {
-            let groups = if phase == SessionPhase::Replay {
-                [
+            let groups: &[(&str, GameUiSectionLayout)] = if phase == SessionPhase::Replay {
+                &[
                     ("replay-status", GameUiSectionLayout::Column),
                     ("replay-cursor", GameUiSectionLayout::Column),
                     ("replay-actions", GameUiSectionLayout::Row),
                 ]
             } else {
-                [
+                &[
                     ("flight-status", GameUiSectionLayout::Column),
                     ("water-quality", GameUiSectionLayout::ChoiceGrid),
+                    ("render-scale", GameUiSectionLayout::ChoiceGrid),
                     ("flight-actions", GameUiSectionLayout::Row),
                 ]
             };
@@ -712,21 +714,31 @@ impl Menu {
                     GameUiControlContent::Status { .. } => groups[0].0,
                     GameUiControlContent::Range { .. } => groups[1].0,
                     GameUiControlContent::Button {
+                        presentation: GameUiButtonPresentation::Choice { group, .. },
+                        ..
+                    } if group == "render-scale" => "render-scale",
+                    GameUiControlContent::Button {
                         presentation: GameUiButtonPresentation::Choice { .. },
                         ..
                     } => groups[1].0,
-                    _ => groups[2].0,
+                    _ => groups[groups.len() - 1].0,
                 }
                 .to_owned();
             }
             self.controls
                 .sort_by_key(|control| groups.iter().position(|(id, _)| *id == control.section));
             self.sections = groups
-                .into_iter()
+                .iter()
+                .copied()
                 .filter(|(id, _)| self.controls.iter().any(|control| control.section == *id))
                 .map(|(id, layout)| GameUiSection {
                     id: id.to_owned(),
-                    label: String::new(),
+                    label: self
+                        .sections
+                        .iter()
+                        .find(|section| section.id == id)
+                        .map(|section| section.label.clone())
+                        .unwrap_or_default(),
                     layout,
                 })
                 .collect();
@@ -1121,6 +1133,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         context.environment_readout,
     );
     water_quality(menu, context);
+    screen_render_scale(menu, context);
     menu.status(
         "game-setup-confirmation",
         "設定の確定",
@@ -1244,6 +1257,37 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                     group_label: "水面画質".to_owned(),
                     selected: current == quality,
                     description: description.to_owned(),
+                },
+            },
+        );
+    }
+}
+
+fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    use crate::screen_render_scale::ScreenRenderScale;
+    if context.platform.presentation_mode != GameUiPresentationMode::Screen {
+        return;
+    }
+    menu.status(
+        "presentation-render-scale-status",
+        "3D描画解像度",
+        "Screenの3D描画解像度を変更する。UI・画角・飛行物理・記録は維持する。",
+    );
+    for scale in ScreenRenderScale::ALL {
+        menu.push(
+            &format!("presentation-render-scale-{}", scale.percent()),
+            scale.label(),
+            context.platform.flight_controller_failure.is_none(),
+            "render-scale",
+            GameUiControlContent::Button {
+                action: GameUiAction::Platform {
+                    command: GameUiPlatformCommand::SetScreenRenderScale { scale },
+                },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "render-scale".to_owned(),
+                    group_label: "3D描画解像度".to_owned(),
+                    selected: context.platform.screen_render_scale == scale,
+                    description: "各描画軸の倍率。低い値ほど描画負荷を抑える。".to_owned(),
                 },
             },
         );

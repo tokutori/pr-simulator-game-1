@@ -8,6 +8,17 @@ Desktop・WebXR・Phone VRのbackendと光学profileは [presentation契約](pre
 全Scene・overlayのScreen/VR対応を高品質描画に先行して確立する。
 簡易worldでもPilot視点、ゲーム進行、Result/Analysis/Replayを完成させてから景観品質を追求する。その後は水面反射・波面・表面模様を先行させ、地平線・対岸稜線、cockpit/wing/nose、近距離固定物、中距離landmark、hazeの順に追加する。湖面描画は簡易worldで独立して開発し、地形・空の完成を待たない。
 
+## Screenの手動3D描画解像度
+
+Flight SetupとPause Settingsで100%・75%・50%を選択する。既定は100%である。
+候補・表示順・ラベル・Screen限定の操作受付は共有Rustの`ScreenRenderScale`とgame UIが所有する。
+設定は各物理描画軸の倍率であり、50%では3Dの画素数がおよそ25%になる。UIの論理解像度、画角、入力座標、固定物理tick、飛行記録は維持する。
+Webは元のdevice pixel ratioと選択倍率を分離し、Three.jsの公開`setPixelRatio`へ積を渡す。canvasのCSS寸法は維持する。
+最小化・極小寸法で描画軸が0 pixelになる場合はGPU targetのresizeを保留し、正の描画領域へ復帰した際に適用する。
+Nativeは整数の物理寸法に共有`physical_size`を適用する。非整数DPRのWebでは最終段でfloorするため、整数化後に倍率を掛けるNativeとの投影差は各軸1 pixel以下となる。
+Phone VRは元の描画倍率を使用し、WebXRのcompositor解像度は変更しない。VR退出・開始失敗後は保持したScreen設定へ復帰する。
+反射targetはScreenの有効3D寸法に追随し、既存の上限・下限を維持する。解像度の低下はGPU負荷を抑える選択肢であり、80 FPSの達成保証は含まない。
+
 ## 湖面
 
 湖底は表示せず、不透明水面を採用する。空の明るさを維持しながら、水面の最終色は参照写真の暗い青灰色へ調整する。
