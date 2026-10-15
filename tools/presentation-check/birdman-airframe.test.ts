@@ -1,10 +1,35 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it, vi } from "vitest";
-import { BufferAttribute, DataTexture, Group, Mesh, MeshLambertMaterial, Vector3 } from "three";
+import { BufferAttribute, CylinderGeometry, DataTexture, Group, Mesh, MeshLambertMaterial, Vector3 } from "three";
 import { createBirdmanAirframe } from "../../web/src/render/engines/three/birdman-airframe.js";
 import { WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
 
 describe("synthetic Birdman airframe", () => {
+  it("retains the frozen Web T-shaped carbon structure through shared bulk geometry", () => {
+    const airframe = createBirdmanAirframe();
+    try {
+      const beam = airframe.root.getObjectByName("single-carbon-main-beam") as Mesh<CylinderGeometry, MeshLambertMaterial>;
+      const spar = airframe.root.getObjectByName("main-wing-spar") as Group;
+      expect(beam.geometry).toBeInstanceOf(CylinderGeometry);
+      expect(beam.geometry.parameters.radiusTop).toBe(0.075);
+      expect(beam.material.color.getHex()).toBe(0x303b3a);
+      expect(spar.children).toHaveLength(24);
+      for (const speed of [0, 13]) {
+        airframe.setVisualState(speed, { layout: "absent" });
+        beam.updateMatrix();
+        for (const [height, expected] of [[-0.5, [0, -0.73, -0.1375]], [0.5, [0, -0.57, 4.75]]] as const) {
+          const actual = new Vector3(0, height, 0).applyMatrix4(beam.matrix).toArray();
+          for (const [index, coordinate] of actual.entries()) expect(coordinate).toBeCloseTo(expected[index] ?? Number.NaN, 11);
+        }
+        const first = spar.children[0] as Mesh<CylinderGeometry, MeshLambertMaterial>;
+        first.updateMatrix();
+        const connection = new Vector3(0, -0.5, 0).applyMatrix4(first.matrix);
+        expect(connection.distanceTo(new Vector3(0, -0.73, -0.1375))).toBeLessThan(1e-11);
+        expect(first.material).toBe(beam.material);
+      }
+    } finally { airframe.dispose(); }
+  });
+
   it.each([
     { speed: 0,
       skin: [-0.7300000190734863, -0.6242138147354126, -0.6263368129730225, -0.544516384601593, -0.4357530176639557, -0.17252102494239807, -0.217544287443161],
