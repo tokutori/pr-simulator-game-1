@@ -86,6 +86,21 @@ function isSharedChartNumberDependency(crate: string, dependency: Record<string,
     && dependency.features.length === 0;
 }
 
+function isSharedImageOperationsDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-session"
+    && dependency.name === "image"
+    && dependency.kind === null
+    && dependency.target === null
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 0;
+}
+
 function isHostNumericalTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-core"
     && dependency.name === "nalgebra"
@@ -171,6 +186,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       if (!permitted.includes(dependencyName)
         && !isNativeTextDependency(name, dependency)
         && !isSharedChartNumberDependency(name, dependency)
+        && !isSharedImageOperationsDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isSchemaGenerationDependency(name, dependency, pkg.features)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);

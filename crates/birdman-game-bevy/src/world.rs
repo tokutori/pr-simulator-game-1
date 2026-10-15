@@ -10,16 +10,18 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::{NoFrustumCulling, RenderLayers},
     core_pipeline::tonemapping::Tonemapping,
+    image::{CompressedImageFormats, ImageSampler, ImageSamplerDescriptor, ImageType},
     light::{CascadeShadowConfigBuilder, NotShadowCaster},
     mesh::Indices,
     prelude::*,
-    render::render_resource::PrimitiveTopology,
+    render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
 use birdman_game_core::{
     HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
 };
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::wing_geometry::{WingFrame, WingGeometry, WingMaterial, WingSurface};
+use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
 
@@ -293,6 +295,57 @@ fn main_wing_mesh(surface: &WingSurface, positions: &[[f32; 3]]) -> Mesh {
     mesh
 }
 
+fn wing_cover_images() -> [Image; 2] {
+    let mut pixels = wing_texture::indigo_wing_textures();
+    let decal = Image::from_buffer(
+        include_bytes!("../../../assets/indigo-resist-decal.png"),
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::Default,
+        RenderAssetUsages::default(),
+    );
+    let applied = decal.map_err(|cause| cause.to_string()).and_then(|image| {
+        if image.texture_descriptor.format != TextureFormat::Rgba8UnormSrgb {
+            return Err("Registered wing decal must decode to sRGB RGBA8".into());
+        }
+        let alpha: Vec<_> = image
+            .data
+            .as_deref()
+            .unwrap_or_default()
+            .chunks_exact(4)
+            .map(|pixel| pixel[3])
+            .collect();
+        wing_texture::apply_indigo_wing_decal(&mut pixels, image.width(), image.height(), &alpha)
+            .map_err(|cause| format!("Registered wing decal is invalid: {cause:?}"))
+    });
+    if let Err(cause) = applied {
+        warn!("Wing dye decal could not be applied; using the procedural pattern: {cause}");
+    }
+    std::array::from_fn(|side| {
+        let start = side * wing_texture::SIDE_BYTES;
+        let rgba = &pixels[start..start + wing_texture::SIDE_BYTES];
+        let mut image = Image::new(
+            Extent3d {
+                width: wing_texture::WIDTH,
+                height: wing_texture::HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            rgba.to_vec(),
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        );
+        image.data = Some(
+            wing_texture::indigo_wing_mipmaps(rgba)
+                .expect("Shared opaque sRGB wing texture supports linear-light mip generation"),
+        );
+        image.texture_descriptor.mip_level_count = wing_texture::WIDTH.ilog2() + 1;
+        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+        image
+    })
+}
+
 fn main_wing_airspeed(session: &NativeSession) -> f64 {
     let speed = match session.game.core_session().snapshot().phase() {
         birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract => {
@@ -516,11 +569,14 @@ pub(crate) fn setup_world(
         ..default()
     });
     let frame = materials.add(Color::srgb(0.13, 0.15, 0.18));
-    let wing_cover = materials.add(StandardMaterial {
-        base_color: Color::srgb_u8(42, 63, 86),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
+    let wing_cover = wing_cover_images().map(|image| {
+        materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(images.add(image)),
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        })
     });
     let wing_underside = materials.add(StandardMaterial {
         base_color: Color::srgb_u8(242, 243, 237),
@@ -634,11 +690,13 @@ pub(crate) fn setup_world(
                     child.insert((NoFrustumCulling, NotShadowCaster));
                 }
             }
-            for (surface, positions) in wing_geometry
+            for (surface_index, (surface, positions)) in wing_geometry
                 .surfaces()
                 .iter()
                 .zip(wing_frame.surface_positions())
+                .enumerate()
             {
+                let side_index = surface_index / 2;
                 let complete_mesh = main_wing_mesh(surface, positions);
                 let mut material_meshes = Vec::new();
                 for range in surface.material_ranges() {
@@ -649,7 +707,7 @@ pub(crate) fn setup_world(
                     let handle = meshes.add(mesh);
                     material_meshes.push(handle.clone());
                     let material = match range.material {
-                        WingMaterial::Cover => wing_cover.clone(),
+                        WingMaterial::Cover => wing_cover[side_index].clone(),
                         WingMaterial::Underside => wing_underside.clone(),
                         WingMaterial::Film => wing_film.clone(),
                     };
@@ -799,6 +857,68 @@ mod tests {
     use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
     use birdman_game_session::application::SessionCommand;
+
+    #[test]
+    fn wing_textures_decode_the_registered_decal_and_upload_srgb_mips() {
+        let images = wing_cover_images();
+        assert_ne!(images[0].data, images[1].data);
+        for image in &images {
+            assert_eq!(
+                image.texture_descriptor.format,
+                TextureFormat::Rgba8UnormSrgb
+            );
+            assert_eq!([image.width(), image.height()], [1024, 256]);
+            assert_eq!(image.texture_descriptor.mip_level_count, 11);
+            let expected_bytes: usize = (0..11)
+                .map(|level| {
+                    (1024_u32 >> level).max(1) as usize * (256_u32 >> level).max(1) as usize * 4
+                })
+                .sum();
+            assert_eq!(image.data.as_ref().unwrap().len(), expected_bytes);
+            let ImageSampler::Descriptor(sampler) = &image.sampler else {
+                panic!("Missing wing sampler");
+            };
+            assert_eq!(sampler.min_filter, bevy::image::ImageFilterMode::Linear);
+            assert_eq!(sampler.mag_filter, bevy::image::ImageFilterMode::Linear);
+            assert_eq!(sampler.mipmap_filter, bevy::image::ImageFilterMode::Linear);
+            assert_eq!(
+                sampler.address_mode_u,
+                bevy::image::ImageAddressMode::ClampToEdge
+            );
+            let rgba = &image.data.as_ref().unwrap()[..wing_texture::SIDE_BYTES];
+            assert!(rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+            let leading_panel = &rgba[31 * 1024 * 4..97 * 1024 * 4];
+            assert!(leading_panel.chunks_exact(4).any(|pixel| pixel[0] > 180));
+        }
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .init_resource::<NativeSession>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let materials = app.world().resource::<Assets<StandardMaterial>>();
+        let cover: Vec<_> = materials
+            .iter()
+            .filter_map(|(_, material)| {
+                material
+                    .base_color_texture
+                    .as_ref()
+                    .map(|texture| (material, texture))
+            })
+            .collect();
+        assert_eq!(cover.len(), 2);
+        assert_ne!(cover[0].1, cover[1].1);
+        for (material, _) in cover {
+            assert_eq!(material.base_color, Color::WHITE);
+            assert_eq!(material.cull_mode, None);
+            assert!(material.double_sided);
+        }
+        assert!(materials.iter().any(|(_, material)| material.base_color
+            == Color::srgb_u8(242, 243, 237)
+            && material.base_color_texture.is_none()));
+    }
 
     fn assert_main_wing_projection(world: &World) {
         let wing = world.resource::<MainWingProjection>();
