@@ -569,7 +569,7 @@ mod tests {
                 });
                 app.insert_sub_app(RenderApp, render_app);
                 app.set_error_handler(|error, _| {
-                    assert_eq!(error.to_string(), "expected render failure")
+                    assert_eq!(error.to_string().trim_end(), "expected render failure")
                 });
                 let plugin = ScreenTimingPlugin { full_diagnostics };
                 plugin.build(&mut app);
