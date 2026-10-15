@@ -37,9 +37,19 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const choices = controls.filter((control) => control.kind === "button" && control.presentation?.kind === "choice");
     expect(choices.filter((control) => control.id.startsWith("game-setup-select-"))).toHaveLength(18);
     expect(choices.filter((control) => control.id.startsWith("presentation-water-quality-")).map((control) => control.label)).toEqual(["Low", "Medium", "High"]);
+    const scales = choices.filter((control) => control.id.startsWith("presentation-render-scale-"));
+    expect(scales.map((control) => ({ id: control.id, label: control.label, enabled: control.enabled,
+      selected: control.kind === "button" && control.presentation?.kind === "choice" && control.presentation.selected }))).toEqual(presentation_mode === "screen" ? [
+      { id: "presentation-render-scale-100", label: "100%", enabled: true, selected: true },
+      { id: "presentation-render-scale-75", label: "75%", enabled: true, selected: false },
+      { id: "presentation-render-scale-50", label: "50%", enabled: true, selected: false }
+    ] : []);
+    expect(controls.some((control) => control.id === "presentation-render-scale-status")).toBe(presentation_mode === "screen");
     expect(controls.map((control) => control.id)).not.toContain("game-state");
     expect(view.panels.flatMap((panel) => panel.sections?.map((section) => section.label) ?? []).filter(Boolean))
-      .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
+      .toEqual(presentation_mode === "screen"
+        ? ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画解像度"]
+        : ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
     expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({
       label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" }
     });
@@ -112,7 +122,15 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const initial = currentSharedGameUiFixture(1, { platform });
       adapter.render(createGameViewModel(initial));
       expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
-        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
+        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画解像度"]);
+      expect([...root.querySelectorAll('[data-section-id="render-scale"] button')].map((button) => ({
+        id: button.getAttribute("data-control-id"), label: button.querySelector(".screen-ui-choice-label")?.textContent,
+        selected: button.getAttribute("aria-pressed")
+      }))).toEqual([
+        { id: "presentation-render-scale-100", label: "● 100%", selected: "true" },
+        { id: "presentation-render-scale-75", label: "75%", selected: "false" },
+        { id: "presentation-render-scale-50", label: "50%", selected: "false" }
+      ]);
       const selected = root.querySelector<HTMLButtonElement>('[data-control-id="game-setup-select-information-0"]');
       const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
       if (selected === null || shell === null) throw new Error("Missing Setup DOM");
