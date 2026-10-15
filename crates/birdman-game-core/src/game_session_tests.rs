@@ -354,6 +354,71 @@ fn countdown_elapsed_addition_overflow_retains_the_previous_valid_observation() 
 }
 
 #[test]
+fn countdown_preserves_clock_validation_order_and_large_duration_inputs() {
+    let mut current = session(100);
+    current.start_countdown(3).unwrap();
+    let token = current.countdown_token().unwrap();
+    let before = current.snapshot();
+    assert_eq!(
+        current.observe_countdown(token - 1, f64::NAN, false),
+        Ok(CountdownProgress::Ignored)
+    );
+    assert_eq!(
+        current.observe_countdown(token, f64::NAN, false),
+        Err(GameSessionError::InvalidCountdownElapsed)
+    );
+    assert_eq!(current.snapshot(), before);
+    assert_eq!(current.countdown_elapsed_seconds(), Some(0.0));
+    let largest_convertible_seconds = f64::from_bits(0x43ef_ffff_ffff_ffff);
+    assert_eq!(
+        current.observe_countdown(token, largest_convertible_seconds, true),
+        Ok(CountdownProgress::Launched)
+    );
+    assert_eq!(current.flight_record().unwrap().sample_count(), 1);
+    assert_eq!(
+        current.snapshot().tail_flight_state().unwrap().tick_index(),
+        0
+    );
+}
+
+#[test]
+fn countdown_nanosecond_boundary_and_record_start_failure_preserve_commit_order() {
+    let mut current = session(100);
+    current.start_countdown(3).unwrap();
+    let token = current.countdown_token().unwrap();
+    assert_eq!(
+        current.observe_countdown(token, 2.999_999_999, true),
+        Ok(CountdownProgress::Waiting {
+            remaining_seconds: 1
+        })
+    );
+    let before = current.snapshot();
+    let elapsed = current.countdown_elapsed_seconds();
+    let configured = current.configured_mut().unwrap();
+    let initial = configured.configuration.initial_state();
+    let telemetry = configured
+        .configuration
+        .telemetry(initial.flight_state())
+        .unwrap();
+    configured.record.begin_tail(initial, telemetry).unwrap();
+    let initial_sample = *current.flight_record().unwrap().sample(0).unwrap();
+    assert_eq!(
+        current.observe_countdown(token, 0.000_000_001, true),
+        Err(GameSessionError::Record(
+            crate::FlightRecordError::AlreadyStarted
+        ))
+    );
+    assert_eq!(current.snapshot(), before);
+    assert_eq!(current.countdown_token(), Some(token));
+    assert_eq!(current.countdown_elapsed_seconds(), elapsed);
+    assert_eq!(current.flight_record().unwrap().sample_count(), 1);
+    assert_eq!(
+        current.flight_record().unwrap().sample(0),
+        Some(&initial_sample)
+    );
+}
+
+#[test]
 fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
     let mut session = GameSession::new();
     assert_eq!(

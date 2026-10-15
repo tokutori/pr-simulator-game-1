@@ -34,6 +34,28 @@ ErrはManualだけを除去した非空の理由を保持する。拒否後の�
 GameSessionのphase代入、物理payload・tick・recordの保持、非Paused時の拒否は既存の接続回帰とreviewの対象であり、
 この認可結果の証明をGameSession全体の証明へ一般化しない。#382のCountdown、Retry、Replay、終端化は後続範囲として残る。
 
+### Countdownの本番遷移
+
+次のcutは`crates/birdman-game-core/src/countdown.rs`の本番`CountdownState`を直接includeする。
+正の秒数と非wrap token、obsolete tokenの無視、時刻検査と可用性の優先順、取消、待機、時間到達による発進認可を対象とする。
+待機中の公開残秒は正であり、観測後の経過時間が所定時間へ到達した場合に発進を認可する。
+公開Countdownが残秒0で存在することを前提としない。
+
+待機状態だけを`u64` nanosecondsで保持する。所定時間は最大`u32::MAX`秒なので待機値はその範囲に収まる。
+入力deltaの全受理域、f64からnanosecondsへの丸め、加算overflowは既存の標準`Duration`境界に維持し、
+比較する加算後の候補は`u128`で渡す。入力の`u64`へのcast、deadlineでのclamp、Duration上限を超える通常整数加算は行わない。
+同じ時刻状態をDurationと整数の双方に保持しない。
+
+GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetryと`record.begin_tail`が成功した後だけRunningへcommitする。
+認可計算は候補値を返すため、record開始失敗時は直前のCountdownのtoken・elapsed・phaseを保持する。
+標準Durationとf64変換、wrapperのphase代入・物理payload・tick・record保持、古いcallbackの発進後拒否は形式証明範囲に含めず、
+実GameSessionの接続回帰を維持する。Retry、Replay、異常tickからの終端化も未証明である。
+
+既存runnerでPauseReasonsに加えてCountdownの全体positive、必須4群の名前別検証、exact compiler inventory、
+renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
+Countdownの負例は期限前の発進とobsolete tokenによる進行を意図的に主張し、指定assertで拒否されることを要求する。
+検証結果は対象headのPRへ記録し、sourceを追加した段階で合格を主張しない。
+
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
 private fieldはghost-onlyのclosed viewを通して仕様から参照し、maskは実bit関数から生成するdual specを使う。
