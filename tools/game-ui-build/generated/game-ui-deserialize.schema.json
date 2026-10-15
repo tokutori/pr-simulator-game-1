@@ -362,6 +362,25 @@
         },
         {
           "additionalProperties": false,
+          "description": "Enables Auto or restores its retained manual Screen resolution.",
+          "properties": {
+            "enabled": {
+              "description": "Whether GPU-work-based adjustment is selected.",
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "set_screen_render_auto",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "enabled"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Changes render-only mesh quality.",
           "properties": {
             "kind": {
@@ -558,8 +577,8 @@
           "type": "boolean"
         },
         "screen_render_scale": {
-          "$ref": "#/$defs/ScreenRenderScale",
-          "description": "Retained Screen-only resolution preference, independent of the active VR mode."
+          "$ref": "#/$defs/ScreenRenderAutoSnapshot",
+          "description": "Confirmed Screen selection, applied resources, and stable measurement state."
         },
         "stored_records": {
           "description": "Persistence results associated with this owner.",
@@ -945,6 +964,162 @@
         }
       ]
     },
+    "ScreenRenderAutoSnapshot": {
+      "additionalProperties": false,
+      "description": "Readonly rendering observation used by both platform UIs.",
+      "properties": {
+        "applied": {
+          "$ref": "#/$defs/ScreenRenderScale",
+          "description": "Last successfully applied rendering resolution."
+        },
+        "selection": {
+          "$ref": "#/$defs/ScreenRenderSelection",
+          "description": "User choice, independent of the current automatic resolution."
+        },
+        "status": {
+          "$ref": "#/$defs/ScreenRenderAutoStatus",
+          "description": "Stable measurement or resource state."
+        }
+      },
+      "required": [
+        "selection",
+        "applied",
+        "status"
+      ],
+      "type": "object"
+    },
+    "ScreenRenderAutoStatus": {
+      "description": "Small UI state; timing samples and history are intentionally excluded.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Automatic adjustment is disabled.",
+          "properties": {
+            "kind": {
+              "const": "manual",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "More recent valid measurements are required.",
+          "properties": {
+            "kind": {
+              "const": "measuring",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The current valid observation window is being evaluated.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Missing observations prevent a quality increase.",
+          "properties": {
+            "kind": {
+              "const": "coverage_limited",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No valid GPU timing capability is available.",
+          "properties": {
+            "cause": {
+              "description": "Backend-specific capability failure.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "unsupported",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cause"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Rendering was interrupted and the previous window was invalidated.",
+          "properties": {
+            "kind": {
+              "const": "interrupted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resource application is in progress.",
+          "properties": {
+            "kind": {
+              "const": "applying",
+              "type": "string"
+            },
+            "requested": {
+              "$ref": "#/$defs/ScreenRenderScale",
+              "description": "Requested resolution, distinct from the applied value."
+            }
+          },
+          "required": [
+            "kind",
+            "requested"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The last resource application failed; the applied value is retained.",
+          "properties": {
+            "cause": {
+              "description": "Original adapter failure.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ScreenRenderScale": {
       "description": "Supported manual Screen rendering scales, with full resolution as the default.",
       "oneOf": [
@@ -962,6 +1137,49 @@
           "const": "50",
           "description": "Half of each physical rendering dimension.",
           "type": "string"
+        }
+      ]
+    },
+    "ScreenRenderSelection": {
+      "description": "User selection; Auto retains the previous manual choice.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Explicit rendering resolution.",
+          "properties": {
+            "kind": {
+              "const": "manual",
+              "type": "string"
+            },
+            "scale": {
+              "$ref": "#/$defs/ScreenRenderScale",
+              "description": "Retained user choice."
+            }
+          },
+          "required": [
+            "kind",
+            "scale"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "GPU-work-based adjustment.",
+          "properties": {
+            "kind": {
+              "const": "auto",
+              "type": "string"
+            },
+            "manual_scale": {
+              "$ref": "#/$defs/ScreenRenderScale",
+              "description": "Restored when Auto is disabled."
+            }
+          },
+          "required": [
+            "kind",
+            "manual_scale"
+          ],
+          "type": "object"
         }
       ]
     },

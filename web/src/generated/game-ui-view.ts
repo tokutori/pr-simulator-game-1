@@ -463,6 +463,12 @@ export interface GameUiControl {
                  */
                 readonly scale: "100" | "75" | "50";
             } | {
+                /**
+                 * Whether GPU-work-based adjustment is selected.
+                 */
+                readonly enabled: boolean;
+                readonly kind: "set_screen_render_auto";
+            } | {
                 readonly kind: "set_water_quality";
                 /**
                  * Requested quality.

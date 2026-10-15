@@ -51,10 +51,7 @@ export interface GameUiPlatformInput {
      * Platform supports recorded scenic playback.
      */
     readonly replay_available: boolean;
-    /**
-     * Retained Screen-only resolution preference, independent of the active VR mode.
-     */
-    readonly screen_render_scale: "100" | "75" | "50";
+    readonly screen_render_scale: ScreenRenderAutoSnapshot;
     /**
      * Persistence results associated with this owner.
      */
@@ -117,6 +114,63 @@ export interface GameUiChartExtent {
      * Content width.
      */
     readonly width: number;
+}
+/**
+ * Confirmed Screen selection, applied resources, and stable measurement state.
+ */
+export interface ScreenRenderAutoSnapshot {
+    /**
+     * Last successfully applied rendering resolution.
+     */
+    readonly applied: "100" | "75" | "50";
+    /**
+     * User choice, independent of the current automatic resolution.
+     */
+    readonly selection: {
+        readonly kind: "manual";
+        /**
+         * Retained user choice.
+         */
+        readonly scale: "100" | "75" | "50";
+    } | {
+        readonly kind: "auto";
+        /**
+         * Restored when Auto is disabled.
+         */
+        readonly manual_scale: "100" | "75" | "50";
+    };
+    /**
+     * Stable measurement or resource state.
+     */
+    readonly status: {
+        readonly kind: "manual";
+    } | {
+        readonly kind: "measuring";
+    } | {
+        readonly kind: "ready";
+    } | {
+        readonly kind: "coverage_limited";
+    } | {
+        /**
+         * Backend-specific capability failure.
+         */
+        readonly cause: string;
+        readonly kind: "unsupported";
+    } | {
+        readonly kind: "interrupted";
+    } | {
+        readonly kind: "applying";
+        /**
+         * Requested resolution, distinct from the applied value.
+         */
+        readonly requested: "100" | "75" | "50";
+    } | {
+        /**
+         * Original adapter failure.
+         */
+        readonly cause: string;
+        readonly kind: "failed";
+    };
 }
 /**
  * Persistence metadata, not an independent flight record.
