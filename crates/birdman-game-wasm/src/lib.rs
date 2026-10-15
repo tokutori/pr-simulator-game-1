@@ -5,6 +5,7 @@ use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, W
 use birdman_game_session::application::ExternalPauseReason;
 use wasm_bindgen::{JsValue, prelude::*};
 
+mod cockpit_geometry;
 mod environment;
 mod environment_snapshot;
 mod hybrid_bridge;
@@ -15,6 +16,7 @@ mod lake_water;
 mod screen_render_auto;
 mod wing_geometry;
 
+pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use lake_sky::LakeSkyImageBridge;
