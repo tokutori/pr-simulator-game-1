@@ -11,7 +11,7 @@ use bevy::{
 };
 use birdman_game_session::screen_render_auto::{
     ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderAutoSnapshot,
-    ScreenRenderInvalidation, ScreenRenderScaleRequest,
+    ScreenRenderInvalidation, ScreenRenderScaleRequest, ScreenRenderSelection,
 };
 use birdman_game_session::screen_render_scale::ScreenRenderScale;
 
@@ -91,6 +91,9 @@ pub(crate) fn apply_scale(
     world: &mut World,
     scale: ScreenRenderScale,
 ) -> Result<(), ScreenRenderFailure> {
+    if scale == world.resource::<NativeScreenRender>().applied() {
+        exchange_scale(world, scale)?;
+    }
     let now_ms = now_ms(world);
     let request = world
         .resource_mut::<NativeScreenRender>()
@@ -101,6 +104,14 @@ pub(crate) fn apply_scale(
 }
 
 pub(crate) fn select_auto(world: &mut World, enabled: bool) -> Result<(), ScreenRenderFailure> {
+    let snapshot = world.resource::<NativeScreenRender>().snapshot();
+    let retained = match snapshot.selection {
+        ScreenRenderSelection::Manual { scale } => scale,
+        ScreenRenderSelection::Auto { manual_scale } => manual_scale,
+    };
+    if enabled || retained == snapshot.applied {
+        exchange_scale(world, snapshot.applied)?;
+    }
     let now_ms = now_ms(world);
     let request = world
         .resource_mut::<NativeScreenRender>()
@@ -151,9 +162,6 @@ fn apply_request(
 
 fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), ScreenRenderFailure> {
     let current = world.resource::<NativeScreenRender>().target.clone();
-    if scale == ScreenRenderScale::Full && matches!(current, ScreenTarget::Direct) {
-        return Ok(());
-    }
     let window_extent = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .single(world)
@@ -178,6 +186,9 @@ fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), Scr
         .get_resource::<Assets<Image>>()
         .ok_or(ScreenRenderFailure::ImagesUnavailable)?;
     if scale == ScreenRenderScale::Full {
+        if matches!(current, ScreenTarget::Direct) {
+            return Ok(());
+        }
         world
             .entity_mut(camera_entity)
             .insert((RenderTarget::default(), IsDefaultUiCamera));
@@ -424,7 +435,7 @@ mod tests {
         render::{camera::camera_system, texture::ManualTextureViews},
         window::{WindowCreated, WindowResized, WindowScaleFactorChanged},
     };
-    use birdman_game_session::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
+    use birdman_game_session::screen_render_auto::ScreenRenderAutoStatus;
 
     fn app() -> (App, Entity, Entity, Handle<WaterMaterial>) {
         let mut app = App::new();
@@ -582,7 +593,7 @@ mod tests {
 
     #[test]
     fn failed_and_obsolete_requests_preserve_actual_target_and_original_cause() {
-        let (mut app, _, _, _) = app();
+        let (mut app, _, camera, _) = app();
         apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
         let image = reduced(app.world()).image.clone();
         let now = now_ms(app.world());
@@ -627,6 +638,37 @@ mod tests {
             ScreenRenderAutoStatus::Failed {
                 cause: "OwnedImageUnavailable".into()
             }
+        );
+        assert_eq!(
+            apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters),
+            Err(ScreenRenderFailure::OwnedImageUnavailable)
+        );
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().snapshot(),
+            snapshot
+        );
+        assert_eq!(
+            select_auto(app.world_mut(), true),
+            Err(ScreenRenderFailure::OwnedImageUnavailable)
+        );
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().snapshot(),
+            snapshot
+        );
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        assert!(matches!(
+            app.world().resource::<NativeScreenRender>().target,
+            ScreenTarget::Direct
+        ));
+        let restored = app.world().resource::<NativeScreenRender>().snapshot();
+        app.world_mut().despawn(camera);
+        assert_eq!(
+            apply_scale(app.world_mut(), ScreenRenderScale::Full),
+            Err(ScreenRenderFailure::FlightCameraUnavailable)
+        );
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().snapshot(),
+            restored
         );
     }
 
