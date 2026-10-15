@@ -665,6 +665,40 @@ enum VerificationStage {
     Finished,
 }
 
+impl VerificationStage {
+    fn captures_phase(self, phase: SessionPhase) -> bool {
+        matches!(
+            (self, phase),
+            (Self::Title, SessionPhase::Title)
+                | (Self::Setup, SessionPhase::FlightSetup)
+                | (Self::Briefing, SessionPhase::BriefingReady)
+                | (Self::CountdownCapture, SessionPhase::Countdown { .. })
+                | (
+                    Self::Pilot | Self::Chase | Self::WaterMotion(..) | Self::WaterResumed,
+                    SessionPhase::FlightRunning,
+                )
+                | (
+                    Self::PausedCapture
+                        | Self::QualityLow
+                        | Self::QualityMedium
+                        | Self::QualityHigh
+                        | Self::WaterQualitySwapped
+                        | Self::WaterQualityRestored,
+                    SessionPhase::FlightPaused { .. },
+                )
+                | (
+                    Self::Result
+                        | Self::Analysis(_)
+                        | Self::ReturnedResult
+                        | Self::InputTrialResult
+                        | Self::InputTrialDetails,
+                    SessionPhase::Result,
+                )
+                | (Self::Replay | Self::ReplayAnalysis, SessionPhase::Replay)
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CaptureIdentity {
     stage: VerificationStage,
@@ -976,7 +1010,12 @@ pub(crate) fn verify_ui_layout(
     hierarchy: VerificationUiHierarchy,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if !verification.capture.pending() || verification.failure.is_some() {
+    let identity = verification.capture_identity();
+    let phase = session.game.core_session().snapshot().phase();
+    if verification.failure.is_some()
+        || !verification.capture.accepts(identity, identity)
+        || !identity.stage.captures_phase(phase)
+    {
         return;
     }
     let result = (|| {
@@ -1107,7 +1146,7 @@ pub(crate) fn verify_ui_layout(
         Ok(())
     })();
     if let Err(error) = result {
-        error!("Native UI verification: {error}");
+        error!("Native UI verification: {error}; capture={identity:?}, phase={phase:?}");
         verification.complete(Err(error.clone()));
         verification.failure = Some(error);
         exit.write(AppExit::error());
@@ -2526,7 +2565,7 @@ mod tests {
         queue_ui_control, recover_processing_delay, save_capture, shader_is_pending,
         within_ancestor_clip,
     };
-    use bevy::ecs::system::SystemState;
+    use bevy::ecs::system::{RunSystemOnce, SystemState};
     use bevy::input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex};
     use bevy::prelude::{
         App, ChildOf, ComputedNode, Entity, Handle, Image, MinimalPlugins, Name, Node, Overflow,
@@ -2839,6 +2878,9 @@ mod tests {
             0
         );
         app.world_mut()
+            .run_system_once(super::verify_ui_layout)
+            .unwrap();
+        app.world_mut()
             .resource_mut::<super::Verification>()
             .capture = CaptureState::Completed(CaptureCompletion {
             identity,
@@ -2848,6 +2890,9 @@ mod tests {
                 height: 720,
             }),
         });
+        app.world_mut()
+            .run_system_once(super::verify_ui_layout)
+            .unwrap();
         app.update();
         app.update();
         let verification = app.world().resource::<super::Verification>();
@@ -2886,6 +2931,9 @@ mod tests {
                 ));
             for _ in 0..10 {
                 app.update();
+                app.world_mut()
+                    .run_system_once(super::verify_ui_layout)
+                    .unwrap();
             }
             let verification = app.world().resource::<super::Verification>();
             assert_eq!(verification.capture_identity(), identity);
@@ -2911,6 +2959,9 @@ mod tests {
                     height: 720,
                 }),
             });
+            app.world_mut()
+                .run_system_once(super::verify_ui_layout)
+                .unwrap();
             app.update();
             assert_eq!(
                 app.world().resource::<super::Verification>().stage,
@@ -2935,6 +2986,64 @@ mod tests {
                     .accepts(identity, verification.capture_identity())
             );
         }
+    }
+
+    #[test]
+    fn layout_verification_ignores_stale_requested_identity() {
+        let mut app = countdown_driver_app();
+        let identity = {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.stage = VerificationStage::Briefing;
+            verification.capture_serial = 1;
+            verification.capture_identity()
+        };
+        for stale in [
+            CaptureIdentity {
+                stage: VerificationStage::Title,
+                ..identity
+            },
+            CaptureIdentity {
+                serial: 0,
+                ..identity
+            },
+            CaptureIdentity {
+                water_case: Some(WaterVerificationCase::parse("calm-low").unwrap()),
+                ..identity
+            },
+        ] {
+            app.world_mut()
+                .resource_mut::<super::Verification>()
+                .capture = CaptureState::Requested(stale);
+            app.world_mut()
+                .run_system_once(super::verify_ui_layout)
+                .unwrap();
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert!(
+                matches!(verification.capture, CaptureState::Requested(owner) if owner == stale)
+            );
+        }
+    }
+
+    #[test]
+    fn live_requested_capture_rejects_missing_navigation() {
+        let mut app = countdown_driver_app();
+        {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.stage = VerificationStage::Briefing;
+            verification.capture_serial = 1;
+            verification.capture = CaptureState::Requested(verification.capture_identity());
+        }
+        app.world_mut()
+            .run_system_once(super::verify_ui_layout)
+            .unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<super::Verification>()
+                .failure
+                .as_deref(),
+            Some("Captured scene has no visible navigation buttons")
+        );
     }
 
     #[test]
