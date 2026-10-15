@@ -2,9 +2,57 @@ import "./lake-model-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { BufferAttribute, DataTexture, Group, Mesh, MeshLambertMaterial, Vector3 } from "three";
 import { createBirdmanAirframe } from "../../web/src/render/engines/three/birdman-airframe.js";
-import { WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { CockpitGeometryBridge, WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
 
 describe("synthetic Birdman airframe", () => {
+  it("preserves frozen Web cockpit shape and releases its bulk owner immediately", () => {
+    const free = vi.spyOn(CockpitGeometryBridge.prototype, "free");
+    const airframe = createBirdmanAirframe();
+    try {
+      expect(free).toHaveBeenCalledTimes(1);
+      const frame = airframe.root.getObjectByName("open-cockpit-frame") as Group;
+      expect(frame.children).toHaveLength(14);
+      expect(airframe.root.children.filter((part) => part.name === "canopy-rim-segment")).toHaveLength(16);
+      const firstRod = frame.children[0] as Mesh;
+      firstRod.updateMatrix();
+      for (const [height, expected] of [[-0.5, [0, -1.17, -1.10]], [0.5, [-0.16, -1.01, -0.75]]] as const) {
+        const actual = new Vector3(0, height, 0).applyMatrix4(firstRod.matrix).toArray();
+        for (const [index, coordinate] of actual.entries()) expect(coordinate).toBeCloseTo(expected[index] ?? Number.NaN, 11);
+      }
+      for (const [name, vertices, indices, samples, color, opacity] of [
+        ["transparent-canopy", 150, 720, [[0, [0.025, -1.08, -1.10]], [6, [0, -1.045, -1.10]], [125, [0.22, -1.05, -0.31]]], 0xd6e3e5, 0.23],
+        ["rear-cockpit-fairing", 125, 576, [[0, [0.22, -1.05, -0.31]], [25, [0.23, -1.04, -0.06]], [106, [0, -0.83, 1.22]]], 0xe1e3db, 1]
+      ] as const) {
+        const mesh = airframe.root.getObjectByName(name) as Mesh;
+        const position = mesh.geometry.getAttribute("position");
+        expect(position.count).toBe(vertices);
+        expect(mesh.geometry.index?.count).toBe(indices);
+        for (const [index, expected] of samples) {
+          const actual = [position.getX(index), position.getY(index), position.getZ(index)];
+          for (const [axis, coordinate] of actual.entries()) expect(coordinate).toBeCloseTo(expected[axis] ?? Number.NaN, 6);
+        }
+        expect((mesh.material as MeshLambertMaterial).color.getHex()).toBe(color);
+        expect((mesh.material as MeshLambertMaterial).opacity).toBeCloseTo(opacity, 6);
+      }
+      airframe.dispose();
+      expect(free).toHaveBeenCalledTimes(1);
+    } finally { airframe.dispose(); free.mockRestore(); }
+  });
+
+  it("returns cockpit bulk arrays owned independently of the released bridge", () => {
+    const bridge = new CockpitGeometryBridge();
+    const positions = bridge.surface_positions();
+    positions[0] = 100;
+    expect(bridge.surface_positions()[0]).toBeCloseTo(0.025, 7);
+    const indices = bridge.surface_indices();
+    const radii = bridge.rod_radii();
+    bridge.free();
+    expect(positions).toHaveLength((150 + 125) * 3);
+    expect(indices).toHaveLength(720 + 576);
+    expect(radii).toHaveLength(30);
+    expect(positions[0]).toBe(100);
+  });
+
   it.each([
     { speed: 0,
       skin: [-0.7300000190734863, -0.6242138147354126, -0.6263368129730225, -0.544516384601593, -0.4357530176639557, -0.17252102494239807, -0.217544287443161],
