@@ -1,25 +1,22 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{
-    ControlMode, FlightState, GameSession, GameSessionError, PauseReason, SessionPhase,
-    SessionSnapshot, SessionTerminalState, TailFlightTickInput, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    FlightState, GameSessionError, SessionPhase, SessionSnapshot, SessionTerminalState,
+    TailFlightTickInput, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailRateTarget,
 };
-use birdman_game_format::DifficultySettings;
+use birdman_game_session::application::{
+    ApplicationSession, BackendReadiness, ExternalPauseReason, SessionCommand,
+};
 use birdman_game_session::game_ui::{
-    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiSessionCommand,
-    GameUiState, GameUiUpdate, GameUiView, game_ui_control_mode, game_ui_environment_readout,
-    game_ui_frame, game_ui_view, prepare_game_ui_flight, select_game_ui_difficulty, update_game_ui,
+    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState, GameUiUpdate,
+    GameUiView, game_ui_environment_readout, game_ui_frame, game_ui_view, update_game_ui,
 };
-use birdman_game_session::{
-    DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED,
-    HybridSessionPreparation, default_difficulty, identity_for_selection,
-};
+use birdman_game_session::{HybridSessionPreparation, identity_for_selection};
 
 #[derive(Resource)]
 pub(crate) struct NativeSession {
-    pub(crate) game: GameSession<'static>,
-    pub(crate) difficulty: DifficultySettings,
+    pub(crate) game: ApplicationSession,
     pub(crate) ui: GameUiState,
     pub(crate) notice: Option<String>,
     pub(crate) initial_pilot_position_m: f64,
@@ -30,8 +27,7 @@ pub(crate) struct NativeSession {
 impl Default for NativeSession {
     fn default() -> Self {
         Self {
-            game: GameSession::new(),
-            difficulty: default_difficulty(DEFAULT_CONTROL_MODE),
+            game: ApplicationSession::default(),
             ui: GameUiState::default(),
             notice: None,
             initial_pilot_position_m: 0.0,
@@ -53,29 +49,14 @@ pub(crate) enum MenuAction {
 
 impl NativeSession {
     pub(crate) fn observe_frame(&mut self, focused: bool, processing_delayed: bool) {
-        self.countdown_frame_token = Some(self.game.countdown_token().unwrap_or(0));
+        self.countdown_frame_token = Some(self.game.core_session().countdown_token().unwrap_or(0));
         self.frame_available = focused && !processing_delayed;
-        if !matches!(
-            self.game.snapshot().phase(),
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-        ) {
-            return;
-        }
-        for (blocked, reason) in [
-            (!focused, PauseReason::DocumentHidden),
-            (processing_delayed, PauseReason::ProcessingDelay),
+        for (available, reason) in [
+            (focused, ExternalPauseReason::DocumentHidden),
+            (!processing_delayed, ExternalPauseReason::ProcessingDelay),
         ] {
-            if blocked && let Err(error) = self.game.pause(reason) {
+            if let Err(error) = self.game.observe_availability(reason, available) {
                 self.notice = Some(format!("停止理由を同期できない: {error:?}"));
-            }
-            if !blocked
-                && matches!(
-                    self.game.snapshot().phase(),
-                    SessionPhase::FlightPaused { .. }
-                )
-                && let Err(error) = self.game.clear_pause_reason(reason)
-            {
-                self.notice = Some(format!("解消した停止理由を同期できない: {error:?}"));
             }
         }
     }
@@ -83,7 +64,7 @@ impl NativeSession {
     pub(crate) fn toggle_pause(&mut self) -> Result<(), String> {
         self.action(
             if matches!(
-                self.game.snapshot().phase(),
+                self.game.core_session().snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ) {
                 MenuAction::Resume
@@ -93,30 +74,21 @@ impl NativeSession {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn can_resume(&self) -> bool {
-        self.frame_available
-            && matches!(
-                self.game.snapshot().phase(),
-                SessionPhase::FlightPaused { reasons }
-                    if !reasons.contains(PauseReason::TrackingSuspended)
-            )
+        self.frame_available && self.game.core_session().can_resume()
     }
 
     pub(crate) fn action(&mut self, action: MenuAction) -> Result<(), String> {
         let command = match action {
-            MenuAction::Start => GameUiSessionCommand::OpenSetup {},
-            MenuAction::Prepare => GameUiSessionCommand::Prepare {},
-            MenuAction::Launch => GameUiSessionCommand::StartCountdown {},
-            MenuAction::Pause => GameUiSessionCommand::Pause {},
-            MenuAction::Resume => GameUiSessionCommand::Resume {},
-            MenuAction::Abort => GameUiSessionCommand::Abort {},
+            MenuAction::Start => SessionCommand::OpenSetup {},
+            MenuAction::Prepare => SessionCommand::Prepare {},
+            MenuAction::Launch => SessionCommand::StartCountdown {},
+            MenuAction::Pause => SessionCommand::Pause {},
+            MenuAction::Resume => SessionCommand::Resume {},
+            MenuAction::Abort => SessionCommand::Abort {},
         };
         self.execute_ui_command(command)
-    }
-
-    pub(crate) fn control_mode(&self) -> ControlMode {
-        game_ui_control_mode(self.difficulty.assistance())
-            .expect("validated difficulty retains a valid authority")
     }
 
     pub(crate) fn ui_view(&self, platform: &GameUiPlatformInput) -> Result<GameUiView, String> {
@@ -151,15 +123,15 @@ impl NativeSession {
     }
 
     pub(crate) fn ui_identity(&self) -> Option<birdman_game_core::SessionScenarioIdentity> {
-        if self.game.snapshot().phase() == SessionPhase::FlightSetup {
+        if self.game.core_session().snapshot().phase() == SessionPhase::FlightSetup {
             HybridSessionPreparation::select_scenario(
-                self.difficulty.weather(),
-                DEFAULT_SESSION_SEED,
+                self.game.display_difficulty().weather(),
+                self.game.seed(),
             )
             .ok()
             .map(identity_for_selection)
         } else {
-            self.game.configuration_identity()
+            self.game.core_session().configuration_identity()
         }
     }
 
@@ -169,74 +141,19 @@ impl NativeSession {
         environment: &'view str,
     ) -> GameUiContext<'view, 'static> {
         GameUiContext {
-            session: &self.game,
-            difficulty: self.difficulty,
-            preset: self.difficulty.preset_label(),
+            session: self.game.core_session(),
+            difficulty: self.game.display_difficulty(),
+            preset: self.game.display_difficulty().preset_label(),
             identity: self.ui_identity(),
-            record: self.game.playback_record(),
+            record: self.game.core_session().playback_record(),
             environment_readout: environment,
             platform,
         }
     }
 
-    pub(crate) fn execute_ui_command(
-        &mut self,
-        command: GameUiSessionCommand,
-    ) -> Result<(), String> {
-        if command == (GameUiSessionCommand::Resume {}) && !self.can_resume() {
-            return Err(
-                "一時停止中の非アクティブ状態・処理遅延・追跡停止の解消後に再開する".into(),
-            );
-        }
-        let result = match command {
-            GameUiSessionCommand::OpenSetup {} => self.game.open_setup(),
-            GameUiSessionCommand::Prepare {} => {
-                prepare_game_ui_flight(
-                    &mut self.game,
-                    self.difficulty,
-                    DEFAULT_MAXIMUM_FLIGHT_TICKS,
-                    DEFAULT_SESSION_SEED,
-                )
-                .map_err(|error| format!("準備に失敗した: {error:?}"))?;
-                self.game.mark_briefing_ready()
-            }
-            GameUiSessionCommand::StartCountdown {} => self.game.start_countdown(3),
-            GameUiSessionCommand::Pause {} => self.game.pause(PauseReason::Manual),
-            GameUiSessionCommand::Resume {} => self
-                .game
-                .clear_pause_reason(PauseReason::Manual)
-                .and_then(|()| self.game.clear_pause_reason(PauseReason::DocumentHidden))
-                .and_then(|()| self.game.clear_pause_reason(PauseReason::ProcessingDelay))
-                .and_then(|()| self.game.resume()),
-            GameUiSessionCommand::Abort {} => self.game.abort_flight().map(|_| ()),
-            GameUiSessionCommand::Retry {} => self.game.retry(),
-            GameUiSessionCommand::RetryBriefing {} => self
-                .game
-                .retry_briefing()
-                .and_then(|()| self.game.mark_briefing_ready()),
-            GameUiSessionCommand::ReturnToTitle {} => self.game.return_to_title(),
-            GameUiSessionCommand::CancelBriefing {} => self.game.cancel_briefing(),
-            GameUiSessionCommand::CancelCountdown {} => self.game.cancel_countdown(),
-            GameUiSessionCommand::EnterReplay {} => self.game.enter_replay(),
-            GameUiSessionCommand::LeaveReplay {} => self.game.leave_replay(),
-            GameUiSessionCommand::EnterAttract {} => self.game.enter_attract(),
-            GameUiSessionCommand::LeaveAttract {} => self.game.leave_attract(),
-            command @ (GameUiSessionCommand::SelectPreset { .. }
-            | GameUiSessionCommand::SelectInformation { .. }
-            | GameUiSessionCommand::SelectAssistance { .. }
-            | GameUiSessionCommand::SelectWeather { .. }
-            | GameUiSessionCommand::SetCue { .. }) => {
-                self.difficulty = select_game_ui_difficulty(
-                    &self.game,
-                    self.difficulty,
-                    &command,
-                    DEFAULT_SESSION_SEED,
-                )
-                .map_err(|error| format!("設定を解決できない: {error:?}"))?;
-                Ok(())
-            }
-        };
-        result
+    pub(crate) fn execute_ui_command(&mut self, command: SessionCommand) -> Result<(), String> {
+        self.game
+            .execute(command, BackendReadiness::Ready)
             .map(|()| {
                 self.notice = None;
             })
@@ -251,6 +168,7 @@ impl NativeSession {
             GameUiAction::ToggleReplayPlaying {} => self.game.set_playback_playing(
                 !self
                     .game
+                    .core_session()
                     .playback_clock()
                     .ok_or_else(|| "Replay clockが存在しない".to_owned())?
                     .is_playing(),
@@ -268,7 +186,7 @@ impl NativeSession {
     }
 
     pub(crate) fn prepared_display_state(&self) -> Option<TailDisplay> {
-        let state = self.game.prepared_launch_state()?;
+        let state = self.game.core_session().prepared_launch_state()?;
         Some(TailDisplay {
             state: state.flight_state(),
             incidence: state.incidence(),
@@ -277,7 +195,7 @@ impl NativeSession {
     }
 
     pub(crate) fn display_state(&self) -> Option<TailDisplay> {
-        match self.game.snapshot() {
+        match self.game.core_session().snapshot() {
             SessionSnapshot::TailFlightRunning { state, .. }
             | SessionSnapshot::TailFlightPaused { state, .. } => Some(TailDisplay {
                 state: state.flight_state(),
@@ -297,8 +215,12 @@ impl NativeSession {
                 }),
             },
             SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
-                let seconds = self.game.playback_clock()?.time_seconds();
-                let sample = self.game.playback_sample_at_seconds(seconds).ok()?;
+                let seconds = self.game.core_session().playback_clock()?.time_seconds();
+                let sample = self
+                    .game
+                    .core_session()
+                    .playback_sample_at_seconds(seconds)
+                    .ok()?;
                 let position = sample.tick_index as f64 + sample.fraction;
                 Some(TailDisplay {
                     state: sample.flight_state,
@@ -312,7 +234,7 @@ impl NativeSession {
 
     pub(crate) fn countdown(&mut self, elapsed: f64) {
         if matches!(
-            self.game.snapshot().phase(),
+            self.game.core_session().snapshot().phase(),
             SessionPhase::Replay | SessionPhase::Attract
         ) {
             if let Err(error) = self.game.advance_playback(elapsed) {
@@ -322,7 +244,7 @@ impl NativeSession {
         }
         if let Some(token) = self.countdown_frame_token.take() {
             if token == 0 {
-                if let Some(current) = self.game.countdown_token() {
+                if let Some(current) = self.game.core_session().countdown_token() {
                     self.observe_countdown(current, 0.0);
                 }
             } else {
@@ -333,7 +255,7 @@ impl NativeSession {
 
     #[cfg(test)]
     pub(crate) fn presentation_frame(&mut self, elapsed: f64) {
-        self.countdown_frame_token = Some(self.game.countdown_token().unwrap_or(0));
+        self.countdown_frame_token = Some(self.game.core_session().countdown_token().unwrap_or(0));
         self.countdown(elapsed);
     }
 
@@ -343,7 +265,9 @@ impl NativeSession {
             .observe_countdown(token, elapsed_seconds, self.frame_available)
         {
             Ok(birdman_game_core::CountdownProgress::Launched) => {
-                if let SessionSnapshot::TailFlightRunning { state, .. } = self.game.snapshot() {
+                if let SessionSnapshot::TailFlightRunning { state, .. } =
+                    self.game.core_session().snapshot()
+                {
                     self.initial_pilot_position_m = state.flight_state().pilot_position_m();
                 }
             }
@@ -353,7 +277,9 @@ impl NativeSession {
     }
 
     pub(crate) fn tick(&mut self, intent: FlightInput) {
-        if self.game.snapshot().phase() != SessionPhase::FlightRunning || !self.frame_available {
+        if self.game.core_session().snapshot().phase() != SessionPhase::FlightRunning
+            || !self.frame_available
+        {
             return;
         }
         let result = intent
@@ -362,6 +288,7 @@ impl NativeSession {
         if let Err(error) = result {
             if self
                 .game
+                .core_session()
                 .snapshot()
                 .result()
                 .is_some_and(|terminal| terminal.failure.is_some())
@@ -370,8 +297,10 @@ impl NativeSession {
                 return;
             }
             self.notice = Some(format!("最後の有効状態を保持した: {error:?}"));
-            if self.game.snapshot().phase() == SessionPhase::FlightRunning
-                && let Err(pause_error) = self.game.pause(PauseReason::ProcessingDelay)
+            if self.game.core_session().snapshot().phase() == SessionPhase::FlightRunning
+                && let Err(pause_error) = self
+                    .game
+                    .observe_availability(ExternalPauseReason::ProcessingDelay, false)
             {
                 self.notice = Some(format!("{error:?}; 停止処理: {pause_error:?}"));
             }
@@ -428,7 +357,15 @@ mod tests {
         let initial = session.prepared_display_state().unwrap();
         assert!(session.display_state().is_none());
         assert!(session.physical_state().is_none());
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
         session.action(MenuAction::Launch).unwrap();
         for _step in 0..2 {
             session.presentation_frame(1.0);
@@ -436,7 +373,15 @@ mod tests {
             assert_eq!(countdown.state, initial.state);
             assert_eq!(countdown.incidence, initial.incidence);
             assert!(session.display_state().is_none());
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
         }
         session.presentation_frame(1.0);
         assert!(session.prepared_display_state().is_none());
@@ -447,19 +392,21 @@ mod tests {
         session.tick(FlightInput::default());
         session.action(MenuAction::Abort).unwrap();
         session
-            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .execute_ui_command(SessionCommand::Retry {})
             .unwrap();
         let retry = session.prepared_display_state().unwrap();
         assert_eq!(retry.state, initial.state);
         assert_eq!(retry.incidence, initial.incidence);
         assert!(session.display_state().is_none());
         session
-            .execute_ui_command(GameUiSessionCommand::CancelBriefing {})
+            .execute_ui_command(SessionCommand::CancelBriefing {})
             .unwrap();
         assert!(session.prepared_display_state().is_none());
     }
     use super::*;
+    use birdman_game_core::PauseReason;
     use birdman_game_format::AssistanceLevel;
+    use birdman_game_session::{DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED};
 
     #[test]
     fn unfocused_countdown_returns_to_briefing_and_requires_explicit_restart() {
@@ -495,21 +442,49 @@ mod tests {
         }
         let session = app.world().resource::<NativeSession>();
         assert!(!session.frame_available);
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-        assert_eq!(session.game.countdown_token(), None);
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
-        let identity = session.game.configuration_identity();
-        let initial = session.game.prepared_launch_state().unwrap();
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+        assert_eq!(session.game.core_session().countdown_token(), None);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
+        let identity = session.game.core_session().configuration_identity();
+        let initial = session.game.core_session().prepared_launch_state().unwrap();
         app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
         for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
             app.update();
         }
         let session = app.world().resource::<NativeSession>();
         assert!(session.frame_available);
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-        assert_eq!(session.game.configuration_identity(), identity);
-        assert_eq!(session.game.prepared_launch_state(), Some(initial));
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            identity
+        );
+        assert_eq!(
+            session.game.core_session().prepared_launch_state(),
+            Some(initial)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
         app.world_mut()
             .resource_mut::<NativeSession>()
             .action(MenuAction::Launch)
@@ -520,6 +495,7 @@ mod tests {
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase()
                 == SessionPhase::FlightRunning
@@ -528,21 +504,44 @@ mod tests {
             }
         }
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().tail_flight_state(), Some(initial));
-        assert_eq!(session.game.configuration_identity(), identity);
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(
+            session.game.core_session().snapshot().tail_flight_state(),
+            Some(initial)
+        );
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            identity
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
         app.update();
         let session = app.world().resource::<NativeSession>();
         assert_eq!(
             session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
                 .tick_index(),
             1
         );
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 2);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            2
+        );
     }
 
     #[test]
@@ -579,25 +578,45 @@ mod tests {
             }
             let session = app.world().resource::<NativeSession>();
             assert_eq!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::Countdown { remaining_seconds }
             );
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
         }
         app.update();
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning
+        );
         assert_eq!(
             session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
                 .tick_index(),
             0
         );
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
-        assert_eq!(session.game.countdown_token(), None);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
+        assert_eq!(session.game.core_session().countdown_token(), None);
     }
 
     #[test]
@@ -606,41 +625,49 @@ mod tests {
         for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
             session.action(action).unwrap();
         }
-        let obsolete = session.game.countdown_token().unwrap();
+        let obsolete = session.game.core_session().countdown_token().unwrap();
         session.presentation_frame(0.8);
         session
-            .execute_ui_command(GameUiSessionCommand::CancelCountdown {})
+            .execute_ui_command(SessionCommand::CancelCountdown {})
             .unwrap();
         session.action(MenuAction::Launch).unwrap();
         session.observe_countdown(obsolete, 3.0);
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::Countdown {
                 remaining_seconds: 3
             }
         );
         session.presentation_frame(0.8);
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::Countdown {
                 remaining_seconds: 3
             }
         );
         session.presentation_frame(0.2);
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::Countdown {
                 remaining_seconds: 2
             }
         );
         session.presentation_frame(2.0);
-        let initial = session.game.snapshot();
+        let initial = session.game.core_session().snapshot();
         assert_eq!(initial.phase(), SessionPhase::FlightRunning);
         assert_eq!(initial.tail_flight_state().unwrap().tick_index(), 0);
         session.presentation_frame(3.0);
         session.observe_countdown(obsolete, 3.0);
-        assert_eq!(session.game.snapshot(), initial);
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(session.game.core_session().snapshot(), initial);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
     }
 
     #[test]
@@ -651,23 +678,40 @@ mod tests {
         session.observe_frame(true, false);
         session.action(MenuAction::Launch).unwrap();
         session.countdown(0.1);
-        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        assert_eq!(
+            session.game.core_session().countdown_elapsed_seconds(),
+            Some(0.0)
+        );
         session.countdown(3.0);
-        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
+        assert_eq!(
+            session.game.core_session().countdown_elapsed_seconds(),
+            Some(0.0)
+        );
         session.observe_frame(true, false);
         session
-            .execute_ui_command(GameUiSessionCommand::CancelCountdown {})
+            .execute_ui_command(SessionCommand::CancelCountdown {})
             .unwrap();
         session.action(MenuAction::Launch).unwrap();
         session.countdown(0.1);
-        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().countdown_elapsed_seconds(),
+            Some(0.0)
+        );
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
             SessionPhase::Countdown {
                 remaining_seconds: 3
             }
         );
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
     }
 
     #[test]
@@ -680,26 +724,45 @@ mod tests {
             session.presentation_frame(0.75);
             session.observe_frame(focused, processing_delayed);
             session.presentation_frame(0.5);
-            assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-            assert_eq!(session.game.countdown_token(), None);
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::BriefingReady
+            );
+            assert_eq!(session.game.core_session().countdown_token(), None);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
             session.observe_frame(true, false);
             session.action(MenuAction::Launch).unwrap();
             session.presentation_frame(0.5);
             assert_eq!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::Countdown {
                     remaining_seconds: 3
                 }
             );
             session.presentation_frame(0.5);
             assert_eq!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::Countdown {
                     remaining_seconds: 2
                 }
             );
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
         }
     }
 
@@ -714,18 +777,27 @@ mod tests {
                 let mut session = NativeSession::default();
                 session.action(MenuAction::Start).unwrap();
                 session
-                    .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                    .execute_ui_command(SessionCommand::SelectAssistance {
                         assistance: mode_action,
                     })
                     .unwrap();
                 session.action(MenuAction::Prepare).unwrap();
-                let sealed_identity = session.game.configuration_identity().unwrap();
+                let sealed_identity = session
+                    .game
+                    .core_session()
+                    .configuration_identity()
+                    .unwrap();
                 assert_eq!(sealed_identity.seed, DEFAULT_SESSION_SEED);
                 session.action(MenuAction::Launch).unwrap();
                 for _step in 0..3 {
                     session.presentation_frame(1.0);
                 }
-                let initial_state = session.game.snapshot().tail_flight_state().unwrap();
+                let initial_state = session
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap();
                 let mut last_successful_state = initial_state;
                 let input = FlightInput {
                     nose_up,
@@ -734,16 +806,21 @@ mod tests {
                 };
                 for _attempt in 0..DEFAULT_MAXIMUM_FLIGHT_TICKS {
                     session.tick(input);
-                    if session.game.snapshot().phase() == SessionPhase::Result {
+                    if session.game.core_session().snapshot().phase() == SessionPhase::Result {
                         break;
                     }
-                    last_successful_state = session.game.snapshot().tail_flight_state().unwrap();
+                    last_successful_state = session
+                        .game
+                        .core_session()
+                        .snapshot()
+                        .tail_flight_state()
+                        .unwrap();
                 }
-                let terminal = session.game.snapshot();
+                let terminal = session.game.core_session().snapshot();
                 let result = terminal
                     .result()
                     .expect("bounded native input sequence must finalize within its tick limit");
-                let record = session.game.flight_record().unwrap();
+                let record = session.game.core_session().flight_record().unwrap();
                 let header = record.header();
                 let finalization = record.finalization().unwrap();
                 let last_sample = *record.samples().last().unwrap();
@@ -781,17 +858,23 @@ mod tests {
                     assert!(session.notice.is_none());
                 }
                 session.tick(input);
-                assert_eq!(session.game.snapshot(), terminal);
-                let retained_record = session.game.flight_record().unwrap();
+                assert_eq!(session.game.core_session().snapshot(), terminal);
+                let retained_record = session.game.core_session().flight_record().unwrap();
                 assert_eq!(retained_record.sample_count(), sample_count);
                 assert_eq!(retained_record.finalization(), Some(finalization));
                 assert_eq!(retained_record.samples().last(), Some(&last_sample));
                 session
-                    .execute_ui_command(GameUiSessionCommand::Retry {})
+                    .execute_ui_command(SessionCommand::Retry {})
                     .unwrap();
-                assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-                assert_eq!(session.game.configuration_identity(), Some(sealed_identity));
-                let retry_record = session.game.flight_record().unwrap();
+                assert_eq!(
+                    session.game.core_session().snapshot().phase(),
+                    SessionPhase::BriefingReady
+                );
+                assert_eq!(
+                    session.game.core_session().configuration_identity(),
+                    Some(sealed_identity)
+                );
+                let retry_record = session.game.core_session().flight_record().unwrap();
                 assert_eq!(retry_record.header(), header);
                 assert_eq!(retry_record.sample_count(), 0);
                 assert!(retry_record.finalization().is_none());
@@ -801,7 +884,7 @@ mod tests {
                     session.presentation_frame(1.0);
                 }
                 assert_eq!(
-                    session.game.snapshot().tail_flight_state(),
+                    session.game.core_session().snapshot().tail_flight_state(),
                     Some(initial_state)
                 );
             }
@@ -818,26 +901,26 @@ mod tests {
             session.presentation_frame(1.0);
         }
         session.tick(FlightInput::default());
-        let before = session.game.snapshot();
+        let before = session.game.core_session().snapshot();
         session.action(MenuAction::Pause).unwrap();
         session.tick(FlightInput {
             nose_up: 1.0,
             ..default()
         });
         assert_eq!(
-            session.game.snapshot().tail_flight_state(),
+            session.game.core_session().snapshot().tail_flight_state(),
             before.tail_flight_state()
         );
         session.action(MenuAction::Resume).unwrap();
         session.action(MenuAction::Abort).unwrap();
-        let terminal = session.game.snapshot();
+        let terminal = session.game.core_session().snapshot();
         let display = session.display_state().unwrap();
         let last = before.tail_flight_state().unwrap();
         assert_eq!(display.state, last.flight_state());
         assert_eq!(display.incidence, last.incidence());
         assert_eq!(display.tick, last.tick_index() as f64);
         session.tick(FlightInput::default());
-        assert_eq!(session.game.snapshot(), terminal);
+        assert_eq!(session.game.core_session().snapshot(), terminal);
         let result = terminal.result().unwrap();
         assert_eq!(
             result.reason,
@@ -847,19 +930,23 @@ mod tests {
         assert!(
             session
                 .game
+                .core_session()
                 .flight_record()
                 .unwrap()
                 .finalization()
                 .is_some()
         );
         session
-            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .execute_ui_command(SessionCommand::Retry {})
             .unwrap();
         assert!(matches!(
-            session.game.snapshot(),
+            session.game.core_session().snapshot(),
             SessionSnapshot::BriefingReady { .. }
         ));
-        assert_eq!(session.game.configuration_identity(), Some(result.scenario));
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            Some(result.scenario)
+        );
         assert!(session.notice.is_none());
     }
 
@@ -873,20 +960,28 @@ mod tests {
             for _step in 0..3 {
                 session.presentation_frame(1.0);
             }
-            let before = session.game.snapshot().tail_flight_state().unwrap();
+            let before = session
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
             session.observe_frame(focused, processing_delayed);
             assert!(matches!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ));
             assert!(!session.can_resume());
             assert!(session.toggle_pause().is_err());
             assert!(session.action(MenuAction::Resume).is_err());
             session.tick(FlightInput::default());
-            assert_eq!(session.game.snapshot().tail_flight_state(), Some(before));
+            assert_eq!(
+                session.game.core_session().snapshot().tail_flight_state(),
+                Some(before)
+            );
             session.observe_frame(true, false);
             assert!(matches!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ));
             assert!(session.can_resume());
@@ -895,6 +990,7 @@ mod tests {
             assert_eq!(
                 session
                     .game
+                    .core_session()
                     .snapshot()
                     .tail_flight_state()
                     .unwrap()
@@ -905,55 +1001,52 @@ mod tests {
     }
 
     #[test]
-    fn resume_admission_is_atomic_for_every_pause_reason_set() {
-        for reason_mask in 0_u8..16 {
-            for frame_available in [false, true] {
-                let mut session = NativeSession::default();
-                for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-                    session.action(action).unwrap();
-                }
-                for _step in 0..3 {
-                    session.presentation_frame(1.0);
-                }
-                session.game.pause(PauseReason::Manual).unwrap();
-                session
-                    .game
-                    .clear_pause_reason(PauseReason::Manual)
-                    .unwrap();
-                for (bit, reason) in [
-                    (1, PauseReason::Manual),
-                    (2, PauseReason::DocumentHidden),
-                    (4, PauseReason::TrackingSuspended),
-                    (8, PauseReason::ProcessingDelay),
-                ] {
-                    if reason_mask & bit != 0 {
-                        session.game.pause(reason).unwrap();
-                    }
-                }
-                session.frame_available = frame_available;
-                let before = session.game.snapshot();
-                let sample_count = session.game.flight_record().unwrap().sample_count();
-                let expected = frame_available && reason_mask & 4 == 0;
-                assert_eq!(session.can_resume(), expected);
-                let resumed = session.action(MenuAction::Resume);
-                assert_eq!(resumed.is_ok(), expected);
-                if expected {
-                    assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-                    assert_eq!(
-                        session.game.snapshot().tail_flight_state(),
-                        before.tail_flight_state()
-                    );
-                } else {
-                    assert_eq!(session.game.snapshot(), before);
-                }
-                assert_eq!(
-                    session.game.flight_record().unwrap().sample_count(),
-                    sample_count
-                );
-            }
+    fn resume_preserves_observed_external_causes_and_recovery_requires_explicit_action() {
+        let mut session = NativeSession::default();
+        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+            session.action(action).unwrap();
         }
-        let session = NativeSession::default();
+        for _step in 0..3 {
+            session.presentation_frame(1.0);
+        }
+        session.action(MenuAction::Pause).unwrap();
+        let before = session.game.core_session().snapshot().tail_flight_state();
+        let sample_count = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        session.observe_frame(false, true);
         assert!(!session.can_resume());
+        assert!(session.action(MenuAction::Resume).is_err());
+        let SessionPhase::FlightPaused { reasons } = session.game.core_session().snapshot().phase()
+        else {
+            panic!("paused");
+        };
+        assert!(!reasons.contains(PauseReason::Manual));
+        assert!(reasons.contains(PauseReason::DocumentHidden));
+        assert!(reasons.contains(PauseReason::ProcessingDelay));
+        session.observe_frame(true, false);
+        assert!(session.can_resume());
+        assert!(matches!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightPaused { .. }
+        ));
+        session.action(MenuAction::Resume).unwrap();
+        assert_eq!(
+            session.game.core_session().snapshot().tail_flight_state(),
+            before
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            sample_count
+        );
     }
 
     #[test]
@@ -966,7 +1059,7 @@ mod tests {
             let mut session = NativeSession::default();
             session.action(MenuAction::Start).unwrap();
             session
-                .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                .execute_ui_command(SessionCommand::SelectAssistance {
                     assistance: selected,
                 })
                 .unwrap();
@@ -975,13 +1068,18 @@ mod tests {
             for _step in 0..3 {
                 session.presentation_frame(1.0);
             }
-            let mode = session.control_mode();
-            let header = session.game.flight_record().unwrap().header();
+            let mode = session.game.prepared().unwrap().control_mode;
+            let header = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .header();
             for terminal in [false, true] {
                 if terminal {
                     session.action(MenuAction::Abort).unwrap();
                 }
-                let before = session.game.snapshot();
+                let before = session.game.core_session().snapshot();
                 for changed in [
                     AssistanceLevel::Manual,
                     AssistanceLevel::Assisted,
@@ -989,14 +1087,22 @@ mod tests {
                 ] {
                     assert!(
                         session
-                            .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+                            .execute_ui_command(SessionCommand::SelectAssistance {
                                 assistance: changed
                             })
                             .is_err()
                     );
-                    assert_eq!(session.control_mode(), mode);
-                    assert_eq!(session.game.snapshot(), before);
-                    assert_eq!(session.game.flight_record().unwrap().header(), header);
+                    assert_eq!(session.game.prepared().unwrap().control_mode, mode);
+                    assert_eq!(session.game.core_session().snapshot(), before);
+                    assert_eq!(
+                        session
+                            .game
+                            .core_session()
+                            .flight_record()
+                            .unwrap()
+                            .header(),
+                        header
+                    );
                 }
             }
         }

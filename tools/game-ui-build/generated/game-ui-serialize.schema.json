@@ -705,7 +705,7 @@
           "description": "Produces one canonical domain operation.",
           "properties": {
             "command": {
-              "$ref": "#/$defs/GameUiSessionCommand",
+              "$ref": "#/$defs/SessionCommand",
               "description": "Operation admitted by the current view."
             },
             "kind": {
@@ -1966,7 +1966,7 @@
           "description": "Existing session command.",
           "properties": {
             "command": {
-              "$ref": "#/$defs/GameUiSessionCommand",
+              "$ref": "#/$defs/SessionCommand",
               "description": "Operation to execute through the shared session owner."
             },
             "kind": {
@@ -3123,321 +3123,6 @@
         }
       ]
     },
-    "GameUiSessionCommand": {
-      "description": "Existing domain commands emitted by the pure UI update.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Opens flight settings.",
-          "properties": {
-            "kind": {
-              "const": "open_setup",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Returns to Title.",
-          "properties": {
-            "kind": {
-              "const": "return_to_title",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Seals the selected configuration.",
-          "properties": {
-            "kind": {
-              "const": "prepare",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Returns from Briefing to Setup.",
-          "properties": {
-            "kind": {
-              "const": "cancel_briefing",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Starts the existing launch countdown.",
-          "properties": {
-            "kind": {
-              "const": "start_countdown",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Cancels the launch countdown.",
-          "properties": {
-            "kind": {
-              "const": "cancel_countdown",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Pauses the current flight.",
-          "properties": {
-            "kind": {
-              "const": "pause",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Explicitly resumes the retained flight.",
-          "properties": {
-            "kind": {
-              "const": "resume",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Finalizes the active flight by pilot request.",
-          "properties": {
-            "kind": {
-              "const": "abort",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Reuses the retained flight configuration.",
-          "properties": {
-            "kind": {
-              "const": "retry",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Repeats preparation of the sealed configuration.",
-          "properties": {
-            "kind": {
-              "const": "retry_briefing",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Opens replay of the finalized record.",
-          "properties": {
-            "kind": {
-              "const": "enter_replay",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Leaves replay for its Rust-owned return target.",
-          "properties": {
-            "kind": {
-              "const": "leave_replay",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Opens the independent Title demonstration.",
-          "properties": {
-            "kind": {
-              "const": "enter_attract",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Returns from the demonstration to Title.",
-          "properties": {
-            "kind": {
-              "const": "leave_attract",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Resolves one existing preset.",
-          "properties": {
-            "kind": {
-              "const": "select_preset",
-              "type": "string"
-            },
-            "preset": {
-              "$ref": "#/$defs/DifficultyPreset",
-              "description": "Named preset; Custom is not a selectable shortcut."
-            }
-          },
-          "required": [
-            "kind",
-            "preset"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Selects the Information axis.",
-          "properties": {
-            "information": {
-              "$ref": "#/$defs/InformationLevel",
-              "description": "Existing information level."
-            },
-            "kind": {
-              "const": "select_information",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "information"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Selects the Assistance axis.",
-          "properties": {
-            "assistance": {
-              "$ref": "#/$defs/AssistanceLevel",
-              "description": "Existing assistance level."
-            },
-            "kind": {
-              "const": "select_assistance",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "assistance"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Selects the Weather axis.",
-          "properties": {
-            "kind": {
-              "const": "select_weather",
-              "type": "string"
-            },
-            "weather": {
-              "$ref": "#/$defs/WeatherClass",
-              "description": "Existing weather class."
-            }
-          },
-          "required": [
-            "kind",
-            "weather"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Changes one Custom information cue.",
-          "properties": {
-            "cue": {
-              "$ref": "#/$defs/HudCue",
-              "description": "Existing cue."
-            },
-            "kind": {
-              "const": "set_cue",
-              "type": "string"
-            },
-            "visible": {
-              "description": "Requested visibility.",
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "cue",
-            "visible"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "GameUiShell": {
       "description": "Shared viewport-relative placement.",
       "oneOf": [
@@ -4050,6 +3735,321 @@
           "const": "non_physical_inertia_tensor",
           "description": "Nonphysical mass inertia.",
           "type": "string"
+        }
+      ]
+    },
+    "SessionCommand": {
+      "description": "Canonical application operations generated by every game UI.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Opens flight settings.",
+          "properties": {
+            "kind": {
+              "const": "open_setup",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns to Title.",
+          "properties": {
+            "kind": {
+              "const": "return_to_title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Seals the selected configuration.",
+          "properties": {
+            "kind": {
+              "const": "prepare",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns from Briefing to Setup.",
+          "properties": {
+            "kind": {
+              "const": "cancel_briefing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Starts the existing launch countdown.",
+          "properties": {
+            "kind": {
+              "const": "start_countdown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cancels the launch countdown.",
+          "properties": {
+            "kind": {
+              "const": "cancel_countdown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Pauses the current flight.",
+          "properties": {
+            "kind": {
+              "const": "pause",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicitly resumes the retained flight.",
+          "properties": {
+            "kind": {
+              "const": "resume",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Finalizes the active flight by pilot request.",
+          "properties": {
+            "kind": {
+              "const": "abort",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reuses the retained flight configuration.",
+          "properties": {
+            "kind": {
+              "const": "retry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Repeats preparation of the sealed configuration.",
+          "properties": {
+            "kind": {
+              "const": "retry_briefing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Opens replay of the finalized record.",
+          "properties": {
+            "kind": {
+              "const": "enter_replay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Leaves replay for its Rust-owned return target.",
+          "properties": {
+            "kind": {
+              "const": "leave_replay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Opens the independent Title demonstration.",
+          "properties": {
+            "kind": {
+              "const": "enter_attract",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Returns from the demonstration to Title.",
+          "properties": {
+            "kind": {
+              "const": "leave_attract",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolves one existing preset.",
+          "properties": {
+            "kind": {
+              "const": "select_preset",
+              "type": "string"
+            },
+            "preset": {
+              "$ref": "#/$defs/DifficultyPreset",
+              "description": "Named preset; Custom is not a selectable shortcut."
+            }
+          },
+          "required": [
+            "kind",
+            "preset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Information axis.",
+          "properties": {
+            "information": {
+              "$ref": "#/$defs/InformationLevel",
+              "description": "Existing information level."
+            },
+            "kind": {
+              "const": "select_information",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "information"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Assistance axis.",
+          "properties": {
+            "assistance": {
+              "$ref": "#/$defs/AssistanceLevel",
+              "description": "Existing assistance level."
+            },
+            "kind": {
+              "const": "select_assistance",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "assistance"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Selects the Weather axis.",
+          "properties": {
+            "kind": {
+              "const": "select_weather",
+              "type": "string"
+            },
+            "weather": {
+              "$ref": "#/$defs/WeatherClass",
+              "description": "Existing weather class."
+            }
+          },
+          "required": [
+            "kind",
+            "weather"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes one Custom information cue.",
+          "properties": {
+            "cue": {
+              "$ref": "#/$defs/HudCue",
+              "description": "Existing cue."
+            },
+            "kind": {
+              "const": "set_cue",
+              "type": "string"
+            },
+            "visible": {
+              "description": "Requested visibility.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "cue",
+            "visible"
+          ],
+          "type": "object"
         }
       ]
     },

@@ -1,9 +1,8 @@
 use birdman_game_core::{
     ControlMode, CountdownProgress, CourseAxis, DistanceScoreError, DynamicsError, FlightState,
-    GameSession, GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot,
-    SessionTerminalState, TailControlError, TailControlProfile, TailFlightTickInput,
-    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping,
-    TailRateTarget,
+    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
+    TailControlError, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
@@ -14,14 +13,15 @@ use birdman_game_format::{
     TailPreparedLaunchDocument as PreparedLaunchDocument,
     TailPreparedLaunchFrame as PreparedLaunchFrame, TailProgressDocument as ProgressDocument,
     TailSnapshotDocument as SnapshotDocument, TailStateDocument as StateDocument,
-    TailTelemetryDocument as TelemetryDocument, WeatherClass,
+    TailTelemetryDocument as TelemetryDocument,
 };
+use birdman_game_session::application::{ApplicationSession, BackendReadiness, SessionCommand};
 use serde::Serialize;
 use wasm_bindgen::{JsValue, prelude::*};
 
 use crate::{
-    HybridSessionPreparation, HybridSessionPreparationError, MAX_TICKS, control_mode_from_code,
-    environment_snapshot::EnvironmentIdentity, pause_reason_from_code, phase_code,
+    HybridSessionPreparation, MAX_TICKS, control_mode_from_code,
+    environment_snapshot::EnvironmentIdentity, external_pause_reason_from_code, phase_code,
 };
 
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
@@ -33,13 +33,6 @@ mod record;
 mod setup;
 
 pub use record::TailPersonalBestSelectionBridge;
-
-struct PreparedMetadata {
-    record_identity: FlightRecordTailIdentityDocument,
-    controller_profile: TailControlProfile,
-    course_axis: CourseAxis,
-    control_mode: ControlMode,
-}
 
 fn decode_input(json: &str) -> Result<TailFlightTickInput, BoundaryError> {
     if json.len() > MAX_INPUT_JSON_BYTES {
@@ -115,7 +108,6 @@ enum BoundaryError {
     InputTooLarge,
     UnsupportedSchema,
     UnsupportedPhase,
-    Preparation(HybridSessionPreparationError),
     Session(GameSessionError),
     Control(TailControlError),
     PilotPosition(DynamicsError),
@@ -127,13 +119,12 @@ enum BoundaryError {
     Record(crate::hybrid_record::HybridRecordError),
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
-    SharedUi(birdman_game_session::game_ui::GameUiCommandError),
+    Application(birdman_game_session::application::ApplicationError),
 }
 
 impl BoundaryError {
     fn into_js(self) -> JsValue {
         let message = match self {
-            Self::Preparation(error) => format!("hybrid preparation failed: {error:?}"),
             Self::Session(error) => format!("hybrid session operation failed: {error:?}"),
             Self::Control(error) => format!("hybrid input failed: {error:?}"),
             Self::PilotPosition(error) => {
@@ -146,7 +137,7 @@ impl BoundaryError {
             Self::Record(error) => format!("hybrid record failed: {error}"),
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
-            Self::SharedUi(error) => format!("shared game UI command failed: {error:?}"),
+            Self::Application(error) => format!("application command failed: {error:?}"),
             error => format!("hybrid boundary rejected: {error:?}"),
         };
         JsValue::from_str(&message)
@@ -156,13 +147,8 @@ impl BoundaryError {
 /// Owns the current two-tail game session and its versioned browser boundary.
 #[wasm_bindgen]
 pub struct HybridGameSessionBridge {
-    session: GameSession<'static>,
-    difficulty: DifficultySettings,
-    maximum_flight_ticks: u64,
-    seed: u64,
-    prepared: Option<PreparedMetadata>,
+    session: ApplicationSession,
     archived: Option<record::ArchiveMetadata>,
-    attract: Option<attract::AttractMetadata>,
     ui: birdman_game_session::game_ui::GameUiState,
     ui_view_cache: Option<game_ui::CachedUiView>,
     ui_view_revision: u32,
@@ -182,12 +168,7 @@ impl HybridGameSessionBridge {
 
     /// Opens the existing Rust FlightSetup phase, clearing prior preparation metadata.
     pub fn open_setup(&mut self) -> Result<(), JsValue> {
-        self.session
-            .open_setup()
-            .map_err(crate::game_session_error)?;
-        self.prepared = None;
-        self.archived = None;
-        Ok(())
+        self.execute_application(SessionCommand::OpenSetup {}, BackendReadiness::Preparing)
     }
 
     /// Seals the named fictional hybrid model in the selected registered environment.
@@ -198,7 +179,7 @@ impl HybridGameSessionBridge {
     /// Confirms required browser resources through the existing Rust readiness transition.
     pub fn mark_briefing_ready(&mut self) -> Result<(), JsValue> {
         self.session
-            .mark_briefing_ready()
+            .observe_readiness(BackendReadiness::Ready)
             .map_err(crate::game_session_error)
     }
 
@@ -211,7 +192,7 @@ impl HybridGameSessionBridge {
 
     /// Returns the active Rust attempt token, or zero outside Countdown.
     pub fn countdown_token(&self) -> u32 {
-        self.session.countdown_token().unwrap_or(0)
+        self.session.core_session().countdown_token().unwrap_or(0)
     }
 
     /// Observes elapsed presentation seconds and availability through the shared policy.
@@ -235,9 +216,10 @@ impl HybridGameSessionBridge {
 
     /// Cancels countdown while retaining the prepared configuration.
     pub fn cancel_countdown(&mut self) -> Result<(), JsValue> {
-        self.session
-            .cancel_countdown()
-            .map_err(crate::game_session_error)
+        self.execute_application(
+            SessionCommand::CancelCountdown {},
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Validates a schema-two input before atomically advancing the Rust-owned tail tick.
@@ -247,44 +229,48 @@ impl HybridGameSessionBridge {
 
     /// Adds one of the existing manual, visibility, tracking or processing pause reasons.
     pub fn pause(&mut self, reason: u32) -> Result<(), JsValue> {
-        self.session
-            .pause(pause_reason_from_code(reason)?)
-            .map_err(crate::game_session_error)
+        if reason == 0 {
+            self.execute_application(SessionCommand::Pause {}, BackendReadiness::Preparing)
+        } else {
+            self.session
+                .observe_availability(external_pause_reason_from_code(reason)?, false)
+                .map_err(BoundaryError::Application)
+                .map_err(BoundaryError::into_js)
+        }
     }
 
-    /// Clears the specified existing pause cause without bypassing Resume eligibility.
+    /// Clears an observed external cause; Manual is cleared only by explicit Resume.
     pub fn clear_pause_reason(&mut self, reason: u32) -> Result<(), JsValue> {
         self.session
-            .clear_pause_reason(pause_reason_from_code(reason)?)
-            .map_err(crate::game_session_error)
+            .observe_availability(external_pause_reason_from_code(reason)?, true)
+            .map_err(BoundaryError::Application)
+            .map_err(BoundaryError::into_js)
     }
 
     /// Resumes only when the existing Rust pause policy permits it.
     pub fn resume(&mut self) -> Result<(), JsValue> {
-        self.session.resume().map_err(crate::game_session_error)
+        self.execute_application(SessionCommand::Resume {}, BackendReadiness::Preparing)
     }
 
     /// Reports the existing Rust Resume eligibility.
     pub fn can_resume(&self) -> bool {
-        self.session.can_resume()
+        self.session.core_session().can_resume()
     }
 
     /// Finalizes a manual abort at the latest successful state and returns its snapshot.
     pub fn abort(&mut self) -> Result<String, JsValue> {
-        self.session
-            .abort_flight()
-            .map_err(crate::game_session_error)?;
+        self.execute_application(SessionCommand::Abort {}, BackendReadiness::Preparing)?;
         self.snapshot_json()
     }
 
     /// Restores the same sealed configuration and seed through Rust's Retry transition.
     pub fn retry(&mut self) -> Result<(), JsValue> {
-        self.session.retry().map_err(crate::game_session_error)
+        self.execute_application(SessionCommand::Retry {}, BackendReadiness::Preparing)
     }
 
     /// Returns the existing domain phase code.
     pub fn phase_code(&self) -> u32 {
-        phase_code(self.session.snapshot().phase())
+        phase_code(self.session.core_session().snapshot().phase())
     }
 
     /// Returns the displayed selection or archived Manual, Shared or Automatic mode code.
@@ -299,7 +285,7 @@ impl HybridGameSessionBridge {
 
     /// Returns Rust's rounded-up remaining seconds, or zero outside Countdown.
     pub fn countdown_remaining_seconds(&self) -> u32 {
-        match self.session.snapshot().phase() {
+        match self.session.core_session().snapshot().phase() {
             SessionPhase::Countdown { remaining_seconds } => remaining_seconds,
             _ => 0,
         }
@@ -319,15 +305,16 @@ impl HybridGameSessionBridge {
 
 impl HybridGameSessionBridge {
     fn prepared_launch_internal(&self) -> Result<String, BoundaryError> {
-        let preview = match self.session.prepared_launch_state() {
+        let preview = match self.session.core_session().prepared_launch_state() {
             Some(state) => {
                 let prepared = self
-                    .prepared
-                    .as_ref()
+                    .session
+                    .prepared()
                     .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
                 PreparedLaunchFrame::Prepared {
                     scenario: self
                         .session
+                        .core_session()
                         .configuration_identity()
                         .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?
                         .into(),
@@ -348,13 +335,8 @@ impl HybridGameSessionBridge {
 
     fn from_mode(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
-            session: GameSession::new(),
-            difficulty: birdman_game_session::default_difficulty(control_mode),
-            maximum_flight_ticks,
-            seed,
-            prepared: None,
+            session: ApplicationSession::new(control_mode, maximum_flight_ticks, seed),
             archived: None,
-            attract: None,
             ui: birdman_game_session::game_ui::GameUiState::default(),
             ui_view_cache: None,
             ui_view_revision: 0,
@@ -362,19 +344,26 @@ impl HybridGameSessionBridge {
     }
 
     fn prepare_internal(&mut self) -> Result<(), BoundaryError> {
-        let metadata = birdman_game_session::game_ui::prepare_game_ui_flight(
-            &mut self.session,
-            self.difficulty,
-            self.maximum_flight_ticks,
-            self.seed,
-        )
-        .map_err(BoundaryError::SharedUi)?;
-        self.prepared = Some(PreparedMetadata {
-            record_identity: metadata.record_identity,
-            controller_profile: metadata.controller_profile,
-            course_axis: metadata.course_axis,
-            control_mode: metadata.control_mode,
-        });
+        self.session
+            .execute(SessionCommand::Prepare {}, BackendReadiness::Preparing)
+            .map_err(BoundaryError::Application)
+    }
+
+    fn execute_application(
+        &mut self,
+        command: SessionCommand,
+        readiness: BackendReadiness,
+    ) -> Result<(), JsValue> {
+        self.session
+            .execute(command, readiness)
+            .map_err(BoundaryError::Application)
+            .map_err(BoundaryError::into_js)?;
+        if matches!(
+            self.session.core_session().snapshot().phase(),
+            SessionPhase::Title | SessionPhase::FlightSetup
+        ) {
+            self.archived = None;
+        }
         Ok(())
     }
 
@@ -382,7 +371,7 @@ impl HybridGameSessionBridge {
         let input = decode_input(json)?;
         match self.session.advance_tail_flight_tick(input) {
             Ok(_) => self.snapshot_internal(),
-            Err(_) if self.session.snapshot().phase() == SessionPhase::Result => {
+            Err(_) if self.session.core_session().snapshot().phase() == SessionPhase::Result => {
                 self.snapshot_internal()
             }
             Err(error) => Err(BoundaryError::Session(error)),
@@ -390,7 +379,7 @@ impl HybridGameSessionBridge {
     }
 
     fn snapshot_internal(&self) -> Result<String, BoundaryError> {
-        let snapshot = self.session.snapshot();
+        let snapshot = self.session.core_session().snapshot();
         let frame = match snapshot {
             SessionSnapshot::TailFlightRunning { state, .. }
             | SessionSnapshot::TailFlightPaused { state, .. } => FrameDocument::Flight {
@@ -414,6 +403,7 @@ impl HybridGameSessionBridge {
                 };
                 let finalization = self
                     .session
+                    .core_session()
                     .flight_record()
                     .and_then(birdman_game_core::FlightRecord::finalization)
                     .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
@@ -441,11 +431,12 @@ impl HybridGameSessionBridge {
             control_mode_code: self.control_mode_code(),
             scenario: self
                 .session
+                .core_session()
                 .configuration_identity()
                 .map(EnvironmentIdentity::from),
             control_identity: self
-                .prepared
-                .as_ref()
+                .session
+                .prepared()
                 .map(|metadata| &metadata.record_identity),
             frame,
         })
@@ -454,12 +445,14 @@ impl HybridGameSessionBridge {
 
     fn required_pilot_mapping(&self) -> Result<TailPilotPositionMapping, BoundaryError> {
         self.session
+            .core_session()
             .tail_pilot_position_mapping()
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
     }
 
     fn required_telemetry(&self) -> Result<TelemetryDocument, BoundaryError> {
         self.session
+            .core_session()
             .telemetry()
             .map_err(|error| BoundaryError::Session(GameSessionError::Telemetry(error)))?
             .map(TelemetryDocument::from)
@@ -468,6 +461,7 @@ impl HybridGameSessionBridge {
 
     fn required_progress(&self) -> Result<ProgressDocument, BoundaryError> {
         self.session
+            .core_session()
             .flight_progress()
             .map_err(BoundaryError::Progress)?
             .map(ProgressDocument::from)
@@ -476,10 +470,10 @@ impl HybridGameSessionBridge {
 
     /// Returns format/PB metadata from the same successful preparation, without recomputation.
     pub fn sealed_record_configuration(&self) -> Option<TailPersonalBestConfiguration<'_>> {
-        let prepared = self.prepared.as_ref()?;
+        let prepared = self.session.prepared()?;
         Some(TailPersonalBestConfiguration {
-            scenario: self.session.configuration_identity()?,
-            difficulty: self.difficulty,
+            scenario: self.session.core_session().configuration_identity()?,
+            difficulty: self.session.difficulty(),
             identity: &prepared.record_identity,
             control_mode: prepared.control_mode,
             controller_profile: prepared.controller_profile,
@@ -488,7 +482,7 @@ impl HybridGameSessionBridge {
 
     /// Returns the prepared course axis while the sealed session is retained.
     pub fn sealed_course_axis(&self) -> Option<CourseAxis> {
-        self.prepared.as_ref().map(|metadata| metadata.course_axis)
+        self.session.prepared().map(|metadata| metadata.course_axis)
     }
 }
 

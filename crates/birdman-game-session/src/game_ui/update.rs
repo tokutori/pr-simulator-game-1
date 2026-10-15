@@ -1,4 +1,5 @@
 use super::{game_ui_view, types::*};
+use crate::application::SessionCommand;
 
 /// Admits an action against the actual shared view and returns UI state plus effects.
 pub fn update_game_ui(
@@ -25,7 +26,7 @@ pub fn update_game_ui(
                 (
                     GameUiControlContent::Toggle { cue, .. },
                     GameUiAction::Session {
-                        command: GameUiSessionCommand::SetCue { cue: candidate, .. },
+                        command: SessionCommand::SetCue { cue: candidate, .. },
                     },
                 ) => cue == candidate,
                 (
@@ -52,8 +53,8 @@ pub fn update_game_ui(
     let mut effects = Vec::new();
     match action {
         GameUiAction::Session { command } => {
-            let entering_replay = command == (GameUiSessionCommand::EnterReplay {});
-            if command == (GameUiSessionCommand::LeaveReplay {}) {
+            let entering_replay = command == (SessionCommand::EnterReplay {});
+            if command == (SessionCommand::LeaveReplay {}) {
                 next.analysis_time_seconds = context
                     .session
                     .playback_clock()
@@ -75,10 +76,10 @@ pub fn update_game_ui(
             }
             if matches!(
                 command,
-                GameUiSessionCommand::Prepare {}
-                    | GameUiSessionCommand::Retry {}
-                    | GameUiSessionCommand::OpenSetup {}
-                    | GameUiSessionCommand::ReturnToTitle {}
+                SessionCommand::Prepare {}
+                    | SessionCommand::Retry {}
+                    | SessionCommand::OpenSetup {}
+                    | SessionCommand::ReturnToTitle {}
             ) {
                 next.technical_open = false;
                 next.result_tab = GameUiResultTab::Summary;

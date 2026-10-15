@@ -107,7 +107,7 @@ it("keeps configuration queries observational through Briefing, pause, Result an
     stableQuery(); session.fail_briefing(0); stableQuery(); session.retry_briefing(); stableQuery();
     session.mark_briefing_ready(); stableQuery(); session.start_countdown(1); stableQuery();
     session.observe_countdown(session.countdown_token(), 1, true); stableQuery(); session.pause(0); stableQuery();
-    session.clear_pause_reason(0); session.resume(); session.advance_tick_json(neutralTailInput); session.abort(); stableQuery();
+    session.resume(); session.advance_tick_json(neutralTailInput); session.abort(); stableQuery();
     const json = session.export_flight_record_json();
     const best = new TailPersonalBestSelectionBridge(json);
     try { expect(best.is_eligible()).toBe(false); } finally { best.free(); }

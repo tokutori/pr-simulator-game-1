@@ -1,7 +1,6 @@
+use crate::application::SessionCommand;
 use birdman_game_core::{FlightRecord, GameSession, SessionScenarioIdentity};
-use birdman_game_format::{
-    AssistanceLevel, DifficultyPreset, DifficultySettings, HudCue, InformationLevel, WeatherClass,
-};
+use birdman_game_format::{DifficultyPreset, DifficultySettings, HudCue};
 use serde::{Deserialize, Serialize};
 
 /// Current shared UI boundary version.
@@ -151,70 +150,6 @@ impl GameUiReplayCamera {
     }
 }
 
-/// Existing domain commands emitted by the pure UI update.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GameUiSessionCommand {
-    /// Opens flight settings.
-    OpenSetup {},
-    /// Returns to Title.
-    ReturnToTitle {},
-    /// Seals the selected configuration.
-    Prepare {},
-    /// Returns from Briefing to Setup.
-    CancelBriefing {},
-    /// Starts the existing launch countdown.
-    StartCountdown {},
-    /// Cancels the launch countdown.
-    CancelCountdown {},
-    /// Pauses the current flight.
-    Pause {},
-    /// Explicitly resumes the retained flight.
-    Resume {},
-    /// Finalizes the active flight by pilot request.
-    Abort {},
-    /// Reuses the retained flight configuration.
-    Retry {},
-    /// Repeats preparation of the sealed configuration.
-    RetryBriefing {},
-    /// Opens replay of the finalized record.
-    EnterReplay {},
-    /// Leaves replay for its Rust-owned return target.
-    LeaveReplay {},
-    /// Opens the independent Title demonstration.
-    EnterAttract {},
-    /// Returns from the demonstration to Title.
-    LeaveAttract {},
-    /// Resolves one existing preset.
-    SelectPreset {
-        /// Named preset; Custom is not a selectable shortcut.
-        preset: DifficultyPreset,
-    },
-    /// Selects the Information axis.
-    SelectInformation {
-        /// Existing information level.
-        information: InformationLevel,
-    },
-    /// Selects the Assistance axis.
-    SelectAssistance {
-        /// Existing assistance level.
-        assistance: AssistanceLevel,
-    },
-    /// Selects the Weather axis.
-    SelectWeather {
-        /// Existing weather class.
-        weather: WeatherClass,
-    },
-    /// Changes one Custom information cue.
-    SetCue {
-        /// Existing cue.
-        cue: HudCue,
-        /// Requested visibility.
-        visible: bool,
-    },
-}
-
 /// Rendering quality has no effect on physics or record identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -310,7 +245,7 @@ pub enum GameUiAction {
     /// Produces one canonical domain operation.
     Session {
         /// Operation admitted by the current view.
-        command: GameUiSessionCommand,
+        command: SessionCommand,
     },
     /// Produces one platform operation.
     Platform {
@@ -368,7 +303,7 @@ pub enum GameUiEffect {
     /// Existing session command.
     Session {
         /// Operation to execute through the shared session owner.
-        command: GameUiSessionCommand,
+        command: SessionCommand,
     },
     /// Platform operation.
     Platform {

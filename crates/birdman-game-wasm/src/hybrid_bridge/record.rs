@@ -96,16 +96,14 @@ impl HybridGameSessionBridge {
 
     /// Queries saved state and held physical controls without moving the shared playback cursor.
     pub fn flight_record_sample_at_seconds(&self, time_seconds: f64) -> Result<String, JsValue> {
-        crate::hybrid_record::playback_sample_json(&self.session, time_seconds)
+        crate::hybrid_record::playback_sample_json(self.session.core_session(), time_seconds)
             .map_err(BoundaryError::Record)
             .map_err(BoundaryError::into_js)
     }
 
     /// Enters snapshot playback of the current Result without simulating it again.
     pub fn enter_replay(&mut self) -> Result<(), JsValue> {
-        self.session
-            .enter_replay()
-            .map_err(crate::game_session_error)
+        self.execute_application(SessionCommand::EnterReplay {}, BackendReadiness::Preparing)
     }
 
     /// Opens a validated schema-six record without reinterpreting its physical state.
@@ -116,7 +114,8 @@ impl HybridGameSessionBridge {
 
     /// Reports an archived Replay without creating another game phase or clock.
     pub fn is_archived_replay(&self) -> bool {
-        self.session.snapshot().phase() == SessionPhase::Replay && self.archived.is_some()
+        self.session.core_session().snapshot().phase() == SessionPhase::Replay
+            && self.archived.is_some()
     }
 
     /// Returns named Replay identity and terminal metadata without evaluating the current model.
@@ -164,19 +163,13 @@ impl HybridGameSessionBridge {
 
     /// Returns to the same Result, or Title after closing an imported archive.
     pub fn leave_replay(&mut self) -> Result<(), JsValue> {
-        self.session
-            .leave_replay()
-            .map_err(crate::game_session_error)?;
-        if self.session.snapshot().phase() == SessionPhase::Title {
-            self.archived = None;
-        }
-        Ok(())
+        self.execute_application(SessionCommand::LeaveReplay {}, BackendReadiness::Preparing)
     }
 }
 
 impl HybridGameSessionBridge {
     fn export_current_record_internal(&self) -> Result<String, BoundaryError> {
-        match self.session.snapshot().phase() {
+        match self.session.core_session().snapshot().phase() {
             SessionPhase::Result => self.export_record_internal(),
             SessionPhase::Replay => match &self.archived {
                 Some(ArchiveMetadata { original_json, .. }) => Ok(original_json.clone()),
@@ -196,20 +189,13 @@ impl HybridGameSessionBridge {
     }
 
     pub(super) fn display_difficulty(&self) -> DifficultySettings {
-        if self.session.snapshot().phase() == SessionPhase::Attract {
-            return self
-                .attract
-                .as_ref()
-                .expect("Attract must retain the installed demonstration metadata")
-                .difficulty;
-        }
         self.archived
             .as_ref()
-            .map_or(self.difficulty, ArchiveMetadata::settings)
+            .map_or(self.session.display_difficulty(), ArchiveMetadata::settings)
     }
 
     pub(super) fn export_record_internal(&self) -> Result<String, BoundaryError> {
-        if self.session.snapshot().phase() == SessionPhase::Attract {
+        if self.session.core_session().snapshot().phase() == SessionPhase::Attract {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
         let configuration = self
@@ -219,7 +205,7 @@ impl HybridGameSessionBridge {
             .sealed_course_axis()
             .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
         crate::hybrid_record::export_record_json(
-            &self.session,
+            self.session.core_session(),
             HybridRecordMetadata {
                 configuration,
                 course_axis,
@@ -236,13 +222,14 @@ impl HybridGameSessionBridge {
 
     fn analysis_internal(&self) -> Result<String, BoundaryError> {
         if !matches!(
-            self.session.snapshot().phase(),
+            self.session.core_session().snapshot().phase(),
             SessionPhase::Result | SessionPhase::Replay | SessionPhase::Attract
         ) {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
         let record = self
             .session
+            .core_session()
             .playback_record()
             .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
         crate::hybrid_record::analysis_samples_json(record).map_err(BoundaryError::Record)
@@ -262,13 +249,12 @@ impl HybridGameSessionBridge {
         self.session
             .open_archived_replay(record)
             .map_err(BoundaryError::Session)?;
-        self.prepared = None;
         self.archived = Some(metadata);
         Ok(())
     }
 
     fn playback_context_internal(&self) -> Result<String, BoundaryError> {
-        let phase = self.session.snapshot().phase();
+        let phase = self.session.core_session().snapshot().phase();
         if !matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
@@ -276,7 +262,7 @@ impl HybridGameSessionBridge {
     }
 
     pub(super) fn record_context(&self) -> Result<PlaybackContext<'_>, BoundaryError> {
-        let phase = self.session.snapshot().phase();
+        let phase = self.session.core_session().snapshot().phase();
         let phase_name = match phase {
             SessionPhase::Result => "result",
             SessionPhase::Replay => "replay",
@@ -285,12 +271,13 @@ impl HybridGameSessionBridge {
         };
         let record = self
             .session
+            .core_session()
             .playback_record()
             .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
         let (control_layout, control_identity, difficulty) = if phase == SessionPhase::Attract {
             let metadata = self
-                .attract
-                .as_ref()
+                .session
+                .attract()
                 .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
             (
                 PlaybackLayout::TailIncidence,
@@ -312,12 +299,12 @@ impl HybridGameSessionBridge {
                     PlaybackLayout::TailIncidence,
                     Some(
                         &self
-                            .prepared
-                            .as_ref()
+                            .session
+                            .prepared()
                             .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?
                             .record_identity,
                     ),
-                    self.difficulty.into(),
+                    self.session.difficulty().into(),
                 ),
             }
         };
@@ -342,6 +329,7 @@ impl HybridGameSessionBridge {
     fn clock_internal(&self) -> Result<Vec<f64>, BoundaryError> {
         let clock = self
             .session
+            .core_session()
             .playback_clock()
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
         Ok(vec![

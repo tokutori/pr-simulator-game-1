@@ -1,4 +1,5 @@
 use super::{catalog, types::*};
+use crate::application::SessionCommand;
 use birdman_game_core::{SessionEndReason, SessionPhase, SessionReplaySource, SessionSnapshot};
 use birdman_game_format::{
     AssistanceLevel, DifficultyPreset, HudCue, InformationLevel, WeatherClass,
@@ -29,7 +30,7 @@ pub fn game_ui_view(
             menu.session(
                 "game-title-start",
                 "飛行を設定",
-                GameUiSessionCommand::OpenSetup {},
+                SessionCommand::OpenSetup {},
                 GameUiEmphasis::Normal,
                 true,
             );
@@ -55,7 +56,7 @@ pub fn game_ui_view(
             menu.session(
                 "game-title-demo",
                 "デモ飛行を見る",
-                GameUiSessionCommand::EnterAttract {},
+                SessionCommand::EnterAttract {},
                 GameUiEmphasis::Normal,
                 context.platform.replay_available,
             );
@@ -113,14 +114,14 @@ pub fn game_ui_view(
             menu.session(
                 "game-setup-start",
                 "飛行準備へ進む",
-                GameUiSessionCommand::Prepare {},
+                SessionCommand::Prepare {},
                 GameUiEmphasis::Primary,
                 true,
             );
             menu.session(
                 "game-setup-back",
                 "← タイトルへ",
-                GameUiSessionCommand::ReturnToTitle {},
+                SessionCommand::ReturnToTitle {},
                 GameUiEmphasis::Secondary,
                 true,
             );
@@ -135,14 +136,14 @@ pub fn game_ui_view(
                 SessionPhase::BriefingReady => menu.session(
                     "game-briefing-start",
                     "発進カウントダウンを開始",
-                    GameUiSessionCommand::StartCountdown {},
+                    SessionCommand::StartCountdown {},
                     GameUiEmphasis::Primary,
                     true,
                 ),
                 SessionPhase::BriefingFailed { .. } => menu.session(
                     "game-briefing-retry",
                     "準備を再試行",
-                    GameUiSessionCommand::RetryBriefing {},
+                    SessionCommand::RetryBriefing {},
                     GameUiEmphasis::Primary,
                     true,
                 ),
@@ -159,7 +160,7 @@ pub fn game_ui_view(
                 } else {
                     "← 設定を変更"
                 },
-                GameUiSessionCommand::CancelBriefing {},
+                SessionCommand::CancelBriefing {},
                 GameUiEmphasis::Secondary,
                 true,
             );
@@ -186,7 +187,7 @@ pub fn game_ui_view(
             menu.session(
                 "game-countdown-cancel",
                 "発進を取消",
-                GameUiSessionCommand::CancelCountdown {},
+                SessionCommand::CancelCountdown {},
                 GameUiEmphasis::Secondary,
                 true,
             );
@@ -198,7 +199,7 @@ pub fn game_ui_view(
                 menu.session(
                     "game-flight-pause",
                     "Pause",
-                    GameUiSessionCommand::Pause {},
+                    SessionCommand::Pause {},
                     GameUiEmphasis::Normal,
                     true,
                 );
@@ -209,7 +210,7 @@ pub fn game_ui_view(
                 menu.session(
                     "game-flight-abort",
                     "飛行を終了",
-                    GameUiSessionCommand::Abort {},
+                    SessionCommand::Abort {},
                     GameUiEmphasis::Normal,
                     true,
                 );
@@ -229,7 +230,7 @@ pub fn game_ui_view(
                 menu.session(
                     "game-flight-resume",
                     "Resume",
-                    GameUiSessionCommand::Resume {},
+                    SessionCommand::Resume {},
                     GameUiEmphasis::Normal,
                     can_resume,
                 );
@@ -252,7 +253,7 @@ pub fn game_ui_view(
                 menu.session(
                     "game-paused-abort",
                     "飛行を終了",
-                    GameUiSessionCommand::Abort {},
+                    SessionCommand::Abort {},
                     GameUiEmphasis::Normal,
                     true,
                 );
@@ -376,7 +377,7 @@ pub fn game_ui_view(
                 } else {
                     "Replayを見る"
                 },
-                GameUiSessionCommand::EnterReplay {},
+                SessionCommand::EnterReplay {},
                 GameUiEmphasis::Normal,
                 context.platform.replay_available && context.record.is_some(),
             );
@@ -387,7 +388,7 @@ pub fn game_ui_view(
                 } else {
                     "同じ条件で再試行"
                 },
-                GameUiSessionCommand::Retry {},
+                SessionCommand::Retry {},
                 GameUiEmphasis::Normal,
                 true,
             );
@@ -398,7 +399,7 @@ pub fn game_ui_view(
                 } else {
                     "設定を変更"
                 },
-                GameUiSessionCommand::OpenSetup {},
+                SessionCommand::OpenSetup {},
                 GameUiEmphasis::Normal,
                 true,
             );
@@ -409,7 +410,7 @@ pub fn game_ui_view(
                 } else {
                     "Titleへ戻る"
                 },
-                GameUiSessionCommand::ReturnToTitle {},
+                SessionCommand::ReturnToTitle {},
                 GameUiEmphasis::Normal,
                 true,
             );
@@ -454,7 +455,7 @@ pub fn game_ui_view(
             menu.session(
                 "game-attract-return",
                 "Titleへ戻る",
-                GameUiSessionCommand::LeaveAttract {},
+                SessionCommand::LeaveAttract {},
                 GameUiEmphasis::Normal,
                 true,
             );
@@ -619,7 +620,7 @@ impl Menu {
         &mut self,
         id: &str,
         label: &str,
-        command: GameUiSessionCommand,
+        command: SessionCommand,
         emphasis: GameUiEmphasis,
         enabled: bool,
     ) {
@@ -642,7 +643,7 @@ impl Menu {
         group: &str,
         group_label: &str,
         definition: (&str, u32, &str),
-        command: GameUiSessionCommand,
+        command: SessionCommand,
         selected: bool,
     ) {
         let (label, code, description) = definition;
@@ -1006,7 +1007,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             "preset",
             "プリセット",
             catalog::preset(preset),
-            GameUiSessionCommand::SelectPreset { preset },
+            SessionCommand::SelectPreset { preset },
             difficulty.preset_label() == preset,
         );
     }
@@ -1029,7 +1030,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             "information",
             "表示情報",
             catalog::information(information),
-            GameUiSessionCommand::SelectInformation { information },
+            SessionCommand::SelectInformation { information },
             difficulty.information() == information,
         );
     }
@@ -1090,7 +1091,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             "assistance",
             "操縦支援",
             catalog::assistance(assistance),
-            GameUiSessionCommand::SelectAssistance { assistance },
+            SessionCommand::SelectAssistance { assistance },
             difficulty.assistance() == assistance,
         );
     }
@@ -1110,7 +1111,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             "weather",
             "気象条件",
             catalog::weather(weather),
-            GameUiSessionCommand::SelectWeather { weather },
+            SessionCommand::SelectWeather { weather },
             difficulty.weather() == weather,
         );
     }
@@ -1552,7 +1553,7 @@ fn replay(
         } else {
             "Resultへ戻る"
         },
-        GameUiSessionCommand::LeaveReplay {},
+        SessionCommand::LeaveReplay {},
         GameUiEmphasis::Normal,
         true,
     );

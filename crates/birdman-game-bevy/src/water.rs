@@ -596,8 +596,8 @@ pub(crate) fn apply_environment(
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
 ) {
     let target = EnvironmentTarget::project(
-        session.game.snapshot().phase(),
-        session.game.configuration_identity(),
+        session.game.core_session().snapshot().phase(),
+        session.game.core_session().configuration_identity(),
     );
     if !presentation.needs_update(target)
         && (quality.pending().is_none() || presentation.condition_for(target).is_ok())
@@ -758,8 +758,8 @@ pub(crate) fn apply_quality(
             ))?
             .clone();
         let target = EnvironmentTarget::project(
-            session.game.snapshot().phase(),
-            session.game.configuration_identity(),
+            session.game.core_session().snapshot().phase(),
+            session.game.core_session().configuration_identity(),
         );
         let condition = environment
             .condition_for(target)
@@ -840,8 +840,7 @@ mod tests {
     use bevy::mesh::VertexAttributeValues;
     use birdman_game_format::WeatherClass;
     use birdman_game_session::{
-        bundled_environment,
-        game_ui::{GameUiControlContent, GameUiSessionCommand},
+        application::SessionCommand, bundled_environment, game_ui::GameUiControlContent,
     };
 
     fn environment_app() -> App {
@@ -869,7 +868,7 @@ mod tests {
         let mut session = app.world_mut().resource_mut::<NativeSession>();
         session.action(MenuAction::Start).unwrap();
         session
-            .execute_ui_command(GameUiSessionCommand::SelectWeather {
+            .execute_ui_command(SessionCommand::SelectWeather {
                 weather: WeatherClass::Calm,
             })
             .unwrap();
@@ -989,6 +988,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
             )
@@ -1028,7 +1028,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Abort).unwrap();
             session
-                .execute_ui_command(GameUiSessionCommand::ReturnToTitle {})
+                .execute_ui_command(SessionCommand::ReturnToTitle {})
                 .unwrap();
         }
         {
@@ -1084,6 +1084,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .configuration_identity()
             .unwrap();
         let target = EnvironmentTarget::Sealed(identity);
@@ -1134,6 +1135,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .sample_count();
@@ -1149,6 +1151,7 @@ mod tests {
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase();
             let next = app
@@ -1161,10 +1164,18 @@ mod tests {
             let session = app.world().resource::<NativeSession>();
             assert_eq!(session.physical_state(), Some(state));
             assert_eq!(
-                session.game.flight_record().unwrap().sample_count(),
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
                 samples
             );
-            assert_eq!(session.game.configuration_identity(), Some(identity));
+            assert_eq!(
+                session.game.core_session().configuration_identity(),
+                Some(identity)
+            );
             assert_eq!(
                 app.world()
                     .resource::<NativeEnvironment>()
@@ -1228,7 +1239,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Abort).unwrap();
             session
-                .execute_ui_command(GameUiSessionCommand::Retry {})
+                .execute_ui_command(SessionCommand::Retry {})
                 .unwrap();
         }
         app.update();
@@ -1245,7 +1256,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<NativeSession>()
             .execute_ui_command(
-                birdman_game_session::game_ui::GameUiSessionCommand::CancelBriefing {},
+                birdman_game_session::application::SessionCommand::CancelBriefing {},
             )
             .unwrap();
         app.update();
@@ -1261,15 +1272,14 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(
-                birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {},
-            )
+            .execute_ui_command(birdman_game_session::application::SessionCommand::ReturnToTitle {})
             .unwrap();
         app.update();
         assert_eq!(
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase(),
             birdman_game_core::SessionPhase::Title
@@ -1328,11 +1338,24 @@ mod tests {
                 _ => unreachable!(),
             }
             prepare_calm(&mut app);
-            let before = app.world().resource::<NativeSession>().game.snapshot();
+            let before = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             app.update();
             let session = app.world().resource::<NativeSession>();
-            assert_eq!(session.game.snapshot(), before);
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(session.game.core_session().snapshot(), before);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
             let images = app.world().resource::<Assets<Image>>();
             assert_eq!(images.len(), initial_images.len());
             assert!(
@@ -1340,7 +1363,13 @@ mod tests {
                     .into_iter()
                     .all(|image| images.get(image).is_some())
             );
-            let target = EnvironmentTarget::Sealed(session.game.configuration_identity().unwrap());
+            let target = EnvironmentTarget::Sealed(
+                session
+                    .game
+                    .core_session()
+                    .configuration_identity()
+                    .unwrap(),
+            );
             assert_eq!(
                 app.world()
                     .resource::<NativeEnvironment>()
@@ -1400,6 +1429,7 @@ mod tests {
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .configuration_identity()
                 .unwrap(),
         );
@@ -1462,6 +1492,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .snapshot()
             .phase();
         let next = app
@@ -1785,10 +1816,19 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
-            let before = app.world().resource::<NativeSession>().game.snapshot();
+            let before = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             app.update();
             assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
                 before
             );
             assert_eq!(app.world().get::<Mesh3d>(near).unwrap().0, mesh);

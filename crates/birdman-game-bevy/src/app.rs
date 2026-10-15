@@ -278,10 +278,11 @@ fn read_input(
     } = ports;
     let focused = windows.iter().all(|window| window.focused);
     session.observe_frame(focused, time.delta() > MAX_FRAME_DELTA);
-    let controls_were_running = session.game.snapshot().phase() == SessionPhase::FlightRunning;
+    let controls_were_running =
+        session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning;
     if keys.just_pressed(KeyCode::KeyC)
         && !matches!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract
         )
     {
@@ -305,7 +306,7 @@ fn read_input(
             .observe(save_to_disk(filename));
     }
     let flight_camera_active = matches!(
-        session.game.snapshot().phase(),
+        session.game.core_session().snapshot().phase(),
         SessionPhase::FlightRunning
             | SessionPhase::FlightPaused { .. }
             | SessionPhase::Result
@@ -319,7 +320,8 @@ fn read_input(
         camera.look.x -= motion.delta.x * 0.003;
         camera.look.y = (camera.look.y - motion.delta.y * 0.003).clamp(-1.2, 1.2);
     }
-    let controls_active = focused && session.game.snapshot().phase() == SessionPhase::FlightRunning;
+    let controls_active =
+        focused && session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning;
     if !controls_active || !controls_were_running {
         accepted_controls.reset_all();
     }
@@ -379,7 +381,7 @@ fn advance_physics(
     intent: Res<FlightInput>,
     mut history: ResMut<world::RenderHistory>,
 ) {
-    if session.game.snapshot().phase() != SessionPhase::FlightRunning {
+    if session.game.core_session().snapshot().phase() != SessionPhase::FlightRunning {
         history.reset();
         return;
     }
@@ -388,8 +390,8 @@ fn advance_physics(
         .pilot
         .filter(|movement| *movement != 0.0)
         .and_then(|movement| {
-            let state = session.game.snapshot().tail_flight_state()?;
-            let mapping = session.game.tail_pilot_position_mapping()?;
+            let state = session.game.core_session().snapshot().tail_flight_state()?;
+            let mapping = session.game.core_session().tail_pilot_position_mapping()?;
             match mapping.normalized_target(state.pilot_position_target()) {
                 Ok(held) => {
                     Some((held.value() + movement / f64::from(PHYSICS_HZ)).clamp(-1.0, 1.0))
@@ -414,7 +416,7 @@ fn advance_presentation(
     real: Res<Time<Real>>,
 ) {
     let elapsed = if matches!(
-        session.game.snapshot().phase(),
+        session.game.core_session().snapshot().phase(),
         SessionPhase::Countdown { .. }
     ) {
         real.delta_secs_f64()
@@ -627,6 +629,7 @@ mod tests {
                     app.world()
                         .resource::<NativeSession>()
                         .game
+                        .core_session()
                         .snapshot()
                         .phase(),
                     SessionPhase::FlightPaused { .. }
@@ -645,6 +648,7 @@ mod tests {
                         .world()
                         .resource::<NativeSession>()
                         .game
+                        .core_session()
                         .snapshot()
                         .phase()
                         == SessionPhase::FlightRunning
@@ -657,6 +661,7 @@ mod tests {
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap();
@@ -675,8 +680,13 @@ mod tests {
             app.update();
             let intent = *app.world().resource::<FlightInput>();
             let session = app.world().resource::<NativeSession>();
-            let state = session.game.snapshot().tail_flight_state().unwrap();
-            let record = session.game.flight_record().unwrap();
+            let state = session
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            let record = session.game.core_session().flight_record().unwrap();
             assert_eq!(state.tick_index(), 1);
             assert_eq!(record.sample_count(), 2);
             let sample = record.samples().last().unwrap();
@@ -725,9 +735,15 @@ mod tests {
             assert_eq!((intent.nose_up, intent.turn_right), (direction, direction));
             assert_eq!(intent.pilot, Some(direction));
             let session = app.world().resource::<NativeSession>();
-            let state = session.game.snapshot().tail_flight_state().unwrap();
+            let state = session
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
             let sample = session
                 .game
+                .core_session()
                 .flight_record()
                 .unwrap()
                 .samples()
@@ -800,6 +816,7 @@ mod tests {
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase(),
             SessionPhase::FlightRunning
@@ -910,7 +927,12 @@ mod tests {
                     .action(action)
                     .unwrap();
             }
-            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let snapshot = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             assert!(
                 app.world()
                     .resource::<NativeSession>()
@@ -927,7 +949,11 @@ mod tests {
             app.update();
             assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
             assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
                 snapshot
             );
         }
@@ -936,12 +962,21 @@ mod tests {
                 .resource_mut::<NativeSession>()
                 .presentation_frame(1.0);
         }
-        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        let snapshot = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         assert_eq!(snapshot.phase(), SessionPhase::FlightRunning);
         app.update();
         assert_eq!(app.world().resource::<CameraMode>().look, Vec2::ZERO);
         assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
             snapshot
         );
     }
@@ -949,8 +984,8 @@ mod tests {
     #[test]
     fn retry_and_new_flight_clear_previous_camera_look_and_control_holds() {
         for return_action in [
-            birdman_game_session::game_ui::GameUiSessionCommand::Retry {},
-            birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {},
+            birdman_game_session::application::SessionCommand::Retry {},
+            birdman_game_session::application::SessionCommand::ReturnToTitle {},
         ] {
             let (mut app, window) = flight_input_app();
             let initial = app.world().resource::<NativeSession>().physical_state();
@@ -999,7 +1034,7 @@ mod tests {
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
                 if return_action
-                    == (birdman_game_session::game_ui::GameUiSessionCommand::ReturnToTitle {})
+                    == (birdman_game_session::application::SessionCommand::ReturnToTitle {})
                 {
                     session.action(native_session::MenuAction::Start).unwrap();
                     session.action(native_session::MenuAction::Prepare).unwrap();
@@ -1023,6 +1058,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::FlightRunning
@@ -1060,7 +1096,12 @@ mod tests {
                     .action(action)
                     .unwrap();
             }
-            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let snapshot = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             assert!(
                 app.world()
                     .resource::<NativeSession>()
@@ -1078,7 +1119,11 @@ mod tests {
             expected += Vec2::new(-0.03, 0.06);
             assert!(app.world().resource::<CameraMode>().look.distance(expected) < 1.0e-6);
             assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
                 snapshot
             );
             app.update();

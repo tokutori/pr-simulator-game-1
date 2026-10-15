@@ -293,18 +293,24 @@ fn main_wing_mesh(surface: &WingSurface, positions: &[[f32; 3]]) -> Mesh {
 }
 
 fn main_wing_airspeed(session: &NativeSession) -> f64 {
-    let speed = match session.game.snapshot().phase() {
+    let speed = match session.game.core_session().snapshot().phase() {
         birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract => {
-            session.game.playback_clock().and_then(|clock| {
-                session
-                    .game
-                    .playback_sample_at_seconds(clock.time_seconds())
-                    .ok()
-                    .map(|sample| sample.telemetry.airspeed_mps)
-            })
+            session
+                .game
+                .core_session()
+                .playback_clock()
+                .and_then(|clock| {
+                    session
+                        .game
+                        .core_session()
+                        .playback_sample_at_seconds(clock.time_seconds())
+                        .ok()
+                        .map(|sample| sample.telemetry.airspeed_mps)
+                })
         }
         _ => session
             .game
+            .core_session()
             .telemetry()
             .ok()
             .flatten()
@@ -655,7 +661,8 @@ pub(crate) fn project_world(
     let display = session.display_state();
     let preview = session.prepared_display_state();
     let aircraft_display = display.as_ref().or(preview.as_ref());
-    let running = session.game.snapshot().phase() == birdman_game_core::SessionPhase::FlightRunning;
+    let running = session.game.core_session().snapshot().phase()
+        == birdman_game_core::SessionPhase::FlightRunning;
     if !running {
         history.reset();
     }
@@ -725,7 +732,7 @@ fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
 mod tests {
     use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
-    use birdman_game_session::game_ui::GameUiSessionCommand;
+    use birdman_game_session::application::SessionCommand;
 
     fn assert_main_wing_projection(world: &World) {
         let wing = world.resource::<MainWingProjection>();
@@ -887,7 +894,7 @@ mod tests {
                 session.presentation_frame(1.0);
             }
             assert_eq!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 birdman_game_core::SessionPhase::FlightRunning
             );
         }
@@ -898,11 +905,17 @@ mod tests {
                 .display_state()
                 .unwrap(),
         );
-        let before = app.world().resource::<NativeSession>().game.snapshot();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         let count = app
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .sample_count();
@@ -940,13 +953,18 @@ mod tests {
             );
         }
         assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
             before
         );
         assert_eq!(
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .flight_record()
                 .unwrap()
                 .sample_count(),
@@ -970,7 +988,7 @@ mod tests {
         assert_sample_projection(&mut app, sample, true);
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .execute_ui_command(SessionCommand::Retry {})
             .unwrap();
         app.update();
         assert_sample_projection(&mut app, sample, false);
@@ -1026,11 +1044,17 @@ mod tests {
         assert!(current.pilot_position_m > initial.pilot_position_m);
         assert_ne!(current.elevator_rad, initial.elevator_rad);
         assert_ne!(current.rudder_rad, initial.rudder_rad);
-        let before = app.world().resource::<NativeSession>().game.snapshot();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         let samples = app
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .sample_count();
@@ -1061,9 +1085,14 @@ mod tests {
             app.update();
             assert_sample_projection(&mut app, expected, true);
             let session = app.world().resource::<NativeSession>();
-            assert_eq!(session.game.snapshot(), before);
+            assert_eq!(session.game.core_session().snapshot(), before);
             assert_eq!(
-                session.game.flight_record().unwrap().sample_count(),
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
                 samples
             );
         }
@@ -1098,14 +1127,23 @@ mod tests {
             .resource_mut::<NativeSession>()
             .action(MenuAction::Pause)
             .unwrap();
-        let paused = app.world().resource::<NativeSession>().game.snapshot();
+        let paused = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         for fraction in [0.0, 0.5, 1.0] {
             set_render_fraction(&mut app, fraction);
             app.update();
             assert_sample_projection(&mut app, current, true);
             assert!(app.world().resource::<RenderHistory>().samples.is_none());
             assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
                 paused
             );
         }
@@ -1140,7 +1178,7 @@ mod tests {
         assert!(app.world().resource::<RenderHistory>().samples.is_none());
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(GameUiSessionCommand::Retry {})
+            .execute_ui_command(SessionCommand::Retry {})
             .unwrap();
         app.update();
         assert_sample_projection(&mut app, initial, false);
@@ -1183,6 +1221,7 @@ mod tests {
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase()
                 == birdman_game_core::SessionPhase::Result
@@ -1191,7 +1230,12 @@ mod tests {
             }
             app.world_mut().run_schedule(FixedUpdate);
         }
-        let terminal = app.world().resource::<NativeSession>().game.snapshot();
+        let terminal = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         let result = terminal.result().unwrap();
         assert_eq!(
             result.reason,
@@ -1217,6 +1261,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .finalization()
@@ -1227,9 +1272,14 @@ mod tests {
             assert_sample_projection(&mut app, exact, true);
             assert!(app.world().resource::<RenderHistory>().samples.is_none());
             let session = app.world().resource::<NativeSession>();
-            assert_eq!(session.game.snapshot(), terminal);
+            assert_eq!(session.game.core_session().snapshot(), terminal);
             assert_eq!(
-                session.game.flight_record().unwrap().finalization(),
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .finalization(),
                 Some(finalization)
             );
         }
@@ -1258,7 +1308,13 @@ mod tests {
             }
             assert_eq!(
                 main_wing_airspeed(&session),
-                session.game.telemetry().unwrap().unwrap().airspeed_mps
+                session
+                    .game
+                    .core_session()
+                    .telemetry()
+                    .unwrap()
+                    .unwrap()
+                    .airspeed_mps
             );
         }
         app.update();
@@ -1410,10 +1466,19 @@ mod tests {
             .resource::<NativeSession>()
             .prepared_display_state()
             .unwrap();
-        let prepared_snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        let prepared_snapshot = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         app.update();
         assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
             prepared_snapshot
         );
         assert_eq!(
@@ -1461,6 +1526,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .flight_record()
                     .unwrap()
                     .sample_count(),
@@ -1479,7 +1545,7 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Abort).unwrap();
             session
-                .execute_ui_command(GameUiSessionCommand::Retry {})
+                .execute_ui_command(SessionCommand::Retry {})
                 .unwrap();
         }
         app.update();

@@ -2,7 +2,6 @@
 
 mod catalog;
 mod chart;
-mod commands;
 mod diagnostics;
 mod environment;
 mod frame;
@@ -11,10 +10,6 @@ mod types;
 mod update;
 mod view;
 
-pub use commands::{
-    GameUiCommandError, GameUiPreparedFlight, game_ui_control_mode, prepare_game_ui_flight,
-    select_game_ui_difficulty,
-};
 pub use diagnostics::{game_ui_failure_summary, game_ui_result_reason_label};
 pub use environment::game_ui_environment_readout;
 pub use frame::game_ui_frame;
