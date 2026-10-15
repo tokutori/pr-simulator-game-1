@@ -50,6 +50,14 @@ impl From<&ProbeExtension> for ProbeOutput {
 }
 
 impl MaterialExtension for ProbeExtension {
+    fn enable_prepass() -> bool {
+        WaterMaterial::enable_prepass()
+    }
+
+    fn enable_shadows() -> bool {
+        WaterMaterial::enable_shadows()
+    }
+
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
