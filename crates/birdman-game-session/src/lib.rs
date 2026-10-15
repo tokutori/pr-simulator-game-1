@@ -11,6 +11,7 @@ mod launch_venue;
 
 pub mod lake_sky;
 pub mod lake_water;
+pub mod screen_render_scale;
 pub mod wing_geometry;
 
 pub use environment::{
