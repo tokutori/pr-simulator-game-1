@@ -261,10 +261,10 @@ describe("versioned two-tail TypeScript boundary", () => {
     try {
       session.pause(0);
       const paused = parseTailSessionSnapshot(session.snapshot_json());
-      expect(() => session.clear_pause_reason(0)).toThrow("external pause reason must be in [1, 3]");
+      expect(() => { session.clear_pause_reason(0); }).toThrow("external pause reason must be in [1, 3]");
       expect(parseTailSessionSnapshot(session.snapshot_json())).toEqual(paused);
       session.pause(1);
-      expect(() => session.resume()).toThrow("PauseConditionsRemain");
+      expect(() => { session.resume(); }).toThrow("PauseConditionsRemain");
       expect(session.phase_code()).toBe(6);
       expect(session.can_resume()).toBe(false);
       session.clear_pause_reason(1);

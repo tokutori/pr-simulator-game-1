@@ -371,7 +371,6 @@ describe("layout-discriminated application session facade", () => {
         expect(snapshot.frame.progressMeters.courseParallelMeters).toBeGreaterThan(0);
       facade.executeOperation("pause");
       expect(facade.readLifecycle()).toMatchObject({ phaseCode: 6, canResume: bridge.can_resume() });
-      facade.clearPauseReason(0);
       expect(facade.readLifecycle().canResume).toBe(true);
       facade.executeOperation("resume");
       expect(facade.executeOperation("abort").kind).toBe("aborted");
