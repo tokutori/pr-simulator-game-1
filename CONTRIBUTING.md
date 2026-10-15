@@ -20,6 +20,10 @@ CIはコード・設計文書・assetを検査する。Issue本文や依存関�
 commitは目的別のConventional Commitsとする。検査未実施の機能を完了として扱わない。
 通常の開発ではmainへの変更をPR経由で管理する。
 
+feature branchは早期にDraft PRを作成する。`Check`はmain/bevyへのpush、無条件のpull_request、手動実行で起動する。
+PRは仮merge tree、pushと手動実行は対象headを検査する。未PR・merge conflict中の先行head検査が必要な場合は、
+local検査または対象branchの手動実行（`deploy_pages=false`）で補完する。競合解消後はPRの3gateを確認する。
+
 ## 公開と統合の分離
 
 mainへのpushは検査を実行し、GitHub Pagesを自動公開しない。
@@ -55,6 +59,8 @@ ChatGPT固有の参照マーカーと数式区切りは転記しない。
 ## 検査
 
 READMEのコマンドと `docs/verification.md` を参照する。
+ローカルは変更箇所のlint、freshなbindingを用いた型検査、関連試験を先行する。Rust UI/ABI変更時は必要な生成を一回行う。
+UI-only変更では無関係な数値fixtureの反復を省き、最終CIの全検査を保持する。
 compiler・linter警告と、CI基盤の非推奨警告を確認し、解消してからmergeする。
 外部サービス起因で解消不能な警告は原因・影響・追跡IssueをPRに記録する。
 実機妥当性とソフトウェア検査の合格を区別する。
