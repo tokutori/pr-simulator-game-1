@@ -1043,7 +1043,10 @@ fn project_hud(
         overflow: Overflow::scroll_y(),
         ..default()
     });
-    world.entity_mut(retained.shell).insert(background);
+    world
+        .get_mut::<BackgroundColor>(retained.shell)
+        .expect("HUD shell background is retained")
+        .set_if_neq(background);
     retained_node(world, retained.instruments).set_if_neq(Node {
         display: Display::Grid,
         width: percent(100),
@@ -1071,8 +1074,9 @@ fn project_hud(
         ..default()
     });
     world
-        .entity_mut(retained.attitude)
-        .insert(BackgroundColor(if horizon.is_some() {
+        .get_mut::<BackgroundColor>(retained.attitude)
+        .expect("HUD attitude background is retained")
+        .set_if_neq(BackgroundColor(if horizon.is_some() {
             Color::srgb(0.224, 0.490, 0.604)
         } else {
             Color::NONE
@@ -4558,6 +4562,15 @@ mod tests {
             .get_ref::<UiTransform>()
             .unwrap()
             .last_changed();
+        let background_entities = [retained.hud.shell, retained.hud.attitude];
+        let backgrounds = |world: &World| {
+            background_entities.map(|entity| {
+                let entity = world.entity(entity);
+                let background = entity.get_ref::<BackgroundColor>().unwrap();
+                (*background, background.last_changed())
+            })
+        };
+        let previous_backgrounds = backgrounds(app.world());
         let stable_text_entities = [
             retained.hud.readouts,
             retained.hud.fields["controls"],
@@ -4583,6 +4596,7 @@ mod tests {
             "Changing only wind geometry must preserve identical text and font change ticks"
         );
         let current_geometry = geometry(app.world());
+        assert_eq!(backgrounds(app.world()), previous_backgrounds);
         for ((entity, previous), current) in stable_node_entities
             .iter()
             .zip(&previous_geometry)
@@ -4607,6 +4621,30 @@ mod tests {
             app.world().get::<UiTransform>(needle).unwrap().rotation,
             Rot2::degrees(90.0)
         );
+        projected.readouts.push_str(" / 12.3 m/s");
+        app.world_mut().increment_change_tick();
+        project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        let readouts = app.world().entity(retained.hud.readouts);
+        let readouts = readouts.get_ref::<Text>().unwrap();
+        assert_eq!(readouts.0, projected.readouts);
+        assert_ne!(readouts.last_changed(), previous_text[0].1);
+        assert_eq!(geometry(app.world()), current_geometry);
+        assert_eq!(backgrounds(app.world()), previous_backgrounds);
+        projected.layout.width_px += 13.0;
+        projected.layout.opacity = 0.123;
+        app.world_mut().increment_change_tick();
+        project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        let shell = app.world().entity(retained.hud.shell);
+        let shell_node = shell.get_ref::<Node>().unwrap();
+        assert_eq!(shell_node.width, px(projected.layout.width_px));
+        assert_ne!(shell_node.last_changed(), previous_geometry[0].1);
+        let changed_backgrounds = backgrounds(app.world());
+        assert_eq!(
+            changed_backgrounds[0].0,
+            BackgroundColor(color(&theme.panel_background, projected.layout.opacity).unwrap())
+        );
+        assert_ne!(changed_backgrounds[0].1, previous_backgrounds[0].1);
+        assert_eq!(changed_backgrounds[1], previous_backgrounds[1]);
         projected.wind_direction_degrees = None;
         projected.geometry.adi = Some(
             birdman_game_session::game_ui::GameUiHudAdiGeometry::Attitude {
