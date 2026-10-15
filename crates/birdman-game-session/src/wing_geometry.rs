@@ -14,6 +14,12 @@ const CHORD_STEPS: usize = 16;
 const ROW_SIZE: usize = CHORD_STEPS + 1;
 const SURFACE_SIZE: usize = (SPAN_STEPS + 1) * ROW_SIZE;
 
+#[doc = "Existing Web sRGB colour of the T-shaped carbon main structure."]
+pub const CARBON_COLOR: u32 = 0x303b3a;
+
+#[doc = "Existing Web longitudinal main-beam radius in metres."]
+pub const MAIN_BEAM_RADIUS: f64 = 0.075;
+
 #[doc = "Material meaning for the existing covered upper, white underside and transparent trailing film."]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WingMaterial {
@@ -191,6 +197,11 @@ impl WingGeometry {
     #[doc = "All rod definitions in the same order as WingFrame rod endpoints."]
     pub fn rods(&self) -> &[WingRod] {
         &self.rods
+    }
+
+    #[doc = "Fixed longitudinal beam from the shared spar root to the Web tail endpoint, in right/up/aft metres."]
+    pub fn main_beam_endpoints(&self) -> [[f64; 3]; 2] {
+        [self.rods[0].endpoints[0], [0.0, -0.57, 4.75]]
     }
 
     #[doc = "All foam definitions in the same order as WingFrame foam translations."]
@@ -507,6 +518,36 @@ fn foam_rib(side: f64, span: f64) -> WingFoam {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_web_carbon_structure_meets_the_shared_spar_root() {
+        let geometry = WingGeometry::new();
+        let mut frame = geometry.frame();
+        let endpoints = geometry.main_beam_endpoints();
+        for (point, expected) in endpoints
+            .into_iter()
+            .zip([[0.0, -0.73, -0.1375], [0.0, -0.57, 4.75]])
+        {
+            for (actual, expected) in point.into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-14);
+            }
+        }
+        assert_eq!(MAIN_BEAM_RADIUS, 0.075);
+        assert_eq!(CARBON_COLOR, 0x303b3a);
+        assert_eq!(
+            geometry
+                .rods()
+                .iter()
+                .filter(|rod| rod.kind() == WingRodKind::Spar)
+                .count(),
+            24
+        );
+        for speed in [0.0, 9.5, 13.0] {
+            geometry.update_frame(&mut frame, speed);
+            assert_eq!(endpoints[0], frame.rod_endpoints()[0][0]);
+            assert_eq!(geometry.main_beam_endpoints(), endpoints);
+        }
+    }
 
     #[test]
     fn fixed_web_deflection_and_dihedral_oracle_is_preserved() {

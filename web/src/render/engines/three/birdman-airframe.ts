@@ -177,8 +177,8 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   });
   const ribMaterial = new MeshLambertMaterial({ color: 0xcdb483 });
   const styrofoam = new MeshLambertMaterial({ color: 0x77b5d0, side: DoubleSide });
-  const carbon = new MeshLambertMaterial({ color: 0x303b3a });
   const sharedWing = new WingGeometryBridge();
+  const carbon = new MeshLambertMaterial({ color: sharedWing.carbon_color });
   const positions = sharedWing.surface_positions();
   const uvs = sharedWing.surface_uvs();
   const indices = sharedWing.surface_indices();
@@ -243,8 +243,10 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     foamRibs.push(foam);
   }
 
+  const beamEndpoints = sharedWing.main_beam_endpoints();
   const mainBeam = addRod(root,
-    new Vector3().fromArray(rodEndpoints, 0), new Vector3(0, -0.57, 4.75), 0.075, carbon);
+    new Vector3().fromArray(beamEndpoints, 0), new Vector3().fromArray(beamEndpoints, 3),
+    sharedWing.main_beam_radius, carbon);
   mainBeam.name = "single-carbon-main-beam";
   addCockpit(root);
 
