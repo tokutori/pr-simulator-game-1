@@ -17,7 +17,7 @@ import {
   Vector3
 } from "three";
 import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
-import { WingGeometryBridge } from "../../../../pkg/birdman_game_wasm.js";
+import { CockpitGeometryBridge, WingGeometryBridge } from "../../../../pkg/birdman_game_wasm.js";
 
 function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTexture {
   const width = 1024;
@@ -124,46 +124,6 @@ function registeredHorizontalTailArmMeters(kind: string, armMeters: number): num
   throw new RangeError("Tail presentation requires registered aircraft geometry");
 }
 
-interface CanopyStation {
-  readonly z: number;
-  readonly centerY: number;
-  readonly halfWidth: number;
-  readonly halfHeight: number;
-}
-
-function canopyPoint(station: CanopyStation, angle: number): Vector3 {
-  const rounded = (value: number): number => Math.sign(value) * Math.abs(value) ** 0.8;
-  return new Vector3(
-    station.halfWidth * rounded(Math.cos(angle)),
-    station.centerY + station.halfHeight * rounded(Math.sin(angle)),
-    station.z
-  );
-}
-
-function canopyGeometry(stations: readonly CanopyStation[]): BufferGeometry {
-  const circumferenceSteps = 24;
-  const rowSize = circumferenceSteps + 1;
-  const vertices: number[] = [];
-  const indices: number[] = [];
-  for (const station of stations) {
-    for (let step = 0; step <= circumferenceSteps; step++) {
-      vertices.push(...canopyPoint(station, step * Math.PI * 2 / circumferenceSteps).toArray());
-    }
-  }
-  for (let section = 0; section < stations.length - 1; section++) {
-    for (let step = 0; step < circumferenceSteps; step++) {
-      const a = section * rowSize + step;
-      const b = a + rowSize;
-      indices.push(a, a + 1, b, a + 1, b + 1, b);
-    }
-  }
-  const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
 function pointRod(rod: Mesh, from: Vector3, to: Vector3): void {
   const vector = to.clone().sub(from);
   rod.position.copy(from).add(to).multiplyScalar(0.5);
@@ -176,6 +136,58 @@ function addRod(parent: Group, from: Vector3, to: Vector3, radius: number, mater
   pointRod(rod, from, to);
   parent.add(rod);
   return rod;
+}
+
+function addCockpit(root: Group): void {
+  const shared = new CockpitGeometryBridge();
+  try {
+    const colors = shared.material_colors();
+    const opacities = shared.material_opacities();
+    const materials = Array.from(colors, (color, index) => {
+      const opacity = bulkNumber(opacities, index);
+      return new MeshLambertMaterial({ color, opacity, transparent: opacity < 1,
+        depthWrite: opacity === 1, ...(index >= 2 ? { side: DoubleSide } : {}) });
+    });
+    const materialFor = (code: number): MeshLambertMaterial => {
+      const material = materials[code];
+      if (material === undefined) throw new RangeError("Incomplete shared cockpit palette");
+      return material;
+    };
+    const frame = new Group();
+    frame.name = "open-cockpit-frame";
+    root.add(frame);
+    const endpoints = shared.rod_endpoints();
+    const radii = shared.rod_radii();
+    const rodMaterials = shared.rod_materials();
+    for (let index = 0; index < radii.length; index++) {
+      const code = bulkNumber(rodMaterials, index);
+      const rod = addRod(code === 0 ? frame : root,
+        new Vector3().fromArray(endpoints, index * 6),
+        new Vector3().fromArray(endpoints, index * 6 + 3), bulkNumber(radii, index), materialFor(code));
+      if (code === 1) rod.name = "canopy-rim-segment";
+    }
+    const positions = shared.surface_positions();
+    const indices = shared.surface_indices();
+    const vertexCounts = shared.surface_vertex_counts();
+    const indexCounts = shared.surface_index_counts();
+    const surfaceMaterials = shared.surface_materials();
+    let positionOffset = 0;
+    let indexOffset = 0;
+    for (let index = 0; index < vertexCounts.length; index++) {
+      const positionEnd = positionOffset + bulkNumber(vertexCounts, index) * 3;
+      const indexEnd = indexOffset + bulkNumber(indexCounts, index);
+      const geometry = new BufferGeometry();
+      geometry.setAttribute("position", new Float32BufferAttribute(positions.subarray(positionOffset, positionEnd), 3));
+      geometry.setIndex(new BufferAttribute(indices.subarray(indexOffset, indexEnd), 1));
+      geometry.computeVertexNormals();
+      const mesh = new Mesh(geometry, materialFor(bulkNumber(surfaceMaterials, index)));
+      mesh.name = index === 0 ? "transparent-canopy" : "rear-cockpit-fairing";
+      if (index === 0) mesh.frustumCulled = false;
+      root.add(mesh);
+      positionOffset = positionEnd;
+      indexOffset = indexEnd;
+    }
+  } finally { shared.free(); }
 }
 
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
@@ -198,12 +210,6 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const styrofoam = new MeshLambertMaterial({ color: 0x77b5d0, side: DoubleSide });
   const sharedWing = new WingGeometryBridge();
   const carbon = new MeshLambertMaterial({ color: sharedWing.carbon_color });
-  const whiteFrame = new MeshLambertMaterial({ color: 0xe4e7e3 });
-  const canopyFilm = new MeshLambertMaterial({
-    color: 0xd6e3e5, side: DoubleSide, transparent: true, opacity: 0.23, depthWrite: false
-  });
-  const canopyRim = new MeshLambertMaterial({ color: 0xb8c5c7 });
-  const fairingSkin = new MeshLambertMaterial({ color: 0xe1e3db, side: DoubleSide });
   const positions = sharedWing.surface_positions();
   const uvs = sharedWing.surface_uvs();
   const indices = sharedWing.surface_indices();
@@ -268,60 +274,12 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     foamRibs.push(foam);
   }
 
-  const cockpitFrame = new Group();
-  cockpitFrame.name = "open-cockpit-frame";
-  root.add(cockpitFrame);
-  for (const side of [-1, 1] as const) {
-    const upperFront = new Vector3(side * 0.16, -1.01, -0.75);
-    const upperRear = new Vector3(side * 0.16, -1.01, 0.65);
-    const lowerFront = new Vector3(side * 0.15, -1.36, -0.65);
-    const lowerRear = new Vector3(side * 0.15, -1.35, 0.48);
-    addRod(cockpitFrame, new Vector3(0, -1.17, -1.10), upperFront, 0.012, whiteFrame);
-    addRod(cockpitFrame, upperFront, upperRear, 0.012, whiteFrame);
-    addRod(cockpitFrame, lowerFront, lowerRear, 0.012, whiteFrame);
-    addRod(cockpitFrame, upperFront, lowerFront, 0.008, whiteFrame);
-    addRod(cockpitFrame, upperRear, lowerRear, 0.008, whiteFrame);
-    addRod(cockpitFrame, lowerFront, upperRear, 0.007, whiteFrame);
-  }
-  for (const z of [-0.65, 0.48]) {
-    addRod(cockpitFrame, new Vector3(-0.15, -1.36, z),
-      new Vector3(0.15, -1.36, z), 0.008, whiteFrame);
-  }
   const beamEndpoints = sharedWing.main_beam_endpoints();
   const mainBeam = addRod(root,
     new Vector3().fromArray(beamEndpoints, 0), new Vector3().fromArray(beamEndpoints, 3),
     sharedWing.main_beam_radius, carbon);
   mainBeam.name = "single-carbon-main-beam";
-  const clearCanopyStations: readonly CanopyStation[] = [
-    { z: -1.10, centerY: -1.08, halfWidth: 0.025, halfHeight: 0.035 },
-    { z: -1.02, centerY: -1.07, halfWidth: 0.065, halfHeight: 0.10 },
-    { z: -0.90, centerY: -1.06, halfWidth: 0.12, halfHeight: 0.17 },
-    { z: -0.75, centerY: -1.06, halfWidth: 0.17, halfHeight: 0.22 },
-    { z: -0.53, centerY: -1.05, halfWidth: 0.20, halfHeight: 0.25 },
-    { z: -0.31, centerY: -1.05, halfWidth: 0.22, halfHeight: 0.27 }
-  ];
-  const canopy = new Mesh(canopyGeometry(clearCanopyStations), canopyFilm);
-  canopy.name = "transparent-canopy";
-  canopy.frustumCulled = false;
-  root.add(canopy);
-  const rearFairing = new Mesh(canopyGeometry([
-    { z: -0.31, centerY: -1.05, halfWidth: 0.22, halfHeight: 0.27 },
-    { z: -0.06, centerY: -1.04, halfWidth: 0.23, halfHeight: 0.28 },
-    { z: 0.30, centerY: -1.03, halfWidth: 0.21, halfHeight: 0.26 },
-    { z: 0.77, centerY: -0.98, halfWidth: 0.13, halfHeight: 0.17 },
-    { z: 1.22, centerY: -0.87, halfWidth: 0.025, halfHeight: 0.04 }
-  ]), fairingSkin);
-  rearFairing.name = "rear-cockpit-fairing";
-  root.add(rearFairing);
-  const frontRim = clearCanopyStations[clearCanopyStations.length - 1];
-  if (frontRim !== undefined) {
-    for (let step = 0; step < 16; step++) {
-      addRod(root,
-        canopyPoint(frontRim, step * Math.PI * 2 / 16),
-        canopyPoint(frontRim, (step + 1) * Math.PI * 2 / 16),
-        0.009, canopyRim);
-    }
-  }
+  addCockpit(root);
 
   const horizontalIncidence = new Group();
   horizontalIncidence.name = "horizontal-tail-incidence";

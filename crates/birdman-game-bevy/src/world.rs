@@ -18,6 +18,7 @@ use bevy::{
 use birdman_game_core::{
     HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
 };
+use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::wing_geometry::{
     CARBON_COLOR, MAIN_BEAM_RADIUS, WingFrame, WingGeometry, WingMaterial, WingRodKind, WingSurface,
 };
@@ -559,6 +560,27 @@ pub(crate) fn setup_world(
     });
     let wing_geometry = WingGeometry::new();
     let wing_frame = wing_geometry.frame();
+    let cockpit = CockpitGeometry::new();
+    let cockpit_materials = CockpitMaterial::ALL.map(|kind| {
+        let color = kind.color();
+        let opacity = kind.opacity();
+        materials.add(StandardMaterial {
+            base_color: Color::srgba(
+                ((color >> 16) & 255) as f32 / 255.0,
+                ((color >> 8) & 255) as f32 / 255.0,
+                (color & 255) as f32 / 255.0,
+                opacity,
+            ),
+            alpha_mode: if opacity < 1.0 {
+                AlphaMode::Blend
+            } else {
+                AlphaMode::Opaque
+            },
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        })
+    });
     let mut wing_surfaces = Vec::new();
     let mut spar_rods = Vec::new();
     let definition = HybridMockDefinition::try_new().expect("登録機体geometryが不正");
@@ -593,12 +615,6 @@ pub(crate) fn setup_world(
                 carbon_rod_transform(wing_geometry.main_beam_endpoints()),
                 RenderLayers::layer(0).with(1),
             ));
-            parent.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.55, 0.5, 0.7))),
-                MeshMaterial3d(frame.clone()),
-                Transform::from_xyz(0.0, -0.35, -0.25),
-                RenderLayers::layer(0).with(1),
-            ));
             for (index, (rod, endpoints)) in wing_geometry
                 .rods()
                 .iter()
@@ -619,6 +635,56 @@ pub(crate) fn setup_world(
                     ))
                     .id();
                 spar_rods.push((index, entity));
+            }
+            for rod in &cockpit.rods {
+                let [from, to] = rod
+                    .endpoints
+                    .map(|point| Vec3::from_array(point.map(|value| value as f32)));
+                let direction = to - from;
+                parent.spawn((
+                    Name::new(if rod.material == CockpitMaterial::Frame {
+                        "cockpit-frame"
+                    } else {
+                        "canopy-rim-segment"
+                    }),
+                    Mesh3d(
+                        meshes.add(
+                            Cylinder::new(rod.radius as f32, 1.0)
+                                .mesh()
+                                .resolution(8)
+                                .build(),
+                        ),
+                    ),
+                    MeshMaterial3d(cockpit_materials[rod.material as usize].clone()),
+                    Transform::from_translation((from + to) * 0.5)
+                        .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction.normalize()))
+                        .with_scale(Vec3::new(1.0, direction.length(), 1.0)),
+                    RenderLayers::layer(0).with(1),
+                ));
+            }
+            for surface in &cockpit.surfaces {
+                let mut mesh = Mesh::new(
+                    PrimitiveTopology::TriangleList,
+                    RenderAssetUsages::default(),
+                )
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, surface.positions.clone())
+                .with_inserted_indices(Indices::U32(surface.indices.clone()));
+                mesh.compute_area_weighted_normals();
+                let transparent = surface.material == CockpitMaterial::Canopy;
+                let mut child = parent.spawn((
+                    Name::new(if transparent {
+                        "transparent-canopy"
+                    } else {
+                        "rear-cockpit-fairing"
+                    }),
+                    Mesh3d(meshes.add(mesh)),
+                    MeshMaterial3d(cockpit_materials[surface.material as usize].clone()),
+                    Transform::IDENTITY,
+                    RenderLayers::layer(0).with(1),
+                ));
+                if transparent {
+                    child.insert((NoFrustumCulling, NotShadowCaster));
+                }
             }
             for (surface, positions) in wing_geometry
                 .surfaces()
@@ -1459,6 +1525,79 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_projects_shared_surfaces_and_tubes_under_the_aircraft() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let expected = CockpitGeometry::new();
+        let mut remaining_rods: Vec<_> = expected.rods.iter().collect();
+        let world = app.world_mut();
+        let mut query = world.query::<(&Name, &Mesh3d, &Transform, &ChildOf)>();
+        let meshes = world.resource::<Assets<Mesh>>();
+        let mut surfaces = 0;
+        for (name, handle, transform, parent) in query.iter(world) {
+            if let Some(index) = ["transparent-canopy", "rear-cockpit-fairing"]
+                .iter()
+                .position(|expected| *expected == name.as_str())
+            {
+                assert!(
+                    *world.get::<WorldProjection>(parent.parent()).unwrap()
+                        == WorldProjection::Aircraft
+                );
+                let mesh = meshes.get(&handle.0).unwrap();
+                assert_eq!(
+                    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap(),
+                    expected.surfaces[index].positions
+                );
+                assert_eq!(
+                    mesh.indices().unwrap().iter().collect::<Vec<_>>(),
+                    expected.surfaces[index]
+                        .indices
+                        .iter()
+                        .map(|index| *index as usize)
+                        .collect::<Vec<_>>()
+                );
+                assert!(
+                    mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+                        .unwrap()
+                        .as_float3()
+                        .unwrap()
+                        .iter()
+                        .flatten()
+                        .all(|value| value.is_finite())
+                );
+                assert_eq!(*transform, Transform::IDENTITY);
+                surfaces += 1;
+            } else if matches!(name.as_str(), "cockpit-frame" | "canopy-rim-segment") {
+                assert!(
+                    *world.get::<WorldProjection>(parent.parent()).unwrap()
+                        == WorldProjection::Aircraft
+                );
+                let actual = [-0.5, 0.5].map(|height| transform.transform_point(Vec3::Y * height));
+                let index = remaining_rods
+                    .iter()
+                    .position(|rod| {
+                        actual.iter().zip(rod.endpoints).all(|(actual, expected)| {
+                            actual.distance(Vec3::from_array(expected.map(|value| value as f32)))
+                                < 1.0e-6
+                        })
+                    })
+                    .unwrap();
+                remaining_rods.swap_remove(index);
+            }
+        }
+        assert_eq!(surfaces, 2);
+        assert!(remaining_rods.is_empty());
+    }
+
+    #[test]
     fn reflection_layer_contains_airframe_meshes_and_sun_but_excludes_water_and_terrain() {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
@@ -1516,10 +1655,10 @@ mod tests {
                 excluded_meshes += 1;
             }
         }
-        assert_eq!(reflected_meshes, 12);
+        assert_eq!(reflected_meshes, 43);
         assert_eq!(reflected_spars, 24);
         assert_eq!(main_beams, 1);
-        assert_eq!(transparent_films, 2);
+        assert_eq!(transparent_films, 3);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(
