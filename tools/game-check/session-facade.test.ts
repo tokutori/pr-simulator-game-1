@@ -519,9 +519,9 @@ describe("layout-discriminated application session facade", () => {
       for (const action of [{ kind: "toggle_technical" }, { kind: "session", command: { kind: "pause" } },
         { kind: "toggle_replay_playing", code: 1 }]) {
         expect(() => parseGameUiUpdate(JSON.stringify({ state, effects: [{ kind: "record", action }] }))).toThrow();
-        expect(() => bridge.apply_game_ui_record_action_json(JSON.stringify(action))).toThrow();
+        expect(() => { bridge.apply_game_ui_record_action_json(JSON.stringify(action)); }).toThrow();
       }
-      expect(() => bridge.apply_game_ui_record_action_json(JSON.stringify({ kind: "seek_analysis", time_seconds: 1 }))).toThrow("OutsideRecordedRange");
+      expect(() => { bridge.apply_game_ui_record_action_json(JSON.stringify({ kind: "seek_analysis", time_seconds: 1 })); }).toThrow("OutsideRecordedRange");
       expect(facade.readPlaybackClock()).toEqual(clock);
     } finally { facade.dispose(); }
   });
