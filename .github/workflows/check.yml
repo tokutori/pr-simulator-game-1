@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}
+  group: check-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.deploy_pages && 'pages' || 'check' }}
   cancel-in-progress: true
 
 jobs:
@@ -41,8 +41,8 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: . -> target
-          key: check-${{ hashFiles('Cargo.toml', '.github/workflows/check.yml') }}
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          key: check-${{ hashFiles('Cargo.toml') }}
+          save-if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
