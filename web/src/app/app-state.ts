@@ -172,7 +172,7 @@ export type LakeWaterQualityUiState =
 export interface AppModel {
   readonly sharedGameUi: GameUiView | null;
   readonly lakeWaterQuality: LakeWaterQualityUiState;
-  readonly screenRenderScale: GameUiPlatformInput["screen_render_scale"];
+  readonly screenRenderScale: GameUiPlatformInput["screen_render_scale"] | null;
   readonly flightLogDownload: FlightLogDownloadState;
   readonly nextFlightLogDownloadRequestId: number;
   readonly flightRecordSourceRevision: number;
@@ -266,6 +266,7 @@ export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ 
 export type GameSessionProjection = TailGameSessionProjection;
 
 export type AppMessage =
+  | { readonly type: "screen-render-observed"; readonly snapshot: GameUiPlatformInput["screen_render_scale"] }
   | { readonly type: "shared-game-ui-observed"; readonly view: GameUiView }
   | { readonly type: "shared-game-ui-effect"; readonly effect: GameUiEffect }
   | { readonly type: "lake-water-quality-applied"; readonly requestId: number; readonly quality: LakeWaterQuality; readonly cleanup: LakeWaterQualityCleanupResult }
@@ -356,6 +357,8 @@ export type AppMessage =
     };
 
 export type AppEffect =
+  | { readonly type: "select-screen-render-scale"; readonly scale: Extract<GameUiPlatformInput["screen_render_scale"]["selection"], { kind: "manual" }>["scale"] }
+  | { readonly type: "select-screen-render-auto"; readonly enabled: boolean }
   | { readonly type: "update-shared-game-ui"; readonly action: GameUiAction }
   | { readonly type: "shared-game-session-command"; readonly command: SessionCommand; readonly requestId: number }
   | { readonly type: "shared-record-action"; readonly action: Extract<GameUiEffect, { kind: "record" }>["action"] }
@@ -481,7 +484,7 @@ export function createInitialAppModel(): AppModel {
   return freezeAppModel({
     sharedGameUi: null,
     lakeWaterQuality: Object.freeze({ kind: "ready", applied: "high", cleanup: Object.freeze({ kind: "complete" }) }),
-    screenRenderScale: "100",
+    screenRenderScale: null,
     flightLogDownload: Object.freeze({ kind: "idle" }),
     nextFlightLogDownloadRequestId: 1,
     flightRecordSourceRevision: 0,
@@ -598,6 +601,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   }
 
   switch (message.type) {
+    case "screen-render-observed":
+      return transition(withModel(model, { screenRenderScale: message.snapshot }));
     case "shared-game-ui-observed":
       return transition(withModel(model, { sharedGameUi: message.view }));
     case "shared-game-ui-effect":
@@ -1148,7 +1153,11 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
     case "set_screen_render_scale":
       return model.presentation.type === "ready" && model.presentation.mode === "screen"
           && canSelectRenderingSettings(model)
-        ? transition(withModel(model, { screenRenderScale: command.scale })) : transition(model);
+        ? transition(model, [{ type: "select-screen-render-scale", scale: command.scale }]) : transition(model);
+    case "set_screen_render_auto":
+      return model.presentation.type === "ready" && model.presentation.mode === "screen"
+          && canSelectRenderingSettings(model)
+        ? transition(model, [{ type: "select-screen-render-auto", enabled: command.enabled }]) : transition(model);
     case "set_water_quality": {
       if (!canSelectLakeWaterQuality(model)
           || command.quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready"

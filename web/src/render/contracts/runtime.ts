@@ -100,6 +100,7 @@ export interface RendererAdapter {
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setScreenRenderScale(factor: number): void;
+  setScreenRenderAuto(enabled: boolean): void;
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void;
   dispose(): void;
 }

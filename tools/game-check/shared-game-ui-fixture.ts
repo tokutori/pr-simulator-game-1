@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { HudProfileUiState } from "../../web/src/app/app-state.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
@@ -39,13 +40,22 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
     flight_log_pending: false,
     water_quality: "high",
     water_quality_operation: Object.freeze({ kind: "idle" }),
-    screen_render_scale: "100",
+    screen_render_scale: sharedScreenRenderSnapshot(),
     notification: "",
     flight_controller_failure: null,
     head_hud_failure: null,
     stored_records: Object.freeze([]),
     ...overrides
   });
+}
+
+export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100"): GameUiPlatformInput["screen_render_scale"] {
+  const bridge = new ScreenRenderAutoBridge();
+  try {
+    bridge.select_manual(Number(scale), 0);
+    if (bridge.requested_scale_percent() !== 0) bridge.applied(bridge.requested_epoch(), Number(scale), 0);
+    return parseScreenRenderAutoSnapshot(bridge.snapshot_json());
+  } finally { bridge.free(); }
 }
 
 export function withSharedGameUiSession<Value>(phaseCode: number, options: SharedGameUiFixtureOptions,

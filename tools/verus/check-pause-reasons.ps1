@@ -13,12 +13,31 @@ $repository = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $verifierVersion = '0.2026.10.04.426d8b0'
 $proofToolchain = '1.98.1'
 $archiveDigest = 'b36968a0f333036e7e1770bb73fdd407a35c8fd163124c1d309972574150da61'
-$sharedModule = Join-Path $repository 'crates/birdman-game-core/src/pause_reasons.rs'
-$positiveDriver = Join-Path $repository 'proofs/pause_reasons.rs'
-$negativeDriver = Join-Path $repository 'proofs/pause_reasons_negative.rs'
-$resumeNegativeDriver = Join-Path $repository 'proofs/resume_admission_negative.rs'
 $productToolchain = Join-Path $repository 'rust-toolchain.toml'
-$expectedInclude = '../crates/birdman-game-core/src/pause_reasons.rs'
+$suites = @(
+    @{
+        Name = 'pause_reasons'
+        SharedModule = Join-Path $repository 'crates/birdman-game-core/src/pause_reasons.rs'
+        PositiveDriver = Join-Path $repository 'proofs/pause_reasons.rs'
+        RequiredProofs = @('verify_set_operations', 'verify_resume_predicate', 'verify_resume_admission', 'verify_empty_set')
+        RenamedProof = 'verify_resume_admission'
+        NegativeChecks = @(
+            @{ Path = Join-Path $repository 'proofs/pause_reasons_negative.rs'; Assertion = 'still_present' },
+            @{ Path = Join-Path $repository 'proofs/resume_admission_negative.rs'; Assertion = 'admitted' }
+        )
+    },
+    @{
+        Name = 'countdown'
+        SharedModule = Join-Path $repository 'crates/birdman-game-core/src/countdown.rs'
+        PositiveDriver = Join-Path $repository 'proofs/countdown.rs'
+        RequiredProofs = @('verify_countdown_start', 'verify_countdown_admission', 'verify_countdown_retention', 'verify_obsolete_countdown')
+        RenamedProof = 'verify_countdown_admission'
+        NegativeChecks = @(
+            @{ Path = Join-Path $repository 'proofs/countdown_early_launch_negative.rs'; Assertion = 'admitted' },
+            @{ Path = Join-Path $repository 'proofs/countdown_stale_token_negative.rs'; Assertion = 'advanced' }
+        )
+    }
+)
 
 function Invoke-NativeCapture {
     param([string]$Command, [string[]]$Arguments, [switch]$JsonOutput)
@@ -49,10 +68,10 @@ function Read-Utf8Source {
 }
 
 function Assert-SharedInclude {
-    param([string]$Path)
+    param([string]$Path, [string]$ExpectedInclude)
     $source = Read-Utf8Source $Path
     $includes = [regex]::Matches($source, 'include!\s*\(\s*"([^"]+)"\s*\)\s*;')
-    if ($includes.Count -ne 1 -or $includes[0].Groups[1].Value -cne $expectedInclude) {
+    if ($includes.Count -ne 1 -or $includes[0].Groups[1].Value -cne $ExpectedInclude) {
         throw "Driver must include the installed core module exactly once: $Path"
     }
 }
@@ -74,24 +93,29 @@ function Get-VerificationSummary {
 }
 
 function Get-MissingProofTargets {
-    param($Report)
+    param($Report, [string]$Module, [string[]]$RequiredProofs)
     $resolvedNames = @($Report.'func-details'.PSObject.Properties.Name)
-    foreach ($requiredProof in $requiredProofs) {
-        if ($resolvedNames -cnotcontains "pause_reasons::pause_reasons::$requiredProof") {
+    foreach ($requiredProof in $RequiredProofs) {
+        if ($resolvedNames -cnotcontains "${Module}::${Module}::$requiredProof") {
             $requiredProof
         }
     }
 }
 
-$proofInputs = @($sharedModule, $positiveDriver, $negativeDriver, $resumeNegativeDriver, $productToolchain)
+$proofInputs = @($productToolchain)
+foreach ($suite in $suites) {
+    $suite.ExpectedInclude = "../crates/birdman-game-core/src/$($suite.Name).rs"
+    $proofInputs += @($suite.SharedModule, $suite.PositiveDriver) + @($suite.NegativeChecks.Path)
+    Assert-SharedInclude $suite.PositiveDriver $suite.ExpectedInclude
+    foreach ($check in $suite.NegativeChecks) {
+        Assert-SharedInclude $check.Path $suite.ExpectedInclude
+    }
+}
 foreach ($path in $proofInputs) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Formal integration is not installed: $path"
     }
 }
-Assert-SharedInclude $positiveDriver
-Assert-SharedInclude $negativeDriver
-Assert-SharedInclude $resumeNegativeDriver
 $toolchainSource = Read-Utf8Source $productToolchain
 if ($toolchainSource -notmatch '(?m)^channel\s*=\s*"1\.97\.0"\s*$') {
     throw 'Product toolchain must remain pinned to Rust 1.97.0.'
@@ -100,11 +124,7 @@ $sourceHashes = @{}
 foreach ($path in $proofInputs) {
     $sourceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
 }
-$negativeChecks = @(
-    @{ Path = $negativeDriver; Assertion = 'still_present' },
-    @{ Path = $resumeNegativeDriver; Assertion = 'admitted' }
-)
-foreach ($check in $negativeChecks) {
+foreach ($check in @($suites.NegativeChecks)) {
     $negativeLines = @(Get-Content -LiteralPath $check.Path -Encoding UTF8)
     $escapedAssertion = [regex]::Escape($check.Assertion)
     $assertionLines = @(
@@ -158,13 +178,20 @@ $escapedVersion = [regex]::Escape($verifierVersion)
 if ($version.ExitCode -ne 0 -or $version.Output -notmatch "(?<![A-Za-z0-9.])$escapedVersion(?![A-Za-z0-9.])") {
     throw 'Verifier executable does not match the pinned release.'
 }
-$commonArguments = @(
-    '--crate-type', 'lib', '--crate-name', 'pause_reasons', '--edition=2024',
+$baseArguments = @(
+    '--crate-type', 'lib', '--edition=2024',
     '--no-cheating', '--num-threads', '1', '--color=never'
 )
-$requiredProofs = @('verify_set_operations', 'verify_resume_predicate', 'verify_resume_admission', 'verify_empty_set')
 Push-Location -LiteralPath $repository
 try {
+  foreach ($suite in $suites) {
+    $sharedModule = $suite.SharedModule
+    $positiveDriver = $suite.PositiveDriver
+    $negativeDriver = $suite.NegativeChecks[0].Path
+    $negativeChecks = $suite.NegativeChecks
+    $expectedInclude = $suite.ExpectedInclude
+    $requiredProofs = $suite.RequiredProofs
+    $commonArguments = $baseArguments + @('--crate-name', $suite.Name)
     $positive = Invoke-NativeCapture $verifier (@($positiveDriver) + $commonArguments + @('--output-json', '--time')) -JsonOutput
     $positiveReport = $positive.Output | ConvertFrom-Json
     $positiveSummary = $positiveReport.'verification-results'
@@ -172,34 +199,34 @@ try {
         $positiveSummary.success -ne $true -or $positiveSummary.'is-verifying-entire-crate' -ne $true) {
         throw 'Positive proof requires exit 0, entire-crate success, verified obligations, and zero errors.'
     }
-    $missingTargets = @(Get-MissingProofTargets $positiveReport)
+    $missingTargets = @(Get-MissingProofTargets $positiveReport $suite.Name $requiredProofs)
     if ($missingTargets.Count -ne 0) {
         throw "Required proof symbols are missing from compiler inventory: $($missingTargets -join ', ')"
     }
-    Write-Host "Whole proof: $($positiveSummary.Verified) verified; exact compiler symbols retained."
+    Write-Host "$($suite.Name) whole proof: $($positiveSummary.Verified) verified; exact compiler symbols retained."
     foreach ($requiredProof in $requiredProofs) {
         $selected = Invoke-NativeCapture $verifier (@($positiveDriver) + $commonArguments + @(
-            '--verify-only-module', 'pause_reasons', '--verify-function', $requiredProof
+            '--verify-only-module', $suite.Name, '--verify-function', $requiredProof
         ))
         $selectedSummary = Get-VerificationSummary $selected.Output -Selected
         if ($selected.ExitCode -ne 0 -or $selectedSummary.Verified -le 0 -or $selectedSummary.Errors -ne 0) {
             throw "Required proof did not verify: $requiredProof"
         }
     }
-    $renamedProof = 'verify_resume_admission'
+    $renamedProof = $suite.RenamedProof
     $positiveSource = Read-Utf8Source $positiveDriver
     $renamedSource = $positiveSource.Replace("fn $renamedProof(", "fn $($renamedProof)_retired(")
     if ($renamedSource -ceq $positiveSource) {
         throw 'The rename fixture did not remove the designated proof symbol.'
     }
     $renamedSource = $renamedSource.Replace($expectedInclude, $sharedModule.Replace('\', '/'))
-    $renamedSource += "`n/*`nfn $renamedProof(reasons: PauseReasons) {}`n*/`n"
-    $renamedDriver = Join-Path $toolRoot 'pause_reasons_renamed.rs'
+    $renamedSource += "`n/*`nfn $renamedProof() {}`n*/`n"
+    $renamedDriver = Join-Path $toolRoot "$($suite.Name)_renamed.rs"
     [System.IO.File]::WriteAllText($renamedDriver, $renamedSource, [System.Text.UTF8Encoding]::new($false))
     $renamed = Invoke-NativeCapture $verifier (@($renamedDriver) + $commonArguments + @('--output-json', '--time')) -JsonOutput
     $renamedReport = $renamed.Output | ConvertFrom-Json
     $renamedSummary = $renamedReport.'verification-results'
-    $renamedMissing = @(Get-MissingProofTargets $renamedReport)
+    $renamedMissing = @(Get-MissingProofTargets $renamedReport $suite.Name $requiredProofs)
     if ($renamed.ExitCode -ne 0 -or $renamedSummary.success -ne $true -or
         $renamedSummary.'is-verifying-entire-crate' -ne $true -or
         $renamedSummary.Verified -le 0 -or $renamedSummary.Errors -ne 0 -or
@@ -209,7 +236,7 @@ try {
     Write-Host 'Renamed proof with commented old declaration rejected by exact compiler inventory.'
     $missingProof = $requiredProofs[0]
     $missing = Invoke-NativeCapture $verifier (@($negativeDriver) + $commonArguments + @(
-        '--verify-only-module', 'pause_reasons', '--verify-function', $missingProof
+        '--verify-only-module', $suite.Name, '--verify-function', $missingProof
     ))
     $missingMessage = [regex]::Escape("could not find function $missingProof specified by --verify-function")
     if ($missing.ExitCode -eq 0 -or $missing.Output -notmatch "(?m)^error: $missingMessage\s*$" -or
@@ -227,6 +254,8 @@ try {
             throw "Negative check must fail verification only at the designated assertion: $($check.Path)"
         }
     }
+    Write-Host "$($suite.Name): positive $($positiveSummary.Verified) verified; all required named proofs verified; missing proof and designated negative assertions rejected."
+  }
 }
 finally {
     Pop-Location
@@ -236,5 +265,5 @@ foreach ($path in $sourceHashes.Keys) {
         throw "Proof input or product toolchain changed during execution: $path"
     }
 }
-Write-Host "PauseReasons: positive $($positiveSummary.Verified) verified; all required named proofs verified; missing proof and designated negative assertions rejected."
+Write-Host 'Production pause and countdown proof suites completed.'
 exit 0

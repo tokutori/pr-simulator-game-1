@@ -9,7 +9,7 @@ import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../g
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import type { PresentationMode } from "../../web/src/render/contracts/runtime.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
-import { currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, sharedGameUiPlatform, sharedScreenRenderSnapshot, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
@@ -181,7 +181,7 @@ describe("manual lake water quality ownership", () => {
 });
 
 describe("Screen render scale preference", () => {
-  function selectScale(model: AppModel, scale: GameUiPlatformInput["screen_render_scale"]): AppTransition {
+  function selectScale(model: AppModel, scale: "100" | "75" | "50"): AppTransition {
     return updateApp(model, { type: "shared-game-ui-effect", effect: {
       kind: "platform", command: { kind: "set_screen_render_scale", scale }
     } });
@@ -189,23 +189,23 @@ describe("Screen render scale preference", () => {
 
   it("keeps one preference while preserving domain state and other render settings", () => {
     const initial = readyModel();
-    expect(initial.screenRenderScale).toBe("100");
+    expect(initial.screenRenderScale).toEqual(sharedScreenRenderSnapshot());
     let selected = initial;
     for (const scale of ["75", "50", "100"] as const) {
       const updated = selectScale(selected, scale);
-      expect(updated.model.screenRenderScale).toBe(scale);
-      expect(updated.effects).toEqual([]);
+      expect(updated.model.screenRenderScale).toBe(selected.screenRenderScale);
+      expect(updated.effects).toEqual([{ type: "select-screen-render-scale", scale }]);
       expect(updated.model.gameSession).toBe(initial.gameSession);
       expect(updated.model.lakeWaterQuality).toBe(initial.lakeWaterQuality);
       expect(updated.model.difficulty).toBe(initial.difficulty);
       expect(updated.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
-      selected = updated.model;
+      selected = updateApp(updated.model, { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot(scale) }).model;
     }
-    expect(selectScale(readyModel(6), "50").model.screenRenderScale).toBe("50");
+    expect(selectScale(readyModel(6), "50").effects).toEqual([{ type: "select-screen-render-scale", scale: "50" }]);
   });
 
   it("rejects stale changes outside Screen settings and retains the preference across VR exit", () => {
-    const selected = selectScale(readyModel(), "75").model;
+    const selected = updateApp(readyModel(), { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot("75") }).model;
     for (const phase of [0, 2, 3, 4, 5, 7, 8, 9, 10]) {
       const model = { ...readyModel(phase), screenRenderScale: selected.screenRenderScale };
       expect(selectScale(model, "50").model).toBe(model);
@@ -214,13 +214,13 @@ describe("Screen render scale preference", () => {
       const model = { ...readyModel(1, mode), screenRenderScale: selected.screenRenderScale };
       expect(selectScale(model, "50").model).toBe(model);
       const ended = updateApp(model, { type: "backend-ended", mode, message: "session ended" }).model;
-      expect(ended.screenRenderScale).toBe("75");
+      expect(ended.screenRenderScale).toEqual(sharedScreenRenderSnapshot("75"));
     }
     const switching = updateApp(selected, { type: "shared-game-ui-effect", effect: {
       kind: "platform", command: { kind: "set_presentation", mode: "phone_vr" }
     } }).model;
     expect(selectScale(switching, "50").model).toBe(switching);
-    expect(switching.screenRenderScale).toBe("75");
+    expect(switching.screenRenderScale).toEqual(sharedScreenRenderSnapshot("75"));
   });
 });
 
@@ -278,7 +278,7 @@ function readyModel(phase = 1, mode: PresentationMode = "screen"): AppModel {
   const phaseSnapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase) : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
   const session = gameSessionState(phase, 0, phaseSnapshot, true, "tail_incidence", phase === 9 ? "result" : undefined);
   if (session === null) throw new Error("Invalid quality fixture session");
-  return { ...ready, gameSession: session, sharedGameUi: currentSharedGameUiFixture(phase, {
+  return { ...ready, screenRenderScale: sharedScreenRenderSnapshot(), gameSession: session, sharedGameUi: currentSharedGameUiFixture(phase, {
     ...(phase === 6 ? { actions: [{ kind: "set_pause_overlay", overlay: "settings" }] } : {}),
     platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode } }) };
 }

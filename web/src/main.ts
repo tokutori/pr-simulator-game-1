@@ -39,7 +39,8 @@ import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
 import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "./game/browser-tail-input.js";
 import { TailFlightController } from "./game/tail-flight-controller.js";
-import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_degrees } from "../pkg/birdman_game_wasm.js";
+import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
+import { parseScreenRenderAutoSnapshot } from "./render/contracts/screen-render-auto.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
 import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
@@ -142,7 +143,6 @@ function runSideEffects(actions: readonly (() => void)[]): void {
 }
 
 function renderModel(): void {
-  flightRenderer?.setScreenRenderScale(Number(model.screenRenderScale) / 100);
   const phaseCode = gameSessionPhaseCode(model.gameSession);
   const domVisible = screenUiVisible(model.presentation);
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
@@ -272,6 +272,12 @@ for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fon
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "select-screen-render-scale":
+      flightRenderer?.setScreenRenderScale(Number(effect.scale) / 100);
+      return;
+    case "select-screen-render-auto":
+      flightRenderer?.setScreenRenderAuto(effect.enabled);
+      return;
     case "apply-lake-water-quality": {
       const renderer = flightRenderer;
       try {
@@ -607,6 +613,7 @@ function runReplayClockCommand(
 async function initializePresentation(requestId: number): Promise<void> {
   let presentationOwner:
     | { readonly kind: "uncreated" }
+    | { readonly kind: "policy"; readonly policy: ScreenRenderAutoBridge }
     | { readonly kind: "renderer"; readonly renderer: RendererAdapter }
     | { readonly kind: "runtime"; readonly runtime: PresentationRuntime } = { kind: "uncreated" };
   try {
@@ -614,8 +621,20 @@ async function initializePresentation(requestId: number): Promise<void> {
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
     if (model.presentation.type === "hidden") return;
     if (isPageHidden()) return;
+    const retainedSelection = model.screenRenderScale?.selection;
+    const policy = new ScreenRenderAutoBridge();
+    presentationOwner = { kind: "policy", policy };
+    if (retainedSelection !== undefined) {
+      policy.select_manual(Number(retainedSelection.kind === "auto" ? retainedSelection.manual_scale : retainedSelection.scale), performance.now());
+      if (retainedSelection.kind === "auto") policy.select_auto(true, performance.now());
+    }
+    dispatch({ type: "screen-render-observed", snapshot: parseScreenRenderAutoSnapshot(policy.snapshot_json()) });
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null,
-      screen_vertical_field_of_view_degrees(), model.lakeWaterQuality.applied, headHudCanvas);
+      screen_vertical_field_of_view_degrees(), model.lakeWaterQuality.applied, headHudCanvas, {
+        policy, onSnapshot: (snapshot) => {
+          if (flightRenderer === bundle.renderer) dispatch({ type: "screen-render-observed", snapshot });
+        }
+      });
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession({ controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
     const session = initializedSession;
@@ -689,6 +708,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       { name: "presentation", run: () => {
         switch (ownedPresentation.kind) {
           case "uncreated": return;
+          case "policy": ownedPresentation.policy.free(); return;
           case "renderer": ownedPresentation.renderer.dispose(); return;
           case "runtime": return ownedPresentation.runtime.dispose();
         }
@@ -735,6 +755,7 @@ function currentViewModel() {
 }
 
 function sharedGameUiPlatformInput(): GameUiPlatformInput {
+  if (model.screenRenderScale === null) throw new Error("Shared Screen rendering observation is unavailable");
   const viewport = currentViewport();
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const quality = model.lakeWaterQuality;

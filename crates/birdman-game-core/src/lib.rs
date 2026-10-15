@@ -9,6 +9,7 @@ extern crate alloc;
 mod aerodynamics;
 mod aerodynamics_contract;
 mod contact;
+mod countdown;
 mod dynamics;
 mod flight_control;
 mod flight_record;

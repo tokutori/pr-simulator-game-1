@@ -30,6 +30,9 @@ import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import { gpuTimerFixture } from "./gpu-timer-fixture.js";
+import { ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
@@ -60,6 +63,7 @@ interface RecordedDraw {
 }
 
 interface RecordingDriver {
+  readonly gpu: ReturnType<typeof gpuTimerFixture>;
   readonly draws: RecordedDraw[];
   readonly scene: Scene | null;
   readonly xr: { isPresenting: boolean; enabled: boolean };
@@ -87,6 +91,8 @@ vi.mock("three", async (importOriginal) => {
     private animationLoop: ((timestamp: number, frame: XRFrame) => void) | null = null;
 
     constructor() { capture.driver = this; }
+    readonly gpu = gpuTimerFixture();
+    getContext(): WebGL2RenderingContext { return this.gpu.context; }
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
     getClearColor(target: Color): Color { return target.copy(this.clearColor); }
     getClearAlpha(): number { return this.clearAlpha; }
@@ -220,6 +226,38 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     for (const invalid of [0, -1, 1.01, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => { bundle.renderer.setScreenRenderScale(invalid); }).toThrow(RangeError);
     }
+  });
+
+  it("acknowledges shared scale only after tiny viewport recovery and invalidates changed environment resources", () => {
+    const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
+    const policy = new ScreenRenderAutoBridge();
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", undefined, { policy, onSnapshot: () => undefined });
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing Screen Auto recording driver");
+    let observedViewport = { x: 1280, y: 720, pixelRatio: 1 };
+    try {
+      trial.renderer.resize(observedViewport);
+      trial.renderer.startLoop(() => { trial.renderer.beginViewFrame(); trial.renderer.render(frame({ viewport: observedViewport })); });
+      trial.renderer.setScreenRenderScale(0.5);
+      observedViewport = { x: 0.2, y: 0.2, pixelRatio: 1 };
+      trial.renderer.resize(observedViewport);
+      recording.tick(0, null);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", status: { kind: "applying", requested: "50" } });
+      expect(recording.getDrawingBufferSize(new Vector2()).toArray()).toEqual([1280, 720]);
+      observedViewport = { x: 1280, y: 720, pixelRatio: 1 };
+      trial.renderer.resize(observedViewport);
+      recording.tick(20, null);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", status: { kind: "manual" } });
+      expect(recording.getDrawingBufferSize(new Vector2()).toArray()).toEqual([640, 360]);
+      const epoch = policy.epoch();
+      trial.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, patternSeed: 77 });
+      expect(policy.epoch()).toBeGreaterThan(epoch);
+      const nextEpoch = policy.epoch();
+      trial.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, patternSeed: 77 });
+      expect(policy.epoch()).toBe(nextEpoch);
+      trial.renderer.setLakeSkyCondition({ sunElevationDegrees: 42, sunAzimuthDegrees: 180, cloudFraction: 0.2, visibilityMeters: 40_000 });
+      expect(policy.epoch()).toBeGreaterThan(nextEpoch);
+    } finally { trial.renderer.dispose(); }
   });
 
   it("restores full Phone VR pixels and the retained Screen factor after normal exit", async () => {

@@ -7,6 +7,8 @@ import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/s
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { WebXrSessionPort } from "../../web/src/presentation/webxr-contracts.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import type { ScreenRenderAutoBinding } from "../../web/src/render/contracts/screen-render-auto.js";
+import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 
 const teardowns: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -52,6 +54,13 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     return timeout(handler, delay, ...args);
   });
   let frame: Parameters<RendererAdapter["startLoop"]>[0] = () => { throw new Error("Renderer loop is not initialized"); };
+  let screenBinding: ScreenRenderAutoBinding | undefined;
+  const acknowledgeScreenScale = (): void => {
+    if (screenBinding === undefined) throw new Error("Missing shared Screen policy binding");
+    const policy = screenBinding.policy;
+    if (policy.requested_scale_percent() !== 0) policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), nowMilliseconds);
+    screenBinding.onSnapshot(parseScreenRenderAutoSnapshot(policy.snapshot_json()));
+  };
   const renderer = {
     startLoop: vi.fn<RendererAdapter["startLoop"]>((callback) => {
       if (failInitialization) throw new Error("Injected renderer start failure");
@@ -64,8 +73,15 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
     setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
-    resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setSelectRayHandler: vi.fn(),
-    dispose: vi.fn(() => { if (failInitialization) throw new Error("Injected renderer cleanup failure"); })
+    resize: vi.fn(), setStereoPresentation: vi.fn(),
+    setScreenRenderScale: vi.fn((factor: number) => { screenBinding?.policy.select_manual(factor * 100, nowMilliseconds); acknowledgeScreenScale(); }),
+    setScreenRenderAuto: vi.fn((enabled: boolean) => { screenBinding?.policy.select_auto(enabled, nowMilliseconds); acknowledgeScreenScale(); }),
+    setSelectRayHandler: vi.fn(),
+    dispose: vi.fn(() => {
+      screenBinding?.policy.free();
+      screenBinding = undefined;
+      if (failInitialization) throw new Error("Injected renderer cleanup failure");
+    })
   } satisfies RendererAdapter;
   let sessionEndHandler: (() => void) | null = null;
   const webxr: WebXrSessionPort = {
@@ -77,7 +93,10 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     setReferenceSpaceResetHandler: () => undefined
   };
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
-    createThreeRenderer: () => ({ renderer, webxr })
+    createThreeRenderer: (...args: Parameters<typeof import("../../web/src/render/engines/three/three-renderer.js")["createThreeRenderer"]>) => {
+      screenBinding = args[6];
+      return { renderer, webxr };
+    }
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -558,7 +577,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it("projects shared Screen scale choices through the real WASM UI and retains the preference through flight and Retry", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([1]);
+    expect(trial.renderer.setScreenRenderScale).not.toHaveBeenCalled();
     trial.click("game-title-start");
     for (const [scale, factor] of [["75", 0.75], ["50", 0.5], ["100", 1]] as const) {
       trial.click(`presentation-render-scale-${scale}`);
@@ -566,6 +585,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(trial.documentRef.querySelector(`[data-control-id="presentation-render-scale-${scale}"]`)?.getAttribute("aria-pressed")).toBe("true");
       expect(trial.tick).not.toHaveBeenCalled();
     }
+    trial.click("presentation-render-scale-auto");
+    expect(trial.renderer.setScreenRenderAuto.mock.lastCall).toEqual([true]);
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("true");
+    trial.click("presentation-render-scale-100");
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("false");
+    expect(trial.tick).not.toHaveBeenCalled();
     trial.click("game-setup-start");
     trial.launch();
     trial.frame(0);
