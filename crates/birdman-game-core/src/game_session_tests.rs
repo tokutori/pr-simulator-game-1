@@ -375,7 +375,10 @@ fn countdown_preserves_clock_validation_order_and_large_duration_inputs() {
         Ok(CountdownProgress::Launched)
     );
     assert_eq!(current.flight_record().unwrap().sample_count(), 1);
-    assert_eq!(current.snapshot().tail_flight_state().unwrap().tick_index(), 0);
+    assert_eq!(
+        current.snapshot().tail_flight_state().unwrap().tick_index(),
+        0
+    );
 }
 
 #[test]
@@ -385,24 +388,34 @@ fn countdown_nanosecond_boundary_and_record_start_failure_preserve_commit_order(
     let token = current.countdown_token().unwrap();
     assert_eq!(
         current.observe_countdown(token, 2.999_999_999, true),
-        Ok(CountdownProgress::Waiting { remaining_seconds: 1 })
+        Ok(CountdownProgress::Waiting {
+            remaining_seconds: 1
+        })
     );
     let before = current.snapshot();
     let elapsed = current.countdown_elapsed_seconds();
     let configured = current.configured_mut().unwrap();
     let initial = configured.configuration.initial_state();
-    let telemetry = configured.configuration.telemetry(initial.flight_state()).unwrap();
+    let telemetry = configured
+        .configuration
+        .telemetry(initial.flight_state())
+        .unwrap();
     configured.record.begin_tail(initial, telemetry).unwrap();
     let initial_sample = *current.flight_record().unwrap().sample(0).unwrap();
     assert_eq!(
         current.observe_countdown(token, 0.000_000_001, true),
-        Err(GameSessionError::Record(crate::FlightRecordError::AlreadyStarted))
+        Err(GameSessionError::Record(
+            crate::FlightRecordError::AlreadyStarted
+        ))
     );
     assert_eq!(current.snapshot(), before);
     assert_eq!(current.countdown_token(), Some(token));
     assert_eq!(current.countdown_elapsed_seconds(), elapsed);
     assert_eq!(current.flight_record().unwrap().sample_count(), 1);
-    assert_eq!(current.flight_record().unwrap().sample(0), Some(&initial_sample));
+    assert_eq!(
+        current.flight_record().unwrap().sample(0),
+        Some(&initial_sample)
+    );
 }
 
 #[test]
