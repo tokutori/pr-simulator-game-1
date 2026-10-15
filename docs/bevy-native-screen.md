@@ -61,6 +61,10 @@ Runningの描画はtick前後の機体pose、pilot位置、両尾翼incidence、
 
 湖面画質は設定画面および一時停止中にLow・Medium・Highから選択する。既定値はHighである。
 Screenの3D描画倍率は同じ設定経路で100%・75%・50%から選択し、既定100%を維持する。
+Autoを明示的に選択すると、共通Rustの規則がGPU処理時間を評価して倍率を一段ずつ調整する。手動選択でAutoを停止し、Auto解除時は保持した手動倍率へ戻る。
+NativeはBevyの標準Recorderで反射・主画面・合成UIを含むRender命令区間を計測する。GPUへの準備・upload、後段のscreenshot/readback、present待ち、CPU全体の処理時間は含まない。
+GPU timestampに非対応の場合は理由を表示して適用済み倍率を保持する。通常の手動起動ではRecorderを退避し、各passのqueryとreadbackを実行しない。Auto中および既存の水面検証時は標準pass診断の費用が加わる。
+遅延した測定値は元のframe・計測世代・同一時計のsource時刻で検査する。resize、画質変更、中断、device再取得は旧測定窓を失効させる。
 縮小時は3Dと反射の内部bufferだけを変更し、UI・入力座標・Window・画角を原寸に保持する。0寸法では既存資源を維持し、復帰時に再適用する。
 倍率による画素数削減、表示同期の要求、12.5 msの処理予算を個別に評価する。手動倍率の追加を80 FPS達成として扱わない。
 波スペクトル、6/10/18成分の投影、near/far微細波画像はWebと共通のRustモデルから生成する。

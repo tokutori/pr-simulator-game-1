@@ -9,11 +9,17 @@ use bevy::{
     render::render_resource::TextureFormat,
     window::PrimaryWindow,
 };
+use birdman_game_session::screen_render_auto::{
+    ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderAutoSnapshot,
+    ScreenRenderInvalidation, ScreenRenderScaleRequest,
+};
 use birdman_game_session::screen_render_scale::ScreenRenderScale;
+
+#[path = "screen_render/timing.rs"]
+pub(crate) mod timing;
 
 #[derive(Clone)]
 struct ReducedTarget {
-    scale: ScreenRenderScale,
     image: Handle<Image>,
     extent: UVec2,
     window_extent: UVec2,
@@ -28,17 +34,32 @@ enum ScreenTarget {
     Reduced(ReducedTarget),
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct NativeScreenRender {
     target: ScreenTarget,
+    controller: ScreenRenderAutoController,
+}
+
+impl Default for NativeScreenRender {
+    fn default() -> Self {
+        Self {
+            target: ScreenTarget::Direct,
+            controller: ScreenRenderAutoController::new(ScreenRenderScale::Full),
+        }
+    }
 }
 
 impl NativeScreenRender {
     pub(crate) fn applied(&self) -> ScreenRenderScale {
-        match &self.target {
-            ScreenTarget::Direct => ScreenRenderScale::Full,
-            ScreenTarget::Reduced(target) => target.scale,
-        }
+        self.controller.snapshot().applied
+    }
+
+    pub(crate) fn snapshot(&self) -> ScreenRenderAutoSnapshot {
+        self.controller.snapshot()
+    }
+
+    fn measuring(&self) -> bool {
+        self.controller.measurement_enabled()
     }
 }
 
@@ -52,6 +73,7 @@ pub(crate) enum ScreenRenderFailure {
     OwnedImageUnavailable,
     CompositionCameraUnavailable,
     CompositionImageUnavailable,
+    Policy(ScreenRenderAutoError),
 }
 
 fn render_image(extent: UVec2) -> Image {
@@ -69,6 +91,65 @@ pub(crate) fn apply_scale(
     world: &mut World,
     scale: ScreenRenderScale,
 ) -> Result<(), ScreenRenderFailure> {
+    let now_ms = now_ms(world);
+    let request = world
+        .resource_mut::<NativeScreenRender>()
+        .controller
+        .select_manual(scale, now_ms)
+        .map_err(ScreenRenderFailure::Policy)?;
+    apply_request(world, request, now_ms)
+}
+
+pub(crate) fn select_auto(world: &mut World, enabled: bool) -> Result<(), ScreenRenderFailure> {
+    let now_ms = now_ms(world);
+    let request = world
+        .resource_mut::<NativeScreenRender>()
+        .controller
+        .select_auto(enabled, now_ms)
+        .map_err(ScreenRenderFailure::Policy)?;
+    apply_request(world, request, now_ms)
+}
+
+fn now_ms(world: &World) -> f64 {
+    world.resource::<Time<Real>>().elapsed_secs_f64() * 1_000.0
+}
+
+fn apply_request(
+    world: &mut World,
+    request: Option<ScreenRenderScaleRequest>,
+    now_ms: f64,
+) -> Result<(), ScreenRenderFailure> {
+    let Some(request) = request else {
+        return Ok(());
+    };
+    if world
+        .resource::<NativeScreenRender>()
+        .controller
+        .requested()
+        != Some(request)
+    {
+        return Err(ScreenRenderFailure::Policy(
+            ScreenRenderAutoError::StaleRequest,
+        ));
+    }
+    match exchange_scale(world, request.scale) {
+        Ok(()) => world
+            .resource_mut::<NativeScreenRender>()
+            .controller
+            .applied(request, now_ms)
+            .map_err(ScreenRenderFailure::Policy),
+        Err(cause) => {
+            world
+                .resource_mut::<NativeScreenRender>()
+                .controller
+                .failed(request, format!("{cause:?}"), now_ms)
+                .map_err(ScreenRenderFailure::Policy)?;
+            Err(cause)
+        }
+    }
+}
+
+fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), ScreenRenderFailure> {
     let current = world.resource::<NativeScreenRender>().target.clone();
     if scale == ScreenRenderScale::Full && matches!(current, ScreenTarget::Direct) {
         return Ok(());
@@ -114,6 +195,7 @@ pub(crate) fn apply_scale(
         world.resource_mut::<NativeScreenRender>().target = ScreenTarget::Direct;
         return Ok(());
     }
+    let extent = UVec2::from_array(scale.physical_size(window_extent.x, window_extent.y));
     let images = world
         .get_resource::<Assets<Image>>()
         .ok_or(ScreenRenderFailure::ImagesUnavailable)?;
@@ -127,11 +209,10 @@ pub(crate) fn apply_scale(
         if world.get::<ImageNode>(target.image_node).is_none() {
             return Err(ScreenRenderFailure::CompositionImageUnavailable);
         }
-        if target.scale == scale && target.window_extent == window_extent {
+        if target.extent == extent && target.window_extent == window_extent {
             return Ok(());
         }
     }
-    let extent = UVec2::from_array(scale.physical_size(window_extent.x, window_extent.y));
     let image = match &current {
         ScreenTarget::Reduced(target) if target.extent == extent => target.image.clone(),
         _ => world
@@ -198,7 +279,6 @@ pub(crate) fn apply_scale(
             .remove(target.image.id());
     }
     world.resource_mut::<NativeScreenRender>().target = ScreenTarget::Reduced(ReducedTarget {
-        scale,
         image,
         extent,
         window_extent,
@@ -220,11 +300,96 @@ pub(crate) fn synchronize(world: &mut World) {
     {
         return;
     }
-    if let Err(cause) = apply_scale(world, scale) {
+    if let Err(cause) = exchange_scale(world, scale) {
         world
             .resource_mut::<NativeSession>()
             .notice
             .get_or_insert_with(|| format!("3D描画倍率を適用できない: {cause:?}"));
+    }
+}
+
+pub(crate) fn observe_auto(world: &mut World) {
+    let now_ms = now_ms(world);
+    let time = world.resource::<Time<Real>>();
+    let time_interrupted = time.delta() > super::MAX_FRAME_DELTA;
+    let frame = world.resource::<bevy::diagnostic::FrameCount>().0;
+    let window = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .ok();
+    let extent = window.map(|window| window.resolution.physical_size());
+    let interrupted = time_interrupted
+        || window.is_none_or(|window| {
+            !window.focused
+                || !window.visible
+                || window.resolution.physical_size().min_element() == 0
+        });
+    let device_changed = world.is_resource_changed::<bevy::render::renderer::RenderDevice>();
+    let quality_changed = world
+        .is_resource_changed::<super::water_quality::WaterQualitySelection>()
+        || world.is_resource_changed::<super::environment::NativeEnvironment>();
+    let support = world
+        .get_resource::<bevy::render::renderer::RenderDevice>()
+        .map(|device| timing::supported(device.features()));
+    let result = world.resource_scope(|world, mut rendering: Mut<NativeScreenRender>| {
+        world.resource_scope(|world, mut readout: Mut<timing::TimingReadout>| {
+            let wrapped = readout
+                .source_frame
+                .is_some_and(|previous| frame < previous);
+            let resized = readout.window_extent != extent;
+            let interrupted_now = interrupted && !readout.interrupted;
+            readout.source_frame = Some(frame);
+            readout.window_extent = extent;
+            readout.interrupted = interrupted;
+            let reason = if device_changed {
+                Some(ScreenRenderInvalidation::ContextRestored)
+            } else if resized {
+                Some(ScreenRenderInvalidation::Resize)
+            } else if quality_changed {
+                Some(ScreenRenderInvalidation::QualityChanged)
+            } else if interrupted_now || wrapped {
+                Some(ScreenRenderInvalidation::Interrupted)
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                rendering.controller.invalidate(reason, now_ms)?;
+            }
+            if !rendering.measuring() || interrupted {
+                return Ok(None);
+            }
+            if support == Some(false) {
+                rendering.controller.unsupported(
+                    "GPU timestamp query inside command encodersを使用できない".into(),
+                    now_ms,
+                )?;
+                return Ok(None);
+            }
+            if support.is_none() {
+                return rendering.controller.pending(now_ms);
+            }
+            let sample = match world.get_resource::<bevy::diagnostic::DiagnosticsStore>() {
+                Some(store) => readout.read(store, rendering.controller.epoch()),
+                None => Ok(None),
+            };
+            match sample {
+                Ok(Some(sample)) => rendering.controller.observe(sample, now_ms),
+                Ok(None) => rendering.controller.pending(now_ms),
+                Err(_) => rendering
+                    .controller
+                    .invalidate(ScreenRenderInvalidation::Interrupted, now_ms)
+                    .map(|()| None),
+            }
+        })
+    });
+    let result = result
+        .map_err(ScreenRenderFailure::Policy)
+        .and_then(|request| apply_request(world, request, now_ms));
+    if let Err(cause) = result {
+        world
+            .resource_mut::<NativeSession>()
+            .notice
+            .get_or_insert_with(|| format!("3D描画倍率Autoを更新できない: {cause:?}"));
     }
 }
 
@@ -259,10 +424,12 @@ mod tests {
         render::{camera::camera_system, texture::ManualTextureViews},
         window::{WindowCreated, WindowResized, WindowScaleFactorChanged},
     };
+    use birdman_game_session::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
 
     fn app() -> (App, Entity, Entity, Handle<WaterMaterial>) {
         let mut app = App::new();
         app.init_resource::<Assets<Image>>()
+            .init_resource::<Time<Real>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<ManualTextureViews>()
             .init_resource::<NativeScreenRender>()
@@ -318,6 +485,205 @@ mod tests {
             .add(WaterMaterial::registered(false).unwrap());
         app.update();
         (app, window, camera, material)
+    }
+
+    #[test]
+    fn auto_observations_apply_real_resources_and_manual_selection_wins() {
+        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        let (mut app, window, _, _) = app();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        select_auto(app.world_mut(), true).unwrap();
+        let epoch = app
+            .world()
+            .resource::<NativeScreenRender>()
+            .controller
+            .epoch();
+        for index in 0..=8_u32 {
+            app.world_mut().resource_mut::<Time<Real>>().advance_to(
+                std::time::Duration::from_millis(3_200 + u64::from(index) * 150),
+            );
+            let time = now_ms(app.world());
+            let request = app
+                .world_mut()
+                .resource_mut::<NativeScreenRender>()
+                .controller
+                .observe(
+                    ScreenGpuSample {
+                        epoch,
+                        frame: index * 3 + 1,
+                        source_ms: time,
+                        gpu_work_ms: 20.0,
+                    },
+                    time,
+                )
+                .unwrap();
+            apply_request(app.world_mut(), request, time).unwrap();
+        }
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().applied(),
+            ScreenRenderScale::Half
+        );
+        app.world_mut()
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(100));
+        select_auto(app.world_mut(), false).unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .snapshot()
+                .selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::ThreeQuarters
+            }
+        );
+        select_auto(app.world_mut(), true).unwrap();
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set_physical_resolution(1001, 701);
+        synchronize(app.world_mut());
+        assert!(matches!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .snapshot()
+                .selection,
+            ScreenRenderSelection::Auto { .. }
+        ));
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        assert!(matches!(
+            app.world().resource::<NativeScreenRender>().target,
+            ScreenTarget::Direct
+        ));
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .snapshot()
+                .selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::Full
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
+            before
+        );
+    }
+
+    #[test]
+    fn failed_and_obsolete_requests_preserve_actual_target_and_original_cause() {
+        let (mut app, _, _, _) = app();
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        let image = reduced(app.world()).image.clone();
+        let now = now_ms(app.world());
+        let obsolete = app
+            .world_mut()
+            .resource_mut::<NativeScreenRender>()
+            .controller
+            .select_manual(ScreenRenderScale::Half, now)
+            .unwrap()
+            .unwrap();
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        assert_eq!(
+            apply_request(app.world_mut(), Some(obsolete), now),
+            Err(ScreenRenderFailure::Policy(
+                ScreenRenderAutoError::StaleRequest
+            ))
+        );
+        assert!(matches!(
+            app.world().resource::<NativeScreenRender>().target,
+            ScreenTarget::Direct
+        ));
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(image.id())
+                .is_none()
+        );
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        let image = reduced(app.world()).image.clone();
+        app.world_mut()
+            .resource_mut::<Assets<Image>>()
+            .remove(image.id());
+        assert_eq!(
+            apply_scale(app.world_mut(), ScreenRenderScale::Half),
+            Err(ScreenRenderFailure::OwnedImageUnavailable)
+        );
+        let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
+        assert_eq!(snapshot.applied, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(reduced(app.world()).image, image);
+        assert_eq!(
+            snapshot.status,
+            ScreenRenderAutoStatus::Failed {
+                cause: "OwnedImageUnavailable".into()
+            }
+        );
+    }
+
+    #[test]
+    fn source_frame_wrap_and_window_interruption_invalidate_the_measurement_epoch() {
+        let (mut app, window, _, _) = app();
+        app.init_resource::<timing::TimingReadout>()
+            .init_resource::<bevy::diagnostic::FrameCount>();
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+        select_auto(app.world_mut(), true).unwrap();
+        observe_auto(app.world_mut());
+        let epoch = app
+            .world()
+            .resource::<NativeScreenRender>()
+            .controller
+            .epoch();
+        app.world_mut()
+            .resource_mut::<bevy::diagnostic::FrameCount>()
+            .0 = u32::MAX;
+        observe_auto(app.world_mut());
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .controller
+                .epoch(),
+            epoch
+        );
+        app.world_mut()
+            .resource_mut::<bevy::diagnostic::FrameCount>()
+            .0 = 0;
+        observe_auto(app.world_mut());
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .controller
+                .epoch(),
+            epoch + 1
+        );
+        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+        observe_auto(app.world_mut());
+        let interrupted = app.world().resource::<NativeScreenRender>().snapshot();
+        assert_eq!(interrupted.status, ScreenRenderAutoStatus::Interrupted);
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .controller
+                .epoch(),
+            epoch + 2
+        );
+        observe_auto(app.world_mut());
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .controller
+                .epoch(),
+            epoch + 2
+        );
     }
 
     fn reduced(world: &World) -> ReducedTarget {
@@ -598,7 +964,11 @@ mod tests {
             apply_scale(app.world_mut(), ScreenRenderScale::Half),
             Err(ScreenRenderFailure::OwnedImageUnavailable)
         );
-        assert_eq!(reduced(app.world()).scale, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().applied(),
+            ScreenRenderScale::ThreeQuarters
+        );
+        assert_eq!(reduced(app.world()).extent, previous.extent);
         assert_eq!(reduced(app.world()).image, previous.image);
         assert_eq!(app.world().resource::<Assets<Image>>().len(), count);
         app.world_mut().resource_mut::<NativeSession>().notice =
