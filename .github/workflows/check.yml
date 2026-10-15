@@ -2,7 +2,7 @@ name: Check
 
 on:
   push:
-    branches: [main, bevy, 'feat/**', 'fix/**', 'chore/**']
+    branches: [main, bevy]
   pull_request:
   workflow_dispatch:
     inputs:
