@@ -2816,6 +2816,7 @@ mod tests {
     use birdman_game_core::{PauseReason, SessionPhase};
     use birdman_game_session::application::ExternalPauseReason;
     use birdman_game_session::game_ui::{GameUiAnalysisChart, GameUiResultTab};
+    use birdman_game_session::screen_render_auto::ScreenRenderSelection;
     use std::time::Duration;
 
     fn countdown_driver_app() -> App {
