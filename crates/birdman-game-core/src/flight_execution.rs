@@ -17,6 +17,61 @@ pub(crate) enum FlightExecutionError {
     PauseConditionsRemain,
 }
 
+#[cfg_attr(verus_only, verus_verify)]
+#[cfg_attr(not(verus_only), derive(Clone, Copy))]
+pub(crate) struct ActiveFlight<State> {
+    pub(crate) state: State,
+    pub(crate) execution: FlightExecution,
+}
+
+impl<State> ActiveFlight<State> {
+    #[cfg_attr(verus_only, verus_spec(
+        ensures
+            final(self).state == old(self).state,
+            !final(self).execution.running(),
+            final(self).execution.pause_bits() == (old(self).execution.pause_bits() | reason.mask()),
+    ))]
+    pub(crate) fn pause(&mut self, reason: PauseReason) {
+        self.execution.pause(reason);
+    }
+
+    #[cfg_attr(verus_only, verus_spec(result =>
+        ensures
+            final(self).state == old(self).state,
+            match result {
+                Ok(()) => !old(self).execution.running() && !final(self).execution.running()
+                    && final(self).execution.pause_bits() == (old(self).execution.pause_bits() & !reason.mask()),
+                Err(FlightExecutionError::NotPaused) => old(self).execution.running()
+                    && final(self).execution == old(self).execution,
+                Err(FlightExecutionError::PauseConditionsRemain) => false,
+            },
+    ))]
+    pub(crate) fn clear_pause_reason(
+        &mut self,
+        reason: PauseReason,
+    ) -> Result<(), FlightExecutionError> {
+        self.execution.clear_pause_reason(reason)
+    }
+
+    #[cfg_attr(verus_only, verus_spec(result =>
+        ensures
+            final(self).state == old(self).state,
+            match result {
+                Ok(()) => !old(self).execution.running() && final(self).execution.running()
+                    && old(self).execution.pause_bits() & !PauseReason::Manual.mask() == 0,
+                Err(FlightExecutionError::NotPaused) => old(self).execution.running()
+                    && final(self).execution == old(self).execution,
+                Err(FlightExecutionError::PauseConditionsRemain) => !old(self).execution.running()
+                    && !final(self).execution.running()
+                    && final(self).execution.pause_bits() == (old(self).execution.pause_bits() & !PauseReason::Manual.mask())
+                    && final(self).execution.pause_bits() != 0,
+            },
+    ))]
+    pub(crate) fn resume(&mut self) -> Result<(), FlightExecutionError> {
+        self.execution.resume()
+    }
+}
+
 #[cfg(verus_only)]
 verus! {
     impl FlightExecution {

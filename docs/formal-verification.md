@@ -58,16 +58,18 @@ Countdownの負例は期限前の発進とobsolete tokenによる進行を意図
 ### FlightExecutionの本番遷移
 
 `crates/birdman-game-core/src/flight_execution.rs`はRunning/Pausedと停止理由を単独所有する。
-GameSessionは従来の二つのvariantを`Flight { state, execution }`へ置換し、pause、clear、resumeから同moduleを直接更新する。
-新APIの可変参照はexecutionだけを指し、飛行payload、tick、configuration、recordを受け取らない。
-これらの値は移動・再構築の対象から外れ、通常Rustの所有分離と実GameSessionの接続回帰で保持を確認する。
-浮動小数値の等価性や任意の不透明payloadについての形式証明は主張しない。
+GameSessionのFlight variantは同moduleの`ActiveFlight<TailFlightTickState>`を保持する。
+このprivateな実行型は実payloadとexecutionの組だけを所有し、pause、clear、resumeの本番methodを接続する。
+各methodは任意の不透明な`State`を更新せず、executionだけへ既存操作を委譲する。
+この実bodyについてpayload保持と成功・NotPaused・PauseConditionsRemainの分類を同時に検証する。
+飛行payload内の物理stateとtickは非更新の対象だが、その数値の妥当性や浮動小数点演算の精度は保証しない。
 
 本番の可変参照更新をそのままincludeし、pauseによるPaused遷移と理由追加、clear後のPaused維持、
 Manual解除後の再開認可、外的理由が残る場合のPaused維持、Runningでのclear/resume拒否と実行状態保持を検証する。
-必須4群のexact inventory・名前別検証・rename fixture・missing-target検査を既存runnerへ追加する。
+実行遷移の必須4群とpayloadの必須3群にexact inventory・名前別検証・rename fixture・missing-target検査を適用する。
 負例は外的理由を残したResumeの成功と、最後の理由をclearした時点の自動再開を意図的に主張する。
-GameSession wrapperの全分岐、record初期化・Retry・Replay・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
+payload負例は実pauseの後にpayloadが変化したと意図的に主張し、指定assertの拒否を要求する。
+GameSession wrapperの全分岐、configuration・record保持、record初期化・Retry・Replay・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
 
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
@@ -138,7 +140,7 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 | 優先度 | 契約・対象body | 適性と現在の根拠 | 残る境界 |
 |---|---|---|---|
 | P0 | PauseReasonsの4bit集合・Resume predicate | 同一bodyのtracked checkerで正37義務と指定負検証を確認した | 外部原因の発生条件は未証明 |
-| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可とFlightExecutionの本番更新を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、物理payload・record保持、Retry/Replay、終端原子性は未証明 |
+| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可、FlightExecutionの本番更新とActiveFlightのpause/clear/resume時payload保持を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、configuration・record保持、Retry/Replay、終端原子性は未証明 |
 | P1 | record/finalization・codec・identity・PB分離 | 純粋な整合性判定とschema別分岐は候補となる。保存値とlayoutを仕様として固定する必要がある | 現在の通常回帰は形式証明ではなく、既存archive全体も未証明 |
 | P1 | tick原子性・bounded保護候補探索 | 副作用commit条件・探索回数は離散契約として扱える | 浮動小数点、全RK stageの荷重域、安全な候補の存在は未証明 |
 | P1 | owner世代・stale query・資源解放 | immutableな観測tokenと有限lifecycleは候補となる | browser/Bevyの再入・非同期・OS資源は環境仮定が必要であり未証明 |
