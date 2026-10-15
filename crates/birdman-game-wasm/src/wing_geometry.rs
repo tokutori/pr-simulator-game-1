@@ -1,4 +1,6 @@
-use birdman_game_session::wing_geometry::{WingFrame, WingGeometry, WingRodKind};
+use birdman_game_session::wing_geometry::{
+    CARBON_COLOR, MAIN_BEAM_RADIUS, WingFrame, WingGeometry, WingRodKind,
+};
 use wasm_bindgen::prelude::*;
 
 #[doc = "Owns fixed main-wing topology and reusable deformation until the renderer releases it. Bulk arrays are copied into JavaScript-owned storage."]
@@ -112,6 +114,27 @@ impl WingGeometryBridge {
             .flatten()
             .copied()
             .collect()
+    }
+
+    #[doc = "Copies from/to coordinates for the fixed longitudinal beam, six right/up/aft values."]
+    pub fn main_beam_endpoints(&self) -> Vec<f64> {
+        self.geometry
+            .main_beam_endpoints()
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    #[doc = "Existing Web longitudinal beam radius in metres."]
+    #[wasm_bindgen(getter)]
+    pub fn main_beam_radius(&self) -> f64 {
+        MAIN_BEAM_RADIUS
+    }
+
+    #[doc = "Existing Web sRGB 0xRRGGBB colour of both main carbon members."]
+    #[wasm_bindgen(getter)]
+    pub fn carbon_color(&self) -> u32 {
+        CARBON_COLOR
     }
 
     #[doc = "Copies all static extruded foam vertices, twelve right/up/aft positions per rib."]
