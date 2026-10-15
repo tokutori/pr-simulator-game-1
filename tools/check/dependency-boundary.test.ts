@@ -49,6 +49,20 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
+describe("shared image operations boundary", () => {
+  const image = { ...chartNumberDependency, name: "image", req: "=0.25.10" };
+  it("allows codec-free operations only in the presentation session crate", () => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [image] }]); }).not.toThrow();
+    expect(() => { assertDependencyBoundary(core(image)); }).toThrow("Forbidden dependency");
+  });
+  it.each([{ uses_default_features: true }, { features: ["png"] }, { features: ["rayon"] }])(
+    "rejects codec/default/threading activation %j", (difference) => {
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [{ ...image, ...difference }] }]); })
+        .toThrow("Forbidden dependency");
+    }
+  );
+});
+
 function versionedPackages(difference: Readonly<Record<string, unknown>>): unknown[] {
   return [
     ...core({ ...numericalDependency, ...difference }),

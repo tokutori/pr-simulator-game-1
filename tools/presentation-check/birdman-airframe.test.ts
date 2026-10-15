@@ -5,6 +5,72 @@ import { createBirdmanAirframe } from "../../web/src/render/engines/three/birdma
 import { CockpitGeometryBridge, WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
 
 describe("synthetic Birdman airframe", () => {
+  it("decodes the wing decal once, updates both owned textures and cancels disposed callbacks", () => {
+    class Decal {
+      naturalWidth = 2171;
+      naturalHeight = 724;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      src = "";
+    }
+    const decoded: Decal[] = [];
+    const createImage = vi.fn(function () { const image = new Decal(); decoded.push(image); return image; });
+    const drawImage = vi.fn();
+    const rgba = new Uint8ClampedArray(2171 * 724 * 4).fill(255);
+    const canvas = { width: 0, height: 0, getContext: () => ({ drawImage,
+      getImageData: () => ({ data: rgba }) }) };
+    vi.stubGlobal("Image", createImage);
+    vi.stubGlobal("document", { createElement: () => canvas });
+    const ready = vi.fn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const airframe = createBirdmanAirframe(ready);
+    try {
+      expect(createImage).toHaveBeenCalledTimes(1);
+      const textureFor = (name: string): DataTexture => {
+        const mesh = airframe.root.getObjectByName(name) as Mesh;
+        const material = (mesh.material as MeshLambertMaterial[])[0];
+        if (!(material?.map instanceof DataTexture)) throw new Error("Missing indigo texture");
+        return material.map;
+      };
+      const left = textureFor("left-wing");
+      const right = textureFor("right-wing");
+      const leftData = left.image.data as Uint8Array;
+      const rightData = right.image.data as Uint8Array;
+      for (const texture of [left, right]) {
+        expect([texture.image.width, texture.image.height, texture.image.data?.byteLength])
+          .toEqual([1024, 256, 1024 * 256 * 4]);
+      }
+      const lowerHalf = leftData.slice(1024 * 128 * 4);
+      const image = decoded[0];
+      if (image === undefined || image.onload === null) throw new Error("Missing decal load callback");
+      const late = image.onload;
+      late();
+      expect(drawImage).toHaveBeenCalledExactlyOnceWith(image, 0, 0);
+      expect(ready).toHaveBeenCalledTimes(1);
+      for (const pixels of [leftData, rightData]) {
+        const index = (50 * 1024 + 512) * 4;
+        expect(Array.from(pixels.slice(index, index + 4))).toEqual([220, 224, 218, 255]);
+      }
+      expect(lowerHalf.every((value, index) => value === leftData[1024 * 128 * 4 + index])).toBe(true);
+      const retained = leftData.slice();
+      image.naturalWidth = 1;
+      late();
+      expect(warning).toHaveBeenCalledTimes(1);
+      expect(leftData.byteLength).toBe(retained.byteLength);
+      expect(retained.every((value, index) => value === leftData[index])).toBe(true);
+      expect(ready).toHaveBeenCalledTimes(1);
+      const disposeLeft = vi.spyOn(left, "dispose");
+      const disposeRight = vi.spyOn(right, "dispose");
+      airframe.dispose();
+      late();
+      expect(disposeLeft).toHaveBeenCalledTimes(1);
+      expect(disposeRight).toHaveBeenCalledTimes(1);
+      expect(image.onload).toBeNull();
+      expect(image.onerror).toBeNull();
+      expect(ready).toHaveBeenCalledTimes(1);
+    } finally { airframe.dispose(); warning.mockRestore(); vi.unstubAllGlobals(); }
+  });
+
   it("retains the frozen Web T-shaped carbon structure through shared bulk geometry", () => {
     const airframe = createBirdmanAirframe();
     try {

@@ -931,6 +931,35 @@ mod tests {
         })
     }
 
+    fn environment_image_ids(material: &WaterMaterial) -> [AssetId<Image>; 3] {
+        [
+            material.detail_near.as_ref().unwrap().id(),
+            material.detail_far.as_ref().unwrap().id(),
+            material.sky_texture.as_ref().unwrap().id(),
+        ]
+    }
+
+    fn assert_environment_image_exchange(
+        app: &mut App,
+        original: &[AssetId<Image>],
+        retired: &[AssetId<Image>],
+    ) {
+        let current =
+            environment_image_ids(&environment_materials(app)[EnvironmentSurface::Near.index()]);
+        let images = app.world().resource::<Assets<Image>>();
+        assert_eq!(images.len(), original.len());
+        assert!(retired.iter().all(|image| images.get(*image).is_none()));
+        assert!(
+            original
+                .iter()
+                .filter(|image| !retired.contains(image))
+                .all(|image| images.get(*image).is_some())
+        );
+        assert!(current.iter().all(|image| images.get(*image).is_some()));
+        assert!(images.ids().all(|image| current.contains(&image)
+            || original.contains(&image) && !retired.contains(&image)));
+    }
+
     fn environment_light(app: &mut App) -> (f32, Transform) {
         let world = app.world_mut();
         let mut query =
@@ -946,6 +975,8 @@ mod tests {
             .run_system_once(super::super::water_reflection::setup_reflection)
             .unwrap();
         let before = environment_materials(&mut app);
+        let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
+        let retired_images = environment_image_ids(&before[EnvironmentSurface::Near.index()]);
         let reflection = before[EnvironmentSurface::Near.index()]
             .reflection_texture
             .clone()
@@ -1017,7 +1048,7 @@ mod tests {
                 f32::from(role != EnvironmentSurface::Sky)
             );
         }
-        assert_eq!(app.world().resource::<Assets<Image>>().len(), 4);
+        assert_environment_image_exchange(&mut app, &original_images, &retired_images);
         assert!(
             app.world()
                 .resource::<Assets<Image>>()
@@ -1066,7 +1097,7 @@ mod tests {
                 .condition_for(EnvironmentTarget::DefaultExhibition),
             Err(EnvironmentFailure::SunUnavailable)
         );
-        assert_eq!(app.world().resource::<Assets<Image>>().len(), 4);
+        assert_environment_image_exchange(&mut app, &original_images, &retired_images);
         assert!(
             app.world()
                 .resource::<Assets<Image>>()
@@ -1079,6 +1110,9 @@ mod tests {
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
+        let retired_images = environment_image_ids(
+            &environment_materials(&mut app)[EnvironmentSurface::Near.index()],
+        );
         prepare_calm(&mut app);
         app.update();
         let briefing = shared_ui_text(&mut app);
@@ -1094,13 +1128,7 @@ mod tests {
         let target = EnvironmentTarget::Sealed(identity);
         let condition = target.resolve().unwrap().condition();
         let high = WaterMaterial::from_environment(condition, false).unwrap();
-        let images = app.world().resource::<Assets<Image>>();
-        assert_eq!(images.len(), 3);
-        assert!(
-            original_images
-                .into_iter()
-                .all(|image| images.get(image).is_none())
-        );
+        assert_environment_image_exchange(&mut app, &original_images, &retired_images);
         let (near, _) = environment_surface(&mut app, EnvironmentSurface::Near);
         assert_eq!(
             app.world().get::<Aabb>(near).unwrap().half_extents,
@@ -1237,7 +1265,7 @@ mod tests {
                 app.world().get::<Aabb>(near).unwrap().half_extents,
                 high.near_bounds().half_extents
             );
-            assert_eq!(app.world().resource::<Assets<Image>>().len(), 3);
+            assert_environment_image_exchange(&mut app, &original_images, &retired_images);
         }
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();

@@ -140,7 +140,7 @@ Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択�
 vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow caster・prepassは無効とし、平面のdefault prepassとの不一致を回避する。shadow receiverは変位後のworld positionとgeometric normalを公式samplingへ渡す。reflection targetはUI・水面・空・地形を含めず、resizeで旧targetだけを退役させる。環境・quality交換は同じ反射passを保持する。geometry・micro-normal・反射pass・cascade shadowの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
-主翼とcockpitの形状はWeb基準の共有Rustを使用する。cockpitは白いframe、透明nose canopy、後部fairingを表示する。中心beam・主翼内部構造の全面移植と藍染textureは後続範囲であり、機体fidelityは未検証である。
+主翼とcockpitの形状はWeb基準の共有Rustを使用する。cockpitは白いframe、透明nose canopy、後部fairingを表示する。主翼上面の藍染textureも共有Rustで生成し、登録decalのalphaを左右へ投影する。Nativeではlinear-light mipを生成してsRGB textureへ格納する。中心beam・主翼内部構造の全面移植と機体fidelityは別範囲である。
 HUDの内容・幾何・表示条件は共有Rustを使用する。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
 数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI、FPI、方位目盛、風向針、AoA指示はWeb版と同じ共有値・表示条件を使用する。実GPUでの視認性と各機器の操作性は検証結果を参照する。
 

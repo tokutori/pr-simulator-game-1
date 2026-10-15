@@ -15,6 +15,7 @@ mod lake_sky;
 mod lake_water;
 mod screen_render_auto;
 mod wing_geometry;
+mod wing_texture;
 
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
@@ -23,6 +24,7 @@ pub use lake_sky::LakeSkyImageBridge;
 pub use lake_water::{LakeDetailImageBridge, LakeWaveProjectionBridge};
 pub use screen_render_auto::ScreenRenderAutoBridge;
 pub use wing_geometry::WingGeometryBridge;
+pub use wing_texture::{apply_indigo_wing_decal, indigo_wing_texture_size, indigo_wing_textures};
 
 mod personal_best_fingerprints {
     include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));

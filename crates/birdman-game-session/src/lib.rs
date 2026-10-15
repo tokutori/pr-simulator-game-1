@@ -15,6 +15,7 @@ pub mod lake_water;
 pub mod screen_render_auto;
 pub mod screen_render_scale;
 pub mod wing_geometry;
+pub mod wing_texture;
 
 pub use environment::{
     PresetEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,

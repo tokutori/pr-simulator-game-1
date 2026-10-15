@@ -17,91 +17,62 @@ import {
   Vector3
 } from "three";
 import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
-import { CockpitGeometryBridge, WingGeometryBridge } from "../../../../pkg/birdman_game_wasm.js";
+import { CockpitGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
+  indigo_wing_texture_size, indigo_wing_textures } from "../../../../pkg/birdman_game_wasm.js";
 
-function indigoWingTexture(side: -1 | 1, onVisualReady?: () => void): DataTexture {
-  const width = 1024;
-  const height = 256;
-  const pixels = new Uint8Array(width * height * 4);
-  const smooth = (from: number, to: number, value: number): number => {
-    const t = Math.max(0, Math.min(1, (value - from) / (to - from)));
-    return t * t * (3 - 2 * t);
-  };
-  for (let y = 0; y < height; y++) {
-    const chord = (y + 0.5) / height;
-    for (let x = 0; x < width; x++) {
-      const span = (x + 0.5) / width;
-      const grain = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-      const weave = (grain - Math.floor(grain) - 0.5) * 11;
-      const dye = 7 * Math.sin(span * 26 + chord * 9 + side) + 4 * Math.sin(span * 87 - chord * 23);
-      let white = 0;
-      // The photographed resist dye has uneven, joined brush marks rather
-      // than a row of equal circles. The two half wings are deliberately different.
-      const centers = side < 0 ? [0.08, 0.30, 0.47, 0.74, 0.89] : [0.09, 0.26, 0.54, 0.69, 0.92];
-      for (const [ring, center] of centers.entries()) {
-        const along = (span - center) / (0.073 + 0.016 * Math.sin(ring * 2.2 + side));
-        const across = (chord - 0.26 - 0.055 * Math.sin(ring * 1.7 + side)) / (0.22 - 0.025 * Math.sin(ring * 1.4));
-        const angle = Math.atan2(across, along);
-        const radius = Math.hypot(along, across)
-          + 0.22 * Math.sin(angle * 3 + ring * 1.3)
-          + 0.13 * Math.sin(angle * 7 - ring * 0.7)
-          + 0.07 * Math.sin(angle * 15 + span * 83);
-        const rimWidth = 0.22 + 0.09 * Math.sin(angle * 5 + ring * 2.1);
-        const ringBand = smooth(0.80 - rimWidth, 0.80, radius)
-          * (1 - smooth(0.84 + rimWidth, 1.00 + rimWidth, radius));
-        white = Math.max(white, ringBand);
-      }
-      const connectingStroke = Math.abs(chord - 0.39 - 0.055 * Math.sin(span * 19 + side * 0.8)
-        - 0.025 * Math.sin(span * 47 - side));
-      const brushWidth = 0.02 + 0.01 * Math.sin(span * 37 + side);
-      white = Math.max(white, (1 - smooth(brushWidth, brushWidth + 0.025, connectingStroke))
-        * (1 - smooth(0.62, 0.82, span)));
-      white *= 0.82 + 0.18 * Math.sin(span * 147 + chord * 71) * Math.sin(chord * 49 - span * 59);
-      const index = (y * width + x) * 4;
-      pixels[index] = Math.round((42 + dye + weave) * (1 - white) + (218 + weave * 0.4) * white);
-      pixels[index + 1] = Math.round((63 + dye + weave) * (1 - white) + (224 + weave * 0.4) * white);
-      pixels[index + 2] = Math.round((86 + dye + weave) * (1 - white) + (218 + weave * 0.4) * white);
-      pixels[index + 3] = 255;
-    }
-  }
-  const texture = new DataTexture(pixels, width, height, RGBAFormat, UnsignedByteType);
-  texture.colorSpace = SRGBColorSpace;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearMipmapLinearFilter;
-  texture.generateMipmaps = true;
-  texture.needsUpdate = true;
+function indigoWingTextures(onVisualReady?: () => void): Readonly<{
+  left: DataTexture; right: DataTexture; dispose(): void;
+}> {
+  const size = indigo_wing_texture_size();
+  const width = bulkNumber(size, 0);
+  const height = bulkNumber(size, 1);
+  const pixels = indigo_wing_textures();
+  const sideBytes = width * height * 4;
+  const textures = [0, 1].map((side) => {
+    const texture = new DataTexture(pixels.subarray(side * sideBytes, (side + 1) * sideBytes),
+      width, height, RGBAFormat, UnsignedByteType);
+    texture.colorSpace = SRGBColorSpace;
+    texture.magFilter = LinearFilter;
+    texture.minFilter = LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.needsUpdate = true;
+    return texture;
+  });
+  const left = textures[0];
+  const right = textures[1];
+  if (left === undefined || right === undefined) throw new Error("Incomplete shared wing textures");
+  let decal: HTMLImageElement | undefined;
   if (typeof Image !== "undefined" && typeof document !== "undefined") {
-    const decal = new Image();
+    decal = new Image();
     decal.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height / 2;
-      const context = canvas.getContext("2d");
-      if (context === null) return;
-      if (side < 0) {
-        context.translate(width, 0);
-        context.scale(-1, 1);
+      if (decal === undefined) return;
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = decal.naturalWidth;
+        canvas.height = decal.naturalHeight;
+        const context = canvas.getContext("2d");
+        if (context === null) throw new Error("Wing decal canvas is unavailable");
+        context.drawImage(decal, 0, 0);
+        const decoded = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        const alpha = Uint8Array.from({ length: canvas.width * canvas.height },
+          (_, index) => decoded[index * 4 + 3] ?? 0);
+        const updated = apply_indigo_wing_decal(pixels, canvas.width, canvas.height, alpha);
+        pixels.set(updated);
+        left.needsUpdate = true;
+        right.needsUpdate = true;
+        onVisualReady?.();
+      } catch (cause) {
+        console.warn("Wing dye decal could not be applied; using the procedural pattern.", cause);
       }
-      // The generated decal has two wing halves and large transparent margins.
-      // The photographic strip occupies only part of the dyed leading panel.
-      // Preserve its long, slender appearance in the 20.863 m top view.
-      context.drawImage(decal, side < 0 ? 32 : 1085, 280, 1051, 148,
-        0, 31, width, 66);
-      const decalPixels = context.getImageData(0, 0, width, height / 2).data;
-      for (let pixel = 0; pixel < decalPixels.length; pixel += 4) {
-        const alpha = (decalPixels[pixel + 3] ?? 0) / 255;
-        const grain = ((pixel / 4 * 0.61803398875) % 1 - 0.5) * 8;
-        pixels[pixel] = Math.round((42 + grain) * (1 - alpha) + 220 * alpha);
-        pixels[pixel + 1] = Math.round((63 + grain) * (1 - alpha) + 224 * alpha);
-        pixels[pixel + 2] = Math.round((86 + grain) * (1 - alpha) + 218 * alpha);
-      }
-      texture.needsUpdate = true;
-      onVisualReady?.();
     };
     decal.onerror = () => { console.warn("Wing dye decal could not be loaded; using the procedural pattern."); };
     decal.src = new URL("../../../../../assets/indigo-resist-decal.png", import.meta.url).href;
   }
-  return texture;
+  return { left, right, dispose() {
+    if (decal !== undefined) { decal.onload = null; decal.onerror = null; decal = undefined; }
+    left.dispose();
+    right.dispose();
+  } };
 }
 
 export interface BirdmanAirframe {
@@ -193,9 +164,7 @@ function addCockpit(root: Group): void {
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
-  const wingPatterns = {
-    left: indigoWingTexture(-1, onVisualReady), right: indigoWingTexture(1, onVisualReady)
-  };
+  const wingPatterns = indigoWingTextures(onVisualReady);
   const wingSkins = {
     left: new MeshLambertMaterial({ color: 0xffffff, map: wingPatterns.left, side: DoubleSide }),
     right: new MeshLambertMaterial({ color: 0xffffff, map: wingPatterns.right, side: DoubleSide })
@@ -364,8 +333,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       });
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
-      wingPatterns.left.dispose();
-      wingPatterns.right.dispose();
+      wingPatterns.dispose();
     }
   };
 }
