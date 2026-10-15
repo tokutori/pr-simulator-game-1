@@ -438,6 +438,7 @@ function createFixture() {
     resize: vi.fn<RendererAdapter["resize"]>(),
     setStereoPresentation: vi.fn<RendererAdapter["setStereoPresentation"]>((value) => { profile = value; }),
     setScreenRenderScale: vi.fn(),
+    setScreenRenderAuto: vi.fn(),
     setSelectRayHandler: vi.fn<RendererAdapter["setSelectRayHandler"]>(),
     dispose: vi.fn<RendererAdapter["dispose"]>()
   } satisfies RendererAdapter;

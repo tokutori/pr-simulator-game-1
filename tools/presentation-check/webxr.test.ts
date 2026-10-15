@@ -329,6 +329,7 @@ class FakeRenderer implements RendererAdapter {
   resize(): void {}
   setStereoPresentation(): void {}
   setScreenRenderScale(): void {}
+  setScreenRenderAuto(): void {}
   setSelectRayHandler(handler: ((ray: SelectRay) => void) | null): void { this.selectHandler = handler; }
   dispose(): void {}
 

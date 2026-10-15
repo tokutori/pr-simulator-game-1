@@ -523,6 +523,7 @@ class FakeRenderer implements RendererAdapter {
 
   setStereoPresentation(): void {}
   setScreenRenderScale(): void {}
+  setScreenRenderAuto(): void {}
 
   setSelectRayHandler(): void {}
 

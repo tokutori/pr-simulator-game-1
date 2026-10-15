@@ -287,6 +287,7 @@ class RecordingRenderer implements RendererAdapter {
   resize(): void {}
   setStereoPresentation(value: StereoPresentationProfile | null): void { this.stereo = value; }
   setScreenRenderScale(): void {}
+  setScreenRenderAuto(): void {}
   setSelectRayHandler(): void {}
   dispose(): void {}
 }

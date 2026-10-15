@@ -777,6 +777,7 @@ class FakeRenderer implements RendererAdapter {
   resize(): void {}
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
   setScreenRenderScale(): void {}
+  setScreenRenderAuto(): void {}
   setSelectRayHandler(): void {}
   dispose(): void {}
 

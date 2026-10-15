@@ -53,6 +53,8 @@ import { createLakeWaveProjection, LAKE_WAVE_PACKET_GLSL, LAKE_WAVE_PROJECTION_G
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
 import { createLakeVenue } from "./lake-venue-mesh.js";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
+import type { ScreenRenderAutoBinding } from "../../contracts/screen-render-auto.js";
+import { ScreenAutoRenderer } from "./screen-auto-renderer.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -160,7 +162,8 @@ export function createThreeRenderer(
   xrSystem: XRSystem | null,
   screenVerticalFieldOfViewDegrees: number,
   lakeQuality: LakeWaterQuality = "high",
-  headHudCanvas?: HTMLCanvasElement
+  headHudCanvas?: HTMLCanvasElement,
+  screenAutoBinding?: ScreenRenderAutoBinding
 ): ThreeRendererBundle {
   let titleCameraPose = titleScreenCameraPoseForViewport(1, 1, screenVerticalFieldOfViewDegrees);
   let titlePhoneCameraPose = titleCameraPoseForViewport(1, 1, 0, screenVerticalFieldOfViewDegrees);
@@ -416,6 +419,14 @@ export function createThreeRenderer(
     lakeQuality?: LakeQualityRequest;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
+  const screenAuto = screenAutoBinding === undefined ? null
+    : new ScreenAutoRenderer(renderer.getContext(), screenAutoBinding, applyScreenRenderScale);
+  const onContextLost = (): void => { screenAuto?.invalidate("interrupted"); };
+  const onContextRestored = (): void => { screenAuto?.restored(); };
+  if (screenAuto !== null) {
+    canvas.addEventListener("webglcontextlost", onContextLost);
+    canvas.addEventListener("webglcontextrestored", onContextRestored);
+  }
   const stageViewInputs = (inputs: PendingViewInputs): void => {
     pendingViewInputs = Object.freeze({ ...pendingViewInputs, ...inputs });
   };
@@ -441,6 +452,7 @@ export function createThreeRenderer(
     water.geometry = nextGeometry;
     waterGeometry = nextGeometry;
     activeLakeQuality = request.quality;
+    screenAuto?.invalidate("quality_changed");
     try {
       previousGeometry.dispose();
       request.resolve({ kind: "complete" });
@@ -498,6 +510,7 @@ export function createThreeRenderer(
       if (loopRunning) throw new Error("Three.js frame loop is already active");
       loopRunning = true;
       renderer.setAnimationLoop((timestamp: number, xrFrame: XRFrame | null | undefined) => {
+        screenAuto?.boundary(!renderer.xr.isPresenting && stereoPresentation === null && width > 0 && height > 0);
         const pending = pendingViewInputs;
         pendingViewInputs = null;
         if (pending !== null) {
@@ -547,6 +560,7 @@ export function createThreeRenderer(
       renderer.setAnimationLoop(null);
       loopRunning = false;
       renderedTrackingMount = null;
+      screenAuto?.invalidate("interrupted");
     },
     render(frame: BackendFrame) {
       ensureActive(disposed);
@@ -635,6 +649,9 @@ export function createThreeRenderer(
       }
       scene.updateMatrixWorld(true);
       const viewCamera = useExternalCamera ? fixedCamera : camera;
+      screenAuto?.begin();
+      let gpuSpanComplete = false;
+      try {
       const waterLevel = water.position.y;
       const eyePosition = viewCamera.getWorldPosition(reflectedPosition);
       if (eyePosition.y > waterLevel + 0.05) {
@@ -686,12 +703,15 @@ export function createThreeRenderer(
       } else {
         renderer.render(scene, useExternalCamera ? fixedCamera : camera);
       }
+      gpuSpanComplete = true;
+      } finally { screenAuto?.end(gpuSpanComplete); }
       renderedTrackingMount = loopRunning && renderer.xr.isPresenting && visiblePanel !== null ? currentTrackingMountPose() : null;
     },
     resize(viewport: ViewportSize) {
       ensureActive(disposed);
       if (renderer.xr.isPresenting) return;
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ viewport }); return; }
+      if (viewport.x !== width || viewport.y !== height || viewport.pixelRatio !== pixelRatio) screenAuto?.invalidate("resize");
       resizeIfNeeded(viewport);
     },
     setStereoPresentation(profile: StereoPresentationProfile | null) {
@@ -703,6 +723,7 @@ export function createThreeRenderer(
         throw new RangeError("Phone VR optical profile values must be positive and finite");
       }
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ stereo: profile }); return; }
+      if (profile !== stereoPresentation) screenAuto?.invalidate("backend_changed");
       stereoPresentation = profile;
       camera.fov = profile?.verticalFieldOfViewDegrees ?? screenVerticalFieldOfViewDegrees;
       camera.focus = profile?.focusDistanceMeters ?? 10;
@@ -713,13 +734,23 @@ export function createThreeRenderer(
     setScreenRenderScale(factor: number) {
       ensureActive(disposed);
       if (!Number.isFinite(factor) || factor <= 0 || factor > 1) throw new RangeError("Screen render scale must be within (0, 1]");
+      if (screenAuto !== null) { screenAuto.selectManual(factor); return; }
       if (screenRenderScale === factor && pendingViewInputs?.screenRenderScale === undefined) return;
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ screenRenderScale: factor }); return; }
-      screenRenderScale = factor;
-      if (width > 0 && height > 0 && !renderer.xr.isPresenting) resizeIfNeeded({ x: width, y: height, pixelRatio });
+      if (!applyScreenRenderScale(factor)) screenRenderScale = factor;
+    },
+    setScreenRenderAuto(enabled: boolean) {
+      ensureActive(disposed);
+      if (screenAuto === null) throw new Error("Shared Screen Auto policy is unavailable");
+      screenAuto.selectAuto(enabled);
     },
     dispose() {
       if (disposed) return;
+      if (screenAuto !== null) {
+        canvas.removeEventListener("webglcontextlost", onContextLost);
+        canvas.removeEventListener("webglcontextrestored", onContextRestored);
+      }
+      try {
       if (loopRunning) renderer.setAnimationLoop(null);
       loopRunning = false;
       pendingViewInputs?.lakeQuality?.reject(new Error("Renderer was disposed before lake quality could be applied"));
@@ -744,7 +775,10 @@ export function createThreeRenderer(
       airframe.dispose();
       venue.dispose();
       renderer.dispose();
-      disposed = true;
+      } finally {
+        disposed = true;
+        screenAuto?.dispose();
+      }
     },
     setSelectRayHandler(handler) {
       selectRayHandler = handler;
@@ -781,6 +815,7 @@ export function createThreeRenderer(
       lakeResources.far.texture.dispose();
       lakeResources = next;
       activeLakeCondition = condition;
+      screenAuto?.invalidate("quality_changed");
     },
     setLakeWaterQuality(quality: LakeWaterQuality) {
       return new Promise<LakeWaterQualityCleanupResult>((resolve, reject) => {
@@ -816,6 +851,7 @@ export function createThreeRenderer(
       skyTexture.dispose();
       skyTexture = nextTexture;
       activeSkyCondition = nextCondition;
+      screenAuto?.invalidate("quality_changed");
     },
     setLakeVenueVisible(visible: boolean) {
       ensureActive(disposed);
@@ -968,6 +1004,30 @@ export function createThreeRenderer(
     if (fixedCamera.fov === fieldOfView) return;
     fixedCamera.fov = fieldOfView;
     fixedCamera.updateProjectionMatrix();
+  }
+
+  function applyScreenRenderScale(factor: number): boolean {
+    if (Math.floor(width * pixelRatio * factor) < 1 || Math.floor(height * pixelRatio * factor) < 1) return false;
+    const previous = screenRenderScale;
+    const previousReflection = { width: reflectionTarget.width, height: reflectionTarget.height };
+    try {
+      screenRenderScale = factor;
+      if (width > 0 && height > 0 && !renderer.xr.isPresenting && stereoPresentation === null) {
+        resizeIfNeeded({ x: width, y: height, pixelRatio });
+        reflectionTarget.setSize(Math.max(256, Math.min(1024, Math.ceil(width * pixelRatio * factor / 2))),
+          Math.max(128, Math.min(1024, Math.ceil(height * pixelRatio * factor / 2))));
+      }
+      return true;
+    } catch (error: unknown) {
+      screenRenderScale = previous;
+      try {
+        if (width > 0 && height > 0 && !renderer.xr.isPresenting && stereoPresentation === null) resizeIfNeeded({ x: width, y: height, pixelRatio });
+        reflectionTarget.setSize(previousReflection.width, previousReflection.height);
+      } catch (rollback: unknown) {
+        throw new AggregateError([error, rollback], "Screen render scale application and rollback failed", { cause: rollback });
+      }
+      throw error;
+    }
   }
 
   function resizeIfNeeded(viewport: ViewportSize): void {
