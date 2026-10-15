@@ -3,14 +3,18 @@ use super::{
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{FlightInput, MenuAction, NativeSession},
     projection::{VerificationObserver, aircraft_transform, camera_transform},
+    screen_render::NativeScreenRender,
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
     water_quality::{WaterQuality, WaterQualitySelection},
+    water_reflection::LakeReflectionCamera,
+    world::WorldProjection,
 };
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
+    camera::RenderTarget,
     diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex},
     material::descriptor::PipelineDescriptor,
@@ -36,6 +40,7 @@ use birdman_game_session::{
     game_ui::{
         GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiReplayView, GameUiResultTab,
     },
+    screen_render_scale::ScreenRenderScale,
 };
 use std::{
     path::PathBuf,
@@ -646,6 +651,10 @@ enum VerificationStage {
     QualityLow,
     QualityMedium,
     QualityHigh,
+    RenderScaleFull,
+    RenderScale75,
+    RenderScale50,
+    RenderScaleRestored,
     WaterQualitySwapped,
     WaterQualityRestored,
     WaterResumed,
@@ -666,6 +675,20 @@ enum VerificationStage {
 }
 
 impl VerificationStage {
+    fn render_scale_capture(self) -> Option<(ScreenRenderScale, &'static str)> {
+        match self {
+            Self::RenderScaleFull => Some((ScreenRenderScale::Full, "03e-paused-scale-100.png")),
+            Self::RenderScale75 => {
+                Some((ScreenRenderScale::ThreeQuarters, "03f-paused-scale-75.png"))
+            }
+            Self::RenderScale50 => Some((ScreenRenderScale::Half, "03g-paused-scale-50.png")),
+            Self::RenderScaleRestored => {
+                Some((ScreenRenderScale::Full, "03h-paused-scale-restored.png"))
+            }
+            _ => None,
+        }
+    }
+
     fn captures_phase(self, phase: SessionPhase) -> bool {
         matches!(
             (self, phase),
@@ -682,6 +705,10 @@ impl VerificationStage {
                         | Self::QualityLow
                         | Self::QualityMedium
                         | Self::QualityHigh
+                        | Self::RenderScaleFull
+                        | Self::RenderScale75
+                        | Self::RenderScale50
+                        | Self::RenderScaleRestored
                         | Self::WaterQualitySwapped
                         | Self::WaterQualityRestored,
                     SessionPhase::FlightPaused { .. },
@@ -848,6 +875,7 @@ pub(crate) struct Verification {
     motion_interval: Option<MotionInterval>,
     paused_sample_count: usize,
     paused_water_time: Option<f32>,
+    paused_window: Option<(UVec2, f32)>,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
 }
@@ -895,6 +923,7 @@ impl Verification {
                 motion_interval: None,
                 paused_sample_count: 0,
                 paused_water_time: None,
+                paused_window: None,
                 failure: None,
                 completion: Some(sender),
             },
@@ -1217,6 +1246,20 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     quality: ResMut<'w, WaterQualitySelection>,
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
+    rendering: Res<'w, NativeScreenRender>,
+    images: Res<'w, Assets<Image>>,
+    scene_cameras: Query<
+        'w,
+        's,
+        (
+            &'static WorldProjection,
+            &'static Camera,
+            &'static RenderTarget,
+            &'static Projection,
+        ),
+    >,
+    ui_cameras: Query<'w, 's, &'static Camera, With<IsDefaultUiCamera>>,
+    reflection_cameras: Query<'w, 's, &'static RenderTarget, With<LakeReflectionCamera>>,
     shader_verification: Option<ResMut<'w, WaterShaderVerification>>,
     surfaces: Query<
         'w,
@@ -1234,7 +1277,7 @@ impl VerificationPresentation<'_, '_> {
     fn water_time(
         &self,
         session: &NativeSession,
-        case: WaterVerificationCase,
+        case: Option<WaterVerificationCase>,
     ) -> Result<f32, String> {
         let target = EnvironmentTarget::project(
             session.game.core_session().snapshot().phase(),
@@ -1244,7 +1287,7 @@ impl VerificationPresentation<'_, '_> {
             .environment
             .condition_for(target)
             .map_err(|cause| format!("Water case environment: {cause:?}"))?;
-        if condition.weather != case.weather {
+        if case.is_some_and(|case| condition.weather != case.weather) {
             return Err("Water case sealed Weather differs from the applied environment".into());
         }
         let mut times = [None; 3];
@@ -1274,6 +1317,74 @@ impl VerificationPresentation<'_, '_> {
             return Err("Water case surface clocks disagree".into());
         }
         Ok(near)
+    }
+
+    fn verify_render_scale(
+        &self,
+        expected: ScreenRenderScale,
+        window: &Window,
+    ) -> Result<(), String> {
+        if self.rendering.applied() != expected {
+            return Err("Screen render scale differs from the selected shared control".into());
+        }
+        let window_extent = window.resolution.physical_size();
+        let (_, camera, target, projection) = self
+            .scene_cameras
+            .iter()
+            .find(|(role, ..)| **role == WorldProjection::FlightCamera)
+            .ok_or("Screen render scale requires the actual Flight camera")?;
+        let expected_extent =
+            UVec2::from_array(expected.physical_size(window_extent.x, window_extent.y));
+        let extent = match target {
+            RenderTarget::Window(_) if expected == ScreenRenderScale::Full => window_extent,
+            RenderTarget::Image(handle) if expected != ScreenRenderScale::Full => self
+                .images
+                .get(&handle.handle)
+                .ok_or("Reduced Flight camera target is unavailable")?
+                .size(),
+            _ => return Err("Screen render scale uses the wrong actual camera target".into()),
+        };
+        let Projection::Perspective(projection) = projection else {
+            return Err("Screen render scale lost the perspective projection".into());
+        };
+        let expected_sub_view = (expected != ScreenRenderScale::Full).then_some(window_extent);
+        if extent != expected_extent
+            || camera.physical_viewport_size() != Some(extent)
+            || camera.sub_camera_view.map(|view| view.full_size) != expected_sub_view
+            || (projection.aspect_ratio - window_extent.x as f32 / window_extent.y as f32).abs()
+                > 1.0e-6
+            || projection.fov
+                != birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+            || self
+                .ui_cameras
+                .single()
+                .ok()
+                .and_then(Camera::logical_viewport_size)
+                != Some(window.resolution.size())
+        {
+            return Err("Screen render scale changed logical view/UI size or failed to resize the actual target".into());
+        }
+        let reflection = self
+            .reflection_cameras
+            .single()
+            .map_err(|_| "Screen render scale lost the reflection camera")?;
+        let RenderTarget::Image(handle) = reflection else {
+            return Err("Reflection camera target must remain an image".into());
+        };
+        let reflection_extent = self
+            .images
+            .get(&handle.handle)
+            .ok_or("Reflection target is unavailable")?
+            .size();
+        if Some(reflection_extent) != super::water_reflection::target_size(extent) {
+            return Err("Reflection target did not follow the reduced 3D extent".into());
+        }
+        println!(
+            "Paused Screen render scale {}: Window={window_extent:?}, UI={:?}, scene={extent:?}, reflection={reflection_extent:?}",
+            expected.label(),
+            window.resolution.size()
+        );
+        Ok(())
     }
 }
 
@@ -1351,18 +1462,22 @@ fn advance_step(
             verification.stage
         ));
     }
-    let water_time = if let Some(case) = verification.water_case
-        && matches!(
-            verification.stage,
-            VerificationStage::WaterMotion(..)
-                | VerificationStage::Pause
-                | VerificationStage::PausedCapture
-                | VerificationStage::WaterQualitySwapped
-                | VerificationStage::WaterQualityRestored
-                | VerificationStage::Resume
-                | VerificationStage::WaterResumed
-        ) {
-        Some(presentation.water_time(session, case)?)
+    let scale_capture = verification.stage.render_scale_capture();
+    let water_time = if matches!(
+        verification.stage,
+        VerificationStage::WaterMotion(..)
+            | VerificationStage::Pause
+            | VerificationStage::PausedCapture
+            | VerificationStage::QualityLow
+            | VerificationStage::QualityMedium
+            | VerificationStage::QualityHigh
+            | VerificationStage::WaterQualitySwapped
+            | VerificationStage::WaterQualityRestored
+            | VerificationStage::Resume
+            | VerificationStage::WaterResumed
+    ) || scale_capture.is_some()
+    {
+        Some(presentation.water_time(session, verification.water_case)?)
     } else {
         None
     };
@@ -1533,7 +1648,26 @@ fn advance_step(
                         .ok_or("High quality selection is unavailable")?;
                     VerificationStage::QualityHigh
                 }
-                VerificationStage::QualityHigh => VerificationStage::Resume,
+                VerificationStage::QualityHigh => {
+                    queue_ui_control(commands, "game-pause-open-settings", None);
+                    VerificationStage::RenderScaleFull
+                }
+                VerificationStage::RenderScaleFull => {
+                    queue_ui_control(commands, "presentation-render-scale-75", None);
+                    VerificationStage::RenderScale75
+                }
+                VerificationStage::RenderScale75 => {
+                    queue_ui_control(commands, "presentation-render-scale-50", None);
+                    VerificationStage::RenderScale50
+                }
+                VerificationStage::RenderScale50 => {
+                    queue_ui_control(commands, "presentation-render-scale-100", None);
+                    VerificationStage::RenderScaleRestored
+                }
+                VerificationStage::RenderScaleRestored => {
+                    queue_ui_control(commands, "game-pause-settings-back", None);
+                    VerificationStage::Resume
+                }
                 VerificationStage::Result if verification.water_case.is_some() => {
                     VerificationStage::Retry
                 }
@@ -1795,6 +1929,7 @@ fn advance_step(
             verification.observer_base = None;
             verification.paused_state = session.game.core_session().snapshot().tail_flight_state();
             verification.paused_water_time = None;
+            verification.paused_window = None;
             verification.paused_sample_count = session
                 .game
                 .core_session()
@@ -1816,12 +1951,17 @@ fn advance_step(
             {
                 return Err("Paused view did not retain the core state".into());
             }
-            if verification.water_case.is_some() {
-                if verification.paused_water_time.is_none() {
-                    verification.paused_water_time = water_time;
-                }
-                verify_paused_water(verification, session, water_time)?;
+            if verification.paused_water_time.is_none() {
+                verification.paused_water_time = water_time;
+                let window = windows
+                    .single()
+                    .map_err(|_| "Missing verification Window")?;
+                verification.paused_window = Some((
+                    window.resolution.physical_size(),
+                    window.resolution.scale_factor(),
+                ));
             }
+            verify_paused_water(verification, session, water_time)?;
             if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
             {
@@ -1877,6 +2017,36 @@ fn advance_step(
                     expected.label(),
                     expected.profile().near_cells
                 );
+                verification.capture(commands, filename);
+            }
+        }
+        VerificationStage::RenderScaleFull
+        | VerificationStage::RenderScale75
+        | VerificationStage::RenderScale50
+        | VerificationStage::RenderScaleRestored => {
+            if !matches!(phase, SessionPhase::FlightPaused { .. })
+                || session.game.core_session().snapshot().tail_flight_state()
+                    != verification.paused_state
+            {
+                return Err("Screen render scale changed the paused core state".into());
+            }
+            verify_paused_water(verification, session, water_time)?;
+            let window = windows
+                .single()
+                .map_err(|_| "Missing verification Window")?;
+            if verification.paused_window
+                != Some((
+                    window.resolution.physical_size(),
+                    window.resolution.scale_factor(),
+                ))
+            {
+                return Err("Screen render scale changed Window size or UI scale".into());
+            }
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                let (expected, filename) = scale_capture.ok_or("Missing scale capture stage")?;
+                presentation.verify_render_scale(expected, window)?;
                 verification.capture(commands, filename);
             }
         }
@@ -2219,7 +2389,7 @@ fn verify_paused_water(
 ) -> Result<(), String> {
     let state = verification
         .paused_state
-        .ok_or("Missing water case paused state")?;
+        .ok_or("Missing paused core state")?;
     let clock = water_time.ok_or("Missing paused render clock")?;
     let expected = state.tick_index() as f64 / f64::from(PHYSICS_HZ);
     if (f64::from(clock) - expected).abs() > 1.0e-5
@@ -2231,7 +2401,7 @@ fn verify_paused_water(
             .map_or(0, |record| record.sample_count())
             != verification.paused_sample_count
     {
-        return Err("Pause/quality exchange changed core record or common water time".into());
+        return Err("Paused presentation exchange changed core record or common water time".into());
     }
     Ok(())
 }
@@ -2594,7 +2764,9 @@ mod tests {
         .init_resource::<super::CameraMode>()
         .init_resource::<super::super::world::RenderHistory>()
         .init_resource::<WaterQualitySelection>()
+        .init_resource::<super::super::screen_render::NativeScreenRender>()
         .init_resource::<Assets<super::WaterMaterial>>()
+        .init_resource::<Assets<Image>>()
         .init_resource::<InputFocus>()
         .insert_resource(super::NativeEnvironment::try_default().unwrap())
         .insert_resource(Time::<Fixed>::from_hz(f64::from(
@@ -3397,6 +3569,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
+            .init_resource::<super::super::screen_render::NativeScreenRender>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(UiScale(1.0))
             .add_systems(Startup, setup_ui)
@@ -3444,20 +3617,40 @@ mod tests {
 
     #[test]
     fn scripted_ui_controls_execute_production_handler_before_the_next_frame() {
+        use bevy::prelude::{
+            Assets, Camera3d, IsDefaultUiCamera, PerspectiveProjection, Projection,
+        };
+        use bevy::window::PrimaryWindow;
+        use birdman_game_session::screen_render_scale::ScreenRenderScale;
+
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
+            .init_resource::<super::super::screen_render::NativeScreenRender>()
             .init_resource::<super::super::CameraMode>()
+            .init_resource::<Assets<Image>>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(bevy::input::ButtonInput::<bevy::input::keyboard::KeyCode>::default())
             .insert_resource(UiScale(1.0))
             .add_systems(Startup, setup_ui)
             .add_systems(Update, update_ui);
-        app.world_mut().spawn(Window {
-            resolution: (800, 600).into(),
-            ..Default::default()
-        });
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    resolution: (800, 600).into(),
+                    ..Default::default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        app.world_mut().spawn((
+            Camera3d::default(),
+            Projection::Perspective(PerspectiveProjection::default()),
+            IsDefaultUiCamera,
+            super::super::world::WorldProjection::FlightCamera,
+        ));
         app.update();
         for (id, phase) in [
             ("game-title-start", SessionPhase::FlightSetup),
@@ -3488,8 +3681,78 @@ mod tests {
                 session.presentation_frame(1.0);
             }
             session.tick(super::super::native_session::FlightInput::default());
-            session.action(MenuAction::Abort).unwrap();
+            session.action(MenuAction::Pause).unwrap();
         }
+        app.update();
+        queue_ui_control(
+            &mut app.world_mut().commands(),
+            "game-pause-open-settings",
+            None,
+        );
+        app.world_mut().flush();
+        app.update();
+        let paused = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        let sample_count = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
+        for (scale, id) in [
+            (ScreenRenderScale::Full, "presentation-render-scale-100"),
+            (
+                ScreenRenderScale::ThreeQuarters,
+                "presentation-render-scale-75",
+            ),
+            (ScreenRenderScale::Half, "presentation-render-scale-50"),
+            (ScreenRenderScale::Full, "presentation-render-scale-100"),
+        ] {
+            queue_ui_control(&mut app.world_mut().commands(), id, None);
+            app.world_mut().flush();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<super::NativeScreenRender>()
+                    .applied(),
+                scale
+            );
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(session.game.core_session().snapshot(), paused);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                sample_count
+            );
+            assert_eq!(
+                app.world()
+                    .get::<Window>(window)
+                    .unwrap()
+                    .resolution
+                    .physical_size(),
+                bevy::prelude::UVec2::new(800, 600)
+            );
+        }
+        queue_ui_control(
+            &mut app.world_mut().commands(),
+            "game-pause-settings-back",
+            None,
+        );
+        app.world_mut().flush();
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Abort)
+            .unwrap();
         app.update();
         queue_ui_control(
             &mut app.world_mut().commands(),
