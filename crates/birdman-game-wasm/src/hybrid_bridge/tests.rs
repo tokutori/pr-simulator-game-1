@@ -1,5 +1,6 @@
 use super::*;
-use birdman_game_core::{FbwAuthority, SessionEndReason};
+use birdman_game_core::{FbwAuthority, GameSession, SessionEndReason};
+use birdman_game_format::WeatherClass;
 use serde_json::{Value, json};
 
 fn input(position: Value) -> String {
@@ -32,6 +33,76 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn wasm_commands_execute_the_same_application_sequence_as_native_without_an_extra_ready_call() {
+    let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 42);
+    let mut application = ApplicationSession::new(ControlMode::Manual, 2, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::SelectAssistance {
+            assistance: birdman_game_format::AssistanceLevel::Light,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        bridge
+            .apply_game_ui_session_command_json(&serde_json::to_string(&command).unwrap())
+            .unwrap();
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+        assert_eq!(
+            bridge.session.core_session().snapshot(),
+            application.core_session().snapshot()
+        );
+        assert_eq!(bridge.session.difficulty(), application.difficulty());
+    }
+    let token = bridge.countdown_token();
+    for elapsed in [0.8, 0.2, 2.0] {
+        bridge.observe_countdown(token, elapsed, true).unwrap();
+        application.observe_countdown(token, elapsed, true).unwrap();
+        assert_eq!(
+            bridge.session.core_session().snapshot(),
+            application.core_session().snapshot()
+        );
+    }
+    let intent = input(json!({"kind":"hold"}));
+    bridge.advance_internal(&intent).unwrap();
+    application
+        .advance_tail_flight_tick(decode_input(&intent).unwrap())
+        .unwrap();
+    for command in [
+        SessionCommand::Pause {},
+        SessionCommand::Resume {},
+        SessionCommand::Abort {},
+        SessionCommand::EnterReplay {},
+        SessionCommand::LeaveReplay {},
+        SessionCommand::Retry {},
+        SessionCommand::CancelBriefing {},
+        SessionCommand::ReturnToTitle {},
+    ] {
+        bridge
+            .apply_game_ui_session_command_json(&serde_json::to_string(&command).unwrap())
+            .unwrap();
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+        assert_eq!(
+            bridge.session.core_session().snapshot(),
+            application.core_session().snapshot()
+        );
+        assert_eq!(
+            bridge.session.core_session().configuration_identity(),
+            application.core_session().configuration_identity()
+        );
+    }
+    assert!(bridge.session.prepared().is_none());
+    assert!(application.prepared().is_none());
+}
+
+#[test]
 fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics() {
     for mode in [
         ControlMode::Manual,
@@ -51,7 +122,11 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             assert_eq!(title["preview"]["kind"], "unavailable");
             bridge.open_setup().unwrap();
             bridge
-                .select_difficulty(bridge.difficulty.with_weather(weather))
+                .session
+                .execute(
+                    SessionCommand::SelectWeather { weather },
+                    BackendReadiness::Preparing,
+                )
                 .unwrap();
             bridge.prepare_internal().unwrap();
             let prepared: Value =
@@ -60,13 +135,21 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             assert_eq!(prepared["preview"]["kind"], "prepared");
             assert_eq!(prepared["preview"]["state"]["tick"], 0);
             let initial = prepared["preview"]["state"].clone();
-            let before = bridge.session.snapshot();
+            let before = bridge.session.core_session().snapshot();
             assert_eq!(
                 serde_json::from_str::<Value>(&bridge.prepared_launch_internal().unwrap()).unwrap(),
                 prepared
             );
-            assert_eq!(bridge.session.snapshot(), before);
-            assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(bridge.session.core_session().snapshot(), before);
+            assert_eq!(
+                bridge
+                    .session
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
             bridge.mark_briefing_ready().unwrap();
             bridge.start_countdown(2).unwrap();
             for _step in 0..2 {
@@ -74,7 +157,15 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
                     serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
                 assert_eq!(countdown["phase_code"], 4);
                 assert_eq!(countdown["preview"]["state"], initial);
-                assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+                assert_eq!(
+                    bridge
+                        .session
+                        .core_session()
+                        .flight_record()
+                        .unwrap()
+                        .sample_count(),
+                    0
+                );
                 bridge
                     .observe_countdown(bridge.countdown_token(), 1.0, true)
                     .unwrap();
@@ -99,7 +190,15 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
                 retry["preview"]["control_identity"],
                 prepared["preview"]["control_identity"]
             );
-            assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                bridge
+                    .session
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
         }
     }
 }
@@ -109,14 +208,10 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
     let seed = birdman_game_session::DEFAULT_SESSION_SEED;
     let defaults = HybridGameSessionBridge::new(0, seed as u32, (seed >> 32) as u32).unwrap();
     assert_eq!(
-        defaults.difficulty,
+        defaults.session.difficulty(),
         birdman_game_session::default_difficulty(birdman_game_session::DEFAULT_CONTROL_MODE)
     );
-    assert_eq!(
-        defaults.maximum_flight_ticks,
-        birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS
-    );
-    assert_eq!(defaults.seed, seed);
+    assert_eq!(defaults.session.seed(), seed);
     for mode in [
         ControlMode::Manual,
         ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
@@ -132,7 +227,11 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
             let mut bridge = HybridGameSessionBridge::from_mode(mode, MAX_TICKS, seed);
             bridge.open_setup().unwrap();
             bridge
-                .select_difficulty(bridge.difficulty.with_weather(weather))
+                .session
+                .execute(
+                    SessionCommand::SelectWeather { weather },
+                    BackendReadiness::Preparing,
+                )
                 .unwrap();
             bridge.prepare_internal().unwrap();
             let preparation = birdman_game_session::HybridSessionPreparation::try_new_for_weather(
@@ -140,7 +239,7 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
             )
             .unwrap();
             let (configuration, identity) = preparation.into_parts();
-            assert_eq!(bridge.prepared.as_ref().unwrap().record_identity, identity);
+            assert_eq!(bridge.session.prepared().unwrap().record_identity, identity);
             let mut native = GameSession::new();
             native.open_setup().unwrap();
             native.prepare_flight(configuration).unwrap();
@@ -155,12 +254,12 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
                 .observe_countdown(native.countdown_token().unwrap(), 1.0, true)
                 .unwrap();
             assert_eq!(
-                bridge.session.configuration_identity(),
+                bridge.session.core_session().configuration_identity(),
                 native.configuration_identity()
             );
-            assert_eq!(bridge.session.snapshot(), native.snapshot());
+            assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
             assert_eq!(
-                bridge.session.telemetry().unwrap(),
+                bridge.session.core_session().telemetry().unwrap(),
                 native.telemetry().unwrap()
             );
             let json = input(json!({"kind":"hold"}));
@@ -169,16 +268,16 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
                 native
                     .advance_tail_flight_tick(decode_input(&json).unwrap())
                     .unwrap();
-                assert_eq!(bridge.session.snapshot(), native.snapshot());
+                assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
                 assert_eq!(
-                    bridge.session.telemetry().unwrap(),
+                    bridge.session.core_session().telemetry().unwrap(),
                     native.telemetry().unwrap()
                 );
             }
             bridge.abort().unwrap();
             native.abort_flight().unwrap();
-            assert_eq!(bridge.session.snapshot(), native.snapshot());
-            let wasm_record = bridge.session.flight_record().unwrap();
+            assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
+            let wasm_record = bridge.session.core_session().flight_record().unwrap();
             let native_record = native.flight_record().unwrap();
             assert_eq!(wasm_record.samples(), native_record.samples());
             assert_eq!(wasm_record.finalization(), native_record.finalization());
@@ -207,7 +306,12 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
                 .unwrap(),
         )
         .unwrap();
-        let progress = bridge.session.flight_progress().unwrap().unwrap();
+        let progress = bridge
+            .session
+            .core_session()
+            .flight_progress()
+            .unwrap()
+            .unwrap();
         assert_eq!(
             next["frame"]["progress_m"],
             json!({
@@ -218,12 +322,22 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
         );
         assert!(progress.course_parallel_m() > 0.0);
         assert!(next["frame"].get("finalization").is_none());
-        let before = bridge.session.snapshot();
-        let sample_count = bridge.session.flight_record().unwrap().sample_count();
+        let before = bridge.session.core_session().snapshot();
+        let sample_count = bridge
+            .session
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
         assert_eq!(snapshot(&bridge), next);
-        assert_eq!(bridge.session.snapshot(), before);
+        assert_eq!(bridge.session.core_session().snapshot(), before);
         assert_eq!(
-            bridge.session.flight_record().unwrap().sample_count(),
+            bridge
+                .session
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             sample_count
         );
         bridge.pause(0).unwrap();
@@ -240,7 +354,7 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
         .unwrap();
         assert_eq!(terminal["frame"]["kind"], "result");
         assert!(terminal["frame"].get("progress_m").is_none());
-        let result = bridge.session.snapshot().result().unwrap();
+        let result = bridge.session.core_session().snapshot().result().unwrap();
         let final_score = result.score.unwrap();
         assert_eq!(
             terminal["frame"]["finalization"]["score_m"],
@@ -262,13 +376,19 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
 #[test]
 fn factory_and_snapshot_expose_the_current_tail_layout() {
     let bridge = HybridGameSessionBridge::new(0, u32::MAX, u32::MAX).unwrap();
-    assert_eq!(bridge.seed, u64::MAX);
+    assert_eq!(bridge.session.seed(), u64::MAX);
     let title = snapshot(&bridge);
     assert_eq!(title["schema_version"], 2);
     assert_eq!(title["control_layout"], "tail_incidence");
     assert_eq!(title["frame"]["kind"], "menu");
     assert_eq!(title["scenario"], Value::Null);
-    assert!(bridge.session.tail_pilot_position_mapping().is_none());
+    assert!(
+        bridge
+            .session
+            .core_session()
+            .tail_pilot_position_mapping()
+            .is_none()
+    );
 
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
@@ -296,7 +416,7 @@ fn factory_and_snapshot_expose_the_current_tail_layout() {
     assert_eq!(state["flight_time_s"], 0.0);
     assert_eq!(state["angular_rate_body_rad_s"], json!([0.0, 0.0, 0.0]));
     assert_eq!(initial["frame"]["telemetry"]["altitude_m"], 10.5);
-    let core_telemetry = bridge.session.telemetry().unwrap().unwrap();
+    let core_telemetry = bridge.session.core_session().telemetry().unwrap().unwrap();
     assert_eq!(
         initial["frame"]["telemetry"]["wind_at_cg_ned_mps"],
         json!(core_telemetry.wind_velocity_ned_mps.components())
@@ -339,7 +459,13 @@ fn versioned_input_preserves_signs_and_independent_hold_set_position() {
         held["frame"]["state"]["pilot_position_target_normalized"],
         1.0
     );
-    let previous_input = bridge.session.flight_record().unwrap().samples()[1].controls;
+    let previous_input = bridge
+        .session
+        .core_session()
+        .flight_record()
+        .unwrap()
+        .samples()[1]
+        .controls;
     let birdman_game_core::FlightRecordControls {
         input_from_previous: Some(recorded),
         ..
@@ -382,7 +508,15 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
             "{field}"
         );
         assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(
+            bridge
+                .session
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
     }
     for field in base.as_object().unwrap().keys() {
         let mut document = base.clone();
@@ -391,7 +525,15 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
         document[field] = Value::Null;
         assert!(bridge.advance_internal(&document.to_string()).is_err());
         assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(
+            bridge
+                .session
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
     }
     let valid = base.to_string();
     let padded = format!("{valid}{}", " ".repeat(MAX_INPUT_JSON_BYTES - valid.len()));
@@ -403,14 +545,27 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
     ] {
         assert!(bridge.advance_internal(&rejected).is_err());
         assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(
+            bridge
+                .session
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
     }
 }
 
 #[test]
 fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
     let bridge = launch(ControlMode::Manual, 10);
-    let initial = bridge.session.snapshot().tail_flight_state().unwrap();
+    let initial = bridge
+        .session
+        .core_session()
+        .snapshot()
+        .tail_flight_state()
+        .unwrap();
     let projected = state_document(
         8,
         0.375,
@@ -512,13 +667,29 @@ fn all_authorities_keep_one_core_lifecycle_and_consistent_terminal_time() {
         assert_eq!(terminal["frame"]["finalization"]["terminal_fraction"], 0.0);
         assert_eq!(terminal["frame"]["finalization"]["failure"], Value::Null);
         assert_eq!(
-            bridge.session.snapshot().result().unwrap().reason,
+            bridge
+                .session
+                .core_session()
+                .snapshot()
+                .result()
+                .unwrap()
+                .reason,
             SessionEndReason::TimeLimit
         );
-        let count = bridge.session.flight_record().unwrap().sample_count();
+        let count = bridge
+            .session
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
         bridge.advance_internal(&neutral).unwrap();
         assert_eq!(
-            bridge.session.flight_record().unwrap().sample_count(),
+            bridge
+                .session
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             count
         );
         bridge.retry().unwrap();
@@ -563,7 +734,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
         bridge
             .observe_countdown(bridge.countdown_token(), 1.0, true)
             .unwrap();
-        let telemetry = bridge.session.telemetry().unwrap().unwrap();
+        let telemetry = bridge.session.core_session().telemetry().unwrap().unwrap();
         if version == 6 {
             assert_eq!(
                 sealed["projection"]["metadata"]["wind_domain"]["kind"],
@@ -601,7 +772,7 @@ fn existing_presets_and_light_authority_seal_the_same_selected_contract() {
         let mut bridge = HybridGameSessionBridge::new(0, 0, 0).unwrap();
         bridge.open_setup().unwrap();
         bridge.set_difficulty_preset(preset).unwrap();
-        let selected = bridge.difficulty;
+        let selected = bridge.session.difficulty();
         bridge.prepare_internal().unwrap();
         let metadata = bridge.configuration_metadata().unwrap();
         assert_eq!(metadata[0], preset);
@@ -659,19 +830,28 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
     bridge.set_information_cue(2, false).unwrap();
     assert_eq!(bridge.information_profile_codes()[2], 0);
     bridge.prepare_internal().unwrap();
-    let difficulty = bridge.difficulty;
-    let identity = bridge.session.configuration_identity();
+    let difficulty = bridge.session.difficulty();
+    let identity = bridge.session.core_session().configuration_identity();
     let sealed_snapshot = snapshot(&bridge);
     assert_eq!(sealed_snapshot["phase_code"], 2);
     assert!(sealed_snapshot["scenario"].is_object());
     assert!(sealed_snapshot["control_identity"].is_object());
     assert!(
         bridge
-            .select_difficulty(difficulty.with_weather(WeatherClass::Typical))
+            .session
+            .execute(
+                SessionCommand::SelectWeather {
+                    weather: WeatherClass::Typical
+                },
+                BackendReadiness::Preparing
+            )
             .is_err()
     );
-    assert_eq!(bridge.difficulty, difficulty);
-    assert_eq!(bridge.session.configuration_identity(), identity);
+    assert_eq!(bridge.session.difficulty(), difficulty);
+    assert_eq!(
+        bridge.session.core_session().configuration_identity(),
+        identity
+    );
     bridge.fail_briefing(0).unwrap();
     assert_eq!(snapshot(&bridge)["phase_code"], 8);
     assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
@@ -681,8 +861,19 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
     );
     bridge.retry_briefing().unwrap();
     assert_eq!(bridge.phase_code(), 2);
-    assert_eq!(bridge.session.configuration_identity(), identity);
-    assert_eq!(bridge.session.flight_record().unwrap().sample_count(), 0);
+    assert_eq!(
+        bridge.session.core_session().configuration_identity(),
+        identity
+    );
+    assert_eq!(
+        bridge
+            .session
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count(),
+        0
+    );
     bridge.mark_briefing_ready().unwrap();
     assert_eq!(snapshot(&bridge)["phase_code"], 3);
     assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
@@ -702,12 +893,15 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
         .unwrap();
     bridge.cancel_countdown().unwrap();
     assert_eq!(bridge.phase_code(), 3);
-    assert_eq!(bridge.session.configuration_identity(), identity);
+    assert_eq!(
+        bridge.session.core_session().configuration_identity(),
+        identity
+    );
     bridge.cancel_briefing().unwrap();
     assert_eq!(bridge.phase_code(), 1);
     assert!(bridge.sealed_record_configuration().is_none());
     assert!(bridge.sealed_course_axis().is_none());
-    assert_eq!(bridge.difficulty, difficulty);
+    assert_eq!(bridge.session.difficulty(), difficulty);
     assert_eq!(snapshot(&bridge)["scenario"], Value::Null);
     assert_eq!(snapshot(&bridge)["control_identity"], Value::Null);
 }

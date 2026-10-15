@@ -2,18 +2,19 @@ use super::*;
 use crate::environment_snapshot::{
     EnvironmentContext, EnvironmentProjection, EnvironmentSnapshot, EnvironmentSource,
 };
-use birdman_game_format::{AssistanceLevel, DifficultyPreset, HudCue};
+use birdman_game_format::{DifficultyPreset, HudCue};
 
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
     /// Selects Manual, Shared or Automatic while Rust FlightSetup is active.
     pub fn set_control_mode(&mut self, code: u32) -> Result<(), JsValue> {
         let mode = crate::control_mode_from_code(code)?;
-        self.select_difficulty(
-            self.difficulty
-                .with_assistance(crate::assistance_from_control_mode(mode)),
+        self.execute_application(
+            SessionCommand::SelectAssistance {
+                assistance: crate::assistance_from_control_mode(mode),
+            },
+            BackendReadiness::Preparing,
         )
-        .map_err(BoundaryError::into_js)
     }
 
     /// Selects the existing Beginner, Standard, Expert or Realistic preset by code.
@@ -29,10 +30,10 @@ impl HybridGameSessionBridge {
                 ));
             }
         };
-        self.select_difficulty(
-            DifficultySettings::preset(preset).map_err(crate::configuration_error)?,
+        self.execute_application(
+            SessionCommand::SelectPreset { preset },
+            BackendReadiness::Preparing,
         )
-        .map_err(BoundaryError::into_js)
     }
 
     /// Selects Information code 0=Full through 4=Custom without altering physics.
@@ -49,22 +50,28 @@ impl HybridGameSessionBridge {
                 ));
             }
         };
-        self.select_difficulty(self.difficulty.with_information(information))
-            .map_err(BoundaryError::into_js)
+        self.execute_application(
+            SessionCommand::SelectInformation { information },
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Selects Assistance code 0=Strong, 1=Assisted, 2=Light, 3=Manual.
     pub fn set_assistance_level(&mut self, code: u32) -> Result<(), JsValue> {
         let assistance = crate::assistance_from_code(code)?;
-        self.select_difficulty(self.difficulty.with_assistance(assistance))
-            .map_err(BoundaryError::into_js)
+        self.execute_application(
+            SessionCommand::SelectAssistance { assistance },
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Selects Weather code 0=Calm through 4=NearLimit from registered providers.
     pub fn set_weather_class(&mut self, code: u32) -> Result<(), JsValue> {
         let weather = crate::weather_from_code(code)?;
-        self.select_difficulty(self.difficulty.with_weather(weather))
-            .map_err(BoundaryError::into_js)
+        self.execute_application(
+            SessionCommand::SelectWeather { weather },
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Changes one existing Custom HUD cue by stable code.
@@ -78,17 +85,19 @@ impl HybridGameSessionBridge {
             5 => HudCue::Warnings,
             _ => return Err(JsValue::from_str("HUD cue code must be in [0, 5]")),
         };
-        self.select_difficulty(self.difficulty.with_hud_cue(cue, visible))
-            .map_err(BoundaryError::into_js)
+        self.execute_application(
+            SessionCommand::SetCue { cue, visible },
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Returns the existing preset code, including 4=Custom.
     pub fn difficulty_preset_code(&self) -> u32 {
-        if self.session.snapshot().phase() == SessionPhase::Attract {
+        if self.session.core_session().snapshot().phase() == SessionPhase::Attract {
             return crate::preset_code(self.display_difficulty().preset_label());
         }
         self.archived.as_ref().map_or_else(
-            || crate::preset_code(self.difficulty.preset_label()),
+            || crate::preset_code(self.session.difficulty().preset_label()),
             |metadata| metadata.preset_code(),
         )
     }
@@ -123,9 +132,13 @@ impl HybridGameSessionBridge {
 
     /// Returns the existing 18-value resolved configuration layout from Rust-owned selections.
     pub fn configuration_metadata(&self) -> Result<Vec<u32>, JsValue> {
-        let identity = self.session.configuration_identity().ok_or_else(|| {
-            JsValue::from_str("resolved configuration is unavailable before Briefing")
-        })?;
+        let identity = self
+            .session
+            .core_session()
+            .configuration_identity()
+            .ok_or_else(|| {
+                JsValue::from_str("resolved configuration is unavailable before Briefing")
+            })?;
         let mut metadata = vec![
             self.difficulty_preset_code(),
             self.information_level_code(),
@@ -159,36 +172,35 @@ impl HybridGameSessionBridge {
 
     /// Returns to Title and clears the discarded preparation metadata.
     pub fn return_to_title(&mut self) -> Result<(), JsValue> {
-        self.session
-            .return_to_title()
-            .map_err(crate::game_session_error)?;
-        self.prepared = None;
-        self.archived = None;
-        Ok(())
+        self.execute_application(
+            SessionCommand::ReturnToTitle {},
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Cancels Briefing and returns to the existing selection without retaining a sealed model.
     pub fn cancel_briefing(&mut self) -> Result<(), JsValue> {
-        self.session
-            .cancel_briefing()
-            .map_err(crate::game_session_error)?;
-        self.prepared = None;
-        self.archived = None;
-        Ok(())
+        self.execute_application(
+            SessionCommand::CancelBriefing {},
+            BackendReadiness::Preparing,
+        )
     }
 
     /// Stores an existing typed browser-resource preparation failure in Rust's Briefing phase.
     pub fn fail_briefing(&mut self, reason: u32) -> Result<(), JsValue> {
         self.session
-            .fail_briefing(crate::briefing_failure_from_code(reason)?)
+            .observe_readiness(BackendReadiness::Failed(crate::briefing_failure_from_code(
+                reason,
+            )?))
             .map_err(crate::game_session_error)
     }
 
     /// Restarts resource preparation for the same sealed configuration.
     pub fn retry_briefing(&mut self) -> Result<(), JsValue> {
-        self.session
-            .retry_briefing()
-            .map_err(crate::game_session_error)
+        self.execute_application(
+            SessionCommand::RetryBriefing {},
+            BackendReadiness::Preparing,
+        )
     }
 }
 
@@ -234,33 +246,20 @@ impl HybridGameSessionBridge {
         .map_err(BoundaryError::Json)
     }
 
-    pub(super) fn select_difficulty(
-        &mut self,
-        difficulty: DifficultySettings,
-    ) -> Result<(), BoundaryError> {
-        if self.session.snapshot().phase() != SessionPhase::FlightSetup {
-            return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
-        }
-        HybridSessionPreparation::select_scenario(difficulty.weather(), self.seed)
-            .map_err(BoundaryError::Preparation)?;
-        control_mode(difficulty.assistance())?;
-        self.difficulty = difficulty;
-        self.prepared = None;
-        Ok(())
-    }
-
     pub(super) fn environment_internal(
         &self,
     ) -> Result<String, crate::environment_snapshot::EnvironmentSnapshotError> {
-        let phase = self.session.snapshot().phase();
+        let phase = self.session.core_session().snapshot().phase();
         let projection = match phase {
             SessionPhase::Title => EnvironmentProjection::NoSelection,
             SessionPhase::FlightSetup => {
-                let selection =
-                    HybridSessionPreparation::select_scenario(self.difficulty.weather(), self.seed)
-                        .map_err(|_| {
-                            crate::environment_snapshot::EnvironmentSnapshotError::InvalidIdentity
-                        })?;
+                let selection = HybridSessionPreparation::select_scenario(
+                    self.session.difficulty().weather(),
+                    self.session.seed(),
+                )
+                .map_err(|_| {
+                    crate::environment_snapshot::EnvironmentSnapshotError::InvalidIdentity
+                })?;
                 let identity = crate::hybrid_session::identity_for_selection(selection);
                 crate::environment_snapshot::for_identity(
                     EnvironmentSource::Selected,
@@ -268,7 +267,7 @@ impl HybridGameSessionBridge {
                 )?
             }
             SessionPhase::Replay => {
-                let identity = self.session.configuration_identity().ok_or(
+                let identity = self.session.core_session().configuration_identity().ok_or(
                     crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
                 )?;
                 crate::environment_snapshot::for_identity(
@@ -281,7 +280,7 @@ impl HybridGameSessionBridge {
                 )?
             }
             SessionPhase::Attract => {
-                let identity = self.session.configuration_identity().ok_or(
+                let identity = self.session.core_session().configuration_identity().ok_or(
                     crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
                 )?;
                 crate::environment_snapshot::for_identity(
@@ -290,7 +289,7 @@ impl HybridGameSessionBridge {
                 )?
             }
             _ => {
-                let identity = self.session.configuration_identity().ok_or(
+                let identity = self.session.core_session().configuration_identity().ok_or(
                     crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
                 )?;
                 crate::environment_snapshot::for_identity(
@@ -306,9 +305,4 @@ impl HybridGameSessionBridge {
             projection,
         )
     }
-}
-
-pub(super) fn control_mode(assistance: AssistanceLevel) -> Result<ControlMode, BoundaryError> {
-    birdman_game_session::game_ui::game_ui_control_mode(assistance)
-        .map_err(|error| BoundaryError::Control(TailControlError::Actuator(error)))
 }

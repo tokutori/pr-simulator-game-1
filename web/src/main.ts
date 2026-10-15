@@ -20,7 +20,7 @@ import type {
   ReplayClockCommand,
   ReplayClockState
 } from "./app/app-state.js";
-import type { GameUiSessionCommand } from "./app/game-ui-types.js";
+import type { SessionCommand } from "./app/game-ui-types.js";
 import type { GameUiPlatformInput } from "./generated/game-ui-input.js";
 import type { GameUiUpdate } from "./generated/game-ui-effects.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
@@ -790,7 +790,7 @@ function currentEnvironmentBriefing() {
   return environment;
 }
 
-function runSharedGameSessionCommand(command: GameUiSessionCommand, requestId: number): void {
+function runSharedGameSessionCommand(command: SessionCommand, requestId: number): void {
   const requestedPhaseCode = gameSessionPhaseCode(model.gameSession);
   const session = gameSession;
   if (session === null) {
@@ -823,7 +823,7 @@ function runSharedGameSessionCommand(command: GameUiSessionCommand, requestId: n
 function dispatchGameOperationFailure(
   requestId: number,
   message: string,
-  context?: { readonly command: GameUiSessionCommand; readonly requestedPhaseCode: number }
+  context?: { readonly command: SessionCommand; readonly requestedPhaseCode: number }
 ): void {
   const session = gameSession;
   if (session === null) {

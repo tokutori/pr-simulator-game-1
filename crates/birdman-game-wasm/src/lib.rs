@@ -1,7 +1,8 @@
 //! Browser adapter; no clock or browser state enters the simulation core.
 
-use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority, PauseReason, SessionPhase};
+use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority, SessionPhase};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
+use birdman_game_session::application::ExternalPauseReason;
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod environment;
@@ -181,13 +182,12 @@ fn control_mode_from_code(code: u32) -> Result<ControlMode, JsValue> {
     }
 }
 
-fn pause_reason_from_code(code: u32) -> Result<PauseReason, JsValue> {
+fn external_pause_reason_from_code(code: u32) -> Result<ExternalPauseReason, JsValue> {
     match code {
-        0 => Ok(PauseReason::Manual),
-        1 => Ok(PauseReason::DocumentHidden),
-        2 => Ok(PauseReason::TrackingSuspended),
-        3 => Ok(PauseReason::ProcessingDelay),
-        _ => Err(JsValue::from_str("pause reason must be in [0, 3]")),
+        1 => Ok(ExternalPauseReason::DocumentHidden),
+        2 => Ok(ExternalPauseReason::TrackingSuspended),
+        3 => Ok(ExternalPauseReason::ProcessingDelay),
+        _ => Err(JsValue::from_str("external pause reason must be in [1, 3]")),
     }
 }
 
@@ -215,8 +215,4 @@ fn phase_code(phase: SessionPhase) -> u32 {
         SessionPhase::Replay => 9,
         SessionPhase::Attract => 10,
     }
-}
-
-fn configuration_error(error: birdman_game_format::ConfigurationError) -> JsValue {
-    JsValue::from_str(&format!("configuration error: {error:?}"))
 }

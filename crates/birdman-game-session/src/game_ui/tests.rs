@@ -1,4 +1,6 @@
 use super::*;
+use crate::application::commands::{control_mode, prepare_flight, resolve_difficulty};
+use crate::application::{ApplicationError, SessionCommand};
 use birdman_game_core::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, ControlMode, DynamicsError,
     GameSession, HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, PauseReason,
@@ -63,7 +65,7 @@ fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
 fn launched() -> GameSession<'static> {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
-    prepare_game_ui_flight(
+    prepare_flight(
         &mut session,
         difficulty().with_weather(WeatherClass::Calm),
         3,
@@ -146,7 +148,7 @@ fn pure_update_admits_actual_visible_actions_and_emits_domain_effects() {
     let state = GameUiState::default();
     let before = session.snapshot();
     let action = GameUiAction::Session {
-        command: GameUiSessionCommand::OpenSetup {},
+        command: SessionCommand::OpenSetup {},
     };
     let result = update_game_ui(
         &state,
@@ -157,7 +159,7 @@ fn pure_update_admits_actual_visible_actions_and_emits_domain_effects() {
     assert_eq!(
         result.effects,
         vec![GameUiEffect::Session {
-            command: GameUiSessionCommand::OpenSetup {}
+            command: SessionCommand::OpenSetup {}
         }]
     );
     assert_eq!(session.snapshot(), before);
@@ -181,10 +183,10 @@ fn pure_update_admits_actual_visible_actions_and_emits_domain_effects() {
 fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
-    let selected = select_game_ui_difficulty(
+    let selected = resolve_difficulty(
         &session,
         difficulty(),
-        &GameUiSessionCommand::SelectPreset {
+        &SessionCommand::SelectPreset {
             preset: DifficultyPreset::Expert,
         },
         42,
@@ -194,10 +196,10 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
         selected,
         DifficultySettings::preset(DifficultyPreset::Expert).unwrap()
     );
-    let custom = select_game_ui_difficulty(
+    let custom = resolve_difficulty(
         &session,
         selected,
-        &GameUiSessionCommand::SetCue {
+        &SessionCommand::SetCue {
             cue: HudCue::Wind,
             visible: true,
         },
@@ -208,23 +210,23 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
     assert_eq!(custom.information(), InformationLevel::Custom);
     assert!(custom.hud_profile().wind());
     assert_eq!(
-        game_ui_control_mode(AssistanceLevel::Strong),
+        control_mode(AssistanceLevel::Strong),
         Ok(ControlMode::Automatic)
     );
     assert_eq!(
-        game_ui_control_mode(AssistanceLevel::Manual),
+        control_mode(AssistanceLevel::Manual),
         Ok(ControlMode::Manual)
     );
     assert_eq!(
-        select_game_ui_difficulty(
+        resolve_difficulty(
             &session,
             custom,
-            &GameUiSessionCommand::SelectPreset {
+            &SessionCommand::SelectPreset {
                 preset: DifficultyPreset::Custom
             },
             42
         ),
-        Err(GameUiCommandError::Configuration(
+        Err(ApplicationError::Configuration(
             birdman_game_format::ConfigurationError::CustomRequiresExplicitAxes
         ))
     );
@@ -248,14 +250,14 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
 fn briefing_technical_disclosure_is_ui_only_and_countdown_admission_is_domain_derived() {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
-    prepare_game_ui_flight(&mut session, difficulty(), 3, 42).unwrap();
+    prepare_flight(&mut session, difficulty(), 3, 42).unwrap();
     let platform = platform();
     let state = GameUiState::default();
     assert_eq!(
         update_game_ui(
             &state,
             GameUiAction::Session {
-                command: GameUiSessionCommand::StartCountdown {}
+                command: SessionCommand::StartCountdown {}
             },
             &context(&session, difficulty(), &platform)
         ),
@@ -742,8 +744,7 @@ fn structured_boundary_rejects_unknown_fields_and_exclusive_variant_payloads() {
             .is_err()
     );
     assert!(
-        serde_json::from_str::<GameUiSessionCommand>(r#"{"kind":"open_setup","extra":true}"#)
-            .is_err()
+        serde_json::from_str::<SessionCommand>(r#"{"kind":"open_setup","extra":true}"#).is_err()
     );
     assert!(
         serde_json::from_str::<GameUiPlatformCommand>(r#"{"kind":"recenter_menu","extra":true}"#)
@@ -810,7 +811,7 @@ fn retained_preflight_and_initial_flight_frames_do_not_query_record_duration() {
     for phase_code in [2, 4, 5] {
         let mut session = GameSession::new();
         session.open_setup().unwrap();
-        prepare_game_ui_flight(&mut session, difficulty(), 3, 42).unwrap();
+        prepare_flight(&mut session, difficulty(), 3, 42).unwrap();
         if phase_code >= 4 {
             session.mark_briefing_ready().unwrap();
             session.start_countdown(1).unwrap();
@@ -1014,7 +1015,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
     }
     let mut session = GameSession::new();
     session.open_setup().unwrap();
-    prepare_game_ui_flight(&mut session, difficulty(), 100, 42).unwrap();
+    prepare_flight(&mut session, difficulty(), 100, 42).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
     session
@@ -1097,7 +1098,7 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
     let session = finalized();
     let mut platform = platform();
     let action = GameUiAction::Session {
-        command: GameUiSessionCommand::EnterReplay {},
+        command: SessionCommand::EnterReplay {},
     };
     let initial = GameUiState::default();
     let web = update_game_ui(
@@ -1111,7 +1112,7 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
         web.effects,
         vec![
             GameUiEffect::Session {
-                command: GameUiSessionCommand::EnterReplay {},
+                command: SessionCommand::EnterReplay {},
             },
             GameUiEffect::Platform {
                 command: GameUiPlatformCommand::SetReplayCamera {
@@ -1132,7 +1133,7 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
         native.effects,
         vec![
             GameUiEffect::Session {
-                command: GameUiSessionCommand::EnterReplay {},
+                command: SessionCommand::EnterReplay {},
             },
             GameUiEffect::Platform {
                 command: GameUiPlatformCommand::SetReplayCamera {
@@ -1156,7 +1157,7 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
         retained.effects,
         vec![
             GameUiEffect::Session {
-                command: GameUiSessionCommand::EnterReplay {}
+                command: SessionCommand::EnterReplay {}
             },
             GameUiEffect::Platform {
                 command: GameUiPlatformCommand::SetReplayCamera {
@@ -1180,7 +1181,7 @@ fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
     let update = update_game_ui(
         &state,
         GameUiAction::Session {
-            command: GameUiSessionCommand::EnterReplay {},
+            command: SessionCommand::EnterReplay {},
         },
         &context(&session, difficulty(), &platform),
     )
@@ -1199,7 +1200,7 @@ fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
         update.effects,
         vec![
             GameUiEffect::Session {
-                command: GameUiSessionCommand::EnterReplay {}
+                command: SessionCommand::EnterReplay {}
             },
             GameUiEffect::Platform {
                 command: GameUiPlatformCommand::SetReplayCamera {
@@ -1225,7 +1226,7 @@ fn leaving_replay_retains_the_authoritative_clock_as_the_analysis_cursor() {
     let update = update_game_ui(
         &state,
         GameUiAction::Session {
-            command: GameUiSessionCommand::LeaveReplay {},
+            command: SessionCommand::LeaveReplay {},
         },
         &context(&session, difficulty(), &platform),
     )
@@ -1236,7 +1237,7 @@ fn leaving_replay_retains_the_authoritative_clock_as_the_analysis_cursor() {
     assert_eq!(
         update.effects,
         vec![GameUiEffect::Session {
-            command: GameUiSessionCommand::LeaveReplay {}
+            command: SessionCommand::LeaveReplay {}
         }]
     );
     session.leave_replay().unwrap();
@@ -1287,7 +1288,7 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
             update_game_ui(
                 &state,
                 GameUiAction::Session {
-                    command: GameUiSessionCommand::Resume {}
+                    command: SessionCommand::Resume {}
                 },
                 &context(&session, settings, &platform)
             ),
@@ -1339,7 +1340,7 @@ fn head_hud_resource_failure_is_independent_of_controller_and_session() {
         update_game_ui(
             &state,
             GameUiAction::Session {
-                command: GameUiSessionCommand::Pause {}
+                command: SessionCommand::Pause {}
             },
             &context(&session, difficulty(), &platform)
         )
@@ -1398,7 +1399,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                     update_game_ui(
                         &state,
                         GameUiAction::Session {
-                            command: GameUiSessionCommand::Pause {}
+                            command: SessionCommand::Pause {}
                         },
                         &context(&session, difficulty(), &platform)
                     ),

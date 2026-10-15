@@ -718,7 +718,7 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         webxr_available: false,
         phone_vr_available: false,
         analysis_available: true,
-        replay_available: session.game.playback_record().is_some(),
+        replay_available: session.game.core_session().playback_record().is_some(),
         stored_records_available: false,
         flight_log_available: false,
         supported_replay_cameras: vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase],
@@ -831,7 +831,12 @@ pub(crate) fn button_actions(world: &mut World) {
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetWaterQuality { quality },
                     } => {
-                        let phase = world.resource::<NativeSession>().game.snapshot().phase();
+                        let phase = world
+                            .resource::<NativeSession>()
+                            .game
+                            .core_session()
+                            .snapshot()
+                            .phase();
                         let current = world.resource::<WaterQualitySelection>();
                         let next = current
                             .request(native_quality(quality), phase)
@@ -879,8 +884,8 @@ pub(crate) fn update_ui(world: &mut World) {
     let mut selections = session.ui.clone();
     selections.analysis_time_seconds = 0.0;
     let source = NativeUiSource {
-        phase: session.game.snapshot().phase(),
-        difficulty: session.difficulty,
+        phase: session.game.core_session().snapshot().phase(),
+        difficulty: session.game.display_difficulty(),
         identity: session.ui_identity(),
         selections,
         platform: platform.clone(),
@@ -1722,7 +1727,7 @@ fn project_control(
                 MenuButton {
                     enabled: control.enabled,
                     action: GameUiAction::Session {
-                        command: birdman_game_session::game_ui::GameUiSessionCommand::SetCue {
+                        command: birdman_game_session::application::SessionCommand::SetCue {
                             cue: *cue,
                             visible: !value,
                         },
@@ -2453,9 +2458,8 @@ fn scroll_content(
 mod tests {
     use super::super::native_session::MenuAction;
     use super::*;
-    use birdman_game_session::game_ui::{
-        GameUiPauseOverlay, GameUiResultTab, GameUiSessionCommand,
-    };
+    use birdman_game_session::application::SessionCommand;
+    use birdman_game_session::game_ui::{GameUiPauseOverlay, GameUiResultTab};
 
     fn app(width: f32, height: f32) -> App {
         let mut app = App::new();
@@ -2541,9 +2545,12 @@ mod tests {
             .insert(Interaction::Pressed);
         app.update();
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.countdown_elapsed_seconds(), Some(0.0));
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().countdown_elapsed_seconds(),
+            Some(0.0)
+        );
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
             birdman_game_core::SessionPhase::Countdown {
                 remaining_seconds: 3
             }
@@ -2554,27 +2561,44 @@ mod tests {
             }
             let session = app.world().resource::<NativeSession>();
             assert_eq!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 birdman_game_core::SessionPhase::Countdown { remaining_seconds }
             );
-            assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
+                0
+            );
         }
         app.update();
         let session = app.world().resource::<NativeSession>();
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             birdman_game_core::SessionPhase::FlightRunning
         );
         assert_eq!(
             session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
                 .tick_index(),
             0
         );
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 1);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            1
+        );
     }
 
     #[test]
@@ -2695,7 +2719,12 @@ mod tests {
     fn gpu_mip_notice_retains_the_cause_without_claiming_the_previous_display_is_preserved() {
         let mut app = app(1280.0, 720.0);
         app.insert_resource(NativeEnvironment::try_default().unwrap());
-        let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+        let snapshot = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
         app.world_mut()
             .resource_mut::<NativeEnvironment>()
             .report_detail_mip_failure(Some(super::super::environment::DetailMipFailure {
@@ -2714,7 +2743,11 @@ mod tests {
             assert!(!message.contains("以前の表示を保持"));
         }
         assert_eq!(
-            app.world().resource::<NativeSession>().game.snapshot(),
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
             snapshot
         );
     }
@@ -2764,6 +2797,7 @@ mod tests {
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase(),
             birdman_game_core::SessionPhase::BriefingReady
@@ -2848,15 +2882,24 @@ mod tests {
             let mut app = analysis_app_size(width as f32, height as f32);
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
-                let record = session.game.take_finalized_result_record().unwrap();
-                session.game.install_attract_record(record).unwrap();
-                session.game.enter_attract().unwrap();
+                session
+                    .execute_ui_command(SessionCommand::ReturnToTitle {})
+                    .unwrap();
+                session
+                    .execute_ui_command(SessionCommand::EnterAttract {})
+                    .unwrap();
             }
-            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let snapshot = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             let clock = app
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .playback_clock();
             add_ui_layout(&mut app, width, height);
             app.add_systems(
@@ -2913,13 +2956,18 @@ mod tests {
             assert!(return_bounds.min.y >= shell_bounds.min.y - 1.0);
             assert!(return_bounds.max.y <= shell_bounds.max.y + 1.0);
             assert_eq!(
-                app.world().resource::<NativeSession>().game.snapshot(),
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
                 snapshot
             );
             assert_eq!(
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .playback_clock(),
                 clock
             );
@@ -2942,7 +2990,7 @@ mod tests {
             .insert(ScrollPosition(Vec2::new(0.0, 80.0)));
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(GameUiSessionCommand::SelectAssistance {
+            .execute_ui_command(SessionCommand::SelectAssistance {
                 assistance: birdman_game_format::AssistanceLevel::Strong,
             })
             .unwrap();
@@ -3000,6 +3048,7 @@ mod tests {
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase(),
             birdman_game_core::SessionPhase::FlightSetup
@@ -3607,7 +3656,12 @@ mod tests {
                     );
                     session.execute_ui_record_action(action).unwrap();
                     if replay {
-                        session.game.playback_clock().unwrap().time_seconds()
+                        session
+                            .game
+                            .core_session()
+                            .playback_clock()
+                            .unwrap()
+                            .time_seconds()
                     } else {
                         session.ui.analysis_time_seconds
                     }
@@ -3648,7 +3702,13 @@ mod tests {
             press(&mut app, "game-title-start");
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
-                session.difficulty = session.difficulty.with_information(information);
+                session
+                    .execute_ui_command(
+                        birdman_game_session::application::SessionCommand::SelectInformation {
+                            information,
+                        },
+                    )
+                    .unwrap();
             }
             app.update();
             press(&mut app, "game-setup-start");
@@ -3666,7 +3726,12 @@ mod tests {
                 PostUpdate,
                 scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
             );
-            let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+            let snapshot = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
             let retained_hud = app.world().resource::<RetainedUi>().hud.shell;
             for (width, height) in [(1280, 720), (800, 600), (360, 300), (1280, 720)] {
                 for mut window in app
@@ -3742,7 +3807,11 @@ mod tests {
                     assert!(navigation_bounds.min.y >= shell_bounds.min.y - 1.0);
                     assert!(navigation_bounds.max.y <= shell_bounds.max.y + 1.0);
                     assert_eq!(
-                        app.world().resource::<NativeSession>().game.snapshot(),
+                        app.world()
+                            .resource::<NativeSession>()
+                            .game
+                            .core_session()
+                            .snapshot(),
                         snapshot
                     );
                 }
@@ -3795,7 +3864,12 @@ mod tests {
             assert!(
                 control_bounds.min.y >= shell_bounds.min.y - 1.0,
                 "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
-                world.resource::<NativeSession>().game.snapshot().phase(),
+                world
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .phase(),
                 world.get::<Name>(control),
                 world.resource::<InputFocus>().get(),
                 world.get::<ScrollPosition>(shell)
@@ -3803,7 +3877,12 @@ mod tests {
             assert!(
                 control_bounds.max.y <= shell_bounds.max.y + 1.0,
                 "phase={:?}, shell={shell_bounds:?}, control={control_bounds:?}, name={:?}, focus={:?}, scroll={:?}",
-                world.resource::<NativeSession>().game.snapshot().phase(),
+                world
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .phase(),
                 world.get::<Name>(control),
                 world.resource::<InputFocus>().get(),
                 world.get::<ScrollPosition>(shell)
@@ -3856,7 +3935,12 @@ mod tests {
                     window,
                 });
                 app.update();
-                let snapshot = app.world().resource::<NativeSession>().game.snapshot();
+                let snapshot = app
+                    .world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot();
                 let retained = app.world().resource::<RetainedUi>();
                 let view = retained.view.as_ref().unwrap();
                 assert!(view.layout.scroll_y && !view.layout.passthrough);
@@ -4015,7 +4099,11 @@ mod tests {
                     }
                 }
                 assert_eq!(
-                    app.world().resource::<NativeSession>().game.snapshot(),
+                    app.world()
+                        .resource::<NativeSession>()
+                        .game
+                        .core_session()
+                        .snapshot(),
                     snapshot
                 );
             }
@@ -4423,6 +4511,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 birdman_game_core::SessionPhase::Replay

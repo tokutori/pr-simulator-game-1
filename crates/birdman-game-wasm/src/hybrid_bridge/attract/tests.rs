@@ -11,9 +11,12 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     bridge.open_setup().unwrap();
     bridge.set_weather_class(3).unwrap();
     bridge.set_information_level(0).unwrap();
-    let selected = bridge.difficulty;
+    let selected = bridge.session.difficulty();
     bridge.return_to_title().unwrap();
-    bridge.enter_attract_internal().unwrap();
+    bridge
+        .session
+        .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
+        .unwrap();
     let projected = context(&bridge);
     assert_eq!(bridge.phase_code(), 10);
     assert_eq!(projected["phase"], "attract");
@@ -21,18 +24,18 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     assert_eq!(projected["scenario"]["catalog_version"], 3);
     assert_eq!(projected["scenario"]["scenario_id"], 1);
     assert_eq!(projected["scenario"]["environment_version"], 1);
-    assert_eq!(projected["scenario"]["seed_low"], DEMO_SEED);
+    assert_eq!(projected["scenario"]["seed_low"], 0xD3A0);
     assert_eq!(projected["difficulty"]["information"], "minimal");
     assert_eq!(projected["difficulty"]["assistance"], "strong");
     assert_eq!(projected["difficulty"]["weather"], "calm");
     assert_eq!(bridge.control_mode_code(), 2);
     assert_eq!(bridge.information_level_code(), 2);
     assert_eq!(bridge.weather_class_code(), 0);
-    assert!(bridge.session.flight_record().is_none());
-    assert!(bridge.prepared.is_none());
+    assert!(bridge.session.core_session().flight_record().is_none());
+    assert!(bridge.session.prepared().is_none());
     assert!(bridge.archived.is_none());
-    assert_eq!(bridge.difficulty, selected);
-    assert_eq!(bridge.seed, 999);
+    assert_eq!(bridge.session.difficulty(), selected);
+    assert_eq!(bridge.session.seed(), 999);
     assert!(bridge.export_record_internal().is_err());
     assert!(matches!(
         bridge.snapshot_internal(),
@@ -45,29 +48,41 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     assert_eq!(bridge.phase_code(), 0);
     assert_eq!(bridge.control_mode_code(), 0);
     assert_eq!(bridge.weather_class_code(), 3);
-    assert_eq!(bridge.difficulty, selected);
-    assert_eq!(bridge.seed, 999);
-    assert!(bridge.session.flight_record().is_none());
+    assert_eq!(bridge.session.difficulty(), selected);
+    assert_eq!(bridge.session.seed(), 999);
+    assert!(bridge.session.core_session().flight_record().is_none());
 }
 
 #[test]
 fn reentry_reuses_the_same_demo_samples_and_restarts_its_clock() {
     let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 5);
-    bridge.enter_attract_internal().unwrap();
-    let record = bridge.session.playback_record().unwrap();
+    bridge
+        .session
+        .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
+        .unwrap();
+    let record = bridge.session.core_session().playback_record().unwrap();
     let samples_address = record.samples().as_ptr();
     let initial = context(&bridge);
     let duration = record.duration_seconds().unwrap();
     assert!(duration > 0.0);
     assert!(duration <= MAX_TICKS as f64 / f64::from(birdman_game_core::PHYSICS_HZ));
     bridge.session.advance_playback(duration * 1.25).unwrap();
-    let clock = bridge.session.playback_clock().unwrap();
+    let clock = bridge.session.core_session().playback_clock().unwrap();
     assert!((clock.time_seconds() - duration * 0.25).abs() < 1e-12);
     assert!(clock.is_playing());
     bridge.leave_attract().unwrap();
-    bridge.enter_attract_internal().unwrap();
+    bridge
+        .session
+        .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
+        .unwrap();
     assert_eq!(
-        bridge.session.playback_record().unwrap().samples().as_ptr(),
+        bridge
+            .session
+            .core_session()
+            .playback_record()
+            .unwrap()
+            .samples()
+            .as_ptr(),
         samples_address
     );
     assert_eq!(context(&bridge), initial);
@@ -77,8 +92,11 @@ fn reentry_reuses_the_same_demo_samples_and_restarts_its_clock() {
 #[test]
 fn saved_queries_preserve_terminal_cause_and_share_only_the_demo_record() {
     let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 123);
-    bridge.enter_attract_internal().unwrap();
-    let record = bridge.session.playback_record().unwrap();
+    bridge
+        .session
+        .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
+        .unwrap();
+    let record = bridge.session.core_session().playback_record().unwrap();
     let finalization = record.finalization().unwrap();
     let finalization_document =
         TailFlightRecordFinalizationDocument::try_from_core(finalization).unwrap();
@@ -86,7 +104,8 @@ fn saved_queries_preserve_terminal_cause_and_share_only_the_demo_record() {
     let last = record.samples().last().unwrap();
     let incidence = last.controls.actuators();
     let queried: Value = serde_json::from_str(
-        &crate::hybrid_record::playback_sample_json(&bridge.session, duration).unwrap(),
+        &crate::hybrid_record::playback_sample_json(bridge.session.core_session(), duration)
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(queried["flight_time_s"], duration);
@@ -129,12 +148,18 @@ fn invalid_enter_keeps_the_selected_setup_and_does_not_generate_a_demo() {
     bridge.open_setup().unwrap();
     let before = bridge.snapshot_internal().unwrap();
     assert!(matches!(
-        bridge.enter_attract_internal(),
-        Err(BoundaryError::Session(GameSessionError::InvalidTransition))
+        bridge
+            .session
+            .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing),
+        Err(
+            birdman_game_session::application::ApplicationError::Session(
+                GameSessionError::InvalidTransition
+            )
+        )
     ));
     assert_eq!(bridge.snapshot_internal().unwrap(), before);
-    assert!(bridge.attract.is_none());
-    assert!(bridge.session.playback_record().is_none());
+    assert!(bridge.session.attract().is_none());
+    assert!(bridge.session.core_session().playback_record().is_none());
 }
 
 #[test]
@@ -162,8 +187,13 @@ fn invalid_enter_does_not_replace_a_player_result_or_its_export() {
         )
         .unwrap();
     let before = bridge.export_flight_record_json().unwrap();
-    assert!(bridge.enter_attract_internal().is_err());
+    assert!(
+        bridge
+            .session
+            .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
+            .is_err()
+    );
     assert_eq!(bridge.export_flight_record_json().unwrap(), before);
     assert_eq!(bridge.phase_code(), 7);
-    assert!(bridge.attract.is_none());
+    assert!(bridge.session.attract().is_none());
 }

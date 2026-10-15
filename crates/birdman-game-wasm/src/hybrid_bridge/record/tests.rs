@@ -27,7 +27,13 @@ fn complete() -> HybridGameSessionBridge {
     bridge.advance_internal(&input).unwrap();
     bridge.advance_internal(&input).unwrap();
     assert_eq!(
-        bridge.session.snapshot().result().unwrap().reason,
+        bridge
+            .session
+            .core_session()
+            .snapshot()
+            .result()
+            .unwrap()
+            .reason,
         SessionEndReason::TimeLimit
     );
     bridge
@@ -69,7 +75,12 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
     let clock = bridge.clock_internal().unwrap();
     let context = bridge.playback_context_internal().unwrap();
     let sample = bridge.flight_record_sample_at_seconds(0.015).unwrap();
-    let record_count = bridge.session.flight_record().unwrap().sample_count();
+    let record_count = bridge
+        .session
+        .core_session()
+        .flight_record()
+        .unwrap()
+        .sample_count();
     assert_eq!(bridge.export_current_record_internal().unwrap(), original);
     assert_eq!(bridge.export_csv_internal().unwrap(), csv);
     assert_eq!(bridge.clock_internal().unwrap(), clock);
@@ -79,7 +90,12 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
         sample
     );
     assert_eq!(
-        bridge.session.flight_record().unwrap().sample_count(),
+        bridge
+            .session
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count(),
         record_count
     );
     bridge.leave_replay().unwrap();
@@ -144,12 +160,12 @@ fn imported_tail_log_keeps_exact_original_text_unknown_identity_and_failed_open_
 #[test]
 fn log_exports_reject_nonrecord_scenes_and_attract_without_changing_the_owner() {
     fn rejects(bridge: &HybridGameSessionBridge) {
-        let snapshot = bridge.session.snapshot();
-        let clock = bridge.session.playback_clock();
+        let snapshot = bridge.session.core_session().snapshot();
+        let clock = bridge.session.core_session().playback_clock();
         assert!(bridge.export_current_record_internal().is_err());
         assert!(bridge.export_csv_internal().is_err());
-        assert_eq!(bridge.session.snapshot(), snapshot);
-        assert_eq!(bridge.session.playback_clock(), clock);
+        assert_eq!(bridge.session.core_session().snapshot(), snapshot);
+        assert_eq!(bridge.session.core_session().playback_clock(), clock);
     }
     let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 7);
     rejects(&bridge);
@@ -183,7 +199,7 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     assert_eq!(document.finalization.failure, None);
     assert_eq!(
         document.control_identity,
-        bridge.prepared.as_ref().unwrap().record_identity
+        bridge.session.prepared().unwrap().record_identity
     );
     let analysis: Value =
         serde_json::from_str(&bridge.flight_analysis_samples_json().unwrap()).unwrap();
@@ -214,7 +230,12 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     assert_eq!(bridge.seek_playback(0.005).unwrap(), [0.005, 1.0, 0.0]);
     let queried: Value =
         serde_json::from_str(&bridge.flight_record_sample_at_seconds(0.005).unwrap()).unwrap();
-    let incidence = bridge.session.flight_record().unwrap().samples()[1]
+    let incidence = bridge
+        .session
+        .core_session()
+        .flight_record()
+        .unwrap()
+        .samples()[1]
         .controls
         .actuators();
     assert_eq!(queried["controls"]["layout"], "tail_incidence");
@@ -282,16 +303,14 @@ fn rejected_archive_and_queries_preserve_current_result_and_metadata() {
     assert!(bridge.open_archive_internal(&corrupt.to_string()).is_err());
     assert_eq!(bridge.snapshot_internal().unwrap(), before);
     assert_eq!(bridge.export_flight_record_json().unwrap(), encoded);
-    let clock = bridge.session.playback_clock();
+    let clock = bridge.session.core_session().playback_clock();
     for time in [f64::NAN, -0.1, 0.03] {
-        assert!(crate::hybrid_record::playback_sample_json(&bridge.session, time).is_err());
-        assert_eq!(bridge.session.playback_clock(), clock);
+        assert!(
+            crate::hybrid_record::playback_sample_json(bridge.session.core_session(), time)
+                .is_err()
+        );
+        assert_eq!(bridge.session.core_session().playback_clock(), clock);
     }
-    bridge.prepared = None;
-    assert!(matches!(
-        bridge.export_record_internal(),
-        Err(BoundaryError::Record(HybridRecordError::MetadataMismatch))
-    ));
 }
 
 #[test]
@@ -300,6 +319,7 @@ fn archived_failure_context_preserves_the_original_cause_and_last_saved_state() 
     let mut document = tail_document(&source.export_flight_record_json().unwrap());
     let original = source
         .session
+        .core_session()
         .flight_record()
         .unwrap()
         .finalization()

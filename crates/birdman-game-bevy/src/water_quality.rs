@@ -177,7 +177,10 @@ mod tests {
             session.presentation_frame(1.0);
         }
         session.action(MenuAction::Pause).unwrap();
-        for phase in [SessionPhase::FlightSetup, session.game.snapshot().phase()] {
+        for phase in [
+            SessionPhase::FlightSetup,
+            session.game.core_session().snapshot().phase(),
+        ] {
             assert!(WaterQualitySelection::default().can_select(phase));
         }
         for phase in [

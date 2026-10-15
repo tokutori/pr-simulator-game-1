@@ -36,7 +36,7 @@ fn wind(bridge: &HybridGameSessionBridge, request: GridRequest) -> Value {
 }
 
 fn assert_metrics(bridge: &HybridGameSessionBridge, projected: &Value) {
-    let record = bridge.session.playback_record().unwrap();
+    let record = bridge.session.core_session().playback_record().unwrap();
     let metrics = record.summary().unwrap();
     assert_eq!(projected["physics_hz"], record.header().physics_hz);
     assert_eq!(projected["summary"]["sample_count"], metrics.sample_count);
@@ -149,6 +149,7 @@ fn bundled_grid_samples_the_same_registered_provider_before_and_after_archive_im
         .unwrap();
         let expected = bridge
             .session
+            .core_session()
             .wind_velocity_at(position)
             .unwrap()
             .unwrap()

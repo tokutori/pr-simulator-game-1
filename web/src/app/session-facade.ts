@@ -23,7 +23,7 @@ import type { FlightRenderPose } from "../render/contracts/runtime.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput, parseGameUiFrame, parseGameUiUpdate, parseGameUiView } from "./game-ui-codec.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect, GameUiUpdate } from "../generated/game-ui-effects.js";
-import type { GameUiSessionCommand } from "./game-ui-types.js";
+import type { SessionCommand } from "./game-ui-types.js";
 import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import { mergeGameUiFrame } from "./game-ui-frame.js";
@@ -283,11 +283,10 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     }, "retain_record");
   }
 
-  executeSharedSessionCommand(command: GameUiSessionCommand): TailAppOperationResult {
+  executeSharedSessionCommand(command: SessionCommand): TailAppOperationResult {
     return this.change(() => {
       this.sharedUiCache = null;
       this.port.apply_game_ui_session_command_json(JSON.stringify(command));
-      if (command.kind === "prepare" || command.kind === "retry_briefing") this.port.mark_briefing_ready();
       if (command.kind === "start_countdown") return Object.freeze({ kind: "countdown-started" });
       if (command.kind === "abort") {
         const terminalSnapshot = this.readSnapshot();
@@ -546,9 +545,9 @@ function executeTailOperation(port: TailAppSessionPort, operation: TailAppSessio
     case "set-control-shared": port.set_control_mode(1); break;
     case "set-control-automatic": port.set_control_mode(2); break;
     case "return-to-title": port.return_to_title(); break;
-    case "prepare": port.prepare(); port.mark_briefing_ready(); break;
+    case "prepare": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "prepare" })); break;
     case "cancel-briefing": port.cancel_briefing(); break;
-    case "start-flight": port.start_countdown(3); return Object.freeze({ kind: "countdown-started" });
+    case "start-flight": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "start_countdown" })); return Object.freeze({ kind: "countdown-started" });
     case "cancel-countdown": port.cancel_countdown(); break;
     case "pause": port.pause(0); break;
     case "resume": port.resume(); break;
@@ -558,7 +557,7 @@ function executeTailOperation(port: TailAppSessionPort, operation: TailAppSessio
       return Object.freeze({ kind: "aborted", terminalSnapshot: snapshot });
     }
     case "retry": port.retry(); break;
-    case "retry-briefing": port.retry_briefing(); port.mark_briefing_ready(); break;
+    case "retry-briefing": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "retry_briefing" })); break;
     case "enter-replay": port.enter_replay(); break;
     case "leave-replay": port.leave_replay(); break;
     case "enter-attract": port.enter_attract(); break;

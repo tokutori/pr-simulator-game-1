@@ -10,7 +10,7 @@ import { analysisCursorMatches, validateAnalysisInput } from "../game/flight-ana
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect } from "../generated/game-ui-effects.js";
-import type { GameUiSessionCommand } from "./game-ui-types.js";
+import type { SessionCommand } from "./game-ui-types.js";
 import { sharedGameUiAction } from "./game-view.js";
 
 export interface StoredFlightRecordUiEntry {
@@ -355,7 +355,7 @@ export type AppMessage =
 
 export type AppEffect =
   | { readonly type: "update-shared-game-ui"; readonly action: GameUiAction }
-  | { readonly type: "shared-game-session-command"; readonly command: GameUiSessionCommand; readonly requestId: number }
+  | { readonly type: "shared-game-session-command"; readonly command: SessionCommand; readonly requestId: number }
   | { readonly type: "shared-record-action"; readonly action: Extract<GameUiEffect, { kind: "record" }>["action"] }
   | { readonly type: "shared-replay-action"; readonly action: Extract<GameUiEffect, { kind: "record" }>["action"]; readonly requestId: number; readonly generation: number }
   | { readonly type: "apply-lake-water-quality"; readonly requestId: number; readonly quality: LakeWaterQuality }

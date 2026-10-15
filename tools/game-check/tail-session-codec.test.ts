@@ -256,6 +256,28 @@ describe("versioned two-tail TypeScript boundary", () => {
     }
   });
 
+  it("keeps Manual in the command path and clears only observed external causes", () => {
+    const session = launch();
+    try {
+      session.pause(0);
+      const paused = parseTailSessionSnapshot(session.snapshot_json());
+      expect(() => session.clear_pause_reason(0)).toThrow("external pause reason must be in [1, 3]");
+      expect(parseTailSessionSnapshot(session.snapshot_json())).toEqual(paused);
+      session.pause(1);
+      expect(() => session.resume()).toThrow("PauseConditionsRemain");
+      expect(session.phase_code()).toBe(6);
+      expect(session.can_resume()).toBe(false);
+      session.clear_pause_reason(1);
+      expect(session.phase_code()).toBe(6);
+      expect(session.can_resume()).toBe(true);
+      session.resume();
+      expect(session.phase_code()).toBe(5);
+      expect(parseTailSessionSnapshot(session.snapshot_json()).frame).toEqual(paused.frame);
+    } finally {
+      session.free();
+    }
+  });
+
   it("retains Rust live progress for Flight and Pause and keeps terminal score separate", () => {
     const session = launch();
     try {
@@ -271,7 +293,6 @@ describe("versioned two-tail TypeScript boundary", () => {
       expect(Object.isFrozen(next.frame.progressMeters)).toBe(true);
       session.pause(0);
       expect(parseTailSessionSnapshot(session.snapshot_json())).toMatchObject({ phaseCode: 6, frame: { progressMeters: next.frame.progressMeters } });
-      session.clear_pause_reason(0);
       session.resume();
       const result = parseTailSessionSnapshot(session.abort());
       if (result.frame.kind !== "result") throw new Error("Expected Result frame");

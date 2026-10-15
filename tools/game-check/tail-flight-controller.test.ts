@@ -206,7 +206,6 @@ describe("two-tail controller through the Rust WASM port", () => {
     const polls = trial.input.readDemand.mock.calls.length;
     trial.controller.onFrame(100);
     expect(trial.input.readDemand).toHaveBeenCalledTimes(polls);
-    trial.session.clear_pause_reason(0);
     trial.session.resume();
     trial.controller.resume();
     trial.controller.onFrame(2_000);

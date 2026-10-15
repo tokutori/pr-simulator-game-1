@@ -1,8 +1,8 @@
 use super::*;
 use birdman_game_core::SessionScenarioIdentity;
 use birdman_game_session::game_ui::{
-    GameUiAction, GameUiContext, GameUiPlatformInput, GameUiSessionCommand, GameUiView,
-    game_ui_frame, game_ui_view, update_game_ui,
+    GameUiAction, GameUiContext, GameUiPlatformInput, GameUiView, game_ui_frame, game_ui_view,
+    update_game_ui,
 };
 
 const MAX_UI_INPUT_BYTES: usize = 131_072;
@@ -36,7 +36,7 @@ impl HybridGameSessionBridge {
             platform,
             difficulty,
             identity,
-            can_resume: self.session.can_resume(),
+            can_resume: self.session.core_session().can_resume(),
         });
         self.ui_view_revision = revision;
         Ok(output)
@@ -59,7 +59,7 @@ impl HybridGameSessionBridge {
             || retained.platform != platform
             || retained.difficulty != context.difficulty
             || retained.identity != context.identity
-            || retained.can_resume != self.session.can_resume()
+            || retained.can_resume != self.session.core_session().can_resume()
         {
             return Err(ui_error(
                 birdman_game_session::game_ui::GameUiError::StaleView,
@@ -90,42 +90,8 @@ impl HybridGameSessionBridge {
         &mut self,
         command_json: &str,
     ) -> Result<(), JsValue> {
-        let command: GameUiSessionCommand = decode(command_json)?;
-        match command {
-            GameUiSessionCommand::OpenSetup {} => self.open_setup(),
-            GameUiSessionCommand::ReturnToTitle {} => self.return_to_title(),
-            GameUiSessionCommand::Prepare {} => self.prepare(),
-            GameUiSessionCommand::CancelBriefing {} => self.cancel_briefing(),
-            GameUiSessionCommand::StartCountdown {} => self.start_countdown(3),
-            GameUiSessionCommand::CancelCountdown {} => self.cancel_countdown(),
-            GameUiSessionCommand::Pause {} => self.pause(0),
-            GameUiSessionCommand::Resume {} => {
-                self.clear_pause_reason(0)?;
-                self.resume()
-            }
-            GameUiSessionCommand::Abort {} => self.abort().map(|_| ()),
-            GameUiSessionCommand::Retry {} => self.retry(),
-            GameUiSessionCommand::RetryBriefing {} => self.retry_briefing(),
-            GameUiSessionCommand::EnterReplay {} => self.enter_replay(),
-            GameUiSessionCommand::LeaveReplay {} => self.leave_replay(),
-            GameUiSessionCommand::EnterAttract {} => self.enter_attract(),
-            GameUiSessionCommand::LeaveAttract {} => self.leave_attract(),
-            command @ (GameUiSessionCommand::SelectPreset { .. }
-            | GameUiSessionCommand::SelectInformation { .. }
-            | GameUiSessionCommand::SelectAssistance { .. }
-            | GameUiSessionCommand::SelectWeather { .. }
-            | GameUiSessionCommand::SetCue { .. }) => {
-                self.difficulty = birdman_game_session::game_ui::select_game_ui_difficulty(
-                    &self.session,
-                    self.difficulty,
-                    &command,
-                    self.seed,
-                )
-                .map_err(ui_error)?;
-                self.prepared = None;
-                Ok(())
-            }
-        }
+        let command: SessionCommand = decode(command_json)?;
+        self.execute_application(command, BackendReadiness::Ready)
     }
 
     /// Executes only admitted query/clock effects through the existing record owner.
@@ -134,6 +100,7 @@ impl HybridGameSessionBridge {
         match action {
             GameUiAction::SeekAnalysis { time_seconds } => {
                 self.session
+                    .core_session()
                     .playback_record()
                     .ok_or_else(|| JsValue::from_str("record unavailable"))?
                     .sample_at_seconds(time_seconds)
@@ -148,6 +115,7 @@ impl HybridGameSessionBridge {
             GameUiAction::ToggleReplayPlaying {} => {
                 let playing = self
                     .session
+                    .core_session()
                     .playback_clock()
                     .ok_or_else(|| JsValue::from_str("playback clock unavailable"))?
                     .is_playing();
@@ -177,34 +145,41 @@ impl HybridGameSessionBridge {
             3 => birdman_game_format::DifficultyPreset::Realistic,
             _ => birdman_game_format::DifficultyPreset::Custom,
         };
-        let identity = if self.session.snapshot().phase() == SessionPhase::FlightSetup {
-            Some(birdman_game_session::identity_for_selection(
-                HybridSessionPreparation::select_scenario(difficulty.weather(), self.seed)
+        let identity =
+            if self.session.core_session().snapshot().phase() == SessionPhase::FlightSetup {
+                Some(birdman_game_session::identity_for_selection(
+                    HybridSessionPreparation::select_scenario(
+                        difficulty.weather(),
+                        self.session.seed(),
+                    )
                     .map_err(ui_error)?,
-            ))
-        } else {
-            self.session.configuration_identity()
-        };
+                ))
+            } else {
+                self.session.core_session().configuration_identity()
+            };
         Ok(GameUiContext {
-            session: &self.session,
+            session: self.session.core_session(),
             difficulty,
             preset,
             identity,
-            record: self.session.playback_record(),
+            record: self.session.core_session().playback_record(),
             environment_readout: environment,
             platform,
         })
     }
 
     fn ui_environment_readout(&self) -> Result<String, JsValue> {
-        let platform = self.session.snapshot().phase();
+        let platform = self.session.core_session().snapshot().phase();
         let identity = if platform == SessionPhase::FlightSetup {
             Some(birdman_game_session::identity_for_selection(
-                HybridSessionPreparation::select_scenario(self.difficulty.weather(), self.seed)
-                    .map_err(ui_error)?,
+                HybridSessionPreparation::select_scenario(
+                    self.session.difficulty().weather(),
+                    self.session.seed(),
+                )
+                .map_err(ui_error)?,
             ))
         } else {
-            self.session.configuration_identity()
+            self.session.core_session().configuration_identity()
         };
         birdman_game_session::game_ui::game_ui_environment_readout(identity).map_err(ui_error)
     }

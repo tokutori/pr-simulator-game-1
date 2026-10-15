@@ -63,7 +63,7 @@
           "description": "Produces one canonical domain operation.",
           "properties": {
             "command": {
-              "$ref": "#/$defs/GameUiSessionCommand",
+              "$ref": "#/$defs/SessionCommand",
               "description": "Operation admitted by the current view."
             },
             "kind": {
@@ -702,8 +702,227 @@
         }
       ]
     },
-    "GameUiSessionCommand": {
-      "description": "Existing domain commands emitted by the pure UI update.",
+    "GameUiStoredRecord": {
+      "additionalProperties": false,
+      "description": "Persistence metadata, not an independent flight record.",
+      "properties": {
+        "id": {
+          "description": "Platform key.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "personal_best": {
+          "description": "Existing Rust-derived Personal Best membership.",
+          "type": "boolean"
+        },
+        "saved_at": {
+          "description": "Formatted local save timestamp supplied by the platform.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "saved_at",
+        "personal_best"
+      ],
+      "type": "object"
+    },
+    "GameUiViewport": {
+      "additionalProperties": false,
+      "description": "Logical pixels and root-font size used by the same responsive calculation.",
+      "properties": {
+        "height": {
+          "description": "Display height in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "root_font_size": {
+          "description": "Platform root font size in logical pixels.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Display width in logical pixels.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height",
+        "root_font_size"
+      ],
+      "type": "object"
+    },
+    "GameUiWaterQuality": {
+      "description": "Rendering quality has no effect on physics or record identity.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Reduced mesh density.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Balanced mesh density.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Detailed mesh density.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiWaterQualityOperation": {
+      "description": "Exclusive observation of a platform-owned water resource operation.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No resource operation is pending and prior resources were released.",
+          "properties": {
+            "kind": {
+              "const": "idle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A replacement has been requested and the confirmed resource remains active.",
+          "properties": {
+            "kind": {
+              "const": "applying",
+              "type": "string"
+            },
+            "requested": {
+              "$ref": "#/$defs/GameUiWaterQuality",
+              "description": "Requested replacement quality."
+            }
+          },
+          "required": [
+            "kind",
+            "requested"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Replacement failed before commitment; the confirmed resource remains active.",
+          "properties": {
+            "cause": {
+              "description": "Captured resource preparation cause.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "failed",
+              "type": "string"
+            },
+            "requested": {
+              "$ref": "#/$defs/GameUiWaterQuality",
+              "description": "Failed replacement quality."
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "cause"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Replacement committed, but release of the superseded resource failed.",
+          "properties": {
+            "cause": {
+              "description": "Captured superseded-resource cleanup cause.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "cleanup_failed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "cause"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "HudCue": {
+      "description": "Stable identity for one independently configurable HUD cue.",
+      "oneOf": [
+        {
+          "const": "telemetry",
+          "description": "Numeric telemetry readouts.",
+          "type": "string"
+        },
+        {
+          "const": "attitude",
+          "description": "Attitude indicator and heading.",
+          "type": "string"
+        },
+        {
+          "const": "wind",
+          "description": "Wind vector readout.",
+          "type": "string"
+        },
+        {
+          "const": "flight_path",
+          "description": "Flight-path marker.",
+          "type": "string"
+        },
+        {
+          "const": "angle_of_attack",
+          "description": "Angle-of-attack cue.",
+          "type": "string"
+        },
+        {
+          "const": "warnings",
+          "description": "Warning cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "InformationLevel": {
+      "description": "Information presentation selected for a session.",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Full flight telemetry and warnings.",
+          "type": "string"
+        },
+        {
+          "const": "standard",
+          "description": "Primary flight instruments.",
+          "type": "string"
+        },
+        {
+          "const": "minimal",
+          "description": "Altitude, distance, and elapsed time.",
+          "type": "string"
+        },
+        {
+          "const": "realistic",
+          "description": "Instrumentation configured for a validated aircraft model.",
+          "type": "string"
+        },
+        {
+          "const": "custom",
+          "description": "Independently configured flight information cues.",
+          "type": "string"
+        }
+      ]
+    },
+    "SessionCommand": {
+      "description": "Canonical application operations generated by every game UI.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -1014,225 +1233,6 @@
             "visible"
           ],
           "type": "object"
-        }
-      ]
-    },
-    "GameUiStoredRecord": {
-      "additionalProperties": false,
-      "description": "Persistence metadata, not an independent flight record.",
-      "properties": {
-        "id": {
-          "description": "Platform key.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "personal_best": {
-          "description": "Existing Rust-derived Personal Best membership.",
-          "type": "boolean"
-        },
-        "saved_at": {
-          "description": "Formatted local save timestamp supplied by the platform.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "saved_at",
-        "personal_best"
-      ],
-      "type": "object"
-    },
-    "GameUiViewport": {
-      "additionalProperties": false,
-      "description": "Logical pixels and root-font size used by the same responsive calculation.",
-      "properties": {
-        "height": {
-          "description": "Display height in logical pixels.",
-          "format": "double",
-          "type": "number"
-        },
-        "root_font_size": {
-          "description": "Platform root font size in logical pixels.",
-          "format": "double",
-          "type": "number"
-        },
-        "width": {
-          "description": "Display width in logical pixels.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "width",
-        "height",
-        "root_font_size"
-      ],
-      "type": "object"
-    },
-    "GameUiWaterQuality": {
-      "description": "Rendering quality has no effect on physics or record identity.",
-      "oneOf": [
-        {
-          "const": "low",
-          "description": "Reduced mesh density.",
-          "type": "string"
-        },
-        {
-          "const": "medium",
-          "description": "Balanced mesh density.",
-          "type": "string"
-        },
-        {
-          "const": "high",
-          "description": "Detailed mesh density.",
-          "type": "string"
-        }
-      ]
-    },
-    "GameUiWaterQualityOperation": {
-      "description": "Exclusive observation of a platform-owned water resource operation.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "No resource operation is pending and prior resources were released.",
-          "properties": {
-            "kind": {
-              "const": "idle",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "A replacement has been requested and the confirmed resource remains active.",
-          "properties": {
-            "kind": {
-              "const": "applying",
-              "type": "string"
-            },
-            "requested": {
-              "$ref": "#/$defs/GameUiWaterQuality",
-              "description": "Requested replacement quality."
-            }
-          },
-          "required": [
-            "kind",
-            "requested"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Replacement failed before commitment; the confirmed resource remains active.",
-          "properties": {
-            "cause": {
-              "description": "Captured resource preparation cause.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "failed",
-              "type": "string"
-            },
-            "requested": {
-              "$ref": "#/$defs/GameUiWaterQuality",
-              "description": "Failed replacement quality."
-            }
-          },
-          "required": [
-            "kind",
-            "requested",
-            "cause"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Replacement committed, but release of the superseded resource failed.",
-          "properties": {
-            "cause": {
-              "description": "Captured superseded-resource cleanup cause.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "cleanup_failed",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "cause"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "HudCue": {
-      "description": "Stable identity for one independently configurable HUD cue.",
-      "oneOf": [
-        {
-          "const": "telemetry",
-          "description": "Numeric telemetry readouts.",
-          "type": "string"
-        },
-        {
-          "const": "attitude",
-          "description": "Attitude indicator and heading.",
-          "type": "string"
-        },
-        {
-          "const": "wind",
-          "description": "Wind vector readout.",
-          "type": "string"
-        },
-        {
-          "const": "flight_path",
-          "description": "Flight-path marker.",
-          "type": "string"
-        },
-        {
-          "const": "angle_of_attack",
-          "description": "Angle-of-attack cue.",
-          "type": "string"
-        },
-        {
-          "const": "warnings",
-          "description": "Warning cues.",
-          "type": "string"
-        }
-      ]
-    },
-    "InformationLevel": {
-      "description": "Information presentation selected for a session.",
-      "oneOf": [
-        {
-          "const": "full",
-          "description": "Full flight telemetry and warnings.",
-          "type": "string"
-        },
-        {
-          "const": "standard",
-          "description": "Primary flight instruments.",
-          "type": "string"
-        },
-        {
-          "const": "minimal",
-          "description": "Altitude, distance, and elapsed time.",
-          "type": "string"
-        },
-        {
-          "const": "realistic",
-          "description": "Instrumentation configured for a validated aircraft model.",
-          "type": "string"
-        },
-        {
-          "const": "custom",
-          "description": "Independently configured flight information cues.",
-          "type": "string"
         }
       ]
     },

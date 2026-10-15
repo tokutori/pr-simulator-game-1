@@ -32,10 +32,9 @@ use birdman_game_core::{
 };
 use birdman_game_format::WeatherClass;
 use birdman_game_session::{
-    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, HybridSessionPreparation,
+    application::SessionCommand,
     game_ui::{
         GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiReplayView, GameUiResultTab,
-        GameUiSessionCommand,
     },
 };
 use std::{
@@ -349,7 +348,8 @@ pub(crate) fn project_observer(
     if let VerificationStage::WaterMotion(motion, MotionEndpoint::End) = verification.stage
         && let Some(interval) = verification.motion_interval
     {
-        let observed = interval.observe(session.game.snapshot().phase(), time.delta());
+        let observed =
+            interval.observe(session.game.core_session().snapshot().phase(), time.delta());
         verification.motion_interval = Some(observed);
         if matches!(interval, MotionInterval::Observing(_))
             && !matches!(observed, MotionInterval::Observing(_))
@@ -364,7 +364,7 @@ pub(crate) fn project_observer(
         }
     }
     if verification.failure.is_none()
-        && session.game.snapshot().phase() == SessionPhase::FlightRunning
+        && session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning
         && let VerificationStage::WaterMotion(motion, endpoint) = verification.stage
         && let Some(base) = verification.observer_base
     {
@@ -987,7 +987,10 @@ pub(crate) fn verify_ui_layout(
             .ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
         if verification.stage == VerificationStage::InputTrialDetails {
-            require_phase(session.game.snapshot().phase(), SessionPhase::Result)?;
+            require_phase(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::Result,
+            )?;
             if session.ui.result_tab != GameUiResultTab::Summary || !session.ui.technical_open {
                 return Err("Technical capture requires the expanded Result Summary".into());
             }
@@ -1195,8 +1198,8 @@ impl VerificationPresentation<'_, '_> {
         case: WaterVerificationCase,
     ) -> Result<f32, String> {
         let target = EnvironmentTarget::project(
-            session.game.snapshot().phase(),
-            session.game.configuration_identity(),
+            session.game.core_session().snapshot().phase(),
+            session.game.core_session().configuration_identity(),
         );
         let condition = self
             .environment
@@ -1346,7 +1349,7 @@ fn advance_step(
     }
     let normal_frame = frame_delta <= MAX_FRAME_DELTA;
     let focused = windows.iter().next().is_some() && windows.iter().all(|window| window.focused);
-    let phase = session.game.snapshot().phase();
+    let phase = session.game.core_session().snapshot().phase();
     let waiting_for_countdown = matches!(
         verification.stage,
         VerificationStage::Launch | VerificationStage::InputTrialLaunch
@@ -1448,14 +1451,17 @@ fn advance_step(
                 VerificationStage::PausedCapture if verification.water_case.is_some() => {
                     let case = verification.water_case.ok_or("Missing water case")?;
                     **quality = quality
-                        .request(case.alternate_quality(), session.game.snapshot().phase())
+                        .request(
+                            case.alternate_quality(),
+                            session.game.core_session().snapshot().phase(),
+                        )
                         .ok_or("Paused water quality is unavailable")?;
                     VerificationStage::WaterQualitySwapped
                 }
                 VerificationStage::WaterQualitySwapped => {
                     let case = verification.water_case.ok_or("Missing water case")?;
                     **quality = quality
-                        .request(case.quality, session.game.snapshot().phase())
+                        .request(case.quality, session.game.core_session().snapshot().phase())
                         .ok_or("Restored water quality is unavailable")?;
                     VerificationStage::WaterQualityRestored
                 }
@@ -1463,19 +1469,28 @@ fn advance_step(
                 VerificationStage::WaterResumed => VerificationStage::Abort,
                 VerificationStage::PausedCapture => {
                     **quality = quality
-                        .request(WaterQuality::Low, session.game.snapshot().phase())
+                        .request(
+                            WaterQuality::Low,
+                            session.game.core_session().snapshot().phase(),
+                        )
                         .ok_or("Paused quality selection is unavailable")?;
                     VerificationStage::QualityLow
                 }
                 VerificationStage::QualityLow => {
                     **quality = quality
-                        .request(WaterQuality::Medium, session.game.snapshot().phase())
+                        .request(
+                            WaterQuality::Medium,
+                            session.game.core_session().snapshot().phase(),
+                        )
                         .ok_or("Medium quality selection is unavailable")?;
                     VerificationStage::QualityMedium
                 }
                 VerificationStage::QualityMedium => {
                     **quality = quality
-                        .request(WaterQuality::High, session.game.snapshot().phase())
+                        .request(
+                            WaterQuality::High,
+                            session.game.core_session().snapshot().phase(),
+                        )
                         .ok_or("High quality selection is unavailable")?;
                     VerificationStage::QualityHigh
                 }
@@ -1541,10 +1556,13 @@ fn advance_step(
             session.action(MenuAction::Start).map_err(|cause| {
                 format!(
                     "Start/OpenSetup failed: phase_before={phase:?}, phase_after={:?}; {cause}",
-                    session.game.snapshot().phase()
+                    session.game.core_session().snapshot().phase()
                 )
             })?;
-            require_phase(session.game.snapshot().phase(), SessionPhase::FlightSetup)?;
+            require_phase(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::FlightSetup,
+            )?;
             if let Some(case) = verification.water_case {
                 **quality = quality
                     .request(case.quality, SessionPhase::FlightSetup)
@@ -1569,26 +1587,21 @@ fn advance_step(
         }
         VerificationStage::Prepare => {
             if let Some(case) = verification.water_case {
-                let preparation = HybridSessionPreparation::try_new_for_weather(
-                    session.control_mode(),
-                    DEFAULT_MAXIMUM_FLIGHT_TICKS,
-                    DEFAULT_SESSION_SEED,
-                    case.weather,
-                )
-                .map_err(|cause| format!("Water case shared preparation: {cause:?}"))?;
-                session
-                    .game
-                    .prepare_flight(preparation.into_parts().0)
-                    .and_then(|()| session.game.mark_briefing_ready())
-                    .map_err(|cause| format!("Water case GameSession preparation: {cause:?}"))?;
+                session.execute_ui_command(SessionCommand::SelectWeather {
+                    weather: case.weather,
+                })?;
+                session.action(MenuAction::Prepare)?;
                 println!(
                     "Water case prepared: {case:?}, sealed={:?}; observer is camera-only",
-                    session.game.configuration_identity()
+                    session.game.core_session().configuration_identity()
                 );
             } else {
                 session.action(MenuAction::Prepare)?;
             }
-            require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
+            require_phase(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::BriefingReady,
+            )?;
             verification.next(VerificationStage::Briefing);
         }
         VerificationStage::Briefing => {
@@ -1621,7 +1634,7 @@ fn advance_step(
                 verification.capture(commands, "01c-countdown.png");
             }
         }
-        VerificationStage::Countdown => match session.game.snapshot() {
+        VerificationStage::Countdown => match session.game.core_session().snapshot() {
             SessionSnapshot::Countdown { .. } => {}
             SessionSnapshot::TailFlightRunning { state, .. } => {
                 if verification.water_case.is_some() {
@@ -1647,6 +1660,7 @@ fn advance_step(
             require_phase(phase, SessionPhase::FlightRunning)?;
             let state = session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .ok_or("Missing tail state")?;
@@ -1683,6 +1697,7 @@ fn advance_step(
             require_phase(phase, SessionPhase::FlightRunning)?;
             let state = session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .ok_or("Missing water case core state")?;
@@ -1739,15 +1754,16 @@ fn advance_step(
         VerificationStage::Pause => {
             commands.remove_resource::<VerificationObserver>();
             verification.observer_base = None;
-            verification.paused_state = session.game.snapshot().tail_flight_state();
+            verification.paused_state = session.game.core_session().snapshot().tail_flight_state();
             verification.paused_water_time = None;
             verification.paused_sample_count = session
                 .game
+                .core_session()
                 .flight_record()
                 .map_or(0, |record| record.sample_count());
             session.action(MenuAction::Pause)?;
             if !matches!(
-                session.game.snapshot().phase(),
+                session.game.core_session().snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
             ) {
                 return Err("Pause did not reach core paused phase".into());
@@ -1756,7 +1772,8 @@ fn advance_step(
         }
         VerificationStage::PausedCapture => {
             if !matches!(phase, SessionPhase::FlightPaused { .. })
-                || session.game.snapshot().tail_flight_state() != verification.paused_state
+                || session.game.core_session().snapshot().tail_flight_state()
+                    != verification.paused_state
             {
                 return Err("Paused view did not retain the core state".into());
             }
@@ -1778,7 +1795,8 @@ fn advance_step(
         | VerificationStage::WaterQualitySwapped
         | VerificationStage::WaterQualityRestored => {
             if !matches!(phase, SessionPhase::FlightPaused { .. })
-                || session.game.snapshot().tail_flight_state() != verification.paused_state
+                || session.game.core_session().snapshot().tail_flight_state()
+                    != verification.paused_state
             {
                 return Err("Quality exchange changed paused core state".into());
             }
@@ -1824,14 +1842,19 @@ fn advance_step(
             }
         }
         VerificationStage::Resume => {
-            if session.game.snapshot().tail_flight_state() != verification.paused_state {
+            if session.game.core_session().snapshot().tail_flight_state()
+                != verification.paused_state
+            {
                 return Err("Paused physics state advanced".into());
             }
             if !normal_frame {
                 return Ok(());
             }
             session.action(MenuAction::Resume)?;
-            require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
+            require_phase(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::FlightRunning,
+            )?;
             verification.next(if verification.water_case.is_some() {
                 VerificationStage::WaterResumed
             } else {
@@ -1842,6 +1865,7 @@ fn advance_step(
             require_phase(phase, SessionPhase::FlightRunning)?;
             let state = session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .ok_or("Missing resumed core state")?;
@@ -1857,6 +1881,7 @@ fn advance_step(
                         .ok_or("Missing paused water clock")?
                     || session
                         .game
+                        .core_session()
                         .flight_record()
                         .map_or(0, |record| record.sample_count())
                         <= verification.paused_sample_count
@@ -1877,11 +1902,13 @@ fn advance_step(
             session.action(MenuAction::Abort)?;
             let terminal = session
                 .game
+                .core_session()
                 .snapshot()
                 .result()
                 .ok_or("Abort did not produce Result")?;
             let record = session
                 .game
+                .core_session()
                 .flight_record()
                 .ok_or("Result record is missing")?;
             let finalization = record
@@ -1909,9 +1936,10 @@ fn advance_step(
             verification.next(VerificationStage::Result);
         }
         VerificationStage::Result => {
-            if session.game.snapshot().result() != verification.terminal
+            if session.game.core_session().snapshot().result() != verification.terminal
                 || session
                     .game
+                    .core_session()
                     .flight_record()
                     .map(|record| record.sample_count())
                     != Some(verification.terminal_sample_count)
@@ -1936,6 +1964,7 @@ fn advance_step(
             if chart == GameUiAnalysisChart::Speed {
                 let midpoint = session
                     .game
+                    .core_session()
                     .flight_record()
                     .ok_or("Speed cursor has no retained record")?
                     .duration_seconds()
@@ -1945,9 +1974,10 @@ fn advance_step(
                     return Err("Native range pointer did not seek the record midpoint".into());
                 }
             }
-            if session.game.snapshot().result() != verification.terminal
+            if session.game.core_session().snapshot().result() != verification.terminal
                 || session
                     .game
+                    .core_session()
                     .flight_record()
                     .map(|record| record.sample_count())
                     != Some(verification.terminal_sample_count)
@@ -1987,9 +2017,10 @@ fn advance_step(
         }
         VerificationStage::ReturnedResult => {
             require_phase(phase, SessionPhase::Result)?;
-            if session.game.snapshot().result() != verification.terminal
+            if session.game.core_session().snapshot().result() != verification.terminal
                 || session
                     .game
+                    .core_session()
                     .flight_record()
                     .map(|record| record.sample_count())
                     != Some(verification.terminal_sample_count)
@@ -2004,7 +2035,7 @@ fn advance_step(
         }
         VerificationStage::Retry => {
             commands.remove_resource::<VerificationObserver>();
-            match session.game.snapshot() {
+            match session.game.core_session().snapshot() {
                 SessionSnapshot::Result(_) => {
                     queue_ui_control(commands, "game-result-retry", None);
                 }
@@ -2039,18 +2070,19 @@ fn advance_step(
         VerificationStage::InputTrialLaunch => {
             start_countdown(verification, session, focused && normal_frame, elapsed)?
         }
-        VerificationStage::InputTrialCountdown => match session.game.snapshot() {
+        VerificationStage::InputTrialCountdown => match session.game.core_session().snapshot() {
             SessionSnapshot::Countdown { .. } => {}
             SessionSnapshot::TailFlightRunning { .. } => {
                 verification.next(VerificationStage::InputTrialFlight);
             }
             snapshot => return Err(format!("Input-trial countdown ended with {snapshot:?}")),
         },
-        VerificationStage::InputTrialFlight => match session.game.snapshot() {
+        VerificationStage::InputTrialFlight => match session.game.core_session().snapshot() {
             SessionSnapshot::TailFlightRunning { .. } => {}
             SessionSnapshot::Result(terminal) => {
                 let record = session
                     .game
+                    .core_session()
                     .flight_record()
                     .ok_or("Input-trial record is missing")?;
                 let finalization = record
@@ -2090,9 +2122,10 @@ fn advance_step(
                     "Input-trial capture does not match its Result Summary disclosure".into(),
                 );
             }
-            if session.game.snapshot().result() != verification.terminal
+            if session.game.core_session().snapshot().result() != verification.terminal
                 || session
                     .game
+                    .core_session()
                     .flight_record()
                     .map(|record| record.sample_count())
                     != Some(verification.terminal_sample_count)
@@ -2154,6 +2187,7 @@ fn verify_paused_water(
         || Some(clock) != verification.paused_water_time
         || session
             .game
+            .core_session()
             .flight_record()
             .map_or(0, |record| record.sample_count())
             != verification.paused_sample_count
@@ -2195,14 +2229,16 @@ fn require_unstarted_countdown(
         .ok_or("Missing prepared launch observation")?;
     let record = session
         .game
+        .core_session()
         .flight_record()
         .ok_or("Missing unstarted countdown record")?;
     if record.header() != header
-        || session.game.configuration_identity() != Some(header.scenario)
-        || session.game.prepared_launch_state() != Some(initial)
+        || session.game.core_session().configuration_identity() != Some(header.scenario)
+        || session.game.core_session().prepared_launch_state() != Some(initial)
         || initial.tick_index() != 0
         || session
             .game
+            .core_session()
             .countdown_elapsed_seconds()
             .is_some_and(|elapsed| elapsed != 0.0)
         || record.sample_count() != 0
@@ -2219,7 +2255,10 @@ fn start_countdown(
     available: bool,
     elapsed: Duration,
 ) -> Result<(), String> {
-    require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
+    require_phase(
+        session.game.core_session().snapshot().phase(),
+        SessionPhase::BriefingReady,
+    )?;
     if !available || !verification.readiness.can_capture() {
         return Ok(());
     }
@@ -2227,11 +2266,12 @@ fn start_countdown(
         verification.countdown_header = Some(
             session
                 .game
+                .core_session()
                 .flight_record()
                 .ok_or("Missing prepared record")?
                 .header(),
         );
-        verification.launch_state = session.game.prepared_launch_state();
+        verification.launch_state = session.game.core_session().prepared_launch_state();
     }
     require_unstarted_countdown(verification, session)?;
     if verification.countdown_attempts >= MAX_COUNTDOWN_ATTEMPTS {
@@ -2240,7 +2280,7 @@ fn start_countdown(
     let input_trial = verification.stage == VerificationStage::InputTrialLaunch;
     session.action(MenuAction::Launch)?;
     require_phase(
-        session.game.snapshot().phase(),
+        session.game.core_session().snapshot().phase(),
         SessionPhase::Countdown {
             remaining_seconds: 3,
         },
@@ -2268,7 +2308,7 @@ fn observe_countdown_launch(
 ) -> Result<(), String> {
     if !countdown_stage(verification.stage)
         || !matches!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
         )
     {
@@ -2285,6 +2325,7 @@ fn observe_countdown_launch(
         .ok_or("Missing prepared launch observation")?;
     let record = session
         .game
+        .core_session()
         .flight_record()
         .ok_or("Missing launched record")?;
     let first = record
@@ -2293,7 +2334,7 @@ fn observe_countdown_launch(
         .ok_or("Missing launch record initial sample")?;
     if elapsed.saturating_sub(started) < Duration::from_millis(2800)
         || record.header() != header
-        || session.game.configuration_identity() != Some(header.scenario)
+        || session.game.core_session().configuration_identity() != Some(header.scenario)
         || first.tick_index != 0
         || first.fraction != 0.0
         || first.flight_state != initial.flight_state()
@@ -2308,6 +2349,7 @@ fn observe_countdown_launch(
         elapsed.saturating_sub(started),
         session
             .game
+            .core_session()
             .snapshot()
             .tail_flight_state()
             .map(|state| state.tick_index())
@@ -2323,7 +2365,8 @@ fn recover_processing_delay(
     normal_frame: bool,
     readiness: &RenderReadiness,
 ) -> Result<bool, String> {
-    let SessionPhase::FlightPaused { reasons } = session.game.snapshot().phase() else {
+    let SessionPhase::FlightPaused { reasons } = session.game.core_session().snapshot().phase()
+    else {
         *observed = false;
         return Ok(false);
     };
@@ -2353,7 +2396,10 @@ fn recover_processing_delay(
     }
     if normal_frame && readiness.can_capture() {
         session.action(MenuAction::Resume)?;
-        require_phase(session.game.snapshot().phase(), SessionPhase::FlightRunning)?;
+        require_phase(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning,
+        )?;
         println!(
             "GPU verification explicitly resumed after ProcessingDelay recovery outside a continuous observation interval."
         );
@@ -2411,7 +2457,10 @@ fn queue_ui_control(commands: &mut Commands, id: &'static str, range_position: O
 fn focus_briefing_navigation(world: &mut World) -> Result<Entity, String> {
     let platform = super::ui::platform_input(world);
     let session = world.resource::<NativeSession>();
-    require_phase(session.game.snapshot().phase(), SessionPhase::BriefingReady)?;
+    require_phase(
+        session.game.core_session().snapshot().phase(),
+        SessionPhase::BriefingReady,
+    )?;
     let view = session.ui_view(&platform)?;
     let label = view
         .panels
@@ -2423,7 +2472,7 @@ fn focus_briefing_navigation(world: &mut World) -> Result<Entity, String> {
                     control.content,
                     GameUiControlContent::Button {
                         action: GameUiAction::Session {
-                            command: GameUiSessionCommand::StartCountdown {},
+                            command: SessionCommand::StartCountdown {},
                         },
                         ..
                     }
@@ -2487,6 +2536,7 @@ mod tests {
     use bevy::shader::ShaderCacheError;
     use bevy::tasks::TaskPoolBuilder;
     use birdman_game_core::{PauseReason, SessionPhase};
+    use birdman_game_session::application::ExternalPauseReason;
     use birdman_game_session::game_ui::{GameUiAnalysisChart, GameUiResultTab};
     use std::time::Duration;
 
@@ -2565,17 +2615,20 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .configuration_identity();
         let initial = app
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .prepared_launch_state();
         app.update();
         assert!(matches!(
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase(),
             SessionPhase::Countdown { .. }
@@ -2589,14 +2642,29 @@ mod tests {
         }
         app.update();
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-        assert_eq!(session.game.configuration_identity(), identity);
-        assert_eq!(session.game.prepared_launch_state(), initial);
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
-        assert_eq!(session.game.countdown_token(), None);
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            identity
+        );
+        assert_eq!(session.game.core_session().prepared_launch_state(), initial);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
+        assert_eq!(session.game.core_session().countdown_token(), None);
         assert!(
             session
                 .game
+                .core_session()
                 .flight_record()
                 .unwrap()
                 .finalization()
@@ -2623,6 +2691,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::Countdown { .. }
@@ -2638,14 +2707,25 @@ mod tests {
         );
         let session = app.world().resource::<NativeSession>();
         assert_eq!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::Countdown {
                 remaining_seconds: 3
             }
         );
-        assert_eq!(session.game.configuration_identity(), identity);
-        assert_eq!(session.game.prepared_launch_state(), initial);
-        assert_eq!(session.game.flight_record().unwrap().sample_count(), 0);
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            identity
+        );
+        assert_eq!(session.game.core_session().prepared_launch_state(), initial);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
     }
 
     #[test]
@@ -2668,6 +2748,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::BriefingReady
@@ -2693,6 +2774,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::Countdown { .. }
@@ -2732,10 +2814,14 @@ mod tests {
             app.update();
         }
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning
+        );
         assert!(
             session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
@@ -2743,7 +2829,13 @@ mod tests {
                 > 0
         );
         assert_eq!(
-            session.game.flight_record().unwrap().samples()[0].tick_index,
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()[0]
+                .tick_index,
             0
         );
         app.world_mut()
@@ -2804,6 +2896,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::BriefingReady
@@ -2880,6 +2973,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::BriefingReady
@@ -2901,6 +2995,7 @@ mod tests {
                     app.world()
                         .resource::<NativeSession>()
                         .game
+                        .core_session()
                         .snapshot()
                         .phase(),
                     SessionPhase::Countdown { .. }
@@ -2933,6 +3028,7 @@ mod tests {
             app.world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .flight_record()
                 .unwrap()
                 .sample_count(),
@@ -2982,6 +3078,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::BriefingReady
@@ -3034,6 +3131,7 @@ mod tests {
                 .world()
                 .resource::<NativeSession>()
                 .game
+                .core_session()
                 .snapshot()
                 .phase()
                 == SessionPhase::FlightRunning
@@ -3042,10 +3140,28 @@ mod tests {
             }
         }
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-        let state = session.game.snapshot().tail_flight_state().unwrap();
-        let sample = session.game.flight_record().unwrap().samples()[0];
-        let samples = session.game.flight_record().unwrap().sample_count();
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning
+        );
+        let state = session
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        let sample = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()[0];
+        let samples = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
         let identity = app
             .world()
             .resource::<super::Verification>()
@@ -3057,11 +3173,19 @@ mod tests {
         app.update();
         let session = app.world().resource::<NativeSession>();
         assert!(
-            matches!(session.game.snapshot().phase(), SessionPhase::FlightPaused { reasons } if reasons.contains(PauseReason::ProcessingDelay))
+            matches!(session.game.core_session().snapshot().phase(), SessionPhase::FlightPaused { reasons } if reasons.contains(PauseReason::ProcessingDelay))
         );
-        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
         assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
+            session.game.core_session().snapshot().tail_flight_state(),
+            Some(state)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             samples
         );
         app.world_mut()
@@ -3070,13 +3194,32 @@ mod tests {
             ));
         app.update();
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
         assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning
+        );
+        assert_eq!(
+            session.game.core_session().snapshot().tail_flight_state(),
+            Some(state)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             samples
         );
-        assert_eq!(session.game.flight_record().unwrap().samples()[0], sample);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()[0],
+            sample
+        );
         let verification = app.world().resource::<super::Verification>();
         assert!(verification.failure.is_none());
         assert_eq!(verification.capture_identity(), identity);
@@ -3108,6 +3251,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 SessionPhase::BriefingReady
@@ -3129,6 +3273,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .flight_record()
                     .unwrap()
                     .sample_count(),
@@ -3164,13 +3309,28 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .configuration_identity();
         let entity = focus_briefing_navigation(app.world_mut()).unwrap();
         assert_eq!(app.world().resource::<InputFocus>().get(), Some(entity));
         let session = app.world().resource::<NativeSession>();
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-        assert_eq!(session.game.configuration_identity(), identity);
-        assert_eq!(session.game.playback_record().unwrap().sample_count(), 0);
+        assert_eq!(
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::BriefingReady
+        );
+        assert_eq!(
+            session.game.core_session().configuration_identity(),
+            identity
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .playback_record()
+                .unwrap()
+                .sample_count(),
+            0
+        );
     }
 
     #[test]
@@ -3206,6 +3366,7 @@ mod tests {
                 app.world()
                     .resource::<NativeSession>()
                     .game
+                    .core_session()
                     .snapshot()
                     .phase(),
                 phase
@@ -3248,6 +3409,7 @@ mod tests {
         let session = app.world().resource::<NativeSession>();
         let midpoint = session
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .duration_seconds()
@@ -3274,13 +3436,20 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .configuration_identity();
         queue_ui_control(&mut app.world_mut().commands(), "game-result-retry", None);
         app.world_mut().flush();
         {
             let session = app.world().resource::<NativeSession>();
-            assert_eq!(session.game.snapshot().phase(), SessionPhase::BriefingReady);
-            assert_eq!(session.game.configuration_identity(), identity);
+            assert_eq!(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::BriefingReady
+            );
+            assert_eq!(
+                session.game.core_session().configuration_identity(),
+                identity
+            );
             assert_eq!(session.ui.result_tab, GameUiResultTab::Summary);
             assert!(!session.ui.technical_open);
             assert_eq!(session.ui.analysis_time_seconds, 0.0);
@@ -3301,6 +3470,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .snapshot()
             .result()
             .unwrap();
@@ -3308,6 +3478,7 @@ mod tests {
             .world()
             .resource::<NativeSession>()
             .game
+            .core_session()
             .flight_record()
             .unwrap()
             .sample_count();
@@ -3321,9 +3492,17 @@ mod tests {
             let session = app.world().resource::<NativeSession>();
             assert_eq!(session.ui.result_tab, GameUiResultTab::Summary);
             assert!(session.ui.technical_open);
-            assert_eq!(session.game.snapshot().result(), Some(terminal));
             assert_eq!(
-                session.game.flight_record().unwrap().sample_count(),
+                session.game.core_session().snapshot().result(),
+                Some(terminal)
+            );
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
                 samples
             );
         }
@@ -3352,9 +3531,17 @@ mod tests {
         assert_eq!(app.world().resource::<InputFocus>().get(), Some(replay));
         let session = app.world().resource::<NativeSession>();
         assert!(session.ui.technical_open);
-        assert_eq!(session.game.snapshot().result(), Some(terminal));
         assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
+            session.game.core_session().snapshot().result(),
+            Some(terminal)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             samples
         );
     }
@@ -3574,18 +3761,21 @@ mod tests {
         assert_eq!(metrics.maximum_delta, Duration::from_millis(100));
         assert_eq!(metrics.pauses, 0);
         assert_eq!(interval.progress(), 1.0);
-        let paused_phases =
-            [PauseReason::ProcessingDelay, PauseReason::DocumentHidden].map(|reason| {
-                let mut session = NativeSession::default();
-                for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-                    session.action(action).unwrap();
-                }
-                for _ in 0..3 {
-                    session.presentation_frame(1.0);
-                }
-                session.game.pause(reason).unwrap();
-                session.game.snapshot().phase()
-            });
+        let paused_phases = [
+            ExternalPauseReason::ProcessingDelay,
+            ExternalPauseReason::DocumentHidden,
+        ]
+        .map(|reason| {
+            let mut session = NativeSession::default();
+            for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
+                session.action(action).unwrap();
+            }
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            session.game.observe_availability(reason, false).unwrap();
+            session.game.core_session().snapshot().phase()
+        });
         for (phase, delta, pauses) in [
             (paused_phases[0], Duration::from_millis(200), 1),
             (paused_phases[1], Duration::from_millis(16), 1),
@@ -3796,8 +3986,18 @@ mod tests {
         for _ in 0..3 {
             session.presentation_frame(1.0);
         }
-        let state = session.game.snapshot().tail_flight_state().unwrap();
-        let sample_count = session.game.flight_record().unwrap().sample_count();
+        let state = session
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        let sample_count = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .sample_count();
         let mut observed = false;
         let mut readiness = RenderReadiness::default();
         session.observe_frame(true, true);
@@ -3814,7 +4014,7 @@ mod tests {
         assert!(observed);
         session.observe_frame(true, false);
         assert!(matches!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::FlightPaused { reasons } if reasons.is_empty()
         ));
         assert!(
@@ -3845,13 +4045,21 @@ mod tests {
             .unwrap()
         );
         assert!(matches!(
-            session.game.snapshot().phase(),
+            session.game.core_session().snapshot().phase(),
             SessionPhase::FlightPaused { reasons } if reasons.is_empty()
         ));
         session.tick(super::FlightInput::default());
-        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
         assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
+            session.game.core_session().snapshot().tail_flight_state(),
+            Some(state)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             sample_count
         );
         assert!(
@@ -3865,16 +4073,28 @@ mod tests {
             .unwrap()
         );
         assert!(!observed);
-        assert_eq!(session.game.snapshot().phase(), SessionPhase::FlightRunning);
-        assert_eq!(session.game.snapshot().tail_flight_state(), Some(state));
         assert_eq!(
-            session.game.flight_record().unwrap().sample_count(),
+            session.game.core_session().snapshot().phase(),
+            SessionPhase::FlightRunning
+        );
+        assert_eq!(
+            session.game.core_session().snapshot().tail_flight_state(),
+            Some(state)
+        );
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count(),
             sample_count
         );
         session.tick(super::FlightInput::default());
         assert_eq!(
             session
                 .game
+                .core_session()
                 .snapshot()
                 .tail_flight_state()
                 .unwrap()
@@ -3898,15 +4118,33 @@ mod tests {
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
-            session.game.pause(PauseReason::ProcessingDelay).unwrap();
+            session
+                .game
+                .observe_availability(ExternalPauseReason::ProcessingDelay, false)
+                .unwrap();
             let mut observed = additional.is_some();
             if let Some(reason) = additional {
-                session.game.pause(reason).unwrap();
+                if reason == PauseReason::Manual {
+                    session.action(MenuAction::Pause).unwrap();
+                } else {
+                    let reason = match reason {
+                        PauseReason::DocumentHidden => ExternalPauseReason::DocumentHidden,
+                        PauseReason::TrackingSuspended => ExternalPauseReason::TrackingSuspended,
+                        PauseReason::ProcessingDelay => ExternalPauseReason::ProcessingDelay,
+                        PauseReason::Manual => unreachable!(),
+                    };
+                    session.game.observe_availability(reason, false).unwrap();
+                }
             } else {
                 session.observe_frame(true, false);
             }
-            let before = session.game.snapshot();
-            let sample_count = session.game.flight_record().unwrap().sample_count();
+            let before = session.game.core_session().snapshot();
+            let sample_count = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .sample_count();
             assert!(
                 recover_processing_delay(
                     &mut observed,
@@ -3918,9 +4156,14 @@ mod tests {
                 .unwrap_err()
                 .starts_with("Unexpected core pause")
             );
-            assert_eq!(session.game.snapshot(), before);
+            assert_eq!(session.game.core_session().snapshot(), before);
             assert_eq!(
-                session.game.flight_record().unwrap().sample_count(),
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count(),
                 sample_count
             );
         }
@@ -3960,12 +4203,15 @@ mod tests {
             .unwrap()
         );
         assert!(!observed);
-        session.game.pause(PauseReason::Manual).unwrap();
         session
             .game
-            .clear_pause_reason(PauseReason::Manual)
+            .observe_availability(ExternalPauseReason::ProcessingDelay, false)
             .unwrap();
-        let before = session.game.snapshot();
+        session
+            .game
+            .observe_availability(ExternalPauseReason::ProcessingDelay, true)
+            .unwrap();
+        let before = session.game.core_session().snapshot();
         assert!(
             recover_processing_delay(
                 &mut observed,
@@ -3977,7 +4223,7 @@ mod tests {
             .unwrap_err()
             .contains("Unexpected core pause")
         );
-        assert_eq!(session.game.snapshot(), before);
+        assert_eq!(session.game.core_session().snapshot(), before);
     }
 
     #[test]

@@ -182,9 +182,13 @@ impl HybridGameSessionBridge {
 impl HybridGameSessionBridge {
     fn summary_internal(&self) -> Result<String, BoundaryError> {
         let context = self.record_context()?;
-        let record = self.session.playback_record().ok_or(BoundaryError::Record(
-            crate::hybrid_record::HybridRecordError::RecordUnavailable,
-        ))?;
+        let record = self
+            .session
+            .core_session()
+            .playback_record()
+            .ok_or(BoundaryError::Record(
+                crate::hybrid_record::HybridRecordError::RecordUnavailable,
+            ))?;
         let summary = record.summary().map_err(|error| {
             BoundaryError::Record(crate::hybrid_record::HybridRecordError::Query(error))
         })?;
@@ -199,11 +203,15 @@ impl HybridGameSessionBridge {
 
     fn wind_grid_internal(&self, request: GridRequest) -> Result<String, BoundaryError> {
         let context = self.record_context()?;
-        let record = self.session.playback_record().ok_or(BoundaryError::Record(
-            crate::hybrid_record::HybridRecordError::RecordUnavailable,
-        ))?;
+        let record = self
+            .session
+            .core_session()
+            .playback_record()
+            .ok_or(BoundaryError::Record(
+                crate::hybrid_record::HybridRecordError::RecordUnavailable,
+            ))?;
         let identity = record.header().scenario;
-        let source = match self.session.snapshot().phase() {
+        let source = match self.session.core_session().snapshot().phase() {
             SessionPhase::Attract => EnvironmentSource::Attract,
             SessionPhase::Replay if self.archived.is_some() => EnvironmentSource::Archive,
             SessionPhase::Result | SessionPhase::Replay => EnvironmentSource::Record,
