@@ -36,6 +36,10 @@ describe("synthetic Birdman airframe", () => {
       const right = textureFor("right-wing");
       const leftData = left.image.data as Uint8Array;
       const rightData = right.image.data as Uint8Array;
+      for (const texture of [left, right]) {
+        expect([texture.image.width, texture.image.height, texture.image.data?.byteLength])
+          .toEqual([1024, 256, 1024 * 256 * 4]);
+      }
       const lowerHalf = leftData.slice(1024 * 128 * 4);
       const image = decoded[0];
       if (image === undefined || image.onload === null) throw new Error("Missing decal load callback");
@@ -47,12 +51,13 @@ describe("synthetic Birdman airframe", () => {
         const index = (50 * 1024 + 512) * 4;
         expect(Array.from(pixels.slice(index, index + 4))).toEqual([220, 224, 218, 255]);
       }
-      expect(leftData.slice(1024 * 128 * 4)).toEqual(lowerHalf);
+      expect(lowerHalf.every((value, index) => value === leftData[1024 * 128 * 4 + index])).toBe(true);
       const retained = leftData.slice();
       image.naturalWidth = 1;
       late();
       expect(warning).toHaveBeenCalledTimes(1);
-      expect(leftData).toEqual(retained);
+      expect(leftData.byteLength).toBe(retained.byteLength);
+      expect(retained.every((value, index) => value === leftData[index])).toBe(true);
       expect(ready).toHaveBeenCalledTimes(1);
       const disposeLeft = vi.spyOn(left, "dispose");
       const disposeRight = vi.spyOn(right, "dispose");
