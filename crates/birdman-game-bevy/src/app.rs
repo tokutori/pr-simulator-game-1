@@ -134,6 +134,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     .add_plugins((
         MaterialPlugin::<water::WaterMaterial>::default(),
         bevy::input_focus::tab_navigation::TabNavigationPlugin,
+        screen_render::timing::ScreenTimingPlugin {
+            full_diagnostics: water_verification.is_some(),
+        },
     ))
     .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
     .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
@@ -182,6 +185,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                     .run_if(any_match_filter::<(With<PrimaryWindow>, Changed<Window>)>),
                 water::apply_environment,
                 water::apply_quality,
+                screen_render::observe_auto,
                 advance_presentation,
                 world::project_world,
                 world::project_main_wing,
@@ -205,16 +209,13 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_completion = None;
     if let Some(directory) = verification_directory {
         if water_verification.is_some() {
-            app.add_plugins((
-                bevy::diagnostic::FrameTimeDiagnosticsPlugin::default(),
-                bevy::render::diagnostic::RenderDiagnosticsPlugin,
-            ))
-            .add_systems(
-                Update,
-                verification::maintain_timing_history
-                    .after(bevy::diagnostic::FrameTimeDiagnosticsPlugin::diagnostic_system)
-                    .before(verification::project_observer),
-            );
+            app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
+                .add_systems(
+                    Update,
+                    verification::maintain_timing_history
+                        .after(bevy::diagnostic::FrameTimeDiagnosticsPlugin::diagnostic_system)
+                        .before(verification::project_observer),
+                );
         }
         let (verification, completion) = verification::Verification::try_new(
             directory,

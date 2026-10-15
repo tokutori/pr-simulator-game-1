@@ -40,6 +40,7 @@ use birdman_game_session::{
     game_ui::{
         GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiReplayView, GameUiResultTab,
     },
+    screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection},
     screen_render_scale::ScreenRenderScale,
 };
 use std::{
@@ -655,6 +656,8 @@ enum VerificationStage {
     RenderScale75,
     RenderScale50,
     RenderScaleRestored,
+    RenderScaleAuto,
+    RenderScaleAutoRestored,
     WaterQualitySwapped,
     WaterQualityRestored,
     WaterResumed,
@@ -685,6 +688,10 @@ impl VerificationStage {
             Self::RenderScaleRestored => {
                 Some((ScreenRenderScale::Full, "03h-paused-scale-restored.png"))
             }
+            Self::RenderScaleAutoRestored => Some((
+                ScreenRenderScale::Full,
+                "03j-paused-scale-auto-restored.png",
+            )),
             _ => None,
         }
     }
@@ -709,6 +716,8 @@ impl VerificationStage {
                         | Self::RenderScale75
                         | Self::RenderScale50
                         | Self::RenderScaleRestored
+                        | Self::RenderScaleAuto
+                        | Self::RenderScaleAutoRestored
                         | Self::WaterQualitySwapped
                         | Self::WaterQualityRestored,
                     SessionPhase::FlightPaused { .. },
@@ -876,6 +885,7 @@ pub(crate) struct Verification {
     paused_sample_count: usize,
     paused_water_time: Option<f32>,
     paused_window: Option<(UVec2, f32)>,
+    auto_capture_scale: Option<ScreenRenderScale>,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
 }
@@ -924,6 +934,7 @@ impl Verification {
                 paused_sample_count: 0,
                 paused_water_time: None,
                 paused_window: None,
+                auto_capture_scale: None,
                 failure: None,
                 completion: Some(sender),
             },
@@ -950,6 +961,7 @@ impl Verification {
         self.readiness.confirmation_frames = 0;
         self.briefing_navigation = None;
         self.processing_delay_reported = false;
+        self.auto_capture_scale = None;
     }
 
     fn capture(&mut self, commands: &mut Commands, filename: &str) {
@@ -1475,6 +1487,7 @@ fn advance_step(
             | VerificationStage::WaterQualityRestored
             | VerificationStage::Resume
             | VerificationStage::WaterResumed
+            | VerificationStage::RenderScaleAuto
     ) || scale_capture.is_some()
     {
         Some(presentation.water_time(session, verification.water_case)?)
@@ -1665,6 +1678,14 @@ fn advance_step(
                     VerificationStage::RenderScaleRestored
                 }
                 VerificationStage::RenderScaleRestored => {
+                    queue_ui_control(commands, "presentation-render-scale-auto", None);
+                    VerificationStage::RenderScaleAuto
+                }
+                VerificationStage::RenderScaleAuto => {
+                    queue_ui_control(commands, "presentation-render-scale-100", None);
+                    VerificationStage::RenderScaleAutoRestored
+                }
+                VerificationStage::RenderScaleAutoRestored => {
                     queue_ui_control(commands, "game-pause-settings-back", None);
                     VerificationStage::Resume
                 }
@@ -2023,7 +2044,9 @@ fn advance_step(
         VerificationStage::RenderScaleFull
         | VerificationStage::RenderScale75
         | VerificationStage::RenderScale50
-        | VerificationStage::RenderScaleRestored => {
+        | VerificationStage::RenderScaleRestored
+        | VerificationStage::RenderScaleAuto
+        | VerificationStage::RenderScaleAutoRestored => {
             if !matches!(phase, SessionPhase::FlightPaused { .. })
                 || session.game.core_session().snapshot().tail_flight_state()
                     != verification.paused_state
@@ -2042,9 +2065,55 @@ fn advance_step(
             {
                 return Err("Screen render scale changed Window size or UI scale".into());
             }
-            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+            if verification.stage == VerificationStage::RenderScaleAuto {
+                let snapshot = presentation.rendering.snapshot();
+                let projection_settled = verification.auto_capture_scale == Some(snapshot.applied);
+                verification.auto_capture_scale = Some(snapshot.applied);
+                if !matches!(
+                    snapshot.selection,
+                    ScreenRenderSelection::Auto {
+                        manual_scale: ScreenRenderScale::Full
+                    }
+                ) {
+                    return Err("Auto verification did not execute the shared Auto control".into());
+                }
+                if let ScreenRenderAutoStatus::Failed { cause } = &snapshot.status {
+                    return Err(format!("Auto resource application failed: {cause}"));
+                }
+                let accepted = matches!(
+                    snapshot.status,
+                    ScreenRenderAutoStatus::Ready | ScreenRenderAutoStatus::CoverageLimited
+                ) || snapshot.applied != ScreenRenderScale::Full;
+                let unsupported =
+                    matches!(snapshot.status, ScreenRenderAutoStatus::Unsupported { .. });
+                let observed = verification.stage_started.elapsed();
+                if observed > Duration::from_secs(8) {
+                    return Err(format!(
+                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}"
+                    ));
+                }
+                if (unsupported || (accepted && observed >= Duration::from_secs(4)))
+                    && projection_settled
+                    && verification.readiness.can_capture()
+                {
+                    presentation.verify_render_scale(snapshot.applied, window)?;
+                    println!(
+                        "Screen Auto observation: accepted_gpu={accepted}, applied_change={}, snapshot={snapshot:?}; manual restoration follows",
+                        snapshot.applied != ScreenRenderScale::Full
+                    );
+                    verification.capture(commands, "03i-paused-scale-auto.png");
+                }
+            } else if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
             {
+                if verification.stage == VerificationStage::RenderScaleAutoRestored
+                    && presentation.rendering.snapshot().selection
+                        != (ScreenRenderSelection::Manual {
+                            scale: ScreenRenderScale::Full,
+                        })
+                {
+                    return Err("Auto verification did not restore explicit Manual 100%".into());
+                }
                 let (expected, filename) = scale_capture.ok_or("Missing scale capture stage")?;
                 presentation.verify_render_scale(expected, window)?;
                 verification.capture(commands, filename);
@@ -3741,6 +3810,37 @@ mod tests {
                     .resolution
                     .physical_size(),
                 bevy::prelude::UVec2::new(800, 600)
+            );
+        }
+        for selection in [
+            ScreenRenderSelection::Auto {
+                manual_scale: ScreenRenderScale::Full,
+            },
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::Full,
+            },
+        ] {
+            queue_ui_control(
+                &mut app.world_mut().commands(),
+                "presentation-render-scale-auto",
+                None,
+            );
+            app.world_mut().flush();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<super::NativeScreenRender>()
+                    .snapshot()
+                    .selection,
+                selection
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
+                paused
             );
         }
         queue_ui_control(

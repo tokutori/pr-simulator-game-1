@@ -710,7 +710,7 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         stored_records_available: false,
         flight_log_available: false,
         supported_replay_cameras: vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase],
-        screen_render_scale: world.resource::<NativeScreenRender>().applied(),
+        screen_render_scale: world.resource::<NativeScreenRender>().snapshot(),
         water_quality: shared_quality(quality.applied()),
         water_quality_operation: if let Some(requested) = quality.pending() {
             GameUiWaterQualityOperation::Applying {
@@ -836,6 +836,10 @@ pub(crate) fn button_actions(world: &mut World) {
                         command: GameUiPlatformCommand::SetScreenRenderScale { scale },
                     } => screen_render::apply_scale(world, scale)
                         .map_err(|cause| format!("3D描画倍率を適用できない: {cause:?}"))?,
+                    GameUiEffect::Platform {
+                        command: GameUiPlatformCommand::SetScreenRenderAuto { enabled },
+                    } => screen_render::select_auto(world, enabled)
+                        .map_err(|cause| format!("3D描画倍率Autoを適用できない: {cause:?}"))?,
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetReplayCamera { camera },
                     } => {
@@ -2457,6 +2461,7 @@ mod tests {
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
             .init_resource::<NativeScreenRender>()
+            .init_resource::<Time<Real>>()
             .init_resource::<super::super::CameraMode>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(ButtonInput::<KeyCode>::default())
@@ -2614,6 +2619,7 @@ mod tests {
     #[test]
     fn shared_render_scale_controls_apply_the_native_target_and_report_selected_value() {
         use super::super::world::WorldProjection;
+        use birdman_game_session::screen_render_auto::ScreenRenderSelection;
         use birdman_game_session::screen_render_scale::ScreenRenderScale;
 
         let mut app = app(1280.0, 720.0);
@@ -2648,7 +2654,10 @@ mod tests {
             (ScreenRenderScale::Full, "presentation-render-scale-100"),
         ] {
             press(&mut app, id);
-            assert_eq!(platform_input(app.world_mut()).screen_render_scale, scale);
+            assert_eq!(
+                platform_input(app.world_mut()).screen_render_scale.applied,
+                scale
+            );
             assert_eq!(
                 app.world()
                     .resource::<NativeSession>()
@@ -2683,6 +2692,42 @@ mod tests {
                         ))
             );
         }
+        press(&mut app, "presentation-render-scale-auto");
+        assert_eq!(
+            platform_input(app.world_mut())
+                .screen_render_scale
+                .selection,
+            ScreenRenderSelection::Auto {
+                manual_scale: ScreenRenderScale::Full
+            }
+        );
+        press(&mut app, "presentation-render-scale-auto");
+        assert_eq!(
+            platform_input(app.world_mut())
+                .screen_render_scale
+                .selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::Full
+            }
+        );
+        press(&mut app, "presentation-render-scale-auto");
+        press(&mut app, "presentation-render-scale-75");
+        assert_eq!(
+            platform_input(app.world_mut())
+                .screen_render_scale
+                .selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::ThreeQuarters
+            }
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
+            before
+        );
     }
 
     #[test]
