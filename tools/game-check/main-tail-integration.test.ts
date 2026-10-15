@@ -585,6 +585,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(trial.documentRef.querySelector(`[data-control-id="presentation-render-scale-${scale}"]`)?.getAttribute("aria-pressed")).toBe("true");
       expect(trial.tick).not.toHaveBeenCalled();
     }
+    trial.click("presentation-render-scale-auto");
+    expect(trial.renderer.setScreenRenderAuto.mock.lastCall).toEqual([true]);
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("true");
+    trial.click("presentation-render-scale-100");
+    expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("false");
+    expect(trial.tick).not.toHaveBeenCalled();
     trial.click("game-setup-start");
     trial.launch();
     trial.frame(0);

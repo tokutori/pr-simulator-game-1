@@ -40,6 +40,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const scales = choices.filter((control) => control.id.startsWith("presentation-render-scale-"));
     expect(scales.map((control) => ({ id: control.id, label: control.label, enabled: control.enabled,
       selected: control.kind === "button" && control.presentation?.kind === "choice" && control.presentation.selected }))).toEqual(presentation_mode === "screen" ? [
+      { id: "presentation-render-scale-auto", label: "Auto", enabled: true, selected: false },
       { id: "presentation-render-scale-100", label: "100%", enabled: true, selected: true },
       { id: "presentation-render-scale-75", label: "75%", enabled: true, selected: false },
       { id: "presentation-render-scale-50", label: "50%", enabled: true, selected: false }
@@ -127,6 +128,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         id: button.getAttribute("data-control-id"), label: button.querySelector(".screen-ui-choice-label")?.textContent,
         selected: button.getAttribute("aria-pressed")
       }))).toEqual([
+        { id: "presentation-render-scale-auto", label: "Auto", selected: "false" },
         { id: "presentation-render-scale-100", label: "● 100%", selected: "true" },
         { id: "presentation-render-scale-75", label: "75%", selected: "false" },
         { id: "presentation-render-scale-50", label: "50%", selected: "false" }

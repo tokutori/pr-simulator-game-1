@@ -8,7 +8,7 @@ Desktop・WebXR・Phone VRのbackendと光学profileは [presentation契約](pre
 全Scene・overlayのScreen/VR対応を高品質描画に先行して確立する。
 簡易worldでもPilot視点、ゲーム進行、Result/Analysis/Replayを完成させてから景観品質を追求する。その後は水面反射・波面・表面模様を先行させ、地平線・対岸稜線、cockpit/wing/nose、近距離固定物、中距離landmark、hazeの順に追加する。湖面描画は簡易worldで独立して開発し、地形・空の完成を待たない。
 
-## Screenの手動3D描画解像度
+## Screenの3D描画解像度
 
 Flight SetupとPause Settingsで100%・75%・50%を選択する。既定は100%である。
 候補・表示順・ラベル・Screen限定の操作受付は共有Rustの`ScreenRenderScale`とgame UIが所有する。
@@ -18,6 +18,11 @@ Webは元のdevice pixel ratioと選択倍率を分離し、Three.jsの公開`se
 Nativeは整数の物理寸法に共有`physical_size`を適用する。非整数DPRのWebでは最終段でfloorするため、整数化後に倍率を掛けるNativeとの投影差は各軸1 pixel以下となる。
 Phone VRは元の描画倍率を使用し、WebXRのcompositor解像度は変更しない。VR退出・開始失敗後は保持したScreen設定へ復帰する。
 反射targetはScreenの有効3D寸法に追随し、既存の上限・下限を維持する。解像度の低下はGPU負荷を抑える選択肢であり、80 FPSの達成保証は含まない。
+
+Autoは共有Rustの`ScreenRenderAutoController`が同じ3候補を一段ずつ選択する。ユーザーのAuto/Manual選択、保持した手動値、実際の適用済み倍率を分離し、資源交換が成功したACKだけを適用済み値へ反映する。極小viewportではACKを保留し、交換失敗時は既存資源と原因を保持する。
+Webは`EXT_disjoint_timer_query_webgl2`で反射と主描画を含むGPU command spanを非同期計測する。Nativeもsource frame・source時刻・epochに対応したGPU spanだけを受理する。通常のManualではAuto計測用GPU queryを発行しない。計測非対応は原因付きで表示し、欠損を0 msとして補完しない。
+2秒窓の8 ms区間ごとの有効GPU sample最大値を代表値とし、そのp95を判断に用いる。12.5 ms超は最低8代表値・1秒のsource span・500 ms以内の鮮度で下降を許可する。9.5 ms未満の上昇は最低30代表値・1.8秒のspan・100 ms以内の鮮度・同時間域のsource frame受領率90%以上を必要とする。適用後3秒は次の変更を保留する。
+このp95は選別したGPU spanの統計である。全frame時間、CPU時間、present待機、全raw sampleのp95と区別する。欠損は有効な高負荷の履歴を消去せず、coverage不足時は上昇を保留する。resize、backend切替、context復帰、環境・描画品質変更、中断、disjointで古い窓を失効する。計測履歴と時刻はUIの構造cache keyへ含めない。
 
 ## 湖面
 
