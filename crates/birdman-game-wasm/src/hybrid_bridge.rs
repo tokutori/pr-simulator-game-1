@@ -150,8 +150,7 @@ pub struct HybridGameSessionBridge {
     session: ApplicationSession,
     archived: Option<record::ArchiveMetadata>,
     ui: birdman_game_session::game_ui::GameUiState,
-    ui_view_cache: Option<game_ui::CachedUiView>,
-    ui_view_revision: u32,
+    ui_view_cache: Option<birdman_game_session::game_ui::GameUiView>,
 }
 
 #[wasm_bindgen]
@@ -339,7 +338,6 @@ impl HybridGameSessionBridge {
             archived: None,
             ui: birdman_game_session::game_ui::GameUiState::default(),
             ui_view_cache: None,
-            ui_view_revision: 0,
         }
     }
 

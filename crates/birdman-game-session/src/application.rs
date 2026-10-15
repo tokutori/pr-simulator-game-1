@@ -4,6 +4,7 @@ pub(crate) mod commands;
 
 pub use commands::{ApplicationError, PreparedFlight, SessionCommand};
 
+use crate::game_ui::{GameUiError, GameUiStructureCache, GameUiStructureKey};
 use birdman_game_core::{
     BriefingFailure, ControlMode, CountdownProgress, FlightRecord, GameSession, GameSessionError,
     PauseReason, SessionPhase, SessionSnapshot, TailFlightTickInput,
@@ -60,6 +61,7 @@ pub struct ApplicationSession {
     seed: u64,
     prepared: Option<PreparedFlight>,
     attract: Option<AttractMetadata>,
+    ui_structure: GameUiStructureCache,
 }
 
 impl Default for ApplicationSession {
@@ -82,12 +84,18 @@ impl ApplicationSession {
             seed,
             prepared: None,
             attract: None,
+            ui_structure: GameUiStructureCache::default(),
         }
     }
 
     /// Borrows the canonical game for queries without exposing mutation.
     pub fn core_session(&self) -> &GameSession<'static> {
         &self.session
+    }
+
+    /// Observes the sole structural revision without owning UI selections or rendered resources.
+    pub fn observe_ui_structure(&mut self, key: GameUiStructureKey) -> Result<u32, GameUiError> {
+        self.ui_structure.observe(key)
     }
 
     /// Returns the retained player selection.
@@ -127,6 +135,7 @@ impl ApplicationSession {
         command: SessionCommand,
         readiness: BackendReadiness,
     ) -> Result<(), ApplicationError> {
+        self.ui_structure.invalidate();
         let result = match command {
             SessionCommand::OpenSetup {} => self.session.open_setup(),
             SessionCommand::ReturnToTitle {} => self.session.return_to_title(),
@@ -243,6 +252,7 @@ impl ApplicationSession {
 
     /// Opens a validated external record and discards the unrelated sealed live metadata.
     pub fn open_archived_replay(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
+        self.ui_structure.invalidate();
         self.session.open_archived_replay(record)?;
         self.prepared = None;
         Ok(())

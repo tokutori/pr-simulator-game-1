@@ -499,6 +499,85 @@ describe("layout-discriminated application session facade", () => {
     }
   });
 
+  it("uses the Rust structural revision for countdown, telemetry and complete pause reasons", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const platform = sharedGameUiPlatform();
+    try {
+      facade.executeOperation("open-setup");
+      facade.executeOperation("prepare");
+      facade.executeOperation("start-flight");
+      const full = vi.spyOn(bridge, "game_ui_view_json");
+      const frame = vi.spyOn(bridge, "game_ui_frame_json");
+      const lifecycle = vi.spyOn(bridge, "phase_code");
+      const retained = facade.readSharedUi(platform);
+      expect(lifecycle).not.toHaveBeenCalled();
+      facade.observeCountdown(facade.captureCountdownToken(), 1, true);
+      const countdown = facade.readSharedUi(platform);
+      expect(countdown.view_revision).toBe(retained.view_revision);
+      expect(countdown.description).toBe(retained.description);
+      expect(full).toHaveBeenCalledTimes(1);
+      expect(frame).toHaveBeenCalledTimes(1);
+      facade.observeCountdown(facade.captureCountdownToken(), 2, true);
+      const flight = facade.readSharedUi(platform);
+      advance(facade);
+      expect(facade.readSharedUi(platform).view_revision).toBe(flight.view_revision);
+      bridge.pause(0);
+      facade.readSharedUi(platform);
+      bridge.pause(1);
+      const hidden = facade.readSharedUi(platform);
+      bridge.pause(3);
+      const delayed = facade.readSharedUi(platform);
+      expect(delayed.view_revision).toBeGreaterThan(hidden.view_revision);
+      expect(delayed.description).toContain("ProcessingDelay");
+      expect(() => facade.executeSharedSessionCommand({ kind: "resume" })).toThrow();
+      expect(facade.readSharedUi(platform).view_revision).toBeGreaterThan(delayed.view_revision);
+    } finally { facade.dispose(); }
+  });
+
+  it("rechecks shared dependencies for stale frames and recovers a failed full projection", () => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const platform = sharedGameUiPlatform();
+    try {
+      const original = facade.readSharedUi(platform);
+      const changed = { ...platform, viewport: { ...platform.viewport, width: 500 } };
+      expect(() => bridge.game_ui_frame_json(original.view_revision, JSON.stringify(changed))).toThrow("StaleView");
+      const current = bridge.game_ui_view_revision(JSON.stringify(changed));
+      expect(current).toBeGreaterThan(original.view_revision);
+      const full = vi.spyOn(bridge, "game_ui_view_json").mockImplementationOnce(() => { throw new Error("projection failed"); });
+      expect(() => facade.readSharedUi(changed)).toThrow("projection failed");
+      const recovered = facade.readSharedUi(changed);
+      expect(recovered.view_revision).toBe(current);
+      expect(full).toHaveBeenCalledTimes(2);
+      expect(facade.readSharedUi(changed).view_revision).toBe(current);
+    } finally { facade.dispose(); }
+  });
+
+  it("rebuilds a same-header replacement even when intermediate archive phases were not observed", () => {
+    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    const other = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    const platform = sharedGameUiPlatform();
+    try {
+      for (const owner of [facade, other]) { launch(owner); advance(owner); }
+      advance(other);
+      for (const owner of [facade, other]) owner.executeOperation("abort");
+      const first = facade.exportRecordJson();
+      const second = other.exportRecordJson();
+      expect(first).not.toBe(second);
+      facade.openArchive(first);
+      const retained = facade.readSharedUi(platform);
+      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      facade.executeOperation("leave-replay");
+      facade.openArchive(second);
+      const replaced = facade.readSharedUi(platform);
+      expect(replaced.view_revision).toBeGreaterThan(retained.view_revision);
+      expect(facade.isAnalysisDatasetCurrent(dataset)).toBe(false);
+      expect(() => facade.executeSharedSessionCommand({ kind: "retry" })).toThrow();
+      expect(facade.readSharedUi(platform).view_revision).toBeGreaterThan(replaced.view_revision);
+    } finally { facade.dispose(); other.dispose(); }
+  });
+
   it("retains record series while frame queries update the analysis cursor and invalidate only query generations", () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());

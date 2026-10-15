@@ -74,6 +74,7 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
   & Omit<GameSessionOperationPort, "abort"> & {
     abort(): string;
     prepared_launch_snapshot_json(): string;
+    game_ui_view_revision(platformJson: string): number;
     game_ui_view_json(platformJson: string): string;
     game_ui_frame_json(expectedRevision: number, platformJson: string): string;
     game_ui_action_json(actionJson: string, platformJson: string): string;
@@ -237,7 +238,7 @@ abstract class SessionResourceOwner {
 export class TailAppSessionFacade extends SessionResourceOwner {
   readonly controlLayout = "tail_incidence";
   readonly flightPort: TailSessionPort;
-  private sharedUiCache: Readonly<{ key: string; view: GameUiView; source: RecordSourceToken }> | null = null;
+  private sharedUiCache: GameUiView | null = null;
 
   constructor(private readonly port: TailAppSessionPort, physicsHz: number) {
     super(port, physicsHz);
@@ -255,20 +256,18 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   readSharedUi(platform: GameUiPlatformInput): GameUiView {
     return this.observe(() => {
       const token = this.captureQueryToken();
-      const lifecycle = this.readLifecycle();
-      const key = JSON.stringify([platform, lifecycle.phaseCode, lifecycle.canResume, this.readDifficulty(), this.readPreparedConfiguration()]);
       const cached = this.sharedUiCache;
-      const sourceValid = lifecycle.phaseCode === 5 || lifecycle.phaseCode === 6 || cached !== null && this.recordSourceIsCurrent(cached.source);
       let view: GameUiView;
       const platformJson = encodeGameUiPlatformInput(platform);
-      if (cached !== null && cached.key === key && sourceValid) {
-        const frame = parseGameUiFrame(this.port.game_ui_frame_json(cached.view.view_revision, platformJson));
-        view = mergeGameUiFrame(cached.view, frame);
+      const revision = this.port.game_ui_view_revision(platformJson);
+      if (cached !== null && cached.view_revision === revision) {
+        const frame = parseGameUiFrame(this.port.game_ui_frame_json(revision, platformJson));
+        view = mergeGameUiFrame(cached, frame);
       } else {
         view = parseGameUiView(this.port.game_ui_view_json(platformJson));
       }
       if (this.acceptQuery(token, view).kind === "stale") throw new RangeError("Shared UI observation owner or generation changed");
-      this.sharedUiCache = Object.freeze({ key, view, source: this.captureRecordSourceToken() });
+      this.sharedUiCache = view;
       return view;
     });
   }
@@ -276,16 +275,12 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   updateSharedUi(action: GameUiAction, platform: GameUiPlatformInput): GameUiUpdate {
     return this.change(() => {
       const update = parseGameUiUpdate(this.port.game_ui_action_json(encodeGameUiAction(action), encodeGameUiPlatformInput(platform)));
-      if (action.kind !== "seek_analysis" && action.kind !== "seek_replay" && action.kind !== "toggle_replay_playing" && action.kind !== "set_replay_rate") {
-        this.sharedUiCache = null;
-      }
       return update;
     }, "retain_record");
   }
 
   executeSharedSessionCommand(command: SessionCommand): TailAppOperationResult {
     return this.change(() => {
-      this.sharedUiCache = null;
       this.port.apply_game_ui_session_command_json(JSON.stringify(command));
       if (command.kind === "start_countdown") return Object.freeze({ kind: "countdown-started" });
       if (command.kind === "abort") {

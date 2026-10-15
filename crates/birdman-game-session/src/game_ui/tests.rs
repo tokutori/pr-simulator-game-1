@@ -11,7 +11,7 @@ use birdman_game_format::{
     AssistanceLevel, DifficultyPreset, DifficultySettings, HudCue, InformationLevel, WeatherClass,
 };
 
-fn platform() -> GameUiPlatformInput {
+pub(super) fn platform() -> GameUiPlatformInput {
     GameUiPlatformInput {
         viewport: GameUiViewport {
             width: 1280.0,
@@ -37,10 +37,10 @@ fn platform() -> GameUiPlatformInput {
         stored_records: Vec::new(),
     }
 }
-fn difficulty() -> DifficultySettings {
+pub(super) fn difficulty() -> DifficultySettings {
     crate::default_difficulty(ControlMode::Manual)
 }
-fn context<'view>(
+pub(super) fn context<'view>(
     session: &'view GameSession<'static>,
     difficulty: DifficultySettings,
     platform: &'view GameUiPlatformInput,
@@ -90,6 +90,203 @@ fn finalized() -> GameSession<'static> {
         session.advance_tail_flight_tick(input).unwrap();
     }
     session
+}
+
+fn revision(
+    application: &mut crate::application::ApplicationSession,
+    state: &GameUiState,
+    platform: &GameUiPlatformInput,
+) -> u32 {
+    let key = GameUiStructureKey::new(
+        state,
+        &context(
+            application.core_session(),
+            application.display_difficulty(),
+            platform,
+        ),
+    );
+    application.observe_ui_structure(key).unwrap()
+}
+
+#[test]
+fn shared_revision_covers_view_inputs_and_retains_dynamic_analysis_time() {
+    let mut application = crate::application::ApplicationSession::default();
+    let mut state = GameUiState::default();
+    let mut platform = platform();
+    let initial = revision(&mut application, &state, &platform);
+    assert_eq!(initial, 1);
+    state.analysis_time_seconds = 2.0;
+    assert_eq!(revision(&mut application, &state, &platform), initial);
+    state.technical_open = true;
+    let selected = revision(&mut application, &state, &platform);
+    assert!(selected > initial);
+    platform.notification = "通知が変化した".to_owned();
+    let notified = revision(&mut application, &state, &platform);
+    assert!(notified > selected);
+    platform.viewport.width = 500.0;
+    assert!(revision(&mut application, &state, &platform) > notified);
+    let mut context = context(
+        application.core_session(),
+        application.display_difficulty(),
+        &platform,
+    );
+    let original = GameUiStructureKey::new(&state, &context);
+    context.preset = DifficultyPreset::Expert;
+    assert_ne!(GameUiStructureKey::new(&state, &context), original);
+    context.preset = application.display_difficulty().preset_label();
+    context.environment_readout = "別の環境説明";
+    assert_ne!(GameUiStructureKey::new(&state, &context), original);
+    context.environment_readout = "気象試験値";
+    context.identity = Some(crate::identity_for_selection(
+        crate::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42).unwrap(),
+    ));
+    assert_ne!(GameUiStructureKey::new(&state, &context), original);
+}
+
+#[test]
+fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_policy() {
+    use crate::application::{ApplicationSession, BackendReadiness, ExternalPauseReason};
+    let mut application = ApplicationSession::new(ControlMode::Manual, 3, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    let state = GameUiState::default();
+    let platform = platform();
+    let countdown = revision(&mut application, &state, &platform);
+    let token = application.core_session().countdown_token().unwrap();
+    let description = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        ),
+    )
+    .unwrap()
+    .description;
+    for _ in 0..2 {
+        application.observe_countdown(token, 1.0, true).unwrap();
+        assert_eq!(revision(&mut application, &state, &platform), countdown);
+        assert_eq!(
+            game_ui_view(
+                &state,
+                &context(
+                    application.core_session(),
+                    application.difficulty(),
+                    &platform
+                )
+            )
+            .unwrap()
+            .description,
+            description
+        );
+    }
+    application.observe_countdown(token, 1.0, true).unwrap();
+    let running = revision(&mut application, &state, &platform);
+    assert!(running > countdown);
+    application
+        .advance_tail_flight_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Hold,
+        ))
+        .unwrap();
+    assert_eq!(revision(&mut application, &state, &platform), running);
+    application
+        .execute(SessionCommand::Pause {}, BackendReadiness::Ready)
+        .unwrap();
+    application
+        .observe_availability(ExternalPauseReason::ProcessingDelay, false)
+        .unwrap();
+    let paused = revision(&mut application, &state, &platform);
+    application
+        .observe_availability(ExternalPauseReason::DocumentHidden, false)
+        .unwrap();
+    assert!(!application.core_session().can_resume());
+    let hidden = revision(&mut application, &state, &platform);
+    assert!(hidden > paused);
+    assert!(
+        application
+            .execute(SessionCommand::Resume {}, BackendReadiness::Ready)
+            .is_err()
+    );
+    assert!(revision(&mut application, &state, &platform) > hidden);
+}
+
+#[test]
+fn record_replacement_and_rejected_commands_invalidate_without_a_second_source_counter() {
+    use crate::application::{ApplicationSession, BackendReadiness};
+    let record = |nose_up| {
+        let mut session = launched();
+        for _ in 0..3 {
+            session
+                .advance_tail_flight_tick(TailFlightTickInput::new(
+                    TailPilotIntent::try_new(nose_up, 0.0).unwrap(),
+                    TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                    TailPilotPositionCommand::Hold,
+                ))
+                .unwrap();
+        }
+        let record = session.playback_record().unwrap();
+        birdman_game_core::FlightRecord::try_from_finalized_samples(
+            record.header(),
+            record.samples().to_vec(),
+            record.finalization().unwrap(),
+        )
+        .unwrap()
+    };
+    let mut application = ApplicationSession::default();
+    let state = GameUiState::default();
+    let platform = platform();
+    let first = record(0.0);
+    let second = record(0.1);
+    assert_eq!(first.header(), second.header());
+    assert_ne!(first.samples(), second.samples());
+    application.open_archived_replay(first).unwrap();
+    let original = revision(&mut application, &state, &platform);
+    application.seek_playback(0.005).unwrap();
+    application.set_playback_playing(true).unwrap();
+    application.set_playback_rate_code(2).unwrap();
+    application.advance_playback(0.001).unwrap();
+    assert_eq!(revision(&mut application, &state, &platform), original);
+    application
+        .execute(SessionCommand::LeaveReplay {}, BackendReadiness::Ready)
+        .unwrap();
+    application.open_archived_replay(second).unwrap();
+    let replaced = revision(&mut application, &state, &platform);
+    assert!(replaced > original);
+    assert!(
+        application
+            .execute(SessionCommand::Retry {}, BackendReadiness::Ready)
+            .is_err()
+    );
+    assert!(revision(&mut application, &state, &platform) > replaced);
+    let mut player = finalized();
+    player.enter_replay().unwrap();
+    assert_ne!(
+        GameUiStructureKey::new(&state, &context(&player, difficulty(), &platform)),
+        GameUiStructureKey::new(
+            &state,
+            &context(application.core_session(), difficulty(), &platform)
+        )
+    );
+    let mut title = GameSession::new();
+    let title_key = GameUiStructureKey::new(&state, &context(&title, difficulty(), &platform));
+    title.install_attract_record(record(0.0)).unwrap();
+    title.enter_attract().unwrap();
+    assert_ne!(
+        GameUiStructureKey::new(&state, &context(&title, difficulty(), &platform)),
+        title_key
+    );
 }
 
 #[test]
@@ -829,6 +1026,7 @@ fn retained_preflight_and_initial_flight_frames_do_not_query_record_duration() {
             &state,
             &context(&session, difficulty(), &platform),
             &retained,
+            retained.view_revision,
         )
         .unwrap();
         assert_eq!(frame.hud, retained.hud);
@@ -870,6 +1068,7 @@ fn unknown_archived_environment_remains_explicit_in_full_and_lightweight_readout
         &state,
         &context(&session, difficulty(), &platform),
         &retained,
+        retained.view_revision,
     )
     .unwrap();
     let fresh = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
@@ -922,6 +1121,7 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
             &state,
             &context(&session, difficulty(), &platform),
             &retained,
+            retained.view_revision,
         )
         .unwrap();
         let full = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
@@ -994,7 +1194,8 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
             game_ui_frame(
                 &state,
                 &context(&session, difficulty(), &platform),
-                &retained
+                &retained,
+                retained.view_revision + 1,
             ),
             Err(GameUiError::StaleView)
         );
@@ -1071,7 +1272,8 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                 let before = session.snapshot();
                 let context = context(&session, difficulty(), &platform);
                 let full = game_ui_view(&state, &context).unwrap();
-                let frame = game_ui_frame(&state, &context, &retained).unwrap();
+                let frame =
+                    game_ui_frame(&state, &context, &retained, retained.view_revision).unwrap();
                 let GameUiControlContent::Range {
                     value,
                     display_value,
@@ -1720,7 +1922,7 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
                     &platform,
                 );
                 let view = game_ui_view(&state, &context).unwrap();
-                let frame = game_ui_frame(&state, &context, &view).unwrap();
+                let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
                 let hud = view.hud.as_ref().unwrap();
                 assert_eq!(hud.status, "一時停止");
                 assert_eq!(frame.hud, view.hud);
@@ -1791,7 +1993,7 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
             let clock = session.playback_clock();
             let context = context(session, difficulty(), &platform);
             let view = game_ui_view(state, &context).unwrap();
-            let frame = game_ui_frame(state, &context, &view).unwrap();
+            let frame = game_ui_frame(state, &context, &view, view.view_revision).unwrap();
             assert_eq!(view.hud.is_some(), expected);
             assert_eq!(frame.hud, view.hud);
             assert_eq!(session.snapshot(), snapshot);
@@ -1963,6 +2165,7 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
             &state,
             &context(&session, difficulty(), &platform),
             &retained,
+            retained.view_revision,
         )
         .unwrap();
         let fresh = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();

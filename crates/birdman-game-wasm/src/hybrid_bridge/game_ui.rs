@@ -1,71 +1,53 @@
 use super::*;
-use birdman_game_core::SessionScenarioIdentity;
 use birdman_game_session::game_ui::{
-    GameUiAction, GameUiContext, GameUiPlatformInput, GameUiView, game_ui_frame, game_ui_view,
-    update_game_ui,
+    GameUiAction, GameUiContext, GameUiPlatformInput, GameUiStructureKey, game_ui_frame,
+    game_ui_view, update_game_ui,
 };
 
 const MAX_UI_INPUT_BYTES: usize = 131_072;
 
-pub(super) struct CachedUiView {
-    view: GameUiView,
-    platform: GameUiPlatformInput,
-    difficulty: birdman_game_format::DifficultySettings,
-    identity: Option<SessionScenarioIdentity>,
-    can_resume: bool,
-}
-
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
+    /// Observes the shared structural revision without serializing a complete view.
+    pub fn game_ui_view_revision(&mut self, platform_json: &str) -> Result<u32, JsValue> {
+        let platform: GameUiPlatformInput = decode(platform_json)?;
+        let environment = self.ui_environment_readout()?;
+        self.observe_ui_revision(&platform, &environment)
+    }
+
     /// Returns the same Rust-owned menu, actions, layout and record chart used by native UI.
     pub fn game_ui_view_json(&mut self, platform_json: &str) -> Result<String, JsValue> {
         let platform: GameUiPlatformInput = decode(platform_json)?;
         let environment = self.ui_environment_readout()?;
+        let revision = self.observe_ui_revision(&platform, &environment)?;
         let context = self.ui_context(&platform, &environment)?;
         let mut view = game_ui_view(&self.ui, &context).map_err(ui_error)?;
-        let difficulty = context.difficulty;
-        let identity = context.identity;
-        let revision = self
-            .ui_view_revision
-            .checked_add(1)
-            .ok_or_else(|| JsValue::from_str("shared UI view revision exhausted"))?;
         view.view_revision = revision;
         let output = serde_json::to_string(&view).map_err(ui_error)?;
-        self.ui_view_cache = Some(CachedUiView {
-            view,
-            platform,
-            difficulty,
-            identity,
-            can_resume: self.session.core_session().can_resume(),
-        });
-        self.ui_view_revision = revision;
+        self.ui_view_cache = Some(view);
         Ok(output)
     }
 
     /// Observes dynamic UI values without rebuilding or resending record series.
     pub fn game_ui_frame_json(
-        &self,
+        &mut self,
         expected_revision: u32,
         platform_json: &str,
     ) -> Result<String, JsValue> {
         let platform: GameUiPlatformInput = decode(platform_json)?;
+        let environment = self.ui_environment_readout()?;
+        let revision = self.observe_ui_revision(&platform, &environment)?;
         let retained = self
             .ui_view_cache
             .as_ref()
             .ok_or_else(|| JsValue::from_str("shared UI view unavailable"))?;
-        let environment = self.ui_environment_readout()?;
         let context = self.ui_context(&platform, &environment)?;
-        if retained.view.view_revision != expected_revision
-            || retained.platform != platform
-            || retained.difficulty != context.difficulty
-            || retained.identity != context.identity
-            || retained.can_resume != self.session.core_session().can_resume()
-        {
+        if retained.view_revision != expected_revision {
             return Err(ui_error(
                 birdman_game_session::game_ui::GameUiError::StaleView,
             ));
         }
-        let frame = game_ui_frame(&self.ui, &context, &retained.view).map_err(ui_error)?;
+        let frame = game_ui_frame(&self.ui, &context, retained, revision).map_err(ui_error)?;
         serde_json::to_string(&frame).map_err(ui_error)
     }
 
@@ -132,6 +114,15 @@ impl HybridGameSessionBridge {
 }
 
 impl HybridGameSessionBridge {
+    fn observe_ui_revision(
+        &mut self,
+        platform: &GameUiPlatformInput,
+        environment: &str,
+    ) -> Result<u32, JsValue> {
+        let key = GameUiStructureKey::new(&self.ui, &self.ui_context(platform, environment)?);
+        self.session.observe_ui_structure(key).map_err(ui_error)
+    }
+
     fn ui_context<'view>(
         &'view self,
         platform: &'view GameUiPlatformInput,

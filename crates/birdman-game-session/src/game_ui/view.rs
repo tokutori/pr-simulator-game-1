@@ -1604,8 +1604,8 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         SessionPhase::BriefingFailed { .. } => {
             "Briefing準備に失敗した。再試行または設定変更を選択する。".to_owned()
         }
-        SessionPhase::Countdown { remaining_seconds } => {
-            format!("物理時間を停止している。発進まで {remaining_seconds}。")
+        SessionPhase::Countdown { .. } => {
+            "物理時間を停止し、発進までの残り時間を表示する。".to_owned()
         }
         SessionPhase::FlightRunning => format!(
             "KeyboardまたはGamepadで操縦する。Physicsは{} Hzで独立して進む。",

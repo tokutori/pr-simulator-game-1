@@ -9,8 +9,9 @@ use birdman_game_session::application::{
     ApplicationSession, BackendReadiness, ExternalPauseReason, SessionCommand,
 };
 use birdman_game_session::game_ui::{
-    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState, GameUiUpdate,
-    GameUiView, game_ui_environment_readout, game_ui_frame, game_ui_view, update_game_ui,
+    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState, GameUiStructureKey,
+    GameUiUpdate, GameUiView, game_ui_environment_readout, game_ui_frame, game_ui_view,
+    update_game_ui,
 };
 use birdman_game_session::{HybridSessionPreparation, identity_for_selection};
 
@@ -98,15 +99,30 @@ impl NativeSession {
             .map_err(|error| format!("表示を導出できない: {error:?}"))
     }
 
+    pub(crate) fn ui_revision(&mut self, platform: &GameUiPlatformInput) -> Result<u32, String> {
+        let environment = game_ui_environment_readout(self.ui_identity())
+            .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
+        let key = GameUiStructureKey::new(&self.ui, &self.ui_context(platform, &environment));
+        self.game
+            .observe_ui_structure(key)
+            .map_err(|error| format!("表示revisionを取得できない: {error:?}"))
+    }
+
     pub(crate) fn ui_frame(
         &self,
         platform: &GameUiPlatformInput,
         retained: &GameUiView,
+        revision: u32,
     ) -> Result<GameUiFrame, String> {
         let environment = game_ui_environment_readout(self.ui_identity())
             .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
-        game_ui_frame(&self.ui, &self.ui_context(platform, &environment), retained)
-            .map_err(|error| format!("表示frameを導出できない: {error:?}"))
+        game_ui_frame(
+            &self.ui,
+            &self.ui_context(platform, &environment),
+            retained,
+            revision,
+        )
+        .map_err(|error| format!("表示frameを導出できない: {error:?}"))
     }
 
     pub(crate) fn update_ui_action(
