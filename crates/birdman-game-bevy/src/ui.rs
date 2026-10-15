@@ -4297,15 +4297,6 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let previous_geometry = geometry(app.world());
-        let background_entities = [retained.hud.shell, retained.hud.attitude];
-        let backgrounds = |world: &World| {
-            background_entities.map(|entity| {
-                let entity = world.entity(entity);
-                let background = entity.get_ref::<BackgroundColor>().unwrap();
-                (*background, background.last_changed())
-            })
-        };
-        let previous_backgrounds = backgrounds(app.world());
         for _ in 0..3 {
             app.update();
             assert_eq!(geometry(app.world()), previous_geometry);
@@ -4319,7 +4310,6 @@ mod tests {
         }
         app.update();
         let current_geometry = geometry(app.world());
-        assert_eq!(backgrounds(app.world()), previous_backgrounds);
         assert!(
             previous_geometry
                 .iter()
@@ -4572,6 +4562,15 @@ mod tests {
             .get_ref::<UiTransform>()
             .unwrap()
             .last_changed();
+        let background_entities = [retained.hud.shell, retained.hud.attitude];
+        let backgrounds = |world: &World| {
+            background_entities.map(|entity| {
+                let entity = world.entity(entity);
+                let background = entity.get_ref::<BackgroundColor>().unwrap();
+                (*background, background.last_changed())
+            })
+        };
+        let previous_backgrounds = backgrounds(app.world());
         let stable_text_entities = [
             retained.hud.readouts,
             retained.hud.fields["controls"],
@@ -4597,6 +4596,7 @@ mod tests {
             "Changing only wind geometry must preserve identical text and font change ticks"
         );
         let current_geometry = geometry(app.world());
+        assert_eq!(backgrounds(app.world()), previous_backgrounds);
         for ((entity, previous), current) in stable_node_entities
             .iter()
             .zip(&previous_geometry)
