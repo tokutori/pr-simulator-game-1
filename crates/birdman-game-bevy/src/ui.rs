@@ -3,6 +3,7 @@ use super::{
     environment::NativeEnvironment,
     frame_rate::FrameRate,
     native_session::NativeSession,
+    screen_render::{self, NativeScreenRender},
     water_quality::{WaterQuality, WaterQualitySelection},
 };
 use bevy::ecs as bevy_ecs;
@@ -709,6 +710,7 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         stored_records_available: false,
         flight_log_available: false,
         supported_replay_cameras: vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase],
+        screen_render_scale: world.resource::<NativeScreenRender>().applied(),
         water_quality: shared_quality(quality.applied()),
         water_quality_operation: if let Some(requested) = quality.pending() {
             GameUiWaterQualityOperation::Applying {
@@ -830,6 +832,10 @@ pub(crate) fn button_actions(world: &mut World) {
                             .ok_or_else(|| "湖面画質の変更を受理できない".to_owned())?;
                         *world.resource_mut::<WaterQualitySelection>() = next;
                     }
+                    GameUiEffect::Platform {
+                        command: GameUiPlatformCommand::SetScreenRenderScale { scale },
+                    } => screen_render::apply_scale(world, scale)
+                        .map_err(|cause| format!("3D描画倍率を適用できない: {cause:?}"))?,
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetReplayCamera { camera },
                     } => {
@@ -2450,6 +2456,7 @@ mod tests {
         app.add_plugins(MinimalPlugins)
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
+            .init_resource::<NativeScreenRender>()
             .init_resource::<super::super::CameraMode>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(ButtonInput::<KeyCode>::default())
@@ -2601,6 +2608,80 @@ mod tests {
             let node = entity.get_ref::<Node>().unwrap();
             assert_eq!(node.display, Display::None);
             assert_eq!(node.last_changed(), previous);
+        }
+    }
+
+    #[test]
+    fn shared_render_scale_controls_apply_the_native_target_and_report_selected_value() {
+        use super::super::world::WorldProjection;
+        use birdman_game_session::screen_render_scale::ScreenRenderScale;
+
+        let mut app = app(1280.0, 720.0);
+        app.init_resource::<Assets<Image>>();
+        let window = app
+            .world_mut()
+            .query_filtered::<Entity, With<Window>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .entity_mut(window)
+            .insert(bevy::window::PrimaryWindow);
+        app.world_mut().spawn((
+            WorldProjection::FlightCamera,
+            Camera3d::default(),
+            Projection::default(),
+            IsDefaultUiCamera,
+        ));
+        press(&mut app, "game-title-start");
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        for (scale, id) in [
+            (
+                ScreenRenderScale::ThreeQuarters,
+                "presentation-render-scale-75",
+            ),
+            (ScreenRenderScale::Half, "presentation-render-scale-50"),
+            (ScreenRenderScale::Full, "presentation-render-scale-100"),
+        ] {
+            press(&mut app, id);
+            assert_eq!(platform_input(app.world_mut()).screen_render_scale, scale);
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
+                before
+            );
+            assert_eq!(
+                app.world()
+                    .get::<Window>(window)
+                    .unwrap()
+                    .resolution
+                    .physical_size(),
+                UVec2::new(1280, 720)
+            );
+            let view = app.world().resource::<RetainedUi>().view.as_ref().unwrap();
+            assert!(
+                view.panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .any(|control| control.id == id
+                        && matches!(
+                            control.content,
+                            GameUiControlContent::Button {
+                                presentation: GameUiButtonPresentation::Choice {
+                                    selected: true,
+                                    ..
+                                },
+                                ..
+                            }
+                        ))
+            );
         }
     }
 
