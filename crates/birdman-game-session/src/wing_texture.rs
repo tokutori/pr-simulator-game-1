@@ -257,7 +257,7 @@ mod tests {
     fn mipmaps_keep_the_base_and_filter_black_and_white_in_linear_light() {
         let mut pixels = vec![255; SIDE_BYTES];
         for (index, pixel) in pixels.chunks_exact_mut(4).enumerate() {
-            if index % WIDTH as usize % 2 == 0 {
+            if (index % WIDTH as usize).is_multiple_of(2) {
                 pixel[..3].fill(0);
             }
         }
