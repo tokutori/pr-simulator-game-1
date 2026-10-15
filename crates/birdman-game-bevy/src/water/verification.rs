@@ -1,8 +1,5 @@
 use super::{NearWaterSurface, WaterMaterial, WaterQuality};
-use bevy::{
-    asset as bevy_asset, ecs as bevy_ecs, image as bevy_image, reflect as bevy_reflect,
-    render as bevy_render,
-};
+use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     camera::{RenderTarget, ScalingMode, visibility::RenderLayers},
     core_pipeline::tonemapping::Tonemapping,

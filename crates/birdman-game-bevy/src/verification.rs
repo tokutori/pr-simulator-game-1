@@ -1175,6 +1175,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     quality: ResMut<'w, WaterQualitySelection>,
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
+    shader_verification: Option<ResMut<'w, WaterShaderVerification>>,
     surfaces: Query<
         'w,
         's,
@@ -1242,12 +1243,12 @@ pub(crate) fn advance(
     time: Res<Time<Real>>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
-    mut shader_verification: Option<ResMut<WaterShaderVerification>>,
 ) {
     if verification.stage == VerificationStage::Finished || verification.failure.is_some() {
         return;
     }
-    let shader_ready = shader_verification
+    let shader_ready = presentation
+        .shader_verification
         .as_deref_mut()
         .map_or(Ok(true), |probe| {
             probe.ready(verification.readiness.can_capture())
