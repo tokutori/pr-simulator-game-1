@@ -25,13 +25,17 @@ export class GpuWorkTimer {
 
   poll(): readonly GpuQueryObservation[] {
     if (this.capability.kind !== "supported" || this.pending.length === 0) return [];
-    if (this.gl.getParameter(this.capability.extension.GPU_DISJOINT_EXT) === true) {
+    const disjoint: unknown = this.gl.getParameter(this.capability.extension.GPU_DISJOINT_EXT);
+    if (typeof disjoint !== "boolean") throw new Error("GPU timer returned an invalid disjoint state");
+    if (disjoint) {
       this.clear();
       return [{ kind: "disjoint" }];
     }
     const observations: GpuQueryObservation[] = [];
     for (const pending of [...this.pending]) {
-      if (!this.gl.getQueryParameter(pending.query, this.gl.QUERY_RESULT_AVAILABLE)) continue;
+      const available: unknown = this.gl.getQueryParameter(pending.query, this.gl.QUERY_RESULT_AVAILABLE);
+      if (typeof available !== "boolean") throw new Error("GPU timer returned an invalid availability state");
+      if (!available) continue;
       const nanoseconds: unknown = this.gl.getQueryParameter(pending.query, this.gl.QUERY_RESULT);
       this.gl.deleteQuery(pending.query);
       this.pending = this.pending.filter((item) => item !== pending);

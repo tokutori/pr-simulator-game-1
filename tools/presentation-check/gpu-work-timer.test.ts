@@ -3,6 +3,19 @@ import { GpuWorkTimer } from "../../web/src/render/engines/three/gpu-work-timer.
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 describe("WebGL GPU-work timer boundary", () => {
+  it("rejects missing disjoint and non-boolean availability without accepting a sample", () => {
+    for (const boundary of ["disjoint", "availability"] as const) {
+      const { gl, context } = gpuTimerFixture();
+      const timer = new GpuWorkTimer(context);
+      timer.begin({ epoch: 1, frame: 1, source: 0 }); timer.end(true);
+      if (boundary === "disjoint") gl.getParameter.mockReturnValue(null);
+      else gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? 1 : 20_000_000);
+      expect(() => timer.poll()).toThrow(`invalid ${boundary} state`);
+      timer.clear();
+      expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("defers pending results and preserves nanosecond precision without a 32-bit cast", () => {
     const { gl, context } = gpuTimerFixture();
     const timer = new GpuWorkTimer(context);

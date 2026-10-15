@@ -11,7 +11,7 @@ export function gpuTimerFixture() {
     beginQuery: vi.fn((_target: number, query: WebGLQuery) => { current = query; }),
     endQuery: vi.fn(() => { current = null; }),
     deleteQuery: vi.fn(),
-    getParameter: vi.fn(() => false),
+    getParameter: vi.fn((): unknown => false),
     getQueryParameter: vi.fn((_query: WebGLQuery, parameter: number): unknown => parameter === 2 ? true : 20_000_000)
   };
   return { gl, context: gl as unknown as WebGL2RenderingContext, foreign: (query: WebGLQuery | null) => { current = query; } };
