@@ -12,12 +12,14 @@ mod hybrid_record;
 mod hybrid_session;
 mod lake_sky;
 mod lake_water;
+mod screen_render_auto;
 mod wing_geometry;
 
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use lake_sky::LakeSkyImageBridge;
 pub use lake_water::{LakeDetailImageBridge, LakeWaveProjectionBridge};
+pub use screen_render_auto::ScreenRenderAutoBridge;
 pub use wing_geometry::WingGeometryBridge;
 
 mod personal_best_fingerprints {

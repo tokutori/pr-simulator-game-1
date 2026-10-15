@@ -15,6 +15,7 @@ export const schemaEntries = [
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
   { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
+  { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
   { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
   { key: "tail_snapshot", name: "TailSnapshotDocument", filename: "tail-snapshot", group: "serialize" },
   { key: "tail_prepared", name: "TailPreparedLaunchDocument", filename: "tail-prepared", group: "serialize" },

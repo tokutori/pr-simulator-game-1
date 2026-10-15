@@ -212,6 +212,11 @@ pub enum GameUiPlatformCommand {
         /// Requested fraction of each physical rendering dimension.
         scale: crate::screen_render_scale::ScreenRenderScale,
     },
+    /// Enables Auto or restores its retained manual Screen resolution.
+    SetScreenRenderAuto {
+        /// Whether GPU-work-based adjustment is selected.
+        enabled: bool,
+    },
     /// Changes render-only mesh quality.
     SetWaterQuality {
         /// Requested quality.
@@ -366,8 +371,8 @@ pub struct GameUiPlatformInput {
     pub water_quality: GameUiWaterQuality,
     /// Actual resource preparation, commitment and cleanup observation.
     pub water_quality_operation: GameUiWaterQualityOperation,
-    /// Retained Screen-only resolution preference, independent of the active VR mode.
-    pub screen_render_scale: crate::screen_render_scale::ScreenRenderScale,
+    /// Confirmed Screen selection, applied resources, and stable measurement state.
+    pub screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot,
     /// Platform operation feedback.
     pub notification: String,
     /// Captured flight-controller resource failure; the session retains its last valid state.

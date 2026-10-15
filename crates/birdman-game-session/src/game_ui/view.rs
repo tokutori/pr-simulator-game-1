@@ -1264,14 +1264,50 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 }
 
 fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
     use crate::screen_render_scale::ScreenRenderScale;
     if context.platform.presentation_mode != GameUiPresentationMode::Screen {
         return;
     }
+    let render = &context.platform.screen_render_scale;
+    let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
+    let status = match &render.status {
+        ScreenRenderAutoStatus::Manual => "手動設定".to_owned(),
+        ScreenRenderAutoStatus::Measuring => "GPU計測待ち".to_owned(),
+        ScreenRenderAutoStatus::Ready => "有効GPU計測を受信中".to_owned(),
+        ScreenRenderAutoStatus::CoverageLimited => "計測欠損あり。倍率上昇を保留する。".to_owned(),
+        ScreenRenderAutoStatus::Unsupported { cause } => format!("GPU計測非対応: {cause}"),
+        ScreenRenderAutoStatus::Interrupted => "中断後のGPU計測待ち".to_owned(),
+        ScreenRenderAutoStatus::Applying { requested } => format!("{}へ変更中", requested.label()),
+        ScreenRenderAutoStatus::Failed { cause } => format!("適用失敗: {cause}"),
+    };
     menu.status(
         "presentation-render-scale-status",
         "3D描画解像度",
-        "Screenの3D描画解像度を変更する。UI・画角・飛行物理・記録は維持する。",
+        &format!(
+            "{} · 適用済み{} · {status}。UI・画角・飛行物理・記録は維持する。",
+            if automatic { "Auto" } else { "Manual" },
+            render.applied.label()
+        ),
+    );
+    menu.push(
+        "presentation-render-scale-auto",
+        "Auto",
+        context.platform.flight_controller_failure.is_none(),
+        "render-scale",
+        GameUiControlContent::Button {
+            action: GameUiAction::Platform {
+                command: GameUiPlatformCommand::SetScreenRenderAuto {
+                    enabled: !automatic,
+                },
+            },
+            presentation: GameUiButtonPresentation::Choice {
+                group: "render-scale".to_owned(),
+                group_label: "3D描画解像度".to_owned(),
+                selected: automatic,
+                description: "有効GPU計測に応じて3D解像度だけを調整する。".to_owned(),
+            },
+        },
     );
     for scale in ScreenRenderScale::ALL {
         menu.push(
@@ -1286,7 +1322,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 presentation: GameUiButtonPresentation::Choice {
                     group: "render-scale".to_owned(),
                     group_label: "3D描画解像度".to_owned(),
-                    selected: context.platform.screen_render_scale == scale,
+                    selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected } if selected == scale),
                     description: "各描画軸の倍率。低い値ほど描画負荷を抑える。".to_owned(),
                 },
             },

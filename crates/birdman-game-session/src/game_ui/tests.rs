@@ -31,7 +31,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         flight_log_pending: false,
         water_quality: GameUiWaterQuality::High,
         water_quality_operation: GameUiWaterQualityOperation::Idle {},
-        screen_render_scale: crate::screen_render_scale::ScreenRenderScale::default(),
+        screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot::default(),
         notification: String::new(),
         flight_controller_failure: None,
         head_hud_failure: None,
@@ -2230,7 +2230,8 @@ fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings()
             for scale in ScreenRenderScale::ALL {
                 let mut platform = platform();
                 platform.presentation_mode = mode;
-                platform.screen_render_scale = scale;
+                platform.screen_render_scale =
+                    crate::screen_render_auto::ScreenRenderAutoSnapshot::manual(scale);
                 let inputs = context(session, difficulty(), &platform);
                 let view = game_ui_view(&state, &inputs).unwrap();
                 if mode != GameUiPresentationMode::Screen {
@@ -2310,6 +2311,58 @@ fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings()
         )
         .is_err()
     );
+}
+
+#[test]
+fn screen_render_auto_projects_selection_applied_status_and_admission() {
+    use crate::screen_render_auto::{
+        ScreenRenderAutoSnapshot, ScreenRenderAutoStatus, ScreenRenderSelection,
+    };
+    use crate::screen_render_scale::ScreenRenderScale;
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let state = GameUiState::default();
+    let mut platform = platform();
+    platform.screen_render_scale = ScreenRenderAutoSnapshot {
+        selection: ScreenRenderSelection::Auto {
+            manual_scale: ScreenRenderScale::Full,
+        },
+        applied: ScreenRenderScale::ThreeQuarters,
+        status: ScreenRenderAutoStatus::Unsupported {
+            cause: "missing GPU timer".to_owned(),
+        },
+    };
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::PhoneVr,
+    ] {
+        platform.presentation_mode = mode;
+        let inputs = context(&session, difficulty(), &platform);
+        let action = GameUiAction::Platform {
+            command: GameUiPlatformCommand::SetScreenRenderAuto { enabled: false },
+        };
+        let update = update_game_ui(&state, action.clone(), &inputs);
+        if mode != GameUiPresentationMode::Screen {
+            assert!(update.is_err());
+            continue;
+        }
+        let view = game_ui_view(&state, &inputs).unwrap();
+        let choice = control(&view, "presentation-render-scale-auto");
+        assert!(
+            matches!(&choice.content, GameUiControlContent::Button { action: actual, presentation: GameUiButtonPresentation::Choice { selected: true, .. } } if actual == &action)
+        );
+        let status = control(&view, "presentation-render-scale-status");
+        assert!(
+            matches!(&status.content, GameUiControlContent::Status { value } if value.contains("Auto") && value.contains("75%") && value.contains("missing GPU timer"))
+        );
+        assert_eq!(
+            update.unwrap().effects,
+            vec![GameUiEffect::Platform {
+                command: GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }
+            }]
+        );
+    }
 }
 
 #[test]

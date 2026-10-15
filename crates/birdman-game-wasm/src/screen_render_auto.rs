@@ -1,0 +1,172 @@
+use birdman_game_session::screen_render_auto::{
+    ScreenGpuSample, ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderInvalidation,
+};
+use birdman_game_session::screen_render_scale::ScreenRenderScale;
+use wasm_bindgen::{JsValue, prelude::*};
+
+/// One rendering lifetime's shared GPU-work controller, independent of GameSession.
+#[wasm_bindgen]
+pub struct ScreenRenderAutoBridge {
+    controller: ScreenRenderAutoController,
+}
+
+#[wasm_bindgen]
+impl ScreenRenderAutoBridge {
+    /// Creates the default manual full-resolution controller.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            controller: ScreenRenderAutoController::new(ScreenRenderScale::default()),
+        }
+    }
+
+    /// Serializes the stable snapshot using the generated common UI schema.
+    pub fn snapshot_json(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&self.controller.snapshot())
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    /// Returns the generation assigned to a newly started timer query.
+    pub fn epoch(&self) -> u32 {
+        self.controller.epoch()
+    }
+
+    /// Returns whether the shared policy currently admits measurements.
+    pub fn measurement_enabled(&self) -> bool {
+        self.controller.measurement_enabled()
+    }
+
+    /// Returns zero when no resource application is pending.
+    pub fn requested_scale_percent(&self) -> u32 {
+        self.controller
+            .requested()
+            .map_or(0, |request| request.scale.percent())
+    }
+
+    /// Returns zero when no resource request identity exists.
+    pub fn requested_epoch(&self) -> u32 {
+        self.controller
+            .requested()
+            .map_or(0, |request| request.epoch)
+    }
+
+    /// Selects a supported manual resolution through the common controller.
+    pub fn select_manual(&mut self, scale_percent: u32, now_ms: f64) -> Result<(), JsValue> {
+        self.controller
+            .select_manual(scale(scale_percent)?, now_ms)
+            .map(|_| ())
+            .map_err(error)
+    }
+
+    /// Enables Auto or restores the retained manual resolution.
+    pub fn select_auto(&mut self, enabled: bool, now_ms: f64) -> Result<(), JsValue> {
+        self.controller
+            .select_auto(enabled, now_ms)
+            .map(|_| ())
+            .map_err(error)
+    }
+
+    /// Supplies one completed GPU query using the adapter's source clock.
+    pub fn observe(
+        &mut self,
+        epoch: u32,
+        frame: u32,
+        source_ms: f64,
+        gpu_work_ms: f64,
+        now_ms: f64,
+    ) -> Result<(), JsValue> {
+        self.controller
+            .observe(
+                ScreenGpuSample {
+                    epoch,
+                    frame,
+                    source_ms,
+                    gpu_work_ms,
+                },
+                now_ms,
+            )
+            .map(|_| ())
+            .map_err(error)
+    }
+
+    /// Observes pending queries without erasing valid high-load samples.
+    pub fn pending(&mut self, now_ms: f64) -> Result<(), JsValue> {
+        self.controller.pending(now_ms).map(|_| ()).map_err(error)
+    }
+
+    /// Invalidates a window for a classified renderer lifecycle event.
+    pub fn invalidate(&mut self, reason: &str, now_ms: f64) -> Result<(), JsValue> {
+        let reason = match reason {
+            "resize" => ScreenRenderInvalidation::Resize,
+            "backend_changed" => ScreenRenderInvalidation::BackendChanged,
+            "context_restored" => ScreenRenderInvalidation::ContextRestored,
+            "disjoint" => ScreenRenderInvalidation::Disjoint,
+            "interrupted" => ScreenRenderInvalidation::Interrupted,
+            "quality_changed" => ScreenRenderInvalidation::QualityChanged,
+            _ => return Err(JsValue::from_str("unknown Screen rendering invalidation")),
+        };
+        self.controller.invalidate(reason, now_ms).map_err(error)
+    }
+
+    /// Retains the GPU capability failure supplied by the browser adapter.
+    pub fn unsupported(&mut self, cause: &str, now_ms: f64) -> Result<(), JsValue> {
+        self.controller
+            .unsupported(cause.to_owned(), now_ms)
+            .map_err(error)
+    }
+
+    /// Acknowledges only the current requested resolution after a successful application.
+    pub fn applied(
+        &mut self,
+        request_epoch: u32,
+        scale_percent: u32,
+        now_ms: f64,
+    ) -> Result<(), JsValue> {
+        self.controller
+            .applied(
+                birdman_game_session::screen_render_auto::ScreenRenderScaleRequest {
+                    epoch: request_epoch,
+                    scale: scale(scale_percent)?,
+                },
+                now_ms,
+            )
+            .map_err(error)
+    }
+
+    /// Holds applied resources and the original application failure.
+    pub fn failed(
+        &mut self,
+        request_epoch: u32,
+        scale_percent: u32,
+        cause: &str,
+        now_ms: f64,
+    ) -> Result<(), JsValue> {
+        self.controller
+            .failed(
+                birdman_game_session::screen_render_auto::ScreenRenderScaleRequest {
+                    epoch: request_epoch,
+                    scale: scale(scale_percent)?,
+                },
+                cause.to_owned(),
+                now_ms,
+            )
+            .map_err(error)
+    }
+}
+
+impl Default for ScreenRenderAutoBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn scale(percent: u32) -> Result<ScreenRenderScale, JsValue> {
+    ScreenRenderScale::ALL
+        .into_iter()
+        .find(|scale| scale.percent() == percent)
+        .ok_or_else(|| JsValue::from_str("unsupported Screen rendering scale"))
+}
+
+fn error(error: ScreenRenderAutoError) -> JsValue {
+    JsValue::from_str(&format!("Screen render policy rejected: {error:?}"))
+}

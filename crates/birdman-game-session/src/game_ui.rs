@@ -29,6 +29,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<GameUiView>();
     output.subschema_for::<GameUiUpdate>();
     output.subschema_for::<GameUiFrame>();
+    output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<birdman_game_format::TailSnapshotDocument<'_>>();
     output.subschema_for::<birdman_game_format::TailPreparedLaunchDocument<'_>>();
     output.subschema_for::<birdman_game_format::FlightRecordDifficultyDocument>();
@@ -57,12 +58,13 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "input" => ("deserialize", "GameUiPlatformInput"),
         "effects" => ("serialize", "GameUiUpdate"),
         "frame" => ("serialize", "GameUiFrame"),
+        "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
         "tail-input" => ("deserialize", "TailInputDocument"),
         "tail-snapshot" => ("serialize", "TailSnapshotDocument"),
         "tail-prepared" => ("serialize", "TailPreparedLaunchDocument"),
         _ => {
             return Err(
-                "schema must be bundle, view, action, input, effects, frame, tail-input, tail-snapshot or tail-prepared"
+                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, tail-input, tail-snapshot or tail-prepared"
                     .to_owned(),
             );
         }
