@@ -306,7 +306,7 @@ impl ScreenRenderAutoController {
             || sample.gpu_work_ms < 0.0
             || self
                 .last_source_ms
-                .is_some_and(|source| sample.source_ms <= source)
+                .is_some_and(|source| sample.source_ms < source)
         {
             return Err(ScreenRenderAutoError::InvalidSample);
         }
@@ -692,6 +692,25 @@ mod tests {
             }
         }
         assert_eq!(request.unwrap().scale, ScreenRenderScale::ThreeQuarters);
+    }
+
+    #[test]
+    fn quantized_source_time_accepts_distinct_frames_without_fabricating_duplicates() {
+        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        for frame in [1, 2, 2] {
+            controller
+                .observe(sample(&controller, frame, 10.0, 20.0), 10.0)
+                .unwrap();
+        }
+        assert_eq!(controller.samples.len(), 1);
+        assert_eq!(controller.samples[0].valid_frames, 2);
+        assert_eq!(controller.samples[0].last_frame, 2);
+        assert_eq!(controller.samples[0].last_source_ms, 10.0);
+        assert_eq!(
+            controller.observe(sample(&controller, 3, 9.0, 20.0), 11.0),
+            Err(ScreenRenderAutoError::InvalidSample)
+        );
     }
 
     #[test]
