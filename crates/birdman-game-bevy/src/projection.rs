@@ -1,6 +1,7 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{FlightState, UnitQuaternion};
+use birdman_game_session::cockpit_geometry::CockpitGeometry;
 
 #[derive(Resource)]
 pub(crate) struct VerificationObserver(pub(crate) Transform);
@@ -45,7 +46,8 @@ pub(crate) fn pilot_eye(
     pilot_position_m: f64,
     initial_position_m: f64,
 ) -> Vec3 {
-    let offset = ned_to_engine([0.55 + pilot_position_m - initial_position_m, 0.0, -0.15]);
+    let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
+    let offset = ned_to_engine([forward + pilot_position_m - initial_position_m, right, down]);
     aircraft.transform_point(offset)
 }
 
@@ -135,7 +137,7 @@ mod tests {
     fn quaternion_conjugation_matches_core_body_to_ned_and_pilot_eye() {
         let attitude = UnitQuaternion::try_new((0.4_f64).cos(), 0.0, 0.0, (0.4_f64).sin()).unwrap();
         let physical = state(attitude, 0.2);
-        let body = BodyVector::try_new(0.75, 0.0, -0.15).unwrap();
+        let body = BodyVector::try_new(0.26, 0.0, 1.04).unwrap();
         let expected = ned_to_engine(physical.datum_position_ned().components())
             + ned_to_engine(attitude.body_to_ned(body).unwrap().components());
         assert!(
@@ -194,8 +196,43 @@ mod tests {
             let camera = camera_transform(aircraft, 0.2, 0.0, false, Vec2::ZERO);
             assert_eq!(
                 camera.translation,
-                aircraft.transform_point(ned_to_engine([0.75, 0.0, -0.15]))
+                aircraft.transform_point(ned_to_engine([0.26, 0.0, 1.04]))
             );
+        }
+    }
+
+    #[test]
+    fn pilot_mount_keeps_real_nose_frame_and_forward_direction_inside_screen_projection() {
+        use bevy::camera::CameraProjection;
+        let geometry = CockpitGeometry::new();
+        for initial in [-0.4, 0.0, 0.4] {
+            for current in [-0.4, 0.0, 0.4] {
+                for aspect in [9.0 / 16.0, 16.0 / 9.0] {
+                    let aircraft = Transform::from_xyz(2.0, 10.0, -5.0)
+                        .with_rotation(Quat::from_euler(EulerRot::YXZ, 0.4, -0.2, 0.1));
+                    let camera = camera_transform(aircraft, current, initial, false, Vec2::ZERO);
+                    assert!(camera.forward().distance(aircraft.forward().as_vec3()) < 1.0e-6);
+                    let projection = PerspectiveProjection {
+                        fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
+                            .to_radians() as f32,
+                        aspect_ratio: aspect,
+                        ..default()
+                    }
+                    .get_clip_from_view();
+                    let view = camera.to_matrix().inverse();
+                    for rod in [0, 6].map(|index| &geometry.rods[index]) {
+                        let nose = Vec3::from_array(rod.endpoints[0].map(|value| value as f32));
+                        let front = Vec3::from_array(rod.endpoints[1].map(|value| value as f32));
+                        for fraction in [0.0, 0.1] {
+                            let point = aircraft.transform_point(nose.lerp(front, fraction));
+                            let clip = projection * view * point.extend(1.0);
+                            assert!(clip.w > 0.0);
+                            assert!((clip.x / clip.w).abs() < 1.0);
+                            assert!((clip.y / clip.w).abs() < 1.0);
+                        }
+                    }
+                }
+            }
         }
     }
 }

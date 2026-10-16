@@ -31,7 +31,9 @@ engine非依存の数値poseを生成し、Three.js等のcameraや数学型を�
 head poseとstereo/XR変換は `presentation.md` に従う。
 景観・操作panel・cursorの参照系は `vr-spaces.md` に従う。
 
-BPG-007のsynthetic aircraftは `SYNTHETIC_PILOT_EYE_POINT` を明示的なview metadataとして使用する。
+BPG-007のsynthetic aircraftは共有Rustの `CockpitGeometry::pilot_eye_offset_frd()` をview metadataの正本とする。
+表示上の仮定として、既存cockpitの最大幅断面の中心線を眼取付とする。現形状ではaft=-0.06 m、up=-1.04 mからFRD `[0.06, 0, 1.04]` を導出する。実機の眼位置の測定値を表すものではない。
+WebはWASM初期化後、renderer生成時に一回bulk取得し、Nativeは同じRust定義を投影する。取付姿勢はbody軸と一致する。既存cockpit形状・物理datum・60°FOVを維持する。
 実機・別機体modelを追加する際は、各modelのPilotEyePoint metadataへ置き換える。
 
 Flightのcamera modeはPilotに固定する。Information preset、presentation backend、操縦modeによる切替を設けない。

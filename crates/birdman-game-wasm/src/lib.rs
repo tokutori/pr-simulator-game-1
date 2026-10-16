@@ -52,6 +52,12 @@ pub fn screen_vertical_field_of_view_degrees() -> f64 {
     birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
 }
 
+#[wasm_bindgen]
+#[doc = "Copies the shared display-only pilot eye mount in FRD metres; load once after WASM initialization."]
+pub fn pilot_eye_offset_frd() -> Vec<f64> {
+    birdman_game_session::cockpit_geometry::CockpitGeometry::pilot_eye_offset_frd().to_vec()
+}
+
 /// Queries immutable environment metadata by a strict JSON-encoded complete identity.
 /// This query does not select or prepare a scenario in any session.
 #[wasm_bindgen]

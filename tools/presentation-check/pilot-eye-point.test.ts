@@ -1,6 +1,9 @@
+import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
+import { PerspectiveCamera, Vector3 } from "three";
+import { CockpitGeometryBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
 import {
-  createPilotEyePoint, pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT
+  createPilotEyePoint, pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint
 } from "../../web/src/render/camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
 import {
@@ -37,8 +40,8 @@ describe("FRD camera basis", () => {
   });
 
   it("preserves the identity Pilot mount and forward view", () => {
-    const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0, 0);
-    expectVector(eye.position, vec3(0, 0.15, -0.55));
+    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0, 0);
+    expectVector(eye.position, vec3(0, -1.04, -0.06));
     expect(eye.orientation).toEqual(IDENTITY_POSE.orientation);
     expectVector(rotateVec3(eye.orientation, vec3(0, 0, -1)), vec3(0, 0, -1));
     expectVector(rotateVec3(eye.orientation, vec3(0, 1, 0)), vec3(0, 1, 0));
@@ -54,10 +57,42 @@ describe("FRD camera basis", () => {
       attitudeBodyToNed: frdEulerQuaternion(0, 0, heading),
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
-    }, pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0));
+    }, pilotEyePoseThree(syntheticPilotEyePoint(), 0));
 
     expectVector(rotateVec3(eye.orientation, vec3(0, 0, -1)), vec3(Math.sin(heading), 0, -Math.cos(heading)));
-    expectVector(eye.position, vec3(0.55 * Math.sin(heading), 10.65, -0.55 * Math.cos(heading)));
+    expectVector(eye.position, vec3(0.06 * Math.sin(heading), 9.46, -0.06 * Math.cos(heading)));
+  });
+
+  it("projects the actual nose and both front frame segments with the horizon throughout body travel", () => {
+    const bridge = new CockpitGeometryBridge();
+    const endpoints = bridge.rod_endpoints();
+    bridge.free();
+    const point = syntheticPilotEyePoint();
+    for (const initial of [-0.4, 0, 0.4]) {
+      for (const current of [-0.4, 0, 0.4]) {
+        for (const aspect of [9 / 16, 16 / 9]) {
+          const eye = pilotEyePoseThree(point, current, initial);
+          const camera = new PerspectiveCamera(screen_vertical_field_of_view_degrees(), aspect, 0.05, 100_000);
+          camera.position.set(eye.position.x, eye.position.y, eye.position.z);
+          camera.updateMatrixWorld();
+          for (const rod of [0, 6]) {
+            const nose = new Vector3().fromArray(endpoints, rod * 6);
+            const front = new Vector3().fromArray(endpoints, rod * 6 + 3);
+            for (const fraction of [0, 0.1]) {
+              const projected = nose.clone().lerp(front, fraction).project(camera);
+              expect(Math.abs(projected.x)).toBeLessThan(1);
+              expect(Math.abs(projected.y)).toBeLessThan(1);
+              expect(projected.z).toBeGreaterThan(-1);
+              expect(projected.z).toBeLessThan(1);
+            }
+          }
+          const horizon = camera.position.clone().add(new Vector3(0, 0, -1000)).project(camera);
+          expect(horizon.x).toBeCloseTo(0, 12);
+          expect(horizon.y).toBeCloseTo(0, 12);
+          expect(eye.position.z).toBeCloseTo(-0.06 - (current - initial), 12);
+        }
+      }
+    }
   });
 
   it("aims the converted Chase pose down toward the aircraft datum", () => {

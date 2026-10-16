@@ -1,5 +1,18 @@
 #![doc = "Fixed cockpit presentation from Web blob 7b0f8012bf1ac30bf87081e3dfdef62f019cf4c0; local metres use right/up/aft axes."]
 
+const COCKPIT_STATIONS: [[f64; 4]; 10] = [
+    [-1.10, -1.08, 0.025, 0.035],
+    [-1.02, -1.07, 0.065, 0.10],
+    [-0.90, -1.06, 0.12, 0.17],
+    [-0.75, -1.06, 0.17, 0.22],
+    [-0.53, -1.05, 0.20, 0.25],
+    [-0.31, -1.05, 0.22, 0.27],
+    [-0.06, -1.04, 0.23, 0.28],
+    [0.30, -1.03, 0.21, 0.26],
+    [0.77, -0.98, 0.13, 0.17],
+    [1.22, -0.87, 0.025, 0.04],
+];
+
 #[doc = "Material meanings and the existing Web palette, independent of the rendering engine."]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -73,6 +86,17 @@ impl Default for CockpitGeometry {
 }
 
 impl CockpitGeometry {
+    #[doc = "Display-only FRD eye mount at the centreline of the widest existing cockpit section. This is a presentation assumption, not a measured pilot eye position. Body displacement is applied by the camera adapter."]
+    pub fn pilot_eye_offset_frd() -> [f64; 3] {
+        let mut widest = COCKPIT_STATIONS[0];
+        for station in COCKPIT_STATIONS {
+            if station[2] > widest[2] {
+                widest = station;
+            }
+        }
+        [-widest[0], 0.0, -widest[1]]
+    }
+
     #[doc = "Constructs the unchanged Web cockpit shape and topology."]
     pub fn new() -> Self {
         let mut rods = Vec::with_capacity(30);
@@ -103,21 +127,8 @@ impl CockpitGeometry {
                 material: CockpitMaterial::Frame,
             });
         }
-        let canopy = [
-            [-1.10, -1.08, 0.025, 0.035],
-            [-1.02, -1.07, 0.065, 0.10],
-            [-0.90, -1.06, 0.12, 0.17],
-            [-0.75, -1.06, 0.17, 0.22],
-            [-0.53, -1.05, 0.20, 0.25],
-            [-0.31, -1.05, 0.22, 0.27],
-        ];
-        let fairing = [
-            canopy[5],
-            [-0.06, -1.04, 0.23, 0.28],
-            [0.30, -1.03, 0.21, 0.26],
-            [0.77, -0.98, 0.13, 0.17],
-            [1.22, -0.87, 0.025, 0.04],
-        ];
+        let canopy = &COCKPIT_STATIONS[..6];
+        let fairing = &COCKPIT_STATIONS[5..];
         for step in 0..16 {
             rods.push(CockpitRod {
                 endpoints: [
@@ -131,8 +142,8 @@ impl CockpitGeometry {
         Self {
             rods,
             surfaces: [
-                surface(&canopy, CockpitMaterial::Canopy),
-                surface(&fairing, CockpitMaterial::Fairing),
+                surface(canopy, CockpitMaterial::Canopy),
+                surface(fairing, CockpitMaterial::Fairing),
             ],
         }
     }
@@ -177,6 +188,63 @@ fn surface(stations: &[[f64; 4]], material: CockpitMaterial) -> CockpitSurface {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pilot_mount_stays_inside_the_actual_shell_over_registered_body_displacements() {
+        use birdman_game_core::{
+            HybridMockDefinition, PilotPositionTarget, TailPilotPositionCommand,
+            TailPilotPositionIntent, TailPilotPositionMapping,
+        };
+        let aircraft = HybridMockDefinition::try_new().unwrap().aircraft();
+        let trim = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+        let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
+        let endpoints = [-1.0, 1.0].map(|normalized| {
+            mapping
+                .resolve(
+                    &aircraft,
+                    trim,
+                    TailPilotPositionCommand::Set(
+                        TailPilotPositionIntent::try_new(normalized).unwrap(),
+                    ),
+                )
+                .unwrap()
+                .position_m()
+        });
+        let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
+        assert_eq!([forward, right, down], [0.06, 0.0, 1.04]);
+        let minimum_aft = -forward - (endpoints[1] - endpoints[0]);
+        let maximum_aft = -forward - (endpoints[0] - endpoints[1]);
+        let geometry = CockpitGeometry::new();
+        let rings: Vec<_> = geometry
+            .surfaces
+            .iter()
+            .flat_map(|surface| surface.positions.chunks_exact(25))
+            .collect();
+        let mut boundaries = vec![minimum_aft, maximum_aft];
+        boundaries.extend(
+            rings
+                .iter()
+                .map(|ring| f64::from(ring[0][2]))
+                .filter(|aft| *aft > minimum_aft && *aft < maximum_aft),
+        );
+        for aft in boundaries {
+            let interval = rings
+                .windows(2)
+                .find(|pair| {
+                    f64::from(pair[0][0][2]) <= aft
+                        && aft <= f64::from(pair[1][0][2])
+                        && pair[0][0][2] < pair[1][0][2]
+                })
+                .unwrap();
+            let fraction = (aft - f64::from(interval[0][0][2]))
+                / f64::from(interval[1][0][2] - interval[0][0][2]);
+            for (index, sign) in [(6, 1.0), (18, -1.0)] {
+                let height = f64::from(interval[0][index][1])
+                    + fraction * f64::from(interval[1][index][1] - interval[0][index][1]);
+                assert!((-down - height) * sign < 0.0);
+            }
+        }
+    }
 
     #[test]
     fn frozen_web_cockpit_stations_topology_and_structure_are_preserved() {

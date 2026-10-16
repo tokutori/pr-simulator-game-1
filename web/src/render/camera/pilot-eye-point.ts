@@ -1,15 +1,18 @@
 import { pose, vec3 } from "../contracts/math.js";
 import { IDENTITY_POSE, multiplyQuaternion, quaternion } from "../contracts/math.js";
 import type { Pose, Quaternion, Vec3 } from "../contracts/math.js";
+import { pilot_eye_offset_frd } from "../../../pkg/birdman_game_wasm.js";
 
 const FRD_TO_THREE = quaternion(0.5, 0.5, 0.5, -0.5);
 const THREE_TO_FRD = quaternion(FRD_TO_THREE.w, -FRD_TO_THREE.x, -FRD_TO_THREE.y, -FRD_TO_THREE.z);
 
-export const SYNTHETIC_PILOT_EYE_POINT = createPilotEyePoint(
-  vec3(0.55, 0, -0.15),
-  0,
-  IDENTITY_POSE.orientation
-);
+export function syntheticPilotEyePoint(): PilotEyePoint {
+  const [forward, right, down] = pilot_eye_offset_frd();
+  if (forward === undefined || right === undefined || down === undefined) {
+    throw new RangeError("Incomplete shared pilot eye mount");
+  }
+  return createPilotEyePoint(vec3(forward, right, down), 0, IDENTITY_POSE.orientation);
+}
 
 export interface PilotEyePoint {
   readonly initialOffsetFrd: Vec3;

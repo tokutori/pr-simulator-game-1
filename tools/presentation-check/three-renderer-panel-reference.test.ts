@@ -7,7 +7,7 @@ import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
 import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
-import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/render/camera/pilot-eye-point.js";
+import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } from "../../web/src/render/contracts/runtime.js";
@@ -1037,7 +1037,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightPose(flight);
     const current = frame({ cameraPose: turnedHead, panel: testPanel(requiredScenePanel("Flight")) });
     bundle.renderer.render(current);
-    const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.15, 0);
+    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0.15, 0);
     expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, composePose(eye, turnedHead))));
     expectMatrix(singleDraw(driver).panel, poseMatrix(flightRelativePose(flight, visiblePanelFrame(current).pose)));
     const external = pose(vec3(100, 25, -40), turnedHead.orientation);
@@ -1062,7 +1062,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const basePanel = createSceneFixture("Result").panels[0];
     if (basePanel === undefined) throw new Error("Missing Result panel fixture");
     const panelPose = placeMenuPanel(IDENTITY_POSE, 2.4);
-    const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.15, 0);
+    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0.15, 0);
     bundle.renderer.setFlightPose(flight);
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
     for (const anchor of ["menu", "world", "head", "cockpit", "menu"] as const) {
@@ -1188,7 +1188,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       try {
         phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
         const rawFrame = fixtureBackendFrame(phone.backend, 10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
-        const mountedHead = composePose(pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1), rawFrame.cameraPose);
+        const mountedHead = composePose(pilotEyePoseThree(syntheticPilotEyePoint(), pilotPositionMeters, 0.1), rawFrame.cameraPose);
         const view = phonePanel(anchor, mountedHead);
         const current = fixtureBackendFrame(phone.backend, 20, view, configuredViewerFixture());
         driver.draws.length = 0;
@@ -1211,7 +1211,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         await phone.backend.stop();
         driver.draws.length = 0;
         bundle.renderer.render(frame({ panel: { kind: "absent" } }));
-        const eye = pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, pilotPositionMeters, 0.1);
+        const eye = pilotEyePoseThree(syntheticPilotEyePoint(), pilotPositionMeters, 0.1);
         expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, eye)));
       } finally {
         await phone.backend.stop();
@@ -1229,7 +1229,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightCameraMode(mode);
     const external = pose(vec3(50, 20, -130), quaternion(Math.cos(0.23), 0, Math.sin(0.23), 0));
     if (mode === "platform") bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
-    const mount = mode === "platform" ? external : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, 0.35, 0.1);
+    const mount = mode === "platform" ? external : pilotEyePoseThree(syntheticPilotEyePoint(), 0.35, 0.1);
     const phone = await startPhone(bundle, viewport);
     try {
       phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });

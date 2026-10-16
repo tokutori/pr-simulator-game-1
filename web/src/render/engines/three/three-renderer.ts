@@ -39,7 +39,7 @@ import { captureConfiguredViewerFrame, captureXrViewerFrame } from "./viewer-fra
 import { createHeadHudSurface } from "./head-hud-surface.js";
 import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
 import { flightRelativePose } from "./flight-pose.js";
-import { pilotEyePoseThree, poseFrdToThree, SYNTHETIC_PILOT_EYE_POINT } from "../../camera/pilot-eye-point.js";
+import { pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint } from "../../camera/pilot-eye-point.js";
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
@@ -465,9 +465,10 @@ export function createThreeRenderer(
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
     return flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")));
   };
+  const pilotEyePoint = syntheticPilotEyePoint();
   const currentPilotEyePose = (): Pose => flightPose === null
     ? IDENTITY_POSE
-    : pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
+    : pilotEyePoseThree(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
   const currentTrackingMountPose = (): Pose => currentExternalCameraPose() ?? currentPilotEyePose();
 
   const onSelect = (event: XRInputSourceEvent): void => {

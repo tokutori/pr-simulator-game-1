@@ -8,7 +8,7 @@ import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
 import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
-import { pilotEyePoseThree, SYNTHETIC_PILOT_EYE_POINT } from "../../web/src/render/camera/pilot-eye-point.js";
+import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
@@ -746,7 +746,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
 });
 
 function eyePose(flight: FlightRenderPose): Pose {
-  return pilotEyePoseThree(SYNTHETIC_PILOT_EYE_POINT, flight.pilotPositionMeters, flight.initialPilotPositionMeters);
+  return pilotEyePoseThree(syntheticPilotEyePoint(), flight.pilotPositionMeters, flight.initialPilotPositionMeters);
 }
 
 function centeredPanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
