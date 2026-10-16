@@ -14,7 +14,7 @@
 200/400 Hzの区間indexを100 Hzの保存recordへ変換しない。
 このgeneric ballistic fixtureは空力providerを使用せず、hybridの範囲外軌道を外挿しない。
 
-1. 解析式のendpointを公開`detect_water_contact`へ渡し、event補間の誤差だけを検査する。
+1. 解析式のendpointを内部`detect_flight_state_water_contact`へ渡し、event補間の誤差だけを検査する。
 2. 同じ条件を既存`advance`でRK4積分し、全endpointを解析式と比較する。
    そのcontact結果と1の差を、積分・累積丸めに由来する追加誤差として個別に判定する。
 
@@ -47,12 +47,11 @@ scoreは公開`course_distance_score`のnorth courseを使用する。course/cro
 
 ## 同時刻stateと検証範囲
 
-実`WaterContactSample`のinterval index・fraction・contact point・state getterを使用する。
-水平位置と鉛直速度は同じ$\hat t_c$へ対応し、定姿勢・body rate・pilot位置/速度・TailIncidenceを保持する。
+実`FlightStateContactSample`のinterval index・fraction・contact point・stateを使用する。
+水平位置と鉛直速度は同じ$\hat t_c$へ対応し、定姿勢・body rate・pilot位置/速度を保持する。
 鉛直位置は線形chord上の水面接触値であり、解析的ballistic位置との差を補間誤差として扱う。
-APIが返さないTail controlsを生成しない。control保持則の境界は既存
-`contact_inside_tick_returns_consistent_fractional_state`と
-`externally_constructed_endpoints_use_held_actuators_after_the_start_boundary`に対応する。
+内部検出が返さないTail controlsを生成しない。実tail tickのincidence保持とrecord終端は
+`off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time`で接続を検査する。
 接触後state・実機精度・新hybridのevent成立率はこの試験の対象外である。
 結果とcommit/toolchain/環境は検査実行時に報告する。
 
@@ -70,7 +69,9 @@ $S=\max(|d_0|,|d_1|)+\lVert r\rVert_1$は位置・回転点の演算scaleであ�
 通常slerpのbasisをa,bとすると、Gram欠損$G=|a\cdot a-1|+|b\cdot b-1|+|a\cdot b|$を加える。
 これは正規化前normの1からの差による回転downの誤差を表す。nlerpではG=0とする。
 この予算はf64/libmによる数値解像度の契約であり、全実入力の厳密丸め誤差証明や固定mの侵入許容値とは区別する。
-端点の接触と通常交差の二分は従来のdown>=0で分類する。
+幾何scaleの回帰検査は1e-300〜1e150を含む。subnormal下端の丸め予算は未検証である。
+内部候補の正負がこの丸め帯に入る場合は、接線とごく浅い侵入を区別せず候補時刻で分類する。
+端点の接触と、この丸め帯を超えた通常交差の二分は従来のdown>=0で分類する。
 
 二分探索幅はevent時刻の総誤差と区別する。単純根には局所傾きmを介した距離予算/mが作用する。
 接線近傍では曲率により平方根の増幅が生じ得るため、任意接線に一様なfraction精度を主張しない。

@@ -7,6 +7,193 @@ use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, Uni
 #[path = "tests/numerical.rs"]
 mod numerical;
 
+#[path = "tests/tail_integration.rs"]
+mod tail_integration;
+
+#[test]
+fn contact_extrema_include_datum_translation_in_both_branches() {
+    for span in [0.02, 0.1] {
+        let fraction = 0.33;
+        let start_angle = -0.011;
+        let end_angle = start_angle + span;
+        let previous = tick(0, 0.0, start_angle);
+        let next = tick(1, 0.0, end_angle);
+        let attitude = previous
+            .flight_state
+            .attitude_body_to_ned()
+            .slerp(next.flight_state.attitude_body_to_ned(), fraction)
+            .unwrap();
+        let components = attitude.components();
+        let angle = 2.0 * libm::atan2(components[2], components[0]);
+        let angle_rate = if span == 0.02 {
+            2.0 * libm::sin(span * 0.5)
+                / (1.0 - 2.0 * fraction * (1.0 - fraction) * (1.0 - libm::cos(span * 0.5)))
+        } else {
+            span
+        };
+        let down_change = angle_rate * libm::sin(angle);
+        let down_start = -libm::cos(angle) - down_change * fraction;
+        let contact = detect_contact(
+            &aircraft(),
+            tick(0, down_start, start_angle),
+            tick(1, down_start + down_change, end_angle),
+            geometry(&[contact_point(0.0, 1.0)]),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            (contact.fraction - fraction).abs() < 2.0e-9,
+            "span={span}, contact={contact:?}"
+        );
+    }
+}
+
+#[test]
+fn tiny_large_and_arbitrary_orientation_contact_uses_the_actual_rotation() {
+    for radius in [1.0e-300, 1.0, 1.0e150] {
+        let contact = detect_contact(
+            &aircraft(),
+            tick(0, -radius * (1.0 - 1.0e-7), -0.0066),
+            tick(1, -radius * (1.0 - 1.0e-7), 0.0134),
+            geometry(&[contact_point(0.0, radius)]),
+        )
+        .unwrap()
+        .unwrap();
+        let boundary_angle = -libm::acos(1.0 - 1.0e-7);
+        let numerator = libm::sin((boundary_angle + 0.0066) * 0.5);
+        let expected = numerator / (numerator + libm::sin((0.0134 - boundary_angle) * 0.5));
+        assert!((contact.fraction - expected).abs() < 2.0e-9);
+        assert!(
+            super::contact_point_down(contact.flight_state, contact_point(0.0, radius))
+                .unwrap()
+                .abs()
+                / radius
+                < 1.0e-12
+        );
+    }
+    let start = UnitQuaternion::try_new(0.5, 0.5, 0.5, 0.5).unwrap();
+    let norm = libm::sqrt(30.0);
+    let end = UnitQuaternion::try_new(1.0 / norm, 2.0 / norm, 3.0 / norm, 4.0 / norm).unwrap();
+    let peak = start.slerp(end, 0.271).unwrap();
+    let point = peak
+        .ned_to_body(NedVector::try_new(0.0, 0.0, 1.0).unwrap())
+        .unwrap()
+        .components();
+    let point = BodyPoint::try_new(point[0], point[1], point[2]).unwrap();
+    let state = |tick_index, attitude| StampedState {
+        tick_index,
+        flight_state: FlightState::try_new(
+            NedPoint::try_new(0.0, 0.0, -1.0).unwrap(),
+            NedVector::zero(),
+            attitude,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap(),
+    };
+    let contact = detect_contact(
+        &aircraft(),
+        state(0, start),
+        state(1, end),
+        geometry(&[point]),
+    )
+    .unwrap()
+    .unwrap();
+    assert!((contact.fraction - 0.271).abs() < 2.0e-11);
+}
+
+#[test]
+fn noncontact_constant_curves_and_near_misses_remain_airborne() {
+    for span in [0.0, 0.02, 0.1] {
+        for clearance in [1.0e-11, 1.0e-7] {
+            assert_eq!(
+                detect_contact(
+                    &aircraft(),
+                    tick(0, -1.0 - clearance, -0.33 * span),
+                    tick(1, -1.0 - clearance, 0.67 * span),
+                    geometry(&[contact_point(0.0, 1.0)]),
+                )
+                .unwrap(),
+                None
+            );
+        }
+    }
+    assert_eq!(
+        detect_contact(
+            &aircraft(),
+            tick(0, -1.0e-15, 0.0),
+            tick(1, -1.0e-15, 0.0),
+            geometry(&[contact_point(0.0, 0.0)]),
+        )
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn multiple_off_grid_tangencies_select_earliest_point_and_preserve_ties() {
+    let points = [0.73, 0.21, 0.21].map(|fraction| {
+        let angle = -0.033 + 0.1 * fraction;
+        contact_point(-libm::sin(angle), libm::cos(angle))
+    });
+    let contact = detect_contact(
+        &aircraft(),
+        tick(0, -1.0, -0.033),
+        tick(1, -1.0, 0.067),
+        geometry(&points),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(contact.contact_point_index, 1);
+    assert!((contact.fraction - 0.21).abs() < 2.0e-11);
+}
+
+#[test]
+fn near_repeated_nlerp_critical_roots_retain_contact_and_spatial_precision() {
+    let span = 0.02;
+    for factor in [1.0 - 32.0 * f64::EPSILON, 1.0, 1.0 + 32.0 * f64::EPSILON] {
+        let down_change = 4.0 * libm::tan(span * 0.25) * factor;
+        let contact = detect_contact(
+            &aircraft(),
+            tick(0, -0.5 * down_change, -0.5 * span),
+            tick(1, 0.5 * down_change, 0.5 * span),
+            geometry(&[contact_point(1.0, 0.0)]),
+        )
+        .unwrap()
+        .unwrap();
+        assert!((0.49..0.51).contains(&contact.fraction));
+        assert!(
+            super::contact_point_down(contact.flight_state, contact_point(1.0, 0.0))
+                .unwrap()
+                .abs()
+                < 1.0e-13,
+        );
+    }
+}
+
+#[test]
+fn contact_coefficients_and_later_point_errors_are_never_suppressed() {
+    assert_eq!(
+        detect_contact(
+            &aircraft(),
+            tick(0, -f64::MAX, 0.0),
+            tick(1, f64::MAX, 0.0),
+            geometry(&[contact_point(0.0, 0.0)]),
+        ),
+        Err(ContactError::Math(crate::MathError::NonFinite))
+    );
+    assert_eq!(
+        detect_contact(
+            &aircraft(),
+            tick(0, -1.0, 0.5),
+            tick(1, -1.0, 0.6),
+            geometry(&[contact_point(0.0, 2.0), contact_point(f64::MAX, f64::MAX)]),
+        ),
+        Err(ContactError::Math(crate::MathError::NonFinite))
+    );
+}
+
 #[test]
 fn off_grid_tangencies_and_transient_crossings_use_both_interpolation_branches() {
     for angular_span in [0.1, 0.02, -0.1, -0.02] {
