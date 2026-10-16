@@ -1,7 +1,7 @@
 use crate::dynamics::{AircraftModel, DynamicsError, FlightState, total_momentum};
 use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector};
 
-const CONTACT_SEARCH_SUBDIVISIONS: usize = 16;
+mod curve;
 
 /// Failures while identifying or interpolating a water-contact event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,11 +89,17 @@ fn find_contact_fraction(
     if start_down >= 0.0 {
         return Ok(Some(0.0));
     }
+    let partition = curve::contact_partitions(previous, next, contact_point)?;
     let mut above_fraction = 0.0;
-    for subdivision in 1..=CONTACT_SEARCH_SUBDIVISIONS {
-        let fraction = subdivision as f64 / CONTACT_SEARCH_SUBDIVISIONS as f64;
+    for fraction in partition.fractions {
+        if fraction == above_fraction {
+            continue;
+        }
         let interpolated = interpolate_flight_state(previous, next, fraction)?;
         let down = contact_point_down(interpolated, contact_point)?;
+        if fraction < 1.0 && down.abs() <= partition.rounding_distance_m {
+            return Ok(Some(fraction));
+        }
         if down >= 0.0 {
             return refine_contact_fraction(
                 previous,

@@ -120,7 +120,9 @@ trimから生成する場合はair-relative条件を明示し、ground条件に�
 静水面はNEDのD=0とする。初期版の接触判定は登録した機体接触点のいずれかがD>=0となる条件を用いる。
 接触点は構造datumからの固定offsetでモデルに記録する。接触検出は隣接する成功tick間のstateを補間し、
 各接触点の水面到達fractionを探索して最早eventを選択する。位置・速度・角速度・身体状態は線形補間し、
-姿勢は短経路quaternion slerpを用いる。接触探索では補間経路を16区間で調べ、接触を含む区間のfractionを
+姿勢は短経路quaternion補間を用い、近角では既存のnlerpを維持する。通常slerpでは線形項とsin/cosから
+接触点downの内部極値を列挙し、nlerpでは正の二次分母を払った三次式の導関数から区間を隔離する。
+各点の内部候補は高々二つであり、固定節点に整列しない接線と短い侵入・離脱も調べる。最初の到達区間のfractionを
 同じ補間state上で二分探索により確定する。
 終端位置・姿勢・actuator・身体状態は同一の接触時刻で確定する。actuatorは `flight-control.md` の
 tick内保持規則に従い、正のfractionでは全RK4 stageに渡した更新値を使用する。

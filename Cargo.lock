@@ -1423,6 +1423,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "nalgebra",
+ "polycool",
 ]
 
 [[package]]
@@ -3448,6 +3449,16 @@ dependencies = [
  "pin-project-lite",
  "rustix 1.1.5",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "polycool"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
+dependencies = [
+ "arrayvec",
+ "libm",
 ]
 
 [[package]]

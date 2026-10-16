@@ -49,6 +49,21 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
+describe("core polynomial roots boundary", () => {
+  const polynomial = { ...chartNumberDependency, name: "polycool", req: "=0.4.0", features: ["libm"] };
+  it("allows the pinned no_std root solver only in core", () => {
+    expect(() => { assertDependencyBoundary(core(polynomial)); }).not.toThrow();
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [polynomial] }]); })
+      .toThrow("Forbidden dependency");
+  });
+  it.each([{ uses_default_features: true }, { features: ["std"] }, { features: ["libm", "arbitrary"] }])(
+    "rejects default/std/testing activation %j", (difference) => {
+      expect(() => { assertDependencyBoundary(core({ ...polynomial, ...difference })); })
+        .toThrow("Forbidden dependency");
+    }
+  );
+});
+
 describe("shared image operations boundary", () => {
   const image = { ...chartNumberDependency, name: "image", req: "=0.25.10" };
   it("allows codec-free operations only in the presentation session crate", () => {

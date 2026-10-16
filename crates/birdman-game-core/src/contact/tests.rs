@@ -7,6 +7,44 @@ use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, Uni
 #[path = "tests/numerical.rs"]
 mod numerical;
 
+#[test]
+fn off_grid_tangencies_and_transient_crossings_use_both_interpolation_branches() {
+    for angular_span in [0.1, 0.02, -0.1, -0.02] {
+        for tangent_fraction in [0.13, 0.33, 0.71, 0.97] {
+            let start_angle = -tangent_fraction * angular_span;
+            let end_angle = start_angle + angular_span;
+            for penetration in [0.0, 1.0e-7] {
+                let previous = tick(0, -1.0 + penetration, start_angle);
+                let next = tick(1, -1.0 + penetration, end_angle);
+                let contact = detect_contact(
+                    &aircraft(),
+                    previous,
+                    next,
+                    geometry(&[contact_point(0.0, 1.0)]),
+                )
+                .unwrap()
+                .unwrap();
+                let contact_angle = -angular_span.signum() * libm::acos(1.0 - penetration);
+                let expected = if angular_span.abs() >= 0.1 {
+                    (contact_angle - start_angle) / angular_span
+                } else {
+                    let numerator = libm::sin((contact_angle - start_angle) * 0.5);
+                    numerator / (numerator + libm::sin((end_angle - contact_angle) * 0.5))
+                };
+                let fraction_budget = if penetration == 0.0 { 2.0e-11 } else { 2.0e-9 };
+                assert!(
+                    (contact.fraction - expected).abs() < fraction_budget,
+                    "span={angular_span} tangent={tangent_fraction} penetration={penetration} actual={} expected={expected}",
+                    contact.fraction,
+                );
+                let down = super::contact_point_down(contact.flight_state, contact_point(0.0, 1.0))
+                    .unwrap();
+                assert!(down.abs() < 1.0e-12);
+            }
+        }
+    }
+}
+
 fn aircraft() -> AircraftModel {
     AircraftModel::try_new(
         10.0,

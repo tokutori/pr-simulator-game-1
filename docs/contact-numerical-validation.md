@@ -28,7 +28,7 @@ $z'(t)\ge w_0>0$を用い、eventの時刻誤差を以下で判定する。
 0\le t_c-\hat t_c\le \frac{g\,dt^2}{8w_0}
 ```
 
-実APIは16区間の探索後に最大48回二分するため、二分区間の時間幅は$dt/(16\times2^{48})$である。
+実APIは補間枝ごとの内部候補で区間を隔離して最大48回二分するため、二分区間の時間幅は最大$dt/2^{48}$である。
 f64によるmidpoint停止とplane分類の丸めを別の余裕へ加える。
 この許容差とfixtureは実行前に固定し、結果に対する事後fitを行わない。
 
@@ -55,3 +55,24 @@ APIが返さないTail controlsを生成しない。control保持則の境界は
 `externally_constructed_endpoints_use_held_actuators_after_the_start_boundary`に対応する。
 接触後state・実機精度・新hybridのevent成立率はこの試験の対象外である。
 結果とcommit/toolchain/環境は検査実行時に報告する。
+
+## Off-grid接触の隔離と丸め
+
+通常slerpでは各点のdownは位置の線形項とsin/cosの和となる。shortest arcの物理角は最大πであり、
+微分の内部根は高々二つとなる。近角nlerpは正規化前quaternionが一次式であり、
+その正の二次normで分母を払った接触関数Pは高々三次となる。P'の二次根で符号区間を隔離する。
+同じmath moduleのshortest符号と枝判定を用い、補間経路・演算順・最終正規化を変更しない。
+二次根にはno_stdの固定`polycool`を使用する。三次式の符号交差だけで接線を探索する方式は用いない。
+
+候補の分類と二分には実際の位置・quaternion補間で再評価したdownを使用する。
+内部候補の接線分類だけに、$128\epsilon S+\lVert r\rVert_1 G$の丸め距離予算を適用する。
+$S=\max(|d_0|,|d_1|)+\lVert r\rVert_1$は位置・回転点の演算scaleであり、128は係数・正規化・回転評価の演算余裕である。
+通常slerpのbasisをa,bとすると、Gram欠損$G=|a\cdot a-1|+|b\cdot b-1|+|a\cdot b|$を加える。
+これは正規化前normの1からの差による回転downの誤差を表す。nlerpではG=0とする。
+この予算はf64/libmによる数値解像度の契約であり、全実入力の厳密丸め誤差証明や固定mの侵入許容値とは区別する。
+端点の接触と通常交差の二分は従来のdown>=0で分類する。
+
+二分探索幅はevent時刻の総誤差と区別する。単純根には局所傾きmを介した距離予算/mが作用する。
+接線近傍では曲率により平方根の増幅が生じ得るため、任意接線に一様なfraction精度を主張しない。
+各点は高々三つの区間端と、必要な一回の最大48回精密化を評価する。点数に線形、追加allocationは0である。
+差分・係数・実評価の非有限はMath causeとして返し、候補を得た後も全点の失敗を評価する。

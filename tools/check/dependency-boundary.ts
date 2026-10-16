@@ -117,6 +117,22 @@ function isHostNumericalTestDependency(crate: string, dependency: Record<string,
     && dependency.features[0] === "std";
 }
 
+function isCorePolynomialDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-core"
+    && dependency.name === "polycool"
+    && dependency.kind === null
+    && dependency.target === null
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 1
+    && dependency.features[0] === "libm";
+}
+
 function activatesSchema(feature: unknown): boolean {
   return typeof feature === "string" && (feature === "schema" || feature === "schemars" || feature === "dep:schemars"
     || feature.startsWith("schemars/") || feature.startsWith("schemars?/") || feature.endsWith("/schema"));
@@ -188,6 +204,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         && !isSharedChartNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
+        && !isCorePolynomialDependency(name, dependency)
         && !isSchemaGenerationDependency(name, dependency, pkg.features)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);
       }

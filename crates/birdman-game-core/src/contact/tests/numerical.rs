@@ -121,7 +121,7 @@ fn horizontal_speed() -> f64 {
 }
 
 fn refinement_time(timestep: f64) -> f64 {
-    timestep / (16.0 * 281_474_976_710_656.0)
+    timestep / 281_474_976_710_656.0
 }
 
 fn interpolation_time_bound(timestep: f64) -> f64 {
