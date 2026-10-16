@@ -70,4 +70,52 @@ mod flight_execution {
             assert(execution.running());
         }
     }
+
+    #[verus_spec(
+        ensures
+            final(flight).state == old(flight).state,
+            !final(flight).execution.running(),
+            final(flight).execution.pause_bits() == (old(flight).execution.pause_bits() | reason.mask()),
+    )]
+    fn verify_pause_payload<State>(flight: &mut ActiveFlight<State>, reason: PauseReason) {
+        flight.pause(reason);
+    }
+
+    #[verus_spec(outcome =>
+        ensures
+            final(flight).state == old(flight).state,
+            match outcome {
+                Ok(()) => !old(flight).execution.running() && !final(flight).execution.running()
+                    && final(flight).execution.pause_bits() == (old(flight).execution.pause_bits() & !reason.mask()),
+                Err(FlightExecutionError::NotPaused) => old(flight).execution.running()
+                    && final(flight).execution == old(flight).execution,
+                Err(FlightExecutionError::PauseConditionsRemain) => false,
+            },
+    )]
+    fn verify_clear_payload<State>(
+        flight: &mut ActiveFlight<State>,
+        reason: PauseReason,
+    ) -> Result<(), FlightExecutionError> {
+        flight.clear_pause_reason(reason)
+    }
+
+    #[verus_spec(outcome =>
+        ensures
+            final(flight).state == old(flight).state,
+            match outcome {
+                Ok(()) => !old(flight).execution.running() && final(flight).execution.running()
+                    && old(flight).execution.pause_bits() & !PauseReason::Manual.mask() == 0,
+                Err(FlightExecutionError::NotPaused) => old(flight).execution.running()
+                    && final(flight).execution == old(flight).execution,
+                Err(FlightExecutionError::PauseConditionsRemain) => !old(flight).execution.running()
+                    && !final(flight).execution.running()
+                    && final(flight).execution.pause_bits() == (old(flight).execution.pause_bits() & !PauseReason::Manual.mask())
+                    && final(flight).execution.pause_bits() != 0,
+            },
+    )]
+    fn verify_resume_payload<State>(
+        flight: &mut ActiveFlight<State>,
+    ) -> Result<(), FlightExecutionError> {
+        flight.resume()
+    }
 }

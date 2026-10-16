@@ -41,11 +41,12 @@ $suites = @(
         Name = 'flight_execution'
         SharedModule = Join-Path $repository 'crates/birdman-game-core/src/flight_execution.rs'
         PositiveDriver = Join-Path $repository 'proofs/flight_execution.rs'
-        RequiredProofs = @('verify_pause_execution', 'verify_clear_execution', 'verify_resume_execution', 'verify_running_rejection')
+        RequiredProofs = @('verify_pause_execution', 'verify_clear_execution', 'verify_resume_execution', 'verify_running_rejection', 'verify_pause_payload', 'verify_clear_payload', 'verify_resume_payload')
         RenamedProof = 'verify_resume_execution'
         NegativeChecks = @(
             @{ Path = Join-Path $repository 'proofs/flight_execution_resume_negative.rs'; Assertion = 'resumed' },
-            @{ Path = Join-Path $repository 'proofs/flight_execution_clear_negative.rs'; Assertion = 'running' }
+            @{ Path = Join-Path $repository 'proofs/flight_execution_clear_negative.rs'; Assertion = 'running' },
+            @{ Path = Join-Path $repository 'proofs/flight_payload_negative.rs'; Assertion = 'changed' }
         )
     }
 )

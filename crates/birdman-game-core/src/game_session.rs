@@ -3,7 +3,7 @@ use core::time::Duration;
 use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
-use crate::flight_execution::{FlightExecution, FlightExecutionError};
+use crate::flight_execution::{ActiveFlight, FlightExecution, FlightExecutionError};
 use crate::flight_record::{
     FlightRecord, FlightRecordError, FlightRecordHeader, FlightRecordQueryError,
     MAX_FLIGHT_RECORD_TICKS,
@@ -375,10 +375,7 @@ enum ConfiguredPhase {
         reason: BriefingFailure,
     },
     Countdown(CountdownState),
-    Flight {
-        state: TailFlightTickState,
-        execution: FlightExecution,
-    },
+    Flight(ActiveFlight<TailFlightTickState>),
     Result {
         result: SessionResult,
     },
@@ -422,14 +419,14 @@ impl<'a> GameSession<'a> {
                         scenario,
                         remaining_seconds: countdown.remaining_seconds(),
                     },
-                    ConfiguredPhase::Flight {
+                    ConfiguredPhase::Flight(ActiveFlight {
                         state,
                         execution: FlightExecution::Running,
-                    } => SessionSnapshot::TailFlightRunning { scenario, state },
-                    ConfiguredPhase::Flight {
+                    }) => SessionSnapshot::TailFlightRunning { scenario, state },
+                    ConfiguredPhase::Flight(ActiveFlight {
                         state,
                         execution: FlightExecution::Paused { reasons },
-                    } => SessionSnapshot::TailFlightPaused {
+                    }) => SessionSnapshot::TailFlightPaused {
                         scenario,
                         state,
                         reasons,
@@ -462,14 +459,14 @@ impl<'a> GameSession<'a> {
                 ConfiguredPhase::Countdown(countdown) => SessionPhase::Countdown {
                     remaining_seconds: countdown.remaining_seconds(),
                 },
-                ConfiguredPhase::Flight {
+                ConfiguredPhase::Flight(ActiveFlight {
                     execution: FlightExecution::Running,
                     ..
-                } => SessionPhase::FlightRunning,
-                ConfiguredPhase::Flight {
+                }) => SessionPhase::FlightRunning,
+                ConfiguredPhase::Flight(ActiveFlight {
                     execution: FlightExecution::Paused { reasons },
                     ..
-                } => SessionPhase::FlightPaused { reasons },
+                }) => SessionPhase::FlightPaused { reasons },
                 ConfiguredPhase::Result { .. } => SessionPhase::Result,
                 ConfiguredPhase::Replay { .. } => SessionPhase::Replay,
             },
@@ -771,7 +768,7 @@ impl<'a> GameSession<'a> {
             return Ok(None);
         };
         let state = match configured.phase {
-            ConfiguredPhase::Flight { state, .. } => Some(state.flight_state()),
+            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => Some(state.flight_state()),
             ConfiguredPhase::Result { result } | ConfiguredPhase::Replay { result, .. } => {
                 Some(result.state.flight_state())
             }
@@ -788,7 +785,7 @@ impl<'a> GameSession<'a> {
             return Ok(None);
         };
         let state = match configured.phase {
-            ConfiguredPhase::Flight { state, .. } => state,
+            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => state,
             _ => return Ok(None),
         };
         course_distance_score(
@@ -991,10 +988,10 @@ impl<'a> GameSession<'a> {
             .record
             .begin_tail(initial, telemetry)
             .map_err(GameSessionError::Record)?;
-        configured.phase = ConfiguredPhase::Flight {
+        configured.phase = ConfiguredPhase::Flight(ActiveFlight {
             state: initial,
             execution: FlightExecution::Running,
-        };
+        });
         Ok(CountdownProgress::Launched)
     }
 
@@ -1010,10 +1007,10 @@ impl<'a> GameSession<'a> {
     /// Adds a pause cause while running or already paused.
     pub fn pause(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
         let configured = self.configured_mut()?;
-        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
+        let ConfiguredPhase::Flight(flight) = &mut configured.phase else {
             return Err(GameSessionError::InvalidTransition);
         };
-        execution.pause(reason);
+        flight.pause(reason);
         Ok(())
     }
 
@@ -1022,10 +1019,10 @@ impl<'a> GameSession<'a> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
         };
-        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
+        let ConfiguredPhase::Flight(flight) = &mut configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        execution
+        flight
             .clear_pause_reason(reason)
             .map_err(GameSessionError::from)
     }
@@ -1035,10 +1032,10 @@ impl<'a> GameSession<'a> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
         };
-        let ConfiguredPhase::Flight { execution, .. } = &mut configured.phase else {
+        let ConfiguredPhase::Flight(flight) = &mut configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        execution.resume().map_err(GameSessionError::from)
+        flight.resume().map_err(GameSessionError::from)
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.
@@ -1047,10 +1044,10 @@ impl<'a> GameSession<'a> {
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
         let configured = self.configured_mut()?;
-        let ConfiguredPhase::Flight {
+        let ConfiguredPhase::Flight(ActiveFlight {
             state: previous,
             execution: FlightExecution::Running,
-        } = configured.phase
+        }) = configured.phase
         else {
             return Err(GameSessionError::InvalidTransition);
         };
@@ -1085,10 +1082,10 @@ impl<'a> GameSession<'a> {
         }
         match report.outcome() {
             TailFlightTickOutcome::Advanced(next) => {
-                configured.phase = ConfiguredPhase::Flight {
+                configured.phase = ConfiguredPhase::Flight(ActiveFlight {
                     state: next,
                     execution: FlightExecution::Running,
-                };
+                });
                 if next.tick_index() >= maximum_ticks {
                     self.finalize_tick(SessionEndReason::TimeLimit, next)?;
                 }
@@ -1107,7 +1104,7 @@ impl<'a> GameSession<'a> {
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
         let state = match self.configured_mut()?.phase {
-            ConfiguredPhase::Flight { state, .. } => state,
+            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => state,
             _ => return Err(GameSessionError::InvalidTransition),
         };
         self.finalize_tick(SessionEndReason::ManualAbort, state)?;
