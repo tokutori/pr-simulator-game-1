@@ -204,6 +204,11 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
     const permitted = allowed.get(name);
     if (permitted === undefined || !Array.isArray(pkg.dependencies)) throw new Error(`Unexpected crate: ${name}`);
     assertSchemaFeatureBoundary(name, pkg.features);
+    if (name !== "birdman-game-core" && pkg.features !== undefined
+      && Object.values(record(pkg.features)).some((enabled) => Array.isArray(enabled)
+        && enabled.some((feature: unknown) => typeof feature === "string" && feature.endsWith("/verus-proof")))) {
+      throw new Error(`Forbidden normal proof activation in ${name}`);
+    }
     for (const value of pkg.dependencies) {
       const dependency = record(value);
       const dependencyName = nonEmpty(dependency.name);

@@ -65,6 +65,10 @@ Web起動ページは `http://localhost:5173/pr-simulator-game-1/` で確認で�
 
 `main`へのpushはUbuntu・Windows双方の検査を実行する。GitHub Pagesへの公開は、明示的な公開指示を受けた後、mainの`Check`を手動実行して`deploy_pages`を有効にする。同じrunで検査したartifactだけを配信する。公開先は [GitHub Pages](https://tokutori.github.io/pr-simulator-game-1/) である。現段階は試験公開とし、BPG-013の配布条件とVR・実端末の未完了受入を追跡する。
 
+形式検証は `powershell -File tools/verus/check-pause-reasons.ps1` で実行する。
+実coreの限定検証は固定Verusのgeneric derived Clone仕様未生成warningを2件保持する。
+本保持契約はClone equalityを仮定しない。[保証範囲と未証明境界](docs/formal-verification.md)を参照する。
+
 ## 設計資料
 
 - [アーキテクチャ](docs/architecture.md)・[座標系](docs/coordinates.md)

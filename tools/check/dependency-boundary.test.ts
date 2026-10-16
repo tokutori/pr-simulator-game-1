@@ -73,6 +73,13 @@ describe("core proof dependency boundary", () => {
       { name: "birdman-game-core", features: ["verus-proof"] }
     ] }]); }).toThrow("Forbidden normal proof activation");
   });
+  it.each(["birdman-game-core/verus-proof", "birdman-game-core?/verus-proof"])(
+    "rejects indirect application activation through %s", (feature) => {
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-format", dependencies: [
+        { name: "birdman-game-core", features: [] }
+      ], features: { default: [feature] } }]); }).toThrow("Forbidden normal proof activation");
+    }
+  );
 });
 
 describe("core polynomial roots boundary", () => {
