@@ -197,7 +197,7 @@ mod tests {
         };
         let aircraft = HybridMockDefinition::try_new().unwrap().aircraft();
         let trim = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
-        let mapping = TailPilotPositionMapping::try_new(&aircraft, trim).unwrap();
+        let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.position_m()).unwrap();
         let endpoints = [-1.0, 1.0].map(|normalized| {
             mapping
                 .resolve(
