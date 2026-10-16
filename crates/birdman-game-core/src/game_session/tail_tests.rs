@@ -377,9 +377,22 @@ fn tail_session_contact_at_start_does_not_record_unelapsed_input() {
         panic!("expected contact at start");
     };
     assert_eq!(contact.fraction(), 0.0);
+    assert_eq!(contact.flight_state(), initial.flight_state());
     assert_eq!(contact.incidence(), initial.incidence());
     let record = session.flight_record().unwrap();
     assert_eq!(record.sample_count(), 1);
+    assert_eq!(
+        record.sample(0).unwrap().flight_state,
+        contact.flight_state()
+    );
+    assert_eq!(
+        record.finalization().unwrap().terminal_tick,
+        contact.interval_start_tick()
+    );
+    assert_eq!(
+        record.finalization().unwrap().terminal_fraction,
+        contact.fraction()
+    );
     assert_eq!(
         record.sample(0).unwrap().controls,
         crate::FlightRecordControls::initial_tail(initial)

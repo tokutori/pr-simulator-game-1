@@ -1,6 +1,7 @@
 use birdman_game_core::{
-    DistanceScore, FlightRecord, FlightRecordError, FlightRecordFinalization, SessionEndReason,
-    TailFlightTickError,
+    DistanceScore, FlightRecord, FlightRecordControlCapture, FlightRecordControls, FlightRecordError,
+    FlightRecordFinalization, FlightTelemetry, SessionEndReason, TailFlightTickError,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState,
 };
 use vstd::prelude::*;
 
@@ -55,5 +56,77 @@ verus! {
         },
     {
         record.finalize_with_failure(reason, tick, fraction, score, failure)
+    }
+
+    fn verify_domain_record_begin(
+        record: &mut FlightRecord,
+        initial: TailFlightTickState,
+        telemetry: FlightTelemetry,
+    ) -> (outcome: Result<(), FlightRecordError>)
+        ensures match outcome {
+            Ok(()) => old(record).recorded_samples().len() == 0
+                && initial.tick_index() == 0
+                && final(record).sample_count() == 1
+                && final(record).recorded_samples().last().flight_state == initial.flight_state()
+                && final(record).recorded_samples().last().controls == FlightRecordControls::initial_tail(initial)
+                && final(record).recorded_samples().last().telemetry == telemetry
+                && final(record).header() == old(record).header()
+                && final(record).sample_limit() == old(record).sample_limit(),
+            Err(_) => *final(record) == *old(record),
+        },
+    {
+        record.begin_tail(initial, telemetry)
+    }
+
+    fn verify_domain_record_append(
+        record: &mut FlightRecord,
+        report: TailFlightTickReport,
+        telemetry: FlightTelemetry,
+    ) -> (outcome: Result<(), FlightRecordError>)
+        ensures match outcome {
+            Ok(()) => old(record).finalization().is_none()
+                && old(record).recorded_samples().len() > 0
+                && match report.outcome() {
+                    TailFlightTickOutcome::Advanced(state) =>
+                        old(record).recorded_samples().last().tick_index.checked_add(1) == Some(state.tick_index())
+                            && state.tick_index() <= old(record).header().maximum_flight_ticks,
+                    TailFlightTickOutcome::WaterContact(sample) =>
+                        sample.interval_start_tick() == old(record).recorded_samples().last().tick_index
+                            && sample.interval_start_tick() < old(record).header().maximum_flight_ticks,
+                }
+                && match FlightRecordControls::from_tail_report(report) {
+                    FlightRecordControlCapture::NoElapsedInterval => *final(record) == *old(record),
+                    FlightRecordControlCapture::Applied(controls) =>
+                        final(record).sample_count() == old(record).sample_count() + 1
+                        && final(record).sample_count() <= final(record).sample_limit()
+                        && final(record).recorded_samples().drop_last() == old(record).recorded_samples()
+                        && final(record).recorded_samples().last().controls == controls
+                        && final(record).recorded_samples().last().telemetry == telemetry
+                        && final(record).recorded_samples().last().wind_at_cg_ned_mps == telemetry.wind_velocity_ned_mps
+                        && match report.outcome() {
+                            TailFlightTickOutcome::Advanced(state) =>
+                                final(record).recorded_samples().last().flight_state == state.flight_state()
+                                    && final(record).recorded_samples().last().tick_index == state.tick_index(),
+                            TailFlightTickOutcome::WaterContact(sample) =>
+                                final(record).recorded_samples().last().flight_state == sample.flight_state()
+                                    && final(record).recorded_samples().last().tick_index == sample.interval_start_tick()
+                                    && final(record).recorded_samples().last().fraction == sample.fraction(),
+                        },
+                },
+            Err(_) => *final(record) == *old(record),
+        },
+    {
+        record.append_tail_report(report, telemetry)
+    }
+
+    fn verify_domain_record_no_elapsed(
+        record: &mut FlightRecord,
+        report: TailFlightTickReport,
+        telemetry: FlightTelemetry,
+    )
+        requires FlightRecordControls::from_tail_report(report) matches FlightRecordControlCapture::NoElapsedInterval,
+        ensures *final(record) == *old(record),
+    {
+        let _ = record.append_tail_report(report, telemetry);
     }
 }

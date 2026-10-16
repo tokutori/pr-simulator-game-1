@@ -214,8 +214,22 @@ Err時の実owner保持、header・sample列・capacity保持、成功時のreas
 score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
 公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
 時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
-Running認可、previous/report選択、appendと最新sample/terminal stateの一致、数値score評価は未接続の境界である。
+Running認可、previous/report選択、全tickの最新sample/terminal state相関、数値score評価は未接続の境界である。
 これらの前提を仮定して終端化全体を完了扱いにせず、親#382を継続する。
+
+公開`begin_tail`/`append_tail_report`は同じ実bodyの認可、実reportからstate/control/telemetryへの転送、
+bounded Vecへの追加、拒否時のowner全保持を検証する。NoElapsedIntervalは結果の成否にかかわらずrecord全体を保持する。
+ghost-onlyのsample sequenceとlogical limitは実Vec/fieldのviewであり、別の記録モデルやruntime APIを追加しない。
+整数tickの隣接・上限は直接の契約である。fractionの実`!= 0.0`比較は、固定vstdの`ne_ensures(..., false)`へ接続する。
+この標準関係は未解釈であり、IEEE比較の数学的意味やspec上の値等号を導かない。
+[固定vstd比較仕様](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L315-L324)に従う。
+
+同じtelemetry validatorではfinite判定を有限閉区間へ等価展開する。固定Verifierはstdの`is_finite`とMIN/MAX定数に
+未対応のため、privateな有限端点2定数を用い、製品Rustでstd MIN/MAXとのbit一致、NaN/±∞/±0/最大値近傍/subnormalを検査する。
+validatorの実bodyを検証し、エラー分類・record保持を接続する。数値比較の意味やtelemetry数式の証明は主張しない。
+接触fraction 0/1は対応する実stateを直接保持する。補間/detectの非自明state・signed zero回帰と、
+実tail producer→record→GameSession Resultの接続回帰を維持する。NoElapsed reportを任意の別previousから生成して
+公開appendへ渡す場合の相関は保証しない。最新sampleとreportの等値を未証明のrequiresへ追加しない。
 
 独立proof clientは同じ検証で生成したcore/vstdの`rmeta`/`vir`とbuiltinを、固定配布物の
 `rust_verify`へ明示して読み込む。実行bodyや実型の複写、外部仕様による実装免除、新たな数値公理は追加しない。

@@ -227,6 +227,10 @@ fn tail_record_positive_and_zero_contact_follow_the_same_terminal_sampling_contr
             .unwrap();
         let samples = if terminal.fraction() == 0.0 { 1 } else { 2 };
         assert_eq!(record.sample_count(), samples);
+        assert_eq!(
+            record.samples().last().unwrap().flight_state,
+            terminal.flight_state()
+        );
         record
             .finalize(
                 crate::SessionEndReason::WaterContact,

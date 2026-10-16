@@ -84,11 +84,16 @@ $suites = @(
     }
 )
 $domainDriver = Join-Path $repository 'proofs/flight_record_finalization.rs'
-$domainProofs = @('verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit')
+$domainProofs = @(
+    'verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit',
+    'verify_domain_record_begin', 'verify_domain_record_append', 'verify_domain_record_no_elapsed'
+)
 $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_retention_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' },
-    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' }
+    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_append_admission_negative.rs'; Assertion = 'appended' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_negative.rs'; Assertion = 'added' }
 )
 
 function Invoke-NativeCapture {
@@ -362,12 +367,24 @@ try {
           'birdman_game_core::configured_session::ConfiguredSession::finalize_terminal',
           'birdman_game_core::game_session::SessionTerminalState::record_time',
           'birdman_game_core::flight_record::FlightRecord::finalization',
-          'birdman_game_core::flight_record::FlightRecord::finalized_from'
+          'birdman_game_core::flight_record::FlightRecord::finalized_from',
+          'birdman_game_core::flight_record::FlightRecord::begin_tail',
+          'birdman_game_core::flight_record::FlightRecord::append_tail_report',
+          'birdman_game_core::flight_record::FlightRecord::latest',
+          'birdman_game_core::flight_record::FlightRecord::recorded_samples',
+          'birdman_game_core::flight_record::FlightRecord::sample_limit',
+          'birdman_game_core::flight_record::control::FlightRecordControls::initial_tail',
+          'birdman_game_core::flight_record::control::FlightRecordControls::from_tail_report',
+          'birdman_game_core::flight_record::control::FlightRecordTailInput::from_applied',
+          'birdman_game_core::tail_simulation::TailFlightTickReport::outcome',
+          'birdman_game_core::tail_simulation::TailFlightTickReport::applied_controls',
+          'birdman_game_core::flight_record::validate_telemetry',
+          'birdman_game_core::flight_record::storage::FlightRecordStorage::push'
       )
       if ($coreSummary.success -ne $true -or $coreSummary.'is-verifying-entire-crate' -ne $true -or
           $coreSummary.Verified -le 0 -or $coreSummary.Errors -ne 0 -or
           @(Get-MissingProofTargets $coreReport '' $coreSymbols).Count -ne 0) {
-          throw 'Production finalization requires whole-crate success and its exact compiler symbols.'
+          throw 'Production record lifecycle requires whole-crate success and its exact compiler symbols.'
       }
       $dependencies = Join-Path $coreTarget 'debug/deps'
       $artifacts = @{}
@@ -399,13 +416,13 @@ try {
           $domainReport.'verification-results'.'is-verifying-entire-crate' -ne $true -or
           $domainReport.'verification-results'.Verified -le 0 -or $domainReport.'verification-results'.Errors -ne 0 -or
           @(Get-MissingProofTargets $domainReport '' $domainSymbols).Count -ne 0) {
-          throw 'Concrete finalization clients require whole-crate success and their exact compiler symbols.'
+          throw 'Concrete record clients require whole-crate success and their exact compiler symbols.'
       }
       foreach ($name in $domainProofs) {
           $selected = Invoke-NativeCapture 'rustup' ($domainArguments + @($domainDriver, '--verify-root', '--verify-function', $name))
           $summary = Get-VerificationSummary $selected.Output -Selected
           if ($selected.ExitCode -ne 0 -or $summary.Verified -le 0 -or $summary.Errors -ne 0) {
-              throw "Required concrete finalization client did not verify: $name"
+              throw "Required concrete record client did not verify: $name"
           }
       }
       $renamedSource = (Read-Utf8Source $domainDriver).Replace("fn $($domainProofs[0])(", "fn $($domainProofs[0])_retired(")
