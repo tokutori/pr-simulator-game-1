@@ -2,14 +2,12 @@ import { PerspectiveCamera, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import shoreline from "../../assets/biwa-shoreline.json";
 import terrain from "../../assets/biwa-terrain.json";
-import { cinematicCameraView } from "../../web/src/render/camera/cinematic-camera.js";
+import { recordedCameraFixture } from "./recorded-camera-fixture.js";
 import "./lake-model-fixture.js";
 import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
 import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../web/src/render/contracts/math.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import { currentVenueMapFixture } from "./current-venue-fixture.js";
 import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
-import type { FlightCameraMode } from "../../web/src/render/contracts/runtime.js";
 
 interface Grid {
   readonly columns: number;
@@ -53,16 +51,12 @@ function projectedHorizontal(point: WorldPoint, camera: PerspectiveCamera): numb
 }
 
 function cameraForVenueView(mode: "platform" | "shore" | "telephoto"): PerspectiveCamera {
-  const projection = currentVenueMapFixture();
-  if (projection.kind !== "available") throw new TypeError("Missing Lake Biwa venue map");
-  const venue = projection.value;
-  const flight = {
-    datumPositionNed: { north: 0, east: 0, down: -10 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
-    pilotPositionMeters: 0,
-    initialPilotPositionMeters: 0
-  } as const;
-  const view = cinematicCameraView(mode satisfies FlightCameraMode, flight, 0, venue.cameraPoints);
+  const session = recordedCameraFixture();
+  let view;
+  try {
+    const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+    view = session.queryReplayCamera(0, mode, true, dataset).replayCamera.cinematic;
+  } finally { session.dispose(); }
   if (view === null) throw new TypeError(`Missing ${mode} venue camera`);
   const camera = new PerspectiveCamera(view.verticalFieldOfViewDegrees, 16 / 9, 0.05, 100_000);
   camera.position.set(view.pose.position.x, view.pose.position.y, view.pose.position.z);

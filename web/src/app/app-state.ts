@@ -1,4 +1,5 @@
-import type { FlightCameraMode, FlightRenderPose, LakeWaterQualityCleanupResult, PresentationMode } from "../render/contracts/runtime.js";
+import type { FlightCameraMode, LakeWaterQualityCleanupResult, PresentationMode } from "../render/contracts/runtime.js";
+import type { RecordedFlightRenderPose } from "../render/contracts/camera.js";
 import type { LakeWaterQuality } from "../render/contracts/lake-water.js";
 import type { UiAction } from "../render/contracts/ui.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
@@ -75,8 +76,8 @@ export interface ReplayClockState {
 
 export type ReplayPoseQueryState = { readonly nextRequestId: number } & (
   | { readonly kind: "idle" }
-  | { readonly kind: "loading"; readonly requestId: number; readonly retained: FlightRenderPose | null }
-  | { readonly kind: "ready"; readonly pose: FlightRenderPose }
+  | { readonly kind: "loading"; readonly requestId: number; readonly retained: RecordedFlightRenderPose | null }
+  | { readonly kind: "ready"; readonly pose: RecordedFlightRenderPose }
   | { readonly kind: "failed"; readonly message: string }
 );
 
@@ -332,7 +333,7 @@ export type AppMessage =
   | { readonly type: "flight-analysis-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "flight-analysis-cursor-loaded"; readonly requestId: number; readonly sample: FlightAnalysisCursorInput }
   | { readonly type: "flight-analysis-cursor-failed"; readonly requestId: number; readonly message: string }
-  | { readonly type: "flight-replay-pose-loaded"; readonly requestId: number; readonly pose: FlightRenderPose }
+  | { readonly type: "flight-replay-pose-loaded"; readonly requestId: number; readonly pose: RecordedFlightRenderPose }
   | { readonly type: "flight-replay-pose-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "replay-clock-tick"; readonly generation: number; readonly elapsedSeconds: number }
   | {
@@ -551,7 +552,7 @@ export function analysisCursorData(state: AnalysisCursorState): FlightAnalysisCu
   }
 }
 
-export function replayPoseData(state: ReplayPoseQueryState): FlightRenderPose | null {
+export function replayPoseData(state: ReplayPoseQueryState): RecordedFlightRenderPose | null {
   switch (state.kind) {
     case "idle":
     case "failed": return null;
@@ -603,8 +604,11 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
   switch (message.type) {
     case "screen-render-observed":
       return transition(withModel(model, { screenRenderScale: message.snapshot }));
-    case "shared-game-ui-observed":
-      return transition(withModel(model, { sharedGameUi: message.view }));
+    case "shared-game-ui-observed": {
+      const next = withModel(model, { sharedGameUi: message.view });
+      return [9, 10].includes(gameSessionPhaseCode(model.gameSession)) && next.replayCameraMode !== model.replayCameraMode
+        ? withReplayPoseQuery(next, next.analysisCursorTimeSeconds, false) : transition(next);
+    }
     case "shared-game-ui-effect":
       return updateSharedUiEffect(model, message.effect);
     case "lake-water-quality-applied": {
@@ -1237,21 +1241,26 @@ function playbackRateForCode(code: number): ReplayClockRequestState["observation
 }
 
 function withReplayQuery(model: AppModel, timeSeconds: number): { readonly model: AppModel; readonly effects: AppEffect[] } {
-  const replayRequestId = model.replayPose.nextRequestId;
+  const replay = withReplayPoseQuery(model, timeSeconds);
+  model = replay.model;
   const cursorRequestId = model.analysisCursor.nextRequestId;
   model = withModel(model, {
-    replayPose: Object.freeze({ kind: "loading", requestId: replayRequestId, nextRequestId: replayRequestId + 1,
-      retained: replayPoseData(model.replayPose) }),
     analysisCursor: Object.freeze({ kind: "loading", requestId: cursorRequestId, nextRequestId: cursorRequestId + 1,
       retained: analysisCursorData(model.analysisCursor) })
   });
   return {
     model,
     effects: [
-      { type: "load-flight-replay-pose", requestId: replayRequestId, timeSeconds },
+      ...replay.effects,
       { type: "load-flight-analysis-cursor", requestId: cursorRequestId, timeSeconds }
     ]
   };
+}
+
+function withReplayPoseQuery(model: AppModel, timeSeconds: number, retain = true): AppTransition {
+  const requestId = model.replayPose.nextRequestId;
+  return transition(withModel(model, { replayPose: Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1,
+    retained: retain ? replayPoseData(model.replayPose) : null }) }), [{ type: "load-flight-replay-pose", requestId, timeSeconds }]);
 }
 
 
@@ -1333,10 +1342,12 @@ function updateBackendCompletion(
         ? message.successStatus
         : `Backend ${message.requestedMode} reported success while ${labelForMode(message.activeMode)} is active`
       : `${message.message}; ${labelForMode(message.activeMode)} is active`;
-    return transition(withModel(model, {
+    const next = withModel(model, {
       presentation: Object.freeze({ type: "ready", mode: message.activeMode }),
       status: `${causePrefix}${outcome}`
-    }));
+    });
+    return [9, 10].includes(gameSessionPhaseCode(next.gameSession))
+      ? withReplayPoseQuery(next, next.analysisCursorTimeSeconds, false) : transition(next);
   }
   const outcome = message.ok
     ? `Backend ${message.requestedMode} reported success without an active backend`

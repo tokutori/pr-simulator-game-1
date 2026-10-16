@@ -11,7 +11,6 @@ import { analysisScenarioId, projectAnalysisCursor, projectAnalysisView } from "
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../../web/src/game/flight-analysis-view.js";
 import type { NamedWindGridRequest } from "../../web/src/game/named-record-analysis.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
-import { resolveAttractCameraMode, resolveReplayCameraMode } from "../../web/src/render/camera/camera-director.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -129,8 +128,6 @@ describe("pure saved Analysis view projection", () => {
       const data: NamedAnalysisDataset = { ...loaded, windGrid: { kind: "unavailable", reason: "not_requested" } };
       expect(projectAnalysisView(data)).toMatchObject({ samples: [expect.objectContaining({ timeSeconds: 0 })],
         summary: { durationSeconds: 0 }, windGrid: { kind: "unavailable", reason: "not_requested" } });
-      expect(resolveReplayCameraMode("auto", data, 0, "screen")).toBe("pilot");
-      expect(resolveAttractCameraMode(data, 0, "phone-vr")).toBe("pilot");
     } finally { session.dispose(); }
   });
 
@@ -201,8 +198,8 @@ describe("pure saved Analysis view projection", () => {
       const distance = createGameViewModel(session.readSharedUi(sharedGameUiPlatform())).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-attract-distance");
       const expected = data.summary.scoreMeters.kind === "available" ? `${data.summary.scoreMeters.value.courseParallelMeters.toFixed(1)} m` : "距離未記録";
       expect(distance).toMatchObject({ label: "確定距離 / 保存時刻", value: `${expected} · t 0.00 s` });
-      expect(resolveAttractCameraMode(data, 0, "screen")).toBe("platform");
-      expect(resolveAttractCameraMode(data, 0, "webxr")).toBe("pilot");
+      expect(session.queryReplayCamera(0, "auto", true, data).replayCamera.mode).toBe("platform");
+      expect(session.queryReplayCamera(0, "auto", false, data).replayCamera.mode).toBe("pilot");
       const resultSession = result();
       try {
         const phaseMismatch = updateApp({ ...model, analysis: { kind: "loading", requestId: 5, nextRequestId: 6, retained: data } }, {

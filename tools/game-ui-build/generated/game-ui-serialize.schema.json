@@ -222,6 +222,40 @@
         }
       ]
     },
+    "CinematicCameraView": {
+      "additionalProperties": false,
+      "description": "Absolute pose in render axes `(east, up, -north)`, with local camera forward `-Z`.",
+      "properties": {
+        "orientation_wxyz": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "position_m": {
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "vertical_field_of_view_degrees": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "position_m",
+        "orientation_wxyz",
+        "vertical_field_of_view_degrees"
+      ],
+      "type": "object"
+    },
     "ContactFailureDocument": {
       "description": "Original contact search or interpolation failure.",
       "oneOf": [
@@ -648,6 +682,87 @@
         }
       ]
     },
+    "FlightRecordStateDocument": {
+      "additionalProperties": false,
+      "description": "Saved physics and telemetry values shared by analysis and snapshot playback.",
+      "properties": {
+        "angular_velocity_body_rad_s": {
+          "description": "Body p/q/r rates in rad/s; roll rate remains physical telemetry.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "attitude_body_to_ned": {
+          "description": "Body-to-NED quaternion in scalar-first order.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "datum_position_ned_m": {
+          "description": "Aircraft datum position in NED metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "datum_velocity_ned_mps": {
+          "description": "Aircraft datum ground velocity in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "pilot_position_m": {
+          "description": "Actual longitudinal pilot position in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "pilot_velocity_mps": {
+          "description": "Actual pilot velocity relative to the airframe in metres per second.",
+          "format": "double",
+          "type": "number"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/FlightRecordTelemetryDocument",
+          "description": "Saved derived telemetry, with undefined angles represented explicitly."
+        },
+        "wind_at_cg_ned_mps": {
+          "description": "Ambient wind at the composite center in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "datum_position_ned_m",
+        "datum_velocity_ned_mps",
+        "attitude_body_to_ned",
+        "angular_velocity_body_rad_s",
+        "pilot_position_m",
+        "pilot_velocity_mps",
+        "wind_at_cg_ned_mps",
+        "telemetry"
+      ],
+      "type": "object"
+    },
     "FlightRecordTailIdentityDocument": {
       "additionalProperties": false,
       "description": "Explicit model/controller names; their independent versions remain in the common header.",
@@ -664,6 +779,73 @@
       "required": [
         "aircraft_configuration_id",
         "controller_profile_id"
+      ],
+      "type": "object"
+    },
+    "FlightRecordTelemetryDocument": {
+      "additionalProperties": false,
+      "description": "Derived values sampled at the composite center.",
+      "properties": {
+        "airspeed_mps": {
+          "description": "Three-dimensional air-relative speed in metres per second.",
+          "format": "double",
+          "type": "number"
+        },
+        "altitude_m": {
+          "description": "Composite-center altitude above still water in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "angle_of_attack_rad": {
+          "description": "Composite-center angle of attack in radians, or null if undefined.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "attitude_euler_rad": {
+          "description": "Roll, pitch, and heading in radians.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "composite_cg_position_ned_m": {
+          "description": "Composite-center position in local NED metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "groundspeed_mps": {
+          "description": "Three-dimensional ground-relative speed in metres per second.",
+          "format": "double",
+          "type": "number"
+        },
+        "sideslip_angle_rad": {
+          "description": "Composite-center sideslip in radians, or null if undefined.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "composite_cg_position_ned_m",
+        "altitude_m",
+        "airspeed_mps",
+        "groundspeed_mps",
+        "angle_of_attack_rad",
+        "sideslip_angle_rad",
+        "attitude_euler_rad"
       ],
       "type": "object"
     },
@@ -3776,6 +3958,27 @@
         }
       ]
     },
+    "PhysicalControlsDocument": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "layout": {
+              "const": "tail_incidence",
+              "type": "string"
+            },
+            "physical_incidence": {
+              "$ref": "#/$defs/TailIncidenceDocument"
+            }
+          },
+          "required": [
+            "layout",
+            "physical_incidence"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "RecordCommand": {
       "description": "Canonical operations on the retained record and its existing playback clock.",
       "oneOf": [
@@ -3855,6 +4058,78 @@
           "type": "object"
         }
       ]
+    },
+    "RecordedPlaybackSample": {
+      "additionalProperties": false,
+      "description": "Existing schema-two single-sample wire projection, shared with record queries.",
+      "properties": {
+        "controls": {
+          "$ref": "#/$defs/PhysicalControlsDocument"
+        },
+        "flight_time_s": {
+          "format": "double",
+          "type": "number"
+        },
+        "fraction": {
+          "format": "double",
+          "type": "number"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "$ref": "#/$defs/FlightRecordStateDocument"
+        },
+        "tick_index": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "tick_index",
+        "fraction",
+        "flight_time_s",
+        "state",
+        "controls"
+      ],
+      "type": "object"
+    },
+    "ReplayCameraView": {
+      "additionalProperties": false,
+      "description": "Recorded camera projection; unavailable fixed points retain the existing Chase fallback.",
+      "properties": {
+        "camera": {
+          "$ref": "#/$defs/GameUiReplayCamera"
+        },
+        "cinematic": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CinematicCameraView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_pilot_position_m": {
+          "format": "double",
+          "type": "number"
+        },
+        "sample": {
+          "$ref": "#/$defs/RecordedPlaybackSample"
+        }
+      },
+      "required": [
+        "sample",
+        "initial_pilot_position_m",
+        "camera",
+        "cinematic"
+      ],
+      "type": "object"
     },
     "ScreenRenderAutoSnapshot": {
       "additionalProperties": false,

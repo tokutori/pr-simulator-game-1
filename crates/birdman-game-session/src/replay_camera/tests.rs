@@ -167,6 +167,43 @@ fn fixed_tracking_preserves_rate_limit_composite_cg_and_seek_order() {
         view(&record, 120.0 / 30.0, GameUiReplayCamera::Platform),
         view(&record, 480.0 / 120.0, GameUiReplayCamera::Platform)
     );
+    let mut samples = record.samples()[..=10].to_vec();
+    for sample in &mut samples[1..] {
+        sample.telemetry.composite_cg_position_ned_m =
+            NedPoint::try_new(-200.0, -200.0, -10.0).unwrap();
+        sample.telemetry.altitude_m = 10.0;
+    }
+    let abrupt = FlightRecord::try_from_finalized_samples(
+        record.header(),
+        samples,
+        FlightRecordFinalization {
+            terminal_tick: 10,
+            reason: SessionEndReason::TimeLimit,
+            ..record.finalization().unwrap()
+        },
+    )
+    .unwrap();
+    let middle = view(&abrupt, 0.05, GameUiReplayCamera::Platform)
+        .cinematic
+        .unwrap();
+    let end = view(&abrupt, 0.1, GameUiReplayCamera::Platform)
+        .cinematic
+        .unwrap();
+    let limit = std::f64::consts::TAU / 3.0 * 0.05;
+    for (left, right) in [(start, middle), (middle, end)] {
+        let angle = 2.0
+            * dot4(left.orientation_wxyz, right.orientation_wxyz)
+                .abs()
+                .min(1.0)
+                .acos();
+        assert!((angle - limit).abs() < 1e-9, "angle={angle}, limit={limit}");
+    }
+    assert_eq!(
+        middle,
+        view(&abrupt, 0.05, GameUiReplayCamera::Platform)
+            .cinematic
+            .unwrap()
+    );
 }
 
 #[test]

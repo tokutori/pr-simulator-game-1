@@ -135,7 +135,7 @@ export function parseNamedPlaybackClock(values: ArrayLike<number>, physicsHz: nu
   return Object.freeze({ timeSeconds, rateCode, kind: playing === 0 ? "paused" : "playing" });
 }
 
-function decodeNamedRecordSample(value: unknown, physicsHz: number, context: RecordQueryContext): NamedRecordSample {
+export function decodeNamedRecordSample(value: unknown, physicsHz: number, context: RecordQueryContext): NamedRecordSample {
   const sample = boundaryObject(value, ["schema_version", "tick_index", "fraction", "flight_time_s", "state", "controls"]);
   if (sample.schema_version !== 2) throw new RangeError("Unsupported named record sample schema");
   const tickIndex = boundaryInteger(sample.tick_index);

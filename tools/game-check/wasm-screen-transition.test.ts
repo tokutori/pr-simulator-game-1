@@ -7,7 +7,7 @@ import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { analysisCursorData, createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppModel } from "../../web/src/app/app-state.js";
-import { queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
+import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
@@ -316,7 +316,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
         } else if (effect.type === "load-flight-replay-pose") {
           const analysis = flightAnalysisData(model.analysis);
           if (analysis === null) throw new Error("Replay pose requires observed Analysis");
-          const { pose } = queryRuntimeRecordPose(session, analysis, effect.timeSeconds);
+          const pose = session.queryReplayCamera(effect.timeSeconds, model.replayCameraMode, true, analysis);
           model = updateApp(model, { type: "flight-replay-pose-loaded", requestId: effect.requestId, pose }).model;
         }
       }

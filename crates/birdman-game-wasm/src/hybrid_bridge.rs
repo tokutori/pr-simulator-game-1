@@ -120,6 +120,7 @@ enum BoundaryError {
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
     Application(birdman_game_session::application::ApplicationError),
+    Camera(birdman_game_session::replay_camera::ReplayCameraError),
 }
 
 impl BoundaryError {
@@ -138,6 +139,7 @@ impl BoundaryError {
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
             Self::Application(error) => format!("application command failed: {error:?}"),
+            Self::Camera(error) => format!("record camera projection failed: {error:?}"),
             error => format!("hybrid boundary rejected: {error:?}"),
         };
         JsValue::from_str(&message)

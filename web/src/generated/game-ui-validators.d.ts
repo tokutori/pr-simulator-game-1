@@ -6,6 +6,7 @@ import type { GameUiPlatformInput } from "./game-ui-input.js";
 import type { GameUiUpdate } from "./game-ui-effects.js";
 import type { GameUiFrame } from "./game-ui-frame.js";
 import type { ScreenRenderAutoSnapshot } from "./screen-render-auto.js";
+import type { ReplayCameraView } from "./replay-camera.js";
 import type { TailInputDocument } from "./tail-input.js";
 import type { TailSnapshotDocument } from "./tail-snapshot.js";
 import type { TailPreparedLaunchDocument } from "./tail-prepared.js";
@@ -20,6 +21,7 @@ export declare const validateGameUiPlatformInput: ValidateFunction<GameUiPlatfor
 export declare const validateGameUiUpdate: ValidateFunction<GameUiUpdate>;
 export declare const validateGameUiFrame: ValidateFunction<GameUiFrame>;
 export declare const validateScreenRenderAutoSnapshot: ValidateFunction<ScreenRenderAutoSnapshot>;
+export declare const validateReplayCameraView: ValidateFunction<ReplayCameraView>;
 export declare const validateTailInputDocument: ValidateFunction<TailInputDocument>;
 export declare const validateTailSnapshotDocument: ValidateFunction<TailSnapshotDocument>;
 export declare const validateTailPreparedLaunchDocument: ValidateFunction<TailPreparedLaunchDocument>;

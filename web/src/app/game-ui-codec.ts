@@ -3,7 +3,8 @@ import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
 import type { GameUiUpdate } from "../generated/game-ui-effects.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiFrame } from "../generated/game-ui-frame.js";
-import { validateGameUiAction, validateGameUiPlatformInput, validateGameUiUpdate, validateGameUiView, validateGameUiFrame } from "../generated/game-ui-validators.js";
+import type { ReplayCameraView } from "../generated/replay-camera.js";
+import { validateGameUiAction, validateGameUiPlatformInput, validateGameUiUpdate, validateGameUiView, validateGameUiFrame, validateReplayCameraView } from "../generated/game-ui-validators.js";
 import type { ValidateFunction } from "ajv";
 
 export const gameUiValidatorLicenseUrl = new URL("../../../assets/game-ui-validators.LICENSE.txt", import.meta.url).href;
@@ -28,6 +29,10 @@ export function parseGameUiUpdate(json: string): GameUiUpdate {
 
 export function parseGameUiFrame(json: string): GameUiFrame {
   return parseBoundary(json, validateGameUiFrame, "GameUiFrame");
+}
+
+export function parseReplayCameraView(json: string): ReplayCameraView {
+  return parseBoundary(json, validateReplayCameraView, "ReplayCameraView");
 }
 
 export function encodeGameUiAction(action: GameUiAction): string {

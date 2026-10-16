@@ -1028,7 +1028,7 @@ describe("Boot application state", () => {
       pose: {
         datumPositionNed: { north: 0, east: 0, down: 0 },
         attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
-        pilotPositionMeters: 0, initialPilotPositionMeters: 0
+        pilotPositionMeters: 0, initialPilotPositionMeters: 0, replayCamera: { mode: "pilot", cinematic: null }
       }
     });
     expect(replayPoseData(stale.model.replayPose)).toBeNull();
@@ -1038,7 +1038,7 @@ describe("Boot application state", () => {
       pose: {
         datumPositionNed: { north: 12, east: 3, down: -8 },
         attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
-        pilotPositionMeters: 0.2, initialPilotPositionMeters: 0.15
+        pilotPositionMeters: 0.2, initialPilotPositionMeters: 0.15, replayCamera: { mode: "pilot", cinematic: null }
       }
     });
     const leave = updateApp(currentPose.model, {
@@ -1224,7 +1224,8 @@ describe("Boot application state", () => {
 
   it("retains a pose through replacement queries and rejects stale, duplicate and contradictory completions", () => {
     const pose = { datumPositionNed: { north: 1, east: 2, down: -3 },
-      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 };
+      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
+      replayCamera: { mode: "pilot" as const, cinematic: null } };
     const initial: AppModel = { ...readyModel(9),
       analysis: { kind: "ready", nextRequestId: 1, data: currentNamedAnalysisFixture({ phase: "replay" }) },
       replayPose: { kind: "ready", nextRequestId: 1, pose } };
@@ -1267,9 +1268,32 @@ describe("Boot application state", () => {
     expect(updateApp(failed.model, { type: "flight-replay-pose-loaded", requestId: 3, pose }).model).toBe(failed.model);
   });
 
+  it("invalidates camera responses on rig and backend changes while retaining one pose/camera pair on seek", () => {
+    const view = currentSharedGameUiFixture(9);
+    const pose = { datumPositionNed: { north: 1, east: 2, down: -3 },
+      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
+      replayCamera: { mode: "pilot" as const, cinematic: null } };
+    const model: AppModel = { ...readyModel(9), sharedGameUi: view,
+      replayPose: { kind: "loading", requestId: 1, nextRequestId: 2, retained: pose } };
+    const changed = updateApp(model, { type: "shared-game-ui-observed", view: { ...view, selections: { ...view.selections, replay_camera: "side" } } });
+    expect(changed.model.replayPose).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: null });
+    expect(changed.effects).toEqual([{ type: "load-flight-replay-pose", requestId: 2, timeSeconds: changed.model.analysisCursorTimeSeconds }]);
+    expect(updateApp(changed.model, { type: "flight-replay-pose-loaded", requestId: 1, pose }).model).toBe(changed.model);
+    const switching: AppModel = { ...changed.model, presentation: { type: "transitioning", origin: "user-request",
+      from: "screen", to: "webxr", phase: "starting", requestId: 4 } };
+    const switched = updateApp(switching, { type: "backend-transition-completed", requestId: 4,
+      requestedMode: "webxr", activeMode: "webxr", ok: true, message: "", successStatus: "VR" });
+    expect(switched.model.replayPose).toEqual({ kind: "loading", requestId: 3, nextRequestId: 4, retained: null });
+    expect(updateApp(switched.model, { type: "flight-replay-pose-loaded", requestId: 2, pose }).model).toBe(switched.model);
+    const loaded = updateApp(switched.model, { type: "flight-replay-pose-loaded", requestId: 3, pose });
+    expect(replayPoseData(loaded.model.replayPose)).toBe(pose);
+    expect(replayPoseData(loaded.model.replayPose)?.replayCamera).toBe(pose.replayCamera);
+  });
+
   it.each(["loaded", "failed"] as const)("accepts pose %s while cached without changing playback ownership", (result) => {
     const pose = { datumPositionNed: { north: 1, east: 2, down: -3 },
-      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 };
+      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
+      replayCamera: { mode: "pilot" as const, cinematic: null } };
     const initial: AppModel = { ...readyModel(9), replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null } };
     const cached = updateApp(initial, { type: "page-suspended" }).model;
     const completed = updateApp(cached, result === "loaded"
@@ -1336,7 +1360,8 @@ describe("Boot application state", () => {
     expect(reopened.model.replayClock).toMatchObject({ kind: "requesting", requestId: 5, nextRequestId: 6, generation: 7 });
     for (const message of [
       { type: "flight-replay-pose-loaded", requestId: 7, pose: { datumPositionNed: { north: 1, east: 2, down: -3 },
-        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0 } },
+        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
+        replayCamera: { mode: "pilot", cinematic: null } } },
       { type: "replay-clock-command-completed", requestId: 4, generation: 5,
         state: { timeSeconds: 1.5, rateCode: 2, playing: true } }
     ] satisfies readonly AppMessage[]) {

@@ -58,7 +58,7 @@ AutoはCameraDirectorを選択するmodeであり、独立したcamera projectio
 ReplayはAutoと手動rigを選択でき、手動選択時には自動cutを停止する。
 ReplayではScreen/VRの両方でcamera rigを手動選択できる。VRの自動選択はPilotを維持し、手動選択した外部rigではhead trackingをcamera rigの局所姿勢として適用する。Chase poseはengine非依存のFRD座標で定義する。
 BPG-022の合成worldでは、定点rigの位置をversion・origin・camera_pointsのSHA-256を持つworld metadataに登録する。追従rigとOrbitは記録時刻から位置を導出し、seek後も同じ時刻で同じposeへ戻る。
-CameraModeごとのGameSceneを作らない。実装は `web/src/render/camera/` に配置する。
+CameraModeごとのGameSceneを作らない。Replay/AttractのgeometryとDirectorは `birdman-game-session::replay_camera` に配置し、既存Webの7種類のcinematic rigとAuto/Attract規則を正本として共有する。Web/WASMとBevyは同じrecord/timeから導出されたcamera/FOVを各描画APIへ投影する。Webの要求ID、record世代、context検査は既存のReplay取得経路を使用し、機体・尾翼・風・airspeedとcameraを同一sampleの応答として保持する。
 定点rigの位置とIDはworld assetの `camera_points` に保存し、origin/version/hashを共有する。
 Platform/shore/telephotoのtarget追従は共通rigのパラメータとして扱う。
 機体追従rigにも位置offset、FOV、追従係数、利用範囲を持たせ、無意味なclass細分化を避ける。

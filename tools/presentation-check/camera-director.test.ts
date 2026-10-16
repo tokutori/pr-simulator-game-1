@@ -1,87 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { resolveAttractCameraMode, resolveReplayCameraMode } from "../../web/src/render/camera/camera-director.js";
-import type { FlightAnalysisSample } from "../../web/src/game/flight-analysis-view.js";
-import { currentNamedAnalysisFixture } from "../game-check/current-session-fixture.js";
+import { recordedCameraFixture } from "./recorded-camera-fixture.js";
 
-const analysis = currentNamedAnalysisFixture({
-  initialPilotPositionMeters: 0,
-  samples: Object.freeze([
-    sample(0, 10),
-    sample(2, 9),
-    sample(5, 6),
-    sample(8, 2),
-    sample(10, 0)
-  ]),
-  summary: Object.freeze({
-    sampleCount: 5,
-    durationSeconds: 10,
-    maximumAltitudeMeters: 10,
-    maximumAirspeedMetersPerSecond: 10,
-    maximumGroundspeedMetersPerSecond: 10,
-    maximumAngleOfAttackRadians: null,
-    maximumAbsoluteRollRadians: 0,
-    score: null,
-    terminal: Object.freeze({ reason: "water-contact", disposition: "complete", timeSeconds: 10 })
-  })
-});
-
-describe("replay camera director", () => {
-  it("selects event-bound shots deterministically from record time", () => {
-    expect(resolveReplayCameraMode("auto", analysis, 0.5, "screen")).toBe("platform");
-    expect(resolveReplayCameraMode("auto", analysis, 4, "screen")).toBe("pilot");
-    expect(resolveReplayCameraMode("auto", analysis, 7, "screen")).toBe("side");
-    expect(resolveReplayCameraMode("auto", analysis, 10, "screen")).toBe("shore");
-  });
-
-  it("produces the same camera at shared record times across frame rates", () => {
-    const thirtyFpsTime = 120 / 30;
-    const oneHundredTwentyFpsTime = 480 / 120;
-    expect(thirtyFpsTime).toBe(oneHundredTwentyFpsTime);
-    expect(resolveReplayCameraMode("auto", analysis, thirtyFpsTime, "screen"))
-      .toBe(resolveReplayCameraMode("auto", analysis, oneHundredTwentyFpsTime, "screen"));
-  });
-
-  it("preserves manual choice and keeps automatic external views out of VR", () => {
-    expect(resolveReplayCameraMode("chase", analysis, 4, "screen")).toBe("chase");
-    expect(resolveReplayCameraMode("auto", analysis, 0, "webxr")).toBe("pilot");
-    expect(resolveReplayCameraMode("auto", analysis, 0, "phone-vr")).toBe("pilot");
-    expect(resolveReplayCameraMode("shore", analysis, 4, "webxr")).toBe("shore");
-  });
-
-  it("handles short records without indexing outside the sample range", () => {
-    const short = currentNamedAnalysisFixture({
-      samples: [sample(0, 1), sample(0.4, 0)],
-      summary: { durationSeconds: 0.4, terminal: { reason: "water-contact", disposition: "complete", timeSeconds: 0.4 } }
-    });
-    expect(resolveReplayCameraMode("auto", short, 0.2, "screen")).toBe("side");
-    expect(resolveReplayCameraMode("auto", short, 5, "screen")).toBe("shore");
-  });
-
-  it("uses launch, distance, and terminal shots for Attract without frame history", () => {
-    expect(resolveAttractCameraMode(analysis, 0, "screen")).toBe("platform");
-    expect(resolveAttractCameraMode(analysis, 2, "screen")).toBe("chase");
-    expect(resolveAttractCameraMode(analysis, 5, "screen")).toBe("side");
-    expect(resolveAttractCameraMode(analysis, 8, "screen")).toBe("shore");
-    expect(resolveAttractCameraMode(analysis, 10, "screen")).toBe("telephoto");
-    expect(resolveAttractCameraMode(analysis, 10, "webxr")).toBe("pilot");
+describe("shared camera director through the Web owner", () => {
+  it("keeps automatic VR Pilot, explicit external choice, and short-record terminal fallback", () => {
+    const session = recordedCameraFixture();
+    try {
+      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      expect(session.queryReplayCamera(0, "auto", true, dataset).replayCamera.mode).toBe("platform");
+      expect(session.queryReplayCamera(1, "auto", true, dataset).replayCamera.mode).toBe("chase");
+      expect(session.queryReplayCamera(0, "auto", false, dataset).replayCamera.mode).toBe("pilot");
+      expect(session.queryReplayCamera(0, "shore", false, dataset).replayCamera.mode).toBe("shore");
+      const middle = session.queryReplayCamera(0.015, "platform", true, dataset);
+      session.queryReplayCamera(0.03, "orbit", true, dataset);
+      expect(session.queryReplayCamera(0.015, "platform", true, dataset)).toEqual(middle);
+    } finally { session.dispose(); }
   });
 });
-
-function sample(timeSeconds: number, altitudeMeters: number): FlightAnalysisSample {
-  return Object.freeze({
-    timeSeconds,
-    northMeters: timeSeconds * 9,
-    eastMeters: 0,
-    altitudeMeters,
-    airspeedMetersPerSecond: 9,
-    groundspeedMetersPerSecond: 9,
-    windNorthMetersPerSecond: 0,
-    windEastMetersPerSecond: 0,
-    windDownMetersPerSecond: 0,
-    angleOfAttackRadians: null,
-    sideslipRadians: null,
-    rollRadians: 0,
-    pitchRadians: 0,
-    headingRadians: 0
-  });
-}
