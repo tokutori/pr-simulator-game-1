@@ -21,8 +21,8 @@ use birdman_game_core::{HybridMockDefinition, HybridSurfaceRole};
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
 use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry,
-    WingMaterial, WingRodKind, WingSurface,
+    CARBON_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial,
+    WingRodKind, WingSurface,
 };
 use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
@@ -581,12 +581,7 @@ pub(crate) fn setup_world(
             ..default()
         })
     });
-    let foam_material = materials.add(StandardMaterial {
-        base_color: wing_color(FOAM_COLOR),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
+    let foam_material = tail_materials[TailMaterial::Foam as usize].clone();
     let rod_mesh = meshes.add(Cylinder::new(1.0, 1.0).mesh().resolution(8));
     let wing_cover = wing_cover_images().map(|image| {
         materials.add(StandardMaterial {

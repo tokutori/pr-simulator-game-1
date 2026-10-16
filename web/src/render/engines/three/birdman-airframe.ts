@@ -161,14 +161,15 @@ function addCockpit(root: Group): void {
   } finally { shared.free(); }
 }
 
-function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group; film: MeshLambertMaterial }> {
+function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group;
+  film: MeshLambertMaterial; rib: MeshLambertMaterial; foam: MeshLambertMaterial }> {
   const shared = new TailGeometryBridge();
   try {
     const colors = shared.material_colors();
     const opacities = shared.material_opacities();
     const materials = Array.from(colors, (color, index) => {
       const opacity = bulkNumber(opacities, index);
-      return new MeshLambertMaterial({ color, opacity, side: DoubleSide,
+      return new MeshLambertMaterial({ color, opacity, ...(index === 3 ? {} : { side: DoubleSide }),
         transparent: opacity < 1, depthWrite: opacity === 1 });
     });
     const materialFor = (index: number): MeshLambertMaterial => {
@@ -205,7 +206,7 @@ function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group; f
     const horizontal = tails[0];
     const vertical = tails[1];
     if (horizontal === undefined || vertical === undefined) throw new RangeError("Incomplete shared tails");
-    return { horizontal, vertical, film: materialFor(1) };
+    return { horizontal, vertical, film: materialFor(1), foam: materialFor(2), rib: materialFor(3) };
   } finally { shared.free(); }
 }
 
@@ -221,8 +222,8 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const tails = addTails(root);
   const trailingFilm = tails.film;
   const sharedWing = new WingGeometryBridge();
-  const ribMaterial = new MeshLambertMaterial({ color: sharedWing.rib_color });
-  const styrofoam = new MeshLambertMaterial({ color: sharedWing.foam_color, side: DoubleSide });
+  const ribMaterial = tails.rib;
+  const styrofoam = tails.foam;
   const carbon = new MeshLambertMaterial({ color: sharedWing.carbon_color });
   const positions = sharedWing.surface_positions();
   const uvs = sharedWing.surface_uvs();
