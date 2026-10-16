@@ -246,12 +246,26 @@ fn finalization_is_atomic_and_rejects_repeat_or_mismatched_time() {
     );
     record.samples.push(sample(0, 0.0, 0.0, 0.0, 0.0));
     let before = record.samples().to_vec();
+    let original_header = record.header();
+    let capacity = record.sample_capacity;
+    let storage = record.samples().as_ptr();
     assert_eq!(
         record.finalize(SessionEndReason::TimeLimit, 1, 0.0, None),
         Err(FlightRecordError::FinalizationMismatch)
     );
     assert_eq!(record.samples(), before);
     assert!(record.finalization().is_none());
+    for fraction in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01, 0.5] {
+        assert_eq!(
+            record.finalize(SessionEndReason::TimeLimit, 0, fraction, None),
+            Err(FlightRecordError::FinalizationMismatch)
+        );
+        assert_eq!(record.samples(), before);
+        assert_eq!(record.samples().as_ptr(), storage);
+        assert_eq!(record.header(), original_header);
+        assert_eq!(record.sample_capacity, capacity);
+        assert!(record.finalization().is_none());
+    }
     record
         .finalize(SessionEndReason::ManualAbort, 0, 0.0, None)
         .unwrap();
