@@ -1,6 +1,7 @@
 use core::time::Duration;
 
-use crate::countdown::{CountdownAdvance, CountdownStartError, CountdownState, start_countdown};
+pub use crate::configured_phase::BriefingFailure;
+use crate::countdown::{CountdownAdvance, CountdownStartError, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
 use crate::flight_execution::{ActiveFlight, FlightExecution, FlightExecutionError};
@@ -125,19 +126,6 @@ pub enum SessionPhase {
     Replay,
     /// A separate finalized demonstration record is being played from Title.
     Attract,
-}
-
-/// Classified reason that prevents a prepared session from becoming ready.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BriefingFailure {
-    /// Required presentation or world assets could not be loaded.
-    AssetUnavailable,
-    /// Required deterministic session capacity could not be reserved.
-    CapacityUnavailable,
-    /// A selected scenario or configuration asset is unavailable.
-    ScenarioUnavailable,
-    /// The selected configuration failed validation.
-    InvalidConfiguration,
 }
 
 /// Terminal state retained by the result view.
@@ -367,23 +355,8 @@ struct ConfiguredSession<'a> {
     phase: ConfiguredPhase,
 }
 
-#[derive(Clone, Copy)]
-enum ConfiguredPhase {
-    Preparing,
-    Ready,
-    Failed {
-        reason: BriefingFailure,
-    },
-    Countdown(CountdownState),
-    Flight(ActiveFlight<TailFlightTickState>),
-    Result {
-        result: SessionResult,
-    },
-    Replay {
-        result: SessionResult,
-        clock: ReplayClock,
-    },
-}
+type ConfiguredPhase =
+    crate::configured_phase::ConfiguredPhase<TailFlightTickState, SessionResult, ReplayClock>;
 
 /// Rust-owned lifecycle, physics gating, terminal result, and retry blueprint.
 pub struct GameSession<'a> {
@@ -621,15 +594,10 @@ impl<'a> GameSession<'a> {
 
     /// Enters read-only playback while retaining the finalized result and record.
     pub fn enter_replay(&mut self) -> Result<(), GameSessionError> {
-        let configured = self.configured_mut()?;
-        let ConfiguredPhase::Result { result } = configured.phase else {
-            return Err(GameSessionError::InvalidTransition);
-        };
-        configured.phase = ConfiguredPhase::Replay {
-            result,
-            clock: ReplayClock::new(),
-        };
-        Ok(())
+        self.configured_mut()?
+            .phase
+            .enter_replay(ReplayClock::new())
+            .map_err(|()| GameSessionError::InvalidTransition)
     }
 
     /// Opens a finalized archived record directly in read-only playback from Title or Result.
@@ -650,10 +618,10 @@ impl<'a> GameSession<'a> {
     pub fn leave_replay(&mut self) -> Result<(), GameSessionError> {
         match &mut self.lifecycle {
             SessionLifecycle::Configured(configured) => {
-                let ConfiguredPhase::Replay { result, .. } = configured.phase else {
-                    return Err(GameSessionError::InvalidTransition);
-                };
-                configured.phase = ConfiguredPhase::Result { result };
+                configured
+                    .phase
+                    .leave_replay()
+                    .map_err(|()| GameSessionError::InvalidTransition)?;
             }
             SessionLifecycle::ArchivedReplay { .. } => self.lifecycle = SessionLifecycle::Title,
             _ => return Err(GameSessionError::InvalidTransition),
