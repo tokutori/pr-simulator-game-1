@@ -257,6 +257,7 @@ try {
     $renamedProof = $suite.RenamedProof
     $positiveSource = Read-Utf8Source $positiveDriver
     $renamedSource = $positiveSource.Replace("fn $renamedProof(", "fn $($renamedProof)_retired(")
+    $renamedSource = $renamedSource.Replace("fn $renamedProof<", "fn $($renamedProof)_retired<")
     if ($renamedSource -ceq $positiveSource) {
         throw 'The rename fixture did not remove the designated proof symbol.'
     }
