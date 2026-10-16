@@ -22,6 +22,7 @@ const MAXIMUM_ANGLE_RAD: f64 = 0.2;
 /// when the fin's local down normal is negative body y. These are physical
 /// angles, independent of normalized manual intent.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailIncidence {
     elevator_rad: f64,
     rudder_rad: f64,

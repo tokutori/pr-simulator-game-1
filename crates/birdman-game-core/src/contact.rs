@@ -5,6 +5,7 @@ mod curve;
 
 /// Failures while identifying or interpolating a water-contact event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum ContactError {
     /// At least one structural contact point is required.
     EmptyGeometry,

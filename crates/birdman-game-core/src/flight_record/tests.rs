@@ -255,7 +255,16 @@ fn finalization_is_atomic_and_rejects_repeat_or_mismatched_time() {
     );
     assert_eq!(record.samples(), before);
     assert!(record.finalization().is_none());
-    for fraction in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.01, 1.01, 0.5] {
+    for fraction in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        -f64::from_bits(1),
+        1.0_f64.next_up(),
+        -0.01,
+        1.01,
+        0.5,
+    ] {
         assert_eq!(
             record.finalize(SessionEndReason::TimeLimit, 0, fraction, None),
             Err(FlightRecordError::FinalizationMismatch)
@@ -278,4 +287,66 @@ fn finalization_is_atomic_and_rejects_repeat_or_mismatched_time() {
         Err(FlightRecordError::AlreadyFinalized)
     );
     assert!(record.personal_best_candidate_score().is_none());
+}
+
+#[test]
+fn public_finalization_preserves_fraction_endpoints_and_failure_priority() {
+    let score = Some(DistanceScore::try_from_recorded(25.0, 0.0, 25.0).unwrap());
+    for fraction in [0.0, -0.0, f64::from_bits(1), 0.5, 1.0_f64.next_down(), 1.0] {
+        let mut record = FlightRecord::try_new(header(4)).unwrap();
+        record.samples.push(sample(0, fraction, 0.0, 0.0, 0.0));
+        let before = record.samples().to_vec();
+        let storage = record.samples().as_ptr();
+        let metadata = record
+            .finalize(SessionEndReason::ManualAbort, 0, fraction, score)
+            .unwrap();
+        assert_eq!(metadata.terminal_fraction.to_bits(), fraction.to_bits());
+        assert_eq!(metadata.reason, SessionEndReason::ManualAbort);
+        assert_eq!(metadata.score, score);
+        assert!(metadata.failure.is_none());
+        assert_eq!(record.finalization(), Some(metadata));
+        assert_eq!(record.samples(), before);
+        assert_eq!(record.samples().as_ptr(), storage);
+    }
+
+    let failure = TailFlightTickError::TickOverflow;
+    let mut record = FlightRecord::try_new(header(4)).unwrap();
+    assert_eq!(
+        record.finalize_with_failure(SessionEndReason::TimeLimit, 0, f64::NAN, score, failure),
+        Err(FlightRecordError::NotStarted)
+    );
+    record.samples.push(sample(0, 0.0, 0.0, 0.0, 0.0));
+    let before = record.samples().to_vec();
+    assert_eq!(
+        record.finalize_with_failure(SessionEndReason::TimeLimit, 0, f64::NAN, score, failure),
+        Err(FlightRecordError::IncompatibleFailure)
+    );
+    assert_eq!(
+        record.finalize_with_failure(
+            SessionEndReason::FatalSimulationError,
+            0,
+            f64::NAN,
+            score,
+            failure
+        ),
+        Err(FlightRecordError::FinalizationMismatch)
+    );
+    assert_eq!(record.samples(), before);
+    assert!(record.finalization().is_none());
+    let metadata = record
+        .finalize_with_failure(
+            SessionEndReason::FatalSimulationError,
+            0,
+            -0.0,
+            score,
+            failure,
+        )
+        .unwrap();
+    assert_eq!(metadata.failure, Some(failure));
+    assert_eq!(metadata.terminal_fraction.to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(
+        record.finalize_with_failure(SessionEndReason::TimeLimit, 0, f64::NAN, score, failure),
+        Err(FlightRecordError::AlreadyFinalized)
+    );
+    assert_eq!(record.finalization(), Some(metadata));
 }

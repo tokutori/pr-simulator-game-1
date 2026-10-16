@@ -133,6 +133,21 @@ function isCorePolynomialDependency(crate: string, dependency: Record<string, un
     && dependency.features[0] === "libm";
 }
 
+function isCoreProofDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
+  if (crate !== "birdman-game-core" || features === undefined) return false;
+  const definitions = record(features);
+  const proof = definitions["verus-proof"];
+  return dependency.name === "vstd" && dependency.kind === null && dependency.target === null
+    && isCompleteVersionPin(dependency.req) && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined && dependency.rename === null && dependency.optional === true
+    && dependency.uses_default_features === false && Array.isArray(dependency.features)
+    && dependency.features.length === 1 && dependency.features[0] === "alloc"
+    && Array.isArray(proof) && proof.length === 1 && proof[0] === "dep:vstd"
+    && Object.entries(definitions).every(([name, enabled]) => name === "verus-proof"
+      || Array.isArray(enabled) && enabled.every((feature: unknown) => typeof feature === "string"
+        && !["verus-proof", "dep:vstd", "vstd"].includes(feature) && !feature.startsWith("vstd/")));
+}
+
 function activatesSchema(feature: unknown): boolean {
   return typeof feature === "string" && (feature === "schema" || feature === "schemars" || feature === "dep:schemars"
     || feature.startsWith("schemars/") || feature.startsWith("schemars?/") || feature.endsWith("/schema"));
@@ -199,12 +214,16 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         && Array.isArray(dependency.features) && dependency.features.includes("schema")) {
         throw new Error(`Forbidden normal schema activation in ${name}: ${dependencyName}`);
       }
+      if (Array.isArray(dependency.features) && dependency.features.includes("verus-proof")) {
+        throw new Error(`Forbidden normal proof activation in ${name}: ${dependencyName}`);
+      }
       if (!permitted.includes(dependencyName)
         && !isNativeTextDependency(name, dependency)
         && !isSharedChartNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isCorePolynomialDependency(name, dependency)
+        && !isCoreProofDependency(name, dependency, pkg.features)
         && !isSchemaGenerationDependency(name, dependency, pkg.features)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);
       }

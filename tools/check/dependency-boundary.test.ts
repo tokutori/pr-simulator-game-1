@@ -49,6 +49,32 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
+describe("core proof dependency boundary", () => {
+  const proof = { ...schemaDependency, name: "vstd", req: "=0.0.0-2026-10-04-0306", features: ["alloc"] };
+  const features = { "verus-proof": ["dep:vstd"] };
+  const provider = (dependency: unknown = proof, definitions: unknown = features): unknown[] => [
+    { name: "birdman-game-core", dependencies: [dependency], features: definitions }
+  ];
+  it("allows an explicit alloc-only optional proof dependency", () => {
+    expect(() => { assertDependencyBoundary(provider()); }).not.toThrow();
+  });
+  it.each([{ optional: false }, { uses_default_features: true }, { features: ["std"] }, { target: "cfg(verus_only)" }])(
+    "rejects runtime or implicit proof dependencies %j", (difference) => {
+      expect(() => { assertDependencyBoundary(provider({ ...proof, ...difference })); }).toThrow("Forbidden dependency");
+    }
+  );
+  it.each([{ default: ["verus-proof"] }, { default: ["dep:vstd"] }, { runtime: ["vstd/std"] }])(
+    "rejects indirect proof activation %j", (difference) => {
+      expect(() => { assertDependencyBoundary(provider(proof, { ...features, ...difference })); }).toThrow("Forbidden dependency");
+    }
+  );
+  it("rejects application activation of the proof feature", () => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-format", dependencies: [
+      { name: "birdman-game-core", features: ["verus-proof"] }
+    ] }]); }).toThrow("Forbidden normal proof activation");
+  });
+});
+
 describe("core polynomial roots boundary", () => {
   const polynomial = { ...chartNumberDependency, name: "polycool", req: "=0.4.0", features: ["libm"] };
   it("allows the pinned no_std root solver only in core", () => {
