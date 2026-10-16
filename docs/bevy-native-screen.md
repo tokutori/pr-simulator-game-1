@@ -318,6 +318,8 @@ Windows 11 / AMD Radeon 860Mの実起動とGPU validation・shader・asset読込
 
 ### 描画FPSと性能目標
 
+両尾翼は登録physical geometryの外周・quarter-chord原点を共有Rustで表示へ投影し、前半の藍色被覆、後半の半透明film、薄茶ribと水色foamを両版で共用する。被覆比率・palette・rib厚さは既存主翼の表示規則であり、rib配置とfoam帯は視覚専用である。static geometryは起動時一回だけ生成し、尾翼全体は従来のphysical incidence親Transformへ従う。空力・physical寸法・操縦・100Hzを変更しない。実描画受入と80FPSは関連CPU検査から推定しない。
+
 WebとBevyは右上に描画FPSを表示する。750 ms窓で集計し、起動直後・長時間中断後は`FPS —`を表示する。
 100 Hzの物理tickとは独立する。Bevyの値は実時間Updateの周期であり、GPU present完了を直接測定する値ではない。
 同じ派生labelのText更新を省略し、表示・入力・Rustの正本は維持する。

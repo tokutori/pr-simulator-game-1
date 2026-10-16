@@ -7,7 +7,8 @@ const TAPER_EXPONENT: f64 = 1.6;
 const ROOT_LEADING_EDGE: f64 = -0.42;
 const LEADING_SWEEP: f64 = 0.24;
 const BASE_HEIGHT: f64 = -0.73;
-const COVERED_FRACTION: f64 = 0.5;
+#[doc = "Display-only chord fraction covered by the opaque dyed skin."]
+pub const COVERED_FRACTION: f64 = 0.5;
 const REFERENCE_SPEED: f64 = 9.5;
 const SPAN_STEPS: usize = 30;
 const CHORD_STEPS: usize = 16;
@@ -19,6 +20,9 @@ pub const CARBON_COLOR: u32 = 0x303b3a;
 
 #[doc = "Existing Web sRGB colour of balsa trailing ribs and stringers."]
 pub const RIB_COLOR: u32 = 0xcdb483;
+
+#[doc = "Existing Web radius of the display-only trailing rib rods, in metres."]
+pub const RIB_RADIUS: f64 = 0.012;
 
 #[doc = "Existing Web sRGB colour of extruded trailing foam ribs."]
 pub const FOAM_COLOR: u32 = 0x77b5d0;
@@ -168,7 +172,7 @@ impl WingGeometry {
                 for [from, to] in [[COVERED_FRACTION, 0.75], [0.75, 1.0]] {
                     rods.push(WingRod {
                         kind: WingRodKind::Rib,
-                        radius: 0.012,
+                        radius: RIB_RADIUS,
                         endpoints: [rib_point(side, span, from), rib_point(side, span, to)],
                     });
                 }

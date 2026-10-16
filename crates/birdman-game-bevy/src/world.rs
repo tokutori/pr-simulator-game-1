@@ -16,13 +16,13 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
-use birdman_game_core::{
-    HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
-};
+#[cfg(test)]
+use birdman_game_core::{HybridMockDefinition, HybridSurfaceRole};
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
+use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
 use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, WingFrame, WingGeometry, WingMaterial,
-    WingRodKind, WingSurface,
+    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry,
+    WingMaterial, WingRodKind, WingSurface,
 };
 use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
@@ -269,11 +269,6 @@ fn platform_transform(platform: &LaunchPlatform, thickness: f32) -> Transform {
         .with_rotation(rotation)
 }
 
-struct TailSurfaceProjection {
-    transform: Transform,
-    vertices: [[f32; 3]; 4],
-}
-
 #[derive(Resource)]
 pub(crate) struct MainWingProjection {
     geometry: WingGeometry,
@@ -448,41 +443,6 @@ fn wing_color(value: u32) -> Color {
     Color::srgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }
 
-fn project_tail_surface(
-    geometry: HybridSurfaceGeometry<'_>,
-) -> Result<TailSurfaceProjection, &'static str> {
-    if geometry.role() == HybridSurfaceRole::MainWing {
-        return Err("尾翼表示には尾翼geometryが必要");
-    }
-    let [first, last] = geometry.sections() else {
-        return Err("登録尾翼表示には2つのsectionが必要");
-    };
-    let first_point = first.quarter_chord().components();
-    let last_point = last.quarter_chord().components();
-    let center = [
-        (first_point[0] + last_point[0]) / 2.0,
-        (first_point[1] + last_point[1]) / 2.0,
-        (first_point[2] + last_point[2]) / 2.0,
-    ];
-    let vertex = |section: HybridSection, chord_fraction: f64| {
-        let point = section.quarter_chord().components();
-        [
-            (point[1] - center[1]) as f32,
-            (center[2] - point[2]) as f32,
-            (center[0] - point[0] + chord_fraction * section.chord_m()) as f32,
-        ]
-    };
-    Ok(TailSurfaceProjection {
-        transform: Transform::from_xyz(center[1] as f32, -center[2] as f32, -center[0] as f32),
-        vertices: [
-            vertex(*first, -0.25),
-            vertex(*last, -0.25),
-            vertex(*last, 0.75),
-            vertex(*first, 0.75),
-        ],
-    })
-}
-
 pub(crate) fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -596,14 +556,31 @@ pub(crate) fn setup_world(
         MeshMaterial3d(platform_material),
         platform_transform(&platform, platform_thickness),
     ));
-    let white = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.87, 0.9, 0.93),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
     let frame = materials.add(wing_color(CARBON_COLOR));
     let balsa = materials.add(wing_color(RIB_COLOR));
+    let tail_materials = TailMaterial::ALL.map(|kind| {
+        if kind == TailMaterial::Rib {
+            return balsa.clone();
+        }
+        let color = kind.color();
+        let opacity = kind.opacity();
+        materials.add(StandardMaterial {
+            base_color: Color::srgba(
+                ((color >> 16) & 255) as f32 / 255.0,
+                ((color >> 8) & 255) as f32 / 255.0,
+                (color & 255) as f32 / 255.0,
+                opacity,
+            ),
+            alpha_mode: if opacity < 1.0 {
+                AlphaMode::Blend
+            } else {
+                AlphaMode::Opaque
+            },
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        })
+    });
     let foam_material = materials.add(StandardMaterial {
         base_color: wing_color(FOAM_COLOR),
         double_sided: true,
@@ -626,13 +603,7 @@ pub(crate) fn setup_world(
         cull_mode: None,
         ..default()
     });
-    let wing_film = materials.add(StandardMaterial {
-        base_color: Color::srgba(213.0 / 255.0, 221.0 / 255.0, 217.0 / 255.0, 0.22),
-        alpha_mode: AlphaMode::Blend,
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
+    let wing_film = tail_materials[TailMaterial::Film as usize].clone();
     let wing_geometry = WingGeometry::new();
     let wing_frame = wing_geometry.frame();
     let cockpit = CockpitGeometry::new();
@@ -659,18 +630,7 @@ pub(crate) fn setup_world(
     let mut wing_surfaces = Vec::new();
     let mut wing_rods = Vec::new();
     let mut wing_foam = Vec::new();
-    let definition = HybridMockDefinition::try_new().expect("登録機体geometryが不正");
-    let surfaces = definition.surfaces().expect("登録surface geometryが不正");
-    let tail_projection = |role| {
-        let geometry = surfaces
-            .iter()
-            .find(|surface| surface.geometry().role() == role)
-            .expect("登録尾翼geometryがない")
-            .geometry();
-        project_tail_surface(geometry).expect("登録尾翼表示geometryが不正")
-    };
-    let horizontal_tail = tail_projection(HybridSurfaceRole::HorizontalTail);
-    let vertical_tail = tail_projection(HybridSurfaceRole::VerticalTail);
+    let tails = TailGeometry::registered().expect("登録尾翼表示geometryが不正");
     commands
         .spawn((
             WorldProjection::Aircraft,
@@ -835,32 +795,48 @@ pub(crate) fn setup_world(
                     material_meshes,
                 });
             }
-            parent
-                .spawn((
-                    WorldProjection::HorizontalTail,
-                    horizontal_tail.transform,
-                    Visibility::Visible,
-                ))
-                .with_children(|tail| {
-                    tail.spawn((
-                        Mesh3d(meshes.add(rectangular_surface(horizontal_tail.vertices))),
-                        MeshMaterial3d(white.clone()),
-                        RenderLayers::layer(0).with(1),
-                    ));
-                });
-            parent
-                .spawn((
-                    WorldProjection::VerticalTail,
-                    vertical_tail.transform,
-                    Visibility::Visible,
-                ))
-                .with_children(|tail| {
-                    tail.spawn((
-                        Mesh3d(meshes.add(rectangular_surface(vertical_tail.vertices))),
-                        MeshMaterial3d(white),
-                        RenderLayers::layer(0).with(1),
-                    ));
-                });
+            for (projection, geometry) in [
+                WorldProjection::HorizontalTail,
+                WorldProjection::VerticalTail,
+            ]
+            .into_iter()
+            .zip(tails)
+            {
+                parent
+                    .spawn((
+                        projection,
+                        Transform::from_translation(Vec3::from_array(
+                            geometry.origin.map(|value| value as f32),
+                        )),
+                        Visibility::Visible,
+                    ))
+                    .with_children(|tail| {
+                        for patch in geometry.patches {
+                            let mut mesh = tail.spawn((
+                                Name::new(match patch.material {
+                                    TailMaterial::Cover => "physical-tail-cover",
+                                    TailMaterial::Film => "physical-tail-film",
+                                    _ => "tail-foam",
+                                }),
+                                Mesh3d(meshes.add(rectangular_surface(patch.vertices))),
+                                MeshMaterial3d(tail_materials[patch.material as usize].clone()),
+                                RenderLayers::layer(0).with(1),
+                            ));
+                            if patch.material == TailMaterial::Film {
+                                mesh.insert(NotShadowCaster);
+                            }
+                        }
+                        for endpoints in geometry.ribs {
+                            tail.spawn((
+                                Name::new("tail-rib"),
+                                Mesh3d(rod_mesh.clone()),
+                                MeshMaterial3d(balsa.clone()),
+                                wing_rod_transform(endpoints, RIB_RADIUS as f32),
+                                RenderLayers::layer(0).with(1),
+                            ));
+                        }
+                    });
+            }
         });
     commands.insert_resource(MainWingProjection {
         geometry: wing_geometry,
@@ -1875,6 +1851,7 @@ mod tests {
         let mut reflected_meshes = 0;
         let mut reflected_spars = 0;
         let mut reflected_internals = 0;
+        let mut reflected_tails = 0;
         let mut main_beams = 0;
         let mut transparent_films = 0;
         let mut excluded_meshes = 0;
@@ -1889,7 +1866,14 @@ mod tests {
                 } else {
                     assert!(shadow_exclusion.is_none());
                 }
-                if name.is_some_and(|name| name.as_str() == "main-wing-spar") {
+                if name.is_some_and(|name| {
+                    matches!(
+                        name.as_str(),
+                        "physical-tail-cover" | "physical-tail-film" | "tail-foam" | "tail-rib"
+                    )
+                }) {
+                    reflected_tails += 1;
+                } else if name.is_some_and(|name| name.as_str() == "main-wing-spar") {
                     reflected_spars += 1;
                 } else if name.is_some_and(|name| {
                     matches!(
@@ -1923,11 +1907,12 @@ mod tests {
                 excluded_meshes += 1;
             }
         }
-        assert_eq!(reflected_meshes, 43);
+        assert_eq!(reflected_meshes, 41);
+        assert_eq!(reflected_tails, 24);
         assert_eq!(reflected_spars, 24);
         assert_eq!(reflected_internals, 180);
         assert_eq!(main_beams, 1);
-        assert_eq!(transparent_films, 3);
+        assert_eq!(transparent_films, 5);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(
@@ -2101,17 +2086,25 @@ mod tests {
         for surface in definition.surfaces().unwrap() {
             let geometry = surface.geometry();
             if geometry.role() == HybridSurfaceRole::MainWing {
-                assert!(project_tail_surface(geometry).is_err());
+                assert!(TailGeometry::from_surface(geometry).is_err());
                 continue;
             }
-            let projected = project_tail_surface(geometry).unwrap();
+            let projected = TailGeometry::from_surface(geometry).unwrap();
             let expected = match geometry.role() {
                 HybridSurfaceRole::HorizontalTail => Vec3::new(0.0, -0.1, 3.6),
                 HybridSurfaceRole::VerticalTail => Vec3::new(0.0, 0.1, 1.8),
                 HybridSurfaceRole::MainWing => unreachable!(),
             };
-            assert!(projected.transform.translation.distance(expected) < 1.0e-6);
-            assert_eq!(projected.transform.rotation, Quat::IDENTITY);
+            let transform = Transform::from_translation(Vec3::from_array(
+                projected.origin.map(|value| value as f32),
+            ));
+            assert!(transform.translation.distance(expected) < 1.0e-6);
+            let vertices = [
+                projected.patches[0].vertices[0],
+                projected.patches[0].vertices[1],
+                projected.patches[1].vertices[2],
+                projected.patches[1].vertices[3],
+            ];
             for (section_index, leading_index, trailing_index) in [(0, 0, 3), (1, 1, 2)] {
                 let section = geometry.sections()[section_index];
                 let point = section.quarter_chord().components();
@@ -2123,13 +2116,81 @@ mod tests {
                         -point[2] as f32,
                         (-point[0] + chord_fraction * section.chord_m()) as f32,
                     );
-                    let actual = projected
-                        .transform
-                        .transform_point(Vec3::from_array(projected.vertices[vertex_index]));
+                    let actual =
+                        transform.transform_point(Vec3::from_array(vertices[vertex_index]));
                     assert!(actual.distance(expected) < 1.0e-6);
                 }
             }
         }
+    }
+
+    #[test]
+    fn tails_project_shared_patches_materials_and_ribs_under_their_physical_parents() {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let expected = TailGeometry::registered().unwrap();
+        let world = app.world_mut();
+        let mut query = world.query::<(
+            &Name,
+            &ChildOf,
+            &Mesh3d,
+            &MeshMaterial3d<StandardMaterial>,
+            &Transform,
+        )>();
+        let meshes = world.resource::<Assets<Mesh>>();
+        let materials = world.resource::<Assets<StandardMaterial>>();
+        let mut remaining_patches = expected
+            .each_ref()
+            .map(|tail| tail.patches.iter().collect::<Vec<_>>());
+        let mut remaining_ribs = expected.each_ref().map(|tail| tail.ribs.clone());
+        for (name, parent, handle, material, transform) in query.iter(world) {
+            let index = match world.get::<WorldProjection>(parent.parent()) {
+                Some(WorldProjection::HorizontalTail) => 0,
+                Some(WorldProjection::VerticalTail) => 1,
+                _ => continue,
+            };
+            let material = materials.get(&material.0).unwrap();
+            if name.as_str() == "tail-rib" {
+                let actual = [-0.5, 0.5].map(|height| transform.transform_point(Vec3::Y * height));
+                let matched = remaining_ribs[index]
+                    .iter()
+                    .position(|endpoints| {
+                        actual.iter().zip(endpoints).all(|(actual, endpoint)| {
+                            actual.distance(Vec3::from_array(endpoint.map(|value| value as f32)))
+                                < 1.0e-6
+                        })
+                    })
+                    .unwrap();
+                remaining_ribs[index].swap_remove(matched);
+                assert_eq!(material.base_color, wing_color(RIB_COLOR));
+            } else {
+                let vertices = meshes
+                    .get(&handle.0)
+                    .unwrap()
+                    .attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap();
+                let matched = remaining_patches[index]
+                    .iter()
+                    .position(|patch| vertices == patch.vertices)
+                    .unwrap();
+                let patch = remaining_patches[index].swap_remove(matched);
+                assert_eq!(
+                    material.alpha_mode == AlphaMode::Blend,
+                    patch.material == TailMaterial::Film
+                );
+                assert!((material.base_color.alpha() - patch.material.opacity()).abs() < 1.0e-6);
+                assert_eq!(*transform, Transform::IDENTITY);
+            }
+        }
+        assert!(remaining_patches.iter().all(Vec::is_empty));
+        assert!(remaining_ribs.iter().all(Vec::is_empty));
     }
 
     #[test]

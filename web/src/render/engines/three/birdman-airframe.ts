@@ -17,7 +17,7 @@ import {
   Vector3
 } from "three";
 import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
-import { CockpitGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
+import { CockpitGeometryBridge, TailGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
   indigo_wing_texture_size, indigo_wing_textures } from "../../../../pkg/birdman_game_wasm.js";
 
 function indigoWingTextures(onVisualReady?: () => void): Readonly<{
@@ -86,12 +86,12 @@ export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const)
 
 function bulkNumber(values: Float32Array | Float64Array | Uint32Array, index: number): number {
   const value = values[index];
-  if (value === undefined) throw new RangeError("Incomplete shared main-wing bulk output");
+  if (value === undefined) throw new RangeError("Incomplete shared airframe bulk output");
   return value;
 }
 
-function registeredHorizontalTailArmMeters(kind: string, armMeters: number): number {
-  if (kind === "bpg041_playable_version_two" && armMeters === 3.6) return armMeters;
+function registeredHorizontalTailArmMeters(kind: string, armMeters: number, registeredArm: number): number {
+  if (kind === "bpg041_playable_version_two" && armMeters === registeredArm) return armMeters;
   throw new RangeError("Tail presentation requires registered aircraft geometry");
 }
 
@@ -161,6 +161,54 @@ function addCockpit(root: Group): void {
   } finally { shared.free(); }
 }
 
+function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group; film: MeshLambertMaterial }> {
+  const shared = new TailGeometryBridge();
+  try {
+    const colors = shared.material_colors();
+    const opacities = shared.material_opacities();
+    const materials = Array.from(colors, (color, index) => {
+      const opacity = bulkNumber(opacities, index);
+      return new MeshLambertMaterial({ color, opacity, side: DoubleSide,
+        transparent: opacity < 1, depthWrite: opacity === 1 });
+    });
+    const materialFor = (index: number): MeshLambertMaterial => {
+      const material = materials[index];
+      if (material === undefined) throw new RangeError("Incomplete shared tail palette");
+      return material;
+    };
+    const origins = shared.origins();
+    const tails = ["horizontal-tail-incidence", "vertical-tail-incidence"].map((name, index) => {
+      const tail = new Group();
+      tail.name = name;
+      tail.position.fromArray(origins, index * 3);
+      const positions = shared.surface_positions(index);
+      const codes = shared.surface_materials(index);
+      for (let patch = 0; patch < codes.length; patch++) {
+        const vertices = Array.from({ length: 4 }, (_, vertex): readonly [number, number, number] => {
+          const start = patch * 12 + vertex * 3;
+          return [bulkNumber(positions, start), bulkNumber(positions, start + 1), bulkNumber(positions, start + 2)];
+        });
+        const code = bulkNumber(codes, patch);
+        const mesh = rectangularTailSurface(vertices, materialFor(code));
+        mesh.name = code === 0 ? "physical-tail-cover" : code === 1 ? "physical-tail-film" : "tail-foam";
+        tail.add(mesh);
+      }
+      const endpoints = shared.rib_endpoints(index);
+      for (let rib = 0; rib < endpoints.length / 6; rib++) {
+        const rod = addRod(tail, new Vector3().fromArray(endpoints, rib * 6),
+          new Vector3().fromArray(endpoints, rib * 6 + 3), shared.rib_radius, materialFor(3));
+        rod.name = "tail-rib";
+      }
+      root.add(tail);
+      return tail;
+    });
+    const horizontal = tails[0];
+    const vertical = tails[1];
+    if (horizontal === undefined || vertical === undefined) throw new RangeError("Incomplete shared tails");
+    return { horizontal, vertical, film: materialFor(1) };
+  } finally { shared.free(); }
+}
+
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
   const root = new Group();
   root.name = "birdman-airframe";
@@ -170,11 +218,8 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     right: new MeshLambertMaterial({ color: 0xffffff, map: wingPatterns.right, side: DoubleSide })
   };
   const whiteWingUnderside = new MeshLambertMaterial({ color: 0xf2f3ed, side: DoubleSide });
-  const skin = new MeshLambertMaterial({ color: 0x304c6b, side: DoubleSide });
-  const whiteTail = new MeshLambertMaterial({ color: 0xe9ece8, side: DoubleSide });
-  const trailingFilm = new MeshLambertMaterial({
-    color: 0xd5ddd9, side: DoubleSide, transparent: true, opacity: 0.22, depthWrite: false
-  });
+  const tails = addTails(root);
+  const trailingFilm = tails.film;
   const sharedWing = new WingGeometryBridge();
   const ribMaterial = new MeshLambertMaterial({ color: sharedWing.rib_color });
   const styrofoam = new MeshLambertMaterial({ color: sharedWing.foam_color, side: DoubleSide });
@@ -250,24 +295,9 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   mainBeam.name = "single-carbon-main-beam";
   addCockpit(root);
 
-  const horizontalIncidence = new Group();
-  horizontalIncidence.name = "horizontal-tail-incidence";
-  horizontalIncidence.position.set(0, -0.1, 3.6);
-  const tailChordMeters = 2.5 / 3.4;
-  horizontalIncidence.add(rectangularTailSurface([
-    [-1.7, 0, -tailChordMeters / 4], [1.7, 0, -tailChordMeters / 4],
-    [1.7, 0, 3 * tailChordMeters / 4], [-1.7, 0, 3 * tailChordMeters / 4]
-  ], whiteTail));
-  root.add(horizontalIncidence);
-  const verticalIncidence = new Group();
-  verticalIncidence.name = "vertical-tail-incidence";
-  verticalIncidence.position.set(0, 0.1, 1.8);
-  const finChordMeters = 0.5 / 0.7;
-  verticalIncidence.add(rectangularTailSurface([
-    [0, -0.35, -finChordMeters / 4], [0, 0.35, -finChordMeters / 4],
-    [0, 0.35, 3 * finChordMeters / 4], [0, -0.35, 3 * finChordMeters / 4]
-  ], skin));
-  root.add(verticalIncidence);
+  const horizontalIncidence = tails.horizontal;
+  const verticalIncidence = tails.vertical;
+  const registeredHorizontalArm = horizontalIncidence.position.z;
 
   let disposed = false;
   const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
@@ -275,11 +305,12 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
         (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
       throw new RangeError("Physical tail incidence must be finite");
     }
-    let horizontalTailArmMeters = 3.6;
+    let horizontalTailArmMeters = registeredHorizontalArm;
     if (controls.layout === "tail_incidence") {
       if (tailGeometry?.kind !== "available") throw new RangeError("Tail presentation requires registered aircraft geometry");
       const geometry = tailGeometry.value;
-      horizontalTailArmMeters = registeredHorizontalTailArmMeters(geometry.kind, geometry.horizontalTailArmMeters);
+      horizontalTailArmMeters = registeredHorizontalTailArmMeters(geometry.kind, geometry.horizontalTailArmMeters,
+        registeredHorizontalArm);
     }
     if (sharedWing.update(airspeedMetersPerSecond ?? Number.NaN)) {
       const nextPositions = sharedWing.surface_positions();
