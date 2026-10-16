@@ -47,7 +47,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.deploy_pages)) }}
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
+      - name: Test workspace packages (Linux)
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --locked
+      - name: Test shared and Web packages (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --exclude birdman-game-bevy --locked
+      - name: Test Bevy native Screen (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test -p birdman-game-bevy --locked
       - name: Build Bevy native Screen executable (Windows)
         if: runner.os == 'Windows'
         run: cargo build -p birdman-game-bevy --locked
