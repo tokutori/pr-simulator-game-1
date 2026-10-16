@@ -941,9 +941,49 @@ mod tests {
 
     #[test]
     fn wing_textures_decode_the_registered_decal_and_upload_srgb_mips() {
-        let images = wing_cover_images();
-        assert_ne!(images[0].data, images[1].data);
-        for image in &images {
+        let mut app = App::new();
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<WaterMaterial>>()
+            .init_resource::<NativeSession>()
+            .add_systems(Startup, setup_world);
+        app.update();
+        let mut projected_meshes = app
+            .world_mut()
+            .query::<(&Mesh3d, &MeshMaterial3d<StandardMaterial>)>();
+        let world = app.world();
+        let materials = world.resource::<Assets<StandardMaterial>>();
+        let meshes = world.resource::<Assets<Mesh>>();
+        let images = world.resource::<Assets<Image>>();
+        let wing = world.resource::<MainWingProjection>();
+        let cover: Vec<_> = materials
+            .iter()
+            .filter_map(|(id, material)| {
+                material
+                    .base_color_texture
+                    .as_ref()
+                    .map(|texture| (id, material, texture))
+            })
+            .collect();
+        assert_eq!(cover.len(), 2);
+        assert_ne!(cover[0].2, cover[1].2);
+        let cover_images: Vec<_> = cover
+            .iter()
+            .map(|(id, _, texture)| {
+                assert!(projected_meshes.iter(world).any(|(mesh, material)| {
+                    material.0.id() == *id
+                        && meshes.get(&mesh.0).is_some()
+                        && wing
+                            .surfaces
+                            .iter()
+                            .any(|surface| surface.material_meshes.contains(&mesh.0))
+                }));
+                images.get(*texture).unwrap()
+            })
+            .collect();
+        assert_ne!(cover_images[0].data, cover_images[1].data);
+        for image in cover_images {
             assert_eq!(
                 image.texture_descriptor.format,
                 TextureFormat::Rgba8UnormSrgb
@@ -971,27 +1011,7 @@ mod tests {
             let leading_panel = &rgba[31 * 1024 * 4..97 * 1024 * 4];
             assert!(leading_panel.chunks_exact(4).any(|pixel| pixel[0] > 180));
         }
-        let mut app = App::new();
-        app.init_resource::<Assets<Mesh>>()
-            .init_resource::<Assets<StandardMaterial>>()
-            .init_resource::<Assets<Image>>()
-            .init_resource::<Assets<WaterMaterial>>()
-            .init_resource::<NativeSession>()
-            .add_systems(Startup, setup_world);
-        app.update();
-        let materials = app.world().resource::<Assets<StandardMaterial>>();
-        let cover: Vec<_> = materials
-            .iter()
-            .filter_map(|(_, material)| {
-                material
-                    .base_color_texture
-                    .as_ref()
-                    .map(|texture| (material, texture))
-            })
-            .collect();
-        assert_eq!(cover.len(), 2);
-        assert_ne!(cover[0].1, cover[1].1);
-        for (material, _) in cover {
+        for (_, material, _) in cover {
             assert_eq!(material.base_color, Color::WHITE);
             assert_eq!(material.cull_mode, None);
             assert!(material.double_sided);
