@@ -30,6 +30,7 @@ impl ReplayRate {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Invalid playback clock inputs.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum ReplayClockError {
     /// The record duration is negative or non-finite.
     InvalidDuration,

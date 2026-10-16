@@ -1,5 +1,8 @@
 use core::time::Duration;
 
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 pub use crate::configured_phase::BriefingFailure;
 use crate::configured_session::RetryError;
 use crate::countdown::{CountdownAdvance, CountdownStartError, start_countdown};
@@ -22,6 +25,8 @@ use crate::tail_simulation::{
     TailWaterContactSample,
 };
 use crate::wind_field::WindError;
+
+mod terminal;
 
 /// Physical configuration sealed when a flight enters preparation.
 pub struct GameSessionConfiguration<'a> {
@@ -130,6 +135,7 @@ pub enum SessionPhase {
 }
 
 /// Terminal state retained by the result view.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SessionTerminalState {
     /// Fractional hybrid state with exactly two physical tail incidences.
@@ -139,6 +145,15 @@ pub enum SessionTerminalState {
 }
 
 impl SessionTerminalState {
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.record_time()))]
+    fn record_time(self) -> (u64, f64) {
+        match self {
+            Self::TailTick(state) => (state.tick_index(), 0.0),
+            Self::TailWaterContact(sample) => (sample.interval_start_tick(), sample.fraction()),
+        }
+    }
+
     /// Returns one body and moving-pilot state at the retained terminal time.
     pub const fn flight_state(self) -> FlightState {
         match self {
@@ -149,6 +164,7 @@ impl SessionTerminalState {
 }
 
 /// Immutable result metadata owned by the game session.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SessionResult {
     /// Finalization reason.
@@ -275,6 +291,7 @@ impl SessionSnapshot {
 }
 
 /// Invalid lifecycle operations or deterministic configuration values.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GameSessionError {
     /// An intent is not permitted in the current phase.
@@ -1138,39 +1155,8 @@ impl<'a> GameSession<'a> {
             .datum_position_ned();
         let terminal = state.flight_state().datum_position_ned();
         let score_result = course_distance_score(start, terminal, configuration.course_axis());
-        let (reason, score) = match score_result {
-            Ok(score) => (reason, Some(score)),
-            Err(_) if failure.is_some() => (reason, None),
-            Err(_) => (SessionEndReason::FatalSimulationError, None),
-        };
-        let (tick_index, fraction) = match state {
-            SessionTerminalState::TailTick(state) => (state.tick_index(), 0.0),
-            SessionTerminalState::TailWaterContact(sample) => {
-                (sample.interval_start_tick(), sample.fraction())
-            }
-        };
-        let record = &mut configured.record;
-        match failure {
-            Some(failure) => {
-                record.finalize_with_failure(reason, tick_index, fraction, score, failure)
-            }
-            None => record.finalize(reason, tick_index, fraction, score),
-        }
-        .map_err(GameSessionError::Record)?;
-        configured.phase = ConfiguredPhase::Result {
-            result: SessionResult {
-                reason,
-                state,
-                score,
-                scenario: configuration.identity,
-                failure,
-            },
-        };
-        if failure.is_some() {
-            Ok(())
-        } else {
-            score_result.map(|_| ()).map_err(GameSessionError::Score)
-        }
+        let identity = configuration.identity;
+        configured.finalize_terminal(reason, state, identity, failure, score_result)
     }
 }
 

@@ -92,6 +92,7 @@ impl DistanceScore {
 }
 
 /// Errors produced by course-axis validation and distance-score evaluation.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DistanceScoreError {
     /// A supplied coordinate or an intermediate result is non-finite.

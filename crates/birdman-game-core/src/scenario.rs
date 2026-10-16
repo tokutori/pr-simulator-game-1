@@ -137,6 +137,7 @@ pub struct FlightTelemetry {
 }
 
 /// Failure while deriving telemetry from a validated flight state.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightTelemetryError {
     /// Composite-center kinematics could not be calculated.

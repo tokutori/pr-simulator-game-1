@@ -415,3 +415,124 @@ fn envelope_classification_preserves_numerical_failure_distinction() {
         assert_eq!(error.end_reason(), reason);
     }
 }
+
+#[test]
+fn terminal_owner_commits_record_and_result_for_score_success_and_failure() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+        AerodynamicEvaluationError::Hybrid(HybridError::new(
+            HybridSite::Datum,
+            AeroError::OutsideEnvelope,
+        )),
+    )));
+    let score = DistanceScore::try_from_recorded(0.0, 0.0, 0.0).unwrap();
+    for failure in [None, Some(failure)] {
+        for score_result in [Ok(score), Err(DistanceScoreError::NonFinite)] {
+            let mut session = launch(configuration(
+                &definition,
+                &surfaces,
+                WindField::uniform(NedVector::zero()),
+                -10.5,
+                10,
+                ControlMode::Manual,
+            ));
+            let state = session.snapshot().tail_flight_state().unwrap();
+            let samples = session.flight_record().unwrap().samples().to_vec();
+            let reason = failure.map_or(
+                SessionEndReason::ManualAbort,
+                TailFlightTickError::end_reason,
+            );
+            let outcome = session.configured_mut().unwrap().finalize_terminal(
+                reason,
+                SessionTerminalState::TailTick(state),
+                identity(),
+                failure,
+                score_result,
+            );
+            let expected = if failure.is_some() {
+                Ok(())
+            } else {
+                score_result.map(|_| ()).map_err(GameSessionError::Score)
+            };
+            assert_eq!(outcome, expected);
+            let result = session.snapshot().result().unwrap();
+            assert_eq!(result.state, SessionTerminalState::TailTick(state));
+            assert_eq!(result.scenario, identity());
+            assert_eq!(result.failure, failure);
+            assert_eq!(result.score, score_result.ok());
+            assert_eq!(
+                result.reason,
+                if score_result.is_err() && failure.is_none() {
+                    SessionEndReason::FatalSimulationError
+                } else {
+                    reason
+                }
+            );
+            let record = session.flight_record().unwrap();
+            assert_eq!(record.samples(), samples.as_slice());
+            assert_eq!(record.header().scenario, identity());
+            let metadata = record.finalization().unwrap();
+            assert_eq!(metadata.reason, result.reason);
+            assert_eq!(metadata.failure, result.failure);
+            assert_eq!(metadata.score, result.score);
+            assert_eq!(metadata.terminal_tick, state.tick_index());
+            assert_eq!(metadata.terminal_fraction, 0.0);
+        }
+    }
+}
+
+#[test]
+fn terminal_record_rejection_preserves_running_and_existing_result() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+    ));
+    let snapshot = session.snapshot();
+    let state = snapshot.tail_flight_state().unwrap();
+    let samples = session.flight_record().unwrap().samples().to_vec();
+    let aircraft = session.configured_mut().unwrap().configuration.aircraft();
+    let mismatched = TailFlightTickState::try_new(
+        &aircraft,
+        state.tick_index() + 1,
+        state.flight_state(),
+        state.incidence(),
+        state.pilot_position_target(),
+    )
+    .unwrap();
+    assert_eq!(
+        session.finalize_tick(SessionEndReason::TimeLimit, mismatched),
+        Err(GameSessionError::Record(
+            FlightRecordError::FinalizationMismatch
+        ))
+    );
+    assert_eq!(session.snapshot(), snapshot);
+    assert_eq!(
+        session.flight_record().unwrap().samples(),
+        samples.as_slice()
+    );
+    assert_eq!(session.flight_record().unwrap().finalization(), None);
+    session
+        .finalize_tick(SessionEndReason::ManualAbort, state)
+        .unwrap();
+    let result = session.snapshot();
+    let metadata = session.flight_record().unwrap().finalization();
+    assert_eq!(
+        session.finalize_tick(SessionEndReason::TimeLimit, state),
+        Err(GameSessionError::Record(
+            FlightRecordError::AlreadyFinalized
+        ))
+    );
+    assert_eq!(session.snapshot(), result);
+    assert_eq!(
+        session.flight_record().unwrap().samples(),
+        samples.as_slice()
+    );
+    assert_eq!(session.flight_record().unwrap().finalization(), metadata);
+}

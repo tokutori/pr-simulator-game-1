@@ -5,6 +5,24 @@ use birdman_game_core::{
 use vstd::prelude::*;
 
 verus! {
+    fn verify_domain_finalization_commit(
+        record: &mut FlightRecord,
+        reason: SessionEndReason,
+        tick: u64,
+        fraction: f64,
+        score: Option<DistanceScore>,
+    ) -> (outcome: Result<FlightRecordFinalization, FlightRecordError>)
+        ensures match outcome {
+            Ok(metadata) => final(record).finalization() == Some(metadata)
+                && final(record).header() == old(record).header()
+                && final(record).sample_count() == old(record).sample_count()
+                && final(record).finalized_from(*old(record), metadata),
+            Err(_) => *final(record) == *old(record),
+        },
+    {
+        record.finalize(reason, tick, fraction, score)
+    }
+
     fn verify_domain_finalization_retention(
         record: &mut FlightRecord,
         reason: SessionEndReason,
