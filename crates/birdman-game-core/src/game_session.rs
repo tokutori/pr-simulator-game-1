@@ -1,6 +1,7 @@
 use core::time::Duration;
 
 pub use crate::configured_phase::BriefingFailure;
+use crate::configured_session::RetryError;
 use crate::countdown::{CountdownAdvance, CountdownStartError, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
@@ -349,11 +350,13 @@ enum SessionLifecycle<'a> {
     },
 }
 
-struct ConfiguredSession<'a> {
-    configuration: GameSessionConfiguration<'a>,
-    record: FlightRecord,
-    phase: ConfiguredPhase,
-}
+type ConfiguredSession<'a> = crate::configured_session::ConfiguredSession<
+    GameSessionConfiguration<'a>,
+    FlightRecord,
+    TailFlightTickState,
+    SessionResult,
+    ReplayClock,
+>;
 
 type ConfiguredPhase =
     crate::configured_phase::ConfiguredPhase<TailFlightTickState, SessionResult, ReplayClock>;
@@ -1089,18 +1092,18 @@ impl<'a> GameSession<'a> {
         &mut self,
         create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
     ) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::Result {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        let configured = self.configured_mut()?;
-        let configuration = &configured.configuration;
-        let header =
-            FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
-                .map_err(GameSessionError::Record)?;
-        let record = create_record(header).map_err(GameSessionError::Record)?;
-        configured.record = record;
-        configured.phase = ConfiguredPhase::Ready;
-        Ok(())
+        self.configured_mut()?
+            .retry_with_record_factory(|configuration| {
+                let header = FlightRecordHeader::try_new(
+                    configuration.identity,
+                    configuration.maximum_flight_ticks,
+                )?;
+                create_record(header)
+            })
+            .map_err(|error| match error {
+                RetryError::InvalidTransition => GameSessionError::InvalidTransition,
+                RetryError::Record(error) => GameSessionError::Record(error),
+            })
     }
 
     fn finalize_tick(

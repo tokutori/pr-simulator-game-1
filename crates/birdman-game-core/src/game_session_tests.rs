@@ -856,6 +856,11 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
             .unwrap();
     }
     let snapshot = session.snapshot();
+    let configuration = &session.configured().unwrap().configuration;
+    let initial_state = configuration.initial_state();
+    let scenario = configuration.scenario;
+    let mode = configuration.control_mode;
+    let maximum_ticks = configuration.maximum_flight_ticks;
     let record = session.flight_record().unwrap();
     let header = record.header();
     let samples = record.samples().to_vec();
@@ -873,6 +878,11 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
             ))
         );
         assert_eq!(session.snapshot(), snapshot);
+        let retained_configuration = &session.configured().unwrap().configuration;
+        assert_eq!(retained_configuration.scenario, scenario);
+        assert_eq!(retained_configuration.control_mode, mode);
+        assert_eq!(retained_configuration.maximum_flight_ticks, maximum_ticks);
+        assert_eq!(retained_configuration.initial_state(), initial_state);
         let retained_record = session.flight_record().unwrap();
         assert_eq!(retained_record.header(), header);
         assert_eq!(retained_record.samples(), samples);
@@ -888,6 +898,11 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
     assert_eq!(session.flight_record().unwrap().header(), header);
     assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+    assert_eq!(session.prepared_launch_state(), Some(initial_state));
+    let retried_configuration = &session.configured().unwrap().configuration;
+    assert_eq!(retried_configuration.scenario, scenario);
+    assert_eq!(retried_configuration.control_mode, mode);
+    assert_eq!(retried_configuration.maximum_flight_ticks, maximum_ticks);
     assert!(session.snapshot().result().is_none());
     session.start_countdown(1).unwrap();
     session
@@ -898,12 +913,30 @@ fn failed_retry_reservation_preserves_result_record_and_replay_until_retry_succe
 
 #[test]
 fn invalid_retry_does_not_request_record_storage() {
-    let mut session = GameSession::new();
-    assert_eq!(
-        session.retry_with_record_factory(|_| panic!("Invalid Retry must not reserve storage")),
-        Err(GameSessionError::InvalidTransition)
-    );
-    assert_eq!(session.snapshot().phase(), SessionPhase::Title);
+    let mut replay = session(2);
+    replay.start_countdown(1).unwrap();
+    replay
+        .observe_countdown(replay.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    replay.abort_flight().unwrap();
+    replay.enter_replay().unwrap();
+    for mut session in [GameSession::new(), session(2), replay] {
+        let snapshot = session.snapshot();
+        let record_storage = session
+            .flight_record()
+            .map(|record| record.samples().as_ptr());
+        assert_eq!(
+            session.retry_with_record_factory(|_| panic!("Invalid Retry must not reserve storage")),
+            Err(GameSessionError::InvalidTransition)
+        );
+        assert_eq!(session.snapshot(), snapshot);
+        assert_eq!(
+            session
+                .flight_record()
+                .map(|record| record.samples().as_ptr()),
+            record_storage
+        );
+    }
 }
 
 #[test]

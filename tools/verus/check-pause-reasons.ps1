@@ -59,6 +59,17 @@ $suites = @(
             @{ Path = Join-Path $repository 'proofs/configured_phase_rejection_negative.rs'; Assertion = 'admitted' },
             @{ Path = Join-Path $repository 'proofs/configured_phase_payload_negative.rs'; Assertion = 'changed' }
         )
+    },
+    @{
+        Name = 'configured_session'
+        SharedModule = Join-Path $repository 'crates/birdman-game-core/src/configured_session.rs'
+        PositiveDriver = Join-Path $repository 'proofs/configured_session.rs'
+        RequiredProofs = @('verify_retry_success', 'verify_retry_reservation_failure', 'verify_retry_rejection')
+        RenamedProof = 'verify_retry_success'
+        NegativeChecks = @(
+            @{ Path = Join-Path $repository 'proofs/configured_session_rejection_negative.rs'; Assertion = 'admitted' },
+            @{ Path = Join-Path $repository 'proofs/configured_session_retention_negative.rs'; Assertion = 'changed' }
+        )
     }
 )
 
@@ -297,5 +308,5 @@ foreach ($path in $sourceHashes.Keys) {
         throw "Proof input or product toolchain changed during execution: $path"
     }
 }
-Write-Host 'Production pause, countdown, flight execution, and configured phase proof suites completed.'
+Write-Host 'Production pause, countdown, flight execution, configured phase, and retry owner proof suites completed.'
 exit 0

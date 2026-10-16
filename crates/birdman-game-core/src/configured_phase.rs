@@ -33,7 +33,7 @@ pub(crate) enum ConfiguredPhase<State, Payload, Clock> {
 #[cfg(verus_only)]
 verus! {
     impl<State, Payload, Clock> ConfiguredPhase<State, Payload, Clock> {
-        pub closed spec fn is_result(self) -> bool {
+        pub(crate) open spec fn is_result(self) -> bool {
             matches!(self, Self::Result { .. })
         }
 

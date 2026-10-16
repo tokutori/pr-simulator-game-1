@@ -84,6 +84,22 @@ current-session の `enter_replay` / `leave_replay` は同 module の二つの m
 外側の record / configuration はこの method へ借用せず、Rust の所有分離と GameSession の通常回帰で保持を確認する。
 これらの外側 payload、GameSession wrapper 全体、archived Replay / Attract、clock の浮動小数点演算は Verus の直接証明範囲に含めない。
 
+### Retry の本番所有体
+
+`configured_session.rs` は製品の実 `ConfiguredSession` を単独所有し、configuration・record・既存 ConfiguredPhase を保持する。
+GameSession は従来の具体型を private alias に割り当て、同じ owner method で Result 認可、factory 呼出し、record / Ready の commit を実行する。
+configuration と record に Copy / Clone を要求せず、既存 phase の三つの payload と合わせて不透明な値として扱う。
+
+成功時は configuration 全体を保持し、factory が返した record を格納して Ready に移る。
+Header 生成または予約を含む factory の失敗時は owner 全体を保持し、原因を分類して返す。
+Result 以外では factory の前提条件を要求せず拒否する。正 driver の拒否群は前提条件 false の factory を渡し、認可前の呼出しを検証で拒否する。
+sealed configuration の非更新は scenario・seed・初期状態・tick 上限の保持を含むが、その浮動小数点の妥当性や物理精度を証明しない。
+
+Header 生成と実 `FlightRecord::try_new` は製品の同じ closure に接続する。
+allocation と record の空性・metadata は factory の形式保証として追加仮定せず、実 factory の接続回帰で確認する未証明境界とする。
+Title 等の owner 不在拒否と GameSession wrapper 全体、Countdown 初期化、異常終端化、archived Replay / Attract は本 cut の直接証明範囲に含めない。
+既存 runner に成功・予約失敗・認可拒否の必須三群、exact inventory / rename / missing-target、認可と失敗保持の指定負例を追加する。
+
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
 private fieldはghost-onlyのclosed viewを通して仕様から参照し、maskは実bit関数から生成するdual specを使う。

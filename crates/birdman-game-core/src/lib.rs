@@ -9,6 +9,7 @@ extern crate alloc;
 mod aerodynamics;
 mod aerodynamics_contract;
 mod configured_phase;
+mod configured_session;
 mod contact;
 mod countdown;
 mod dynamics;
