@@ -14,6 +14,7 @@ pub mod lake_sky;
 pub mod lake_water;
 pub mod screen_render_auto;
 pub mod screen_render_scale;
+pub mod tail_geometry;
 pub mod wing_geometry;
 pub mod wing_texture;
 

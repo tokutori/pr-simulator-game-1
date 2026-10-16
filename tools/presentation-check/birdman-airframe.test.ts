@@ -2,9 +2,68 @@ import "./lake-model-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { BufferAttribute, CylinderGeometry, DataTexture, Group, Mesh, MeshLambertMaterial, Vector3 } from "three";
 import { createBirdmanAirframe } from "../../web/src/render/engines/three/birdman-airframe.js";
-import { CockpitGeometryBridge, WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { CockpitGeometryBridge, TailGeometryBridge, WingGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
 
 describe("synthetic Birdman airframe", () => {
+  it("projects shared registered tail materials and ribs under the physical incidence pivots", () => {
+    const free = vi.spyOn(TailGeometryBridge.prototype, "free");
+    const airframe = createBirdmanAirframe();
+    try {
+      expect(free).toHaveBeenCalledTimes(1);
+      const tails = ["horizontal-tail-incidence", "vertical-tail-incidence"].map((name) =>
+        airframe.root.getObjectByName(name) as Group);
+      const source = new TailGeometryBridge();
+      try {
+        for (const [index, tail] of tails.entries()) {
+          const positions = source.surface_positions(index);
+          const codes = source.surface_materials(index);
+          const patches = tail.children.filter((part) => part.name !== "tail-rib") as Mesh[];
+          expect(patches).toHaveLength(index === 0 ? 9 : 5);
+          for (const [patch, mesh] of patches.entries()) {
+            expect(Array.from(mesh.geometry.getAttribute("position").array))
+              .toEqual(Array.from(positions.subarray(patch * 12, (patch + 1) * 12)));
+            const material = mesh.material as MeshLambertMaterial;
+            expect(material.color.getHex()).toBe(source.material_colors()[codes[patch] ?? -1]);
+            expect(material.opacity).toBeCloseTo(source.material_opacities()[codes[patch] ?? -1] ?? -1, 6);
+            expect(material.transparent).toBe(codes[patch] === 1);
+            expect(material.depthWrite).toBe(codes[patch] !== 1);
+          }
+          const ribs = tail.children.filter((part) => part.name === "tail-rib") as Mesh[];
+          const endpoints = source.rib_endpoints(index);
+          expect(ribs).toHaveLength(index === 0 ? 7 : 3);
+          for (const [rib, mesh] of ribs.entries()) {
+            mesh.updateMatrix();
+            for (const [end, height] of [-0.5, 0.5].entries()) {
+              const actual = new Vector3(0, height, 0).applyMatrix4(mesh.matrix).toArray();
+              for (const [axis, value] of actual.entries()) expect(value)
+                .toBeCloseTo(endpoints[rib * 6 + end * 3 + axis] ?? Number.NaN, 11);
+            }
+          }
+        }
+      } finally { source.free(); }
+      const retained = tails.flatMap((tail) => tail.children.map((part) => (part as Mesh).geometry));
+      airframe.setVisualState(13, { layout: "tail_incidence", physicalIncidence: {
+        horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
+      { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } });
+      expect(tails[0]?.rotation.x).toBeCloseTo(0.12);
+      expect(tails[1]?.rotation.y).toBeCloseTo(0.08);
+      expect(tails.flatMap((tail) => tail.children.map((part) => (part as Mesh).geometry))).toEqual(retained);
+    } finally { airframe.dispose(); free.mockRestore(); }
+  });
+
+  it("retains owned static tail bulk after bridge release", () => {
+    const source = new TailGeometryBridge();
+    const positions = source.surface_positions(0);
+    const initial = positions[0];
+    positions[0] = 100;
+    expect(source.surface_positions(0)[0]).toBe(initial);
+    const ribs = source.rib_endpoints(1);
+    source.free();
+    expect(positions[0]).toBe(100);
+    expect(ribs.length).toBe(18);
+    expect(Array.from(ribs).every(Number.isFinite)).toBe(true);
+  });
+
   it("decodes the wing decal once, updates both owned textures and cancels disposed callbacks", () => {
     class Decal {
       naturalWidth = 2171;

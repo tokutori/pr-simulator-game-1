@@ -1,6 +1,6 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
-import { Group, Mesh, Vector3 } from "three";
+import { Box3, Group, Mesh, Vector3 } from "three";
 import type { Object3D } from "three";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "../../web/src/render/engines/three/birdman-airframe.js";
 import type { BirdmanAirframe } from "../../web/src/render/engines/three/birdman-airframe.js";
@@ -15,10 +15,22 @@ function group(airframe: BirdmanAirframe, name: string): Group {
   return node;
 }
 
-function surface(parent: Group): Mesh {
-  const node = parent.getObjectByName("physical-tail-surface");
-  if (!isMesh(node)) throw new Error("Expected rectangular tail surface");
-  return node;
+function surfaces(parent: Group): readonly [Mesh, Mesh] {
+  const cover = parent.getObjectByName("physical-tail-cover");
+  const film = parent.getObjectByName("physical-tail-film");
+  if (!isMesh(cover) || !isMesh(film)) throw new Error("Expected complete tail cover and film");
+  return [cover, film];
+}
+
+function outline(parent: Group): Box3 {
+  const bounds = new Box3();
+  for (const surface of surfaces(parent)) {
+    const positions = surface.geometry.getAttribute("position");
+    for (let index = 0; index < positions.count; index++) {
+      bounds.expandByPoint(new Vector3().fromBufferAttribute(positions, index));
+    }
+  }
+  return bounds;
 }
 
 function isGroup(node: Object3D | undefined): node is Group {
@@ -40,18 +52,18 @@ describe("physical two-tail airframe adapter", () => {
       expect(vertical.parent).toBe(airframe.root);
       expect(horizontal.position.toArray()).toEqual([0, -0.1, 3.6]);
       expect(vertical.position.toArray()).toEqual([0, 0.1, 1.8]);
-      const horizontalVertices = surface(horizontal).geometry.getAttribute("position");
-      const verticalVertices = surface(vertical).geometry.getAttribute("position");
-      expect(horizontalVertices.getX(0)).toBeCloseTo(-1.7);
-      expect(horizontalVertices.getX(1)).toBeCloseTo(1.7);
-      expect(horizontalVertices.getZ(0)).toBeCloseTo(-(2.5 / 3.4) / 4);
-      expect(horizontalVertices.getZ(2)).toBeCloseTo(3 * (2.5 / 3.4) / 4);
-      expect(verticalVertices.getY(0) + vertical.position.y).toBeCloseTo(-0.25);
-      expect(verticalVertices.getY(1) + vertical.position.y).toBeCloseTo(0.45);
-      expect(verticalVertices.getZ(0)).toBeCloseTo(-(0.5 / 0.7) / 4);
-      expect(verticalVertices.getZ(2)).toBeCloseTo(3 * (0.5 / 0.7) / 4);
-      const span = horizontalVertices.getX(1) - horizontalVertices.getX(0);
-      const chord = horizontalVertices.getZ(2) - horizontalVertices.getZ(0);
+      const horizontalBounds = outline(horizontal);
+      const verticalBounds = outline(vertical);
+      expect(horizontalBounds.min.x).toBeCloseTo(-1.7);
+      expect(horizontalBounds.max.x).toBeCloseTo(1.7);
+      expect(horizontalBounds.min.z).toBeCloseTo(-(2.5 / 3.4) / 4);
+      expect(horizontalBounds.max.z).toBeCloseTo(3 * (2.5 / 3.4) / 4);
+      expect(verticalBounds.min.y + vertical.position.y).toBeCloseTo(-0.25);
+      expect(verticalBounds.max.y + vertical.position.y).toBeCloseTo(0.45);
+      expect(verticalBounds.min.z).toBeCloseTo(-(0.5 / 0.7) / 4);
+      expect(verticalBounds.max.z).toBeCloseTo(3 * (0.5 / 0.7) / 4);
+      const span = horizontalBounds.max.x - horizontalBounds.min.x;
+      const chord = horizontalBounds.max.z - horizontalBounds.min.z;
       expect(span * chord).toBeCloseTo(2.5);
     } finally {
       airframe.dispose();
@@ -111,8 +123,8 @@ describe("physical two-tail airframe adapter", () => {
     try {
       const horizontal = group(airframe, "horizontal-tail-incidence");
       const vertical = group(airframe, "vertical-tail-incidence");
-      const horizontalMesh = surface(horizontal).geometry;
-      const verticalMesh = surface(vertical).geometry;
+      const horizontalMeshes = surfaces(horizontal).map((surface) => surface.geometry);
+      const verticalMeshes = surfaces(vertical).map((surface) => surface.geometry);
       for (let iteration = 0; iteration < 3; iteration++) {
         airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
         airframe.root.updateMatrixWorld(true);
@@ -120,8 +132,8 @@ describe("physical two-tail airframe adapter", () => {
         expect(vertical.getWorldPosition(new Vector3()).toArray()).toEqual([0, 0.1, 1.8]);
         expect(horizontal.rotation.x).toBe(controls.physicalIncidence.horizontalTailRadians);
         expect(vertical.rotation.y).toBe(-controls.physicalIncidence.verticalTailRadians);
-        expect(surface(horizontal).geometry).toBe(horizontalMesh);
-        expect(surface(vertical).geometry).toBe(verticalMesh);
+        for (const [index, surface] of surfaces(horizontal).entries()) expect(surface.geometry).toBe(horizontalMeshes[index]);
+        for (const [index, surface] of surfaces(vertical).entries()) expect(surface.geometry).toBe(verticalMeshes[index]);
         airframe.setVisualState(null, NO_AIRFRAME_CONTROLS);
         expect(horizontal.visible || vertical.visible).toBe(false);
       }

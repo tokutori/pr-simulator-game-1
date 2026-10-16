@@ -141,6 +141,7 @@ vertex shaderでworld位置を変位させ、変位量を含むAabbを使用す�
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 主翼とcockpitの形状はWeb基準の共有Rustを使用する。cockpitは白いframe、透明nose canopy、後部fairingを表示する。主翼上面の藍染textureも共有Rustで生成し、登録decalのalphaを左右へ投影する。Nativeではlinear-light mipを生成してsRGB textureへ格納する。T字骨格を表示し、全160本の主翼rod・44個のfoamが同じWingFrameの曲げへ追従する。rodのunit meshと左右同形foamのmeshを共有する。機体fidelityは未検証である。
+両尾翼は登録physical geometryの外周・quarter-chord原点を共有Rustで表示へ投影し、前半の藍色被覆、後半の半透明film、薄茶ribと水色foamを両版で共用する。被覆比率・palette・rib厚さは既存主翼の表示規則であり、rib配置とfoam帯は視覚専用である。static geometryは起動時一回だけ生成し、尾翼全体は従来のphysical incidence親Transformへ従う。空力・physical寸法・操縦・100Hzを変更しない。実描画受入と80FPSは関連CPU検査から推定しない。
 HUDの内容・幾何・表示条件は共有Rustを使用する。[#258](https://github.com/tokutori/pr-simulator-game-1/issues/258)の修正として、
 数値と単位を不可分にし、角速度・姿勢の共有単位を見出しへ分離する。ADI、FPI、方位目盛、風向針、AoA指示はWeb版と同じ共有値・表示条件を使用する。実GPUでの視認性と各機器の操作性は検証結果を参照する。
 
