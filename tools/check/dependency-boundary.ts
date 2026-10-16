@@ -47,11 +47,8 @@ function isNativeEngineDependency(crate: string, dependency: Record<string, unkn
     && dependency.optional === false
     && dependency.uses_default_features === false
     && Array.isArray(dependency.features)
-    && (dependency.kind === null
-      && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature))
-      || dependency.kind === "dev"
-      && dependency.features.length === 1
-      && dependency.features[0] === "default_font");
+    && dependency.kind === null
+    && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
 }
 
 function isNativeTextDependency(crate: string, dependency: Record<string, unknown>): boolean {

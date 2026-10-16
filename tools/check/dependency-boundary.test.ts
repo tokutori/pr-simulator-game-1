@@ -83,7 +83,6 @@ function versionedPackages(difference: Readonly<Record<string, unknown>>): unkno
     ...core({ ...numericalDependency, ...difference }),
     { name: "birdman-game-session", dependencies: [{ ...chartNumberDependency, ...difference }] },
     { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] },
-    { name: "birdman-game-bevy", dependencies: [{ ...nativeTestFontDependency, ...difference }] },
     ...schemaProvider("birdman-game-format", { ...schemaDependency, ...difference }),
     ...schemaProvider("birdman-game-session", { ...schemaDependency, ...difference })
   ];
@@ -335,21 +334,9 @@ describe("Cargo dependency boundary", () => {
     ]); }).toThrow("Forbidden native engine dependency");
   });
 
-  it("allows only the pinned Windows test font beside the product native engine", () => {
+  it("rejects a dev-only native font feature beside the product native engine", () => {
     expect(() => { assertDependencyBoundary([
       { name: "birdman-game-bevy", dependencies: [nativeEngineDependency, nativeTestFontDependency] }
-    ]); }).not.toThrow();
-  });
-
-  it.each([
-    { req: "^0.19.1" }, { kind: null }, { kind: "build" }, { target: null },
-    { target: 'cfg(target_arch = "wasm32")' }, { uses_default_features: true },
-    { features: [] }, { features: ["std"] }, { features: ["default_font", "std"] },
-    { source: "git+https://example.invalid/bevy" }, { registry: "other" },
-    { path: "../bevy" }, { rename: "other" }, { optional: true }
-  ])("rejects a broader native test font dependency %j", (difference) => {
-    expect(() => { assertDependencyBoundary([
-      { name: "birdman-game-bevy", dependencies: [{ ...nativeTestFontDependency, ...difference }] }
     ]); }).toThrow("Forbidden native engine dependency");
   });
 
