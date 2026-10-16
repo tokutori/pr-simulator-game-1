@@ -63,6 +63,9 @@ ChatGPT固有の参照マーカーと数式区切りは転記しない。
 READMEのコマンドと `docs/verification.md` を参照する。
 ローカルは変更箇所のlint、freshなbindingを用いた型検査、関連試験を先行する。Rust UI/ABI変更時は必要な生成を一回行う。
 UI-only変更では無関係な数値fixtureの反復を省き、最終CIの全検査を保持する。
+Windows CIはworkspace試験からnative packageを除外し、その後native単独の試験とbuildを実行する。
+これによりWebやcoreのdev依存によるfeature統合をnative試験から分離する。全packageのtests/doctestsを保持し、
+Linux CIは従来のworkspace一括試験を継続する。
 compiler・linter警告と、CI基盤の非推奨警告を確認し、解消してからmergeする。
 外部サービス起因で解消不能な警告は原因・影響・追跡IssueをPRに記録する。
 実機妥当性とソフトウェア検査の合格を区別する。
