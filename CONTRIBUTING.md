@@ -11,7 +11,7 @@ Completion criteria、Dependenciesを記載する。依存先はIssue番号で�
 PRには対象Issueをリンクし、実施結果と未達条件を記録する。
 CIはコード・設計文書・assetを検査する。Issue本文や依存関係の検査・同期は行わず、着手時とレビュー時に確認する。
 
-1. 依存BPGのmerge完了と基底commitを確認する。
+1. 依存BPGのmerge完了と基底commitを確認する。以下の先行条件を満たす場合は固定した依存HEADを確認する。
 2. `feat/bpg-###-description` 等のブランチを作成する。
 3. 対象の契約、実装、検証、文書を同一PRに含める。
 4. CIと差分を確認し、検査結果と未検証範囲をPR本文に記載する。
@@ -23,6 +23,17 @@ commitは目的別のConventional Commitsとする。検査未実施の機能を
 feature branchは早期にDraft PRを作成する。`Check`はmain/bevyへのpush、無条件のpull_request、手動実行で起動する。
 PRは仮merge tree、pushと手動実行は対象headを検査する。未PR・merge conflict中の先行head検査が必要な場合は、
 local検査または対象branchの手動実行（`deploy_pages=false`）で補完する。競合解消後はPRの3gateを確認する。
+
+## 依存作業の先行
+
+依存先が独立review・必要な局所検査を完了した不変のHEADに固定されている場合は、別worktree/branchで依存作業を先行できる。
+親branch/sourceは変更しない。親PR未merge中はchild PRのbaseを親branchとし、依存HEADのSHAを明記する。
+親PRのmerge後はchild PRのbaseをmainへ変更し、必要な通常mergeで最新mainを取り込み、combined treeと最終gateを確認する。
+親HEADが更新された場合はreview・局所検査の状況を再確認し、通常mergeで取り込み、影響範囲を確認する。
+親CIの失敗や変更により、childにも修正・再検査が必要となる手戻りリスクを伴う。
+
+main統合前には依存PRのmerge完了、最新mainとのcombined tree、独立review、既存3gateの成功を必須とする。
+通常pushとfast-forward優先、既存変更の保護、共有build targetのleaseを維持する。force push・rebaseは行わない。
 
 ## 公開と統合の分離
 
