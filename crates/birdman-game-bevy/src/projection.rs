@@ -2,6 +2,7 @@ use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{FlightState, UnitQuaternion};
 use birdman_game_session::cockpit_geometry::CockpitGeometry;
+use birdman_game_session::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
 
 #[derive(Resource)]
 pub(crate) struct VerificationObserver(pub(crate) Transform);
@@ -67,6 +68,35 @@ pub(crate) fn camera_transform(
             .with_rotation(
                 aircraft.rotation * Quat::from_rotation_y(look.x) * Quat::from_rotation_x(look.y),
             )
+    }
+}
+
+pub(crate) fn replay_camera_transform(
+    view: &ReplayCameraView,
+    aircraft: Transform,
+    pilot_position_m: f64,
+    initial_position_m: f64,
+    look: Vec2,
+) -> Transform {
+    if let Some(cinematic) = view.cinematic() {
+        let [scalar, first, second, third] = cinematic.orientation_wxyz();
+        Transform::from_translation(Vec3::from_array(
+            cinematic.position_m().map(|value| value as f32),
+        ))
+        .with_rotation(Quat::from_xyzw(
+            first as f32,
+            second as f32,
+            third as f32,
+            scalar as f32,
+        ))
+    } else {
+        camera_transform(
+            aircraft,
+            pilot_position_m,
+            initial_position_m,
+            view.camera() != GameUiReplayCamera::Pilot,
+            look,
+        )
     }
 }
 

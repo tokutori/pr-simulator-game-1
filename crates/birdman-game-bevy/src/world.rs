@@ -2,7 +2,10 @@ use super::{
     CameraMode,
     environment::{EnvironmentSun, EnvironmentSurface, NativeEnvironment},
     native_session::{NativeSession, TailDisplay},
-    projection::{VerificationObserver, aircraft_transform, camera_transform, sunlight_transform},
+    projection::{
+        VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
+        sunlight_transform,
+    },
     water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
 };
 use bevy::ecs as bevy_ecs;
@@ -855,12 +858,12 @@ pub(crate) fn setup_world(
 }
 
 pub(crate) fn project_world(
-    session: Res<NativeSession>,
+    mut session: ResMut<NativeSession>,
     camera: Res<CameraMode>,
     mut history: ResMut<RenderHistory>,
     fixed: Res<Time<Fixed>>,
     observer: Option<Res<VerificationObserver>>,
-    mut transforms: Query<(&WorldProjection, &mut Transform)>,
+    mut transforms: Query<(&WorldProjection, &mut Transform, Option<&mut Projection>)>,
     mut water: ResMut<Assets<WaterMaterial>>,
 ) {
     let display = session.display_state();
@@ -885,9 +888,55 @@ pub(crate) fn project_world(
         || exhibition_aircraft_transform(launch_venue().expect("登録launch venueが不正").platform),
         |sample| sample.aircraft,
     );
+    let record_camera = if matches!(
+        session.game.core_session().snapshot().phase(),
+        birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract
+    ) {
+        session
+            .game
+            .core_session()
+            .playback_record()
+            .zip(session.game.core_session().playback_clock())
+            .map(|(record, clock)| {
+                birdman_game_session::replay_camera::replay_camera_view(
+                    record,
+                    clock.time_seconds(),
+                    session.ui.replay_camera,
+                    birdman_game_session::game_ui::GameUiPresentationMode::Screen,
+                    session.game.core_session().snapshot().phase()
+                        == birdman_game_core::SessionPhase::Attract,
+                )
+            })
+    } else {
+        None
+    };
+    let record_camera = match record_camera.transpose() {
+        Ok(view) => view,
+        Err(cause) => {
+            session.notice = Some(format!("記録cameraを表示できない: {cause:?}"));
+            None
+        }
+    };
+    let fov = record_camera
+        .as_ref()
+        .and_then(|view| view.cinematic())
+        .map_or(
+            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+            |view| view.vertical_field_of_view_degrees(),
+        )
+        .to_radians() as f32;
     let projected_camera = display.as_ref().and(render_sample).map_or_else(
         || Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
         |sample| {
+            if let Some(ref view) = record_camera {
+                return replay_camera_transform(
+                    view,
+                    sample.aircraft,
+                    sample.pilot_position_m,
+                    session.initial_pilot_position_m,
+                    camera.look,
+                );
+            }
             camera_transform(
                 sample.aircraft,
                 sample.pilot_position_m,
@@ -901,10 +950,18 @@ pub(crate) fn project_world(
         .as_ref()
         .filter(|_| running)
         .map_or(projected_camera, |observer| observer.0);
-    for (projection, mut transform) in &mut transforms {
+    for (projection, mut transform, lens) in &mut transforms {
         match projection {
             WorldProjection::Aircraft => *transform = projected,
-            WorldProjection::FlightCamera => *transform = projected_camera,
+            WorldProjection::FlightCamera => {
+                *transform = projected_camera;
+                if let Some(mut lens) = lens
+                    && let Projection::Perspective(perspective) = &mut *lens
+                    && perspective.fov != fov
+                {
+                    perspective.fov = fov;
+                }
+            }
             WorldProjection::HorizontalTail => {
                 transform.rotation = Quat::from_rotation_x(
                     render_sample.map_or(0.0, |sample| sample.elevator_rad as f32),
@@ -1202,6 +1259,117 @@ mod tests {
             .iter(app.world())
             .find_map(|(kind, transform)| (*kind == projection).then_some(*transform))
             .unwrap()
+    }
+
+    #[test]
+    fn replay_rigs_project_shared_pose_and_lens_then_restore_screen_fov() {
+        use birdman_game_session::{
+            game_ui::{GameUiPresentationMode, GameUiReplayCamera},
+            replay_camera::replay_camera_view,
+        };
+        let mut app = projection_app();
+        let camera = {
+            let mut query = app.world_mut().query::<(Entity, &WorldProjection)>();
+            query
+                .iter(app.world())
+                .find_map(|(entity, kind)| {
+                    (*kind == WorldProjection::FlightCamera).then_some(entity)
+                })
+                .unwrap()
+        };
+        app.world_mut()
+            .entity_mut(camera)
+            .insert(Projection::Perspective(PerspectiveProjection::default()));
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            for _ in 0..3 {
+                session.tick(FlightInput::default());
+            }
+            session.action(MenuAction::Abort).unwrap();
+            session
+                .execute_ui_command(SessionCommand::EnterReplay {})
+                .unwrap();
+        }
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .playback_record()
+            .unwrap()
+            .samples()
+            .to_vec();
+        for rig in GameUiReplayCamera::ALL {
+            let expected = {
+                let mut session = app.world_mut().resource_mut::<NativeSession>();
+                session.ui.replay_camera = rig;
+                session
+                    .execute_ui_record_action(
+                        birdman_game_session::application::RecordCommand::SeekReplay {
+                            time_seconds: 0.015,
+                        },
+                    )
+                    .unwrap();
+                let record = session.game.core_session().playback_record().unwrap();
+                replay_camera_view(record, 0.015, rig, GameUiPresentationMode::Screen, false)
+                    .unwrap()
+            };
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            let sample = RenderSample::from_display(&session.display_state().unwrap());
+            let expected_transform = replay_camera_transform(
+                &expected,
+                sample.aircraft,
+                sample.pilot_position_m,
+                session.initial_pilot_position_m,
+                Vec2::ZERO,
+            );
+            assert!(session.notice.is_none());
+            assert_eq!(
+                before,
+                session
+                    .game
+                    .core_session()
+                    .playback_record()
+                    .unwrap()
+                    .samples()
+            );
+            assert_eq!(
+                projected_transform(&mut app, WorldProjection::FlightCamera),
+                expected_transform
+            );
+            let Projection::Perspective(lens) = app.world().get::<Projection>(camera).unwrap()
+            else {
+                panic!("Perspective projection required")
+            };
+            let expected_fov = expected.cinematic().map_or(
+                birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+                |view| view.vertical_field_of_view_degrees(),
+            );
+            assert_eq!(lens.fov, expected_fov.to_radians() as f32);
+            assert_eq!(
+                projected_transform(&mut app, WorldProjection::Aircraft),
+                sample.aircraft
+            );
+        }
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .execute_ui_command(SessionCommand::LeaveReplay {})
+            .unwrap();
+        app.update();
+        let Projection::Perspective(lens) = app.world().get::<Projection>(camera).unwrap() else {
+            panic!("Perspective projection required")
+        };
+        assert_eq!(
+            lens.fov,
+            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+        );
     }
 
     fn set_render_fraction(app: &mut App, fraction: f64) {

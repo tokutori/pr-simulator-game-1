@@ -709,7 +709,7 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         replay_available: session.game.core_session().playback_record().is_some(),
         stored_records_available: false,
         flight_log_available: false,
-        supported_replay_cameras: vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase],
+        supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
         screen_render_scale: world.resource::<NativeScreenRender>().snapshot(),
         water_quality: shared_quality(quality.applied()),
         water_quality_operation: if let Some(requested) = quality.pending() {
@@ -844,15 +844,7 @@ pub(crate) fn button_actions(world: &mut World) {
                         command: GameUiPlatformCommand::SetReplayCamera { camera },
                     } => {
                         let mut mode = world.resource_mut::<super::CameraMode>();
-                        mode.chase = match camera {
-                            birdman_game_session::game_ui::GameUiReplayCamera::Pilot => false,
-                            birdman_game_session::game_ui::GameUiReplayCamera::Chase => true,
-                            _ => {
-                                return Err(
-                                    "native camera capabilityに存在しないrigである".to_owned()
-                                );
-                            }
-                        };
+                        mode.chase = camera == GameUiReplayCamera::Chase;
                         mode.look = Vec2::ZERO;
                     }
                     GameUiEffect::Platform { command } => {
@@ -4829,14 +4821,16 @@ mod tests {
             .unwrap();
         app.update();
         press(&mut app, "game-result-replay");
-        assert_replay_camera(&app, GameUiReplayCamera::Pilot, false);
+        assert_replay_camera(&app, GameUiReplayCamera::Auto, false);
 
         press(&mut app, "game-replay-return");
         toggle_camera(&mut app);
         assert!(app.world().resource::<super::super::CameraMode>().chase);
         press(&mut app, "game-result-replay");
-        assert_replay_camera(&app, GameUiReplayCamera::Pilot, false);
+        assert_replay_camera(&app, GameUiReplayCamera::Auto, false);
 
+        press(&mut app, "game-replay-camera");
+        assert_replay_camera(&app, GameUiReplayCamera::Pilot, false);
         press(&mut app, "game-replay-camera");
         assert_replay_camera(&app, GameUiReplayCamera::Chase, true);
         press(&mut app, "game-replay-return");
