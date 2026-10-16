@@ -186,6 +186,7 @@ pub enum TailFlightRecordControlsDocument {
 
 /// Saved physics and telemetry values shared by analysis and snapshot playback.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordStateDocument {
     /// Aircraft datum position in NED metres.

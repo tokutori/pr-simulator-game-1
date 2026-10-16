@@ -160,6 +160,7 @@ pub enum FlightRecordWeatherDocument {
 
 /// Derived values sampled at the composite center.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightRecordTelemetryDocument {
     /// Composite-center position in local NED metres.

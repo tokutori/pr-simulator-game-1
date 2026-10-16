@@ -12,6 +12,7 @@ mod launch_venue;
 
 pub mod lake_sky;
 pub mod lake_water;
+pub mod replay_camera;
 pub mod screen_render_auto;
 pub mod screen_render_scale;
 pub mod tail_geometry;
