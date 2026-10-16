@@ -1,0 +1,556 @@
+//! Web-baseline recorded camera geometry and history-independent shot selection.
+
+use std::sync::OnceLock;
+
+use birdman_game_core::{
+    FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample,
+    FlightState, FlightTelemetry, MathError, SessionEndReason, TailIncidence, UnitQuaternion,
+};
+use birdman_game_format::{
+    FlightRecordStateDocument, FlightRecordTelemetryDocument, LocalNedFrameDocument,
+    TailIncidenceDocument, WeatherClass,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
+
+/// Recorded camera projection; unavailable fixed points retain the existing Chase fallback.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ReplayCameraView {
+    sample: RecordedPlaybackSample,
+    initial_pilot_position_m: f64,
+    camera: GameUiReplayCamera,
+    cinematic: Option<CinematicCameraView>,
+}
+
+/// Existing schema-two single-sample wire projection, shared with record queries.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RecordedPlaybackSample {
+    schema_version: u32,
+    tick_index: u64,
+    fraction: f64,
+    flight_time_s: f64,
+    state: FlightRecordStateDocument,
+    controls: PhysicalControlsDocument,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "layout", rename_all = "snake_case", deny_unknown_fields)]
+enum PhysicalControlsDocument {
+    TailIncidence {
+        physical_incidence: TailIncidenceDocument,
+    },
+}
+
+impl From<TailIncidence> for PhysicalControlsDocument {
+    fn from(incidence: TailIncidence) -> Self {
+        Self::TailIncidence {
+            physical_incidence: TailIncidenceDocument {
+                horizontal_tail_rad: incidence.elevator_rad(),
+                vertical_tail_rad: incidence.rudder_rad(),
+            },
+        }
+    }
+}
+
+impl From<FlightRecordPlaybackSample> for RecordedPlaybackSample {
+    fn from(sample: FlightRecordPlaybackSample) -> Self {
+        Self {
+            schema_version: 2,
+            tick_index: sample.tick_index,
+            fraction: sample.fraction,
+            flight_time_s: (sample.tick_index as f64 + sample.fraction)
+                / f64::from(birdman_game_core::PHYSICS_HZ),
+            state: saved_state(sample.flight_state, sample.telemetry),
+            controls: sample.actuators.into(),
+        }
+    }
+}
+
+fn saved_state(state: FlightState, telemetry: FlightTelemetry) -> FlightRecordStateDocument {
+    FlightRecordStateDocument {
+        datum_position_ned_m: state.datum_position_ned().components(),
+        datum_velocity_ned_mps: state.datum_velocity_ned().components(),
+        attitude_body_to_ned: state.attitude_body_to_ned().components(),
+        angular_velocity_body_rad_s: state.angular_velocity_body().components(),
+        pilot_position_m: state.pilot_position_m(),
+        pilot_velocity_mps: state.pilot_velocity_mps(),
+        wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps.components(),
+        telemetry: FlightRecordTelemetryDocument {
+            composite_cg_position_ned_m: telemetry.composite_cg_position_ned_m.components(),
+            altitude_m: telemetry.altitude_m,
+            airspeed_mps: telemetry.airspeed_mps,
+            groundspeed_mps: telemetry.groundspeed_mps,
+            angle_of_attack_rad: telemetry.angle_of_attack_rad,
+            sideslip_angle_rad: telemetry.sideslip_angle_rad,
+            attitude_euler_rad: [
+                telemetry.roll_rad,
+                telemetry.pitch_rad,
+                telemetry.heading_rad,
+            ],
+        },
+    }
+}
+
+impl ReplayCameraView {
+    /// Returns the manual choice or the director's resolved shot.
+    pub fn camera(&self) -> GameUiReplayCamera {
+        self.camera
+    }
+
+    /// Returns an absolute cinematic pose, absent for Pilot/Chase or unavailable fixed points.
+    pub fn cinematic(&self) -> Option<CinematicCameraView> {
+        self.cinematic
+    }
+}
+
+/// Absolute pose in render axes `(east, up, -north)`, with local camera forward `-Z`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct CinematicCameraView {
+    position_m: [f64; 3],
+    orientation_wxyz: [f64; 4],
+    vertical_field_of_view_degrees: f64,
+}
+
+impl CinematicCameraView {
+    /// Returns world render coordinates in metres.
+    pub fn position_m(self) -> [f64; 3] {
+        self.position_m
+    }
+
+    /// Returns the normalized scalar-first world camera orientation.
+    pub fn orientation_wxyz(self) -> [f64; 4] {
+        self.orientation_wxyz
+    }
+
+    /// Returns the existing shot-specific vertical field of view.
+    pub fn vertical_field_of_view_degrees(self) -> f64 {
+        self.vertical_field_of_view_degrees
+    }
+}
+
+/// Rejection while projecting retained samples; no simulation or record mutation occurs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayCameraError {
+    /// Camera time is negative or non-finite.
+    InvalidTime,
+    /// The retained record cannot supply the requested state.
+    Record(FlightRecordQueryError),
+    /// A normalized camera orientation cannot be constructed.
+    Math(MathError),
+    /// Registered camera-point metadata is invalid.
+    InvalidVenue,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VenueCameraPoints {
+    origin_wgs84: VenueOrigin,
+    camera_points: Vec<FixedCameraPoint>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VenueOrigin {
+    latitude_degrees: f64,
+    longitude_degrees: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixedCameraPoint {
+    id: GameUiReplayCamera,
+    north_meters: f64,
+    east_meters: f64,
+    altitude_meters: f64,
+}
+
+static VENUE: OnceLock<Result<VenueCameraPoints, ReplayCameraError>> = OnceLock::new();
+
+/// Projects the Web-baseline camera from one immutable record and one requested time.
+///
+/// Track samples are borrowed without allocation. Fixed tracking reconstructs its bounded
+/// orientation from the record checkpoints, independently of frame rate and seek order.
+pub fn replay_camera_view(
+    record: &FlightRecord,
+    time_seconds: f64,
+    selection: GameUiReplayCamera,
+    presentation: GameUiPresentationMode,
+    attract: bool,
+) -> Result<ReplayCameraView, ReplayCameraError> {
+    if !time_seconds.is_finite() || time_seconds < 0.0 {
+        return Err(ReplayCameraError::InvalidTime);
+    }
+    let duration = record
+        .duration_seconds()
+        .map_err(ReplayCameraError::Record)?;
+    let time = time_seconds.min(duration);
+    let camera = select_camera(record, time, duration, selection, presentation, attract);
+    let sample = record
+        .sample_at_seconds(time)
+        .map_err(ReplayCameraError::Record)?;
+    let mut view = ReplayCameraView {
+        sample: sample.into(),
+        initial_pilot_position_m: record
+            .samples()
+            .first()
+            .ok_or(ReplayCameraError::Record(
+                FlightRecordQueryError::EmptyRecord,
+            ))?
+            .flight_state
+            .pilot_position_m(),
+        camera,
+        cinematic: None,
+    };
+    if matches!(
+        camera,
+        GameUiReplayCamera::Pilot | GameUiReplayCamera::Chase
+    ) {
+        return Ok(view);
+    }
+    let target = render_position(sample.flight_state.datum_position_ned().components());
+    let fixed = matches!(
+        camera,
+        GameUiReplayCamera::Platform | GameUiReplayCamera::Shore | GameUiReplayCamera::Telephoto
+    );
+    let (position, fov) = if fixed {
+        let Some(points) = registered_points(record)? else {
+            return Ok(view);
+        };
+        let Some(point) = points.iter().find(|point| point.id == camera) else {
+            return Ok(view);
+        };
+        (
+            [
+                point.east_meters,
+                point.altitude_meters,
+                -point.north_meters,
+            ],
+            match camera {
+                GameUiReplayCamera::Telephoto => 24.0,
+                GameUiReplayCamera::Shore => 40.0,
+                _ => 60.0,
+            },
+        )
+    } else {
+        match camera {
+            GameUiReplayCamera::Overhead => ([target[0], target[1] + 30.0, target[2] + 2.0], 65.0),
+            GameUiReplayCamera::Side => {
+                ([target[0] + 30.0, target[1] + 9.0, target[2] - 4.0], 50.0)
+            }
+            GameUiReplayCamera::Front => ([target[0], target[1] + 7.0, target[2] - 28.0], 55.0),
+            GameUiReplayCamera::Orbit => {
+                let angle = time * 0.35;
+                (
+                    [
+                        target[0] + 28.0 * angle.sin(),
+                        target[1] + 10.0,
+                        target[2] + 28.0 * angle.cos(),
+                    ],
+                    50.0,
+                )
+            }
+            _ => unreachable!("Director must resolve Auto before camera geometry"),
+        }
+    };
+    let Some(orientation) = look_at(position, target)? else {
+        return Ok(view);
+    };
+    let orientation = if fixed {
+        bounded_orientation(position, record, time)?.unwrap_or(orientation)
+    } else {
+        orientation
+    };
+    view.cinematic = Some(CinematicCameraView {
+        position_m: position,
+        orientation_wxyz: orientation.components(),
+        vertical_field_of_view_degrees: fov,
+    });
+    Ok(view)
+}
+
+fn select_camera(
+    record: &FlightRecord,
+    time: f64,
+    duration: f64,
+    selection: GameUiReplayCamera,
+    presentation: GameUiPresentationMode,
+    attract: bool,
+) -> GameUiReplayCamera {
+    use GameUiReplayCamera::{Chase, Pilot, Platform, Shore, Side, Telephoto};
+    if !attract && selection != GameUiReplayCamera::Auto {
+        return selection;
+    }
+    if presentation != GameUiPresentationMode::Screen || duration <= 0.0 {
+        return Pilot;
+    }
+    let opening_end = 1.5_f64.min(duration * 0.15);
+    if time <= opening_end {
+        return Platform;
+    }
+    let terminal_start =
+        opening_end.max(duration - 2.5_f64.min(duration * if attract { 0.25 } else { 0.2 }));
+    if time >= terminal_start {
+        return if attract {
+            if time >= (terminal_start + duration) / 2.0 {
+                Telephoto
+            } else {
+                Shore
+            }
+        } else if record
+            .finalization()
+            .is_some_and(|terminal| terminal.reason == SessionEndReason::WaterContact)
+        {
+            Shore
+        } else {
+            Chase
+        };
+    }
+    if !attract {
+        return if record
+            .samples()
+            .iter()
+            .find(|sample| sample.telemetry.altitude_m <= 3.0)
+            .is_some_and(|sample| time >= opening_end.max(sample_seconds(record, sample) - 1.5))
+        {
+            Side
+        } else {
+            Pilot
+        };
+    }
+    let (Some(first), Some(last)) = (record.samples().first(), record.samples().last()) else {
+        return Chase;
+    };
+    let current = record
+        .samples()
+        .iter()
+        .find(|sample| sample_seconds(record, sample) >= time)
+        .unwrap_or(last);
+    let distance = |sample: &FlightRecordSample| {
+        let first_position = first.telemetry.composite_cg_position_ned_m.components();
+        let position = sample.telemetry.composite_cg_position_ned_m.components();
+        (position[0] - first_position[0]).hypot(position[1] - first_position[1])
+    };
+    let total = distance(last);
+    if total > 0.0 && distance(current) >= total * 0.25 {
+        Side
+    } else {
+        Chase
+    }
+}
+
+fn registered_points(
+    record: &FlightRecord,
+) -> Result<Option<&'static [FixedCameraPoint]>, ReplayCameraError> {
+    let identity = record.header().scenario;
+    let Ok(selection) =
+        crate::HybridSessionPreparation::select_scenario(WeatherClass::Typical, identity.seed)
+    else {
+        return Ok(None);
+    };
+    if crate::identity_for_selection(selection) != identity {
+        return Ok(None);
+    }
+    let frame = &crate::bundled_environment()
+        .map_err(|_| ReplayCameraError::InvalidVenue)?
+        .document()
+        .local_frame;
+    points_for_frame(Some(frame))
+}
+
+fn points_for_frame(
+    frame: Option<&LocalNedFrameDocument>,
+) -> Result<Option<&'static [FixedCameraPoint]>, ReplayCameraError> {
+    let Some(frame) = frame else { return Ok(None) };
+    let expected = &crate::bundled_environment()
+        .map_err(|_| ReplayCameraError::InvalidVenue)?
+        .document()
+        .local_frame;
+    let venue = VENUE
+        .get_or_init(|| {
+            let venue: VenueCameraPoints =
+                serde_json::from_str(include_str!("../../../assets/biwa-analysis-map.json"))
+                    .map_err(|_| ReplayCameraError::InvalidVenue)?;
+            let fixed = [
+                GameUiReplayCamera::Platform,
+                GameUiReplayCamera::Shore,
+                GameUiReplayCamera::Telephoto,
+            ];
+            if venue.camera_points.len() != fixed.len()
+                || fixed.iter().any(|id| {
+                    venue
+                        .camera_points
+                        .iter()
+                        .filter(|point| point.id == *id)
+                        .count()
+                        != 1
+                })
+                || venue.camera_points.iter().any(|point| {
+                    [point.north_meters, point.east_meters, point.altitude_meters]
+                        .iter()
+                        .any(|value| !value.is_finite())
+                })
+            {
+                return Err(ReplayCameraError::InvalidVenue);
+            }
+            Ok(venue)
+        })
+        .as_ref()
+        .map_err(|error| *error)?;
+    if frame != expected
+        || frame.latitude_degrees != venue.origin_wgs84.latitude_degrees
+        || frame.longitude_degrees != venue.origin_wgs84.longitude_degrees
+    {
+        return Ok(None);
+    }
+    Ok(Some(&venue.camera_points))
+}
+
+fn sample_seconds(record: &FlightRecord, sample: &FlightRecordSample) -> f64 {
+    (sample.tick_index as f64 + sample.fraction) / f64::from(record.header().physics_hz)
+}
+
+fn render_position([north, east, down]: [f64; 3]) -> [f64; 3] {
+    [east, -down, -north]
+}
+
+fn bounded_orientation(
+    position: [f64; 3],
+    record: &FlightRecord,
+    time: f64,
+) -> Result<Option<UnitQuaternion>, ReplayCameraError> {
+    let mut samples = record.samples().iter();
+    let Some(first) = samples.next() else {
+        return Ok(None);
+    };
+    let target = |sample: &FlightRecordSample| {
+        let [north, east, _] = sample.telemetry.composite_cg_position_ned_m.components();
+        [east, sample.telemetry.altitude_m, -north]
+    };
+    let Some(mut previous) = look_at(position, target(first))? else {
+        return Ok(None);
+    };
+    let mut previous_time = sample_seconds(record, first);
+    if time <= previous_time {
+        return Ok(Some(previous));
+    }
+    for sample in samples {
+        let next_time = sample_seconds(record, sample);
+        if next_time <= previous_time {
+            continue;
+        }
+        let interval = next_time - previous_time;
+        let next = if let Some(desired) = look_at(position, target(sample))? {
+            let cosine = dot4(previous.components(), desired.components())
+                .abs()
+                .min(1.0);
+            let distance = 2.0 * cosine.acos();
+            if distance < 1.0e-12 {
+                desired
+            } else {
+                previous
+                    .slerp(
+                        desired,
+                        (std::f64::consts::TAU / 3.0 * interval / distance).min(1.0),
+                    )
+                    .map_err(ReplayCameraError::Math)?
+            }
+        } else {
+            previous
+        };
+        if time <= next_time {
+            return previous
+                .slerp(next, (time - previous_time) / interval)
+                .map(Some)
+                .map_err(ReplayCameraError::Math);
+        }
+        previous = next;
+        previous_time = next_time;
+    }
+    Ok(Some(previous))
+}
+
+fn look_at(
+    position: [f64; 3],
+    target: [f64; 3],
+) -> Result<Option<UnitQuaternion>, ReplayCameraError> {
+    let Some(backward) = unit(std::array::from_fn(|index| position[index] - target[index])) else {
+        return Ok(None);
+    };
+    let reference_up = if backward[1].abs() > 0.98 {
+        [0.0, 0.0, -1.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let Some(right) = unit(cross(reference_up, backward)) else {
+        return Ok(None);
+    };
+    let camera_up = cross(backward, right);
+    let trace = right[0] + camera_up[1] + backward[2];
+    let components = if trace > 0.0 {
+        let scale = 2.0 * (trace + 1.0).sqrt();
+        [
+            scale / 4.0,
+            (camera_up[2] - backward[1]) / scale,
+            (backward[0] - right[2]) / scale,
+            (right[1] - camera_up[0]) / scale,
+        ]
+    } else if right[0] > camera_up[1] && right[0] > backward[2] {
+        let scale = 2.0 * (1.0 + right[0] - camera_up[1] - backward[2]).sqrt();
+        [
+            (camera_up[2] - backward[1]) / scale,
+            scale / 4.0,
+            (camera_up[0] + right[1]) / scale,
+            (backward[0] + right[2]) / scale,
+        ]
+    } else if camera_up[1] > backward[2] {
+        let scale = 2.0 * (1.0 + camera_up[1] - right[0] - backward[2]).sqrt();
+        [
+            (backward[0] - right[2]) / scale,
+            (camera_up[0] + right[1]) / scale,
+            scale / 4.0,
+            (backward[1] + camera_up[2]) / scale,
+        ]
+    } else {
+        let scale = 2.0 * (1.0 + backward[2] - right[0] - camera_up[1]).sqrt();
+        [
+            (right[1] - camera_up[0]) / scale,
+            (backward[0] + right[2]) / scale,
+            (backward[1] + camera_up[2]) / scale,
+            scale / 4.0,
+        ]
+    };
+    UnitQuaternion::try_new(components[0], components[1], components[2], components[3])
+        .map(Some)
+        .map_err(ReplayCameraError::Math)
+}
+
+fn unit(value: [f64; 3]) -> Option<[f64; 3]> {
+    let magnitude = value[0].hypot(value[1]).hypot(value[2]);
+    (magnitude >= 1.0e-9).then(|| value.map(|component| component / magnitude))
+}
+
+fn cross(left: [f64; 3], right: [f64; 3]) -> [f64; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn dot4(left: [f64; 4], right: [f64; 4]) -> f64 {
+    left.into_iter()
+        .zip(right)
+        .map(|(left, right)| left * right)
+        .sum()
+}
+
+#[cfg(test)]
+mod tests;

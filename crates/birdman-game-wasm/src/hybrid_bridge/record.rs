@@ -101,6 +101,17 @@ impl HybridGameSessionBridge {
             .map_err(BoundaryError::into_js)
     }
 
+    /// Queries the shared recorded camera without moving the clock or copying its track.
+    pub fn playback_camera_view_json(
+        &self,
+        time_seconds: f64,
+        selection: &str,
+        screen: bool,
+    ) -> Result<String, JsValue> {
+        self.camera_view_internal(time_seconds, selection, screen)
+            .map_err(BoundaryError::into_js)
+    }
+
     /// Enters snapshot playback of the current Result without simulating it again.
     pub fn enter_replay(&mut self) -> Result<(), JsValue> {
         self.execute_application(SessionCommand::EnterReplay {}, BackendReadiness::Preparing)
@@ -177,6 +188,41 @@ impl HybridGameSessionBridge {
             },
             _ => Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
         }
+    }
+
+    fn camera_view_internal(
+        &self,
+        time_seconds: f64,
+        selection: &str,
+        screen: bool,
+    ) -> Result<String, BoundaryError> {
+        use birdman_game_session::{
+            game_ui::GameUiPresentationMode, replay_camera::replay_camera_view,
+        };
+        let phase = self.session.core_session().snapshot().phase();
+        if !matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
+            return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
+        }
+        let selection = serde_json::from_value(serde_json::Value::String(selection.to_owned()))
+            .map_err(BoundaryError::Json)?;
+        let record = self
+            .session
+            .core_session()
+            .playback_record()
+            .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
+        let view = replay_camera_view(
+            record,
+            time_seconds,
+            selection,
+            if screen {
+                GameUiPresentationMode::Screen
+            } else {
+                GameUiPresentationMode::Webxr
+            },
+            phase == SessionPhase::Attract,
+        )
+        .map_err(BoundaryError::Camera)?;
+        serde_json::to_string(&view).map_err(BoundaryError::Json)
     }
 
     fn export_csv_internal(&self) -> Result<String, BoundaryError> {

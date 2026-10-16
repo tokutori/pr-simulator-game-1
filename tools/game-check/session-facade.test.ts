@@ -28,6 +28,31 @@ function advance(facade: AppSessionFacade): void {
 }
 
 describe("layout-discriminated application session facade", () => {
+  it.each(["replace", "seek", "rig", "dispose"] as const)("rejects a camera response after its owner observation changes (%s)", (operation) => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    try {
+      launch(facade);
+      advance(facade);
+      facade.executeOperation("abort");
+      const saved = facade.exportRecordJson();
+      facade.executeOperation("enter-replay");
+      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const query = bridge.playback_camera_view_json.bind(bridge);
+      vi.spyOn(bridge, "playback_camera_view_json").mockImplementationOnce((...args) => {
+        const response = query(...args);
+        switch (operation) {
+          case "replace": facade.openArchive(saved); break;
+          case "seek": facade.seekPlayback(0.005); break;
+          case "rig": facade.updateSharedUi({ kind: "cycle_replay_camera" }, sharedGameUiPlatform()); break;
+          case "dispose": facade.dispose(); break;
+        }
+        return response;
+      });
+      expect(() => facade.queryReplayCamera(0.005, "auto", true, dataset)).toThrow();
+    } finally { facade.dispose(); }
+  });
+
   it("preserves its observation through the raw Model and rejects plain or foreign datasets before a cursor read", () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());

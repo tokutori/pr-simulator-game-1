@@ -6,12 +6,12 @@ import { projectTailGameSession } from "./session-snapshot.js";
 import type { GameSessionOperationPort } from "./game-session-operation.js";
 import { readFlightLog } from "../game/flight-log-export.js";
 import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
-import { projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
+import { projectFlightRenderPose, projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
 import { validateAnalysisInput } from "../game/flight-analysis-view.js";
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../game/flight-analysis-view.js";
-import { parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
+import { decodeNamedRecordSample, parseNamedAnalysisSamples, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, tailResultRecordContext } from "../game/named-record-query.js";
 import type { NamedAttractContext, NamedPlaybackClock, NamedPlaybackContext, NamedRecordContext, NamedRecordSample, NamedReplayClock, NamedReplayContext, RecordQueryContext } from "../game/named-record-query.js";
 import { parseNamedRecordSummary, parseNamedWindGrid, sameNamedRecordContext } from "../game/named-record-analysis.js";
 import type { NamedRecordSummary, NamedWindGrid, NamedWindGridRequest } from "../game/named-record-analysis.js";
@@ -20,7 +20,10 @@ import { boundaryInteger } from "../game/tail-boundary-values.js";
 import { parseTailPreparedLaunchSnapshot, parseTailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
-import { encodeGameUiAction, encodeGameUiPlatformInput, parseGameUiFrame, parseGameUiUpdate, parseGameUiView } from "./game-ui-codec.js";
+import type { RecordedFlightRenderPose } from "../render/contracts/camera.js";
+import { projectReplayCamera } from "../render/camera/replay-camera.js";
+import { encodeGameUiAction, encodeGameUiPlatformInput, parseGameUiFrame, parseGameUiUpdate, parseGameUiView, parseReplayCameraView } from "./game-ui-codec.js";
+import type { GameUiReplayCamera } from "../generated/replay-camera.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect, GameUiUpdate } from "../generated/game-ui-effects.js";
 import type { SessionCommand } from "./game-ui-types.js";
@@ -83,6 +86,7 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort
     playback_context_json(): string;
     flight_analysis_samples_json(): string;
     flight_record_sample_at_seconds(seconds: number): string;
+    playback_camera_view_json(seconds: number, selection: string, screen: boolean): string;
     playback_clock_state(): ArrayLike<number>;
     seek_playback(seconds: number): ArrayLike<number>;
     set_playback_rate_code(code: number): ArrayLike<number>;
@@ -428,6 +432,25 @@ export class TailAppSessionFacade extends SessionResourceOwner {
       const context = this.recordContext();
       const sample = parseNamedRecordSample(this.port.flight_record_sample_at_seconds(seconds), this.physicsHz, context);
       return projectRecordedFlightSnapshot(sample, context);
+    });
+  }
+
+  queryReplayCamera(seconds: number, selection: GameUiReplayCamera, screen: boolean, dataset: NamedAnalysisDataset): RecordedFlightRenderPose {
+    return this.observeRecordQuery(() => {
+      if (!this.isAnalysisDatasetCurrent(dataset)) throw new RangeError("Camera analysis record owner or generation is stale");
+      const source = this.captureRecordSourceToken();
+      const context = this.readPlaybackContext();
+      if (!sameNamedRecordContext(dataset.context, context)) throw new RangeError("Camera dataset belongs to another playback context");
+      const view = parseReplayCameraView(this.port.playback_camera_view_json(seconds, selection, screen));
+      const sample = decodeNamedRecordSample(view.sample, this.physicsHz, context);
+      const duration = (context.finalization.terminalTick + context.finalization.terminalFraction) / this.physicsHz;
+      if (Math.abs(sample.timeSeconds - Math.min(seconds, duration)) > 1e-10) {
+        throw new RangeError("Camera sample differs from its requested playback time");
+      }
+      const pose = projectFlightRenderPose(projectRecordedFlightSnapshot(sample, context), view.initial_pilot_position_m);
+      this.requireCursorRecordContext(context);
+      if (!this.recordSourceIsCurrent(source)) throw new RangeError("Camera record source changed during observation");
+      return Object.freeze({ ...pose, replayCamera: projectReplayCamera(view) });
     });
   }
 

@@ -10,7 +10,7 @@ import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
-import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
+import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
 import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
@@ -46,7 +46,7 @@ import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js"
 import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import { NO_VENUE_MAP, venueMapForEnvironment } from "./game/biwa-venue-map.js";
-import { analysisCursorMatches, projectAnalysisView } from "./game/flight-analysis-view.js";
+import { analysisCursorMatches } from "./game/flight-analysis-view.js";
 import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import { projectRuntimeVenue } from "./game/runtime-venue.js";
@@ -54,8 +54,6 @@ import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
 import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
-import { resolveAttractCameraMode, resolveReplayCameraMode } from "./render/camera/camera-director.js";
-import { cinematicCameraView, isCinematicCameraMode } from "./render/camera/cinematic-camera.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
@@ -152,24 +150,13 @@ function renderModel(): void {
     ? environment.value.sky.value.condition : null);
   flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
   controllerHudDisplay.render();
-  const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
-  const analysis = flightAnalysisData(model.analysis);
-  const cameraMode = phaseCode === 10
-    ? resolveAttractCameraMode(analysis, model.analysisCursorTimeSeconds, presentationMode)
-    : phaseCode === 9
-      ? resolveReplayCameraMode(model.replayCameraMode, analysis, model.analysisCursorTimeSeconds, presentationMode)
-      : "pilot";
-  const venue = currentVenueMap();
-  const cameraPoints = venue.kind === "available" ? venue.value.cameraPoints : [];
-  const replayPose = replayPoseData(model.replayPose);
-  const cinematicView = isCinematicCameraMode(cameraMode) && replayPose !== null
-    ? cinematicCameraView(cameraMode, replayPose, model.analysisCursorTimeSeconds, cameraPoints, analysis === null ? undefined : projectAnalysisView(analysis).samples)
-    : null;
-  flightRenderer?.setCinematicCameraView(cinematicView);
-  flightRenderer?.setFlightCameraMode(cameraMode);
+  const replay = (phaseCode === 9 || phaseCode === 10) ? replayPoseData(model.replayPose) : null;
+  const camera = replay?.replayCamera ?? null;
+  flightRenderer?.setCinematicCameraView(camera?.cinematic ?? null);
+  flightRenderer?.setFlightCameraMode(camera?.mode ?? "pilot");
   if (phaseCode === 9 || phaseCode === 10) {
     flightRenderer?.setPreparedFlightPose(null);
-    flightRenderer?.setFlightPose(replayPose);
+    flightRenderer?.setFlightPose(replay);
   } else if (phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8) {
     flightRenderer?.setFlightPose(null);
     flightRenderer?.setPreparedFlightPose(gameSession?.readPreparedLaunchPose() ?? null);
@@ -519,7 +506,8 @@ function runEffect(effect: AppEffect): void {
       }
       try {
         const token = session.captureQueryToken();
-        const { pose } = queryRuntimeRecordPose(session, analysis, effect.timeSeconds);
+        const pose = session.queryReplayCamera(effect.timeSeconds, model.replayCameraMode,
+          model.presentation.type === "ready" && model.presentation.mode === "screen", analysis);
         if (gameSession !== session || session.acceptQuery(token, pose).kind === "stale") return;
         dispatch({ type: "flight-replay-pose-loaded", requestId: effect.requestId, pose });
       } catch (error: unknown) {
@@ -797,7 +785,9 @@ function synchronizeSharedGameUi(): void {
   const token = session.captureQueryToken();
   const view = session.readSharedUi(sharedGameUiPlatformInput());
   if (gameSession !== session || session.acceptQuery(token, view).kind === "stale") return;
-  model = updateApp(model, { type: "shared-game-ui-observed", view }).model;
+  const transition = updateApp(model, { type: "shared-game-ui-observed", view });
+  model = transition.model;
+  for (const effect of transition.effects) runEffect(effect);
 }
 
 function currentEnvironmentBriefing() {

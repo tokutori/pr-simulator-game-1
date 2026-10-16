@@ -1,12 +1,12 @@
 use birdman_game_core::{
-    CourseAxis, FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightState,
-    FlightTelemetry, GameSession, GameSessionError, TailIncidence,
+    CourseAxis, FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, GameSession,
+    GameSessionError,
 };
 use birdman_game_format::{
-    AssistanceLevel, FlightRecordFormatError, FlightRecordStateDocument,
-    FlightRecordTelemetryDocument, PersonalBestContentHashes, TailFlightRecordDocument,
-    TailIncidenceDocument, TailPersonalBestConfiguration, canonical_tail_personal_best_key,
+    AssistanceLevel, FlightRecordFormatError, PersonalBestContentHashes, TailFlightRecordDocument,
+    TailPersonalBestConfiguration, canonical_tail_personal_best_key,
 };
+use birdman_game_session::replay_camera::RecordedPlaybackSample as PlaybackDocument;
 use serde::Serialize;
 
 #[derive(Clone, Copy)]
@@ -79,74 +79,6 @@ pub(crate) fn export_record_json(
         .map_err(HybridRecordError::Format)?;
     String::from_utf8(encoded)
         .map_err(|_| HybridRecordError::Format(FlightRecordFormatError::EncodingFailed))
-}
-
-#[derive(Serialize)]
-#[serde(tag = "layout", rename_all = "snake_case")]
-enum PhysicalControlsDocument {
-    TailIncidence {
-        physical_incidence: TailIncidenceDocument,
-    },
-}
-
-impl From<TailIncidence> for PhysicalControlsDocument {
-    fn from(incidence: TailIncidence) -> Self {
-        Self::TailIncidence {
-            physical_incidence: TailIncidenceDocument {
-                horizontal_tail_rad: incidence.elevator_rad(),
-                vertical_tail_rad: incidence.rudder_rad(),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct PlaybackDocument {
-    schema_version: u32,
-    tick_index: u64,
-    fraction: f64,
-    flight_time_s: f64,
-    state: FlightRecordStateDocument,
-    controls: PhysicalControlsDocument,
-}
-
-impl From<FlightRecordPlaybackSample> for PlaybackDocument {
-    fn from(sample: FlightRecordPlaybackSample) -> Self {
-        Self {
-            schema_version: 2,
-            tick_index: sample.tick_index,
-            fraction: sample.fraction,
-            flight_time_s: (sample.tick_index as f64 + sample.fraction)
-                / f64::from(birdman_game_core::PHYSICS_HZ),
-            state: saved_state(sample.flight_state, sample.telemetry),
-            controls: sample.actuators.into(),
-        }
-    }
-}
-
-fn saved_state(state: FlightState, telemetry: FlightTelemetry) -> FlightRecordStateDocument {
-    FlightRecordStateDocument {
-        datum_position_ned_m: state.datum_position_ned().components(),
-        datum_velocity_ned_mps: state.datum_velocity_ned().components(),
-        attitude_body_to_ned: state.attitude_body_to_ned().components(),
-        angular_velocity_body_rad_s: state.angular_velocity_body().components(),
-        pilot_position_m: state.pilot_position_m(),
-        pilot_velocity_mps: state.pilot_velocity_mps(),
-        wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps.components(),
-        telemetry: FlightRecordTelemetryDocument {
-            composite_cg_position_ned_m: telemetry.composite_cg_position_ned_m.components(),
-            altitude_m: telemetry.altitude_m,
-            airspeed_mps: telemetry.airspeed_mps,
-            groundspeed_mps: telemetry.groundspeed_mps,
-            angle_of_attack_rad: telemetry.angle_of_attack_rad,
-            sideslip_angle_rad: telemetry.sideslip_angle_rad,
-            attitude_euler_rad: [
-                telemetry.roll_rad,
-                telemetry.pitch_rad,
-                telemetry.heading_rad,
-            ],
-        },
-    }
 }
 
 pub(crate) fn playback_sample_json(
