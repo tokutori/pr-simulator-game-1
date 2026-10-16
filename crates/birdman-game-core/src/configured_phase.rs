@@ -20,19 +20,19 @@ pub enum BriefingFailure {
 
 #[cfg_attr(verus_only, verus_verify)]
 #[cfg_attr(not(verus_only), derive(Clone, Copy))]
-pub(crate) enum ConfiguredPhase<State, Result, Clock> {
+pub(crate) enum ConfiguredPhase<State, Payload, Clock> {
     Preparing,
     Ready,
     Failed { reason: BriefingFailure },
     Countdown(CountdownState),
     Flight(ActiveFlight<State>),
-    Result { result: Result },
-    Replay { result: Result, clock: Clock },
+    Result { result: Payload },
+    Replay { result: Payload, clock: Clock },
 }
 
 #[cfg(verus_only)]
 verus! {
-    impl<State, Result, Clock> ConfiguredPhase<State, Result, Clock> {
+    impl<State, Payload, Clock> ConfiguredPhase<State, Payload, Clock> {
         pub closed spec fn is_result(self) -> bool {
             matches!(self, Self::Result { .. })
         }
@@ -41,7 +41,7 @@ verus! {
             matches!(self, Self::Replay { .. })
         }
 
-        pub closed spec fn result_payload(self) -> Option<Result> {
+        pub closed spec fn result_payload(self) -> Option<Payload> {
             match self {
                 Self::Result { result } | Self::Replay { result, .. } => Some(result),
                 _ => None,
@@ -57,7 +57,7 @@ verus! {
     }
 }
 
-impl<State, Result: Copy, Clock> ConfiguredPhase<State, Result, Clock> {
+impl<State, Payload: Copy, Clock> ConfiguredPhase<State, Payload, Clock> {
     #[cfg_attr(verus_only, verus_spec(outcome =>
         ensures
             outcome.is_ok() == old(self).is_result(),
@@ -68,7 +68,7 @@ impl<State, Result: Copy, Clock> ConfiguredPhase<State, Result, Clock> {
             Err(()) => !old(self).is_result() && *final(self) == *old(self),
         },
     ))]
-    pub(crate) fn enter_replay(&mut self, clock: Clock) -> core::result::Result<(), ()> {
+    pub(crate) fn enter_replay(&mut self, clock: Clock) -> Result<(), ()> {
         let Self::Result { result } = self else {
             return Err(());
         };
@@ -86,7 +86,7 @@ impl<State, Result: Copy, Clock> ConfiguredPhase<State, Result, Clock> {
             Err(()) => !old(self).is_replay() && *final(self) == *old(self),
         },
     ))]
-    pub(crate) fn leave_replay(&mut self) -> core::result::Result<(), ()> {
+    pub(crate) fn leave_replay(&mut self) -> Result<(), ()> {
         let Self::Replay { result, .. } = self else {
             return Err(());
         };

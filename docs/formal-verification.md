@@ -48,7 +48,7 @@ Countdownのcutは`crates/birdman-game-core/src/countdown.rs`の本番`Countdown
 GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetryと`record.begin_tail`が成功した後だけRunningへcommitする。
 認可計算は候補値を返すため、record開始失敗時は直前のCountdownのtoken・elapsed・phaseを保持する。
 標準Durationとf64変換、wrapperのphase代入・物理payload・tick・record保持、古いcallbackの発進後拒否は形式証明範囲に含めず、
-実GameSessionの接続回帰を維持する。Retry、Replay、異常tickからの終端化も未証明である。
+実GameSessionの接続回帰を維持する。Retry、Replay wrapper全体、異常tickからの終端化も未証明である。
 
 既存runnerでPauseReasonsに加えてCountdownの全体positive、必須4群の名前別検証、exact compiler inventory、
 renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
