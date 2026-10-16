@@ -5,6 +5,11 @@ use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::{FlightState, TailFlightTickError, TailIncidence};
 use alloc::vec::Vec;
 
+#[path = "flight_record_storage.rs"]
+mod storage;
+pub use storage::FlightRecordError;
+use storage::FlightRecordStorage;
+
 mod control;
 pub use control::{
     FlightRecordControlCapture, FlightRecordControlError, FlightRecordControls,
@@ -153,40 +158,23 @@ pub enum FlightRecordQueryError {
     NonFiniteInterpolation,
 }
 
-/// Invalid lifecycle operations or inconsistent bounded-record input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlightRecordError {
-    /// The configured maximum exceeds the fixed sample capacity or physics contract.
-    InvalidHeader,
-    /// The record has already been initialized.
-    AlreadyStarted,
-    /// No initial sample has been recorded.
-    NotStarted,
-    /// The record has already been finalized.
-    AlreadyFinalized,
-    /// The fixed sample buffer has no available slot.
-    CapacityExceeded,
-    /// The requested buffer could not be reserved during preparation.
-    AllocationFailed,
-    /// The supplied tick or fraction is invalid or non-monotonic.
-    InvalidTime,
-    /// Derived telemetry contains a non-finite value or a negative speed.
-    InvalidTelemetry,
-    /// Finalization time does not match the latest stored sample.
-    FinalizationMismatch,
-    /// Imported record samples violate the core record invariants.
-    InvalidArchive,
-    /// The original failure disagrees with the terminal reason.
-    IncompatibleFailure,
-}
-
 /// Bounded flight samples with capacity reserved before simulation begins.
-pub struct FlightRecord {
-    header: FlightRecordHeader,
-    samples: Vec<FlightRecordSample>,
-    sample_capacity: usize,
-    finalization: Option<FlightRecordFinalization>,
-}
+///
+/// Storage updates require the public domain validation methods.
+///
+/// ```compile_fail
+/// fn bypass(record: &mut birdman_game_core::FlightRecord, sample: birdman_game_core::FlightRecordSample) {
+///     record.push(sample).unwrap();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// fn bypass(record: &mut birdman_game_core::FlightRecord) {
+///     record.finalize_with(|_| Err(birdman_game_core::FlightRecordError::InvalidTime));
+/// }
+/// ```
+pub type FlightRecord =
+    FlightRecordStorage<FlightRecordHeader, FlightRecordSample, FlightRecordFinalization>;
 
 impl FlightRecord {
     /// Validates the public header before reserving all samples for the configured duration.
@@ -398,39 +386,16 @@ impl FlightRecord {
         score: Option<DistanceScore>,
         failure: Option<TailFlightTickError>,
     ) -> Result<FlightRecordFinalization, FlightRecordError> {
-        if self.finalization.is_some() {
-            return Err(FlightRecordError::AlreadyFinalized);
-        }
-        let latest = self.latest().ok_or(FlightRecordError::NotStarted)?;
-        if !failure_matches(failure, reason) {
-            return Err(FlightRecordError::IncompatibleFailure);
-        }
-        if !terminal_fraction.is_finite()
-            || !(0.0..=1.0).contains(&terminal_fraction)
-            || latest.tick_index != terminal_tick
-            || latest.fraction != terminal_fraction
-        {
-            return Err(FlightRecordError::FinalizationMismatch);
-        }
-        let disposition = match reason {
-            SessionEndReason::WaterContact | SessionEndReason::TimeLimit => {
-                FlightRecordDisposition::Complete
-            }
-            SessionEndReason::ManualAbort => FlightRecordDisposition::Interrupted,
-            SessionEndReason::OutOfValidEnvelope | SessionEndReason::FatalSimulationError => {
-                FlightRecordDisposition::Failed
-            }
-        };
-        let finalized = FlightRecordFinalization {
-            reason,
-            disposition,
-            terminal_tick,
-            terminal_fraction,
-            score,
-            failure,
-        };
-        self.finalization = Some(finalized);
-        Ok(finalized)
+        self.finalize_with(|latest| {
+            validate_finalization(
+                latest,
+                reason,
+                terminal_tick,
+                terminal_fraction,
+                score,
+                failure,
+            )
+        })
     }
 
     /// Returns immutable metadata for the reserved record.
@@ -630,14 +595,43 @@ impl FlightRecord {
     fn latest(&self) -> Option<&FlightRecordSample> {
         self.samples.last()
     }
+}
 
-    fn push(&mut self, sample: FlightRecordSample) -> Result<(), FlightRecordError> {
-        if self.samples.len() >= self.sample_capacity {
-            return Err(FlightRecordError::CapacityExceeded);
-        }
-        self.samples.push(sample);
-        Ok(())
+fn validate_finalization(
+    latest: &FlightRecordSample,
+    reason: SessionEndReason,
+    terminal_tick: u64,
+    terminal_fraction: f64,
+    score: Option<DistanceScore>,
+    failure: Option<TailFlightTickError>,
+) -> Result<FlightRecordFinalization, FlightRecordError> {
+    if !failure_matches(failure, reason) {
+        return Err(FlightRecordError::IncompatibleFailure);
     }
+    if !terminal_fraction.is_finite()
+        || !(0.0..=1.0).contains(&terminal_fraction)
+        || latest.tick_index != terminal_tick
+        || latest.fraction != terminal_fraction
+    {
+        return Err(FlightRecordError::FinalizationMismatch);
+    }
+    let disposition = match reason {
+        SessionEndReason::WaterContact | SessionEndReason::TimeLimit => {
+            FlightRecordDisposition::Complete
+        }
+        SessionEndReason::ManualAbort => FlightRecordDisposition::Interrupted,
+        SessionEndReason::OutOfValidEnvelope | SessionEndReason::FatalSimulationError => {
+            FlightRecordDisposition::Failed
+        }
+    };
+    Ok(FlightRecordFinalization {
+        reason,
+        disposition,
+        terminal_tick,
+        terminal_fraction,
+        score,
+        failure,
+    })
 }
 
 fn failure_matches(failure: Option<TailFlightTickError>, reason: SessionEndReason) -> bool {

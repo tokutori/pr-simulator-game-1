@@ -100,6 +100,25 @@ allocation と record の空性・metadata は factory の形式保証として�
 Title 等の owner 不在拒否と GameSession wrapper 全体、Countdown 初期化、異常終端化、archived Replay / Attract は本 cut の直接証明範囲に含めない。
 既存 runner に成功・予約失敗・認可拒否の必須三群、exact inventory / rename / missing-target、認可と失敗保持の指定負例を追加する。
 
+### FlightRecord の離散所有
+
+`flight_record_storage.rs` は実 header・Vec sample・sample_capacity・finalization の4fieldと、元の FlightRecordError を所有する。
+FlightRecord は従来の3実型を用いた具体 alias であり、storage module、field、低水準 push / finalize は外部へ公開しない。
+公開 domain 操作は従来の時刻・finite・metadata 検査を維持し、compile-fail の使用例で低水準操作の不可視性を確認する。
+
+実 Vec::push の容量判定、prefix と他 field の保持、成功時の1 sample追加、容量拒否時の全保持を直接検証する。
+finalize は AlreadyFinalized、実 Vec.last による NotStarted、不変 sample の検証、metadata commit の順序を所有する。
+成功は検証出力を一度だけ保持し、sample / header / capacity を変更しない。全 Err は owner 全体を保持する。
+検証 callback は &Sample のみを受け取り、Err 原子性や有効 metadata を仮定する契約は追加しない。
+意味検査は製品の同じ validate_finalization を呼び、その数値仕様自体は本 cut の直接証明範囲に含めない。
+
+固定 Verus の既定は usize / isize の32 / 64 bitであり、本 driver と runner に幅固定を置かない。
+len < capacity と usize::MAX から1要素追加の安全性と論理容量上限を検証する。
+Vec の論理更新は bundled vstd の仕様に依存し、実 reserve / allocator・wasm codegen の証明と区別する。
+既存 constructor の checked conversion / checked_add / try_reserve_exact と通常回帰を維持する。
+低水準 push の証明は公開 append の全認可を含めず、確定後追加の拒否は既存 domain 回帰の対象である。
+GameSession の previous / report 選択、元 failure と Result の対応、正常 / 異常終端化の縦断保証、Retry factory の空性・metadata は後続範囲である。
+
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
 private fieldはghost-onlyのclosed viewを通して仕様から参照し、maskは実bit関数から生成するdual specを使う。
