@@ -1,4 +1,7 @@
 use crate::PHYSICS_DT_SECONDS;
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
 use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError, HybridLimit};
 use crate::contact::{ContactError, WaterContactGeometry, detect_flight_state_water_contact};
@@ -15,6 +18,7 @@ use crate::tail_control::{
 };
 
 /// One immutable integer-tick state with exactly two held physical tail incidences.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickState {
     tick_index: u64,
@@ -44,6 +48,8 @@ impl TailFlightTickState {
     }
 
     /// Returns the completed integer physics tick index.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.tick_index()))]
     pub const fn tick_index(self) -> u64 {
         self.tick_index
     }
@@ -143,6 +149,7 @@ pub enum TailFlightTickError {
 }
 
 /// Consistent physical state and held inputs at the first fractional water-contact time.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailWaterContactSample {
     interval_start_tick: u64,
@@ -155,11 +162,15 @@ pub struct TailWaterContactSample {
 
 impl TailWaterContactSample {
     /// Returns the interval's starting integer tick.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.interval_start_tick()))]
     pub const fn interval_start_tick(self) -> u64 {
         self.interval_start_tick
     }
 
     /// Returns the contact fraction in [0, 1] within that interval.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.fraction()))]
     pub const fn fraction(self) -> f64 {
         self.fraction
     }

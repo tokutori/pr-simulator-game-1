@@ -207,7 +207,15 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 製品Rust 1.97と`no_std`を維持し、closure仕様に必要な`proc_macro_hygiene`は`cfg(verus_only)`に限定する。
 公開`finalize`/`finalize_with_failure`、実`finalize_record`、実`validate_finalization`を検証する。
 Err時の実owner保持、header・sample列・capacity保持、成功時のreason/tick/fraction/score/元failureの転送を扱う。
-成功metadataの`disposition`対応、数値の合法性、allocator、GameSession終端化の縦断契約は未証明である。
+成功metadataの`disposition`対応、数値の合法性、allocatorは未証明である。
+
+実`ConfiguredSession`のprivate終端methodは、実recordの確定後に同一state・時刻・reason・score・元failureで
+`SessionResult`を構築する。record拒否はhelper入口のowner全体を保持し、configurationは全経路で保持する。
+score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
+公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
+時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
+Running認可、previous/report選択、appendと最新sample/terminal stateの一致、数値score評価は未接続の境界である。
+これらの前提を仮定して終端化全体を完了扱いにせず、親#382を継続する。
 
 独立proof clientは同じ検証で生成したcore/vstdの`rmeta`/`vir`とbuiltinを、固定配布物の
 `rust_verify`へ明示して読み込む。実行bodyや実型の複写、外部仕様による実装免除、新たな数値公理は追加しない。

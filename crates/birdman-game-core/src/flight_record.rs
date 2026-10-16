@@ -153,6 +153,7 @@ pub struct FlightRecordSummary {
 }
 
 /// Failure while querying or deriving values from a flight record.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightRecordQueryError {
     /// No initial sample has been recorded.
@@ -182,6 +183,23 @@ pub enum FlightRecordQueryError {
 /// ```
 pub type FlightRecord =
     FlightRecordStorage<FlightRecordHeader, FlightRecordSample, FlightRecordFinalization>;
+
+#[cfg(verus_only)]
+verus! {
+    impl FlightRecord {
+        /// States that finalization retained the header, sample sequence, and reserved capacity.
+        pub closed spec fn finalized_from(
+            self,
+            before: Self,
+            metadata: FlightRecordFinalization,
+        ) -> bool {
+            self.header == before.header
+                && self.samples@ == before.samples@
+                && self.sample_capacity == before.sample_capacity
+                && self.finalization() == Some(metadata)
+        }
+    }
+}
 
 impl FlightRecord {
     /// Validates the public header before reserving all samples for the configured duration.
@@ -361,7 +379,11 @@ impl FlightRecord {
         ensures
             outcome.is_err() ==> *final(self) == *old(self),
             match outcome {
-                Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                Ok(metadata) => final(self).finalized_from(*old(self), metadata)
+                    && final(self).finalization() == Some(metadata)
+                    && final(self).header() == old(self).header()
+                    && final(self).sample_count() == old(self).sample_count()
+                    && metadata.reason == reason && metadata.terminal_tick == terminal_tick
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                     && metadata.failure.is_none(),
                 Err(_) => true,
@@ -382,7 +404,11 @@ impl FlightRecord {
         ensures
             outcome.is_err() ==> *final(self) == *old(self),
             match outcome {
-                Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                Ok(metadata) => final(self).finalized_from(*old(self), metadata)
+                    && final(self).finalization() == Some(metadata)
+                    && final(self).header() == old(self).header()
+                    && final(self).sample_count() == old(self).sample_count()
+                    && metadata.reason == reason && metadata.terminal_tick == terminal_tick
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                     && metadata.failure == Some(failure),
                 Err(_) => true,
@@ -450,11 +476,15 @@ impl FlightRecord {
     }
 
     /// Returns immutable metadata for the reserved record.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.header()))]
     pub const fn header(&self) -> FlightRecordHeader {
         self.header
     }
 
     /// Returns the number of retained state samples.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.sample_count()))]
     pub fn sample_count(&self) -> usize {
         self.samples.len()
     }
@@ -470,6 +500,8 @@ impl FlightRecord {
     }
 
     /// Returns immutable terminal metadata after finalization.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.finalization()))]
     pub const fn finalization(&self) -> Option<FlightRecordFinalization> {
         self.finalization
     }

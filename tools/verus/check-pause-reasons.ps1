@@ -84,10 +84,11 @@ $suites = @(
     }
 )
 $domainDriver = Join-Path $repository 'proofs/flight_record_finalization.rs'
-$domainProofs = @('verify_domain_finalization_retention', 'verify_domain_finalization_metadata')
+$domainProofs = @('verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit')
 $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_retention_negative.rs'; Assertion = 'changed' },
-    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' }
+    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' }
 )
 
 function Invoke-NativeCapture {
@@ -357,7 +358,11 @@ try {
           'birdman_game_core::flight_record::FlightRecord::finalize_with_failure',
           'birdman_game_core::flight_record::FlightRecord::finalize_record',
           'birdman_game_core::flight_record::validate_finalization',
-          'birdman_game_core::flight_record::storage::FlightRecordStorage::finalize_with'
+          'birdman_game_core::flight_record::storage::FlightRecordStorage::finalize_with',
+          'birdman_game_core::configured_session::ConfiguredSession::finalize_terminal',
+          'birdman_game_core::game_session::SessionTerminalState::record_time',
+          'birdman_game_core::flight_record::FlightRecord::finalization',
+          'birdman_game_core::flight_record::FlightRecord::finalized_from'
       )
       if ($coreSummary.success -ne $true -or $coreSummary.'is-verifying-entire-crate' -ne $true -or
           $coreSummary.Verified -le 0 -or $coreSummary.Errors -ne 0 -or
