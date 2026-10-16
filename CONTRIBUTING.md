@@ -29,6 +29,8 @@ local検査または対象branchの手動実行（`deploy_pages=false`）で補�
 mainへのpushは検査を実行し、GitHub Pagesを自動公開しない。
 公開は明示的な公開指示を受けた後、`Check`の`workflow_dispatch`をmainに対して実行し、`deploy_pages`を有効にする。
 Ubuntu・Windowsの検査成功後に、同じrunで生成したartifactだけを公開する。
+Rust cacheの保存はmainへのpushと非公開の手動検査（`deploy_pages=false`）が担当し、Pages公開runは復元だけを行う。
+保存元のrunが失敗した場合は、同じmainの非公開手動検査でcacheを更新できる。
 
 ## Fast-forward優先
 
