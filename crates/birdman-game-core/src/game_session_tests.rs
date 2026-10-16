@@ -661,6 +661,16 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     let result = session.snapshot().result();
     let record = session.flight_record().unwrap().sample_count();
     let sample_storage = session.flight_record().unwrap().samples().as_ptr();
+    let samples = session.flight_record().unwrap().samples().to_vec();
+    let header = session.flight_record().unwrap().header();
+    let finalization = session.flight_record().unwrap().finalization();
+    let identity = session.configuration_identity();
+    let result_snapshot = session.snapshot();
+    assert_eq!(
+        session.leave_replay(),
+        Err(GameSessionError::InvalidTransition)
+    );
+    assert_eq!(session.snapshot(), result_snapshot);
     session.enter_replay().unwrap();
     assert!(!session.playback_clock().unwrap().is_playing());
     assert_eq!(session.snapshot().phase(), SessionPhase::Replay);
@@ -680,6 +690,14 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     session.seek_playback(0.01).unwrap();
     session.set_playback_playing(true).unwrap();
     assert_eq!(session.advance_playback(0.01).unwrap(), 0.03);
+    let replay_snapshot = session.snapshot();
+    let clock = session.playback_clock();
+    assert_eq!(
+        session.enter_replay(),
+        Err(GameSessionError::InvalidTransition)
+    );
+    assert_eq!(session.snapshot(), replay_snapshot);
+    assert_eq!(session.playback_clock(), clock);
     let sample = session.playback_sample_at_seconds(0.03).unwrap();
     assert_eq!(sample.tick_index, 3);
     assert_eq!(
@@ -699,6 +717,13 @@ fn replay_phase_retains_the_immutable_result_and_record() {
     );
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     assert_eq!(session.snapshot().result(), result);
+    assert_eq!(session.configuration_identity(), identity);
+    assert_eq!(session.flight_record().unwrap().header(), header);
+    assert_eq!(session.flight_record().unwrap().samples(), samples);
+    assert_eq!(
+        session.flight_record().unwrap().finalization(),
+        finalization
+    );
     assert_eq!(
         session.flight_record().unwrap().samples().as_ptr(),
         sample_storage

@@ -48,7 +48,7 @@ Countdownのcutは`crates/birdman-game-core/src/countdown.rs`の本番`Countdown
 GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetryと`record.begin_tail`が成功した後だけRunningへcommitする。
 認可計算は候補値を返すため、record開始失敗時は直前のCountdownのtoken・elapsed・phaseを保持する。
 標準Durationとf64変換、wrapperのphase代入・物理payload・tick・record保持、古いcallbackの発進後拒否は形式証明範囲に含めず、
-実GameSessionの接続回帰を維持する。Retry、Replay、異常tickからの終端化も未証明である。
+実GameSessionの接続回帰を維持する。Retry、Replay wrapper全体、異常tickからの終端化も未証明である。
 
 既存runnerでPauseReasonsに加えてCountdownの全体positive、必須4群の名前別検証、exact compiler inventory、
 renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
@@ -69,7 +69,20 @@ Manual解除後の再開認可、外的理由が残る場合のPaused維持、Ru
 実行遷移の必須4群とpayloadの必須3群にexact inventory・名前別検証・rename fixture・missing-target検査を適用する。
 負例は外的理由を残したResumeの成功と、最後の理由をclearした時点の自動再開を意図的に主張する。
 payload負例は実pauseの後にpayloadが変化したと意図的に主張し、指定assertの拒否を要求する。
-GameSession wrapperの全分岐、configuration・record保持、record初期化・Retry・Replay・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
+GameSession wrapperの全分岐、configuration・record保持、record初期化・Retry・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
+
+### Result / Replay の本番遷移
+
+`configured_phase.rs` は従来の全 ConfiguredPhase variant と、Result / Replay の実更新を所有する。
+GameSession は Flight state・SessionResult・ReplayClock を具体化した private alias を使用し、
+current-session の `enter_replay` / `leave_replay` は同 module の二つの method を呼ぶ。
+不透明な payload の型 parameter はこの内部 enum に限定し、別の状態機械や transaction framework を設けない。
+
+本番 enum を正負 driver が直接 include し、Result だけが Replay に入ること、Replay だけが Result に戻ること、
+成功時の結果 payload 完全保持と指定 clock の格納、拒否時の enum 全体保持を検証する。
+必須三群、exact compiler inventory、rename / missing-target 拒否、発進前の Replay 認可と結果改変を誤って主張する負例を既存 runner に追加する。
+外側の record / configuration はこの method へ借用せず、Rust の所有分離と GameSession の通常回帰で保持を確認する。
+これらの外側 payload、GameSession wrapper 全体、archived Replay / Attract、clock の浮動小数点演算は Verus の直接証明範囲に含めない。
 
 検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
 Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
@@ -140,7 +153,7 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 | 優先度 | 契約・対象body | 適性と現在の根拠 | 残る境界 |
 |---|---|---|---|
 | P0 | PauseReasonsの4bit集合・Resume predicate | 同一bodyのtracked checkerで正37義務と指定負検証を確認した | 外部原因の発生条件は未証明 |
-| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可、FlightExecutionの本番更新とActiveFlightのpause/clear/resume時payload保持を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、configuration・record保持、Retry/Replay、終端原子性は未証明 |
+| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可、FlightExecutionとActiveFlight payload、実ConfiguredPhaseのResult / Replay更新を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、configuration・record保持、Retry、archived Replay / Attract、終端原子性は未証明 |
 | P1 | record/finalization・codec・identity・PB分離 | 純粋な整合性判定とschema別分岐は候補となる。保存値とlayoutを仕様として固定する必要がある | 現在の通常回帰は形式証明ではなく、既存archive全体も未証明 |
 | P1 | tick原子性・bounded保護候補探索 | 副作用commit条件・探索回数は離散契約として扱える | 浮動小数点、全RK stageの荷重域、安全な候補の存在は未証明 |
 | P1 | owner世代・stale query・資源解放 | immutableな観測tokenと有限lifecycleは候補となる | browser/Bevyの再入・非同期・OS資源は環境仮定が必要であり未証明 |
