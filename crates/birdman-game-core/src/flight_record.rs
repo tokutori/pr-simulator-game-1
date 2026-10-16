@@ -5,6 +5,9 @@ use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::{FlightState, TailFlightTickError, TailIncidence};
 use alloc::vec::Vec;
 
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 #[path = "flight_record_storage.rs"]
 mod storage;
 pub use storage::FlightRecordError;
@@ -23,6 +26,7 @@ pub const MAX_FLIGHT_RECORD_TICKS: usize = 4_000;
 pub const MAX_FLIGHT_RECORD_SAMPLES: usize = MAX_FLIGHT_RECORD_TICKS + 1;
 
 /// Immutable simulation and asset identity recorded for a flight.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlightRecordHeader {
     /// Versioned scenario and model identity.
@@ -63,6 +67,7 @@ impl FlightRecordHeader {
 }
 
 /// One state sample at an integer tick or fractional terminal time.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightRecordSample {
     /// Integer tick at the start of this sample interval.
@@ -81,6 +86,7 @@ pub struct FlightRecordSample {
 }
 
 /// Whether a terminal record represents normal completion or interruption/failure.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightRecordDisposition {
     /// The configured flight reached water contact or its time limit.
@@ -92,6 +98,7 @@ pub enum FlightRecordDisposition {
 }
 
 /// Immutable finalization metadata for a record.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightRecordFinalization {
     /// Domain reason that ended the session.
@@ -350,6 +357,16 @@ impl FlightRecord {
     }
 
     /// Finalizes the current record exactly once at its latest stored time.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            outcome.is_err() ==> *final(self) == *old(self),
+            match outcome {
+                Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+                    && metadata.failure.is_none(),
+                Err(_) => true,
+            },
+    ))]
     pub fn finalize(
         &mut self,
         reason: SessionEndReason,
@@ -361,6 +378,16 @@ impl FlightRecord {
     }
 
     /// Finalizes at the last successful sample while preserving the original simulation failure.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            outcome.is_err() ==> *final(self) == *old(self),
+            match outcome {
+                Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+                    && metadata.failure == Some(failure),
+                Err(_) => true,
+            },
+    ))]
     pub fn finalize_with_failure(
         &mut self,
         reason: SessionEndReason,
@@ -378,6 +405,20 @@ impl FlightRecord {
         )
     }
 
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            final(self).header == old(self).header,
+            final(self).samples@ == old(self).samples@,
+            final(self).sample_capacity == old(self).sample_capacity,
+            outcome.is_err() ==> *final(self) == *old(self),
+            match outcome {
+                Ok(metadata) => final(self).finalization == Some(metadata)
+                    && metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+                    && metadata.failure == failure,
+                Err(_) => true,
+            },
+    ))]
     fn finalize_record(
         &mut self,
         reason: SessionEndReason,
@@ -386,16 +427,26 @@ impl FlightRecord {
         score: Option<DistanceScore>,
         failure: Option<TailFlightTickError>,
     ) -> Result<FlightRecordFinalization, FlightRecordError> {
-        self.finalize_with(|latest| {
-            validate_finalization(
-                latest,
-                reason,
-                terminal_tick,
-                terminal_fraction,
-                score,
-                failure,
-            )
-        })
+        self.finalize_with(
+            #[cfg_attr(verus_only, verus_spec(metadata =>
+                ensures match metadata {
+                    Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                        && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+                        && metadata.failure == failure,
+                    Err(_) => true,
+                },
+            ))]
+            |latest: &FlightRecordSample| -> Result<FlightRecordFinalization, FlightRecordError> {
+                validate_finalization(
+                    latest,
+                    reason,
+                    terminal_tick,
+                    terminal_fraction,
+                    score,
+                    failure,
+                )
+            },
+        )
     }
 
     /// Returns immutable metadata for the reserved record.
@@ -597,6 +648,14 @@ impl FlightRecord {
     }
 }
 
+#[cfg_attr(verus_only, verus_spec(outcome =>
+    ensures match outcome {
+        Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+            && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+            && metadata.failure == failure,
+        Err(_) => true,
+    },
+))]
 fn validate_finalization(
     latest: &FlightRecordSample,
     reason: SessionEndReason,
@@ -608,8 +667,7 @@ fn validate_finalization(
     if !failure_matches(failure, reason) {
         return Err(FlightRecordError::IncompatibleFailure);
     }
-    if !terminal_fraction.is_finite()
-        || !(0.0..=1.0).contains(&terminal_fraction)
+    if !(0.0..=1.0).contains(&terminal_fraction)
         || latest.tick_index != terminal_tick
         || latest.fraction != terminal_fraction
     {
@@ -634,8 +692,12 @@ fn validate_finalization(
     })
 }
 
+#[cfg_attr(verus_only, verus_verify)]
 fn failure_matches(failure: Option<TailFlightTickError>, reason: SessionEndReason) -> bool {
-    failure.is_none_or(|failure| failure.end_reason() == reason)
+    match failure {
+        None => true,
+        Some(failure) => failure.end_reason() == reason,
+    }
 }
 
 fn disposition_matches(reason: SessionEndReason, disposition: FlightRecordDisposition) -> bool {

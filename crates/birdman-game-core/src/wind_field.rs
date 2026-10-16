@@ -2,6 +2,7 @@ use crate::math::{MathError, NedPoint, NedVector};
 
 /// Errors returned while constructing or querying a stationary wind field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum WindError {
     /// A supplied coordinate or computed wind component is non-finite.
     NonFinite,

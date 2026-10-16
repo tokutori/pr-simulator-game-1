@@ -112,6 +112,7 @@ pub(crate) fn prepare_scenario_contact(
 
 /// Core-derived telemetry at the composite center of mass.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct FlightTelemetry {
     /// Composite-center position in local NED metres.
     pub composite_cg_position_ned_m: NedPoint,

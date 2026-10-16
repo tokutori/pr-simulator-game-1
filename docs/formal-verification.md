@@ -200,6 +200,27 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 
 ## 信頼境界
 
+### 実core crateの限定直接検証
+
+固定426d8b0の`cargo-verus`とproof用Rust 1.98.1から、実`birdman-game-core`を直接読み込む。
+`verus-proof`は固定`vstd`の`alloc`だけを有効にする明示的optional featureであり、通常の依存は従来どおりである。
+製品Rust 1.97と`no_std`を維持し、closure仕様に必要な`proc_macro_hygiene`は`cfg(verus_only)`に限定する。
+公開`finalize`/`finalize_with_failure`、実`finalize_record`、実`validate_finalization`を検証する。
+Err時の実owner保持、header・sample列・capacity保持、成功時のreason/tick/fraction/score/元failureの転送を扱う。
+成功metadataの`disposition`対応、数値の合法性、allocator、GameSession終端化の縦断契約は未証明である。
+
+独立proof clientは同じ検証で生成したcore/vstdの`rmeta`/`vir`とbuiltinを、固定配布物の
+`rust_verify`へ明示して読み込む。実行bodyや実型の複写、外部仕様による実装免除、新たな数値公理は追加しない。
+Vector3/Point3のgeneric derived Cloneは固定Verusが仕様を生成できず、warningが2件発生する。
+今回の保持契約は実ownerと値の同一性に接続し、Clone equalityを仮定しない。
+Cloneの仕様化とGameSession全体の証明完了を、この検査の成功から導かない。
+
+`RangeInclusive::contains`はRust 1.97の実装で両端との比較を行い、NaN・無限大も区間外として拒否するため、
+重複する`is_finite`項だけを除去した。公開finalizeの非有限値・符号付きゼロ・端点・直外値と
+既存の失敗原因順を通常Rust回帰で確認する。
+[固定Rust実装](https://github.com/rust-lang/rust/blob/1.97.0/library/core/src/ops/range.rs#L833-L846)、
+[固定Cargo Guide](https://github.com/verus-lang/verus/blob/426d8b0/source/docs/guide/src/cargo_verus.md)に従う。
+
 Verus frontend/attribute macro、専用rustc、bundled vstd、SMT solverと配布物の供給経路をTCBに含める。
 ZIP digestは配布物の同一性を確認するものであり、その意味論やsolverを独立に証明するものではない。
 製品bodyにassume/admit/external_body/assume_specificationによる免除を設けない。

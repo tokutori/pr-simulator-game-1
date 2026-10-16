@@ -5,6 +5,7 @@ const POSITION_LIMIT_METERS: f64 = 0.4;
 
 /// Validated normalized longitudinal body-position intent.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailPilotPositionIntent(f64);
 
 impl TailPilotPositionIntent {
@@ -27,6 +28,7 @@ impl TailPilotPositionIntent {
 
 /// Explicitly retains the last target or accepts one new normalized target.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum TailPilotPositionCommand {
     /// No valid new device input; retain the previous physical target.
     Hold,
