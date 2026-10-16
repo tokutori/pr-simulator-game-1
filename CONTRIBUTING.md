@@ -28,6 +28,7 @@ local検査または対象branchの手動実行（`deploy_pages=false`）で補�
 
 依存先が独立review・必要な局所検査を完了した不変のHEADに固定されている場合は、別worktree/branchで依存作業を先行できる。
 親branch/sourceは変更しない。親PR未merge中はchild PRのbaseを親branchとし、依存HEADのSHAを明記する。
+親PRのmerge後はchild PRのbaseをmainへ変更し、必要な通常mergeで最新mainを取り込み、combined treeと最終gateを確認する。
 親HEADが更新された場合はreview・局所検査の状況を再確認し、通常mergeで取り込み、影響範囲を確認する。
 親CIの失敗や変更により、childにも修正・再検査が必要となる手戻りリスクを伴う。
 
