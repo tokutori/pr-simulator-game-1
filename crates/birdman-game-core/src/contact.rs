@@ -144,6 +144,12 @@ fn interpolate_flight_state(
     next_flight: FlightState,
     fraction: f64,
 ) -> Result<FlightState, ContactError> {
+    if fraction == 0.0 {
+        return Ok(previous_flight);
+    }
+    if fraction == 1.0 {
+        return Ok(next_flight);
+    }
     let position = interpolate_components(
         previous_flight.datum_position_ned().components(),
         next_flight.datum_position_ned().components(),
