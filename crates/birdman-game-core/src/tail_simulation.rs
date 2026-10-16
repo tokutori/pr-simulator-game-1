@@ -55,16 +55,22 @@ impl TailFlightTickState {
     }
 
     /// Returns the aircraft and moving-pilot state at the tick boundary.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.flight_state()))]
     pub const fn flight_state(self) -> FlightState {
         self.flight_state
     }
 
     /// Returns the completed interval's held physical tail incidences.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.incidence()))]
     pub const fn incidence(self) -> TailIncidence {
         self.incidence
     }
 
     /// Returns the most recent valid pilot target, retained when device input is absent.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_target()))]
     pub const fn pilot_position_target(self) -> PilotPositionTarget {
         self.pilot_position_target
     }
@@ -97,6 +103,7 @@ impl TailFlightTickConfig {
 }
 
 /// Device-independent tail intent, desired q/r and independent pilot-position command.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickInput {
     pilot: TailPilotIntent,
@@ -119,16 +126,22 @@ impl TailFlightTickInput {
     }
 
     /// Returns normalized nose-up/right-turn manual intent, distinct from physical incidence.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.manual_intent()))]
     pub const fn manual_intent(self) -> TailPilotIntent {
         self.pilot
     }
 
     /// Returns desired body pitch/yaw rates in rad/s, with body-positive target signs.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.desired_body_rate()))]
     pub const fn desired_body_rate(self) -> TailRateTarget {
         self.desired_rate
     }
 
     /// Returns the independent normalized position command or explicit Hold.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_command()))]
     pub const fn pilot_position_command(self) -> TailPilotPositionCommand {
         self.pilot_position
     }
@@ -181,22 +194,29 @@ impl TailWaterContactSample {
     }
 
     /// Returns body and pilot state interpolated at the same terminal time.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.flight_state()))]
     pub const fn flight_state(self) -> FlightState {
         self.flight_state
     }
 
     /// Returns the previous incidence at fraction zero and updated held incidence otherwise.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.incidence()))]
     pub const fn incidence(self) -> TailIncidence {
         self.incidence
     }
 
     /// Returns the pilot target held over the elapsed part of the terminal interval.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_target()))]
     pub const fn pilot_position_target(self) -> PilotPositionTarget {
         self.pilot_position_target
     }
 }
 
 /// Complete next airborne tick or a terminal sample, excluding any post-contact state.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TailFlightTickOutcome {
     /// The complete next integer tick remains airborne.
@@ -206,6 +226,7 @@ pub enum TailFlightTickOutcome {
 }
 
 /// Input and command evaluation applied over a successfully elapsed physics interval.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailAppliedControls {
     input: TailFlightTickInput,
@@ -214,16 +235,21 @@ pub struct TailAppliedControls {
 
 impl TailAppliedControls {
     /// Returns the sampled manual intent, body-rate target and pilot command without reevaluation.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.input()))]
     pub const fn input(self) -> TailFlightTickInput {
         self.input
     }
 
     /// Returns manual/FBW/mixed incidence targets from the interval's single evaluation.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.commands()))]
     pub const fn commands(self) -> TailControlCommands {
         self.commands
     }
 }
 
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum TailReportedOutcome {
     Advanced(TailFlightTickState, TailAppliedControls),
@@ -232,6 +258,7 @@ enum TailReportedOutcome {
 }
 
 /// Atomic outcome and applied-control report; an unelapsed contact interval has no new input.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickReport {
     result: TailReportedOutcome,
@@ -239,6 +266,8 @@ pub struct TailFlightTickReport {
 
 impl TailFlightTickReport {
     /// Returns the authoritative physical incidence and pilot target through the state/sample.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.outcome()))]
     pub const fn outcome(self) -> TailFlightTickOutcome {
         match self.result {
             TailReportedOutcome::Advanced(state, _) => TailFlightTickOutcome::Advanced(state),
@@ -250,6 +279,8 @@ impl TailFlightTickReport {
     }
 
     /// Returns newly applied controls, absent only when water contact occurred at fraction zero.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.applied_controls()))]
     pub const fn applied_controls(self) -> Option<TailAppliedControls> {
         match self.result {
             TailReportedOutcome::Advanced(_, controls)

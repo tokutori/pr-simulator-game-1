@@ -2,6 +2,8 @@ use crate::aerodynamics::TailIncidence;
 use crate::aerodynamics_contract::HybridError;
 use crate::flight_control::{ActuatorConfig, ActuatorError, ControlMode, saturated_rate_command};
 use crate::math::BodyVector;
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 mod pilot_position;
 pub use pilot_position::{
@@ -295,6 +297,7 @@ pub fn tail_rate_feedback_incidence(
 }
 
 /// Physical-incidence command targets produced by one manual/FBW authority evaluation.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailControlCommands {
     manual: TailIncidence,
@@ -304,16 +307,22 @@ pub struct TailControlCommands {
 
 impl TailControlCommands {
     /// Returns manual intent mapped to horizontal/vertical tail incidence targets in rad.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.manual_incidence_target()))]
     pub const fn manual_incidence_target(self) -> TailIncidence {
         self.manual
     }
 
     /// Returns observed-minus-target q/r feedback incidence targets in rad.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.fbw_incidence_target()))]
     pub const fn fbw_incidence_target(self) -> TailIncidence {
         self.feedback
     }
 
     /// Returns the authority-mixed saturated incidence targets before software slew.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.mixed_incidence_target()))]
     pub const fn mixed_incidence_target(self) -> TailIncidence {
         self.mixed
     }

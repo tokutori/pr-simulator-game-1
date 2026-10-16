@@ -2,6 +2,8 @@ use crate::{
     PilotPositionTarget, TailAppliedControls, TailFlightTickOutcome, TailFlightTickReport,
     TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
 };
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 /// Invalid externally restored control data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +27,8 @@ pub struct FlightRecordTailInput {
 
 impl FlightRecordTailInput {
     /// Captures the interval's existing control report and authoritative resolved pilot target.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::from_applied(applied, resolved_pilot_position_target)))]
     pub const fn from_applied(
         applied: TailAppliedControls,
         resolved_pilot_position_target: PilotPositionTarget,
@@ -125,6 +129,8 @@ impl FlightRecordControls {
     }
 
     /// Creates the initial sample with no newly applied interval input.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::initial_tail(state)))]
     pub const fn initial_tail(state: TailFlightTickState) -> Self {
         Self {
             incidence: state.incidence(),
@@ -133,22 +139,26 @@ impl FlightRecordControls {
     }
 
     /// Captures only controls committed by one successfully elapsed interval.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::from_tail_report(report)))]
     pub const fn from_tail_report(report: TailFlightTickReport) -> FlightRecordControlCapture {
-        let Some(applied) = report.applied_controls() else {
-            return FlightRecordControlCapture::NoElapsedInterval;
-        };
-        let (incidence, target) = match report.outcome() {
-            TailFlightTickOutcome::Advanced(state) => {
-                (state.incidence(), state.pilot_position_target())
+        match report.applied_controls() {
+            None => FlightRecordControlCapture::NoElapsedInterval,
+            Some(applied) => {
+                let (incidence, target) = match report.outcome() {
+                    TailFlightTickOutcome::Advanced(state) => {
+                        (state.incidence(), state.pilot_position_target())
+                    }
+                    TailFlightTickOutcome::WaterContact(sample) => {
+                        (sample.incidence(), sample.pilot_position_target())
+                    }
+                };
+                FlightRecordControlCapture::Applied(Self {
+                    incidence,
+                    input_from_previous: Some(FlightRecordTailInput::from_applied(applied, target)),
+                })
             }
-            TailFlightTickOutcome::WaterContact(sample) => {
-                (sample.incidence(), sample.pilot_position_target())
-            }
-        };
-        FlightRecordControlCapture::Applied(Self {
-            incidence,
-            input_from_previous: Some(FlightRecordTailInput::from_applied(applied, target)),
-        })
+        }
     }
 
     /// Returns physical tail incidences without re-evaluating controls.
@@ -158,6 +168,7 @@ impl FlightRecordControls {
 }
 
 /// Whether a successful tick report produced a new recordable control interval.
+#[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlightRecordControlCapture {
     /// Contact at fraction zero reuses the previous sample and supplies no new input.

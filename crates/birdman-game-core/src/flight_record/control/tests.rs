@@ -511,3 +511,147 @@ fn initial_tail_controls_have_no_interval_input() {
         }
     );
 }
+
+#[test]
+fn public_record_operations_preserve_telemetry_finite_domain_and_rejection_state() {
+    assert_eq!(
+        super::super::MIN_FINITE_TELEMETRY.to_bits(),
+        f64::MIN.to_bits()
+    );
+    assert_eq!(
+        super::super::MAX_FINITE_TELEMETRY.to_bits(),
+        f64::MAX.to_bits()
+    );
+    let initial = initial(-10.5);
+    let report = report(ControlMode::Manual, -10.5);
+    let values = [
+        f64::from_bits(0x7ff8_0000_0000_0001),
+        f64::from_bits(0xfff8_0000_0000_0001),
+        f64::from_bits(0x7ff0_0000_0000_0001),
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        0.0,
+        -0.0,
+        f64::MAX,
+        f64::MIN,
+        f64::from_bits(f64::MAX.to_bits() - 1),
+        f64::MIN_POSITIVE,
+        -f64::MIN_POSITIVE,
+        f64::from_bits(1),
+        -f64::from_bits(1),
+    ];
+    for value in values {
+        for field in 0..8 {
+            let mut supplied = telemetry(initial.flight_state());
+            match field {
+                0 => supplied.altitude_m = value,
+                1 => supplied.airspeed_mps = value,
+                2 => supplied.groundspeed_mps = value,
+                3 => supplied.roll_rad = value,
+                4 => supplied.pitch_rad = value,
+                5 => supplied.heading_rad = value,
+                6 => supplied.angle_of_attack_rad = Some(value),
+                _ => supplied.sideslip_angle_rad = Some(value),
+            }
+            let accepted = value.is_finite() && !((field == 1 || field == 2) && value < 0.0);
+            let mut record = crate::FlightRecord::try_new(header()).unwrap();
+            let capacity = record.sample_capacity;
+            let begun = record.begin_tail(initial, supplied);
+            assert_eq!(
+                begun.is_ok(),
+                accepted,
+                "begin field={field}, bits={:x}",
+                value.to_bits()
+            );
+            if !accepted {
+                assert_eq!(begun, Err(crate::FlightRecordError::InvalidTelemetry));
+                assert!(record.samples().is_empty());
+                assert_eq!(record.header(), header());
+                assert_eq!(record.sample_capacity, capacity);
+                assert_eq!(record.finalization(), None);
+                record
+                    .begin_tail(initial, telemetry(initial.flight_state()))
+                    .unwrap();
+            }
+            let before = record.samples().to_vec();
+            let appended = record.append_tail_report(report, supplied);
+            assert_eq!(
+                appended.is_ok(),
+                accepted,
+                "append field={field}, bits={:x}",
+                value.to_bits()
+            );
+            if !accepted {
+                assert_eq!(appended, Err(crate::FlightRecordError::InvalidTelemetry));
+                assert_eq!(record.samples(), before);
+            }
+            assert_eq!(record.header(), header());
+            assert_eq!(record.sample_capacity, capacity);
+            assert_eq!(record.finalization(), None);
+        }
+    }
+}
+
+#[test]
+fn lifecycle_and_time_rejections_precede_telemetry_even_without_elapsed_interval() {
+    let airborne = initial(-10.5);
+    let advanced = report(ControlMode::Manual, -10.5);
+    let TailFlightTickOutcome::Advanced(next) = advanced.outcome() else {
+        panic!("expected airborne tick");
+    };
+    let mut timed_record = crate::FlightRecord::try_new(header()).unwrap();
+    let mut invalid = telemetry(airborne.flight_state());
+    invalid.angle_of_attack_rad = Some(f64::NAN);
+    assert_eq!(
+        timed_record.begin_tail(next, invalid),
+        Err(crate::FlightRecordError::InvalidHeader)
+    );
+    timed_record
+        .begin_tail(airborne, telemetry(airborne.flight_state()))
+        .unwrap();
+    timed_record
+        .append_tail_report(advanced, telemetry(next.flight_state()))
+        .unwrap();
+    let before = timed_record.samples().to_vec();
+    assert_eq!(
+        timed_record.append_tail_report(advanced, invalid),
+        Err(crate::FlightRecordError::InvalidTime)
+    );
+    assert_eq!(timed_record.samples(), before);
+
+    let initial = initial(0.0);
+    let report = report(ControlMode::Manual, 0.0);
+    let mut invalid = telemetry(initial.flight_state());
+    invalid.angle_of_attack_rad = Some(f64::NAN);
+    let mut record = crate::FlightRecord::try_new(header()).unwrap();
+    assert_eq!(
+        record.append_tail_report(report, invalid),
+        Err(crate::FlightRecordError::NotStarted)
+    );
+    record
+        .begin_tail(initial, telemetry(initial.flight_state()))
+        .unwrap();
+    let before = record.samples().to_vec();
+    assert_eq!(
+        record.begin_tail(initial, invalid),
+        Err(crate::FlightRecordError::AlreadyStarted)
+    );
+    assert_eq!(
+        record.append_tail_report(report, invalid),
+        Err(crate::FlightRecordError::InvalidTelemetry)
+    );
+    assert_eq!(record.samples(), before);
+    record
+        .append_tail_report(report, telemetry(initial.flight_state()))
+        .unwrap();
+    assert_eq!(record.samples(), before);
+    let metadata = record
+        .finalize(crate::SessionEndReason::WaterContact, 0, 0.0, None)
+        .unwrap();
+    assert_eq!(
+        record.append_tail_report(report, invalid),
+        Err(crate::FlightRecordError::AlreadyFinalized)
+    );
+    assert_eq!(record.samples(), before);
+    assert_eq!(record.finalization(), Some(metadata));
+}

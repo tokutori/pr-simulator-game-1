@@ -187,6 +187,16 @@ pub type FlightRecord =
 #[cfg(verus_only)]
 verus! {
     impl FlightRecord {
+        /// Returns the sequence held by the actual record buffer.
+        pub closed spec fn recorded_samples(self) -> Seq<FlightRecordSample> {
+            self.samples@
+        }
+
+        /// Returns the logical sample limit stored by the actual record owner.
+        pub closed spec fn sample_limit(self) -> usize {
+            self.sample_capacity
+        }
+
         /// States that finalization retained the header, sample sequence, and reserved capacity.
         pub closed spec fn finalized_from(
             self,
@@ -300,6 +310,37 @@ impl FlightRecord {
     }
 
     /// Begins the same bounded record with two tail incidences and no transition input.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            outcome.is_err() ==> *final(self) == *old(self),
+            match outcome {
+                Ok(()) => old(self).recorded_samples().len() == 0
+                    && old(self).finalization().is_none()
+                    && initial.tick_index() == 0
+                    && final(self).header() == old(self).header()
+                    && final(self).finalization() == old(self).finalization()
+                    && final(self).sample_limit() == old(self).sample_limit()
+                    && final(self).sample_count() == 1
+                    && final(self).recorded_samples() == old(self).recorded_samples().push(
+                        FlightRecordSample {
+                            tick_index: 0,
+                            fraction: 0.0,
+                            flight_state: initial.flight_state(),
+                            controls: FlightRecordControls::initial_tail(initial),
+                            wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
+                            telemetry,
+                        }),
+                Err(error) => if old(self).recorded_samples().len() > 0
+                    || old(self).finalization().is_some() {
+                    error == FlightRecordError::AlreadyStarted
+                } else if initial.tick_index() != 0 {
+                    error == FlightRecordError::InvalidHeader
+                } else {
+                    error == FlightRecordError::InvalidTelemetry
+                        || error == FlightRecordError::CapacityExceeded
+                },
+            },
+    ))]
     pub fn begin_tail(
         &mut self,
         initial: crate::TailFlightTickState,
@@ -324,6 +365,59 @@ impl FlightRecord {
 
     /// Appends the committed tail tick/contact report without reevaluating any control.
     /// Fraction-zero contact retains the existing sample and adds no transition input.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            outcome.is_err() ==> *final(self) == *old(self),
+            match outcome {
+                Ok(()) => old(self).finalization().is_none()
+                    && old(self).recorded_samples().len() > 0
+                    && vstd::std_specs::cmp::ne_ensures(
+                        old(self).recorded_samples().last().fraction, 0.0f64, false)
+                    && match report.outcome() {
+                        crate::TailFlightTickOutcome::Advanced(state) =>
+                            old(self).recorded_samples().last().tick_index.checked_add(1)
+                                == Some(state.tick_index())
+                                && state.tick_index() <= old(self).header().maximum_flight_ticks,
+                        crate::TailFlightTickOutcome::WaterContact(sample) =>
+                            sample.interval_start_tick() == old(self).recorded_samples().last().tick_index
+                                && sample.interval_start_tick() < old(self).header().maximum_flight_ticks,
+                    }
+                    && final(self).header() == old(self).header()
+                    && final(self).finalization() == old(self).finalization()
+                    && final(self).sample_limit() == old(self).sample_limit()
+                    && match FlightRecordControls::from_tail_report(report) {
+                        FlightRecordControlCapture::NoElapsedInterval => *final(self) == *old(self),
+                        FlightRecordControlCapture::Applied(controls) => {
+                            let (tick_index, fraction, flight_state) = match report.outcome() {
+                                crate::TailFlightTickOutcome::Advanced(state) =>
+                                    (state.tick_index(), 0.0, state.flight_state()),
+                                crate::TailFlightTickOutcome::WaterContact(sample) =>
+                                    (sample.interval_start_tick(), sample.fraction(), sample.flight_state()),
+                            };
+                            final(self).recorded_samples() == old(self).recorded_samples().push(
+                                FlightRecordSample {
+                                    tick_index,
+                                    fraction,
+                                    flight_state,
+                                    controls,
+                                    wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
+                                    telemetry,
+                                })
+                                && final(self).sample_count() == old(self).sample_count() + 1
+                                && final(self).sample_count() <= final(self).sample_limit()
+                        },
+                    },
+                Err(error) => if old(self).finalization().is_some() {
+                    error == FlightRecordError::AlreadyFinalized
+                } else if old(self).recorded_samples().len() == 0 {
+                    error == FlightRecordError::NotStarted
+                } else {
+                    error == FlightRecordError::InvalidTime
+                        || error == FlightRecordError::InvalidTelemetry
+                        || error == FlightRecordError::CapacityExceeded
+                },
+            },
+    ))]
     pub fn append_tail_report(
         &mut self,
         report: crate::TailFlightTickReport,
@@ -675,6 +769,12 @@ impl FlightRecord {
         })
     }
 
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures match outcome {
+            Some(sample) => self.samples@.len() > 0 && *sample == self.samples@.last(),
+            None => self.samples@.len() == 0,
+        },
+    ))]
     fn latest(&self) -> Option<&FlightRecordSample> {
         self.samples.last()
     }
@@ -922,32 +1022,44 @@ fn interpolate_angle(start: f64, end: f64, fraction: f64) -> f64 {
     libm::atan2(libm::sin(angle), libm::cos(angle))
 }
 
+#[cfg_attr(verus_only, verus_verify)]
+const MIN_FINITE_TELEMETRY: f64 = -1.7976931348623157e308;
+#[cfg_attr(verus_only, verus_verify)]
+const MAX_FINITE_TELEMETRY: f64 = 1.7976931348623157e308;
+
+#[cfg_attr(verus_only, verus_spec(outcome =>
+    ensures outcome.is_err() ==> outcome == Err(FlightRecordError::InvalidTelemetry),
+))]
 fn validate_telemetry(telemetry: FlightTelemetry) -> Result<(), FlightRecordError> {
-    let [wind_north, wind_east, wind_down] = telemetry.wind_velocity_ned_mps.components();
-    let [cg_north, cg_east, cg_down] = telemetry.composite_cg_position_ned_m.components();
+    let wind = telemetry.wind_velocity_ned_mps.components();
+    let cg = telemetry.composite_cg_position_ned_m.components();
     let scalar_values = [
         telemetry.altitude_m,
         telemetry.airspeed_mps,
         telemetry.groundspeed_mps,
-        wind_north,
-        wind_east,
-        wind_down,
-        cg_north,
-        cg_east,
-        cg_down,
+        wind[0],
+        wind[1],
+        wind[2],
+        cg[0],
+        cg[1],
+        cg[2],
         telemetry.roll_rad,
         telemetry.pitch_rad,
         telemetry.heading_rad,
     ];
-    if scalar_values.iter().any(|value| !value.is_finite())
+    if scalar_values
+        .iter()
+        .any(|value| !(MIN_FINITE_TELEMETRY..=MAX_FINITE_TELEMETRY).contains(value))
         || telemetry.airspeed_mps < 0.0
         || telemetry.groundspeed_mps < 0.0
-        || telemetry
-            .angle_of_attack_rad
-            .is_some_and(|value| !value.is_finite())
-        || telemetry
-            .sideslip_angle_rad
-            .is_some_and(|value| !value.is_finite())
+        || match telemetry.angle_of_attack_rad {
+            Some(value) => !(MIN_FINITE_TELEMETRY..=MAX_FINITE_TELEMETRY).contains(&value),
+            None => false,
+        }
+        || match telemetry.sideslip_angle_rad {
+            Some(value) => !(MIN_FINITE_TELEMETRY..=MAX_FINITE_TELEMETRY).contains(&value),
+            None => false,
+        }
     {
         return Err(FlightRecordError::InvalidTelemetry);
     }

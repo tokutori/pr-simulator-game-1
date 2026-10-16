@@ -1,4 +1,6 @@
 use core::marker::PhantomData;
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 /// A coordinate frame supported by the simulation core.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -92,6 +94,8 @@ impl<F: Frame> Vector3<F> {
     }
 
     /// Returns the vector components in frame-axis order.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.components()))]
     pub const fn components(self) -> [f64; 3] {
         self.components
     }
@@ -223,6 +227,8 @@ impl<F: Frame> Point3<F> {
     }
 
     /// Returns point coordinates in frame-axis order.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.components()))]
     pub const fn components(self) -> [f64; 3] {
         self.components
     }

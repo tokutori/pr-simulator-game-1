@@ -2,6 +2,8 @@ use crate::aerodynamics_contract::{AerodynamicEvaluationError, AerodynamicStage}
 use crate::math::{
     BodyVector, InertiaTensor, MathError, NedPoint, NedVector, UnitQuaternion, cross3,
 };
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 /// Standard gravitational acceleration directed along positive NED down.
 pub const STANDARD_GRAVITY: Gravity = Gravity {
@@ -287,6 +289,8 @@ impl PilotPositionTarget {
     }
 
     /// Returns the target position relative to datum O in meters.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.position_m()))]
     pub const fn position_m(self) -> f64 {
         self.position_m
     }
