@@ -10,6 +10,77 @@ mod numerical;
 #[path = "tests/tail_integration.rs"]
 mod tail_integration;
 
+fn endpoint_states(down: [f64; 2]) -> [FlightState; 2] {
+    [
+        FlightState::try_new(
+            NedPoint::try_new(7.25, -0.0, down[0]).unwrap(),
+            NedVector::try_new(-0.0, -3.5, 6.75).unwrap(),
+            UnitQuaternion::try_new(0.7, 0.2, -0.3, libm::sqrt(0.38)).unwrap(),
+            BodyVector::try_new(0.125, -0.25, 0.375).unwrap(),
+            -0.0,
+            0.625,
+        )
+        .unwrap(),
+        FlightState::try_new(
+            NedPoint::try_new(12.5, -8.75, down[1]).unwrap(),
+            NedVector::try_new(-4.125, 5.25, -6.375).unwrap(),
+            UnitQuaternion::try_new(-0.5, -0.5, 0.5, -0.5).unwrap(),
+            BodyVector::try_new(-0.45, -0.0, 0.65).unwrap(),
+            0.4,
+            -0.0,
+        )
+        .unwrap(),
+    ]
+}
+
+fn assert_same_state_bits(actual: FlightState, expected: FlightState) {
+    let components = |state: FlightState| {
+        state
+            .datum_position_ned()
+            .components()
+            .into_iter()
+            .chain(state.datum_velocity_ned().components())
+            .chain(state.attitude_body_to_ned().components())
+            .chain(state.angular_velocity_body().components())
+            .chain([state.pilot_position_m(), state.pilot_velocity_mps()])
+            .map(f64::to_bits)
+    };
+    assert!(
+        components(actual).eq(components(expected)),
+        "actual={actual:?}, expected={expected:?}"
+    );
+}
+
+#[test]
+fn interpolation_endpoints_retain_every_state_component_without_recomputation() {
+    let [previous, next] = endpoint_states([-1.75, 2.125]);
+    for (fraction, expected) in [(0.0, previous), (-0.0, previous), (1.0, next)] {
+        let actual = super::interpolate_flight_state(previous, next, fraction).unwrap();
+        assert_same_state_bits(actual, expected);
+    }
+}
+
+#[test]
+fn contact_detection_retains_the_exact_zero_and_one_endpoint_states() {
+    for (down, fraction, index) in [([-0.0, 1.0], 0.0, 0), ([-1.0, -0.0], 1.0, 1)] {
+        let states = endpoint_states(down);
+        let contact = detect_flight_state_water_contact(
+            &aircraft(),
+            4,
+            states[0],
+            5,
+            states[1],
+            geometry(&[BodyPoint::origin()]),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(contact.interval_start_tick, 4);
+        assert_eq!(contact.contact_point_index, 0);
+        assert_eq!(contact.fraction, fraction);
+        assert_same_state_bits(contact.flight_state, states[index]);
+    }
+}
+
 #[test]
 fn contact_extrema_include_datum_translation_in_both_branches() {
     for span in [0.02, 0.1] {
