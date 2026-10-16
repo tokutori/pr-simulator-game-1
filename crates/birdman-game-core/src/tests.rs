@@ -650,6 +650,47 @@ fn quaternion_rotation_round_trips_vectors_between_frames() {
 }
 
 #[test]
+fn quaternion_interpolation_preserves_shortest_arc_branches_and_exact_endpoints() {
+    for angular_span in [0.02, 0.1, core::f64::consts::PI] {
+        for sign in [-1.0, 1.0] {
+            let end = UnitQuaternion::try_new(
+                sign * libm::cos(angular_span * 0.5),
+                0.0,
+                sign * libm::sin(angular_span * 0.5),
+                0.0,
+            )
+            .unwrap();
+            assert_eq!(
+                UnitQuaternion::IDENTITY.slerp(end, 0.0),
+                Ok(UnitQuaternion::IDENTITY)
+            );
+            assert_eq!(UnitQuaternion::IDENTITY.slerp(end, 1.0), Ok(end));
+            for fraction in [0.23, 0.5, 0.92] {
+                let angle = if angular_span == 0.02 {
+                    2.0 * libm::atan2(
+                        fraction * libm::sin(angular_span * 0.5),
+                        1.0 - fraction + fraction * libm::cos(angular_span * 0.5),
+                    )
+                } else {
+                    angular_span * fraction
+                };
+                let direction = UnitQuaternion::IDENTITY
+                    .slerp(end, fraction)
+                    .unwrap()
+                    .body_to_ned(BodyVector::try_new(1.0, 0.0, 0.0).unwrap())
+                    .unwrap();
+                close(direction.components()[0], libm::cos(angle), 2.0e-15);
+                close(direction.components()[2], -libm::sin(angle), 2.0e-15);
+            }
+        }
+    }
+    assert_eq!(
+        UnitQuaternion::IDENTITY.slerp(UnitQuaternion::IDENTITY, f64::NAN),
+        Err(MathError::NonFinite),
+    );
+}
+
+#[test]
 fn gravity_produces_analytical_free_fall() {
     let model = model(0.0, diagonal_inertia(1.0, 1.5, 2.0));
     let initial = state(

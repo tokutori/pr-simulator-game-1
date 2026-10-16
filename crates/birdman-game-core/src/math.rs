@@ -252,6 +252,19 @@ pub struct UnitQuaternion {
     components: [f64; 4],
 }
 
+pub(crate) enum QuaternionInterpolation {
+    NormalizedLinear {
+        start: [f64; 4],
+        end: [f64; 4],
+    },
+    Spherical {
+        start: [f64; 4],
+        end: [f64; 4],
+        angle: f64,
+        sine: f64,
+    },
+}
+
 impl UnitQuaternion {
     /// Maximum absolute error from unit length accepted by [`Self::try_new`].
     pub const UNIT_TOLERANCE: f64 = 1.0e-10;
@@ -321,6 +334,26 @@ impl UnitQuaternion {
             return Ok(other);
         }
 
+        let components = match self.interpolation_arc(other) {
+            QuaternionInterpolation::NormalizedLinear { start, end } => {
+                core::array::from_fn(|index| start[index] + fraction * (end[index] - start[index]))
+            }
+            QuaternionInterpolation::Spherical {
+                start,
+                end,
+                angle,
+                sine,
+                ..
+            } => {
+                let start_weight = libm::sin((1.0 - fraction) * angle) / sine;
+                let end_weight = libm::sin(fraction * angle) / sine;
+                core::array::from_fn(|index| start_weight * start[index] + end_weight * end[index])
+            }
+        };
+        Self::from_integrated_components(components)
+    }
+
+    pub(crate) fn interpolation_arc(self, other: Self) -> QuaternionInterpolation {
         let start = self.components;
         let mut end = other.components;
         let mut cosine = start
@@ -334,16 +367,18 @@ impl UnitQuaternion {
         }
         cosine = cosine.clamp(-1.0, 1.0);
 
-        let components = if cosine > 0.9995 {
-            core::array::from_fn(|index| start[index] + fraction * (end[index] - start[index]))
+        if cosine > 0.9995 {
+            QuaternionInterpolation::NormalizedLinear { start, end }
         } else {
             let angle = libm::acos(cosine);
             let sine = libm::sin(angle);
-            let start_weight = libm::sin((1.0 - fraction) * angle) / sine;
-            let end_weight = libm::sin(fraction * angle) / sine;
-            core::array::from_fn(|index| start_weight * start[index] + end_weight * end[index])
-        };
-        Self::from_integrated_components(components)
+            QuaternionInterpolation::Spherical {
+                start,
+                end,
+                angle,
+                sine,
+            }
+        }
     }
 
     pub(crate) fn derivative(self, angular_rate: BodyVector) -> [f64; 4] {
