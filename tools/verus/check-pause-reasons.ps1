@@ -163,7 +163,14 @@ if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $archiveDigest) {
     throw 'Official Verus archive SHA256 mismatch; the archive is not extracted or executed.'
 }
-Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot -Force
+$extractor = Join-Path $env:SystemRoot 'System32/tar.exe'
+if (-not (Test-Path -LiteralPath $extractor -PathType Leaf)) {
+    throw 'Windows system tar executable was not found.'
+}
+$extraction = Invoke-NativeCapture $extractor @('-xf', $archive, '-C', $toolRoot)
+if ($extraction.ExitCode -ne 0) {
+    throw "Windows tar extraction failed with exit $($extraction.ExitCode)."
+}
 $verifier = Join-Path $toolRoot 'verus-x86-win/verus.exe'
 if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
     throw 'Verified archive did not provide the expected Windows executable.'
