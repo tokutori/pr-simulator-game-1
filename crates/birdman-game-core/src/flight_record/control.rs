@@ -12,6 +12,7 @@ pub enum FlightRecordControlError {
 
 /// One tail interval's intent and core-computed command targets, distinct from its actuator.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct FlightRecordTailInput {
     manual_intent: TailPilotIntent,
     desired_body_rate: TailRateTarget,
@@ -101,6 +102,7 @@ impl FlightRecordTailInput {
 
 /// Physical tail incidences and the input committed over the same elapsed interval.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct FlightRecordControls {
     /// Horizontal and vertical effective incidences held over the elapsed interval.
     pub incidence: TailIncidence,

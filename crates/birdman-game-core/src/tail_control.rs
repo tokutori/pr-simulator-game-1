@@ -13,6 +13,7 @@ const RATE_TARGET_LIMIT_RAD_PER_SECOND: f64 = 0.2;
 
 /// Device-independent normalized nose-up and right-turn intent, without a roll axis.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailPilotIntent {
     nose_up: f64,
     turn_right: f64,
@@ -54,6 +55,7 @@ impl TailPilotIntent {
 
 /// Desired body pitch and yaw rates in rad/s, independent of manual intent signs.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailRateTarget {
     pitch_rad_per_second: f64,
     yaw_rad_per_second: f64,
@@ -435,6 +437,7 @@ pub(crate) fn advance_tail_control_at_alpha(
 
 /// Classified failures at the two-axis software control boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum TailControlError {
     /// A normalized intent or desired rate is not finite.
     NonFinite,

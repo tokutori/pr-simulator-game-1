@@ -109,6 +109,7 @@ impl ActuatorConfig {
 
 /// Failures while validating or advancing flight-control values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum ActuatorError {
     /// An input or computed value is non-finite.
     NonFinite,

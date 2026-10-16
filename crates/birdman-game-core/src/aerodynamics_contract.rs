@@ -1,8 +1,12 @@
 use crate::math::MathError;
 use crate::wind_field::WindError;
 
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 /// Failures returned by aerodynamic model validation and evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum AeroError {
     /// A supplied or computed value is not finite.
     NonFinite,
@@ -40,6 +44,7 @@ pub enum AeroError {
 
 /// Identifies an element-scoped or model-wide aerodynamic evaluation failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum AerodynamicEvaluationError {
     /// A hybrid evaluation failed at its original datum, surface, or proxy.
     Hybrid(HybridError),
@@ -52,6 +57,7 @@ pub enum AerodynamicEvaluationError {
 
 impl AerodynamicEvaluationError {
     /// Returns the original aerodynamic cause.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
     pub const fn cause(self) -> AeroError {
         match self {
             Self::StaticPolar { cause } => cause,
@@ -62,6 +68,7 @@ impl AerodynamicEvaluationError {
 
 /// One complete aerodynamic surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum HybridSurfaceRole {
     /// The complete main wing, including both sides.
     MainWing,
@@ -73,6 +80,7 @@ pub enum HybridSurfaceRole {
 
 /// Original evaluation or construction site for a hybrid failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum HybridSite {
     /// Datum O's air-relative flow or wind sample.
     Datum,
@@ -95,6 +103,7 @@ pub enum HybridSite {
 
 /// The actual or current-reference local flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum HybridFlowKind {
     /// Flow including rate, spatial wind, and beta.
     Actual,
@@ -104,6 +113,7 @@ pub enum HybridFlowKind {
 
 /// The closed software envelope condition which was exceeded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum HybridLimit {
     /// The static alpha lies outside its table.
     StaticAlpha,
@@ -129,6 +139,7 @@ pub enum HybridLimit {
 
 /// The four load evaluations of one classical RK4 step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum AerodynamicStage {
     /// Initial state.
     First,
@@ -142,6 +153,7 @@ pub enum AerodynamicStage {
 
 /// A hybrid failure retaining its precise site, original cause, limit, and RK stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridError {
     site: HybridSite,
     cause: AeroError,
@@ -230,6 +242,7 @@ impl HybridError {
         self.site
     }
     /// Returns the original aerodynamic cause without replacing fatal failures.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
     pub const fn cause(self) -> AeroError {
         self.cause
     }

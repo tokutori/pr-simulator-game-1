@@ -129,6 +129,7 @@ impl TailFlightTickInput {
 }
 
 /// Classified failures without publishing a partially advanced control or physics state.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TailFlightTickError {
     /// The completed tick counter cannot be incremented.

@@ -1,4 +1,8 @@
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 /// Identifies a validated, immutable flight configuration retained for retry.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionScenarioIdentity {
     /// Stable catalog version used to resolve the scenario.
@@ -18,6 +22,7 @@ pub struct SessionScenarioIdentity {
 }
 
 /// Reason that finalized the active flight.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionEndReason {
     /// A registered structural point contacted the water plane.
@@ -34,6 +39,7 @@ pub enum SessionEndReason {
 
 impl TailFlightTickError {
     /// Classifies envelope and finite wind-domain failures separately from numerical failures.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
     pub const fn end_reason(self) -> SessionEndReason {
         let dynamics = match self {
             Self::Dynamics(error) => Some(error),

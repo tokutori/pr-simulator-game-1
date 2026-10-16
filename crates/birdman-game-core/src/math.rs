@@ -1,14 +1,17 @@
 use core::marker::PhantomData;
 
 /// A coordinate frame supported by the simulation core.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub trait Frame: sealed::Sealed + Copy + core::fmt::Debug + PartialEq {}
 
 mod sealed {
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
     pub trait Sealed {}
 }
 
 /// Forward-right-down aircraft body frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct BodyFrame;
 
 impl sealed::Sealed for BodyFrame {}
@@ -16,6 +19,7 @@ impl Frame for BodyFrame {}
 
 /// North-east-down navigation frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct NedFrame;
 
 impl sealed::Sealed for NedFrame {}
@@ -24,6 +28,7 @@ impl Frame for NedFrame {}
 /// A finite three-dimensional vector whose frame is encoded in its type.
 ///
 /// Checked operations return [`MathError::NonFinite`] if arithmetic overflows.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Vector3<F: Frame> {
     components: [f64; 3],
@@ -34,6 +39,7 @@ pub struct Vector3<F: Frame> {
 ///
 /// Checked translation and displacement return [`MathError::NonFinite`] if
 /// arithmetic overflows.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point3<F: Frame> {
     components: [f64; 3],
@@ -51,6 +57,7 @@ pub type NedPoint = Point3<NedFrame>;
 
 /// An error produced by validated mathematical values.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum MathError {
     /// At least one value is non-finite.
     NonFinite,
@@ -248,6 +255,7 @@ impl<F: Frame> Point3<F> {
 
 /// A scalar-first Hamilton quaternion representing active body-to-NED rotation.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct UnitQuaternion {
     components: [f64; 4],
 }

@@ -83,6 +83,12 @@ $suites = @(
         )
     }
 )
+$domainDriver = Join-Path $repository 'proofs/flight_record_finalization.rs'
+$domainProofs = @('verify_domain_finalization_retention', 'verify_domain_finalization_metadata')
+$domainNegatives = @(
+    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_retention_negative.rs'; Assertion = 'changed' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' }
+)
 
 function Invoke-NativeCapture {
     param([string]$Command, [string[]]$Arguments, [switch]$JsonOutput)
@@ -141,7 +147,8 @@ function Get-MissingProofTargets {
     param($Report, [string]$Module, [string[]]$RequiredProofs)
     $resolvedNames = @($Report.'func-details'.PSObject.Properties.Name)
     foreach ($requiredProof in $RequiredProofs) {
-        if ($resolvedNames -cnotcontains "${Module}::${Module}::$requiredProof") {
+        $qualifiedName = if ($requiredProof.Contains('::')) { $requiredProof } else { "${Module}::${Module}::$requiredProof" }
+        if ($resolvedNames -cnotcontains $qualifiedName) {
             $requiredProof
         }
     }
@@ -156,6 +163,13 @@ foreach ($suite in $suites) {
         Assert-SharedInclude $check.Path $suite.ExpectedInclude
     }
 }
+$proofInputs += @($domainDriver) + @($domainNegatives.Path) + @(
+    (Join-Path $repository 'Cargo.lock'),
+    (Join-Path $repository 'crates/birdman-game-core/Cargo.toml'),
+    $PSCommandPath
+)
+$proofInputs += @(Get-ChildItem -LiteralPath (Join-Path $repository 'crates/birdman-game-core/src') -Recurse -Filter '*.rs' -File).FullName
+$proofInputs = @($proofInputs | Select-Object -Unique)
 foreach ($path in $proofInputs) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Formal integration is not installed: $path"
@@ -169,7 +183,7 @@ $sourceHashes = @{}
 foreach ($path in $proofInputs) {
     $sourceHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
 }
-foreach ($check in @($suites.NegativeChecks)) {
+foreach ($check in (@($suites.NegativeChecks) + $domainNegatives)) {
     $negativeLines = @(Get-Content -LiteralPath $check.Path -Encoding UTF8)
     $escapedAssertion = [regex]::Escape($check.Assertion)
     $assertionLines = @(
@@ -310,6 +324,122 @@ try {
         }
     }
     Write-Host "$($suite.Name): positive $($positiveSummary.Verified) verified; all required named proofs verified; missing proof and designated negative assertions rejected."
+  }
+
+  $coreTarget = [System.IO.Path]::GetFullPath((Join-Path $repository 'target/direct-core-proof'))
+  if (-not $coreTarget.StartsWith($repository + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw 'Dedicated core proof target must remain inside this worktree.'
+  }
+  $oldPath = $env:PATH
+  $oldToolchain = $env:RUSTUP_TOOLCHAIN
+  $oldBuildJobs = $env:CARGO_BUILD_JOBS
+  try {
+      $binaryDirectory = Split-Path -Parent $verifier
+      $cargoVerifier = Join-Path $binaryDirectory 'cargo-verus.exe'
+      $rustVerifier = Join-Path $binaryDirectory 'rust_verify.exe'
+      $env:PATH = "$binaryDirectory;$oldPath"
+      $env:RUSTUP_TOOLCHAIN = $proofToolchain
+      $env:CARGO_BUILD_JOBS = '1'
+      $clean = Invoke-NativeCapture 'cargo' @('clean', '-p', 'birdman-game-core', '--target-dir', $coreTarget)
+      if ($clean.ExitCode -ne 0) { throw 'Dedicated core proof artifacts could not be refreshed.' }
+      $coreProof = Invoke-NativeCapture $cargoVerifier @(
+          'verify', '-p', 'birdman-game-core', '--features', 'verus-proof', '--locked',
+          '--target-dir', $coreTarget, '--check-toolchain', '--fwd-verus-args-to', 'roots', '--',
+          '--no-cheating', '--num-threads', '1', '--output-json', '--time'
+      ) -JsonOutput
+      if ($coreProof.ExitCode -ne 0) { throw 'Production core crate verification failed.' }
+      $jsonStart = $coreProof.Output.IndexOf('{')
+      if ($jsonStart -lt 0) { throw 'The core verification report is missing.' }
+      $coreReport = $coreProof.Output.Substring($jsonStart) | ConvertFrom-Json
+      $coreSummary = $coreReport.'verification-results'
+      $coreSymbols = @(
+          'birdman_game_core::flight_record::FlightRecord::finalize',
+          'birdman_game_core::flight_record::FlightRecord::finalize_with_failure',
+          'birdman_game_core::flight_record::FlightRecord::finalize_record',
+          'birdman_game_core::flight_record::validate_finalization',
+          'birdman_game_core::flight_record::storage::FlightRecordStorage::finalize_with'
+      )
+      if ($coreSummary.success -ne $true -or $coreSummary.'is-verifying-entire-crate' -ne $true -or
+          $coreSummary.Verified -le 0 -or $coreSummary.Errors -ne 0 -or
+          @(Get-MissingProofTargets $coreReport '' $coreSymbols).Count -ne 0) {
+          throw 'Production finalization requires whole-crate success and its exact compiler symbols.'
+      }
+      $dependencies = Join-Path $coreTarget 'debug/deps'
+      $artifacts = @{}
+      foreach ($entry in @(
+          @{ Name = 'core'; Pattern = 'libbirdman_game_core-*.rmeta' },
+          @{ Name = 'vstd'; Pattern = 'libvstd-*.rmeta' },
+          @{ Name = 'builtin'; Pattern = 'libverus_builtin-*.rmeta' },
+          @{ Name = 'macros'; Pattern = 'verus_builtin_macros-*.dll' }
+      )) {
+          $matches = @(Get-ChildItem -LiteralPath $dependencies -Filter $entry.Pattern -File)
+          if ($matches.Count -ne 1) { throw "Ambiguous verified dependency: $($entry.Name)" }
+          $artifacts[$entry.Name] = $matches[0].FullName
+      }
+      $domainArguments = @(
+          'run', $proofToolchain, $rustVerifier,
+          '--crate-name', 'flight_record_finalization', '--crate-type', 'lib', '--edition=2024',
+          '--no-cheating', '--num-threads', '1', '--color=never', '--no-vstd', '-L', "dependency=$dependencies",
+          '--extern', "birdman_game_core=$($artifacts.core)",
+          '--import', "birdman_game_core=$([System.IO.Path]::ChangeExtension($artifacts.core, 'vir'))",
+          '--extern', "vstd=$($artifacts.vstd)",
+          '--import', "vstd=$([System.IO.Path]::ChangeExtension($artifacts.vstd, 'vir'))",
+          '--extern', "verus_builtin=$($artifacts.builtin)",
+          '--extern', "verus_builtin_macros=$($artifacts.macros)"
+      )
+      $domain = Invoke-NativeCapture 'rustup' ($domainArguments + @($domainDriver, '--output-json', '--time')) -JsonOutput
+      $domainReport = $domain.Output | ConvertFrom-Json
+      $domainSymbols = @($domainProofs | ForEach-Object { "flight_record_finalization::$_" })
+      if ($domain.ExitCode -ne 0 -or $domainReport.'verification-results'.success -ne $true -or
+          $domainReport.'verification-results'.'is-verifying-entire-crate' -ne $true -or
+          $domainReport.'verification-results'.Verified -le 0 -or $domainReport.'verification-results'.Errors -ne 0 -or
+          @(Get-MissingProofTargets $domainReport '' $domainSymbols).Count -ne 0) {
+          throw 'Concrete finalization clients require whole-crate success and their exact compiler symbols.'
+      }
+      foreach ($name in $domainProofs) {
+          $selected = Invoke-NativeCapture 'rustup' ($domainArguments + @($domainDriver, '--verify-root', '--verify-function', $name))
+          $summary = Get-VerificationSummary $selected.Output -Selected
+          if ($selected.ExitCode -ne 0 -or $summary.Verified -le 0 -or $summary.Errors -ne 0) {
+              throw "Required concrete finalization client did not verify: $name"
+          }
+      }
+      $renamedSource = (Read-Utf8Source $domainDriver).Replace("fn $($domainProofs[0])(", "fn $($domainProofs[0])_retired(")
+      if ($renamedSource -ceq (Read-Utf8Source $domainDriver)) { throw 'The concrete client rename fixture did not change its declaration.' }
+      $renamedSource += "`n/*`nfn $($domainProofs[0])() {}`n*/`n"
+      $renamedPath = Join-Path $coreTarget 'record_finalization_renamed.rs'
+      [System.IO.File]::WriteAllText($renamedPath, $renamedSource, [System.Text.UTF8Encoding]::new($false))
+      $renamed = Invoke-NativeCapture 'rustup' ($domainArguments + @($renamedPath, '--output-json', '--time')) -JsonOutput
+      $renamedReport = $renamed.Output | ConvertFrom-Json
+      $missingSymbols = @(Get-MissingProofTargets $renamedReport '' $domainSymbols)
+      if ($renamed.ExitCode -ne 0 -or $renamedReport.'verification-results'.success -ne $true -or
+          $renamedReport.'verification-results'.'is-verifying-entire-crate' -ne $true -or
+          $missingSymbols.Count -ne 1 -or $missingSymbols[0] -cne $domainSymbols[0]) {
+          throw 'The concrete renamed client with its old name in a comment must fail compiler inventory.'
+      }
+      $missing = Invoke-NativeCapture 'rustup' ($domainArguments + @(
+          $domainNegatives[0].Path, '--verify-root', '--verify-function', $domainProofs[0]
+      ))
+      $missingMessage = [regex]::Escape("could not find function $($domainProofs[0]) specified by --verify-function")
+      if ($missing.ExitCode -eq 0 -or $missing.Output -notmatch "(?m)^error: $missingMessage\s*$" -or
+          $missing.Output -match '(?m)^error: assertion failed\s*$') {
+          throw 'A missing concrete client must fail the designated function lookup.'
+      }
+      foreach ($check in $domainNegatives) {
+          $negative = Invoke-NativeCapture 'rustup' ($domainArguments + @($check.Path))
+          $summary = Get-VerificationSummary $negative.Output
+          $filename = [regex]::Escape([System.IO.Path]::GetFileName($check.Path))
+          if ($negative.ExitCode -eq 0 -or $summary.Errors -ne 1 -or
+              $negative.Output -notmatch '(?m)^error: assertion failed\s*$' -or
+              $negative.Output -notmatch "(?m)^\s*-->\s+[^`r`n]*$filename`:$($check.Line):\d+\s*$") {
+              throw "Concrete negative must fail only at the designated assertion: $($check.Path)"
+          }
+      }
+      Write-Host "Production core: $($coreSummary.Verified) verified; concrete clients, exact inventory, lookup and designated negatives completed."
+  }
+  finally {
+      $env:PATH = $oldPath
+      $env:RUSTUP_TOOLCHAIN = $oldToolchain
+      $env:CARGO_BUILD_JOBS = $oldBuildJobs
   }
 }
 finally {

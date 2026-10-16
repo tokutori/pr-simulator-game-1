@@ -1,10 +1,14 @@
 #![no_std]
+#![cfg_attr(verus_only, feature(proc_macro_hygiene))]
 //! Platform-independent simulation contracts and deterministic flight dynamics.
 //!
 //! The core owns no clock, I/O, random generator, or platform interface. It
 //! evaluates explicit state, model, load, and input values.
 
 extern crate alloc;
+
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 mod aerodynamics;
 mod aerodynamics_contract;

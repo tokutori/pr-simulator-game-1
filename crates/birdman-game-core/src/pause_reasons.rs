@@ -23,12 +23,14 @@ pub struct PauseReasons(u8);
 #[cfg(verus_only)]
 verus! {
     impl PauseReasons {
+        /// Returns the bit representation used by the proof contracts.
         pub closed spec fn bits(self) -> u8 {
             self.0
         }
     }
 
     impl PauseReason {
+        /// Returns the bit corresponding to this pause cause in proof contracts.
         pub closed spec fn mask(self) -> u8 {
             self.bit()
         }

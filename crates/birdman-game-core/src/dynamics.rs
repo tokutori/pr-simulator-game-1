@@ -122,6 +122,7 @@ impl AircraftModel {
 
 /// A finite flight state referenced to aircraft-fixed structural datum O.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct FlightState {
     datum_position_ned: NedPoint,
     datum_velocity_ned: NedVector,
@@ -266,6 +267,7 @@ impl PilotAcceleration {
 
 /// A validated longitudinal pilot position target within one aircraft's travel range.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct PilotPositionTarget {
     position_m: f64,
 }
@@ -729,6 +731,7 @@ impl Wrench {
 
 /// Failure categories returned by an external load model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum LoadError {
     /// The state lies outside the load model's validated domain.
     OutsideDomain,
@@ -765,6 +768,7 @@ impl ExternalLoadProvider for ConstantLoad {
 
 /// Typed failures from model validation and one all-or-nothing dynamics step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum DynamicsError {
     /// At least one scalar or computed result is non-finite.
     NonFinite,

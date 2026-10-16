@@ -36,6 +36,7 @@ impl CourseAxis {
 }
 
 /// Course-relative endpoint displacement metrics in meters.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DistanceScore {
     course_parallel_m: f64,
