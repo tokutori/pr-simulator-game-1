@@ -1,0 +1,67 @@
+import "./lake-model-fixture.js";
+import { describe, expect, it, vi } from "vitest";
+import { DataTexture, SRGBColorSpace } from "three";
+import { LakeCloudsBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { createLakeClouds, disposeLakeClouds } from "../../web/src/render/engines/three/lake-clouds.js";
+
+const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25,
+  cloudBaseMeters: 1500, visibilityMeters: 25_000 };
+
+describe("finite shared cloud projection", () => {
+  it("projects the actual packet into one world mesh shared by main and reflection views", () => {
+    const packet = new LakeCloudsBridge(135, 55, 0.25, 25_000, 1500);
+    const mesh = createLakeClouds(condition);
+    try {
+      const positions = mesh.geometry.getAttribute("position");
+      const offsets = mesh.geometry.getAttribute("cloudOffset");
+      const uvs = mesh.geometry.getAttribute("uv");
+      const shared = packet.vertices();
+      expect(positions.count).toBe(shared.length / 7);
+      expect(positions.count).toBeGreaterThan(0);
+      expect(positions.count).toBeLessThanOrEqual(96);
+      for (let index = 0; index < positions.count; index++) {
+        expect([positions.getX(index), positions.getY(index), positions.getZ(index)])
+          .toEqual([shared[index * 7 + 1], -(shared[index * 7 + 2] ?? NaN), -(shared[index * 7] ?? NaN)]);
+        expect([offsets.getX(index), offsets.getY(index)]).toEqual(Array.from(shared.slice(index * 7 + 3, index * 7 + 5)));
+        expect([uvs.getX(index), uvs.getY(index)]).toEqual(Array.from(shared.slice(index * 7 + 5, index * 7 + 7)));
+      }
+      expect(Array.from(mesh.geometry.index?.array ?? [])).toEqual(Array.from(packet.indices()));
+      const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
+      if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
+      expect(atlas.image.data).toEqual(packet.rgba());
+      expect(atlas.colorSpace).toBe(SRGBColorSpace);
+      expect(mesh.layers.isEnabled(0)).toBe(true);
+      expect(mesh.layers.isEnabled(1)).toBe(true);
+      expect(mesh.material.depthWrite).toBe(false);
+      expect(mesh.position.toArray()).toEqual([0, 0, 0]);
+    } finally { packet.free(); disposeLakeClouds(mesh); }
+  });
+
+  it.each([
+    { sky: null, reason: "unrecorded" },
+    { sky: { ...condition, cloudFraction: 0 }, reason: "clear" },
+    { sky: { ...condition, cloudBaseMeters: 0 }, reason: "ground_level_unsupported" }
+  ])("preserves explicit absence: $reason", ({ sky, reason }) => {
+    const mesh = createLakeClouds(sky);
+    try {
+      expect(mesh.userData.cloudAvailability).toBe(reason);
+      expect(mesh.visible).toBe(false);
+      expect(mesh.geometry.getAttribute("position").count).toBe(0);
+    } finally { disposeLakeClouds(mesh); }
+  });
+
+  it("releases the bridge on transfer failure and the GPU projection on disposal", () => {
+    const free = vi.spyOn(LakeCloudsBridge.prototype, "free");
+    const read = vi.spyOn(LakeCloudsBridge.prototype, "vertices").mockImplementationOnce(() => { throw new Error("transfer"); });
+    try {
+      expect(() => createLakeClouds(condition)).toThrow("transfer");
+      expect(free).toHaveBeenCalledTimes(1);
+    } finally { read.mockRestore(); free.mockRestore(); }
+    const mesh = createLakeClouds(condition);
+    const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
+    if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
+    const released = [vi.spyOn(atlas, "dispose"), vi.spyOn(mesh.geometry, "dispose"), vi.spyOn(mesh.material, "dispose")];
+    disposeLakeClouds(mesh);
+    for (const release of released) expect(release).toHaveBeenCalledTimes(1);
+  });
+});

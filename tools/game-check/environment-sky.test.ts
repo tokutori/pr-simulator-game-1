@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
 import { createLakeSkyCondition, lakeSkySunDirectionNed } from "../../web/src/render/contracts/lake-sky.js";
 
-const skyCondition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
+const skyCondition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
 const recordedSky = { kind: "defined", value: {
   sun_azimuth_degrees: 135, sun_elevation_degrees: 55, cloud_fraction: 0.25, cloud_base_m: 1500, visibility_m: 25_000
 } };
@@ -20,7 +20,7 @@ describe("environment sky projection", () => {
   it("retains immutable sky metadata and explicit unrecorded availability", () => {
     const projection = parseRuntimeEnvironmentSnapshot(JSON.stringify(environment(recordedSky)), 3);
     expect(projection).toMatchObject({ kind: "available", value: { sky: { kind: "available",
-      value: { condition: skyCondition, cloudBaseMeters: 1500 } } } });
+      value: { condition: skyCondition } } } });
     if (projection.kind !== "available" || projection.value.sky.kind !== "available") throw new Error("Expected recorded sky");
     expect(Object.isFrozen(projection.value.sky.value.condition)).toBe(true);
     expect(parseRuntimeEnvironmentSnapshot(JSON.stringify(environment({ kind: "unavailable" })), 3))
@@ -72,7 +72,7 @@ describe("environment sky projection", () => {
     expect(lakeSkySunDirectionNed({ ...skyCondition, sunElevationDegrees: 90 }).down).toBe(-1);
     expect(lakeSkySunDirectionNed({ ...skyCondition, sunElevationDegrees: -90 }).down).toBe(1);
     for (const invalid of [NaN, Infinity, -Infinity]) {
-      for (const field of ["sunAzimuthDegrees", "sunElevationDegrees", "cloudFraction", "visibilityMeters"] as const) {
+      for (const field of ["sunAzimuthDegrees", "sunElevationDegrees", "cloudFraction", "cloudBaseMeters", "visibilityMeters"] as const) {
         expect(() => createLakeSkyCondition({ ...skyCondition, [field]: invalid })).toThrow(RangeError);
       }
     }

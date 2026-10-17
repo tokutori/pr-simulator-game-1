@@ -48,6 +48,7 @@ import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
+import { createLakeClouds, disposeLakeClouds } from "./lake-clouds.js";
 import { createLakeGeometry } from "./lake-water-geometry.js";
 import { createLakeWaveProjection, LAKE_WAVE_PACKET_GLSL, LAKE_WAVE_PROJECTION_GLSL } from "./lake-wave-projection.js";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
@@ -178,6 +179,8 @@ export function createThreeRenderer(
   const scene = new Scene();
   let activeSkyCondition: LakeSkyCondition | null = null;
   let skyTexture = createLakeSkyTexture(activeSkyCondition);
+  let clouds = createLakeClouds(activeSkyCondition);
+  scene.add(clouds);
   scene.background = skyTexture;
   const lakeFog = new Fog(0x9aafb1, 14_000, 80_000);
   scene.fog = lakeFog;
@@ -771,6 +774,7 @@ export function createThreeRenderer(
       farWaterMaterial.dispose();
       reflectionTarget.dispose();
       skyTexture.dispose();
+      disposeLakeClouds(clouds);
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
       airframe.dispose();
@@ -834,6 +838,9 @@ export function createThreeRenderer(
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ sky: nextCondition }); return; }
       if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyCondition(activeSkyCondition, nextCondition)) return;
       const nextTexture = createLakeSkyTexture(nextCondition);
+      let nextClouds;
+      try { nextClouds = createLakeClouds(nextCondition); }
+      catch (cause) { nextTexture.dispose(); throw cause; }
       const direction = nextCondition === null ? null : lakeSkySunDirectionNed(nextCondition);
       const daylight = nextCondition !== null && nextCondition.sunElevationDegrees >= 0 ? 1 : 0;
       const north = direction?.north ?? 0;
@@ -848,6 +855,10 @@ export function createThreeRenderer(
       lakeFog.near = lakeFog.far * 0.175;
       lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
       scene.background = nextTexture;
+      scene.remove(clouds);
+      scene.add(nextClouds);
+      disposeLakeClouds(clouds);
+      clouds = nextClouds;
       lakeUniforms.skyTexture.value = nextTexture;
       skyTexture.dispose();
       skyTexture = nextTexture;

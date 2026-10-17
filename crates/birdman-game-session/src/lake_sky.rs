@@ -208,7 +208,8 @@ fn cloud_pixel(patch: &CumulusPatch, local_column: f64, local_row: f64) -> [u8; 
 
 /// One bounded atlas and batched billboard mesh. Positions use local NED metres.
 /// The fixed water surface is down=0. Each vertex is center N/E/D, right/up
-/// offset in metres, and atlas U/V. The view supplies the right/up basis.
+/// offset in metres, and atlas U/V. Up is world up; each view supplies only the
+/// horizontal right basis facing its eye. Camera roll cannot rotate the clouds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LakeClouds {
     rgba: Vec<u8>,

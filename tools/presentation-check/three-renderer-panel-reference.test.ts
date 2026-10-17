@@ -255,7 +255,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const nextEpoch = policy.epoch();
       trial.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, patternSeed: 77 });
       expect(policy.epoch()).toBe(nextEpoch);
-      trial.renderer.setLakeSkyCondition({ sunElevationDegrees: 42, sunAzimuthDegrees: 180, cloudFraction: 0.2, visibilityMeters: 40_000 });
+      trial.renderer.setLakeSkyCondition({ sunElevationDegrees: 42, sunAzimuthDegrees: 180, cloudFraction: 0.2, cloudBaseMeters: 1500, visibilityMeters: 40_000 });
       expect(policy.epoch()).toBeGreaterThan(nextEpoch);
     } finally { trial.renderer.dispose(); }
   });
@@ -527,7 +527,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("connects one sky to background, solar lighting, near/far water and haze without changing wave parameters", () => {
-    const condition = { sunAzimuthDegrees: 90, sunElevationDegrees: 0, cloudFraction: 0, visibilityMeters: 6_000 };
+    const condition = { sunAzimuthDegrees: 90, sunElevationDegrees: 0, cloudFraction: 0, cloudBaseMeters: 1500, visibilityMeters: 6_000 };
     bundle.renderer.setLakeSkyCondition(condition);
     bundle.renderer.render(frame());
     const scene = driver.scene;
@@ -594,7 +594,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("defers a view-phase sky change and explicit unavailable reset until the next frame", () => {
-    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
+    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
     bundle.renderer.setLakeSkyCondition(condition);
     bundle.renderer.render(frame());
     const original = driver.scene?.background;
