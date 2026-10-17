@@ -1350,9 +1350,9 @@ pub(crate) struct VerificationPresentation<'w, 's> {
             &'static Camera,
             &'static RenderTarget,
             &'static Projection,
+            &'static Transform,
         ),
     >,
-    camera_poses: Query<'w, 's, (&'static WorldProjection, &'static Transform)>,
     ui_cameras: Query<'w, 's, &'static Camera, With<IsDefaultUiCamera>>,
     reflection_cameras: Query<'w, 's, &'static RenderTarget, With<LakeReflectionCamera>>,
     shader_verification: Option<ResMut<'w, WaterShaderVerification>>,
@@ -1410,12 +1410,7 @@ impl VerificationPresentation<'_, '_> {
             session.initial_pilot_position_m,
             Vec2::ZERO,
         );
-        let (_, actual) = self
-            .camera_poses
-            .iter()
-            .find(|(role, _)| **role == WorldProjection::FlightCamera)
-            .ok_or("Replay camera Transform is missing")?;
-        let (_, _, _, Projection::Perspective(lens)) = self
+        let (_, _, _, Projection::Perspective(lens), actual) = self
             .scene_cameras
             .iter()
             .find(|(role, ..)| **role == WorldProjection::FlightCamera)
@@ -1500,7 +1495,7 @@ impl VerificationPresentation<'_, '_> {
             return Err("Screen render scale differs from the selected shared control".into());
         }
         let window_extent = window.resolution.physical_size();
-        let (_, camera, target, projection) = self
+        let (_, camera, target, projection, _) = self
             .scene_cameras
             .iter()
             .find(|(role, ..)| **role == WorldProjection::FlightCamera)
@@ -4292,7 +4287,7 @@ mod tests {
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
-            for _ in 0..4_000 {
+            for _ in 0..birdman_game_core::MAX_FLIGHT_RECORD_TICKS {
                 session.tick(super::FlightInput {
                     nose_up: 1.0,
                     ..Default::default()
