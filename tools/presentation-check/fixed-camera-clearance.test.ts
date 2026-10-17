@@ -10,7 +10,7 @@ import { applyLandMask, terrainGeometry } from "../../web/src/render/engines/thr
 import "./lake-model-fixture.js";
 
 function regionalTerrain(): Mesh {
-  const terrain = applyLandMask(terrainAsset, landMask);
+  const terrain = applyLandMask({ ...terrainAsset, schemaVersion: 1 }, { ...landMask, schemaVersion: 1 });
   const regional = terrain.finePatches.find((patch) => patch.id === "terrain-patch-regional-shore");
   if (regional === undefined) throw new Error("Missing regional terrain");
   return new Mesh(terrainGeometry(regional, [], [terrain, ...terrain.finePatches]),
