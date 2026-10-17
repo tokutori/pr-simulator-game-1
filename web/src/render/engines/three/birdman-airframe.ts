@@ -81,7 +81,7 @@ export interface BirdmanAirframe {
   dispose(): void;
 }
 
-export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout: "absent" }>;
+export type AirframeVisualControls = PhysicalFlightControls | Readonly<{ layout: "absent" | "registered_preview" }>;
 export const NO_AIRFRAME_CONTROLS = Object.freeze({ layout: "absent" } as const);
 
 function bulkNumber(values: Float32Array | Float64Array | Uint32Array, index: number): number {
@@ -332,14 +332,16 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     }
 
     horizontalIncidence.position.z = horizontalTailArmMeters;
-    horizontalIncidence.visible = controls.layout === "tail_incidence";
-    verticalIncidence.visible = controls.layout === "tail_incidence";
+    const tailVisible = controls.layout === "tail_incidence" || controls.layout === "registered_preview";
+    horizontalIncidence.visible = tailVisible;
+    verticalIncidence.visible = tailVisible;
     switch (controls.layout) {
       case "tail_incidence":
         horizontalIncidence.rotation.x = controls.physicalIncidence.horizontalTailRadians;
         verticalIncidence.rotation.y = -controls.physicalIncidence.verticalTailRadians;
         break;
       case "absent":
+      case "registered_preview":
         horizontalIncidence.rotation.x = 0;
         verticalIncidence.rotation.y = 0;
         break;
