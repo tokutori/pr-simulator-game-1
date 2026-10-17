@@ -103,7 +103,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
+                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
                 );
                 return Ok(());
             }
@@ -176,9 +176,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<CameraMode>();
     if offscreen {
         offscreen::configure(&mut app, verification_size.unwrap_or((1280, 720)))?;
-        app.add_plugins(ScheduleRunnerPlugin::run_loop(
-            std::time::Duration::from_secs_f64(1.0 / 60.0),
-        ));
+        let runner = offscreen_runner(no_vsync);
+        println!(
+            "Offscreen runner: {:?}; wait=None is unpaced. Logical Window PresentMode does not control Image presentation.",
+            runner.run_mode
+        );
+        app.add_plugins(runner);
     }
     mip_filter::configure(app.world_mut())?;
     app.init_resource::<frame_rate::FrameRate>();
@@ -282,6 +285,14 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("Native app exited with an error".into());
     }
     Ok(())
+}
+
+fn offscreen_runner(no_vsync: bool) -> ScheduleRunnerPlugin {
+    if no_vsync {
+        ScheduleRunnerPlugin::default()
+    } else {
+        ScheduleRunnerPlugin::run_loop(std::time::Duration::from_secs_f64(1.0 / 60.0))
+    }
 }
 
 fn primary_window(verification_size: Option<(u32, u32)>, no_vsync: bool) -> Window {
@@ -499,6 +510,19 @@ mod tests {
         keyboard::{Key, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion},
     };
+
+    #[test]
+    fn offscreen_runner_only_removes_wait_when_explicitly_selected() {
+        for (no_vsync, expected_wait) in [
+            (false, Some(std::time::Duration::from_secs_f64(1.0 / 60.0))),
+            (true, None),
+        ] {
+            let bevy::app::RunMode::Loop { wait } = offscreen_runner(no_vsync).run_mode else {
+                panic!("Offscreen verification must retain the continuous runner");
+            };
+            assert_eq!(wait, expected_wait);
+        }
+    }
 
     #[test]
     fn primary_window_only_requests_no_vsync_when_explicitly_selected() {

@@ -25,7 +25,7 @@ cargo run -p birdman-game-bevy --release --locked
 cargo run -p birdman-game-bevy --release --locked -- --no-vsync
 ```
 
-通常はFifoを維持し、指定時だけAutoNoVsyncを要求する。GPU/OSの対応状況に応じてImmediate→Mailbox→Fifoを選択するため、同期解除は保証されない。
+通常WindowはFifoを維持し、指定時だけAutoNoVsyncを要求する。GPU/OSの対応状況に応じてImmediate→Mailbox→Fifoを選択するため、同期解除は保証されない。
 tearingやGPU負荷・消費電力の増加が生じうる。物理tick・入力割当・画質・安全停止は同じ契約を使用する。
 
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
@@ -154,6 +154,8 @@ cargo run -p birdman-game-bevy --locked -- --verify target/bevy-offscreen --offs
 ```
 
 `--offscreen`は`--verify`との併用を必須とする。WinitPluginを登録せず、ScheduleRunnerPluginで実行する。
+既定runnerの最小周期は16.67 msである。`--offscreen --no-vsync`を明示すると、公式runnerの待機なしLoopを使用する。
+起動logの`Loop { wait: Some(...) }`/`Loop { wait: None }`でpaced/unpacedを識別できる。Image targetのGPU描画・readbackは同じ経路を使用する。
 描画接続の初回検査は既定dev profileで実行できる。性能計測時はreleaseを使用する。
 オフスクリーンの検証フローは180秒、通常Windowの検証フローは従来の90秒で打ち切る。実ゲームのProcessingDelay条件は変更しない。
 Window componentはviewport寸法と検査用focusの論理metadataとして保持し、OSのWindow handleを生成しない。
@@ -253,7 +255,14 @@ render CPU/GPUの時刻はMainへの診断受領時刻であり、同Motion内�
 画像の時間的aliasing・optic flow・白波OFF/ONは、native表示の直接観測と実GPU画像で評価する。
 開始・終了画像だけを連続表示の受入根拠にしない。
 このcamera-only観測とscene/pass計測は、物理入力応答、描画FPS非依存性、80 FPSやrelease予算の達成を証明しない。
-`--offscreen`ではrunnerが更新周期を最低16.67 msへ制限するため、Real周期から80 FPS throughputを受け入れない。
+既定`--offscreen`ではrunnerの最小周期が16.67 msであり、80 FPS throughputの測定には明示的な待機解除が必要になる。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-unpaced --offscreen --no-vsync --verify-size 1280x720 --verify-water typical-high
+```
+
+この組合せはrunnerの人工的な待機だけを解除する。100 Hz物理、Real時刻、入力割当、150 ms安全停止、画質は維持する。
+Real Update周期と有効root GPU標本数・時間分布を分けて確認し、offscreen throughputと通常Windowの80 FPS表示受入を区別する。
 WindowのPresentModeはこのmodeの論理metadataである。画像targetには実際のpresent待機がなく、Real周期にはCPU・RenderApp同期・GPU backpressure等の影響が残る。
 6条件の実行・画像評価結果は実施後に記録する。
 
@@ -354,7 +363,7 @@ WebとBevyは右上に描画FPSを表示する。750 ms窓で集計し、起動�
 100 Hzの物理tickとは独立する。Bevyの値は実時間Updateの周期であり、GPU present完了を直接測定する値ではない。
 同じ派生labelのText更新を省略し、表示・入力・Rustの正本は維持する。
 PC Screenの目標は80 FPS相当・12.5 ms/frameである。現在の検査画面は60 Hzであり、80 FPSの実表示受入は未実施である。
-`--no-vsync`はNativeの提示方式の要求だけを変更する。既存診断のwindow.present_modeも要求値であり、GPU/OSが実際に選択した方式と区別する。
+`--no-vsync`は通常Windowで提示方式の要求を変更し、offscreenではrunnerの待機を解除する。既存診断のwindow.present_modeは要求値であり、GPU/OSが実際に選択した方式と区別する。
 Update頻度の増加、80 Hz以上の実表示、12.5 msの処理予算達成を個別に確認する。WebのrequestAnimationFrameには影響しない。
 FPSの単体試験、debug版の撮影、以前のrelease検査を、最新版の性能達成として扱わない。
 
