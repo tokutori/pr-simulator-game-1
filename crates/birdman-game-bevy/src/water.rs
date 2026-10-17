@@ -967,11 +967,24 @@ mod tests {
         })
     }
 
-    fn environment_image_ids(material: &WaterMaterial) -> [AssetId<Image>; 3] {
+    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 4] {
+        let material = &environment_materials(app)[EnvironmentSurface::Near.index()];
+        let world = app.world_mut();
+        let cloud = world.query_filtered::<
+            &MeshMaterial3d<super::super::clouds::CloudMaterial>,
+            With<super::super::clouds::CloudLayer>,
+        >().single(world).unwrap().0.id();
+        let cloud_atlas = world
+            .resource::<Assets<super::super::clouds::CloudMaterial>>()
+            .get(cloud)
+            .unwrap()
+            .atlas
+            .id();
         [
             material.detail_near.as_ref().unwrap().id(),
             material.detail_far.as_ref().unwrap().id(),
             material.sky_texture.as_ref().unwrap().id(),
+            cloud_atlas,
         ]
     }
 
@@ -980,8 +993,7 @@ mod tests {
         original: &[AssetId<Image>],
         retired: &[AssetId<Image>],
     ) {
-        let current =
-            environment_image_ids(&environment_materials(app)[EnvironmentSurface::Near.index()]);
+        let current = environment_image_ids(app);
         let images = app.world().resource::<Assets<Image>>();
         assert_eq!(images.len(), original.len());
         assert!(retired.iter().all(|image| images.get(*image).is_none()));
@@ -1012,7 +1024,7 @@ mod tests {
             .unwrap();
         let before = environment_materials(&mut app);
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
-        let retired_images = environment_image_ids(&before[EnvironmentSurface::Near.index()]);
+        let retired_images = environment_image_ids(&mut app);
         let reflection = before[EnvironmentSurface::Near.index()]
             .reflection_texture
             .clone()
@@ -1146,9 +1158,7 @@ mod tests {
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
-        let retired_images = environment_image_ids(
-            &environment_materials(&mut app)[EnvironmentSurface::Near.index()],
-        );
+        let retired_images = environment_image_ids(&mut app);
         prepare_calm(&mut app);
         app.update();
         let briefing = shared_ui_text(&mut app);
