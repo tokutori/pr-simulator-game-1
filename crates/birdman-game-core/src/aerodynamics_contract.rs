@@ -57,7 +57,8 @@ pub enum AerodynamicEvaluationError {
 
 impl AerodynamicEvaluationError {
     /// Returns the original aerodynamic cause.
-    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.cause()))]
     pub const fn cause(self) -> AeroError {
         match self {
             Self::StaticPolar { cause } => cause,
@@ -242,7 +243,8 @@ impl HybridError {
         self.site
     }
     /// Returns the original aerodynamic cause without replacing fatal failures.
-    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.cause()))]
     pub const fn cause(self) -> AeroError {
         self.cause
     }

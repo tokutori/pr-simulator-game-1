@@ -471,6 +471,8 @@ impl FlightRecord {
     /// Finalizes the current record exactly once at its latest stored time.
     #[cfg_attr(verus_only, verus_spec(outcome =>
         ensures
+            final(self).recorded_samples() == old(self).recorded_samples(),
+            final(self).sample_limit() == old(self).sample_limit(),
             outcome.is_err() ==> *final(self) == *old(self),
             match outcome {
                 Ok(metadata) => final(self).finalized_from(*old(self), metadata)
@@ -496,6 +498,8 @@ impl FlightRecord {
     /// Finalizes at the last successful sample while preserving the original simulation failure.
     #[cfg_attr(verus_only, verus_spec(outcome =>
         ensures
+            final(self).recorded_samples() == old(self).recorded_samples(),
+            final(self).sample_limit() == old(self).sample_limit(),
             outcome.is_err() ==> *final(self) == *old(self),
             match outcome {
                 Ok(metadata) => final(self).finalized_from(*old(self), metadata)
