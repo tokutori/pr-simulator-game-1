@@ -2,7 +2,9 @@ use super::{
     CameraMode, MAX_FRAME_DELTA,
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{FlightInput, MenuAction, NativeSession},
-    projection::{VerificationObserver, aircraft_transform, camera_transform},
+    projection::{
+        VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
+    },
     screen_render::NativeScreenRender,
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
@@ -31,15 +33,18 @@ use bevy::{
     ui::{OverrideClip, clip_check_recursive},
 };
 use birdman_game_core::{
-    FlightRecordControls, FlightRecordHeader, PHYSICS_HZ, PauseReason, PauseReasons,
-    SessionEndReason, SessionPhase, SessionResult, SessionSnapshot, TailFlightTickState,
+    FlightRecordControls, FlightRecordFinalization, FlightRecordHeader, FlightRecordSample,
+    PHYSICS_HZ, PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult,
+    SessionSnapshot, TailFlightTickState,
 };
 use birdman_game_format::WeatherClass;
 use birdman_game_session::{
     application::SessionCommand,
     game_ui::{
-        GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiReplayView, GameUiResultTab,
+        GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiPresentationMode,
+        GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
     },
+    replay_camera::replay_camera_view,
     screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection},
     screen_render_scale::ScreenRenderScale,
 };
@@ -674,6 +679,9 @@ enum VerificationStage {
     InputTrialFlight,
     InputTrialResult,
     InputTrialDetails,
+    ReplayCamerasPrepare,
+    ReplayCamera(usize),
+    ReplayCamerasReturned,
     Finished,
 }
 
@@ -727,10 +735,14 @@ impl VerificationStage {
                         | Self::Analysis(_)
                         | Self::ReturnedResult
                         | Self::InputTrialResult
-                        | Self::InputTrialDetails,
+                        | Self::InputTrialDetails
+                        | Self::ReplayCamerasReturned,
                     SessionPhase::Result,
                 )
-                | (Self::Replay | Self::ReplayAnalysis, SessionPhase::Replay)
+                | (
+                    Self::Replay | Self::ReplayAnalysis | Self::ReplayCamera(_),
+                    SessionPhase::Replay,
+                )
         )
     }
 }
@@ -747,6 +759,58 @@ struct SavedCapture {
     path: PathBuf,
     width: u32,
     height: u32,
+}
+
+struct ReplayCaptureRecord {
+    header: FlightRecordHeader,
+    samples: Vec<FlightRecordSample>,
+    finalization: FlightRecordFinalization,
+}
+
+impl ReplayCaptureRecord {
+    fn retain(session: &NativeSession) -> Result<Self, String> {
+        let record = session
+            .game
+            .core_session()
+            .flight_record()
+            .ok_or("Replay camera capture requires a retained flight record")?;
+        let finalization = record
+            .finalization()
+            .ok_or("Replay camera capture requires a finalized record")?;
+        if finalization.reason != SessionEndReason::WaterContact || finalization.failure.is_some() {
+            return Err(
+                "Replay camera capture requires natural WaterContact without failure".into(),
+            );
+        }
+        Ok(Self {
+            header: record.header(),
+            samples: record.samples().to_vec(),
+            finalization,
+        })
+    }
+
+    fn verify(&self, session: &NativeSession) -> Result<(), String> {
+        let record = session
+            .game
+            .core_session()
+            .flight_record()
+            .ok_or("Replay camera capture lost the retained record")?;
+        if record.header() != self.header
+            || record.samples() != self.samples
+            || record.finalization() != Some(self.finalization)
+        {
+            return Err(
+                "Replay camera selection changed record samples, identity or finalization".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn midpoint(&self) -> f64 {
+        (self.finalization.terminal_tick as f64 + self.finalization.terminal_fraction)
+            / f64::from(self.header.physics_hz)
+            * 0.5
+    }
 }
 
 struct CaptureCompletion {
@@ -890,6 +954,8 @@ pub(crate) struct Verification {
     completion: Option<Sender<Result<(), String>>>,
     capture_target: RenderTarget,
     timeout: Duration,
+    replay_cameras: bool,
+    replay_record: Option<ReplayCaptureRecord>,
 }
 
 impl Verification {
@@ -898,6 +964,7 @@ impl Verification {
         asset_server: &AssetServer,
         water_case: Option<WaterVerificationCase>,
         capture_target: RenderTarget,
+        replay_cameras: bool,
     ) -> Result<(Self, VerificationCompletion), std::io::Error> {
         std::fs::create_dir_all(&directory)?;
         let material_shader = match StandardMaterial::fragment_shader() {
@@ -947,6 +1014,8 @@ impl Verification {
                 completion: Some(sender),
                 capture_target,
                 timeout,
+                replay_cameras,
+                replay_record: None,
             },
             completion,
         ))
@@ -1281,6 +1350,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
             &'static Camera,
             &'static RenderTarget,
             &'static Projection,
+            &'static Transform,
         ),
     >,
     ui_cameras: Query<'w, 's, &'static Camera, With<IsDefaultUiCamera>>,
@@ -1299,6 +1369,78 @@ pub(crate) struct VerificationPresentation<'w, 's> {
 }
 
 impl VerificationPresentation<'_, '_> {
+    fn verify_replay_camera(
+        &self,
+        session: &NativeSession,
+        selected: GameUiReplayCamera,
+        seconds: f64,
+    ) -> Result<(), String> {
+        let core = session.game.core_session();
+        let clock = core
+            .playback_clock()
+            .ok_or("Replay camera clock is missing")?;
+        if clock.is_playing()
+            || clock.time_seconds() != seconds
+            || session.ui.replay_camera != selected
+            || session.ui.replay_view != GameUiReplayView::Cinematic
+            || session.notice.is_some()
+        {
+            return Err(
+                "Replay camera capture did not retain its shared selection and stopped time".into(),
+            );
+        }
+        let record = core
+            .playback_record()
+            .ok_or("Replay camera record is missing")?;
+        let view = replay_camera_view(
+            record,
+            seconds,
+            selected,
+            GameUiPresentationMode::Screen,
+            false,
+        )
+        .map_err(|cause| format!("Replay camera query failed: {cause:?}"))?;
+        let display = session
+            .display_state()
+            .ok_or("Replay display state is missing")?;
+        let expected = replay_camera_transform(
+            &view,
+            aircraft_transform(display.state),
+            display.state.pilot_position_m(),
+            session.initial_pilot_position_m,
+            Vec2::ZERO,
+        );
+        let (_, _, _, Projection::Perspective(lens), actual) = self
+            .scene_cameras
+            .iter()
+            .find(|(role, ..)| **role == WorldProjection::FlightCamera)
+            .ok_or("Replay camera Projection is missing")?
+        else {
+            return Err("Replay camera requires a perspective lens".into());
+        };
+        let expected_fov = view.cinematic().map_or(
+            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+            |view| view.vertical_field_of_view_degrees(),
+        );
+        if *actual != expected || lens.fov != expected_fov.to_radians() as f32 {
+            return Err(
+                "Actual Replay camera pose/FOV differs from the shared record query".into(),
+            );
+        }
+        println!(
+            "Replay camera capture: selected={}, resolved={}, record_time_s={seconds:.9}, actual_fov_deg={:.6}, translation={:?}, rotation_xyzw={:?}, score={:?}",
+            selected.label(),
+            view.camera().label(),
+            lens.fov.to_degrees(),
+            actual.translation.to_array(),
+            actual.rotation.to_array(),
+            record
+                .finalization()
+                .and_then(|finalization| finalization.score),
+        );
+        Ok(())
+    }
+
     fn water_time(
         &self,
         session: &NativeSession,
@@ -1353,7 +1495,7 @@ impl VerificationPresentation<'_, '_> {
             return Err("Screen render scale differs from the selected shared control".into());
         }
         let window_extent = window.resolution.physical_size();
-        let (_, camera, target, projection) = self
+        let (_, camera, target, projection, _) = self
             .scene_cameras
             .iter()
             .find(|(role, ..)| **role == WorldProjection::FlightCamera)
@@ -1743,7 +1885,21 @@ fn advance_step(
                     queue_ui_control(commands, "game-result-technical", None);
                     VerificationStage::InputTrialDetails
                 }
+                VerificationStage::InputTrialDetails if verification.replay_cameras => {
+                    verification.replay_record = Some(ReplayCaptureRecord::retain(session)?);
+                    queue_ui_control(commands, "game-result-replay", None);
+                    VerificationStage::ReplayCamerasPrepare
+                }
                 VerificationStage::InputTrialDetails => VerificationStage::Retry,
+                VerificationStage::ReplayCamera(index) => {
+                    if index + 1 < GameUiReplayCamera::ALL.len() {
+                        queue_ui_control(commands, "game-replay-camera", None);
+                        VerificationStage::ReplayCamera(index + 1)
+                    } else {
+                        queue_ui_control(commands, "game-replay-return", None);
+                        VerificationStage::ReplayCamerasReturned
+                    }
+                }
                 _ => return Err("Unexpected screenshot stage".into()),
             };
             verification.next(next);
@@ -2314,6 +2470,66 @@ fn advance_step(
                 verification.capture(commands, "04e-replay-analysis.png");
             }
         }
+        VerificationStage::ReplayCamerasPrepare => {
+            require_phase(phase, SessionPhase::Replay)?;
+            let retained = verification
+                .replay_record
+                .as_ref()
+                .ok_or("Missing Replay capture record")?;
+            retained.verify(session)?;
+            let clock = session
+                .game
+                .core_session()
+                .playback_clock()
+                .ok_or("Missing Replay clock")?;
+            if clock.is_playing() {
+                queue_ui_control(commands, "game-replay-play-pause", None);
+            } else if clock.time_seconds() != retained.midpoint() {
+                if session.ui.replay_view == GameUiReplayView::Telemetry {
+                    queue_ui_control(commands, "game-replay-cursor", Some(0.5));
+                } else {
+                    queue_ui_control(commands, "game-replay-view-mode", None);
+                }
+            } else if session.ui.replay_view != GameUiReplayView::Cinematic {
+                queue_ui_control(commands, "game-replay-view-mode", None);
+            } else if session.ui.replay_camera != GameUiReplayCamera::ALL[0] {
+                queue_ui_control(commands, "game-replay-camera", None);
+            } else {
+                verification.next(VerificationStage::ReplayCamera(0));
+            }
+        }
+        VerificationStage::ReplayCamera(index) => {
+            require_phase(phase, SessionPhase::Replay)?;
+            let retained = verification
+                .replay_record
+                .as_ref()
+                .ok_or("Missing Replay capture record")?;
+            retained.verify(session)?;
+            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+                && verification.readiness.can_capture()
+            {
+                let selected = *GameUiReplayCamera::ALL
+                    .get(index)
+                    .ok_or("Invalid Replay camera index")?;
+                presentation.verify_replay_camera(session, selected, retained.midpoint())?;
+                verification.capture(
+                    commands,
+                    &format!("06-replay-{}.png", selected.label().to_lowercase()),
+                );
+            }
+        }
+        VerificationStage::ReplayCamerasReturned => {
+            require_phase(phase, SessionPhase::Result)?;
+            verification
+                .replay_record
+                .as_ref()
+                .ok_or("Missing Replay capture record")?
+                .verify(session)?;
+            if session.game.core_session().snapshot().result() != verification.terminal {
+                return Err("Replay camera return changed the retained terminal state".into());
+            }
+            verification.next(VerificationStage::Retry);
+        }
         VerificationStage::ReturnedResult => {
             require_phase(phase, SessionPhase::Result)?;
             if session.game.core_session().snapshot().result() != verification.terminal
@@ -2836,7 +3052,9 @@ mod tests {
     use bevy::tasks::TaskPoolBuilder;
     use birdman_game_core::{PauseReason, SessionPhase};
     use birdman_game_session::application::ExternalPauseReason;
-    use birdman_game_session::game_ui::{GameUiAnalysisChart, GameUiResultTab};
+    use birdman_game_session::game_ui::{
+        GameUiAnalysisChart, GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
+    };
     use birdman_game_session::screen_render_auto::ScreenRenderSelection;
     use std::time::Duration;
 
@@ -2890,6 +3108,7 @@ mod tests {
             app.world().resource::<AssetServer>(),
             None,
             bevy::camera::RenderTarget::default(),
+            false,
         )
         .unwrap();
         verification.stage = VerificationStage::Finished;
@@ -2924,6 +3143,7 @@ mod tests {
             app.world().resource::<bevy::asset::AssetServer>(),
             None,
             bevy::camera::RenderTarget::Image(Handle::<Image>::default().into()),
+            false,
         )
         .unwrap();
         assert_eq!(offscreen.timeout, Duration::from_secs(180));
@@ -4055,6 +4275,67 @@ mod tests {
                 .unwrap()
                 .sample_count(),
             samples
+        );
+        assert!(super::ReplayCaptureRecord::retain(session).is_err());
+        queue_ui_control(&mut app.world_mut().commands(), "game-result-retry", None);
+        app.world_mut().flush();
+        app.update();
+        queue_ui_control(&mut app.world_mut().commands(), "game-briefing-start", None);
+        app.world_mut().flush();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            for _ in 0..birdman_game_core::MAX_FLIGHT_RECORD_TICKS {
+                session.tick(super::FlightInput {
+                    nose_up: 1.0,
+                    ..Default::default()
+                });
+                if session.game.core_session().snapshot().phase() == SessionPhase::Result {
+                    break;
+                }
+            }
+        }
+        let retained =
+            super::ReplayCaptureRecord::retain(app.world().resource::<NativeSession>()).unwrap();
+        app.update();
+        for (id, position) in [
+            ("game-result-replay", None),
+            ("game-replay-view-mode", None),
+            ("game-replay-cursor", Some(0.5)),
+            ("game-replay-view-mode", None),
+            ("game-replay-view-mode", None),
+        ] {
+            queue_ui_control(&mut app.world_mut().commands(), id, position);
+            app.world_mut().flush();
+            app.update();
+        }
+        for selected in GameUiReplayCamera::ALL {
+            let session = app.world().resource::<NativeSession>();
+            retained.verify(session).unwrap();
+            let clock = session.game.core_session().playback_clock().unwrap();
+            assert!(!clock.is_playing());
+            assert_eq!(clock.time_seconds(), retained.midpoint());
+            assert_eq!(session.ui.replay_view, GameUiReplayView::Cinematic);
+            assert_eq!(session.ui.replay_camera, selected);
+            assert!(session.notice.is_none());
+            queue_ui_control(&mut app.world_mut().commands(), "game-replay-camera", None);
+            app.world_mut().flush();
+            app.update();
+        }
+        queue_ui_control(&mut app.world_mut().commands(), "game-replay-return", None);
+        app.world_mut().flush();
+        retained
+            .verify(app.world().resource::<NativeSession>())
+            .unwrap();
+        app.update();
+        queue_ui_control(&mut app.world_mut().commands(), "game-result-retry", None);
+        app.world_mut().flush();
+        assert!(
+            retained
+                .verify(app.world().resource::<NativeSession>())
+                .is_err()
         );
     }
 

@@ -162,6 +162,18 @@ PNGの保存完了、float probe、shader/pipeline readiness、開始・Pilot/Ch
 出力先の画像を確認し、実GPU/driverでの描画結果と物理入力・OS focus・通常表示の性能を分けて評価する。
 オフスクリーンの描画成功はVR、物理keyboard/mouse操作、通常Windowでの80 FPS達成を保証しない。
 
+実際に自然着水した同じ記録を全Replay cameraから観察する場合は、任意の検査を追加する。
+
+```sh
+cargo run -p birdman-game-bevy --locked -- --verify target/bevy-replay-cameras --offscreen --verify-replay-cameras
+```
+
+既存のfull nose-up logical input試験によるWaterContact記録を使用し、共有UIのReplay・cursor・camera切替を通して、
+記録の中間時刻を停止したまま共有の全10候補を撮影する。`06-replay-*.png`へ保存し、選択名・解決したshot・記録時刻・
+本番cameraのTransform/FOV・scoreを標準出力へ記録する。全sample・header・finalizationと、Resultへ戻った終端状態の保持を検査する。
+通常の起動と既定`--verify`の経路は変更しない。`--verify-water`との同時指定は拒否する。
+この検査は一つの記録・中間時刻・viewportの描画接続を確認する。全軌跡・全環境・VRの受入は個別に扱う。
+
 `--verify`は本番の`WaterMaterial`と同じ19 bindings・shader asset・import・vertexを使用し、平坦・Low・Medium・High・Farの固定入力を16×16の`Rgba32Float`へ描画してreadbackする。変位は本番vertexが渡したworld positionと平面の基準UVの差、法線は本番fragmentの導出結果を検査専用ShaderDefで取り出す。色は検査分岐を使わず元のfragment最終出力を使用する。通常起動には検査Material・camera・readbackを登録せず、通常shader variantには検査用の処理・bindingを追加しない。
 
 有限値、単位法線と上向き、共有投影から既に導出した変位上界、平坦入力の零変位、波の空間変動、昼間の黒一色・異常輝度を検査する。RGB8変換より前のfloat値を使用し、GPUの実行成功と色変換の成功を区別する。既存の資源・mip・quality交換・cleanup回帰は保持する。
