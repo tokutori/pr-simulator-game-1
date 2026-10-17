@@ -150,10 +150,12 @@ HUDの内容・幾何・表示条件は共有Rustを使用する。[#258](https:
 OSウィンドウを生成せず、CUIから本番scene・共有UI・水面shaderを描画する場合は、次を実行する。
 
 ```sh
-cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-offscreen --offscreen --verify-size 1280x720
+cargo run -p birdman-game-bevy --locked -- --verify target/bevy-offscreen --offscreen --verify-size 1280x720
 ```
 
 `--offscreen`は`--verify`との併用を必須とする。WinitPluginを登録せず、ScheduleRunnerPluginで実行する。
+描画接続の初回検査は既定dev profileで実行できる。性能計測時はreleaseを使用する。
+オフスクリーンの検証フローは180秒、通常Windowの検証フローは従来の90秒で打ち切る。実ゲームのProcessingDelay条件は変更しない。
 Window componentはviewport寸法と検査用focusの論理metadataとして保持し、OSのWindow handleを生成しない。
 本番のworld、aircraft、camera、UI、Material、shaderと既存の検証手順をそのまま使用し、最終出力と縮小描画の合成先をImageへ接続する。
 PNGの保存完了、float probe、shader/pipeline readiness、開始・Pilot/Chase・一時停止・Result・Retryを検査して終了する。

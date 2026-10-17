@@ -889,6 +889,7 @@ pub(crate) struct Verification {
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
     capture_target: RenderTarget,
+    timeout: Duration,
 }
 
 impl Verification {
@@ -909,6 +910,11 @@ impl Verification {
             }
         };
         let (sender, completion) = VerificationCompletion::channel();
+        let timeout = if matches!(capture_target, RenderTarget::Image(_)) {
+            Duration::from_secs(180)
+        } else {
+            Duration::from_secs(90)
+        };
         Ok((
             Self {
                 directory,
@@ -940,6 +946,7 @@ impl Verification {
                 failure: None,
                 completion: Some(sender),
                 capture_target,
+                timeout,
             },
             completion,
         ))
@@ -1519,7 +1526,7 @@ fn advance_step(
             now
         }
     };
-    if started.elapsed() > Duration::from_secs(90) {
+    if started.elapsed() > verification.timeout {
         return Err(format!(
             "Verification timeout in {:?}: {:?}",
             verification.stage, verification.readiness
@@ -2903,6 +2910,23 @@ mod tests {
         }
         app.world_mut().resource_mut::<super::Verification>().stage = VerificationStage::Launch;
         app
+    }
+
+    #[test]
+    fn offscreen_workflow_has_a_bounded_dev_budget_and_preserves_the_window_budget() {
+        let app = countdown_driver_app();
+        assert_eq!(
+            app.world().resource::<super::Verification>().timeout,
+            Duration::from_secs(90)
+        );
+        let (offscreen, _) = super::Verification::try_new(
+            std::env::temp_dir(),
+            app.world().resource::<bevy::asset::AssetServer>(),
+            None,
+            bevy::camera::RenderTarget::Image(Handle::<Image>::default().into()),
+        )
+        .unwrap();
+        assert_eq!(offscreen.timeout, Duration::from_secs(180));
     }
 
     fn assert_countdown_driver_recovers_cancellation(focused: bool, delta: Duration) {
