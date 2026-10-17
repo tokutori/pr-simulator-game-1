@@ -115,6 +115,28 @@ describe("physical two-tail airframe adapter", () => {
     } finally { airframe.dispose(); }
   });
 
+  it("shows registered preview tails at neutral incidence without changing absent controls", () => {
+    const airframe = createBirdmanAirframe();
+    try {
+      const horizontal = group(airframe, "horizontal-tail-incidence");
+      const vertical = group(airframe, "vertical-tail-incidence");
+      const meshes = [...surfaces(horizontal), ...surfaces(vertical)];
+      expect(horizontal.visible || vertical.visible).toBe(false);
+      airframe.setVisualState(null, { layout: "tail_incidence", physicalIncidence: {
+        horizontalTailRadians: 0.1, verticalTailRadians: -0.2
+      } }, PLAYABLE_GEOMETRY);
+      const origins = [horizontal.position.toArray(), vertical.position.toArray()];
+      airframe.setVisualState(null, { layout: "registered_preview" });
+      expect(horizontal.visible && vertical.visible).toBe(true);
+      expect(horizontal.rotation.x).toBe(0);
+      expect(vertical.rotation.y).toBe(0);
+      expect([horizontal.position.toArray(), vertical.position.toArray()]).toEqual(origins);
+      expect([...surfaces(horizontal), ...surfaces(vertical)]).toEqual(meshes);
+      airframe.setVisualState(null, NO_AIRFRAME_CONTROLS);
+      expect(horizontal.visible || vertical.visible).toBe(false);
+    } finally { airframe.dispose(); }
+  });
+
   it("retains current geometry and controls without rebuilding the surface meshes", () => {
     const airframe = createBirdmanAirframe();
     const controls = Object.freeze({ layout: "tail_incidence" as const, physicalIncidence: Object.freeze({
