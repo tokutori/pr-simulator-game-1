@@ -1,4 +1,4 @@
-//! Pure equirectangular sky radiance ported from the fixed Web reference.
+//! Shared clear-sky radiance and finite world-anchored cumulus billboards.
 
 use birdman_game_format::{EnvironmentFormatError, SkyStateDocument};
 
@@ -6,6 +6,12 @@ use birdman_game_format::{EnvironmentFormatError, SkyStateDocument};
 pub const LAKE_SKY_IMAGE_WIDTH: u32 = 1024;
 /// Vertical resolution of the Web reference panorama.
 pub const LAKE_SKY_IMAGE_HEIGHT: u32 = 512;
+
+/// Upper bound on cloud quads shared by every quality and display backend.
+pub const MAX_LAKE_CLOUDS: usize = 24;
+const CLOUD_TILE_WIDTH: u32 = 256;
+const CLOUD_TILE_HEIGHT: u32 = 128;
+const CLOUD_ATLAS_COLUMNS: u32 = 4;
 
 /// Validated display conditions independent of physical cloud-base metadata.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,7 +136,7 @@ fn cloud_noise(longitude: f64, latitude: f64, columns: i32, rows: i32) -> f64 {
 }
 
 fn cumulus_patches(fraction: f64) -> Vec<CumulusPatch> {
-    let count = (36.0 * fraction / 0.35).round() as usize;
+    let count = ((36.0 * fraction / 0.35).round() as usize).min(MAX_LAKE_CLOUDS);
     let mut state = 0x4f5a_2c91;
     let mut clouds: Vec<CumulusPatch> = Vec::with_capacity(count);
     for _attempt in 0..160 {
@@ -177,51 +183,190 @@ fn cumulus_patches(fraction: f64) -> Vec<CumulusPatch> {
     clouds
 }
 
-fn sky_pixel(
-    longitude: f64,
-    latitude: f64,
-    sun: [f64; 3],
-    daylight: f64,
-    clouds: &[CumulusPatch],
-) -> [u8; 4] {
+fn cloud_pixel(patch: &CumulusPatch, local_column: f64, local_row: f64) -> [u8; 4] {
+    let mut top = 0.18 * (1.0 - local_column * local_column).max(0.0).sqrt();
+    for (lobe, lobe_height) in patch.lobe_heights.iter().enumerate() {
+        let lobe_column = (local_column - patch.lobe_offsets[lobe]) / patch.lobe_widths[lobe];
+        top = top.max(lobe_height * (1.0 - lobe_column * lobe_column).max(0.0).sqrt());
+    }
+    let longitude = patch.longitude + local_column * patch.half_width;
+    let latitude = patch.base + local_row * patch.height;
+    let billow = cloud_noise(longitude, latitude, 150, 75) * 0.55
+        + cloud_noise(longitude, latitude, 400, 200) * 0.45;
+    let edge = smoothstep((top - local_row + (billow - 0.5) * 0.16) / 0.11);
+    let base = smoothstep((local_row + 0.02) / 0.055);
+    let opacity = (edge * base * (0.55 + 0.6 * billow)).clamp(0.0, 1.0);
+    let brightness =
+        (0.23 + 0.58 * local_row / top.max(0.01) + (billow - 0.5) * 0.65).clamp(0.0, 1.0);
+    [
+        (134.0 + 95.0 * brightness).round() as u8,
+        (148.0 + 90.0 * brightness).round() as u8,
+        (157.0 + 80.0 * brightness).round() as u8,
+        (255.0 * opacity).round() as u8,
+    ]
+}
+
+/// One bounded atlas and batched billboard mesh. Positions use local NED metres.
+/// The fixed water surface is down=0. Each vertex is center N/E/D, right/up
+/// offset in metres, and atlas U/V. The view supplies the right/up basis.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LakeClouds {
+    rgba: Vec<u8>,
+    vertices: Vec<[f32; 7]>,
+    indices: Vec<u32>,
+    height: u32,
+    availability: LakeCloudAvailability,
+}
+
+/// Why the finite elevated cloud layer is present or absent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LakeCloudAvailability {
+    /// No sky was recorded; no cloud altitude is invented.
+    Unrecorded,
+    /// The recorded cloud fraction is zero.
+    Clear,
+    /// Cloud base is at the water surface; elevated cumulus cannot represent fog.
+    GroundLevelUnsupported,
+    /// Elevated finite cumulus are represented by the packet.
+    Elevated,
+}
+
+impl LakeClouds {
+    /// Preserves the distinction between clear, absent, and unsupported metadata.
+    pub const fn availability(&self) -> LakeCloudAvailability {
+        self.availability
+    }
+    /// Returns the atlas horizontal resolution.
+    pub const fn width(&self) -> u32 {
+        CLOUD_ATLAS_COLUMNS * CLOUD_TILE_WIDTH
+    }
+
+    /// Returns the atlas vertical resolution.
+    pub const fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Borrows straight-alpha sRGB RGBA pixels; row zero is the bottom edge.
+    pub fn rgba(&self) -> &[u8] {
+        &self.rgba
+    }
+
+    /// Borrows the actual batched mesh, independent of backend coordinate types.
+    pub fn vertices(&self) -> &[[f32; 7]] {
+        &self.vertices
+    }
+
+    /// Borrows the triangle indices into the vertex packet.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+}
+
+/// Generates finite cumulus from recorded sky metadata. Zero cloud base and
+/// absent metadata produce no elevated cumulus; ground fog is not synthesized.
+pub fn generate_lake_clouds(
+    sky: Option<SkyStateDocument>,
+) -> Result<LakeClouds, EnvironmentFormatError> {
+    let (base_m, availability, patches) = if let Some(sky) = sky {
+        LakeSkyRenderCondition::try_from(sky)?;
+        if !sky.cloud_base_m.is_finite() || sky.cloud_base_m < 0.0 {
+            return Err(EnvironmentFormatError::InvalidSky);
+        }
+        if sky.cloud_fraction == 0.0 {
+            (sky.cloud_base_m, LakeCloudAvailability::Clear, Vec::new())
+        } else if sky.cloud_base_m > 0.0 {
+            (
+                sky.cloud_base_m,
+                LakeCloudAvailability::Elevated,
+                cumulus_patches(sky.cloud_fraction),
+            )
+        } else {
+            (
+                0.0,
+                LakeCloudAvailability::GroundLevelUnsupported,
+                Vec::new(),
+            )
+        }
+    } else {
+        (0.0, LakeCloudAvailability::Unrecorded, Vec::new())
+    };
+    let height = (patches.len() as u32).div_ceil(CLOUD_ATLAS_COLUMNS).max(1) * CLOUD_TILE_HEIGHT;
+    let width = CLOUD_ATLAS_COLUMNS * CLOUD_TILE_WIDTH;
+    let mut clouds = LakeClouds {
+        rgba: vec![0; (width * height * 4) as usize],
+        vertices: Vec::with_capacity(patches.len() * 4),
+        indices: Vec::with_capacity(patches.len() * 6),
+        height,
+        availability,
+    };
+    for (index, patch) in patches.iter().enumerate() {
+        let range = base_m / ((patch.base - 0.5) * core::f64::consts::PI).tan();
+        let azimuth = (patch.longitude - 0.5) * core::f64::consts::TAU;
+        let half_width = range * (patch.half_width * core::f64::consts::TAU).tan() * 1.08;
+        let full_height = range * (patch.height * core::f64::consts::PI).tan() * 1.15;
+        let center = [
+            -range * azimuth.sin(),
+            range * azimuth.cos(),
+            -base_m - full_height * 0.5,
+        ]
+        .map(|value| value as f32);
+        let extent = [half_width as f32, (full_height * 0.5) as f32];
+        if !center
+            .iter()
+            .chain(extent.iter())
+            .all(|value| value.is_finite())
+            || extent.iter().any(|value| *value <= 0.0)
+        {
+            return Err(EnvironmentFormatError::InvalidSky);
+        }
+        let column = index as u32 % CLOUD_ATLAS_COLUMNS;
+        let row = index as u32 / CLOUD_ATLAS_COLUMNS;
+        let first = clouds.vertices.len() as u32;
+        for [right, up] in [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]] {
+            let atlas_u = (f64::from(column * CLOUD_TILE_WIDTH)
+                + 0.5
+                + (right + 1.0) * 0.5 * f64::from(CLOUD_TILE_WIDTH - 1))
+                / f64::from(width);
+            let atlas_v = (f64::from(row * CLOUD_TILE_HEIGHT)
+                + 0.5
+                + (up + 1.0) * 0.5 * f64::from(CLOUD_TILE_HEIGHT - 1))
+                / f64::from(height);
+            clouds.vertices.push([
+                center[0],
+                center[1],
+                center[2],
+                right as f32 * extent[0],
+                up as f32 * extent[1],
+                atlas_u as f32,
+                atlas_v as f32,
+            ]);
+        }
+        clouds
+            .indices
+            .extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+        for tile_row in 0..CLOUD_TILE_HEIGHT {
+            for tile_column in 0..CLOUD_TILE_WIDTH {
+                let local_column =
+                    -1.08 + 2.16 * f64::from(tile_column) / f64::from(CLOUD_TILE_WIDTH - 1);
+                let local_row =
+                    -0.07 + 1.15 * f64::from(tile_row) / f64::from(CLOUD_TILE_HEIGHT - 1);
+                let pixel = cloud_pixel(patch, local_column, local_row);
+                let offset = (((row * CLOUD_TILE_HEIGHT + tile_row) * width
+                    + column * CLOUD_TILE_WIDTH
+                    + tile_column)
+                    * 4) as usize;
+                clouds.rgba[offset..offset + 4].copy_from_slice(&pixel);
+            }
+        }
+    }
+    Ok(clouds)
+}
+
+fn sky_pixel(longitude: f64, latitude: f64, sun: [f64; 3], daylight: f64) -> [u8; 4] {
     let angle = (latitude - 0.5) * core::f64::consts::PI;
     let elevation = angle.sin().max(0.0);
     let gradient = elevation.powf(0.72);
     let horizon_haze = (1.0 - smoothstep(elevation / 0.12)) * 3.0;
-    let mut cloud_opacity = 0.0;
-    let mut cloud_brightness = 0.0;
-    if angle > 0.0 && angle < 0.5 {
-        for patch in clouds {
-            let separation = longitude - patch.longitude;
-            let wrapped = if separation.abs() <= 0.5 {
-                separation
-            } else {
-                separation - separation.signum()
-            };
-            let local_column = wrapped / patch.half_width;
-            let local_row = (latitude - patch.base) / patch.height;
-            if local_column.abs() > 1.08 || !(-0.07..=1.08).contains(&local_row) {
-                continue;
-            }
-            let mut top = 0.18 * (1.0 - local_column * local_column).max(0.0).sqrt();
-            for (lobe, lobe_height) in patch.lobe_heights.iter().enumerate() {
-                let lobe_column =
-                    (local_column - patch.lobe_offsets[lobe]) / patch.lobe_widths[lobe];
-                top = top.max(lobe_height * (1.0 - lobe_column * lobe_column).max(0.0).sqrt());
-            }
-            let billow = cloud_noise(longitude, latitude, 150, 75) * 0.55
-                + cloud_noise(longitude, latitude, 400, 200) * 0.45;
-            let edge = smoothstep((top - local_row + (billow - 0.5) * 0.16) / 0.11);
-            let base = smoothstep((local_row + 0.02) / 0.055);
-            let opacity = edge * base * (0.55 + 0.6 * billow);
-            if opacity > cloud_opacity {
-                cloud_opacity = opacity;
-                cloud_brightness =
-                    (0.23 + 0.58 * local_row / top.max(0.01) + (billow - 0.5) * 0.65)
-                        .clamp(0.0, 1.0);
-            }
-        }
-    }
     let azimuth = (longitude - 0.5) * core::f64::consts::TAU;
     let alignment = (angle.cos() * azimuth.cos() * sun[0]
         + angle.sin() * sun[1]
@@ -233,22 +378,15 @@ fn sky_pixel(
         202.0 - 38.0 * gradient + horizon_haze + glow * 0.8,
         215.0 - 10.0 * gradient + horizon_haze + glow * 0.55,
     ];
-    let cloud = [
-        134.0 + 95.0 * cloud_brightness,
-        148.0 + 90.0 * cloud_brightness,
-        157.0 + 80.0 * cloud_brightness,
-    ];
     let rgb = std::array::from_fn::<_, 3, _>(|channel| {
-        (background[channel] * (1.0 - cloud_opacity) + cloud[channel] * cloud_opacity)
-            .clamp(0.0, 255.0)
-            .round() as u8
+        background[channel].clamp(0.0, 255.0).round() as u8
     });
     [rgb[0], rgb[1], rgb[2], 255]
 }
 
 /// Generates the fixed Web panorama without I/O, animation, or physical sky state.
 pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyImage {
-    let (sun, daylight, clouds) = condition.map_or(([0.0, 1.0, 0.0], 0.0, Vec::new()), |sky| {
+    let (sun, daylight) = condition.map_or(([0.0, 1.0, 0.0], 0.0), |sky| {
         let azimuth = sky.sun_azimuth_degrees.to_radians();
         let elevation = sky.sun_elevation_degrees.to_radians();
         (
@@ -258,7 +396,6 @@ pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyIm
                 -elevation.cos() * azimuth.cos(),
             ],
             f64::from(sky.sun_elevation_degrees >= 0.0),
-            cumulus_patches(sky.cloud_fraction),
         )
     });
     let mut rgba = Vec::with_capacity((LAKE_SKY_IMAGE_WIDTH * LAKE_SKY_IMAGE_HEIGHT * 4) as usize);
@@ -266,7 +403,7 @@ pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyIm
         let latitude = (f64::from(row) + 0.5) / f64::from(LAKE_SKY_IMAGE_HEIGHT);
         for column in 0..LAKE_SKY_IMAGE_WIDTH {
             let longitude = (f64::from(column) + 0.5) / f64::from(LAKE_SKY_IMAGE_WIDTH);
-            rgba.extend_from_slice(&sky_pixel(longitude, latitude, sun, daylight, &clouds));
+            rgba.extend_from_slice(&sky_pixel(longitude, latitude, sun, daylight));
         }
     }
     LakeSkyImage { rgba }
@@ -279,15 +416,15 @@ mod tests {
     #[test]
     fn missing_sky_preserves_the_web_neutral_horizon_and_zenith() {
         assert_eq!(
-            sky_pixel(0.5, 0.0, [0.0, 1.0, 0.0], 0.0, &[]),
+            sky_pixel(0.5, 0.0, [0.0, 1.0, 0.0], 0.0),
             [180, 205, 218, 255]
         );
         assert_eq!(
-            sky_pixel(0.5, 0.5, [0.0, 1.0, 0.0], 0.0, &[]),
+            sky_pixel(0.5, 0.5, [0.0, 1.0, 0.0], 0.0),
             [180, 205, 218, 255]
         );
         assert_eq!(
-            sky_pixel(0.5, 1.0, [0.0, 1.0, 0.0], 0.0, &[]),
+            sky_pixel(0.5, 1.0, [0.0, 1.0, 0.0], 0.0),
             [107, 164, 205, 255]
         );
     }
@@ -295,11 +432,11 @@ mod tests {
     #[test]
     fn daylight_gates_the_same_web_sun_glow() {
         assert_eq!(
-            sky_pixel(0.5, 1.0, [0.0, 1.0, 0.0], 1.0, &[]),
+            sky_pixel(0.5, 1.0, [0.0, 1.0, 0.0], 1.0),
             [121, 175, 213, 255]
         );
         assert_eq!(
-            sky_pixel(0.0, 0.5, [1.0, 0.0, 0.0], 1.0, &[]),
+            sky_pixel(0.0, 0.5, [1.0, 0.0, 0.0], 1.0),
             [180, 205, 218, 255]
         );
     }
@@ -309,9 +446,9 @@ mod tests {
         let clouds = cumulus_patches(0.35);
         assert_eq!(clouds, cumulus_patches(0.35));
         assert!(!clouds.is_empty());
-        assert!(clouds.len() <= 36);
+        assert!(clouds.len() <= MAX_LAKE_CLOUDS);
         assert!(cumulus_patches(0.0).is_empty());
-        assert!(cumulus_patches(1.0).len() <= 103);
+        assert!(cumulus_patches(1.0).len() <= MAX_LAKE_CLOUDS);
         for patch in clouds {
             assert!(patch.longitude > patch.half_width);
             assert!(patch.longitude + patch.half_width < 1.0);
@@ -334,15 +471,11 @@ mod tests {
     }
 
     #[test]
-    fn generated_panorama_matches_independent_fixed_web_pixels_within_one_byte() {
+    fn clear_panorama_retains_independent_fixed_web_pixels_without_duplicate_clouds() {
         for (condition, pixels) in [
             (
                 LakeSkyRenderCondition::try_new(240.0, 35.0, 0.35, 28_000.0).unwrap(),
                 [
-                    (200, 308, [221, 231, 230, 255]),
-                    (460, 294, [226, 234, 233, 255]),
-                    (614, 318, [228, 236, 235, 255]),
-                    (867, 308, [222, 231, 231, 255]),
                     (938, 355, [144, 188, 216, 255]),
                     (0, 511, [107, 164, 205, 255]),
                     (1023, 0, [180, 205, 218, 255]),
@@ -351,10 +484,6 @@ mod tests {
             (
                 LakeSkyRenderCondition::try_new(45.0, 20.0, 0.7, 16_000.0).unwrap(),
                 [
-                    (200, 308, [221, 231, 230, 255]),
-                    (279, 315, [225, 233, 232, 255]),
-                    (716, 317, [233, 240, 237, 255]),
-                    (995, 320, [223, 234, 234, 255]),
                     (384, 312, [159, 196, 218, 255]),
                     (0, 511, [107, 164, 205, 255]),
                     (1023, 0, [180, 205, 218, 255]),
@@ -372,6 +501,81 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn cloud_packet_is_bounded_deterministic_and_above_the_recorded_water_datum() {
+        let mut sky = crate::bundled_environment().unwrap().document().sky;
+        sky.cloud_fraction = 1.0;
+        let packet = generate_lake_clouds(Some(sky)).unwrap();
+        assert_eq!(packet, generate_lake_clouds(Some(sky)).unwrap());
+        assert_eq!(packet.availability(), LakeCloudAvailability::Elevated);
+        assert!(!packet.vertices().is_empty());
+        assert!(packet.vertices().len() <= MAX_LAKE_CLOUDS * 4);
+        assert_eq!(packet.indices().len(), packet.vertices().len() / 4 * 6);
+        assert!(
+            packet
+                .indices()
+                .iter()
+                .all(|index| (*index as usize) < packet.vertices().len())
+        );
+        for vertex in packet.vertices() {
+            assert!(vertex.iter().all(|value| value.is_finite()));
+            assert!((-vertex[2] - vertex[4].abs() - sky.cloud_base_m as f32).abs() < 0.001);
+            assert!((0.0..=1.0).contains(&vertex[5]));
+            assert!((0.0..=1.0).contains(&vertex[6]));
+        }
+        assert!(packet.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(packet.rgba().chunks_exact(4).any(|pixel| pixel[3] > 240));
+        let original = packet.vertices()[0];
+        sky.cloud_base_m *= 2.0;
+        let raised = generate_lake_clouds(Some(sky)).unwrap();
+        for (before, after) in original[..5].iter().zip(&raised.vertices()[0][..5]) {
+            assert_eq!(*before * 2.0, *after);
+        }
+        assert_eq!(packet.rgba(), raised.rgba());
+    }
+
+    #[test]
+    fn missing_clear_and_ground_level_clouds_retain_distinct_availability() {
+        let mut sky = crate::bundled_environment().unwrap().document().sky;
+        for (condition, expected) in [
+            (None, LakeCloudAvailability::Unrecorded),
+            (
+                Some(SkyStateDocument {
+                    cloud_fraction: 0.0,
+                    ..sky
+                }),
+                LakeCloudAvailability::Clear,
+            ),
+            (
+                Some(SkyStateDocument {
+                    cloud_base_m: 0.0,
+                    ..sky
+                }),
+                LakeCloudAvailability::GroundLevelUnsupported,
+            ),
+        ] {
+            let packet = generate_lake_clouds(condition).unwrap();
+            assert_eq!(packet.availability(), expected);
+            assert!(packet.vertices().is_empty());
+            assert!(packet.indices().is_empty());
+            assert!(packet.rgba().iter().all(|value| *value == 0));
+        }
+        let original = generate_lake_sky(Some(LakeSkyRenderCondition::try_from(sky).unwrap()));
+        sky.cloud_fraction = 0.0;
+        assert_eq!(
+            original,
+            generate_lake_sky(Some(LakeSkyRenderCondition::try_from(sky).unwrap()))
+        );
+        for invalid in [-1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            sky.cloud_fraction = 0.25;
+            sky.cloud_base_m = invalid;
+            assert_eq!(
+                generate_lake_clouds(Some(sky)),
+                Err(EnvironmentFormatError::InvalidSky)
+            );
         }
     }
 
