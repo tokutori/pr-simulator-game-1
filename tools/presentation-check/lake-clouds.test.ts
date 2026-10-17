@@ -74,7 +74,7 @@ describe("finite shared cloud projection", () => {
     atlas.addEventListener("dispose", () => { throw cause; });
     const geometry = vi.spyOn(mesh.geometry, "dispose");
     const material = vi.spyOn(mesh.material, "dispose");
-    expect(() => disposeLakeClouds(mesh)).toThrow(AggregateError);
+    expect(() => { disposeLakeClouds(mesh); }).toThrow(AggregateError);
     expect(geometry).toHaveBeenCalledTimes(1);
     expect(material).toHaveBeenCalledTimes(1);
   });

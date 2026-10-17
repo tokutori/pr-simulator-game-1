@@ -81,7 +81,7 @@ export function disposeLakeClouds(clouds: Mesh<BufferGeometry, ShaderMaterial>):
   const atlas: unknown = clouds.material.uniforms.cloudAtlas?.value;
   const failures: unknown[] = [];
   for (const release of [() => { if (atlas instanceof DataTexture) atlas.dispose(); },
-    () => clouds.geometry.dispose(), () => clouds.material.dispose()]) {
+    () => { clouds.geometry.dispose(); }, () => { clouds.material.dispose(); }]) {
     try { release(); } catch (cause) { failures.push(cause); }
   }
   if (failures.length > 0) throw new AggregateError(failures, "Cloud projection cleanup failed");

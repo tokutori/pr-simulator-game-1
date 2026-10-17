@@ -865,7 +865,7 @@ export function createThreeRenderer(
       activeSkyCondition = nextCondition;
       screenAuto?.invalidate("quality_changed");
       const failures: unknown[] = [];
-      for (const release of [() => disposeLakeClouds(previousClouds), () => previousTexture.dispose()]) {
+      for (const release of [() => { disposeLakeClouds(previousClouds); }, () => { previousTexture.dispose(); }]) {
         try { release(); } catch (cause) { failures.push(cause); }
       }
       if (failures.length > 0) throw new AggregateError(failures, "Previous sky projection cleanup failed");

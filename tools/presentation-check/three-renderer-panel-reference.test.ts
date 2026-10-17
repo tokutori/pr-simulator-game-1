@@ -605,14 +605,14 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     atlas.addEventListener("dispose", () => { throw new Error("atlas cleanup"); });
     const oldTextureCleanup = vi.spyOn(previousTexture, "dispose");
     const next = { ...condition, cloudBaseMeters: 3000 };
-    expect(() => bundle.renderer.setLakeSkyCondition(next)).toThrow(AggregateError);
+    expect(() => { bundle.renderer.setLakeSkyCondition(next); }).toThrow(AggregateError);
     const committed = driver.scene?.getObjectByName("world-clouds");
     expect(Object.is(committed, previousCloud)).toBe(false);
     expect(Object.is(driver.scene?.background, previousTexture)).toBe(false);
     expect(oldTextureCleanup).toHaveBeenCalledTimes(1);
-    expect(() => bundle.renderer.setLakeSkyCondition(next)).not.toThrow();
+    expect(() => { bundle.renderer.setLakeSkyCondition(next); }).not.toThrow();
     expect(Object.is(driver.scene?.getObjectByName("world-clouds"), committed)).toBe(true);
-    expect(() => bundle.renderer.setLakeSkyCondition(null)).not.toThrow();
+    expect(() => { bundle.renderer.setLakeSkyCondition(null); }).not.toThrow();
   });
 
   it("defers a view-phase sky change and explicit unavailable reset until the next frame", () => {
