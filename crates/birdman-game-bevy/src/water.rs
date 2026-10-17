@@ -19,6 +19,7 @@ use bevy::{
         DownsampleShaders, MipGenerationJobs, MipGenerationPhaseId, MipGenerationPipelines,
         generate_mips_for_phase,
     },
+    ecs::system::SystemParam,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, VertexAttributeValues},
     prelude::*,
@@ -585,20 +586,25 @@ pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
 #[derive(Component)]
 pub(crate) struct NearWaterSurface;
 
+#[derive(SystemParam)]
+pub(crate) struct EnvironmentAssets<'w> {
+    materials: ResMut<'w, Assets<WaterMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    cloud_materials: ResMut<'w, Assets<super::clouds::CloudMaterial>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+}
+
 pub(crate) fn apply_environment(
     session: Res<NativeSession>,
     quality: Res<WaterQualitySelection>,
     mut presentation: ResMut<NativeEnvironment>,
-    mut materials: ResMut<Assets<WaterMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    assets: EnvironmentAssets,
     mut surfaces: Query<(
         &EnvironmentSurface,
         &MeshMaterial3d<WaterMaterial>,
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
-    mut cloud_materials: ResMut<Assets<super::clouds::CloudMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut clouds: Query<
         (&mut Mesh3d, &MeshMaterial3d<super::clouds::CloudMaterial>),
         With<super::clouds::CloudLayer>,
@@ -613,6 +619,12 @@ pub(crate) fn apply_environment(
     {
         return;
     }
+    let EnvironmentAssets {
+        mut materials,
+        mut images,
+        mut cloud_materials,
+        mut meshes,
+    } = assets;
     let result = (|| {
         let resolved = target.resolve()?;
         let condition = resolved.condition();
