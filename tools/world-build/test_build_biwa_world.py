@@ -1,6 +1,9 @@
+import hashlib
+import json
+from pathlib import Path
 import unittest
 
-from build_biwa_world import FINE_PATCHES, shoreline_land_side, simplify_closed_ring, supplemental_land_height
+from build_biwa_world import FINE_PATCHES, build_camera_points, shoreline_land_side, simplify_closed_ring, supplemental_land_height
 
 
 class ShorelineLandSideTests(unittest.TestCase):
@@ -71,6 +74,17 @@ class LaunchShoreTerrainCoverageTests(unittest.TestCase):
         self.assertGreaterEqual(int(patch["northMinMeters"]) + (int(patch["rows"]) - 1) * 10, 16_464)
         self.assertLessEqual(int(patch["eastMinMeters"]), -6_147)
         self.assertGreaterEqual(int(patch["eastMinMeters"]) + (int(patch["columns"]) - 1) * 10, -6_099)
+
+
+class RegisteredCameraPointTests(unittest.TestCase):
+    def test_asset_retains_generated_camera_points_and_their_hash(self) -> None:
+        path = Path(__file__).resolve().parents[2] / "assets" / "biwa-analysis-map.json"
+        asset = json.loads(path.read_text(encoding="utf-8"))
+        points = build_camera_points()
+        self.assertEqual(asset["cameraPoints"], points)
+        self.assertEqual(asset["cameraPointsSha256"], hashlib.sha256(
+            json.dumps(points, separators=(",", ":")).encode("utf-8")).hexdigest())
+
 
 if __name__ == "__main__":
     unittest.main()

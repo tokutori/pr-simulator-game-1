@@ -130,7 +130,7 @@ fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
     for (camera, position, fov) in [
         (GameUiReplayCamera::Platform, [-18.0, 14.0, 16.0], 60.0),
         (GameUiReplayCamera::Shore, [250.0, 10.0, 0.0], 40.0),
-        (GameUiReplayCamera::Telephoto, [700.0, 55.0, -300.0], 24.0),
+        (GameUiReplayCamera::Telephoto, [700.0, 80.0, -300.0], 24.0),
     ] {
         let cinematic = view(&record, 0.0, camera).cinematic.unwrap();
         assert_eq!(cinematic.position_m, position);
