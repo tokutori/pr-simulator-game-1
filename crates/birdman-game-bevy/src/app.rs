@@ -8,6 +8,8 @@ mod frame_rate;
 mod mip_filter;
 #[path = "native_session.rs"]
 mod native_session;
+#[path = "offscreen.rs"]
+mod offscreen;
 #[path = "projection.rs"]
 mod projection;
 #[path = "screen_render.rs"]
@@ -28,12 +30,14 @@ mod world;
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
 use bevy::{
+    app::ScheduleRunnerPlugin,
     camera::CameraUpdateSystems,
     ecs::schedule::common_conditions::any_match_filter,
     input::{ButtonState, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion},
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
-    window::{PresentMode, PrimaryWindow},
+    window::{ExitCondition, PresentMode, PrimaryWindow},
+    winit::WinitPlugin,
 };
 use birdman_game_core::{PHYSICS_HZ, SessionPhase};
 use native_session::{FlightInput, NativeSession};
@@ -61,9 +65,11 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_size = None;
     let mut water_verification = None;
     let mut no_vsync = false;
+    let mut offscreen = false;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
+            "--offscreen" => offscreen = true,
             "--font" => {
                 font_path = arguments
                     .next()
@@ -93,7 +99,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--verify-size: 検査windowの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
+                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
                 );
                 return Ok(());
             }
@@ -105,6 +111,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     }
     if water_verification.is_some() && verification_directory.is_none() {
         return Err("--verify-water requires --verify DIR".into());
+    }
+    if offscreen && verification_directory.is_none() {
+        return Err("--offscreen requires --verify DIR".into());
     }
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
@@ -120,31 +129,46 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("水面shader assetがない".into());
     }
     let mut app = App::new();
-    app.add_plugins(
-        DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(primary_window(verification_size, no_vsync)),
-                ..default()
-            })
-            .set(AssetPlugin {
-                file_path: assets_path.to_string_lossy().into_owned(),
-                ..default()
-            }),
-    )
-    .add_plugins((
-        MaterialPlugin::<water::WaterMaterial>::default(),
-        bevy::input_focus::tab_navigation::TabNavigationPlugin,
-        screen_render::timing::ScreenTimingPlugin {
-            full_diagnostics: water_verification.is_some(),
-        },
-    ))
-    .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
-    .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
-    .init_resource::<NativeSession>()
-    .init_resource::<FlightInput>()
-    .init_resource::<water_quality::WaterQualitySelection>()
-    .init_resource::<screen_render::NativeScreenRender>()
-    .init_resource::<CameraMode>();
+    let plugins = DefaultPlugins
+        .set(WindowPlugin {
+            primary_window: Some(primary_window(verification_size, no_vsync)),
+            exit_condition: if offscreen {
+                ExitCondition::DontExit
+            } else {
+                ExitCondition::OnAllClosed
+            },
+            ..default()
+        })
+        .set(AssetPlugin {
+            file_path: assets_path.to_string_lossy().into_owned(),
+            ..default()
+        });
+    let plugins = if offscreen {
+        plugins.disable::<WinitPlugin>()
+    } else {
+        plugins
+    };
+    app.add_plugins(plugins)
+        .add_plugins((
+            MaterialPlugin::<water::WaterMaterial>::default(),
+            bevy::input_focus::tab_navigation::TabNavigationPlugin,
+            screen_render::timing::ScreenTimingPlugin {
+                full_diagnostics: water_verification.is_some(),
+            },
+        ))
+        .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
+        .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
+        .init_resource::<NativeSession>()
+        .init_resource::<FlightInput>()
+        .init_resource::<water_quality::WaterQualitySelection>()
+        .init_resource::<screen_render::NativeScreenRender>()
+        .init_resource::<CameraMode>();
+    if offscreen {
+        offscreen::configure(&mut app, verification_size.unwrap_or((1280, 720)))?;
+        app.add_plugins(ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::from_secs_f64(1.0 / 60.0),
+        ));
+    }
     mip_filter::configure(app.world_mut())?;
     app.init_resource::<frame_rate::FrameRate>();
     let render_app = app
@@ -170,6 +194,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             Startup,
             (
                 world::setup_world,
+                offscreen::redirect_main_camera,
                 water_reflection::setup_reflection,
                 ui::setup_ui,
             )
@@ -221,6 +246,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             directory,
             app.world().resource::<AssetServer>(),
             water_verification,
+            offscreen::output_target(app.world()),
         )?;
         verification_completion = Some(completion);
         app.insert_resource(verification)

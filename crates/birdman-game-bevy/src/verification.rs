@@ -888,6 +888,8 @@ pub(crate) struct Verification {
     auto_capture_scale: Option<ScreenRenderScale>,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
+    capture_target: RenderTarget,
+    timeout: Duration,
 }
 
 impl Verification {
@@ -895,6 +897,7 @@ impl Verification {
         directory: PathBuf,
         asset_server: &AssetServer,
         water_case: Option<WaterVerificationCase>,
+        capture_target: RenderTarget,
     ) -> Result<(Self, VerificationCompletion), std::io::Error> {
         std::fs::create_dir_all(&directory)?;
         let material_shader = match StandardMaterial::fragment_shader() {
@@ -907,6 +910,11 @@ impl Verification {
             }
         };
         let (sender, completion) = VerificationCompletion::channel();
+        let timeout = if matches!(capture_target, RenderTarget::Image(_)) {
+            Duration::from_secs(180)
+        } else {
+            Duration::from_secs(90)
+        };
         Ok((
             Self {
                 directory,
@@ -937,6 +945,8 @@ impl Verification {
                 auto_capture_scale: None,
                 failure: None,
                 completion: Some(sender),
+                capture_target,
+                timeout,
             },
             completion,
         ))
@@ -969,22 +979,24 @@ impl Verification {
         self.capture_serial += 1;
         let identity = self.capture_identity();
         self.capture = CaptureState::Requested(identity);
-        commands.spawn(Screenshot::primary_window()).observe(
-            move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
-                if verification.failure.is_some()
-                    || !verification
-                        .capture
-                        .accepts(identity, verification.capture_identity())
-                {
-                    return;
-                }
-                let image = capture.image.clone();
-                let path = path.clone();
-                let task = AsyncComputeTaskPool::get()
-                    .spawn(async move { save_capture(identity, image, path) });
-                verification.capture = CaptureState::Saving { identity, task };
-            },
-        );
+        commands
+            .spawn(Screenshot(self.capture_target.clone()))
+            .observe(
+                move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
+                    if verification.failure.is_some()
+                        || !verification
+                            .capture
+                            .accepts(identity, verification.capture_identity())
+                    {
+                        return;
+                    }
+                    let image = capture.image.clone();
+                    let path = path.clone();
+                    let task = AsyncComputeTaskPool::get()
+                        .spawn(async move { save_capture(identity, image, path) });
+                    verification.capture = CaptureState::Saving { identity, task };
+                },
+            );
     }
 
     fn capture_identity(&self) -> CaptureIdentity {
@@ -1259,6 +1271,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
     rendering: Res<'w, NativeScreenRender>,
+    offscreen: Option<Res<'w, super::offscreen::OffscreenTarget>>,
     images: Res<'w, Assets<Image>>,
     scene_cameras: Query<
         'w,
@@ -1349,6 +1362,14 @@ impl VerificationPresentation<'_, '_> {
             UVec2::from_array(expected.physical_size(window_extent.x, window_extent.y));
         let extent = match target {
             RenderTarget::Window(_) if expected == ScreenRenderScale::Full => window_extent,
+            RenderTarget::Image(_)
+                if expected == ScreenRenderScale::Full
+                    && self.offscreen.as_ref().is_some_and(|output| {
+                        output.target().normalize(None) == target.normalize(None)
+                    }) =>
+            {
+                window_extent
+            }
             RenderTarget::Image(handle) if expected != ScreenRenderScale::Full => self
                 .images
                 .get(&handle.handle)
@@ -1505,7 +1526,7 @@ fn advance_step(
             now
         }
     };
-    if started.elapsed() > Duration::from_secs(90) {
+    if started.elapsed() > verification.timeout {
         return Err(format!(
             "Verification timeout in {:?}: {:?}",
             verification.stage, verification.readiness
@@ -2868,6 +2889,7 @@ mod tests {
             std::env::temp_dir(),
             app.world().resource::<AssetServer>(),
             None,
+            bevy::camera::RenderTarget::default(),
         )
         .unwrap();
         verification.stage = VerificationStage::Finished;
@@ -2888,6 +2910,23 @@ mod tests {
         }
         app.world_mut().resource_mut::<super::Verification>().stage = VerificationStage::Launch;
         app
+    }
+
+    #[test]
+    fn offscreen_workflow_has_a_bounded_dev_budget_and_preserves_the_window_budget() {
+        let app = countdown_driver_app();
+        assert_eq!(
+            app.world().resource::<super::Verification>().timeout,
+            Duration::from_secs(90)
+        );
+        let (offscreen, _) = super::Verification::try_new(
+            std::env::temp_dir(),
+            app.world().resource::<bevy::asset::AssetServer>(),
+            None,
+            bevy::camera::RenderTarget::Image(Handle::<Image>::default().into()),
+        )
+        .unwrap();
+        assert_eq!(offscreen.timeout, Duration::from_secs(180));
     }
 
     fn assert_countdown_driver_recovers_cancellation(focused: bool, delta: Duration) {
