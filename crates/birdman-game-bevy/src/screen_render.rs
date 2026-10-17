@@ -162,6 +162,7 @@ fn apply_request(
 
 fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), ScreenRenderFailure> {
     let current = world.resource::<NativeScreenRender>().target.clone();
+    let output_target = super::offscreen::output_target(world);
     let window_extent = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .single(world)
@@ -191,7 +192,7 @@ fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), Scr
         }
         world
             .entity_mut(camera_entity)
-            .insert((RenderTarget::default(), IsDefaultUiCamera));
+            .insert((output_target, IsDefaultUiCamera));
         world
             .get_mut::<Camera>(camera_entity)
             .unwrap()
@@ -236,6 +237,7 @@ fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), Scr
             let composition_camera = world
                 .spawn((
                     Camera2d,
+                    output_target,
                     Camera {
                         order: 1,
                         ..default()
@@ -733,6 +735,58 @@ mod tests {
             panic!("expected reduced target");
         };
         target.clone()
+    }
+
+    #[test]
+    fn offscreen_scale_changes_compose_into_the_same_output_and_restore_it() {
+        let (mut app, _, camera, _) = app();
+        super::super::offscreen::configure(&mut app, (1281, 721)).unwrap();
+        super::super::offscreen::redirect_main_camera(app.world_mut());
+        let output = super::super::offscreen::output_target(app.world());
+        for scale in [ScreenRenderScale::ThreeQuarters, ScreenRenderScale::Half] {
+            apply_scale(app.world_mut(), scale).unwrap();
+            app.update();
+            let target = reduced(app.world());
+            assert_eq!(
+                app.world()
+                    .get::<RenderTarget>(target.composition_camera)
+                    .unwrap()
+                    .normalize(None),
+                output.normalize(None)
+            );
+            assert_ne!(
+                app.world()
+                    .get::<RenderTarget>(camera)
+                    .unwrap()
+                    .normalize(None),
+                output.normalize(None)
+            );
+        }
+        apply_scale(app.world_mut(), ScreenRenderScale::Full).unwrap();
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RenderTarget>(camera)
+                .unwrap()
+                .normalize(None),
+            output.normalize(None)
+        );
+        let RenderTarget::Image(target) = output else {
+            panic!("Offscreen output must remain an Image");
+        };
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(&target.handle)
+                .is_some()
+        );
+        assert_eq!(
+            app.world()
+                .get::<Camera>(camera)
+                .unwrap()
+                .logical_viewport_size(),
+            Some(Vec2::new(1281.0, 721.0))
+        );
     }
 
     #[test]
