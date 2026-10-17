@@ -724,6 +724,14 @@ def write_json(path: Path, payload: object) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def build_camera_points() -> list[dict[str, int | str]]:
+    return [
+        {"id": "platform", "northMeters": -16, "eastMeters": -18, "altitudeMeters": 14},
+        {"id": "shore", "northMeters": 0, "eastMeters": 250, "altitudeMeters": 10},
+        {"id": "telephoto", "northMeters": 300, "eastMeters": 700, "altitudeMeters": 80},
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("osm", type=Path)
@@ -759,11 +767,7 @@ def main() -> None:
         for fragment in clip_polyline(line, analysis_bounds):
             if len(fragment) >= 2:
                 analysis_shorelines.append(simplify(fragment, 2.0))
-    camera_points = [
-        {"id": "platform", "northMeters": -16, "eastMeters": -18, "altitudeMeters": 14},
-        {"id": "shore", "northMeters": 0, "eastMeters": 250, "altitudeMeters": 10},
-        {"id": "telephoto", "northMeters": 300, "eastMeters": 700, "altitudeMeters": 55},
-    ]
+    camera_points = build_camera_points()
     analysis_map = {
         "schemaVersion": 1,
         "originWgs84": {"latitudeDegrees": ORIGIN_LAT, "longitudeDegrees": ORIGIN_LON},
@@ -779,7 +783,7 @@ def main() -> None:
         "shorelinesNorthEastMeters": [[[round(n, 1), round(e, 1)] for n, e in line] for line in analysis_shorelines],
         "cameraPoints": camera_points,
         "cameraPointsSha256": hashlib.sha256(json.dumps(camera_points, separators=(",", ":")).encode("utf-8")).hexdigest(),
-        "cameraPointNote": "Art-directed nearby viewpoints based on OSM shoreline and AW3D30 terrain; approximate, not surveyed.",
+        "cameraPointNote": "Art-directed nearby viewpoints based on OSM shoreline and AW3D30 terrain; approximate, not surveyed. Telephoto altitude is rounded up to 80 m above water to clear the regional 30 m terrain along the nominal 0/100/200 m northwest glide sightlines by at least 2 m; this is a rendering adjustment, not a surveyed tower or a physical parameter.",
     }
     shoreline = {
         "schemaVersion": 3,

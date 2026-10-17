@@ -60,6 +60,7 @@ ReplayではScreen/VRの両方でcamera rigを手動選択できる。VRの自�
 BPG-022の合成worldでは、定点rigの位置をversion・origin・camera_pointsのSHA-256を持つworld metadataに登録する。追従rigとOrbitは記録時刻から位置を導出し、seek後も同じ時刻で同じposeへ戻る。
 CameraModeごとのGameSceneを作らない。Replay/AttractのgeometryとDirectorは `birdman-game-session::replay_camera` に配置し、既存Webの7種類のcinematic rigとAuto/Attract規則を正本として共有する。Web/WASMとBevyは同じrecord/timeから導出されたcamera/FOVを各描画APIへ投影する。Webの要求ID、record世代、context検査は既存のReplay取得経路を使用し、機体・尾翼・風・airspeedとcameraを同一sampleの応答として保持する。
 定点rigの位置とIDはworld assetの `camera_points` に保存し、origin/version/hashを共有する。
+登録Telephotoの水平位置はN=300 m・E=700 m、高度は水面上80 mとする。regional 30 m地形の実三角形に対し、315度方向の0/100/200 m地点への視線が2 m以上上方を通るよう表示用高度を切り上げた値である。地表約58.667 mと近傍の約71.5 mの隆起を考慮する。測量済みcamera塔の高さや物理parameterは意味しない。Web/Bevyは同じ登録値を使用し、任意の飛行軌跡の無遮蔽までは保証しない。
 Platform/shore/telephotoのtarget追従は共通rigのパラメータとして扱う。
 機体追従rigにも位置offset、FOV、追従係数、利用範囲を持たせ、無意味なclass細分化を避ける。
 

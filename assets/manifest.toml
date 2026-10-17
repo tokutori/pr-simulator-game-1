@@ -92,13 +92,13 @@ processing = "tools/world-build/build_biwa_world.py; origin WGS84 35.294075,136.
 
 [[assets]]
 path = "assets/biwa-analysis-map.json"
-sha256 = "1eb207b851062f20a200b662cc477994f490b3e7f9a0f39e4ffa66e1a87c3bd9"
+sha256 = "e1ccf3a65fcdb9869cd34996d20cb81a216e9fbe7534999b1b0488e489c0646e"
 source = "OpenStreetMap Lake Biwa relation 63499, local shoreline crop around the Hikone launch point"
 source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
 license = "ODbL-1.0"
 license_url = "https://opendatacommons.org/licenses/odbl/1-0/"
 attribution = "© OpenStreetMap contributors"
-processing = "tools/world-build/build_biwa_world.py; 3 km × 3 km shoreline crop; local NED camera points are approximate, not surveyed; point hash recorded in asset"
+processing = "tools/world-build/build_biwa_world.py; 3 km × 3 km shoreline crop; local NED camera points are approximate, not surveyed; Telephoto 80 m above water is an art-directed altitude with 2 m regional-terrain sightline clearance on the nominal 0/100/200 m northwest glide course; point hash recorded in asset"
 
 [[assets]]
 path = "assets/biwa-terrain.json"
