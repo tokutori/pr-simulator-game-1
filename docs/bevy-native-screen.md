@@ -147,6 +147,19 @@ HUDの内容・幾何・表示条件は共有Rustを使用する。[#258](https:
 
 ## GPU接続の検査
 
+OSウィンドウを生成せず、CUIから本番scene・共有UI・水面shaderを描画する場合は、次を実行する。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-offscreen --offscreen --verify-size 1280x720
+```
+
+`--offscreen`は`--verify`との併用を必須とする。WinitPluginを登録せず、ScheduleRunnerPluginで実行する。
+Window componentはviewport寸法と検査用focusの論理metadataとして保持し、OSのWindow handleを生成しない。
+本番のworld、aircraft、camera、UI、Material、shaderと既存の検証手順をそのまま使用し、最終出力と縮小描画の合成先をImageへ接続する。
+PNGの保存完了、float probe、shader/pipeline readiness、開始・Pilot/Chase・一時停止・Result・Retryを検査して終了する。
+出力先の画像を確認し、実GPU/driverでの描画結果と物理入力・OS focus・通常表示の性能を分けて評価する。
+オフスクリーンの描画成功はVR、物理keyboard/mouse操作、通常Windowでの80 FPS達成を保証しない。
+
 `--verify`は本番の`WaterMaterial`と同じ19 bindings・shader asset・import・vertexを使用し、平坦・Low・Medium・High・Farの固定入力を16×16の`Rgba32Float`へ描画してreadbackする。変位は本番vertexが渡したworld positionと平面の基準UVの差、法線は本番fragmentの導出結果を検査専用ShaderDefで取り出す。色は検査分岐を使わず元のfragment最終出力を使用する。通常起動には検査Material・camera・readbackを登録せず、通常shader variantには検査用の処理・bindingを追加しない。
 
 有限値、単位法線と上向き、共有投影から既に導出した変位上界、平坦入力の零変位、波の空間変動、昼間の黒一色・異常輝度を検査する。RGB8変換より前のfloat値を使用し、GPUの実行成功と色変換の成功を区別する。既存の資源・mip・quality交換・cleanup回帰は保持する。
