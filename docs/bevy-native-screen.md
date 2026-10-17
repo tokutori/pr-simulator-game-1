@@ -230,6 +230,8 @@ observerはPause・Result・Retryで無効化する。Pause中のcore state・re
 保持するsave taskは1件とし、case・stage・serialを照合した保存完了後だけ次段階へ進む。
 区間外のProcessingDelayは既存の安全停止と明示的な回復経路を維持する。GPU readbackの負荷は別途計測する。
 水面検証processだけに公式`FrameTimeDiagnosticsPlugin`と`RenderDiagnosticsPlugin`を追加する。
+この明示検証ではManual 100%でも既存`screen_work` root spanを記録し、Auto判定や描画倍率を変更しない。
+通常Manualではroot spanを実行しない。root GPU時間はRenderGraphの描画命令区間であり、準備・upload、後段のscreenshot/readback、present待機を含まない。
 `frame_time`と各`elapsed_cpu`/`elapsed_gpu`の既存履歴を4096件へ拡張し、Motion区間終了時、撮影要求前に
 既存stage開始時刻以後に受領した標本のcount・時間幅・mean・nearest-rank p95・maxをmsで出力する。
 履歴が満杯で最古標本が開始境界以後にある場合、容量不足として分布不完全を明記する。非finite・負値を除いた
@@ -239,6 +241,8 @@ render CPU/GPUの時刻はMainへの診断受領時刻であり、同Motion内�
 画像の時間的aliasing・optic flow・白波OFF/ONは、native表示の直接観測と実GPU画像で評価する。
 開始・終了画像だけを連続表示の受入根拠にしない。
 このcamera-only観測とscene/pass計測は、物理入力応答、描画FPS非依存性、80 FPSやrelease予算の達成を証明しない。
+`--offscreen`ではrunnerが更新周期を最低16.67 msへ制限するため、Real周期から80 FPS throughputを受け入れない。
+WindowのPresentModeはこのmodeの論理metadataである。画像targetには実際のpresent待機がなく、Real周期にはCPU・RenderApp同期・GPU backpressure等の影響が残る。
 6条件の実行・画像評価結果は実施後に記録する。
 
 ## 検証状態

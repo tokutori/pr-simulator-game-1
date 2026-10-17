@@ -44,7 +44,8 @@ impl Plugin for ScreenTimingPlugin {
     fn build(&self, app: &mut App) {
         assert!(!app.is_plugin_added::<RenderDiagnosticsPlugin>());
         RenderDiagnosticsPlugin.build(app);
-        app.init_resource::<TimingReadout>();
+        app.init_resource::<TimingReadout>()
+            .insert_resource(FullDiagnostics(self.full_diagnostics));
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .insert_resource(FullDiagnostics(self.full_diagnostics))
@@ -141,11 +142,12 @@ impl FromWorld for MetadataBuffer {
 fn extract_packet(
     mut commands: Commands,
     rendering: Extract<Res<NativeScreenRender>>,
+    full_diagnostics: Extract<Res<FullDiagnostics>>,
     time: Extract<Res<Time<Real>>>,
     frame: Extract<Res<FrameCount>>,
     windows: Extract<Query<&Window, With<PrimaryWindow>>>,
 ) {
-    let active = rendering.measuring()
+    let active = (full_diagnostics.0 || rendering.measuring())
         && windows.single().is_ok_and(|window| {
             window.focused && window.visible && window.resolution.physical_size().min_element() > 0
         })
@@ -447,6 +449,59 @@ mod tests {
         assert!(supported(
             WgpuFeatures::TIMESTAMP_QUERY | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
         ));
+    }
+
+    #[test]
+    fn explicit_diagnostics_measure_manual_without_changing_auto_policy_or_safety_gates() {
+        use bevy::render::MainWorld;
+
+        for (full, automatic, focused, visible, area, delta_ms, expected) in [
+            (false, false, true, true, true, 16, false),
+            (false, true, true, true, true, 16, true),
+            (true, false, true, true, true, 16, true),
+            (true, true, true, true, true, 16, true),
+            (true, false, false, true, true, 16, false),
+            (true, false, true, false, true, 16, false),
+            (true, false, true, true, false, 16, false),
+            (true, false, true, true, true, 1_000, false),
+        ] {
+            let mut source = MainWorld::default();
+            let mut rendering = NativeScreenRender::default();
+            if automatic {
+                rendering.controller.select_auto(true, 0.0).unwrap();
+            }
+            let before = rendering.snapshot();
+            let mut time = Time::<Real>::default();
+            time.advance_by(Duration::from_millis(delta_ms));
+            source.insert_resource(rendering);
+            source.insert_resource(FullDiagnostics(full));
+            source.insert_resource(time);
+            source.insert_resource(FrameCount(42));
+            source.spawn((
+                Window {
+                    focused,
+                    visible,
+                    resolution: if area { (1280, 720) } else { (0, 0) }.into(),
+                    ..default()
+                },
+                PrimaryWindow,
+            ));
+            let mut app = App::new();
+            app.insert_resource(source)
+                .add_systems(Update, extract_packet);
+            app.update();
+            let packet = app.world().resource::<TimingPacket>();
+            assert_eq!(packet.active, expected);
+            assert_eq!(packet.frame, 42);
+            assert_eq!(packet.source_ms, delta_ms);
+            assert_eq!(
+                app.world()
+                    .resource::<MainWorld>()
+                    .resource::<NativeScreenRender>()
+                    .snapshot(),
+                before
+            );
+        }
     }
 
     #[derive(Resource, Default)]
