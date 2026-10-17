@@ -19,6 +19,7 @@ use bevy::{
         DownsampleShaders, MipGenerationJobs, MipGenerationPhaseId, MipGenerationPipelines,
         generate_mips_for_phase,
     },
+    ecs::system::SystemParam,
     image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor},
     mesh::{Indices, VertexAttributeValues},
     prelude::*,
@@ -585,18 +586,29 @@ pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
 #[derive(Component)]
 pub(crate) struct NearWaterSurface;
 
+#[derive(SystemParam)]
+pub(crate) struct EnvironmentAssets<'w> {
+    materials: ResMut<'w, Assets<WaterMaterial>>,
+    images: ResMut<'w, Assets<Image>>,
+    cloud_materials: ResMut<'w, Assets<super::clouds::CloudMaterial>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+}
+
 pub(crate) fn apply_environment(
     session: Res<NativeSession>,
     quality: Res<WaterQualitySelection>,
     mut presentation: ResMut<NativeEnvironment>,
-    mut materials: ResMut<Assets<WaterMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    assets: EnvironmentAssets,
     mut surfaces: Query<(
         &EnvironmentSurface,
         &MeshMaterial3d<WaterMaterial>,
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
+    mut clouds: Query<
+        (&mut Mesh3d, &MeshMaterial3d<super::clouds::CloudMaterial>),
+        With<super::clouds::CloudLayer>,
+    >,
 ) {
     let target = EnvironmentTarget::project(
         session.game.core_session().snapshot().phase(),
@@ -607,6 +619,12 @@ pub(crate) fn apply_environment(
     {
         return;
     }
+    let EnvironmentAssets {
+        mut materials,
+        mut images,
+        mut cloud_materials,
+        mut meshes,
+    } = assets;
     let result = (|| {
         let resolved = target.resolve()?;
         let condition = resolved.condition();
@@ -670,6 +688,16 @@ pub(crate) fn apply_environment(
             .map_err(EnvironmentFailure::WavePreparation)?;
         let sky_image =
             prepare_sky_image(high.sky_condition).map_err(EnvironmentFailure::WavePreparation)?;
+        let cloud_packet =
+            super::clouds::prepare(condition.sky).map_err(EnvironmentFailure::WavePreparation)?;
+        let (mut cloud_mesh, cloud_handle) = clouds.single_mut().map_err(|_| {
+            EnvironmentFailure::WavePreparation("有限cloud layerが欠損または重複した".into())
+        })?;
+        let mut cloud_material = cloud_materials
+            .get_mut(cloud_handle.0.id())
+            .ok_or_else(|| {
+                EnvironmentFailure::WavePreparation("有限cloud materialが欠損した".into())
+            })?;
         let direction = prepared[EnvironmentSurface::Sky.index()]
             .sun_cloud
             .truncate();
@@ -697,6 +725,13 @@ pub(crate) fn apply_environment(
         for image in previous_images {
             images.remove(image);
         }
+        super::clouds::replace(
+            &mut meshes,
+            &mut images,
+            &mut cloud_mesh,
+            &mut cloud_material,
+            cloud_packet,
+        );
         *transform = sunlight;
         light.illuminance = if condition
             .sky
@@ -854,6 +889,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
@@ -931,11 +967,24 @@ mod tests {
         })
     }
 
-    fn environment_image_ids(material: &WaterMaterial) -> [AssetId<Image>; 3] {
+    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 4] {
+        let material = &environment_materials(app)[EnvironmentSurface::Near.index()];
+        let world = app.world_mut();
+        let cloud = world.query_filtered::<
+            &MeshMaterial3d<super::super::clouds::CloudMaterial>,
+            With<super::super::clouds::CloudLayer>,
+        >().single(world).unwrap().0.id();
+        let cloud_atlas = world
+            .resource::<Assets<super::super::clouds::CloudMaterial>>()
+            .get(cloud)
+            .unwrap()
+            .atlas
+            .id();
         [
             material.detail_near.as_ref().unwrap().id(),
             material.detail_far.as_ref().unwrap().id(),
             material.sky_texture.as_ref().unwrap().id(),
+            cloud_atlas,
         ]
     }
 
@@ -944,8 +993,7 @@ mod tests {
         original: &[AssetId<Image>],
         retired: &[AssetId<Image>],
     ) {
-        let current =
-            environment_image_ids(&environment_materials(app)[EnvironmentSurface::Near.index()]);
+        let current = environment_image_ids(app);
         let images = app.world().resource::<Assets<Image>>();
         assert_eq!(images.len(), original.len());
         assert!(retired.iter().all(|image| images.get(*image).is_none()));
@@ -976,7 +1024,7 @@ mod tests {
             .unwrap();
         let before = environment_materials(&mut app);
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
-        let retired_images = environment_image_ids(&before[EnvironmentSurface::Near.index()]);
+        let retired_images = environment_image_ids(&mut app);
         let reflection = before[EnvironmentSurface::Near.index()]
             .reflection_texture
             .clone()
@@ -1110,9 +1158,7 @@ mod tests {
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
-        let retired_images = environment_image_ids(
-            &environment_materials(&mut app)[EnvironmentSurface::Near.index()],
-        );
+        let retired_images = environment_image_ids(&mut app);
         prepare_calm(&mut app);
         app.update();
         let briefing = shared_ui_text(&mut app);

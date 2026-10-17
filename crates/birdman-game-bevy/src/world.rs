@@ -1,6 +1,6 @@
 use super::{
     CameraMode,
-    environment::{EnvironmentSun, EnvironmentSurface, NativeEnvironment},
+    environment::{EnvironmentSun, EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{NativeSession, TailDisplay},
     projection::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
@@ -452,9 +452,16 @@ pub(crate) fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut water: ResMut<Assets<WaterMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut clouds: ResMut<Assets<super::clouds::CloudMaterial>>,
 ) {
     commands.init_resource::<RenderHistory>();
-    commands.insert_resource(NativeEnvironment::try_default().expect("登録環境が不正"));
+    let environment = NativeEnvironment::try_default().expect("登録環境が不正");
+    let sky = environment
+        .condition_for(EnvironmentTarget::DefaultExhibition)
+        .expect("登録環境が欠損")
+        .sky;
+    commands.insert_resource(environment);
+    super::clouds::spawn(&mut commands, &mut meshes, &mut images, &mut clouds, sky);
     let terrain: Terrain = serde_json::from_str(include_str!("../../../assets/biwa-terrain.json"))
         .expect("登録terrain JSONが不正");
     let masks: LandMasks =
@@ -1001,6 +1008,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<NativeSession>()
@@ -1853,6 +1861,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<NativeSession>()
@@ -1944,6 +1953,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
@@ -2013,10 +2023,11 @@ mod tests {
     }
 
     #[test]
-    fn reflection_layer_contains_airframe_meshes_and_sun_but_excludes_water_and_terrain() {
+    fn reflection_layer_contains_airframe_clouds_and_sun_but_excludes_water_and_terrain() {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
@@ -2030,6 +2041,7 @@ mod tests {
             Option<&MeshMaterial3d<StandardMaterial>>,
             Option<&Name>,
             &Transform,
+            Option<&super::super::clouds::CloudLayer>,
         )>();
         let mut reflected_meshes = 0;
         let mut reflected_spars = 0;
@@ -2038,10 +2050,19 @@ mod tests {
         let mut main_beams = 0;
         let mut transparent_films = 0;
         let mut excluded_meshes = 0;
+        let mut cloud_layers = 0;
         let materials = world.resource::<Assets<StandardMaterial>>();
-        for (_, layers, water, shadow_exclusion, material, name, transform) in meshes.iter(world) {
+        for (_, layers, water, shadow_exclusion, material, name, transform, cloud) in
+            meshes.iter(world)
+        {
             if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
                 assert!(water.is_none());
+                if cloud.is_some() {
+                    assert!(material.is_none());
+                    assert_eq!(*layers.unwrap(), RenderLayers::layer(0).with(1));
+                    cloud_layers += 1;
+                    continue;
+                }
                 let material = materials.get(&material.unwrap().0).unwrap();
                 if material.alpha_mode == AlphaMode::Blend {
                     assert!(shadow_exclusion.is_some());
@@ -2096,6 +2117,7 @@ mod tests {
         assert_eq!(reflected_internals, 180);
         assert_eq!(main_beams, 1);
         assert_eq!(transparent_films, 5);
+        assert_eq!(cloud_layers, 1);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(
@@ -2312,6 +2334,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);

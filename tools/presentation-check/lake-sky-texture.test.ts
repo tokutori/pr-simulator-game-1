@@ -6,7 +6,7 @@ import { ClampToEdgeWrapping, EquirectangularReflectionMapping, LinearFilter,
 import { LakeSkyImageBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { createLakeSkyTexture } from "../../web/src/render/engines/three/lake-sky-texture.js";
 
-const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 };
+const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
 
 function fingerprint(texture: ReturnType<typeof createLakeSkyTexture>): string {
   if (!(texture.image.data instanceof Uint8Array)) throw new Error("Sky texture has no byte data");
@@ -82,13 +82,13 @@ describe("shared lake sky", () => {
     }
   });
 
-  it("is deterministic and responds to the recorded cloud fraction", () => {
+  it("keeps the shared panorama clear so the finite cloud layer is not duplicated", () => {
     const clear = createLakeSkyTexture({ ...condition, cloudFraction: 0 });
     const repeated = createLakeSkyTexture({ ...condition, cloudFraction: 0 });
     const cloudy = createLakeSkyTexture({ ...condition, cloudFraction: 0.5 });
     try {
       expect(fingerprint(clear)).toBe(fingerprint(repeated));
-      expect(fingerprint(cloudy)).not.toBe(fingerprint(clear));
+      expect(fingerprint(cloudy)).toBe(fingerprint(clear));
     } finally { clear.dispose(); repeated.dispose(); cloudy.dispose(); }
   });
 

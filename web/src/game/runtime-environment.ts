@@ -11,7 +11,7 @@ export interface RuntimeEnvironmentMetadata {
   readonly identity: TailScenarioIdentity;
   readonly localFrame: DisplayAvailability<Readonly<{ latitudeDegrees: number; longitudeDegrees: number; waterLevelDatum: string }>, "origin_not_recorded">;
   readonly waves: LakeVisualCondition;
-  readonly sky: DisplayAvailability<Readonly<{ condition: LakeSkyCondition; cloudBaseMeters: number }>, "sky_not_recorded">;
+  readonly sky: DisplayAvailability<Readonly<{ condition: LakeSkyCondition }>, "sky_not_recorded">;
 }
 export type RuntimeEnvironmentProjection = DisplayAvailability<RuntimeEnvironmentMetadata, "no_selection" | "unregistered_environment_identity" | "invalid_snapshot">;
 
@@ -65,8 +65,8 @@ export function parseRuntimeEnvironmentSnapshot(json: string, phaseCode: number,
     const value = boundaryObject(rawSky.value, ["sun_azimuth_degrees", "sun_elevation_degrees", "cloud_fraction", "cloud_base_m", "visibility_m"]);
     sky = Object.freeze({ kind: "available", value: Object.freeze({ condition: createLakeSkyCondition({
       sunAzimuthDegrees: boundaryNumber(value.sun_azimuth_degrees), sunElevationDegrees: boundaryNumber(value.sun_elevation_degrees),
-      cloudFraction: boundaryNumber(value.cloud_fraction), visibilityMeters: boundaryNumber(value.visibility_m)
-    }), cloudBaseMeters: boundaryNumber(value.cloud_base_m, 0) }) });
+      cloudFraction: boundaryNumber(value.cloud_fraction), cloudBaseMeters: boundaryNumber(value.cloud_base_m, 0), visibilityMeters: boundaryNumber(value.visibility_m)
+    }) }) });
   }
   return Object.freeze({ kind: "available", value: Object.freeze({ source, identity, localFrame, sky, waves: Object.freeze({
     windNorthMetersPerSecond: wind[0] as number, windEastMetersPerSecond: wind[1] as number,
