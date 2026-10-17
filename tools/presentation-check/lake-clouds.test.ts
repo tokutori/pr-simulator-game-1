@@ -28,7 +28,8 @@ describe("finite shared cloud projection", () => {
       expect(Array.from(mesh.geometry.index?.array ?? [])).toEqual(Array.from(packet.indices()));
       const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
       if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
-      expect(atlas.image.data).toEqual(packet.rgba());
+      if (!(atlas.image.data instanceof Uint8Array)) throw new Error("Missing atlas byte upload");
+      expect(Buffer.from(atlas.image.data).equals(Buffer.from(packet.rgba()))).toBe(true);
       expect(atlas.colorSpace).toBe(SRGBColorSpace);
       expect(mesh.layers.isEnabled(0)).toBe(true);
       expect(mesh.layers.isEnabled(1)).toBe(true);
