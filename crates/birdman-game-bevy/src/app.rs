@@ -64,12 +64,14 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_directory = None;
     let mut verification_size = None;
     let mut water_verification = None;
+    let mut replay_camera_verification = false;
     let mut no_vsync = false;
     let mut offscreen = false;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
             "--offscreen" => offscreen = true,
+            "--verify-replay-cameras" => replay_camera_verification = true,
             "--font" => {
                 font_path = arguments
                     .next()
@@ -99,7 +101,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。"
+                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: AutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
                 );
                 return Ok(());
             }
@@ -114,6 +116,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     }
     if offscreen && verification_directory.is_none() {
         return Err("--offscreen requires --verify DIR".into());
+    }
+    if replay_camera_verification && verification_directory.is_none() {
+        return Err("--verify-replay-cameras requires --verify DIR".into());
+    }
+    if replay_camera_verification && water_verification.is_some() {
+        return Err("--verify-replay-cameras cannot be combined with --verify-water".into());
     }
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
@@ -247,6 +255,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             app.world().resource::<AssetServer>(),
             water_verification,
             offscreen::output_target(app.world()),
+            replay_camera_verification,
         )?;
         verification_completion = Some(completion);
         app.insert_resource(verification)
