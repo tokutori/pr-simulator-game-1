@@ -65,4 +65,17 @@ describe("finite shared cloud projection", () => {
     disposeLakeClouds(mesh);
     for (const release of released) expect(release).toHaveBeenCalledTimes(1);
   });
+
+  it("attempts independent geometry and material cleanup after an atlas listener fails", () => {
+    const mesh = createLakeClouds(condition);
+    const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
+    if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
+    const cause = new Error("atlas listener");
+    atlas.addEventListener("dispose", () => { throw cause; });
+    const geometry = vi.spyOn(mesh.geometry, "dispose");
+    const material = vi.spyOn(mesh.material, "dispose");
+    expect(() => disposeLakeClouds(mesh)).toThrow(AggregateError);
+    expect(geometry).toHaveBeenCalledTimes(1);
+    expect(material).toHaveBeenCalledTimes(1);
+  });
 });

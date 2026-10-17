@@ -854,16 +854,21 @@ export function createThreeRenderer(
       lakeFog.far = nextCondition?.visibilityMeters ?? 80_000;
       lakeFog.near = lakeFog.far * 0.175;
       lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
+      const previousClouds = clouds;
+      const previousTexture = skyTexture;
       scene.background = nextTexture;
-      scene.remove(clouds);
+      scene.remove(previousClouds);
       scene.add(nextClouds);
-      disposeLakeClouds(clouds);
       clouds = nextClouds;
       lakeUniforms.skyTexture.value = nextTexture;
-      skyTexture.dispose();
       skyTexture = nextTexture;
       activeSkyCondition = nextCondition;
       screenAuto?.invalidate("quality_changed");
+      const failures: unknown[] = [];
+      for (const release of [() => disposeLakeClouds(previousClouds), () => previousTexture.dispose()]) {
+        try { release(); } catch (cause) { failures.push(cause); }
+      }
+      if (failures.length > 0) throw new AggregateError(failures, "Previous sky projection cleanup failed");
     },
     setLakeVenueVisible(visible: boolean) {
       ensureActive(disposed);
