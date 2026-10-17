@@ -54,4 +54,16 @@ mod configured_phase {
     ) -> Result<(), ()> {
         phase.leave_replay()
     }
+
+    #[verus_spec(outcome =>
+        ensures outcome == match phase {
+            ConfiguredPhase::Flight(ActiveFlight { state, execution: FlightExecution::Running }) => Some(*state),
+            _ => None,
+        },
+    )]
+    fn verify_running_admission<State: Copy, Payload, Clock>(
+        phase: &ConfiguredPhase<State, Payload, Clock>,
+    ) -> Option<State> {
+        phase.running_state()
+    }
 }

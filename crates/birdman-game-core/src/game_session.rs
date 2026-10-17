@@ -21,11 +21,11 @@ use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::tail_control::TailPilotPositionMapping;
 use crate::tail_scenario::TailFlightScenario;
 use crate::tail_simulation::{
-    TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState,
-    TailWaterContactSample,
+    TailFlightTickError, TailFlightTickInput, TailFlightTickState, TailWaterContactSample,
 };
 use crate::wind_field::WindError;
 
+mod running;
 mod terminal;
 
 /// Physical configuration sealed when a flight enters preparation.
@@ -1032,60 +1032,29 @@ impl<'a> GameSession<'a> {
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
         let configured = self.configured_mut()?;
-        let ConfiguredPhase::Flight(ActiveFlight {
-            state: previous,
-            execution: FlightExecution::Running,
-        }) = configured.phase
-        else {
-            return Err(GameSessionError::InvalidTransition);
-        };
-        let configuration = &configured.configuration;
-        let scenario = &configuration.scenario;
-        let maximum_ticks = configuration.maximum_flight_ticks;
-        let report = match scenario.advance_tick_with_contact_report(
-            previous,
-            configuration.control_mode,
+        configured.advance_tail_flight_tick(
             input,
-        ) {
-            Ok(report) => report,
-            Err(error) => {
-                self.finalize_failed_tick(error, previous)?;
-                return Err(GameSessionError::TailTick(error));
-            }
-        };
-        let physical_state = match report.outcome() {
-            TailFlightTickOutcome::Advanced(state) => state.flight_state(),
-            TailFlightTickOutcome::WaterContact(sample) => sample.flight_state(),
-        };
-        let telemetry = match scenario.telemetry(physical_state) {
-            Ok(telemetry) => telemetry,
-            Err(error) => {
-                self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
-                return Err(GameSessionError::Telemetry(error));
-            }
-        };
-        if let Err(error) = configured.record.append_tail_report(report, telemetry) {
-            self.finalize_tick(SessionEndReason::FatalSimulationError, previous)?;
-            return Err(GameSessionError::Record(error));
-        }
-        match report.outcome() {
-            TailFlightTickOutcome::Advanced(next) => {
-                configured.phase = ConfiguredPhase::Flight(ActiveFlight {
-                    state: next,
-                    execution: FlightExecution::Running,
-                });
-                if next.tick_index() >= maximum_ticks {
-                    self.finalize_tick(SessionEndReason::TimeLimit, next)?;
-                }
-            }
-            TailFlightTickOutcome::WaterContact(sample) => {
-                self.finalize_terminal(
-                    SessionEndReason::WaterContact,
-                    SessionTerminalState::TailWaterContact(sample),
-                    None,
-                )?;
-            }
-        }
+            configured.configuration.maximum_flight_ticks,
+            configured.configuration.identity,
+            |configuration, previous, input| {
+                configuration.scenario.advance_tick_with_contact_report(
+                    previous,
+                    configuration.control_mode,
+                    input,
+                )
+            },
+            |configuration, state| configuration.telemetry(state),
+            |configuration, terminal| {
+                course_distance_score(
+                    configuration
+                        .initial_state()
+                        .flight_state()
+                        .datum_position_ned(),
+                    terminal.flight_state().datum_position_ned(),
+                    configuration.course_axis(),
+                )
+            },
+        )?;
         Ok(self.snapshot())
     }
 
@@ -1130,15 +1099,6 @@ impl<'a> GameSession<'a> {
     ) -> Result<(), GameSessionError> {
         let terminal = SessionTerminalState::TailTick(state);
         self.finalize_terminal(reason, terminal, None)
-    }
-
-    fn finalize_failed_tick(
-        &mut self,
-        failure: TailFlightTickError,
-        state: TailFlightTickState,
-    ) -> Result<(), GameSessionError> {
-        let terminal = SessionTerminalState::TailTick(state);
-        self.finalize_terminal(failure.end_reason(), terminal, Some(failure))
     }
 
     fn finalize_terminal(

@@ -549,3 +549,260 @@ fn terminal_record_rejection_preserves_running_and_existing_result() {
     );
     assert_eq!(session.flight_record().unwrap().finalization(), metadata);
 }
+
+#[test]
+fn running_owner_rejects_non_running_phases_before_evaluation() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+    ));
+    let reject = |session: &mut GameSession<'_>| {
+        let snapshot = session.snapshot();
+        let samples = session.flight_record().unwrap().samples().to_vec();
+        let metadata = session.flight_record().unwrap().finalization();
+        let configured = session.configured_mut().unwrap();
+        assert_eq!(
+            configured.advance_tail_flight_tick(
+                input(),
+                10,
+                identity(),
+                |_, _, _| panic!("rejected tick evaluated physics"),
+                |_, _| panic!("rejected tick evaluated telemetry"),
+                |_, _| panic!("rejected tick evaluated score"),
+            ),
+            Err(GameSessionError::InvalidTransition)
+        );
+        assert_eq!(session.snapshot(), snapshot);
+        assert_eq!(session.flight_record().unwrap().samples(), samples);
+        assert_eq!(session.flight_record().unwrap().finalization(), metadata);
+    };
+    session.pause(PauseReason::Manual).unwrap();
+    reject(&mut session);
+    session.abort_flight().unwrap();
+    reject(&mut session);
+    session.enter_replay().unwrap();
+    reject(&mut session);
+    session.leave_replay().unwrap();
+    session.retry().unwrap();
+    reject(&mut session);
+    session.start_countdown(1).unwrap();
+    reject(&mut session);
+}
+
+#[test]
+fn running_owner_preserves_callback_order_and_stage_failure_priority() {
+    use core::cell::{Cell, RefCell};
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Stage {
+        Advanced,
+        Tick,
+        Telemetry,
+        Append,
+        Limit,
+    }
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    for stage in [
+        Stage::Advanced,
+        Stage::Tick,
+        Stage::Telemetry,
+        Stage::Append,
+        Stage::Limit,
+    ] {
+        for score_fails in [false, true] {
+            if stage == Stage::Advanced && score_fails {
+                continue;
+            }
+            let maximum_ticks = if stage == Stage::Limit { 1 } else { 10 };
+            let mut session = launch(configuration(
+                &definition,
+                &surfaces,
+                WindField::uniform(NedVector::zero()),
+                -10.5,
+                maximum_ticks,
+                ControlMode::Manual,
+            ));
+            let previous = session.snapshot().tail_flight_state().unwrap();
+            let retained = session.flight_record().unwrap().samples().to_vec();
+            let events = RefCell::new(alloc::vec::Vec::new());
+            let observed = Cell::new(None);
+            let tick_failure = TailFlightTickError::TickOverflow;
+            let telemetry_failure = FlightTelemetryError::Wind(crate::WindError::OutsideGrid);
+            let configured = session.configured_mut().unwrap();
+            let outcome = configured.advance_tail_flight_tick(
+                input(),
+                maximum_ticks,
+                identity(),
+                |configuration, state, sampled_input| {
+                    events.borrow_mut().push("evaluate");
+                    assert_eq!(state, previous);
+                    assert_eq!(sampled_input, input());
+                    if stage == Stage::Tick {
+                        return Err(tick_failure);
+                    }
+                    let report = configuration.scenario.advance_tick_with_contact_report(
+                        state,
+                        configuration.control_mode,
+                        sampled_input,
+                    )?;
+                    let report = if stage == Stage::Append {
+                        let crate::TailFlightTickOutcome::Advanced(next) = report.outcome() else {
+                            panic!("unexpected contact in append rejection fixture");
+                        };
+                        configuration.scenario.advance_tick_with_contact_report(
+                            next,
+                            configuration.control_mode,
+                            sampled_input,
+                        )?
+                    } else {
+                        report
+                    };
+                    observed.set(Some(report));
+                    Ok(report)
+                },
+                |configuration, state| {
+                    events.borrow_mut().push("telemetry");
+                    let expected = match observed.get().unwrap().outcome() {
+                        crate::TailFlightTickOutcome::Advanced(next) => next.flight_state(),
+                        crate::TailFlightTickOutcome::WaterContact(sample) => sample.flight_state(),
+                    };
+                    assert_eq!(state, expected);
+                    if stage == Stage::Telemetry {
+                        return Err(telemetry_failure);
+                    }
+                    configuration.telemetry(state)
+                },
+                |configuration, terminal| {
+                    events.borrow_mut().push("score");
+                    let expected = if stage == Stage::Limit {
+                        let crate::TailFlightTickOutcome::Advanced(next) =
+                            observed.get().unwrap().outcome()
+                        else {
+                            panic!("unexpected contact in time-limit fixture");
+                        };
+                        next
+                    } else {
+                        previous
+                    };
+                    assert_eq!(terminal, SessionTerminalState::TailTick(expected));
+                    if score_fails {
+                        return Err(DistanceScoreError::NonFinite);
+                    }
+                    course_distance_score(
+                        configuration
+                            .initial_state()
+                            .flight_state()
+                            .datum_position_ned(),
+                        terminal.flight_state().datum_position_ned(),
+                        configuration.course_axis(),
+                    )
+                },
+            );
+            if stage == Stage::Advanced {
+                assert_eq!(outcome, Ok(()));
+                assert_eq!(*events.borrow(), ["evaluate", "telemetry"]);
+                assert_eq!(
+                    session.snapshot().tail_flight_state().unwrap().tick_index(),
+                    1
+                );
+                assert_eq!(session.flight_record().unwrap().sample_count(), 2);
+                continue;
+            }
+            assert_eq!(
+                *events.borrow(),
+                if stage == Stage::Tick {
+                    alloc::vec!["evaluate", "score"]
+                } else {
+                    alloc::vec!["evaluate", "telemetry", "score"]
+                }
+            );
+            let expected = if stage == Stage::Tick {
+                Err(GameSessionError::TailTick(tick_failure))
+            } else if score_fails {
+                Err(GameSessionError::Score(DistanceScoreError::NonFinite))
+            } else {
+                match stage {
+                    Stage::Telemetry => Err(GameSessionError::Telemetry(telemetry_failure)),
+                    Stage::Append => Err(GameSessionError::Record(FlightRecordError::InvalidTime)),
+                    Stage::Limit => Ok(()),
+                    _ => unreachable!(),
+                }
+            };
+            assert_eq!(outcome, expected, "{stage:?}, score_fails={score_fails}");
+            let result = session.snapshot().result().unwrap();
+            assert_eq!(
+                result.failure,
+                (stage == Stage::Tick).then_some(tick_failure)
+            );
+            assert_eq!(result.score.is_none(), score_fails);
+            assert_eq!(
+                result.reason,
+                if stage == Stage::Limit && !score_fails {
+                    SessionEndReason::TimeLimit
+                } else {
+                    SessionEndReason::FatalSimulationError
+                }
+            );
+            let record = session.flight_record().unwrap();
+            if stage == Stage::Limit {
+                assert_eq!(record.sample_count(), 2);
+            } else {
+                assert_eq!(record.samples(), retained);
+            }
+            let latest = record.samples().last().unwrap();
+            assert_eq!(latest.flight_state, result.state.flight_state());
+            let metadata = record.finalization().unwrap();
+            assert_eq!(metadata.failure, result.failure);
+            assert_eq!(metadata.score, result.score);
+            assert_eq!(
+                (metadata.terminal_tick, metadata.terminal_fraction),
+                result.state.record_time()
+            );
+        }
+    }
+}
+
+#[test]
+fn running_owner_finalization_rejection_retains_the_previous_owner() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        10,
+        ControlMode::Manual,
+    ));
+    let previous = session.snapshot().tail_flight_state().unwrap();
+    session.abort_flight().unwrap();
+    session.configured_mut().unwrap().phase = ConfiguredPhase::Flight(ActiveFlight {
+        state: previous,
+        execution: FlightExecution::Running,
+    });
+    let snapshot = session.snapshot();
+    let samples = session.flight_record().unwrap().samples().to_vec();
+    let metadata = session.flight_record().unwrap().finalization();
+    assert_eq!(
+        session.configured_mut().unwrap().advance_tail_flight_tick(
+            input(),
+            10,
+            identity(),
+            |_, _, _| Err(TailFlightTickError::TickOverflow),
+            |_, _| panic!("failed tick evaluated telemetry"),
+            |_, _| Err(DistanceScoreError::NonFinite),
+        ),
+        Err(GameSessionError::Record(
+            FlightRecordError::AlreadyFinalized
+        ))
+    );
+    assert_eq!(session.snapshot(), snapshot);
+    assert_eq!(session.flight_record().unwrap().samples(), samples);
+    assert_eq!(session.flight_record().unwrap().finalization(), metadata);
+}

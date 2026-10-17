@@ -2,7 +2,7 @@
 use vstd::prelude::*;
 
 use crate::countdown::CountdownState;
-use crate::flight_execution::ActiveFlight;
+use crate::flight_execution::{ActiveFlight, FlightExecution};
 
 /// Classified reason that prevents a prepared session from becoming ready.
 #[cfg_attr(verus_only, verus_verify)]
@@ -53,6 +53,24 @@ verus! {
                 Self::Replay { clock, .. } => Some(clock),
                 _ => None,
             }
+        }
+    }
+}
+
+impl<State: Copy, Payload, Clock> ConfiguredPhase<State, Payload, Clock> {
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures outcome == match self {
+            Self::Flight(ActiveFlight { state, execution: FlightExecution::Running }) => Some(*state),
+            _ => None,
+        },
+    ))]
+    pub(crate) fn running_state(&self) -> Option<State> {
+        match self {
+            Self::Flight(ActiveFlight {
+                state,
+                execution: FlightExecution::Running,
+            }) => Some(*state),
+            _ => None,
         }
     }
 }

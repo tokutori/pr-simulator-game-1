@@ -15,6 +15,9 @@ impl<Configuration, Clock>
     #[cfg_attr(verus_only, verus_spec(outcome =>
         ensures
             final(self).configuration == old(self).configuration,
+            final(self).record.header() == old(self).record.header(),
+            final(self).record.sample_limit() == old(self).record.sample_limit(),
+            final(self).record.recorded_samples() == old(self).record.recorded_samples(),
             match outcome {
                 Err(GameSessionError::Record(_)) => *final(self) == *old(self),
                 _ => match final(self).phase {

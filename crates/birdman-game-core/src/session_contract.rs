@@ -39,7 +39,8 @@ pub enum SessionEndReason {
 
 impl TailFlightTickError {
     /// Classifies envelope and finite wind-domain failures separately from numerical failures.
-    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.end_reason()))]
     pub const fn end_reason(self) -> SessionEndReason {
         let dynamics = match self {
             Self::Dynamics(error) => Some(error),
