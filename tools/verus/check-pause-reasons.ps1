@@ -53,11 +53,12 @@ $suites = @(
         Name = 'configured_phase'
         SharedModule = Join-Path $repository 'crates/birdman-game-core/src/configured_phase.rs'
         PositiveDriver = Join-Path $repository 'proofs/configured_phase.rs'
-        RequiredProofs = @('verify_result_replay_roundtrip', 'verify_enter_replay', 'verify_leave_replay')
+        RequiredProofs = @('verify_result_replay_roundtrip', 'verify_enter_replay', 'verify_leave_replay', 'verify_running_admission')
         RenamedProof = 'verify_result_replay_roundtrip'
         NegativeChecks = @(
             @{ Path = Join-Path $repository 'proofs/configured_phase_rejection_negative.rs'; Assertion = 'admitted' },
-            @{ Path = Join-Path $repository 'proofs/configured_phase_payload_negative.rs'; Assertion = 'changed' }
+            @{ Path = Join-Path $repository 'proofs/configured_phase_payload_negative.rs'; Assertion = 'changed' },
+            @{ Path = Join-Path $repository 'proofs/configured_phase_running_negative.rs'; Assertion = 'admitted' }
         )
     },
     @{
@@ -365,6 +366,11 @@ try {
           'birdman_game_core::flight_record::validate_finalization',
           'birdman_game_core::flight_record::storage::FlightRecordStorage::finalize_with',
           'birdman_game_core::configured_session::ConfiguredSession::finalize_terminal',
+          'birdman_game_core::configured_session::ConfiguredSession::advance_tail_flight_tick',
+          'birdman_game_core::configured_phase::ConfiguredPhase::running_state',
+          'birdman_game_core::tail_simulation::TailFlightTickError::end_reason',
+          'birdman_game_core::aerodynamics_contract::AerodynamicEvaluationError::cause',
+          'birdman_game_core::aerodynamics_contract::HybridError::cause',
           'birdman_game_core::game_session::SessionTerminalState::record_time',
           'birdman_game_core::flight_record::FlightRecord::finalization',
           'birdman_game_core::flight_record::FlightRecord::finalized_from',

@@ -214,15 +214,42 @@ Err時の実owner保持、header・sample列・capacity保持、成功時のreas
 score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
 公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
 時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
-Running認可、previous/report選択、全tickの最新sample/terminal state相関、数値score評価は未接続の境界である。
-これらの前提を仮定して終端化全体を完了扱いにせず、親#382を継続する。
+Running認可と実tickの制御bodyは次節の契約へ接続する。外側のGameSession wrapper全体、
+数値関数が生成するreportの由来、全tickの最新sample/terminal state相関、数値score評価は未証明の境界である。
+これらを仮定して終端化全体を完了扱いにせず、親#382を継続する。
+
+### Running tickの制御body
+
+公開GameSessionのadvanceは、既存ConfiguredSessionのprivate methodへ制御を委譲する。
+実ConfiguredPhaseのrunning_stateだけがRunningのstateを返し、拒否時は数値callbackを呼ばずowner全体を保持する。
+この認可getterは同じproduction moduleを用いる既存suiteの必須positiveと指定negativeへ接続する。
+認可getter単体の保証と、実tick bodyのactual core直接検証を区分する。
+
+評価・telemetry・scoreの三つのFnOnceは共有ConfigurationとCopy値だけを受け取り、record・phaseへの可変参照を受け取らない。
+実bodyは同じprevious/inputを評価へ一回渡し、その返却reportのstateをtelemetryへ渡してから、同report/telemetryをappendする。
+callbackのrequiresは呼出し可能性だけを要求し、state保持・有効なrecord・数値結果の相関を仮定しない。
+標準FnOnceのrequires/ensuresと、実record view上のpredicateにより、同じ出力の転送、sample列のprefix、最大1sampleの追加を検証する。
+[公式FnOnce仕様](https://verus-lang.github.io/verus/guide/reference-signature-fnonce.html)の呼出し契約を用いる。
+ghost-onlyのproof_decl/proofは実値を参照し、新しい実行状態・数値model・runtime APIを追加しない。
+
+tick失敗はpreviousと元TailFlightTickErrorをResultへ保持する。元tick failureがある場合のscore失敗も同じfailureを保持する。
+telemetry失敗とappend失敗はpreviousを終端化し、finalize自体のRecord/Scoreエラーを先に返す既存順序を維持する。
+ScoreエラーはFatal Result、score None、failure Noneを保持し、Record拒否は入口owner保持、previousのFatal Result、またはappend済みRunningを区分する。
+正常継続、TimeLimit、WaterContactの実report・record・Resultのstate/stamp/metadataも同じbodyで接続する。
+通常Rust回帰は各callbackの呼出し順序、実scenarioの一回評価、telemetryの入力state、エラー優先順、拒否とResult保持を通す。
+finalize拒否の回帰には内部不整合を明示的に注入し、利用者操作から発生した障害とは扱わない。
+
+外側の実callerは既存scenario/telemetry/score関数をbindし、同じconfigurationのtick上限・identityを渡す。
+この具体wiringと0-fraction producerからrecord/Resultへの接続はsource確認と通常Rust回帰の範囲であり、
+数値callbackのbody、任意reportと前sampleの等値、wrapper全体を形式証明したことにはならない。
 
 公開`begin_tail`/`append_tail_report`は同じ実bodyの認可、実reportからstate/control/telemetryへの転送、
 bounded Vecへの追加、拒否時のowner全保持を検証する。NoElapsedIntervalは結果の成否にかかわらずrecord全体を保持する。
 ghost-onlyのsample sequenceとlogical limitは実Vec/fieldのviewであり、別の記録モデルやruntime APIを追加しない。
 整数tickの隣接・上限は直接の契約である。fractionの実`!= 0.0`比較は、固定vstdの`ne_ensures(..., false)`へ接続する。
 この標準関係は未解釈であり、IEEE比較の数学的意味やspec上の値等号を導かない。
-[固定vstd比較仕様](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L315-L324)に従う。
+[固定vstdのne_ensures宣言](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L243-L245)と
+[f64のne仕様](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L295-L299)に従う。
 
 同じtelemetry validatorではfinite判定を有限閉区間へ等価展開する。固定Verifierはstdの`is_finite`とMIN/MAX定数に
 未対応のため、privateな有限端点2定数を用い、製品Rustでstd MIN/MAXとのbit一致、NaN/±∞/±0/最大値近傍/subnormalを検査する。
