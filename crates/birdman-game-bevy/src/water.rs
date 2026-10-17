@@ -597,6 +597,12 @@ pub(crate) fn apply_environment(
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
+    mut cloud_materials: ResMut<Assets<super::clouds::CloudMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut clouds: Query<
+        (&mut Mesh3d, &MeshMaterial3d<super::clouds::CloudMaterial>),
+        With<super::clouds::CloudLayer>,
+    >,
 ) {
     let target = EnvironmentTarget::project(
         session.game.core_session().snapshot().phase(),
@@ -670,6 +676,16 @@ pub(crate) fn apply_environment(
             .map_err(EnvironmentFailure::WavePreparation)?;
         let sky_image =
             prepare_sky_image(high.sky_condition).map_err(EnvironmentFailure::WavePreparation)?;
+        let cloud_packet =
+            super::clouds::prepare(condition.sky).map_err(EnvironmentFailure::WavePreparation)?;
+        let (mut cloud_mesh, cloud_handle) = clouds.single_mut().map_err(|_| {
+            EnvironmentFailure::WavePreparation("有限cloud layerが欠損または重複した".into())
+        })?;
+        let cloud_material = cloud_materials
+            .get_mut(cloud_handle.0.id())
+            .ok_or_else(|| {
+                EnvironmentFailure::WavePreparation("有限cloud materialが欠損した".into())
+            })?;
         let direction = prepared[EnvironmentSurface::Sky.index()]
             .sun_cloud
             .truncate();
@@ -697,6 +713,13 @@ pub(crate) fn apply_environment(
         for image in previous_images {
             images.remove(image);
         }
+        super::clouds::replace(
+            &mut meshes,
+            &mut images,
+            &mut cloud_mesh,
+            cloud_material,
+            cloud_packet,
+        );
         *transform = sunlight;
         light.illuminance = if condition
             .sky
@@ -854,6 +877,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(

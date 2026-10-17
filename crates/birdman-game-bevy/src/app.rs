@@ -1,5 +1,7 @@
 #![doc = "Native Screen presentation using the existing authoritative Rust game session."]
 
+#[path = "clouds.rs"]
+mod clouds;
 #[path = "environment.rs"]
 mod environment;
 #[path = "frame_rate.rs"]
@@ -159,6 +161,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_plugins(plugins)
         .add_plugins((
             MaterialPlugin::<water::WaterMaterial>::default(),
+            MaterialPlugin::<clouds::CloudMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             screen_render::timing::ScreenTimingPlugin {
                 full_diagnostics: water_verification.is_some(),
