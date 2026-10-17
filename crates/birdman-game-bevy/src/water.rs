@@ -681,7 +681,7 @@ pub(crate) fn apply_environment(
         let (mut cloud_mesh, cloud_handle) = clouds.single_mut().map_err(|_| {
             EnvironmentFailure::WavePreparation("有限cloud layerが欠損または重複した".into())
         })?;
-        let cloud_material = cloud_materials
+        let mut cloud_material = cloud_materials
             .get_mut(cloud_handle.0.id())
             .ok_or_else(|| {
                 EnvironmentFailure::WavePreparation("有限cloud materialが欠損した".into())
@@ -717,7 +717,7 @@ pub(crate) fn apply_environment(
             &mut meshes,
             &mut images,
             &mut cloud_mesh,
-            cloud_material,
+            &mut cloud_material,
             cloud_packet,
         );
         *transform = sunlight;
