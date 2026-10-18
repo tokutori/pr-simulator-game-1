@@ -204,11 +204,20 @@ fn cumulus_patches(fraction: f64) -> Vec<CumulusPatch> {
     clouds
 }
 
-fn cloud_pixel(patch: &CumulusPatch, local_column: f64, local_row: f64) -> [u8; 4] {
+fn cloud_texel(patch: &CumulusPatch, local_column: f64, local_row: f64) -> ([u8; 4], [u8; 2]) {
     let mut top = 0.18 * (1.0 - local_column * local_column).max(0.0).sqrt();
+    let mut ellipse = [0.0, 1.0, 0.18];
     for (lobe, lobe_height) in patch.lobe_heights.iter().enumerate() {
         let lobe_column = (local_column - patch.lobe_offsets[lobe]) / patch.lobe_widths[lobe];
-        top = top.max(lobe_height * (1.0 - lobe_column * lobe_column).max(0.0).sqrt());
+        let lobe_top = lobe_height * (1.0 - lobe_column * lobe_column).max(0.0).sqrt();
+        if lobe_top > top {
+            top = lobe_top;
+            ellipse = [
+                patch.lobe_offsets[lobe],
+                patch.lobe_widths[lobe],
+                *lobe_height,
+            ];
+        }
     }
     let longitude = patch.longitude + local_column * patch.half_width;
     let latitude = patch.base + local_row * patch.height;
@@ -219,25 +228,51 @@ fn cloud_pixel(patch: &CumulusPatch, local_column: f64, local_row: f64) -> [u8; 
     let opacity = (edge * base * (0.55 + 0.6 * billow)).clamp(0.0, 1.0);
     let brightness =
         (0.23 + 0.58 * local_row / top.max(0.01) + (billow - 0.5) * 0.65).clamp(0.0, 1.0);
-    [
+    let color = [
         (134.0 + 95.0 * brightness).round() as u8,
         (148.0 + 90.0 * brightness).round() as u8,
         (157.0 + 80.0 * brightness).round() as u8,
         (255.0 * opacity).round() as u8,
-    ]
+    ];
+    let column = (local_column - ellipse[0]) / ellipse[1];
+    let row = local_row / ellipse[2];
+    let depth = (1.0 - column * column - row * row).max(0.0).sqrt();
+    let radius_right = ellipse[1] * (patch.half_width * core::f64::consts::TAU).tan();
+    let radius_up = ellipse[2] * (patch.height * core::f64::consts::PI).tan();
+    let radius_front = (radius_right * radius_up).sqrt();
+    let normal = [column / radius_right, row / radius_up, depth / radius_front];
+    let length = normal.iter().map(|value| value * value).sum::<f64>().sqrt();
+    let normal_rg = [normal[0], normal[1]]
+        .map(|value| ((value / length * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8);
+    (color, normal_rg)
 }
 
-/// One bounded atlas and batched billboard mesh. Positions use local NED metres.
+fn cloud_sun_direction(sky: Option<SkyStateDocument>) -> [f32; 4] {
+    sky.map_or([0.0, 0.0, -1.0, 0.0], |sky| {
+        let azimuth = sky.sun_azimuth_degrees.to_radians();
+        let elevation = sky.sun_elevation_degrees.to_radians();
+        [
+            (elevation.cos() * azimuth.cos()) as f32,
+            (elevation.cos() * azimuth.sin()) as f32,
+            -elevation.sin() as f32,
+            f32::from(sky.sun_elevation_degrees >= 0.0),
+        ]
+    })
+}
+
+/// Bounded colour/normal atlases and one batched mesh in local NED metres.
 /// The fixed water surface is down=0. Each vertex is center N/E/D, right/up
 /// offset in metres, and atlas U/V. Up is world up; each view supplies only the
 /// horizontal right basis facing its eye. Camera roll cannot rotate the clouds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LakeClouds {
     rgba: Vec<u8>,
+    normal_rg: Vec<u8>,
     vertices: Vec<[f32; 7]>,
     indices: Vec<u32>,
     height: u32,
     availability: LakeCloudAvailability,
+    sun_direction_ned: [f32; 4],
 }
 
 /// Why the finite elevated cloud layer is present or absent.
@@ -271,6 +306,17 @@ impl LakeClouds {
     /// Borrows straight-alpha sRGB RGBA pixels; row zero is the bottom edge.
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
+    }
+
+    /// Borrows linear RG8 billboard-space normal X/Y. Positive Z is reconstructed.
+    /// X uses the horizontal right basis, Y is world up, Z faces the view.
+    pub fn normal_rg(&self) -> &[u8] {
+        &self.normal_rg
+    }
+
+    /// Returns N/E/D toward the recorded sun and W=daylight, independent of view.
+    pub const fn sun_direction_ned(&self) -> [f32; 4] {
+        self.sun_direction_ned
     }
 
     /// Borrows the actual batched mesh, independent of backend coordinate types.
@@ -316,10 +362,12 @@ pub fn generate_lake_clouds(
     let width = CLOUD_ATLAS_COLUMNS * CLOUD_TILE_WIDTH;
     let mut clouds = LakeClouds {
         rgba: vec![0; (width * height * 4) as usize],
+        normal_rg: vec![0; (width * height * 2) as usize],
         vertices: Vec::with_capacity(patches.len() * 4),
         indices: Vec::with_capacity(patches.len() * 6),
         height,
         availability,
+        sun_direction_ned: cloud_sun_direction(sky),
     };
     for (index, patch) in patches.iter().enumerate() {
         let range = base_m / ((patch.base - 0.5) * core::f64::consts::PI).tan();
@@ -372,12 +420,13 @@ pub fn generate_lake_clouds(
                     -1.08 + 2.16 * f64::from(tile_column) / f64::from(CLOUD_TILE_WIDTH - 1);
                 let local_row =
                     -0.07 + 1.15 * f64::from(tile_row) / f64::from(CLOUD_TILE_HEIGHT - 1);
-                let pixel = cloud_pixel(patch, local_column, local_row);
+                let (pixel, normal) = cloud_texel(patch, local_column, local_row);
                 let offset = (((row * CLOUD_TILE_HEIGHT + tile_row) * width
                     + column * CLOUD_TILE_WIDTH
                     + tile_column)
                     * 4) as usize;
                 clouds.rgba[offset..offset + 4].copy_from_slice(&pixel);
+                clouds.normal_rg[offset / 2..offset / 2 + 2].copy_from_slice(&normal);
             }
         }
     }
@@ -557,6 +606,57 @@ mod tests {
             assert_eq!(*before * 2.0, *after);
         }
         assert_eq!(packet.rgba(), raised.rgba());
+        assert_eq!(packet.normal_rg(), raised.normal_rg());
+        assert_eq!(packet.normal_rg().len(), packet.rgba().len() / 2);
+        assert!(packet.normal_rg().len() <= 1024 * 768 * 2);
+    }
+
+    #[test]
+    fn cloud_normals_follow_the_actual_lobe_surface_and_keep_world_up() {
+        let patch = CumulusPatch {
+            longitude: 0.5,
+            base: 0.55,
+            half_width: 0.01,
+            height: 0.02,
+            lobe_heights: [0.0; 4],
+            lobe_offsets: [0.0; 4],
+            lobe_widths: [1.0; 4],
+        };
+        assert_eq!(cloud_texel(&patch, 0.0, 0.0).1, [128, 128]);
+        let left = cloud_texel(&patch, -0.5, 0.0).1;
+        let right = cloud_texel(&patch, 0.5, 0.0).1;
+        assert!(left[0] < 128 && right[0] > 128);
+        assert_eq!(u16::from(left[0]) + u16::from(right[0]), 255);
+        assert_eq!(left[1], 128);
+        assert_eq!(right[1], 128);
+        assert!(cloud_texel(&patch, 0.0, 0.1).1[1] > 128);
+        assert!(cloud_texel(&patch, 0.0, -0.1).1[1] < 128);
+    }
+
+    #[test]
+    fn cloud_sun_packet_uses_recorded_ned_direction_without_rebuilding_the_shape() {
+        let mut sky = crate::bundled_environment().unwrap().document().sky;
+        let original = generate_lake_clouds(Some(sky)).unwrap();
+        for (azimuth, elevation, expected) in [
+            (0.0, 0.0, [1.0, 0.0, 0.0, 1.0]),
+            (90.0, 0.0, [0.0, 1.0, 0.0, 1.0]),
+            (180.0, 0.0, [-1.0, 0.0, 0.0, 1.0]),
+            (0.0, 90.0, [0.0, 0.0, -1.0, 1.0]),
+            (0.0, -90.0, [0.0, 0.0, 1.0, 0.0]),
+        ] {
+            sky.sun_azimuth_degrees = azimuth;
+            sky.sun_elevation_degrees = elevation;
+            for (actual, expected) in cloud_sun_direction(Some(sky)).into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 1.0e-6);
+            }
+        }
+        let changed = generate_lake_clouds(Some(sky)).unwrap();
+        assert_eq!(original.rgba(), changed.rgba());
+        assert_eq!(original.normal_rg(), changed.normal_rg());
+        assert_eq!(original.vertices(), changed.vertices());
+        assert_eq!(original.indices(), changed.indices());
+        assert_ne!(original.sun_direction_ned(), changed.sun_direction_ned());
+        assert_eq!(cloud_sun_direction(None), [0.0, 0.0, -1.0, 0.0]);
     }
 
     #[test]

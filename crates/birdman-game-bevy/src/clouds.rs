@@ -16,7 +16,9 @@ use bevy::{
     shader::ShaderRef,
 };
 use birdman_game_format::SkyStateDocument;
-use birdman_game_session::lake_sky::{LakeCloudAvailability, generate_lake_clouds};
+use birdman_game_session::lake_sky::{
+    LAKE_SCENE_LIGHTING, LakeCloudAvailability, generate_lake_clouds,
+};
 
 const CLOUD_OFFSET: MeshVertexAttribute =
     MeshVertexAttribute::new("CloudOffset", 1_668_934_721, VertexFormat::Float32x2);
@@ -31,6 +33,15 @@ pub(crate) struct CloudMaterial {
     pub(crate) atlas: Handle<Image>,
     #[uniform(2)]
     haze: Vec4,
+    #[texture(3)]
+    #[sampler(4)]
+    pub(crate) normals: Handle<Image>,
+    #[uniform(5)]
+    sun: Vec4,
+    #[uniform(6)]
+    shade_tint: Vec4,
+    #[uniform(7)]
+    sun_tint: Vec4,
 }
 
 impl Material for CloudMaterial {
@@ -66,7 +77,14 @@ impl Material for CloudMaterial {
     }
 }
 
-pub(crate) fn prepare(sky: Option<SkyStateDocument>) -> Result<(Mesh, Image, Vec4), String> {
+pub(crate) struct PreparedClouds {
+    mesh: Mesh,
+    atlases: [Image; 2],
+    haze: Vec4,
+    sun: Vec4,
+}
+
+pub(crate) fn prepare(sky: Option<SkyStateDocument>) -> Result<PreparedClouds, String> {
     let packet = generate_lake_clouds(sky)
         .map_err(|cause| format!("共有cloud packetを準備できない: {cause:?}"))?;
     if packet.availability() == LakeCloudAvailability::GroundLevelUnsupported {
@@ -103,27 +121,43 @@ pub(crate) fn prepare(sky: Option<SkyStateDocument>) -> Result<(Mesh, Image, Vec
             .collect::<Vec<_>>(),
     );
     mesh.insert_indices(Indices::U32(packet.indices().to_vec()));
-    let mut atlas = Image::new(
-        Extent3d {
-            width: packet.width(),
-            height: packet.height(),
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        packet.rgba().to_vec(),
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    );
-    atlas.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    let atlases = [
+        (packet.rgba().to_vec(), TextureFormat::Rgba8UnormSrgb),
+        (packet.normal_rg().to_vec(), TextureFormat::Rg8Unorm),
+    ]
+    .map(|(pixels, format)| {
+        let mut image = Image::new(
+            Extent3d {
+                width: packet.width(),
+                height: packet.height(),
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            format,
+            RenderAssetUsages::default(),
+        );
+        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+        image
+    });
     let visibility = sky.map_or(80_000.0, |sky| sky.visibility_m) as f32;
     if !visibility.is_finite() || visibility <= 0.0 {
         return Err("cloud hazeのvisibilityをGPU表現へ変換できない".into());
     }
-    Ok((
+    let [north, east, down, daylight] = packet.sun_direction_ned();
+    Ok(PreparedClouds {
         mesh,
-        atlas,
-        Vec4::new(visibility * 0.175, visibility, 0.0, 0.0),
-    ))
+        atlases,
+        haze: Vec4::new(visibility * 0.175, visibility, 0.0, 0.0),
+        sun: Vec4::new(east, -down, -north, daylight),
+    })
+}
+
+fn normalized_tint(srgb: u32) -> Vec4 {
+    let color = Color::srgb_u8((srgb >> 16) as u8, (srgb >> 8) as u8, srgb as u8)
+        .to_linear()
+        .to_vec4();
+    (color.truncate() / color.truncate().max_element()).extend(1.0)
 }
 
 pub(crate) fn spawn(
@@ -133,13 +167,22 @@ pub(crate) fn spawn(
     materials: &mut Assets<CloudMaterial>,
     sky: Option<SkyStateDocument>,
 ) {
-    let (mesh, atlas, haze) = prepare(sky).expect("登録cloud packetが不正");
+    let PreparedClouds {
+        mesh,
+        atlases: [atlas, normals],
+        haze,
+        sun,
+    } = prepare(sky).expect("登録cloud packetが不正");
     commands.spawn((
         CloudLayer,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(CloudMaterial {
             atlas: images.add(atlas),
+            normals: images.add(normals),
             haze,
+            sun,
+            shade_tint: normalized_tint(LAKE_SCENE_LIGHTING.ambient_color_srgb),
+            sun_tint: normalized_tint(LAKE_SCENE_LIGHTING.sunlight_color_srgb),
         })),
         Transform::IDENTITY,
         NoFrustumCulling,
@@ -152,14 +195,22 @@ pub(crate) fn replace(
     images: &mut Assets<Image>,
     mesh_handle: &mut Mesh3d,
     material: &mut CloudMaterial,
-    prepared: (Mesh, Image, Vec4),
+    prepared: PreparedClouds,
 ) {
-    let (mesh, atlas, haze) = prepared;
+    let PreparedClouds {
+        mesh,
+        atlases: [atlas, normals],
+        haze,
+        sun,
+    } = prepared;
     let previous_mesh = std::mem::replace(&mut mesh_handle.0, meshes.add(mesh));
     let previous_atlas = std::mem::replace(&mut material.atlas, images.add(atlas));
+    let previous_normals = std::mem::replace(&mut material.normals, images.add(normals));
     material.haze = haze;
+    material.sun = sun;
     meshes.remove(previous_mesh.id());
     images.remove(previous_atlas.id());
+    images.remove(previous_normals.id());
 }
 
 #[cfg(test)]
@@ -174,7 +225,12 @@ mod tests {
             .document()
             .sky;
         let packet = generate_lake_clouds(Some(sky)).unwrap();
-        let (mesh, atlas, haze) = prepare(Some(sky)).unwrap();
+        let PreparedClouds {
+            mesh,
+            atlases: [atlas, normals],
+            haze,
+            sun,
+        } = prepare(Some(sky)).unwrap();
         let Some(VertexAttributeValues::Float32x3(positions)) =
             mesh.attribute(Mesh::ATTRIBUTE_POSITION)
         else {
@@ -189,7 +245,11 @@ mod tests {
             atlas.texture_descriptor.format,
             TextureFormat::Rgba8UnormSrgb
         );
+        assert_eq!(normals.data.as_deref(), Some(packet.normal_rg()));
+        assert_eq!(normals.texture_descriptor.format, TextureFormat::Rg8Unorm);
+        let [north, east, down, daylight] = packet.sun_direction_ned();
+        assert_eq!(sun, Vec4::new(east, -down, -north, daylight));
         assert_eq!(haze, Vec4::new(4375.0, 25000.0, 0.0, 0.0));
-        assert_eq!(prepare(None).unwrap().0.count_vertices(), 0);
+        assert_eq!(prepare(None).unwrap().mesh.count_vertices(), 0);
     }
 }

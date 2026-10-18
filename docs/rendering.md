@@ -91,6 +91,7 @@ recordのsky unavailable、未知の環境identity、未選択状態は欠損を
 
 全天テクスチャ、haze、world-anchoredな積雲のbillboard/impostor clusterを基本とする。
 雲は明るい上面、暖色寄りの太陽側、青灰色の下面を持つ。
+共有Rustは同じlobeから前半球法線のRG8 atlasを生成する。各viewは記録済みのNED太陽方向をworld-up billboardのright/up/front基底へ変換し、既存Webのambient色とsunlight色の間で陰影色を補間する。反射viewにも同じworld太陽方向を使う。法線atlasは非色データであり、色atlasのみsRGBとして扱う。環境条件の交換時に生成し、frameごとの再生成は行わない。法線atlasは最大1.5 MiB、色atlasと合計最大4.5 MiBであり、mesh・draw数を増やさない。
 山の稜線は識別可能に保持し、山下部は距離に応じて淡くする。
 雲を水面reflectionへ反映する。雲影はHigh以上の任意機能とする。
 volumetric raymarchは初期版の対象外である。
