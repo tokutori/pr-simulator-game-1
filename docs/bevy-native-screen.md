@@ -130,7 +130,10 @@ native ScreenのPilot/Chase切替はpresentation機能として提供し、core 
 共有UI接続では記録由来の解析系列、seek、再生停止・再開、再生速度を接続する。
 解析の軸名・単位、目盛、grid、基準線、legend、地図のscaleと北方位、plotの配置は共有`GameUiChart.presentation`から投影する。chart viewportの実測寸法を共有UIへ渡し、静的要素はview revisionの変更時だけ再投影する。seek中は同じcursor entityと共有系列色を使用する。低高さでは共有overflow契約に従ってchart内部をスクロールし、seek操作領域を保持する。文字のbaselineはBevyが使用するフォントの実測metricsから変換する。今回のchart投影に対する実GPU検査は未実施である。
 Replay cameraは共通候補順序のAuto・Pilot・Chase・Orbit・Platform・Shore・Overhead・Side・Front・Telephotoを提供する。既存Webを移植基準とする共有RustのgeometryとDirectorを使用し、Attractも同じrecord時刻からshotを選択する。固定点は登録環境のoriginとwater datumが一致する場合に使用する。退出時は通常Screenの60°FOVへ復帰する。本追加の実GPU描画は未確認である。
-記録一覧・保存・downloadはnativeで未提供であり、対応操作は共有capabilityから無効化する。
+記録一覧・保存済みReplayの読込みはnativeで未提供であり、対応操作は共有capabilityから無効化する。
+Resultと現飛行Replayの「飛行ログ CSV」「元記録 JSON」は、共有Rustの既存形式をfilesystemへ出力する。保存先は起動時の作業directoryの`flight-logs`であり、`--export-dir DIR`で変更できる。相対指定は起動時に絶対pathへ解決し、共通UIへ保存先と完了/失敗を表示する。directoryは出力時に作る。
+日時・process IDを含むfile名を`create_new`で生成し、既存fileは上書きしない。write/flush失敗では元の原因と実pathを表示し、不完全なfileが残る可能性がある。成功はwrite/flush完了を表し、電源断に対する永続性は保証しない。fileはUTF-8/LFである。
+JSONは元のschema 6 FlightRecordであり、Nativeで未提供のPersonal Best keyは`null`とする。CSVの加速度は既存Rust実装による保存標本のfinite-difference推定値であり、新たな物理計算や記録への値の追加は行わない。保存一覧・PB管理・保存済みReplayの読込み・file dialogは本機能に含まれない。
 水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。

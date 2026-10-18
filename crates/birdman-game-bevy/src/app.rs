@@ -4,6 +4,8 @@
 mod clouds;
 #[path = "environment.rs"]
 mod environment;
+#[path = "flight_log.rs"]
+mod flight_log;
 #[path = "frame_rate.rs"]
 mod frame_rate;
 #[path = "mip_filter.rs"]
@@ -73,6 +75,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut replay_camera_verification = false;
     let mut no_vsync = false;
     let mut offscreen = false;
+    let mut export_directory = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
@@ -84,6 +87,13 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                     .next()
                     .ok_or("--font requires a local font path")?
                     .into()
+            }
+            "--export-dir" => {
+                export_directory = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--export-dir requires a directory")?,
+                ));
             }
             "--verify" => {
                 verification_directory = Some(PathBuf::from(
@@ -120,6 +130,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 println!(
                     "--verify-water-auto: --verify-waterの5 motionを通常UIと同じ実Auto policyで観測する。既定Manual100は保持する。"
                 );
+                println!(
+                    "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
+                );
                 return Ok(());
             }
             _ => return Err(format!("Unknown argument: {argument}").into()),
@@ -143,6 +156,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let timing_mode =
         verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
     water_verification = verification_water_auto(water_verification, water_auto)?;
+    let flight_log_export =
+        flight_log::FlightLogExport::new(&std::env::current_dir()?, export_directory.as_deref());
+    println!(
+        "飛行ログの保存先: {}",
+        flight_log_export.directory().display()
+    );
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
             "日本語フォントを読めない: {} ({error})。--font PATH を指定する。",
@@ -187,6 +206,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
         .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
         .init_resource::<NativeSession>()
+        .insert_resource(flight_log_export)
         .init_resource::<FlightInput>()
         .init_resource::<water_quality::WaterQualitySelection>()
         .init_resource::<screen_render::NativeScreenRender>()

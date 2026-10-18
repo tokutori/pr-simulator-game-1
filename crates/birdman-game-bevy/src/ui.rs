@@ -1,6 +1,7 @@
 use super::{
     NativeFont,
     environment::NativeEnvironment,
+    flight_log::{FlightLogExport, FlightLogFormat},
     frame_rate::FrameRate,
     native_session::NativeSession,
     screen_render::{self, NativeScreenRender},
@@ -693,6 +694,18 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
     if let Some(notice) = &session.notice {
         notifications.push(notice.clone());
     }
+    let flight_log_export = world.get_resource::<FlightLogExport>();
+    if let Some(export) = flight_log_export
+        && matches!(
+            session.game.core_session().snapshot().phase(),
+            birdman_game_core::SessionPhase::Result | birdman_game_core::SessionPhase::Replay
+        )
+    {
+        notifications.push(format!(
+            "飛行ログの保存先: {}",
+            export.directory().display()
+        ));
+    }
     if let Some(environment) = world.get_resource::<NativeEnvironment>()
         && let Some(notice) = environment.failure_notice()
     {
@@ -712,7 +725,7 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         analysis_available: true,
         replay_available: session.game.core_session().playback_record().is_some(),
         stored_records_available: false,
-        flight_log_available: false,
+        flight_log_available: flight_log_export.is_some(),
         supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
         screen_render_scale: world.resource::<NativeScreenRender>().snapshot(),
         water_quality: shared_quality(quality.applied()),
@@ -821,6 +834,24 @@ pub(crate) fn button_actions(world: &mut World) {
                     GameUiEffect::Record { action } => world
                         .resource_mut::<NativeSession>()
                         .execute_ui_record_action(action)?,
+                    GameUiEffect::Platform {
+                        command:
+                            command @ (GameUiPlatformCommand::DownloadRecordJson {}
+                            | GameUiPlatformCommand::DownloadFlightCsv {}),
+                    } => {
+                        let export = world
+                            .get_resource::<FlightLogExport>()
+                            .ok_or("飛行ログの保存先が設定されていない")?;
+                        let format = match command {
+                            GameUiPlatformCommand::DownloadRecordJson {} => FlightLogFormat::Json,
+                            _ => FlightLogFormat::Csv,
+                        };
+                        let path = export
+                            .save(world.resource::<NativeSession>(), format)
+                            .map_err(|cause| cause.to_string())?;
+                        world.resource_mut::<NativeSession>().notice =
+                            Some(format!("飛行ログを保存した: {}", path.display()));
+                    }
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetWaterQuality { quality },
                     } => {
@@ -3224,6 +3255,124 @@ mod tests {
         app.update();
         press(&mut app, "game-result-open-analysis");
         app
+    }
+
+    #[test]
+    fn shared_log_buttons_export_original_json_and_full_csv_without_mutating_record_or_clock() {
+        use super::super::flight_log::tests::TestDirectory;
+        use birdman_game_format::TailFlightRecordDocument;
+
+        let directory = TestDirectory::new();
+        let mut app = analysis_app();
+        assert!(!platform_input(app.world_mut()).flight_log_available);
+        for id in ["game-flight-log-json", "game-flight-log-csv"] {
+            let node = app.world().resource::<RetainedUi>().widgets[id].node;
+            assert!(!app.world().get::<MenuButton>(node).unwrap().enabled);
+        }
+        app.insert_resource(FlightLogExport::new(&directory.0, None));
+        app.update();
+        let expected = {
+            let session = app.world().resource::<NativeSession>();
+            TailFlightRecordDocument::from_record(
+                session.game.core_session().flight_record().unwrap(),
+                session.game.difficulty(),
+                session.game.prepared().unwrap().record_identity.clone(),
+            )
+            .unwrap()
+        };
+        assert_eq!(expected.schema_version, 6);
+        assert!(expected.header.personal_best_key.is_none());
+        assert!(expected.samples.len() > 1);
+        let export_directory = directory.0.join("flight-logs");
+        assert!(!export_directory.exists());
+        for replay in [false, true] {
+            if replay {
+                press(&mut app, "game-result-replay");
+            }
+            let before = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
+            let before_clock = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .playback_clock();
+            for id in ["game-flight-log-json", "game-flight-log-csv"] {
+                press(&mut app, id);
+                let session = app.world().resource::<NativeSession>();
+                assert_eq!(session.game.core_session().snapshot(), before);
+                assert_eq!(session.game.core_session().playback_clock(), before_clock);
+                let after = TailFlightRecordDocument::from_record(
+                    session.game.core_session().flight_record().unwrap(),
+                    session.game.difficulty(),
+                    session.game.prepared().unwrap().record_identity.clone(),
+                )
+                .unwrap();
+                assert_eq!(after, expected);
+                assert!(
+                    session
+                        .notice
+                        .as_ref()
+                        .unwrap()
+                        .starts_with("飛行ログを保存した: ")
+                );
+                let notice =
+                    &app.world().resource::<RetainedUi>().widgets["game-flight-log-notice"];
+                let text = &app.world().get::<Text>(notice.text).unwrap().0;
+                assert!(text.contains("飛行ログを保存した: "));
+                assert!(text.contains(&export_directory.display().to_string()));
+            }
+        }
+        let paths: Vec<_> = std::fs::read_dir(&export_directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(paths.len(), 4);
+        for path in paths {
+            let bytes = std::fs::read(&path).unwrap();
+            assert!(!bytes.contains(&b'\r'));
+            assert!(std::str::from_utf8(&bytes).is_ok());
+            if path.extension().unwrap() == "json" {
+                assert_eq!(
+                    TailFlightRecordDocument::decode_json(&bytes).unwrap(),
+                    expected
+                );
+            } else {
+                assert_eq!(bytes, expected.encode_csv().unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn shared_log_effect_reports_real_io_failure_without_success_or_record_changes() {
+        use super::super::flight_log::tests::TestDirectory;
+
+        let directory = TestDirectory::new();
+        let blocked = directory.0.join("existing-file");
+        std::fs::write(&blocked, b"preserve\n").unwrap();
+        let mut app = analysis_app();
+        app.insert_resource(FlightLogExport::new(&directory.0, Some(&blocked)));
+        app.update();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        press(&mut app, "game-flight-log-json");
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.core_session().snapshot(), before);
+        let notice = session.notice.as_ref().unwrap();
+        assert!(notice.starts_with("飛行ログを保存できない: "));
+        assert!(notice.contains(&blocked.display().to_string()));
+        assert!(!notice.contains("飛行ログを保存した"));
+        assert_eq!(std::fs::read(&blocked).unwrap(), b"preserve\n");
+        assert!(std::fs::read_dir(&directory.0).unwrap().count() == 1);
+        assert!(platform_input(app.world_mut()).flight_log_available);
     }
 
     fn add_ui_layout(app: &mut App, width: u32, height: u32) -> Entity {
