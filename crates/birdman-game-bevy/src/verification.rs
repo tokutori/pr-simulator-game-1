@@ -1261,9 +1261,9 @@ impl Verification {
                 countdown_attempts: 0,
                 countdown_header: None,
                 scene_shaders: [
-                    asset_server.load("native_water.wgsl"),
+                    asset_server.load(super::native_assets::water_shader_path()),
                     material_shader,
-                    asset_server.load("native_terrain_haze.wgsl"),
+                    asset_server.load(super::native_assets::terrain_shader_path()),
                 ],
                 readiness: RenderReadiness::default(),
                 processing_delay_reported: false,
@@ -3591,6 +3591,7 @@ mod tests {
             Update,
             (super::super::advance_presentation, super::advance).chain(),
         );
+        super::super::native_assets::register(&mut app);
         super::super::register_input(&mut app);
         app.add_systems(
             PreUpdate,

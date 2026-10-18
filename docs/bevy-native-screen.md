@@ -113,6 +113,19 @@ Resultでは選択した操縦支援、記録由来のcontroller version、確�
 
 登録済みの湖岸・地形・会場・環境JSONを再利用する。機体は現行表示の寸法に基づくprocedural meshで表示する。
 出典・加工・利用条件は`assets/manifest.toml`を正本とする。native起動前にTypeScriptでassetを生成する手順は不要である。
+Native runtime assetの入力経路は次のとおりである。
+
+| 入力 | 実行時の取得方法 | 出典・利用条件 |
+|---|---|---|
+| `native_water.wgsl`・`native_clouds.wgsl`・`native_terrain_haze.wgsl` | Bevy 0.19.1標準の`embedded_asset!`でbinaryへ含め、Materialと検証処理が同じ`embedded://` sourceを`AssetServer`で読む | 本repositoryのproject-authored shader、MIT |
+| `indigo-resist-decal.png` | Native worldの`include_bytes!`からdecode | `assets/manifest.toml`の生成画像・MIT契約 |
+| `biwa-terrain.json`・`biwa-land-mask.json` | Native worldの`include_str!`からdecode | manifestのJAXA AW3D30・Copernicus・OpenStreetMapの出典・利用条件 |
+| environment v6・launch venue・analysis map・venue featuresのJSON | 共有Rustの既存`include_*`からdecode | manifestに記載した気象庁・OpenStreetMap・利用者提供の設定と加工条件 |
+| 水面detail・sky panorama・cloud color/normal・主翼/尾翼のmesh/texture | 既存共有Rustの表示モデルと登録済み入力から生成 | 既存source/manifestの帰属を保持し、別fileの手作業配置は不要 |
+| 日本語font | 対象WindowsのMeiryo、または`--font PATH`で明示したローカルfile | 下記のOS font前提・利用条件。binaryへ含めない |
+
+WGSLは既存Bevyのembedded readerへ直接登録し、build時checkoutの絶対pathやfilesystemへのfallbackを使用しない。shader directoryのcopyは不要である。`embedded_watcher`は有効にしない。テスト専用FiraMono subsetはproductionのfont入力に使用しない。
+本変更のCPU検査は、不存在のfilesystem asset rootで本番Materialの参照を実`AssetServer`/`ShaderLoader`へ通し、3 shaderの読込みと未登録pathの原因付き失敗を確認する。shaderのGPU compile、ソースdirectory外へ移した実行ファイルの起動、配布物全体の受入は[#385](https://github.com/tokutori/pr-simulator-game-1/issues/385)の未完条件として区分する。
 日本語表示はWindowsにインストールされたMeiryoをローカルで読み取る。フォントファイルをrepositoryやbinaryへ同梱しない。
 日本語の単語分割にはICU辞書を使用する。Bevy 0.19.1が利用するParley 0.9.0へ公式の`complex-scripts`選択処理を限定backportし、
 Windows native依存だけで有効化する。出典と変更範囲は`vendor/parley/BACKPORT.md`に記録する。

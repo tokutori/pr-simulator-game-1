@@ -33,6 +33,6 @@ impl TerrainHazeExtension {
 
 impl MaterialExtension for TerrainHazeExtension {
     fn fragment_shader() -> ShaderRef {
-        "native_terrain_haze.wgsl".into()
+        super::native_assets::terrain_shader_path().into()
     }
 }

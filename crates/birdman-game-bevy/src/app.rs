@@ -10,6 +10,8 @@ mod flight_log;
 mod frame_rate;
 #[path = "mip_filter.rs"]
 mod mip_filter;
+#[path = "native_assets.rs"]
+mod native_assets;
 #[path = "native_session.rs"]
 mod native_session;
 #[path = "offscreen.rs"]
@@ -171,25 +173,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     if verification_directory.is_some() {
         verification::verify_text_layout(&font_bytes)?;
     }
-    let assets_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets");
-    if !assets_path.join("native_water.wgsl").is_file() {
-        return Err("水面shader assetがない".into());
-    }
     let mut app = App::new();
-    let plugins = DefaultPlugins
-        .set(WindowPlugin {
-            primary_window: Some(primary_window(verification_size, no_vsync)),
-            exit_condition: if offscreen {
-                ExitCondition::DontExit
-            } else {
-                ExitCondition::OnAllClosed
-            },
-            ..default()
-        })
-        .set(AssetPlugin {
-            file_path: assets_path.to_string_lossy().into_owned(),
-            ..default()
-        });
+    let plugins = DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(primary_window(verification_size, no_vsync)),
+        exit_condition: if offscreen {
+            ExitCondition::DontExit
+        } else {
+            ExitCondition::OnAllClosed
+        },
+        ..default()
+    });
     let plugins = if offscreen {
         plugins.disable::<WinitPlugin>()
     } else {
@@ -211,6 +204,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<water_quality::WaterQualitySelection>()
         .init_resource::<screen_render::NativeScreenRender>()
         .init_resource::<CameraMode>();
+    native_assets::register(&mut app);
     if offscreen {
         offscreen::configure(&mut app, verification_size.unwrap_or((1280, 720)))?;
         let runner = offscreen_runner(no_vsync);

@@ -46,10 +46,10 @@ pub(crate) struct CloudMaterial {
 
 impl Material for CloudMaterial {
     fn vertex_shader() -> ShaderRef {
-        "native_clouds.wgsl".into()
+        super::native_assets::cloud_shader_path().into()
     }
     fn fragment_shader() -> ShaderRef {
-        "native_clouds.wgsl".into()
+        Self::vertex_shader()
     }
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
