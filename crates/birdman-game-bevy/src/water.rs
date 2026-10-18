@@ -737,7 +737,7 @@ pub(crate) fn apply_environment(
             .sky
             .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0)
         {
-            18_000.0
+            super::world::SCENE_SUN_ILLUMINANCE_LUX
         } else {
             0.0
         };

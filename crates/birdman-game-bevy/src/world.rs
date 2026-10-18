@@ -11,7 +11,10 @@ use super::{
 use bevy::ecs as bevy_ecs;
 use bevy::{
     asset::RenderAssetUsages,
-    camera::visibility::{NoFrustumCulling, RenderLayers},
+    camera::{
+        Exposure,
+        visibility::{NoFrustumCulling, RenderLayers},
+    },
     core_pipeline::tonemapping::Tonemapping,
     image::{CompressedImageFormats, ImageSampler, ImageSamplerDescriptor, ImageType},
     light::{CascadeShadowConfigBuilder, NotShadowCaster},
@@ -22,6 +25,7 @@ use bevy::{
 #[cfg(test)]
 use birdman_game_core::{HybridMockDefinition, HybridSurfaceRole};
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
+use birdman_game_session::lake_sky::LAKE_SCENE_LIGHTING;
 use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
 use birdman_game_session::wing_geometry::{
     CARBON_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial,
@@ -30,6 +34,16 @@ use birdman_game_session::wing_geometry::{
 use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
 use serde::Deserialize;
+
+pub(super) const SCENE_SUN_ILLUMINANCE_LUX: f32 = 18_000.0;
+const SCENE_EXPOSURE_SCALE: f32 =
+    LAKE_SCENE_LIGHTING.sunlight_irradiance as f32 / SCENE_SUN_ILLUMINANCE_LUX;
+
+pub(super) fn scene_exposure() -> Exposure {
+    Exposure {
+        ev100: (1.0 / (1.2 * SCENE_EXPOSURE_SCALE)).log2(),
+    }
+}
 
 #[derive(Component, PartialEq, Eq)]
 pub(crate) enum WorldProjection {
@@ -455,6 +469,12 @@ pub(crate) fn setup_world(
     mut clouds: ResMut<Assets<super::clouds::CloudMaterial>>,
 ) {
     commands.init_resource::<RenderHistory>();
+    commands.insert_resource(GlobalAmbientLight {
+        color: wing_color(LAKE_SCENE_LIGHTING.ambient_color_srgb),
+        brightness: LAKE_SCENE_LIGHTING.ambient_irradiance as f32
+            / (std::f32::consts::PI * SCENE_EXPOSURE_SCALE),
+        ..default()
+    });
     let environment = NativeEnvironment::try_default().expect("登録環境が不正");
     let sky = environment
         .condition_for(EnvironmentTarget::DefaultExhibition)
@@ -538,7 +558,8 @@ pub(crate) fn setup_world(
     commands.spawn((
         EnvironmentSun,
         DirectionalLight {
-            illuminance: 18_000.0,
+            color: wing_color(LAKE_SCENE_LIGHTING.sunlight_color_srgb),
+            illuminance: SCENE_SUN_ILLUMINANCE_LUX,
             shadow_maps_enabled: true,
             ..default()
         },
@@ -854,7 +875,8 @@ pub(crate) fn setup_world(
         WorldProjection::FlightCamera,
         Camera3d::default(),
         IsDefaultUiCamera,
-        Tonemapping::Reinhard,
+        Tonemapping::None,
+        scene_exposure(),
         Projection::Perspective(PerspectiveProjection {
             far: 200_000.0,
             fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32,
@@ -1937,7 +1959,32 @@ mod tests {
         let (light, transform) = lights.single(app.world()).unwrap();
         assert_eq!(light.illuminance, 18_000.0);
         assert!(light.shadow_maps_enabled);
+        assert_eq!(
+            light.color,
+            wing_color(LAKE_SCENE_LIGHTING.sunlight_color_srgb)
+        );
         assert!((transform.forward().as_vec3() + expected).length() < 1.0e-6);
+        let illuminance = light.illuminance;
+        let mut exposure_query = app
+            .world_mut()
+            .query_filtered::<(&Exposure, &Tonemapping), With<Camera3d>>();
+        let (exposure, tone_mapping) = exposure_query.single(app.world()).unwrap();
+        assert_eq!(*tone_mapping, Tonemapping::None);
+        let scale = exposure.exposure();
+        assert!(
+            (illuminance * scale - LAKE_SCENE_LIGHTING.sunlight_irradiance as f32).abs() < 1.0e-6
+        );
+        let ambient = app.world().resource::<GlobalAmbientLight>();
+        assert_eq!(
+            ambient.color,
+            wing_color(LAKE_SCENE_LIGHTING.ambient_color_srgb)
+        );
+        assert!(
+            (ambient.brightness * std::f32::consts::PI * scale
+                - LAKE_SCENE_LIGHTING.ambient_irradiance as f32)
+                .abs()
+                < 1.0e-6
+        );
         let materials = app.world().resource::<Assets<WaterMaterial>>();
         let mut material_modes = Vec::new();
         for (_, material) in materials.iter() {
