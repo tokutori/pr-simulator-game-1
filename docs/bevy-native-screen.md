@@ -282,6 +282,7 @@ cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-
 この選択は診断方式だけを変更する。5 motion・水面画質・固定tick・150 ms安全条件は同一である。
 飛行中の実Autoを観測する場合は`--verify-water-auto`を追加する。省略時は従来のManual100を維持する。
 Setupの公開Auto操作を通し、最初の有効窓と資源ACKまで既存Setup内で最大10秒待つ。未対応・失敗・未達は原因を保持する。
+初期完了は共有controllerが保持する成熟・受領率90%以上の窓のepochから導出し、ACK後のpipeline Readyと500 ms以内のGPU sourceを併せて確認する。継続適応で現在窓がMeasuringへ戻っても完了事実を保持し、外部contextの失効・適用失敗では破棄する。停止中のAuto接続確認にも同じ完了条件を使用し、倍率低下だけを有効窓の証拠にしない。
 この準備確認は最適画質への収束を意味しない。飛行中も同じ共有policyが実GPU標本を受け、倍率とshadowを適応させる。
 到着時刻基準の従来集計とは別に、root GPUの同一完了batchのepoch・source-frame・実適用scale/shadowで分布を分ける。
 source区間はStart画像保存frameを除き、2秒motionの完了frameまでを含む。整数msは同じReal時計から取得し、frame包含の判定に小数時刻を用いない。

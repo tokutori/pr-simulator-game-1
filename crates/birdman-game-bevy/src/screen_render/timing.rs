@@ -141,7 +141,7 @@ impl Plugin for ScreenTimingPlugin {
 struct ParkedRecorder(Option<DiagnosticsRecorder>);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) enum PipelinePreparation {
+pub(crate) enum PipelinePreparation {
     #[default]
     Pending,
     Ready,
@@ -160,11 +160,12 @@ struct TimingPacket {
 }
 
 fn observe_preparation(packet: Res<TimingPacket>, mut main: ResMut<MainWorld>) {
-    if let Some(mut readout) = main.get_resource_mut::<TimingReadout>()
-        && readout.preparation != packet.preparation
-    {
-        readout.preparation = packet.preparation.clone();
-        readout.preparation_changed = true;
+    if let Some(mut readout) = main.get_resource_mut::<TimingReadout>() {
+        readout.preparation_epoch = packet.epoch;
+        if readout.preparation != packet.preparation {
+            readout.preparation = packet.preparation.clone();
+            readout.preparation_changed = true;
+        }
     }
 }
 
@@ -399,13 +400,14 @@ fn end_work(world: &mut World) {
 }
 
 #[derive(Resource, Default)]
-pub(super) struct TimingReadout {
+pub(crate) struct TimingReadout {
     arrival: Option<Instant>,
     previous: Option<(u32, u32)>,
-    pub(super) source_frame: Option<u32>,
+    pub(crate) source_frame: Option<u32>,
     pub(super) window_extent: Option<UVec2>,
     pub(super) interrupted: bool,
-    pub(super) preparation: PipelinePreparation,
+    pub(crate) preparation: PipelinePreparation,
+    pub(crate) preparation_epoch: u32,
     pub(super) preparation_changed: bool,
 }
 

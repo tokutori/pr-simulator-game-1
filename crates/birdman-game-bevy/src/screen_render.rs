@@ -62,6 +62,13 @@ impl NativeScreenRender {
         self.controller.snapshot()
     }
 
+    pub(crate) fn initial_observation_epoch(&self, readout: &timing::TimingReadout) -> Option<u32> {
+        (readout.preparation == timing::PipelinePreparation::Ready
+            && readout.preparation_epoch == self.controller.epoch())
+        .then(|| self.controller.initial_observation_epoch())
+        .flatten()
+    }
+
     fn measuring(&self) -> bool {
         self.controller.measurement_enabled()
     }
@@ -386,13 +393,9 @@ pub(crate) fn observe_auto(world: &mut World) {
             } else if interrupted_now || wrapped {
                 Some(ScreenRenderInvalidation::Interrupted)
             } else if preparation_changed {
-                Some(
-                    if readout.preparation == timing::PipelinePreparation::Ready {
-                        ScreenRenderInvalidation::QualityChanged
-                    } else {
-                        ScreenRenderInvalidation::Interrupted
-                    },
-                )
+                Some(ScreenRenderInvalidation::ScenePreparation {
+                    ready: readout.preparation == timing::PipelinePreparation::Ready,
+                })
             } else {
                 None
             };
@@ -560,6 +563,113 @@ mod tests {
             .add(WaterMaterial::registered(false).unwrap());
         app.update();
         (app, window, camera, material)
+    }
+
+    #[test]
+    fn initial_observation_requires_actual_ack_current_pipeline_epoch_and_fresh_gpu_source() {
+        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        let (mut app, _, _, _) = app();
+        select_auto(app.world_mut(), true).unwrap();
+        let initial_epoch = app
+            .world()
+            .resource::<NativeScreenRender>()
+            .controller
+            .epoch();
+        let mut request = None;
+        for frame in 0..=110 {
+            let now = f64::from(frame) * 20.0;
+            let mut rendering = app.world_mut().resource_mut::<NativeScreenRender>();
+            let epoch = rendering.controller.epoch();
+            request = rendering
+                .controller
+                .observe(
+                    ScreenGpuSample {
+                        epoch,
+                        frame,
+                        source_ms: now,
+                        gpu_work_ms: 20.0,
+                    },
+                    now,
+                )
+                .unwrap();
+            if request.is_some() {
+                break;
+            }
+        }
+        let request = request.unwrap();
+        let now = 2_250.0;
+        let mut readout = timing::TimingReadout::default();
+        readout.preparation = timing::PipelinePreparation::Ready;
+        readout.preparation_epoch = app
+            .world()
+            .resource::<NativeScreenRender>()
+            .controller
+            .epoch();
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .initial_observation_epoch(&readout),
+            None
+        );
+        apply_request(app.world_mut(), Some(request), now).unwrap();
+        let epoch = app
+            .world()
+            .resource::<NativeScreenRender>()
+            .controller
+            .epoch();
+        app.world_mut()
+            .resource_mut::<NativeScreenRender>()
+            .controller
+            .observe(
+                ScreenGpuSample {
+                    epoch,
+                    frame: 0,
+                    source_ms: now + 1.0,
+                    gpu_work_ms: 20.0,
+                },
+                now + 1.0,
+            )
+            .unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .initial_observation_epoch(&readout),
+            None
+        );
+        readout.preparation_epoch = epoch;
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .initial_observation_epoch(&readout),
+            Some(initial_epoch)
+        );
+        readout.preparation = timing::PipelinePreparation::Pending;
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .initial_observation_epoch(&readout),
+            None
+        );
+        readout.preparation = timing::PipelinePreparation::Ready;
+        app.world_mut()
+            .resource_mut::<NativeScreenRender>()
+            .controller
+            .pending(now + 502.0)
+            .unwrap();
+        assert_eq!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .initial_observation_epoch(&readout),
+            None
+        );
+        assert_eq!(
+            app.world().resource::<DirectionalLightShadowMap>().size,
+            request.shadow.size() as usize
+        );
+        assert_eq!(
+            app.world().resource::<NativeScreenRender>().applied(),
+            request.scale
+        );
     }
 
     #[test]

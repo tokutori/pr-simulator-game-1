@@ -169,6 +169,11 @@ pub enum ScreenRenderInvalidation {
     Interrupted,
     /// Another rendering-quality setting changed.
     QualityChanged,
+    /// Scene pipeline preparation changed within the same rendering context.
+    ScenePreparation {
+        /// The current scene pipelines are ready for measurement.
+        ready: bool,
+    },
 }
 
 /// Rejected controller input; no backend error classification is discarded.
@@ -223,6 +228,7 @@ pub struct ScreenRenderAutoController {
     window_started_ms: f64,
     last_evaluated_ms: f64,
     cooldown_until_ms: f64,
+    initial_observation_epoch: Option<u32>,
 }
 
 impl ScreenRenderAutoController {
@@ -245,6 +251,7 @@ impl ScreenRenderAutoController {
             window_started_ms: 0.0,
             last_evaluated_ms: 0.0,
             cooldown_until_ms: 0.0,
+            initial_observation_epoch: None,
         }
     }
 
@@ -282,6 +289,24 @@ impl ScreenRenderAutoController {
         self.epoch
     }
 
+    /// Returns the first complete mature window while acknowledged resources have fresh observations.
+    pub fn initial_observation_epoch(&self) -> Option<u32> {
+        if self.automatic()
+            && matches!(self.resource, ResourceState::Ready)
+            && !matches!(
+                self.measurement,
+                MeasurementState::Unsupported(_) | MeasurementState::Interrupted
+            )
+            && self
+                .last_source_ms
+                .is_some_and(|source| self.now_ms - source <= 500.0)
+        {
+            self.initial_observation_epoch
+        } else {
+            None
+        }
+    }
+
     /// Returns the outstanding resource request, if any.
     pub const fn requested(&self) -> Option<ScreenRenderResourceRequest> {
         match self.resource {
@@ -307,6 +332,7 @@ impl ScreenRenderAutoController {
             return Ok(self.requested());
         }
         self.reset_window(now_ms)?;
+        self.initial_observation_epoch = None;
         self.selection = ScreenRenderSelection::Manual { scale, shadow };
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
@@ -323,6 +349,7 @@ impl ScreenRenderAutoController {
         match (enabled, self.selection) {
             (true, ScreenRenderSelection::Manual { scale, shadow }) => {
                 self.reset_window(now_ms)?;
+                self.initial_observation_epoch = None;
                 self.selection = ScreenRenderSelection::Auto {
                     manual_scale: scale,
                     manual_shadow: shadow,
@@ -411,6 +438,9 @@ impl ScreenRenderAutoController {
     ) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         self.reset_window(now_ms)?;
+        if !matches!(reason, ScreenRenderInvalidation::ScenePreparation { .. }) {
+            self.initial_observation_epoch = None;
+        }
         let unsupported_retained = matches!(self.measurement, MeasurementState::Unsupported(_))
             && !matches!(
                 reason,
@@ -420,7 +450,9 @@ impl ScreenRenderAutoController {
         if !unsupported_retained {
             self.measurement = if matches!(
                 reason,
-                ScreenRenderInvalidation::BackendChanged | ScreenRenderInvalidation::Interrupted
+                ScreenRenderInvalidation::BackendChanged
+                    | ScreenRenderInvalidation::Interrupted
+                    | ScreenRenderInvalidation::ScenePreparation { ready: false }
             ) {
                 MeasurementState::Interrupted
             } else {
@@ -433,6 +465,7 @@ impl ScreenRenderAutoController {
     /// Retains an explicit capability failure without treating it as zero work.
     pub fn unsupported(&mut self, cause: String, now_ms: f64) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
+        self.initial_observation_epoch = None;
         if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
             self.reset_window(now_ms)?;
         }
@@ -452,6 +485,9 @@ impl ScreenRenderAutoController {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window_reserving_ack(now_ms, false)?;
+        if cleanup_failure.is_some() {
+            self.initial_observation_epoch = None;
+        }
         self.resource = match cleanup_failure {
             Some(cause) => ResourceState::Failed(cause),
             None => ResourceState::Ready,
@@ -459,6 +495,7 @@ impl ScreenRenderAutoController {
         self.applied = request.scale;
         self.shadow = request.shadow;
         if self.epoch == u32::MAX {
+            self.initial_observation_epoch = None;
             self.measurement =
                 MeasurementState::Unsupported("GPU timing epoch exhausted".to_owned());
         } else if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
@@ -480,6 +517,7 @@ impl ScreenRenderAutoController {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window_reserving_ack(now_ms, false)?;
+        self.initial_observation_epoch = None;
         self.resource = ResourceState::Failed(cause);
         Ok(())
     }
@@ -543,6 +581,7 @@ impl ScreenRenderAutoController {
 
     fn check_epoch_capacity(&mut self, increments: u32) -> Result<(), ScreenRenderAutoError> {
         if self.epoch.checked_add(increments).is_none() {
+            self.initial_observation_epoch = None;
             self.measurement =
                 MeasurementState::Unsupported("GPU timing epoch exhausted".to_owned());
             return Err(ScreenRenderAutoError::EpochExhausted);
@@ -584,6 +623,9 @@ impl ScreenRenderAutoController {
             && self.samples.len() >= 8
             && span >= 1_000.0
             && freshness <= 500.0;
+        if complete && mature && self.initial_observation_epoch.is_none() {
+            self.initial_observation_epoch = Some(self.epoch);
+        }
         self.measurement = if !complete {
             MeasurementState::CoverageLimited
         } else if mature {
@@ -662,6 +704,24 @@ mod tests {
             source_ms,
             gpu_work_ms,
         }
+    }
+
+    fn evaluated_window(
+        controller: &mut ScreenRenderAutoController,
+        start: f64,
+        frame_step: u32,
+    ) -> Option<ScreenRenderResourceRequest> {
+        for frame in 0..=100 {
+            let now = start + f64::from(frame) * 20.0;
+            if let Some(request) = controller
+                .observe(sample(controller, frame * frame_step, now, 20.0), now)
+                .unwrap()
+            {
+                return Some(request);
+            }
+            assert_ne!(controller.snapshot().status, ScreenRenderAutoStatus::Ready);
+        }
+        controller.pending(start + 2_250.0).unwrap()
     }
 
     #[test]
@@ -814,6 +874,130 @@ mod tests {
         assert_eq!(controller.pending(12_250.0).unwrap(), None);
         assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Ready);
         assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
+        assert_eq!(
+            controller.initial_observation_epoch(),
+            Some(controller.epoch())
+        );
+    }
+
+    #[test]
+    fn complete_initial_window_survives_ack_and_continuous_adaptation_without_snapshot_ready() {
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        let initial_epoch = controller.epoch();
+        let mut start = 0.0;
+        for _ in 0..3 {
+            let request = evaluated_window(&mut controller, start, 1).unwrap();
+            assert_eq!(controller.initial_observation_epoch(), None);
+            let now = controller.now_ms;
+            controller.applied(request, now, None).unwrap();
+            assert_eq!(controller.initial_observation_epoch(), None);
+            controller
+                .invalidate(
+                    ScreenRenderInvalidation::ScenePreparation { ready: false },
+                    now + 1.0,
+                )
+                .unwrap();
+            assert_eq!(
+                controller.snapshot().status,
+                ScreenRenderAutoStatus::Interrupted
+            );
+            controller
+                .invalidate(
+                    ScreenRenderInvalidation::ScenePreparation { ready: true },
+                    now + 2.0,
+                )
+                .unwrap();
+            assert_eq!(
+                controller.snapshot().status,
+                ScreenRenderAutoStatus::Measuring
+            );
+            start = now + 1_200.0;
+            controller
+                .observe(sample(&controller, 0, start, 20.0), start)
+                .unwrap();
+            assert_eq!(controller.initial_observation_epoch(), Some(initial_epoch));
+        }
+        controller.pending(controller.now_ms + 501.0).unwrap();
+        assert_eq!(controller.initial_observation_epoch(), None);
+    }
+
+    #[test]
+    fn insufficient_coverage_and_obsolete_sources_never_create_initial_completion() {
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        let obsolete = sample(&controller, 0, 0.0, 20.0);
+        let request = evaluated_window(&mut controller, 0.0, 2).unwrap();
+        controller
+            .applied(request, controller.now_ms, None)
+            .unwrap();
+        controller.observe(obsolete, controller.now_ms).unwrap();
+        let now = controller.now_ms + 20.0;
+        controller
+            .observe(sample(&controller, 0, now, 20.0), now)
+            .unwrap();
+        assert_eq!(controller.initial_observation_epoch(), None);
+    }
+
+    #[test]
+    fn external_invalidation_and_failed_ack_cannot_recreate_initial_completion() {
+        for reason in [
+            ScreenRenderInvalidation::Resize,
+            ScreenRenderInvalidation::BackendChanged,
+            ScreenRenderInvalidation::ContextRestored,
+            ScreenRenderInvalidation::Disjoint,
+            ScreenRenderInvalidation::Interrupted,
+            ScreenRenderInvalidation::QualityChanged,
+        ] {
+            let mut controller =
+                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+            controller.select_auto(true, 0.0).unwrap();
+            let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
+            let now = controller.now_ms;
+            controller.invalidate(reason, now + 1.0).unwrap();
+            controller.applied(request, now + 2.0, None).unwrap();
+            controller
+                .observe(sample(&controller, 0, now + 3.0, 20.0), now + 3.0)
+                .unwrap();
+            assert_eq!(controller.initial_observation_epoch(), None, "{reason:?}");
+        }
+        for failure in 0..4 {
+            let mut controller =
+                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+            controller.select_auto(true, 0.0).unwrap();
+            let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
+            let now = controller.now_ms;
+            match failure {
+                0 => controller
+                    .failed(request, "allocation".into(), now)
+                    .unwrap(),
+                1 => controller
+                    .applied(request, now, Some("cleanup".into()))
+                    .unwrap(),
+                2 => controller
+                    .unsupported("timestamp unsupported".into(), now)
+                    .unwrap(),
+                _ => {
+                    controller
+                        .select_manual(ScreenRenderScale::Full, now)
+                        .unwrap();
+                    controller.select_auto(true, now).unwrap();
+                }
+            }
+            let current_request = controller.requested();
+            let stale = ScreenRenderResourceRequest {
+                epoch: request.epoch - 1,
+                ..request
+            };
+            assert_eq!(
+                controller.applied(stale, now, None),
+                Err(ScreenRenderAutoError::StaleRequest)
+            );
+            assert_eq!(controller.requested(), current_request);
+            assert_eq!(controller.initial_observation_epoch(), None);
+        }
     }
 
     #[test]

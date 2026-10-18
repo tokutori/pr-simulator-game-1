@@ -1605,6 +1605,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
     rendering: Res<'w, NativeScreenRender>,
+    timing_readout: Res<'w, timing::TimingReadout>,
     frame: Res<'w, FrameCount>,
     diagnostics: Option<Res<'w, DiagnosticsStore>>,
     shadow_map: Res<'w, bevy::light::DirectionalLightShadowMap>,
@@ -2251,18 +2252,34 @@ fn advance_step(
                                 return Ok(());
                             }
                             match rendering.status {
-                                ScreenRenderAutoStatus::Ready => println!(
-                                    "Water Auto initial valid window and resource ACK confirmed: {rendering:?}; later flight adaptation remains active"
-                                ),
                                 ScreenRenderAutoStatus::Unsupported { cause }
                                 | ScreenRenderAutoStatus::Failed { cause } => {
                                     return Err(format!("Water Auto unavailable: {cause}"));
+                                }
+                                _ if presentation
+                                    .rendering
+                                    .initial_observation_epoch(&presentation.timing_readout)
+                                    .is_some() =>
+                                {
+                                    println!(
+                                        "Water Auto initial valid window and resource ACK confirmed: {rendering:?}, observation_epoch={:?}, preparation_epoch={}; later flight adaptation remains active",
+                                        presentation.rendering.initial_observation_epoch(
+                                            &presentation.timing_readout
+                                        ),
+                                        presentation.timing_readout.preparation_epoch,
+                                    )
                                 }
                                 _ if verification.stage_started.elapsed()
                                     > Duration::from_secs(10) =>
                                 {
                                     return Err(format!(
-                                        "Water Auto initial valid window timed out: {rendering:?}"
+                                        "Water Auto initial valid window timed out: {rendering:?}, observation_epoch={:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
+                                        presentation.rendering.initial_observation_epoch(
+                                            &presentation.timing_readout
+                                        ),
+                                        presentation.timing_readout.preparation,
+                                        presentation.timing_readout.preparation_epoch,
+                                        presentation.timing_readout.source_frame,
                                     ));
                                 }
                                 _ => return Ok(()),
@@ -2654,14 +2671,19 @@ fn advance_step(
                 if let ScreenRenderAutoStatus::Failed { cause } = &snapshot.status {
                     return Err(format!("Auto resource application failed: {cause}"));
                 }
-                let accepted = matches!(snapshot.status, ScreenRenderAutoStatus::Ready)
-                    || snapshot.applied != ScreenRenderScale::Full;
+                let accepted = presentation
+                    .rendering
+                    .initial_observation_epoch(&presentation.timing_readout)
+                    .is_some();
                 let unsupported =
                     matches!(snapshot.status, ScreenRenderAutoStatus::Unsupported { .. });
                 let observed = verification.stage_started.elapsed();
                 if observed > Duration::from_secs(8) {
                     return Err(format!(
-                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}"
+                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
+                        presentation.timing_readout.preparation,
+                        presentation.timing_readout.preparation_epoch,
+                        presentation.timing_readout.source_frame,
                     ));
                 }
                 if (unsupported || (accepted && observed >= Duration::from_secs(4)))
@@ -3512,6 +3534,7 @@ mod tests {
         .init_resource::<super::super::world::RenderHistory>()
         .init_resource::<WaterQualitySelection>()
         .init_resource::<super::super::screen_render::NativeScreenRender>()
+        .init_resource::<super::timing::TimingReadout>()
         .init_resource::<bevy::light::DirectionalLightShadowMap>()
         .init_resource::<Assets<super::WaterMaterial>>()
         .init_resource::<Assets<Image>>()
