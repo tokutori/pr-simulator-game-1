@@ -550,6 +550,7 @@ pub(crate) fn setup_world(
         commands.spawn((
             VenueStructure,
             Name::new(format!("lake-biwa-{}-features-osm", structure.kind.name())),
+            Visibility::Inherited,
             Mesh3d(meshes.add(shore_structure_mesh(structure))),
             MeshMaterial3d(
                 terrain_materials.add(TerrainMaterial {

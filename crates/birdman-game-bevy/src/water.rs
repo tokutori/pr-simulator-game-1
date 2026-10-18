@@ -1419,7 +1419,7 @@ mod tests {
         let mut app = environment_app();
         assert_eq!(
             terrain_haze(&app),
-            [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap()]
+            [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap(); 4]
         );
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
         let retired_images = environment_image_ids(&mut app);
@@ -1427,7 +1427,7 @@ mod tests {
         app.update();
         assert_eq!(
             terrain_haze(&app),
-            [TerrainHazeExtension::try_new(None).unwrap()]
+            [TerrainHazeExtension::try_new(None).unwrap(); 4]
         );
         let briefing = shared_ui_text(&mut app);
         assert!(briefing.contains("Calm"));
