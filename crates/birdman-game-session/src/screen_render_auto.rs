@@ -313,6 +313,9 @@ impl ScreenRenderAutoController {
         if now_ms - sample.source_ms > 500.0 {
             return self.pending(now_ms);
         }
+        if self.last_source_ms.is_none() {
+            self.window_started_ms = sample.source_ms;
+        }
         self.last_frame = Some(sample.frame);
         self.last_source_ms = Some(sample.source_ms);
         if let Some(last) = self
@@ -516,17 +519,18 @@ impl ScreenRenderAutoController {
         let valid_frames: u64 = self.samples.iter().map(|sample| sample.valid_frames).sum();
         let expected_frames = u64::from(last.last_frame) - u64::from(first.first_frame) + 1;
         let complete = valid_frames as f64 >= expected_frames as f64 * 0.9;
-        self.measurement = if complete {
+        let mature = now_ms - self.window_started_ms >= WINDOW_MS
+            && self.samples.len() >= 8
+            && span >= 1_000.0
+            && freshness <= 500.0;
+        self.measurement = if !complete {
+            MeasurementState::CoverageLimited
+        } else if mature {
             MeasurementState::Ready
         } else {
-            MeasurementState::CoverageLimited
+            MeasurementState::Measuring
         };
-        if now_ms - self.window_started_ms < WINDOW_MS
-            || now_ms < self.cooldown_until_ms
-            || self.samples.len() < 8
-            || span < 1_000.0
-            || freshness > 500.0
-        {
+        if !mature || now_ms < self.cooldown_until_ms {
             return Ok(None);
         }
         let mut work: Vec<_> = self
@@ -664,6 +668,67 @@ mod tests {
             let observation = sample(&controller, index, now_ms, 20.0);
             assert_eq!(controller.observe(observation, now_ms).unwrap(), None);
         }
+    }
+
+    #[test]
+    fn initial_window_starts_at_the_first_valid_gpu_source_after_preparation() {
+        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        assert_eq!(controller.pending(10_000.0).unwrap(), None);
+        for frame in 0..=19 {
+            let now = 10_000.0 + f64::from(frame) * 100.0;
+            assert_eq!(
+                controller
+                    .observe(sample(&controller, frame, now, 20.0), now)
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                controller.snapshot().status,
+                ScreenRenderAutoStatus::Measuring
+            );
+        }
+        controller
+            .observe(sample(&controller, 20, 12_000.0, 20.0), 12_000.0)
+            .unwrap();
+        let request = controller.pending(12_250.0).unwrap().unwrap();
+        assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
+        controller.applied(request, 12_251.0).unwrap();
+        assert_eq!(
+            controller.snapshot().applied,
+            ScreenRenderScale::ThreeQuarters
+        );
+    }
+
+    #[test]
+    fn ready_is_derived_from_a_complete_valid_window_and_old_epochs_cannot_start_it() {
+        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        let obsolete = sample(&controller, 0, 1.0, 11.0);
+        controller
+            .invalidate(ScreenRenderInvalidation::QualityChanged, 2.0)
+            .unwrap();
+        assert_eq!(controller.observe(obsolete, 10_000.0).unwrap(), None);
+        assert!(controller.last_source_ms.is_none());
+        for frame in 0..=100 {
+            let now = 10_000.0 + f64::from(frame) * 20.0;
+            assert_eq!(
+                controller
+                    .observe(sample(&controller, frame, now, 11.0), now)
+                    .unwrap(),
+                None
+            );
+            if frame < 100 {
+                assert_eq!(
+                    controller.snapshot().status,
+                    ScreenRenderAutoStatus::Measuring
+                );
+            }
+        }
+        assert_eq!(controller.pending(12_250.0).unwrap(), None);
+        assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Ready);
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
     }
 
     #[test]
