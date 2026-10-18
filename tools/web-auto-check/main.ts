@@ -111,7 +111,7 @@ try {
   report.observation = observation;
   report.summary = summary;
   assert.equal(summary.initial.phaseCode, 5);
-  if (summary.initial.phaseCode === 5) assert.equal(summary.initial.identity.scenario.scenarioId, 6, "The actual Rust scenario is not Typical");
+  assert.equal(summary.initial.identity.scenario.scenarioId, 6, "The actual Rust scenario is not Typical");
   await page.screenshot({ path: resolve(output, "02-live-window-end.png") });
   report.after = await page.evaluate(() => ({ phase: window.__liveAuto.phase, tick: window.__liveAuto.tick,
     snapshotJson: window.__liveAuto.snapshotJson, contextLosses: window.__liveAuto.contextLosses }));
