@@ -3,8 +3,10 @@ import { BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute,
 import { LakeCloudsBridge, lake_scene_ambient_color_srgb,
   lake_scene_sunlight_color_srgb } from "../../../../pkg/birdman_game_wasm.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
+import { lakeSkyHaze } from "./lake-sky-texture.js";
 
 export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<BufferGeometry, ShaderMaterial> {
+  const [, hazeNear, hazeFar] = lakeSkyHaze(condition?.visibilityMeters);
   const packet = condition === null ? LakeCloudsBridge.unrecorded() : new LakeCloudsBridge(
     condition.sunAzimuthDegrees, condition.sunElevationDegrees, condition.cloudFraction,
     condition.visibilityMeters, condition.cloudBaseMeters);
@@ -49,13 +51,12 @@ export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<Buffe
       const color = new Color(srgb);
       return color.multiplyScalar(1 / Math.max(color.r, color.g, color.b));
     };
-    const visibility = condition?.visibilityMeters ?? 80_000;
     const material = new ShaderMaterial({
       uniforms: { cloudAtlas: { value: atlas }, normalAtlas: { value: normals },
         sunDirection: { value: new Vector4(sunComponent(1), -sunComponent(2), -sunComponent(0), sunComponent(3)) },
         shadeTint: { value: tint(lake_scene_ambient_color_srgb()) },
         sunTint: { value: tint(lake_scene_sunlight_color_srgb()) },
-        hazeRange: { value: new Vector2(visibility * 0.175, visibility) } },
+        hazeRange: { value: new Vector2(hazeNear, hazeFar) } },
       vertexShader: `
         attribute vec2 cloudOffset;
         uniform vec4 sunDirection;
