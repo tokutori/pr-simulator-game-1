@@ -2,7 +2,7 @@ import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { AmbientLight, BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Texture, Vector2, Vector3, Vector4 } from "three";
+import { AmbientLight, BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Texture, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
 import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
@@ -66,6 +66,10 @@ interface RecordedDraw {
 interface RecordingDriver {
   readonly gpu: ReturnType<typeof gpuTimerFixture>;
   readonly draws: RecordedDraw[];
+  readonly shadowMap: { enabled: boolean; autoUpdate: boolean; needsUpdate: boolean };
+  readonly renderCalls: { reflection: boolean; autoUpdate: boolean; needsUpdate: boolean;
+    receivers: number; casters: number; clouds: boolean }[];
+  reflectionFailure: Error | null;
   readonly scene: Scene | null;
   readonly xr: { isPresenting: boolean; enabled: boolean };
   readonly resizeCalls: number;
@@ -83,7 +87,9 @@ vi.mock("three", async (importOriginal) => {
     readonly draws: RecordedDraw[] = [];
     scene: Scene | null = null;
     readonly xr = { isPresenting: false, enabled: false, getReferenceSpace: () => ({}) as XRReferenceSpace };
-    readonly shadowMap = { enabled: false };
+    readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
+    readonly renderCalls: RecordingDriver["renderCalls"] = [];
+    reflectionFailure: Error | null = null;
     autoClear = true;
     private readonly size = new actual.Vector2();
     private readonly clearColor = new actual.Color();
@@ -116,6 +122,18 @@ vi.mock("three", async (importOriginal) => {
     }
     dispose(): void {}
     render(scene: Scene, camera: Camera): void {
+      let receivers = 0;
+      let casters = 0;
+      let clouds = false;
+      scene.traverseVisible((object) => {
+        if (!(object instanceof actual.Mesh) || !object.layers.test(camera.layers)) return;
+        if (object.receiveShadow) receivers += 1;
+        if (object.castShadow) casters += 1;
+        if (object.name === "world-clouds") clouds = true;
+      });
+      this.renderCalls.push({ reflection: this.target !== null, autoUpdate: this.shadowMap.autoUpdate,
+        needsUpdate: this.shadowMap.needsUpdate, receivers, casters, clouds });
+      if (this.target !== null && this.reflectionFailure !== null) throw this.reflectionFailure;
       if (this.target !== null) return;
       this.scene = scene;
       scene.updateMatrixWorld(true);
@@ -170,6 +188,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   beforeEach(() => {
     driver.xr.isPresenting = false;
+    driver.shadowMap.autoUpdate = true;
+    driver.shadowMap.needsUpdate = false;
+    driver.reflectionFailure = null;
     bundle.renderer.setStereoPresentation(null);
     bundle.renderer.setScreenRenderScale(1);
     bundle.renderer.setFlightPose(null);
@@ -179,9 +200,66 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightCameraMode("pilot");
     bundle.renderer.setCinematicCameraView(null);
     driver.draws.length = 0;
+    driver.renderCalls.length = 0;
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it.each([[true, false], [true, true], [false, false], [false, true]])(
+    "skips unused reflection shadows and restores auto=%s requested=%s before the main pass",
+    (autoUpdate, needsUpdate) => {
+      bundle.renderer.setLakeSkyCondition({ sunAzimuthDegrees: 90, sunElevationDegrees: 30,
+        cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 });
+      bundle.renderer.render(frame());
+      const solar = driver.scene?.children.find((object) => object instanceof DirectionalLight);
+      if (!(solar instanceof DirectionalLight)) throw new Error("Missing directional sun");
+      const map = new WebGLRenderTarget(4, 4);
+      solar.shadow.map = map;
+      try {
+        driver.renderCalls.length = 0;
+        driver.shadowMap.autoUpdate = autoUpdate;
+        driver.shadowMap.needsUpdate = needsUpdate;
+        bundle.renderer.render(frame());
+        expect(driver.renderCalls).toHaveLength(2);
+        expect(driver.renderCalls[0]).toMatchObject({ reflection: true, autoUpdate: false,
+          needsUpdate: false, receivers: 0, clouds: true });
+        expect(driver.renderCalls[0]?.casters).toBeGreaterThan(0);
+        expect(driver.renderCalls[1]).toMatchObject({ reflection: false, autoUpdate, needsUpdate });
+        expect(driver.renderCalls[1]?.receivers).toBeGreaterThan(0);
+        expect(driver.shadowMap).toEqual({ enabled: true, autoUpdate, needsUpdate });
+      } finally { solar.shadow.map = null; map.dispose(); }
+    }
+  );
+
+  it("keeps the initial shadow render until Three has prepared the sampler resource", () => {
+    bundle.renderer.setLakeSkyCondition({ sunAzimuthDegrees: 90, sunElevationDegrees: 30,
+      cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 });
+    bundle.renderer.render(frame());
+    expect(driver.renderCalls).toHaveLength(2);
+    expect(driver.renderCalls[0]).toMatchObject({ reflection: true, autoUpdate: true, needsUpdate: false });
+    expect(driver.renderCalls[1]).toMatchObject({ reflection: false, autoUpdate: true, needsUpdate: false });
+  });
+
+  it("restores pending shadow updates after reflection rendering throws", () => {
+    const failure = new Error("Reflection draw failed");
+    bundle.renderer.render(frame());
+    const solar = driver.scene?.children.find((object) => object instanceof DirectionalLight);
+    if (!(solar instanceof DirectionalLight)) throw new Error("Missing directional sun");
+    const map = new WebGLRenderTarget(4, 4);
+    solar.shadow.map = map;
+    try {
+      driver.renderCalls.length = 0;
+      driver.shadowMap.needsUpdate = true;
+      driver.reflectionFailure = failure;
+      expect(() => { bundle.renderer.render(frame()); }).toThrow(failure);
+      expect(driver.shadowMap).toEqual({ enabled: true, autoUpdate: true, needsUpdate: true });
+      expect(driver.renderCalls).toHaveLength(1);
+      driver.reflectionFailure = null;
+      driver.renderCalls.length = 0;
+      bundle.renderer.render(frame());
+      expect(driver.renderCalls[1]).toMatchObject({ reflection: false, autoUpdate: true, needsUpdate: true });
+    } finally { solar.shadow.map = null; map.dispose(); }
+  });
 
   it("changes only drawing pixels and reflection size while retaining the logical viewport and camera", () => {
     const viewport = { x: 1919, y: 1079, pixelRatio: 1.25 };
