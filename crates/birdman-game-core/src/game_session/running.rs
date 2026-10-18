@@ -184,7 +184,7 @@ verus! {
         let outcome = session.advance_tail_flight_tick_with(input, evaluate, telemetry, score);
         match session.snapshot() {
             SessionSnapshot::Result(result) => {
-                assert(terminal_payload_matches(session.flight_record().unwrap(), result.state));
+                assert(terminal_payload_matches(*session.flight_record().unwrap(), result.state));
             },
             SessionSnapshot::TailFlightRunning { state, .. } if outcome.is_ok() => {
                 assert(session.flight_record().unwrap().latest_matches_tail_state(state));
