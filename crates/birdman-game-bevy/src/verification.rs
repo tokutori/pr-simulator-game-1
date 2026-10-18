@@ -45,7 +45,7 @@ use birdman_game_session::{
         GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
     },
     replay_camera::replay_camera_view,
-    screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection},
+    screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
 use std::{
@@ -2270,7 +2270,8 @@ fn advance_step(
                 if !matches!(
                     snapshot.selection,
                     ScreenRenderSelection::Auto {
-                        manual_scale: ScreenRenderScale::Full
+                        manual_scale: ScreenRenderScale::Full,
+                        manual_shadow: ScreenShadowMap::Full,
                     }
                 ) {
                     return Err("Auto verification did not execute the shared Auto control".into());
@@ -2306,6 +2307,7 @@ fn advance_step(
                     && presentation.rendering.snapshot().selection
                         != (ScreenRenderSelection::Manual {
                             scale: ScreenRenderScale::Full,
+                            shadow: ScreenShadowMap::Full,
                         })
                 {
                     return Err("Auto verification did not restore explicit Manual 100%".into());
@@ -3112,7 +3114,7 @@ mod tests {
     use birdman_game_session::game_ui::{
         GameUiAnalysisChart, GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
     };
-    use birdman_game_session::screen_render_auto::ScreenRenderSelection;
+    use birdman_game_session::screen_render_auto::{ScreenRenderSelection, ScreenShadowMap};
     use std::time::Duration;
 
     fn countdown_driver_app() -> App {
@@ -3131,6 +3133,7 @@ mod tests {
         .init_resource::<super::super::world::RenderHistory>()
         .init_resource::<WaterQualitySelection>()
         .init_resource::<super::super::screen_render::NativeScreenRender>()
+        .init_resource::<bevy::light::DirectionalLightShadowMap>()
         .init_resource::<Assets<super::WaterMaterial>>()
         .init_resource::<Assets<Image>>()
         .init_resource::<InputFocus>()
@@ -4100,6 +4103,7 @@ mod tests {
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
             .init_resource::<super::super::screen_render::NativeScreenRender>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(UiScale(1.0))
             .add_systems(Startup, setup_ui)
@@ -4159,6 +4163,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<super::super::screen_render::NativeScreenRender>()
             .init_resource::<super::super::CameraMode>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .init_resource::<Assets<Image>>()
             .insert_resource(NativeFont(Handle::default()))
             .insert_resource(bevy::input::ButtonInput::<bevy::input::keyboard::KeyCode>::default())
@@ -4276,9 +4281,11 @@ mod tests {
         for selection in [
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
+                manual_shadow: ScreenShadowMap::Full,
             },
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
+                shadow: ScreenShadowMap::Full,
             },
         ] {
             queue_ui_control(

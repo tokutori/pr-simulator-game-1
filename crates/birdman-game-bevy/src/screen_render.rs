@@ -4,6 +4,7 @@ use bevy::{
     camera::{RenderTarget, SubCameraView},
     core_pipeline::tonemapping::Tonemapping,
     image::{ImageSampler, ImageSamplerDescriptor},
+    light::DirectionalLightShadowMap,
     picking::Pickable,
     prelude::*,
     render::render_resource::TextureFormat,
@@ -11,7 +12,7 @@ use bevy::{
 };
 use birdman_game_session::screen_render_auto::{
     ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderAutoSnapshot,
-    ScreenRenderInvalidation, ScreenRenderScaleRequest, ScreenRenderSelection,
+    ScreenRenderInvalidation, ScreenRenderResourceRequest, ScreenRenderSelection, ScreenShadowMap,
 };
 use birdman_game_session::screen_render_scale::ScreenRenderScale;
 
@@ -44,7 +45,10 @@ impl Default for NativeScreenRender {
     fn default() -> Self {
         Self {
             target: ScreenTarget::Direct,
-            controller: ScreenRenderAutoController::new(ScreenRenderScale::Full),
+            controller: ScreenRenderAutoController::new(
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+            ),
         }
     }
 }
@@ -73,6 +77,7 @@ pub(crate) enum ScreenRenderFailure {
     OwnedImageUnavailable,
     CompositionCameraUnavailable,
     CompositionImageUnavailable,
+    ShadowMapUnavailable,
     Policy(ScreenRenderAutoError),
 }
 
@@ -106,8 +111,8 @@ pub(crate) fn apply_scale(
 pub(crate) fn select_auto(world: &mut World, enabled: bool) -> Result<(), ScreenRenderFailure> {
     let snapshot = world.resource::<NativeScreenRender>().snapshot();
     let retained = match snapshot.selection {
-        ScreenRenderSelection::Manual { scale } => scale,
-        ScreenRenderSelection::Auto { manual_scale } => manual_scale,
+        ScreenRenderSelection::Manual { scale, .. } => scale,
+        ScreenRenderSelection::Auto { manual_scale, .. } => manual_scale,
     };
     if enabled || retained == snapshot.applied {
         exchange_scale(world, snapshot.applied)?;
@@ -127,7 +132,7 @@ fn now_ms(world: &World) -> f64 {
 
 fn apply_request(
     world: &mut World,
-    request: Option<ScreenRenderScaleRequest>,
+    request: Option<ScreenRenderResourceRequest>,
     now_ms: f64,
 ) -> Result<(), ScreenRenderFailure> {
     let Some(request) = request else {
@@ -143,11 +148,11 @@ fn apply_request(
             ScreenRenderAutoError::StaleRequest,
         ));
     }
-    match exchange_scale(world, request.scale) {
+    match exchange_resources(world, request) {
         Ok(()) => world
             .resource_mut::<NativeScreenRender>()
             .controller
-            .applied(request, now_ms)
+            .applied(request, now_ms, None)
             .map_err(ScreenRenderFailure::Policy),
         Err(cause) => {
             world
@@ -158,6 +163,23 @@ fn apply_request(
             Err(cause)
         }
     }
+}
+
+fn exchange_resources(
+    world: &mut World,
+    request: ScreenRenderResourceRequest,
+) -> Result<(), ScreenRenderFailure> {
+    world
+        .get_resource::<DirectionalLightShadowMap>()
+        .ok_or(ScreenRenderFailure::ShadowMapUnavailable)?;
+    if request.scale != world.resource::<NativeScreenRender>().applied() {
+        exchange_scale(world, request.scale)?;
+    }
+    let size = request.shadow.size() as usize;
+    if world.resource::<DirectionalLightShadowMap>().size != size {
+        world.resource_mut::<DirectionalLightShadowMap>().size = size;
+    }
+    Ok(())
 }
 
 fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), ScreenRenderFailure> {
@@ -463,6 +485,7 @@ mod tests {
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<ManualTextureViews>()
             .init_resource::<NativeScreenRender>()
+            .init_resource::<DirectionalLightShadowMap>()
             .init_resource::<NativeSession>()
             .init_resource::<InputFocus>()
             .add_message::<WindowCreated>()
@@ -569,7 +592,8 @@ mod tests {
                 .snapshot()
                 .selection,
             ScreenRenderSelection::Manual {
-                scale: ScreenRenderScale::ThreeQuarters
+                scale: ScreenRenderScale::ThreeQuarters,
+                shadow: ScreenShadowMap::Full,
             }
         );
         select_auto(app.world_mut(), true).unwrap();
@@ -597,7 +621,8 @@ mod tests {
                 .snapshot()
                 .selection,
             ScreenRenderSelection::Manual {
-                scale: ScreenRenderScale::Full
+                scale: ScreenRenderScale::Full,
+                shadow: ScreenShadowMap::Full,
             }
         );
         assert_eq!(
@@ -607,6 +632,98 @@ mod tests {
                 .core_session()
                 .snapshot(),
             before
+        );
+    }
+
+    #[test]
+    fn shadow_steps_keep_the_resolution_target_and_manual_restore_commits_both_resources() {
+        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        let (mut app, _, _, _) = app();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        select_auto(app.world_mut(), true).unwrap();
+        let mut reduced_target = None;
+        for frame in 0..=240_u32 {
+            app.world_mut().resource_mut::<Time<Real>>().advance_to(
+                std::time::Duration::from_millis(1_000 + u64::from(frame) * 50),
+            );
+            let now = now_ms(app.world());
+            let rendering = app.world_mut().resource_mut::<NativeScreenRender>();
+            let epoch = rendering.controller.epoch();
+            let request = rendering
+                .into_inner()
+                .controller
+                .observe(
+                    ScreenGpuSample {
+                        epoch,
+                        frame,
+                        source_ms: now,
+                        gpu_work_ms: 20.0,
+                    },
+                    now,
+                )
+                .unwrap();
+            if let Some(request) = request {
+                apply_request(app.world_mut(), Some(request), now).unwrap();
+                let ScreenTarget::Reduced(target) =
+                    &app.world().resource::<NativeScreenRender>().target
+                else {
+                    panic!("Auto reduction must keep the reduced scene target");
+                };
+                if request.shadow != ScreenShadowMap::Full {
+                    assert_eq!(Some(target.image.clone()), reduced_target);
+                }
+                reduced_target = Some(target.image.clone());
+                assert_eq!(
+                    app.world().resource::<DirectionalLightShadowMap>().size,
+                    request.shadow.size() as usize
+                );
+            }
+        }
+        let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
+        assert_eq!(snapshot.applied, ScreenRenderScale::Half);
+        assert_eq!(snapshot.shadow, ScreenShadowMap::Quarter);
+        select_auto(app.world_mut(), false).unwrap();
+        let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
+        assert_eq!(snapshot.applied, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(snapshot.shadow, ScreenShadowMap::Full);
+        assert_eq!(
+            app.world().resource::<DirectionalLightShadowMap>().size,
+            2048
+        );
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
+            before
+        );
+    }
+
+    #[test]
+    fn missing_shadow_resource_rejects_the_pair_before_exchanging_resolution() {
+        let (mut app, _, _, _) = app();
+        app.world_mut()
+            .remove_resource::<DirectionalLightShadowMap>();
+        assert_eq!(
+            apply_scale(app.world_mut(), ScreenRenderScale::Half),
+            Err(ScreenRenderFailure::ShadowMapUnavailable),
+        );
+        let rendering = app.world().resource::<NativeScreenRender>();
+        assert!(matches!(rendering.target, ScreenTarget::Direct));
+        assert_eq!(rendering.snapshot().applied, ScreenRenderScale::Full);
+        assert_eq!(rendering.snapshot().shadow, ScreenShadowMap::Full);
+        assert_eq!(
+            rendering.snapshot().status,
+            birdman_game_session::screen_render_auto::ScreenRenderAutoStatus::Failed {
+                cause: "ShadowMapUnavailable".to_owned(),
+            }
         );
     }
 

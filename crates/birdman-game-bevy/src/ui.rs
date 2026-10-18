@@ -2457,6 +2457,7 @@ mod tests {
             .init_resource::<NativeSession>()
             .init_resource::<WaterQualitySelection>()
             .init_resource::<NativeScreenRender>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .init_resource::<Time<Real>>()
             .init_resource::<super::super::CameraMode>()
             .insert_resource(NativeFont(Handle::default()))
@@ -2615,7 +2616,7 @@ mod tests {
     #[test]
     fn shared_render_scale_controls_apply_the_native_target_and_report_selected_value() {
         use super::super::world::WorldProjection;
-        use birdman_game_session::screen_render_auto::ScreenRenderSelection;
+        use birdman_game_session::screen_render_auto::{ScreenRenderSelection, ScreenShadowMap};
         use birdman_game_session::screen_render_scale::ScreenRenderScale;
 
         let mut app = app(1280.0, 720.0);
@@ -2694,7 +2695,8 @@ mod tests {
                 .screen_render_scale
                 .selection,
             ScreenRenderSelection::Auto {
-                manual_scale: ScreenRenderScale::Full
+                manual_scale: ScreenRenderScale::Full,
+                manual_shadow: ScreenShadowMap::Full,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -2703,7 +2705,8 @@ mod tests {
                 .screen_render_scale
                 .selection,
             ScreenRenderSelection::Manual {
-                scale: ScreenRenderScale::Full
+                scale: ScreenRenderScale::Full,
+                shadow: ScreenShadowMap::Full,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -2713,7 +2716,8 @@ mod tests {
                 .screen_render_scale
                 .selection,
             ScreenRenderSelection::Manual {
-                scale: ScreenRenderScale::ThreeQuarters
+                scale: ScreenRenderScale::ThreeQuarters,
+                shadow: ScreenShadowMap::Full,
             }
         );
         assert_eq!(
