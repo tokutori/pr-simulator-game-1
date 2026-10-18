@@ -424,6 +424,7 @@ impl UnitQuaternion {
 ///
 /// Principal moments satisfy the inclusive triangle inequalities about a fixed point.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct InertiaTensor {
     matrix: [[f64; 3]; 3],
 }

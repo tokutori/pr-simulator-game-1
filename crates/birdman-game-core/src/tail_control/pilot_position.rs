@@ -38,6 +38,7 @@ pub enum TailPilotPositionCommand {
 
 /// Software mapping [-1, 0, 1] to [-0.4, trim, 0.4] metres, independent of FBW.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailPilotPositionMapping {
     trim_target: PilotPositionTarget,
 }

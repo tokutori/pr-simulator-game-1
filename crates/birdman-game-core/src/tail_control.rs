@@ -101,6 +101,7 @@ impl TailRateTarget {
 
 /// Synthetic datum-alpha preview policy for constraining elevator and pilot-position targets.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailAngleOfAttackGuard {
     alpha_interval_rad: [f64; 2],
     trim_alpha_rad: f64,
@@ -223,6 +224,7 @@ impl TailAngleOfAttackGuard {
 
 /// Software-only q/r feedback, optional alpha guard and tail slew, separate from airframe data.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailControlProfile {
     pitch_gain_seconds: f64,
     yaw_gain_seconds: f64,

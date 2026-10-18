@@ -82,6 +82,7 @@ impl TailIncidence {
 
 /// A full-aircraft static polar plus exclusive local normal-force increments.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridModel<'a> {
     polar: StaticPolar<'a>,
     surfaces: &'a [HybridSurface<'a>],
@@ -158,6 +159,7 @@ impl HybridEvaluation {
 
 /// Stationary-wind hybrid provider sampling O and every proxy at each RK stage.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridAerodynamicLoad<'a> {
     model: HybridModel<'a>,
     density_kg_m3: f64,

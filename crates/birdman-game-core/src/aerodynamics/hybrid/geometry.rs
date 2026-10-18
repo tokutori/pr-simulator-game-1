@@ -6,6 +6,7 @@ const GEOMETRY_TOLERANCE: f64 = 1.0e-10;
 
 /// An explicit symmetry requirement for section geometry and lift anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum PlanformSymmetry {
     /// Section/proxy pairs mirror their projected span coordinate about zero.
     MirrorSpan,
@@ -15,6 +16,7 @@ pub enum PlanformSymmetry {
 
 /// A nonnegative chord and quarter-chord point at one span station in body FRD.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridSection {
     quarter_chord: BodyPoint,
     chord_m: f64,
@@ -55,6 +57,7 @@ impl HybridSection {
 /// Chordwise sweep changes the action point, not projected span area.
 /// Actual span length uses the y-z distance, so dihedral is applied once.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridSurfaceGeometry<'a> {
     role: HybridSurfaceRole,
     sections: &'a [HybridSection],
@@ -215,6 +218,7 @@ impl<'a> HybridSurfaceGeometry<'a> {
 
 /// A lift anchor at one geometric local alpha; no induced angle is reapplied.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridAnchor {
     lift_coefficient: f64,
     geometric_alpha_rad: f64,
@@ -246,6 +250,7 @@ impl HybridAnchor {
 
 /// A strip's area-weighted quarter-chord action point, frame, and lift anchor.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridProxy {
     role: HybridSurfaceRole,
     interval_m: [f64; 2],
@@ -359,6 +364,7 @@ impl HybridProxy {
 
 /// A complete surface with an exhaustive, nonoverlapping proxy partition.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct HybridSurface<'a> {
     geometry: HybridSurfaceGeometry<'a>,
     proxies: &'a [HybridProxy],

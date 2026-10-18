@@ -12,6 +12,7 @@ pub const STANDARD_GRAVITY: Gravity = Gravity {
 
 /// A validated nonnegative gravitational acceleration in m/s².
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct Gravity {
     meters_per_second_squared: f64,
 }
@@ -38,6 +39,7 @@ impl Gravity {
 
 /// A validated aircraft and moving-pilot mass model.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct AircraftModel {
     airframe_mass_kg: f64,
     airframe_inertia_about_datum: InertiaTensor,
