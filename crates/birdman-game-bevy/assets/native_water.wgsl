@@ -100,15 +100,18 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
     if geometry_patch.w <= 0.0 { return surface; }
     let local = position - geometry_patch.xy;
     let spacing_gradient = grid_spacing_gradient(local);
-    let details = detail_samples(position);
-    let near_visibility = 1.0 - smoothstep(0.12, 0.32, spacing);
-    let far_visibility = 1.0 - smoothstep(0.8, 2.8, spacing);
-    let near_slope = (details[0].xy * 255.0 - 128.0) / 127.0;
-    let far_slope = (details[1].xy * 255.0 - 128.0) / 127.0;
-    let resolved_detail_slope = (near_slope * (0.6 * near_visibility)
-        + far_slope * (0.55 * far_visibility)) * waves_sky.z;
-    surface.offset.y = ((details[0].w - 128.0 / 255.0) * 0.6 * near_visibility
-        + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * waves_sky.z;
+    var resolved_detail_slope = vec2<f32>(0.0);
+    if spacing < 2.8 {
+        let details = detail_samples(position);
+        let near_visibility = 1.0 - smoothstep(0.12, 0.32, spacing);
+        let far_visibility = 1.0 - smoothstep(0.8, 2.8, spacing);
+        let near_slope = (details[0].xy * 255.0 - 128.0) / 127.0;
+        let far_slope = (details[1].xy * 255.0 - 128.0) / 127.0;
+        resolved_detail_slope = (near_slope * (0.6 * near_visibility)
+            + far_slope * (0.55 * far_visibility)) * waves_sky.z;
+        surface.offset.y = ((details[0].w - 128.0 / 255.0) * 0.6 * near_visibility
+            + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * waves_sky.z;
+    }
     var horizontal_jacobian = vec4<f32>(1.0, 0.0, 0.0, 1.0);
     var height_gradient = resolved_detail_slope;
     var crest = 0.0;

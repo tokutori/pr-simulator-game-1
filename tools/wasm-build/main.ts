@@ -2,11 +2,13 @@ import { spawnSync } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCargoWasmBuildOutput, selectWasmBuildArtifact } from "./cargo-build-output.js";
+import { assertSafeCargoBuildDirectories, parseCargoWasmBuildOutput, selectWasmBuildArtifact } from "./cargo-build-output.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const wasmBindgenVersion = "0.2.129";
 const wasmOutputDirectory = resolve(root, "web/pkg");
+
+await assertSafeCargoBuildDirectories(run("cargo", ["metadata", "--no-deps", "--locked", "--format-version", "1"], true));
 
 const version = run("wasm-bindgen", ["--version"], true).trim();
 if (version !== `wasm-bindgen ${wasmBindgenVersion}`) {

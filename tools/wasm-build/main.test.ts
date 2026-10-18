@@ -15,7 +15,7 @@ afterEach(() => {
   vi.doUnmock("node:fs/promises");
 });
 
-function fixture(exitStatus: number | null = 0, buildError?: Error) {
+function fixture(exitStatus: number | null = 0, buildError?: Error, metadataOverrides: Record<string, unknown> = {}) {
   vi.resetModules();
   const legacyArtifact = resolve(root, "target/wasm32-unknown-unknown/release/birdman_game_wasm.wasm");
   const currentArtifact = resolve(root, "custom target/wasm32-unknown-unknown/release/birdman_game_wasm.wasm");
@@ -23,6 +23,10 @@ function fixture(exitStatus: number | null = 0, buildError?: Error) {
   const calls: { readonly command: string; readonly args: readonly string[]; readonly options: Record<string, unknown> }[] = [];
   const consumed: string[] = [];
   const diagnostic = "error: current WASM build failed\n";
+  const metadata = JSON.stringify({ workspace_root: root,
+    target_directory: resolve(root, "custom target"), build_directory: resolve(root, "custom target"),
+    packages: [{ manifest_path: resolve(root, "crates/birdman-game-wasm/Cargo.toml"),
+      targets: [{ src_path: resolve(root, "crates/birdman-game-wasm/src/lib.rs") }] }], ...metadataOverrides });
   const output = [
     { reason: "compiler-artifact", manifest_path: resolve(root, "crates/birdman-game-wasm/Cargo.toml"),
       target: { name: "birdman_game_wasm", crate_types: ["cdylib", "rlib"] }, filenames: [currentArtifact] },
@@ -31,10 +35,11 @@ function fixture(exitStatus: number | null = 0, buildError?: Error) {
   ].map((message) => JSON.stringify(message)).join("\n");
   const mkdir = vi.fn();
   const rm = vi.fn();
-  vi.doMock("node:fs/promises", () => ({ mkdir, rm }));
+  vi.doMock("node:fs/promises", async () => ({ ...await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises"), mkdir, rm }));
   vi.doMock("node:child_process", () => ({
     spawnSync: (command: string, args: readonly string[], options: Record<string, unknown>) => {
       calls.push({ command, args, options });
+      if (command === "cargo" && args[0] === "metadata") return { status: 0, stdout: metadata };
       if (command === "cargo") return { status: exitStatus, stdout: output, error: buildError };
       if (args[0] === "--version") return { status: 0, stdout: "wasm-bindgen 0.2.129\n" };
       const input = args.at(-1);
@@ -75,7 +80,7 @@ describe("WASM build command artifact ownership", () => {
   it("uses the custom target artifact while an old default-target artifact exists", async () => {
     const trial = fixture();
     await import("./main.js");
-    const cargo = trial.calls.find((call) => call.command === "cargo");
+    const cargo = trial.calls.find((call) => call.command === "cargo" && call.args[0] === "build");
     const bindgen = trial.calls.find((call) => call.command === "wasm-bindgen" && call.args[0] !== "--version");
     expect(cargo?.args).toContain("--message-format=json");
     expect(cargo?.args).not.toContain("--target-dir");
@@ -85,6 +90,19 @@ describe("WASM build command artifact ownership", () => {
     expect(trial.consumed).toEqual(["current WASM"]);
     expect(trial.rm).toHaveBeenCalledTimes(1);
     expect(trial.mkdir).toHaveBeenCalledTimes(1);
+    expect(trial.calls.map(({ command, args }) => [command, args[0]])).toEqual([
+      ["cargo", "metadata"], ["wasm-bindgen", "--version"], ["cargo", "build"], ["wasm-bindgen", "--target"]
+    ]);
+    expect(trial.calls[0]?.args).toEqual(["metadata", "--no-deps", "--locked", "--format-version", "1"]);
+  });
+
+  it.each(["target_directory", "build_directory"])("rejects unsafe %s before building or replacing bindings", async (field) => {
+    const trial = fixture(0, undefined, { [field]: root });
+    await expect(import("./main.js")).rejects.toThrow(`Unsafe Cargo ${field}`);
+    expect(trial.calls.map(({ command, args }) => [command, args[0]])).toEqual([["cargo", "metadata"]]);
+    expect(trial.consumed).toEqual([]);
+    expect(trial.rm).not.toHaveBeenCalled();
+    expect(trial.mkdir).not.toHaveBeenCalled();
   });
 
   it.each([101, null])("preserves build diagnostics and skips generation after status %s", async (status) => {
