@@ -429,6 +429,7 @@ try {
           'birdman_game_core::tail_simulation::TailFlightTickReport::applied_controls',
           'birdman_game_core::tail_simulation::contact_at_start_report',
           'birdman_game_core::tail_simulation::evaluated_tick_report',
+          'birdman_game_core::tail_simulation::TailWaterContactSample::contact_point_index',
           'birdman_game_core::tail_simulation::verify_contact_at_start_record_payload',
           'birdman_game_core::tail_simulation::verify_advanced_contact_at_start_record_payload',
           'birdman_game_core::flight_record::validate_telemetry',

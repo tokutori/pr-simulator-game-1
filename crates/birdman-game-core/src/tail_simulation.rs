@@ -189,6 +189,8 @@ impl TailWaterContactSample {
     }
 
     /// Returns the first structural contact point reaching the water plane.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.contact_point_index()))]
     pub const fn contact_point_index(self) -> usize {
         self.contact_point_index
     }
@@ -640,7 +642,7 @@ pub fn advance_tail_flight_tick_with_contact_report(
                 None => match report.outcome() {
                     TailFlightTickOutcome::WaterContact(published) =>
                         published.fraction() == sample.fraction()
-                            && published.contact_point_index == sample.contact_point_index,
+                            && published.contact_point_index() == sample.contact_point_index(),
                     _ => false,
                 },
             },
@@ -675,6 +677,7 @@ pub(crate) fn evaluated_tick_report(
             TailFlightTickOutcome::WaterContact(sample) =>
                 sample.interval_start_tick() == previous.tick_index()
                     && sample.fraction() == fraction
+                    && sample.contact_point_index() == contact_point_index
                     && sample.flight_state() == previous.flight_state()
                     && sample.incidence() == previous.incidence()
                     && sample.pilot_position_target() == previous.pilot_position_target(),

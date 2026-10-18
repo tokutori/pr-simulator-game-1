@@ -24,7 +24,7 @@ use crate::tail_simulation::{
 
 #[cfg(verus_only)]
 verus! {
-    pub open spec fn terminal_payload_matches(record: FlightRecord, terminal: SessionTerminalState) -> bool {
+    pub(super) open spec fn terminal_payload_matches(record: FlightRecord, terminal: SessionTerminalState) -> bool {
         record.recorded_samples().len() > 0
             && record.recorded_samples().last().tick_index == terminal.record_time().0
             && record.recorded_samples().last().flight_state == terminal.flight_state()
@@ -244,7 +244,8 @@ impl<'a> GameSession<'a> {
                         && after.record.recorded_samples().len() <= before.record.recorded_samples().len() + 1
                         && match before.phase {
                             ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }) => {
-                                (outcome.is_ok() ==> exists|report: TailFlightTickReport, reading: FlightTelemetry|
+                                final(self).projection_valid()
+                                && (outcome.is_ok() ==> exists|report: TailFlightTickReport, reading: FlightTelemetry|
                                     #[trigger] evaluate.ensures((&before.configuration, previous, input), Ok(report))
                                     && #[trigger] telemetry.ensures((&before.configuration, report_physical_state(report)), Ok(reading))
                                     && recorded_report(before.record, after.record, report, reading)
