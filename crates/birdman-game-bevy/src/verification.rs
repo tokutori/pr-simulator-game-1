@@ -197,6 +197,15 @@ struct SourceBoundary {
     milliseconds: u64,
 }
 
+impl SourceBoundary {
+    fn before_extract(frame: FrameCount, elapsed: Duration) -> Self {
+        Self {
+            frame: frame.0.wrapping_add(1),
+            milliseconds: elapsed.as_millis() as u64,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MotionSourceWindow {
     Observing {
@@ -587,10 +596,8 @@ pub(crate) fn project_observer(
             && !matches!(observed, MotionInterval::Observing(_))
         {
             if let Some(window) = verification.motion_source {
-                verification.motion_source = Some(window.finish(SourceBoundary {
-                    frame: timing.3.0,
-                    milliseconds: time.elapsed().as_millis() as u64,
-                }));
+                verification.motion_source =
+                    Some(window.finish(SourceBoundary::before_extract(*timing.3, time.elapsed())));
             }
             report_motion_timings(
                 &verification,
@@ -2187,10 +2194,7 @@ fn advance_step(
                 verification.stage,
                 VerificationStage::WaterMotion(_, MotionEndpoint::Start)
             )
-            .then_some(SourceBoundary {
-                frame: presentation.frame.0,
-                milliseconds: elapsed.as_millis() as u64,
-            });
+            .then_some(SourceBoundary::before_extract(*presentation.frame, elapsed));
             verification.next(next);
             verification.motion_source =
                 source_start.map(|start| MotionSourceWindow::Observing { start });
@@ -5252,6 +5256,40 @@ mod tests {
             });
         }
         diagnostic
+    }
+
+    #[test]
+    fn source_boundary_matches_the_real_last_frame_increment_before_render_extraction() {
+        use bevy::prelude::*;
+        #[derive(Resource, Default)]
+        struct Observed(Option<super::SourceBoundary>);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Observed>()
+            .add_systems(
+                Update,
+                |frame: Res<super::FrameCount>,
+                 time: Res<Time<Real>>,
+                 mut observed: ResMut<Observed>| {
+                    observed.0 = Some(super::SourceBoundary::before_extract(
+                        *frame,
+                        time.elapsed(),
+                    ));
+                },
+            );
+        for frame in [0, 1, u32::MAX] {
+            app.world_mut().resource_mut::<super::FrameCount>().0 = frame;
+            app.update();
+            let boundary = app.world().resource::<Observed>().0.unwrap();
+            assert_eq!(
+                boundary.frame,
+                app.world().resource::<super::FrameCount>().0
+            );
+            assert_eq!(
+                boundary.milliseconds,
+                app.world().resource::<Time<Real>>().elapsed().as_millis() as u64
+            );
+        }
     }
 
     #[test]

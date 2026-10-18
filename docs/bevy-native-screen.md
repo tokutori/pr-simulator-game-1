@@ -285,6 +285,7 @@ Setupの公開Auto操作を通し、最初の有効窓と資源ACKまで既存Se
 この準備確認は最適画質への収束を意味しない。飛行中も同じ共有policyが実GPU標本を受け、倍率とshadowを適応させる。
 到着時刻基準の従来集計とは別に、root GPUの同一完了batchのepoch・source-frame・実適用scale/shadowで分布を分ける。
 source区間はStart画像保存frameを除き、2秒motionの完了frameまでを含む。整数msは同じReal時計から取得し、frame包含の判定に小数時刻を用いない。
+Bevy 0.19.1は`Last`でFrameCountを増加させてからExtractを実行するため、Update境界を同じ描画元frameへ変換する。区間中のframe wrapは未対応として明示する。
 既存End画像保存完了を受信cutoffとする。GPU query全件のdrainは保証せず、欠損・重複・metadata不一致・履歴不足とpair別の部分区間を明示する。
 履歴は既存DiagnosticsStoreの4096件をmetadataにも適用し、別collectorを保持しない。GPU非対応や不足標本を0msへ置換しない。
 通常Windowの80 FPS受入、Release性能、CPU時間とGPU時間の同frame合算は別の確認対象である。
