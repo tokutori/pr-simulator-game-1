@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import shoreline from "../../../../../assets/biwa-shoreline.json";
 import terrainSource from "../../../../../assets/biwa-terrain.json";
 import landMask from "../../../../../assets/biwa-land-mask.json";
-import { applyLandMask, fillIslandTerrainPatch, okinoshiraishiRockGeometry, shoreStructureGeometry, shorelineTransitionGeometry, takeshimaCanopyGeometry, terrainGeometry } from "./lake-venue-mesh.js";
+import { applyLandMask, fillIslandTerrainPatch, okinoshiraishiRockGeometry, shorelineTransitionGeometry, takeshimaCanopyGeometry, terrainGeometry } from "./lake-venue-mesh.js";
 
 const sourceTerrain = applyLandMask(terrainSource as unknown as Parameters<typeof applyLandMask>[0],
   landMask as unknown as Parameters<typeof applyLandMask>[1]);
@@ -764,24 +764,6 @@ describe("AW3D30 terrain mesh orientation", () => {
     expect(fineNormal[2]).toBeCloseTo(broadNormal[2], 5);
     broadGeometry.dispose();
     fineGeometry.dispose();
-  });
-});
-
-describe("OSM shoreline structure geometry", () => {
-  it.each(["pier", "quay", "breakwater"] as const)("builds finite, raised %s meshes from the mapped ways", (kind) => {
-    const geometry = shoreStructureGeometry(kind);
-    geometry.computeBoundingBox();
-    const position = geometry.getAttribute("position");
-    expect(position.count).toBeGreaterThan(0);
-    expect(geometry.index?.count).toBeGreaterThan(0);
-    expect(geometry.boundingBox).not.toBeNull();
-    expect(geometry.boundingBox?.max.y).toBeGreaterThan(0.5);
-    for (let index = 0; index < position.count; index++) {
-      expect(Number.isFinite(position.getX(index))).toBe(true);
-      expect(Number.isFinite(position.getY(index))).toBe(true);
-      expect(Number.isFinite(position.getZ(index))).toBe(true);
-    }
-    geometry.dispose();
   });
 });
 

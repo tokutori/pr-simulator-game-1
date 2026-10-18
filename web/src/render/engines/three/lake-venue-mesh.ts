@@ -1,15 +1,18 @@
 import {
+  BufferAttribute,
   BufferGeometry,
   CylinderGeometry,
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  Matrix4,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
   ShapeUtils,
   Vector2,
 } from "three";
+import { ShoreStructureGeometryBridge } from "../../../../pkg/birdman_game_wasm.js";
 import venueFeatures from "../../../../../assets/biwa-venue-features.json";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
 import { subtractTerrainPatch, type TerrainPatchBounds, type TerrainVertex } from "./terrain-patch-clip.js";
@@ -452,12 +455,6 @@ export function shorelineTransitionGeometry(asset: ShorelineAsset, grids: readon
 
 type TerrainTint = readonly [red: number, green: number, blue: number];
 type LandCover = Readonly<{ kind: "beach" | "woodland"; ring: readonly (readonly number[])[] }>;
-type ShoreStructure = Readonly<{
-  kind: "pier" | "quay" | "breakwater";
-  closed: boolean;
-  northEastMeters: readonly (readonly number[])[];
-}>;
-
 const landCover: readonly LandCover[] = venueFeatures.features.flatMap((feature) => {
   if (!feature.closed || (feature.kind !== "beach" && feature.kind !== "woodland")) return [];
   return [{ kind: feature.kind, ring: feature.northEastMeters }];
@@ -918,72 +915,32 @@ export function okinoshiraishiRockGeometry(islands: ShorelineAsset["islands"]): 
   return geometry;
 }
 
-function appendRaisedFootprint(
-  positions: number[], indices: number[],
-  outline: readonly (readonly [north: number, east: number])[], topMeters: number
-): void {
-  if (outline.length < 3) return;
-  const points = outline.map(([north, east]) => new Vector2(east, north));
-  const triangles = ShapeUtils.triangulateShape(points, []);
-  const topStart = positions.length / 3;
-  for (const [north, east] of outline) positions.push(east, topMeters, -north);
-  for (const triangle of triangles) {
-    const a = triangle[0]; const b = triangle[1]; const c = triangle[2];
-    if (a !== undefined && b !== undefined && c !== undefined) indices.push(topStart + a, topStart + b, topStart + c);
-  }
-  const sideStart = positions.length / 3;
-  for (const [north, east] of outline) positions.push(east, 0.25, -north, east, topMeters, -north);
-  for (let index = 0; index < outline.length; index++) {
-    const next = (index + 1) % outline.length;
-    const lower = sideStart + index * 2;
-    const upper = lower + 1;
-    const nextLower = sideStart + next * 2;
-    const nextUpper = nextLower + 1;
-    indices.push(lower, nextLower, upper, upper, nextLower, nextUpper);
-  }
-}
-
-export function shoreStructureGeometry(kind: ShoreStructure["kind"]): BufferGeometry {
-  const positions: number[] = [];
-  const indices: number[] = [];
-  const widthMeters = kind === "pier" ? 3 : kind === "quay" ? 4.5 : 6;
-  const topMeters = kind === "breakwater" ? 1.5 : kind === "quay" ? 0.9 : 0.7;
-  for (const feature of venueFeatures.features as readonly ShoreStructure[]) {
-    if (feature.kind !== kind) continue;
-    const path = feature.northEastMeters.flatMap((point) => {
-      const north = point[0]; const east = point[1];
-      return north === undefined || east === undefined ? [] : [[north, east] as const];
-    });
-    if (feature.closed) {
-      const ring = path.length > 1 && path[0]?.[0] === path[path.length - 1]?.[0] &&
-        path[0]?.[1] === path[path.length - 1]?.[1] ? path.slice(0, -1) : path;
-      appendRaisedFootprint(positions, indices, ring, topMeters);
-      continue;
-    }
-    for (let index = 0; index < path.length - 1; index++) {
-      const start = path[index]; const end = path[index + 1];
-      if (start === undefined || end === undefined) continue;
-      const deltaEast = end[1] - start[1];
-      const deltaSouth = start[0] - end[0];
-      const length = Math.hypot(deltaEast, deltaSouth);
-      if (length < 0.1) continue;
-      const halfWidth = widthMeters / 2;
-      const offsetNorth = deltaEast / length * halfWidth;
-      const offsetEast = deltaSouth / length * halfWidth;
-      appendRaisedFootprint(positions, indices, [
-        [start[0] - offsetNorth, start[1] - offsetEast],
-        [end[0] - offsetNorth, end[1] - offsetEast],
-        [end[0] + offsetNorth, end[1] + offsetEast],
-        [start[0] + offsetNorth, start[1] + offsetEast]
-      ], topMeters);
-    }
-  }
+export function shoreStructureMesh(kind: "pier" | "quay" | "breakwater"): Mesh<BufferGeometry, MeshLambertMaterial> {
+  const shared = new ShoreStructureGeometryBridge(kind);
   const geometry = new BufferGeometry();
-  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
+  let material: MeshLambertMaterial | null = null;
+  try {
+    geometry.setAttribute("position", new Float32BufferAttribute(shared.positions_ned(), 3));
+    geometry.setIndex(new BufferAttribute(shared.indices(), 1));
+    geometry.applyMatrix4(new Matrix4().set(
+      0, 1, 0, 0,
+      0, 0, -1, 0,
+      -1, 0, 0, 0,
+      0, 0, 0, 1
+    ));
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+    material = new MeshLambertMaterial({ color: shared.color_srgb(), side: DoubleSide });
+    const mesh = new Mesh(geometry, material);
+    mesh.name = `lake-biwa-${kind}-features-osm`;
+    mesh.receiveShadow = true;
+    mesh.castShadow = true;
+    return mesh;
+  } catch (error) {
+    geometry.dispose();
+    material?.dispose();
+    throw error;
+  } finally { shared.free(); }
 }
 
 function parseShoreline(value: unknown): ShorelineAsset {
@@ -1075,9 +1032,7 @@ export function createLakeVenue(): Readonly<{ group: Group; dispose(): void }> {
   const terrainMaterial = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
   const canopyMaterial = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
   const rockMaterial = new MeshLambertMaterial({ vertexColors: true, side: DoubleSide });
-  const pierMaterial = new MeshLambertMaterial({ color: 0x85765d, side: DoubleSide });
-  const quayMaterial = new MeshLambertMaterial({ color: 0x777a73, side: DoubleSide });
-  const breakwaterMaterial = new MeshLambertMaterial({ color: 0x696e6a, side: DoubleSide });
+  const structureMaterials: MeshLambertMaterial[] = [];
   const bearing = LAUNCH_PLATFORM.launchBearingDegrees * Math.PI / 180;
   const forwardNorth = Math.cos(bearing);
   const forwardEast = Math.sin(bearing);
@@ -1153,11 +1108,9 @@ export function createLakeVenue(): Readonly<{ group: Group; dispose(): void }> {
       canopy.castShadow = false;
       group.add(canopy);
     }
-    for (const [kind, material] of [["pier", pierMaterial], ["quay", quayMaterial], ["breakwater", breakwaterMaterial]] as const) {
-      const structures = new Mesh(shoreStructureGeometry(kind), material);
-      structures.name = `lake-biwa-${kind}-features-osm`;
-      structures.receiveShadow = true;
-      structures.castShadow = true;
+    for (const kind of ["pier", "quay", "breakwater"] as const) {
+      const structures = shoreStructureMesh(kind);
+      structureMaterials.push(structures.material);
       group.add(structures);
     }
     for (const patch of fineTerrain) {
@@ -1186,9 +1139,7 @@ export function createLakeVenue(): Readonly<{ group: Group; dispose(): void }> {
       terrainMaterial.dispose();
       canopyMaterial.dispose();
       rockMaterial.dispose();
-      pierMaterial.dispose();
-      quayMaterial.dispose();
-      breakwaterMaterial.dispose();
+      for (const material of structureMaterials) material.dispose();
     }
   };
 }

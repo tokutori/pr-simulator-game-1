@@ -2,7 +2,7 @@ import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
 import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
-import { gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
+import { earcutLicenseUrl, gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
 describe("Flight HUD DOM lifecycle", () => {
   it("retains layout writes and heading nodes on numeric frames and applies changed structure", async () => {
@@ -123,6 +123,11 @@ describe("Flight HUD DOM lifecycle", () => {
       expect(validatorLicense?.href).toBe(gameUiValidatorLicenseUrl);
       expect(validatorLicense?.target).toBe("_blank");
       expect(validatorLicense?.rel).toBe("noopener noreferrer");
+      const earcutLicense = Array.from(root.querySelectorAll<HTMLAnchorElement>(".flight-hud-attribution-link"))
+        .find((node) => node.textContent === "earcut 利用条件");
+      expect(earcutLicense?.href).toBe(earcutLicenseUrl);
+      expect(earcutLicense?.target).toBe("_blank");
+      expect(earcutLicense?.rel).toBe("noopener noreferrer");
     } finally {
       await window.happyDOM.abort();
     }

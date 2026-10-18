@@ -1,5 +1,5 @@
 import type { FlightHudModel } from "./flight-hud-model.js";
-import { gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
+import { earcutLicenseUrl, gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
 export class FlightHudAdapter {
   private previous: FlightHudModel | null = null;
@@ -174,7 +174,13 @@ export class FlightHudAdapter {
     numberFormatLicense.target = "_blank";
     numberFormatLicense.rel = "noopener noreferrer";
     numberFormatLicense.textContent = "ryu-js 利用条件";
-    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense, numberFormatLicense);
+    const earcutLicense = documentRef.createElement("a");
+    earcutLicense.className = "flight-hud-attribution-link";
+    earcutLicense.href = earcutLicenseUrl;
+    earcutLicense.target = "_blank";
+    earcutLicense.rel = "noopener noreferrer";
+    earcutLicense.textContent = "earcut 利用条件";
+    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense, numberFormatLicense, earcutLicense);
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
     root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, this.controls);
