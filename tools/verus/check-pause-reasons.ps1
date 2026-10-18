@@ -96,6 +96,7 @@ $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' },
     @{ Path = Join-Path $repository 'proofs/flight_record_append_admission_negative.rs'; Assertion = 'appended' },
     @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_negative.rs'; Assertion = 'added' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_payload_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_terminal_tick_negative.rs'; Assertion = 'shifted' }
 )
 
@@ -386,6 +387,8 @@ try {
           'birdman_game_core::flight_record::control::FlightRecordTailInput::from_applied',
           'birdman_game_core::tail_simulation::TailFlightTickReport::outcome',
           'birdman_game_core::tail_simulation::TailFlightTickReport::applied_controls',
+          'birdman_game_core::tail_simulation::contact_at_start_report',
+          'birdman_game_core::tail_simulation::verify_contact_at_start_record_payload',
           'birdman_game_core::flight_record::validate_telemetry',
           'birdman_game_core::flight_record::storage::FlightRecordStorage::push'
       )

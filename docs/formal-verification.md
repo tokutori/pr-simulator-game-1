@@ -243,8 +243,12 @@ NoElapsedIntervalの必須clientは同じ公開append/finalizeを呼び、sample
 finalize拒否の回帰には内部不整合を明示的に注入し、利用者操作から発生した障害とは扱わない。
 
 外側の実callerは既存scenario/telemetry/score関数をbindし、同じconfigurationのtick上限・identityを渡す。
-この具体wiringと0-fraction producerからrecord/Resultへの接続はsource確認と通常Rust回帰の範囲であり、
-数値callbackのbody、任意reportと前sampleの等値、wrapper全体を形式証明したことにはならない。
+この具体wiring、数値callbackのbody、任意reportと前sampleの等値、wrapper全体は形式証明の対象外である。
+0-fractionの本番private producerは同じpreviousのFlightState・incidence・pilot targetを構造的に保持し、
+newly applied controlsを持たない。その実bodyと、同じpreviousによる公開begin/NoElapsed append/finalizeを呼ぶ
+private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、
+sampleのinput/telemetryを保持することを結合する。初期sampleには独立したpilot target fieldがないため、
+targetはreportのprevious保持に限定する。数値接触検出や任意tickのrecord/previous相関は別の未証明範囲である。
 
 公開`begin_tail`/`append_tail_report`は同じ実bodyの認可、実reportからstate/control/telemetryへの転送、
 bounded Vecへの追加、拒否時のowner全保持を検証する。NoElapsedIntervalは結果の成否にかかわらずrecord全体を保持する。
