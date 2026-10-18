@@ -361,6 +361,111 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     expect(reflection.image).toMatchObject({ width: 640, height: 360 });
   });
 
+  it("projects shared Auto water steps and restores the retained upper quality without recreating detail textures", async () => {
+    const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
+    const policy = new ScreenRenderAutoBridge();
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing Auto water recording driver");
+    let now = 0;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
+      trial.renderer.setFlightPose({ datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+        pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
+      trial.renderer.render(frame());
+      const original = lakeDrawResources(recording).foreground;
+      const detail: unknown = original.material.uniforms.uDetailNear?.value;
+      const applied = new Set<string>();
+      trial.renderer.startLoop(() => { trial.renderer.beginViewFrame(); trial.renderer.render(frame()); });
+      trial.renderer.setScreenRenderAuto(true);
+      for (let index = 0; index < 240; index++) {
+        now = index * 100;
+        recording.tick(now, null);
+        const snapshot = parseScreenRenderAutoSnapshot(policy.snapshot_json());
+        const profile = lakeWater.lakeWaterQualityProfile(snapshot.water_quality);
+        expect(original.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
+        expect(original.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
+        applied.add(snapshot.water_quality);
+      }
+      expect([...applied]).toEqual(["high", "medium", "low"]);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", shadow: "quarter", water_quality: "low" });
+      const geometry = original.mesh.geometry;
+      await trial.renderer.setLakeWaterQuality("medium");
+      expect(original.mesh.geometry).toBe(geometry);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ selection: { manual_water_quality: "medium" }, water_quality: "low" });
+      trial.renderer.setScreenRenderAuto(false);
+      now += 20;
+      recording.tick(now, null);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", shadow: "full", water_quality: "medium" });
+      expect(original.material.uniforms.uWaveCount?.value).toBe(10);
+      expect(original.material.uniforms.uDetailNear?.value).toBe(detail);
+      expect(original.material.uniforms.uTimeSeconds?.value).toBe(12.345);
+    } finally { trial.renderer.dispose(); clock.mockRestore(); }
+  });
+
+  it.each(["preparation", "cleanup"] as const)("preserves the correct triple and manual outcome after water %s failure", async (stage) => {
+    const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
+    const policy = new ScreenRenderAutoBridge();
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing failing water recording driver");
+    trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
+    trial.renderer.render(frame());
+    const original = lakeDrawResources(recording).foreground;
+    const geometry = original.mesh.geometry;
+    const failure = new Error(`water ${stage} failed`);
+    const spectrum = vi.spyOn(lakeProjection, "createLakeWaveProjection");
+    const cleanup = (): never => { throw failure; };
+    if (stage === "preparation") spectrum.mockImplementationOnce(() => { throw failure; });
+    else geometry.addEventListener("dispose", cleanup);
+    try {
+      trial.renderer.startLoop(() => { trial.renderer.beginViewFrame(); trial.renderer.render(frame()); });
+      const request = trial.renderer.setLakeWaterQuality("low");
+      const settled = stage === "preparation" ? expect(request).rejects.toBe(failure)
+        : expect(request).resolves.toEqual({ kind: "failed", message: failure.message });
+      recording.tick(0, null);
+      await settled;
+      const snapshot = parseScreenRenderAutoSnapshot(policy.snapshot_json());
+      expect(snapshot).toMatchObject({ applied: "100", shadow: "full", water_quality: stage === "preparation" ? "high" : "low",
+        status: { kind: "failed", cause: failure.message } });
+      expect(original.mesh.geometry === geometry).toBe(stage === "preparation");
+      expect(recording.getDrawingBufferSize(new Vector2()).toArray()).toEqual([1280, 720]);
+    } finally { geometry.removeEventListener("dispose", cleanup); spectrum.mockRestore(); trial.renderer.dispose(); }
+  });
+
+  it("acknowledges only water-only requests in VR and retains a conflicting Screen request until return", async () => {
+    const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
+    const policy = new ScreenRenderAutoBridge();
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing VR water recording driver");
+    try {
+      trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
+      trial.renderer.render(frame());
+      const original = lakeDrawResources(recording).foreground;
+      trial.renderer.startLoop(() => undefined);
+      recording.xr.isPresenting = true;
+      const resizes = recording.resizeCalls;
+      const low = trial.renderer.setLakeWaterQuality("low");
+      recording.tick(0, null);
+      await low;
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", shadow: "full", water_quality: "low" });
+      expect(recording.resizeCalls).toBe(resizes);
+      const geometry = original.mesh.geometry;
+      trial.renderer.setScreenRenderScale(0.5);
+      const high = trial.renderer.setLakeWaterQuality("high");
+      recording.tick(20, null);
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", water_quality: "low", status: { kind: "applying" } });
+      expect(original.mesh.geometry).toBe(geometry);
+      expect(recording.resizeCalls).toBe(resizes);
+      recording.xr.isPresenting = false;
+      recording.tick(40, null);
+      await high;
+      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", water_quality: "high" });
+    } finally { trial.renderer.dispose(); }
+  });
+
   it("restores the retained Screen pixels when Phone VR startup fails after stereo was enabled", async () => {
     const viewport = { x: 1280, y: 720, pixelRatio: 2 };
     bundle.renderer.resize(viewport);

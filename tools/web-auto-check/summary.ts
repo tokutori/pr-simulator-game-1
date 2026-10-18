@@ -38,7 +38,7 @@ export function summarize(observation: LiveObservation) {
     const statistics = distribution(group.values);
     const limited = statistics.count < 20;
     return { epoch, confirmedAtMs: group.source.at, selection: snapshot.selection, applied: snapshot.applied,
-      shadow: snapshot.shadow, statistics, limited, sourceSpanMs: group.lastSourceMs - group.firstSourceMs,
+      shadow: snapshot.shadow, waterQuality: snapshot.water_quality, statistics, limited, sourceSpanMs: group.lastSourceMs - group.firstSourceMs,
       gpuWorkBudgetMet: limited || statistics.p95Ms === null ? null : statistics.p95Ms <= 12.5, uniqueSourceFrames: unique,
       observedSourceFrameSpan: last - first + 1, withinObservedSpanCoverage: unique / (last - first + 1) };
   });

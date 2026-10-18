@@ -2,6 +2,7 @@ import type { ScreenRenderAutoBinding, ScreenRenderInvalidation } from "../../co
 import { parseScreenRenderAutoSnapshot } from "../../contracts/screen-render-auto.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import type { GpuQueryObservation } from "./gpu-work-timer.js";
+import type { LakeWaterQuality } from "../../contracts/lake-water.js";
 
 export class ScreenAutoRenderer {
   private frame = 0;
@@ -12,7 +13,7 @@ export class ScreenAutoRenderer {
   private readonly timer: GpuWorkTimer;
 
   constructor(gl: WebGLRenderingContext | WebGL2RenderingContext, private readonly binding: ScreenRenderAutoBinding,
-    private readonly applyResources: (factor: number, shadowMapSize: number) => false | { readonly cleanupFailure?: string },
+    private readonly applyResources: (factor: number, shadowMapSize: number, quality: LakeWaterQuality, screen: boolean) => false | { readonly cleanupFailure?: string },
     private readonly now: () => number = () => performance.now()) {
     if (!("beginQuery" in gl)) throw new Error("The Screen renderer requires WebGL2");
     this.timer = new GpuWorkTimer(gl);
@@ -30,6 +31,12 @@ export class ScreenAutoRenderer {
     this.publish();
   }
 
+  selectWaterQuality(quality: LakeWaterQuality): void {
+    this.timer.clear();
+    this.binding.policy.select_water_quality(quality, this.now());
+    this.publish();
+  }
+
   boundary(eligible: boolean): void {
     const now = this.now();
     if (eligible !== this.eligible) this.invalidateAt("backend_changed", now);
@@ -43,17 +50,22 @@ export class ScreenAutoRenderer {
       } catch (error: unknown) { this.unavailable(error, now); }
     }
     const percent = this.binding.policy.requested_scale_percent();
-    if (percent !== 0 && eligible) {
+    if (percent !== 0) {
       const epoch = this.binding.policy.requested_epoch();
       const shadowMapSize = this.binding.policy.requested_shadow_map_size();
+      const quality = this.binding.policy.requested_water_quality();
+      if (quality !== "low" && quality !== "medium" && quality !== "high") {
+        this.unavailable(new Error("Invalid pending water quality"), now);
+        return;
+      }
       try {
         this.timer.clear();
-        const result = this.applyResources(percent / 100, shadowMapSize);
+        const result = this.applyResources(percent / 100, shadowMapSize, quality, eligible);
         if (result !== false) {
           this.prepared = false;
-          this.binding.policy.applied(epoch, percent, shadowMapSize, now, result.cleanupFailure);
+          this.binding.policy.applied(epoch, percent, shadowMapSize, quality, now, result.cleanupFailure);
         }
-      } catch (error: unknown) { this.binding.policy.failed(epoch, percent, shadowMapSize, message(error), now); }
+      } catch (error: unknown) { this.binding.policy.failed(epoch, percent, shadowMapSize, quality, message(error), now); }
     }
     this.publish();
   }
@@ -78,7 +90,7 @@ export class ScreenAutoRenderer {
     catch (error: unknown) { this.unavailable(error, this.now()); }
     if (!complete) this.invalidate("interrupted");
     else if (this.eligible && !this.prepared) {
-      this.invalidateAt("quality_changed", this.now());
+      this.invalidateAt("scene_preparation", this.now());
       this.prepared = true;
     }
   }

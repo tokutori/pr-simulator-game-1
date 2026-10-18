@@ -411,6 +411,8 @@ export function createThreeRenderer(
     resolve: (cleanup: LakeWaterQualityCleanupResult) => void;
     reject: (reason: unknown) => void;
   }>;
+  type PreparedLakeQuality = Readonly<{ quality: LakeWaterQuality; waves: LakeWaveResources; geometry: PlaneGeometry }>;
+  let manualLakeQualityRequest: LakeQualityRequest | null = null;
   type PendingViewInputs = Readonly<{
     flightPose?: FlightRenderPose | null;
     preparedFlightPose?: FlightRenderPose | null;
@@ -426,9 +428,48 @@ export function createThreeRenderer(
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
   const screenAuto = screenAutoBinding === undefined ? null
-    : new ScreenAutoRenderer(renderer.getContext(), screenAutoBinding, (factor, shadowMapSize) =>
-      hasScreenRenderArea(factor) && applyScreenRenderResources(sun, renderer, shadowMapSize,
-        () => applyScreenRenderScale(factor)));
+    : new ScreenAutoRenderer(renderer.getContext(), {
+      policy: screenAutoBinding.policy,
+      onSnapshot(snapshot) {
+        screenAutoBinding.onSnapshot(snapshot);
+        const request = manualLakeQualityRequest;
+        if (request === null || snapshot.status.kind === "applying" || screenAutoBinding.policy.requested_scale_percent() !== 0) return;
+        manualLakeQualityRequest = null;
+        if (snapshot.status.kind === "failed" || snapshot.status.kind === "unsupported") request.reject(new Error(snapshot.status.cause));
+        else request.resolve({ kind: "complete" });
+      }
+    }, (factor, shadowMapSize, quality, screen) => {
+      if (screen ? !hasScreenRenderArea(factor) : factor !== screenRenderScale || shadowMapSize !== sun.shadow.mapSize.x) return false;
+      let next: PreparedLakeQuality | null = null;
+      try {
+        next = prepareLakeQuality(quality);
+        const commitWater = (): string | undefined => {
+          const cleanup = commitLakeQuality(next);
+          next = null;
+          return cleanup.kind === "failed" ? cleanup.message : undefined;
+        };
+        const result = applyScreenRenderResources(sun, renderer, shadowMapSize,
+          () => screen ? applyScreenRenderScale(factor) : true, commitWater);
+        if (result === false) {
+          const unused = next;
+          next = null;
+          unused?.geometry.dispose();
+          return false;
+        }
+        const request = manualLakeQualityRequest;
+        manualLakeQualityRequest = null;
+        request?.resolve(result.cleanupFailure === undefined ? { kind: "complete" } : { kind: "failed", message: result.cleanupFailure });
+        return result;
+      } catch (cause: unknown) {
+        let failure = cause;
+        try { next?.geometry.dispose(); }
+        catch (cleanup: unknown) { failure = new AggregateError([cause, cleanup], "Screen water preparation cleanup failed", { cause }); }
+        const request = manualLakeQualityRequest;
+        manualLakeQualityRequest = null;
+        request?.reject(failure);
+        throw failure;
+      }
+    });
   const onContextLost = (): void => { screenAuto?.invalidate("interrupted"); };
   const onContextRestored = (): void => { screenAuto?.restored(); };
   if (screenAuto !== null) {
@@ -438,35 +479,39 @@ export function createThreeRenderer(
   const stageViewInputs = (inputs: PendingViewInputs): void => {
     pendingViewInputs = Object.freeze({ ...pendingViewInputs, ...inputs });
   };
-  const applyLakeQuality = (request: LakeQualityRequest): void => {
-    if (request.quality === activeLakeQuality) { request.resolve({ kind: "complete" }); return; }
-    let nextWaves: LakeWaveResources;
-    let nextGeometry: PlaneGeometry;
-    try {
-      nextWaves = createLakeWaveResources(activeLakeCondition, request.quality);
-      nextGeometry = createLakeGeometry(lakeWaterQualityProfile(request.quality).meshSegments);
-    } catch (error: unknown) {
-      request.reject(error);
-      return;
-    }
+  const prepareLakeQuality = (quality: LakeWaterQuality): PreparedLakeQuality | null => quality === activeLakeQuality ? null
+    : { quality, waves: createLakeWaveResources(activeLakeCondition, quality),
+      geometry: createLakeGeometry(lakeWaterQualityProfile(quality).meshSegments) };
+  const commitLakeQuality = (next: PreparedLakeQuality | null): LakeWaterQualityCleanupResult => {
+    if (next === null) return { kind: "complete" };
     const previousGeometry = waterGeometry;
-    lakeUniforms.waveKAmplitude.value = nextWaves.waveKAmplitude;
-    lakeUniforms.waveOmegaPhase.value = nextWaves.waveOmegaPhase;
-    lakeUniforms.waveCount.value = nextWaves.waveCount;
-    lakeUniforms.choppiness.value = nextWaves.choppiness;
-    lakeUniforms.spacingGradient.value = nextWaves.spacingGradientMagnitude;
-    lakeUniforms.visualWaveHeight.value = nextWaves.visualWaveHeight;
-    lakeResources = { ...lakeResources, ...nextWaves };
-    water.geometry = nextGeometry;
-    waterGeometry = nextGeometry;
-    activeLakeQuality = request.quality;
-    screenAuto?.invalidate("quality_changed");
+    lakeUniforms.waveKAmplitude.value = next.waves.waveKAmplitude;
+    lakeUniforms.waveOmegaPhase.value = next.waves.waveOmegaPhase;
+    lakeUniforms.waveCount.value = next.waves.waveCount;
+    lakeUniforms.choppiness.value = next.waves.choppiness;
+    lakeUniforms.spacingGradient.value = next.waves.spacingGradientMagnitude;
+    lakeUniforms.visualWaveHeight.value = next.waves.visualWaveHeight;
+    lakeResources = { ...lakeResources, ...next.waves };
+    water.geometry = next.geometry;
+    waterGeometry = next.geometry;
+    activeLakeQuality = next.quality;
     try {
       previousGeometry.dispose();
-      request.resolve({ kind: "complete" });
-    } catch (error: unknown) {
-      request.resolve({ kind: "failed", message: errorMessage(error) });
+      return { kind: "complete" };
+    } catch (cause: unknown) {
+      return { kind: "failed", message: errorMessage(cause) };
     }
+  };
+  const applyLakeQuality = (request: LakeQualityRequest): void => {
+    if (screenAuto !== null) {
+      manualLakeQualityRequest = request;
+      try { screenAuto.selectWaterQuality(request.quality); }
+      catch (cause: unknown) { manualLakeQualityRequest = null; request.reject(cause); }
+      return;
+    }
+    try {
+      request.resolve(commitLakeQuality(prepareLakeQuality(request.quality)));
+    } catch (cause: unknown) { request.reject(cause); }
   };
   const currentExternalCameraPose = (): Pose | null => {
     if (flightPose === null || flightCameraMode === "pilot") return null;
@@ -771,6 +816,8 @@ export function createThreeRenderer(
       if (loopRunning) renderer.setAnimationLoop(null);
       loopRunning = false;
       pendingViewInputs?.lakeQuality?.reject(new Error("Renderer was disposed before lake quality could be applied"));
+      manualLakeQualityRequest?.reject(new Error("Renderer was disposed before lake quality could be applied"));
+      manualLakeQualityRequest = null;
       pendingViewInputs = null;
       framePhase = "idle";
       frameViewport = null;
@@ -839,7 +886,7 @@ export function createThreeRenderer(
       return new Promise<LakeWaterQualityCleanupResult>((resolve, reject) => {
         ensureActive(disposed);
         if (!["low", "medium", "high"].includes(quality)) throw new RangeError("Invalid lake water quality");
-        if (pendingViewInputs?.lakeQuality !== undefined) throw new Error("Lake water quality is already pending");
+        if (pendingViewInputs?.lakeQuality !== undefined || manualLakeQualityRequest !== null) throw new Error("Lake water quality is already pending");
         const request: LakeQualityRequest = Object.freeze({ quality, resolve, reject });
         if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ lakeQuality: request }); return; }
         applyLakeQuality(request);
