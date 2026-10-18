@@ -1336,6 +1336,7 @@ fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUi
 #[derive(SystemParam)]
 pub(crate) struct VerificationPresentation<'w, 's> {
     camera: ResMut<'w, CameraMode>,
+    observer: Option<Res<'w, VerificationObserver>>,
     quality: ResMut<'w, WaterQualitySelection>,
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
@@ -2014,7 +2015,7 @@ fn advance_step(
                         aircraft_transform(flight),
                         flight.pilot_position_m(),
                         session.initial_pilot_position_m,
-                        false,
+                        true,
                         Vec2::ZERO,
                     ));
                     verification.next(VerificationStage::WaterMotion(
@@ -2086,6 +2087,19 @@ fn advance_step(
                         Some(MotionInterval::Complete(_))
                     ))
             {
+                let Some(observer) = presentation.observer.as_ref() else {
+                    verification.readiness.confirmation_frames = 0;
+                    return Ok(());
+                };
+                let (_, _, _, _, actual) = presentation
+                    .scene_cameras
+                    .iter()
+                    .find(|(role, ..)| **role == WorldProjection::FlightCamera)
+                    .ok_or("Water observation requires the actual Flight camera")?;
+                if *actual != observer.0 {
+                    verification.readiness.confirmation_frames = 0;
+                    return Ok(());
+                }
                 if endpoint == MotionEndpoint::Start {
                     verification.motion_start_time = Some(clock);
                 } else if clock
@@ -2098,9 +2112,11 @@ fn advance_step(
                     );
                 }
                 println!(
-                    "Water observer {} {endpoint:?}: request-time core tick={}, render-time={clock:.4}s",
+                    "Water observer {} {endpoint:?}: request-time core tick={}, render-time={clock:.4}s, camera_translation={:?}, camera_rotation_xyzw={:?}",
                     motion.label(),
-                    state.tick_index()
+                    state.tick_index(),
+                    actual.translation,
+                    actual.rotation.to_array(),
                 );
                 if let Some(MotionInterval::Complete(metrics)) = verification.motion_interval {
                     println!(
@@ -3129,6 +3145,53 @@ mod tests {
         }
         app.world_mut().resource_mut::<super::Verification>().stage = VerificationStage::Launch;
         app
+    }
+
+    #[test]
+    fn water_observer_origin_reuses_chase_and_remains_world_fixed() {
+        let mut app = countdown_driver_app();
+        app.world_mut()
+            .resource_mut::<super::Verification>()
+            .water_case = Some(WaterVerificationCase::parse("typical-high").unwrap());
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+            if app
+                .world()
+                .resource::<super::Verification>()
+                .observer_base
+                .is_some()
+            {
+                break;
+            }
+        }
+        let session = app.world().resource::<NativeSession>();
+        let flight = session
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .flight_state();
+        let aircraft = super::aircraft_transform(flight);
+        let base = app
+            .world()
+            .resource::<super::Verification>()
+            .observer_base
+            .unwrap();
+        let camera = |chase| {
+            super::camera_transform(
+                aircraft,
+                flight.pilot_position_m(),
+                session.initial_pilot_position_m,
+                chase,
+                Vec2::ZERO,
+            )
+        };
+        assert_eq!(base, camera(true));
+        assert_ne!(base, camera(false));
+        assert!(base.translation.distance(aircraft.translation) > 12.0);
+        assert_eq!(WaterMotion::Static.pose(base, 0.0), base);
+        assert_eq!(WaterMotion::Static.pose(base, 1.0), base);
     }
 
     #[test]
