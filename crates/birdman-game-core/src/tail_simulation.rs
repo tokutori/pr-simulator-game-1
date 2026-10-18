@@ -267,7 +267,13 @@ pub struct TailFlightTickReport {
 impl TailFlightTickReport {
     /// Returns the authoritative physical incidence and pilot target through the state/sample.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
-    #[cfg_attr(verus_only, verus_spec(returns self.outcome()))]
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        returns self.outcome(),
+        ensures match outcome {
+            TailFlightTickOutcome::Advanced(_) => self.applied_controls().is_some(),
+            TailFlightTickOutcome::WaterContact(_) => true,
+        },
+    ))]
     pub const fn outcome(self) -> TailFlightTickOutcome {
         match self.result {
             TailReportedOutcome::Advanced(state, _) => TailFlightTickOutcome::Advanced(state),
@@ -675,6 +681,58 @@ verus! {
         },
     {
         record.begin_tail(previous, telemetry)?;
+        let report = contact_at_start_report(previous, fraction, contact_point_index);
+        record.append_tail_report(report, telemetry)?;
+        let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {
+            return Err(crate::FlightRecordError::InvalidTime);
+        };
+        let metadata = record.finalize(
+            crate::SessionEndReason::WaterContact,
+            sample.interval_start_tick(),
+            sample.fraction(),
+            score,
+        )?;
+        Ok((report, metadata))
+    }
+
+    fn verify_advanced_contact_at_start_record_payload(
+        record: &mut crate::FlightRecord,
+        advanced: TailFlightTickReport,
+        fraction: f64,
+        contact_point_index: usize,
+        telemetry: crate::FlightTelemetry,
+        score: Option<crate::DistanceScore>,
+    ) -> (outcome: Result<(TailFlightTickReport, crate::FlightRecordFinalization), crate::FlightRecordError>)
+        ensures match outcome {
+            Ok((report, metadata)) => final(record).sample_count() == old(record).sample_count() + 1
+                && final(record).recorded_samples().drop_last() == old(record).recorded_samples()
+                && final(record).recorded_samples().last().telemetry == telemetry
+                && final(record).finalization() == Some(metadata)
+                && report.applied_controls().is_none()
+                && match advanced.outcome() {
+                    TailFlightTickOutcome::Advanced(previous) =>
+                        final(record).latest_matches_tail_state(previous)
+                            && match crate::FlightRecordControls::from_tail_report(advanced) {
+                                crate::FlightRecordControlCapture::Applied(controls) =>
+                                    final(record).recorded_samples().last().controls == controls,
+                                _ => false,
+                            }
+                            && match report.outcome() {
+                                TailFlightTickOutcome::WaterContact(sample) =>
+                                    final(record).recorded_samples().last().flight_state == sample.flight_state()
+                                        && final(record).recorded_samples().last().controls.incidence == sample.incidence()
+                                        && sample.pilot_position_target() == previous.pilot_position_target(),
+                                _ => false,
+                            },
+                    _ => false,
+                },
+            Err(_) => true,
+        },
+    {
+        let TailFlightTickOutcome::Advanced(previous) = advanced.outcome() else {
+            return Err(crate::FlightRecordError::InvalidTime);
+        };
+        record.append_tail_report(advanced, telemetry)?;
         let report = contact_at_start_report(previous, fraction, contact_point_index);
         record.append_tail_report(report, telemetry)?;
         let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {

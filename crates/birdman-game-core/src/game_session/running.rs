@@ -92,6 +92,11 @@ impl<Configuration, Clock>
             final(self).record.recorded_samples().take(old(self).record.recorded_samples().len() as int)
                 =~= old(self).record.recorded_samples(),
             final(self).record.recorded_samples().len() <= old(self).record.recorded_samples().len() + 1,
+            outcome.is_ok() ==> match final(self).phase {
+                ConfiguredPhase::Flight(flight) => flight.execution == FlightExecution::Running
+                    && final(self).record.latest_matches_tail_state(flight.state),
+                _ => true,
+            },
             match old(self).phase {
                 ConfiguredPhase::Flight(ActiveFlight { execution: FlightExecution::Running, .. }) =>
                     outcome != Err(GameSessionError::InvalidTransition),

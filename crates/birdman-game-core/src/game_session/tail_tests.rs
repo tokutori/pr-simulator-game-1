@@ -184,6 +184,44 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
 }
 
 #[test]
+fn accepted_running_ticks_retain_the_latest_record_physical_payload() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let mut session = launch(configuration(
+        &definition,
+        &surfaces,
+        WindField::uniform(NedVector::zero()),
+        -10.5,
+        4,
+        ControlMode::Manual,
+    ));
+    let applied = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.25, -0.125).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    for completed_ticks in 0..=3 {
+        let snapshot = session.snapshot();
+        assert_eq!(snapshot.phase(), SessionPhase::FlightRunning);
+        let current = snapshot.tail_flight_state().unwrap();
+        let record = session.flight_record().unwrap();
+        let latest = record.samples().last().unwrap();
+        assert_eq!(latest.tick_index, completed_ticks);
+        assert_eq!(latest.fraction.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(latest.flight_state, current.flight_state());
+        assert_eq!(latest.controls.incidence, current.incidence());
+        assert_eq!(latest.controls.has_input(), completed_ticks > 0);
+        if completed_ticks == 1 {
+            session.pause(PauseReason::Manual).unwrap();
+            session.resume().unwrap();
+        }
+        if completed_ticks < 3 {
+            session.advance_tail_flight_tick(applied).unwrap();
+        }
+    }
+}
+
+#[test]
 fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();

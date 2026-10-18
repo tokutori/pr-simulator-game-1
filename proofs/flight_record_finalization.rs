@@ -70,6 +70,7 @@ verus! {
                 && final(record).recorded_samples().last().flight_state == initial.flight_state()
                 && final(record).recorded_samples().last().controls == FlightRecordControls::initial_tail(initial)
                 && final(record).recorded_samples().last().telemetry == telemetry
+                && final(record).latest_matches_tail_state(initial)
                 && final(record).header() == old(record).header()
                 && final(record).sample_limit() == old(record).sample_limit(),
             Err(_) => *final(record) == *old(record),
@@ -105,7 +106,8 @@ verus! {
                         && final(record).recorded_samples().last().wind_at_cg_ned_mps == telemetry.wind_velocity_ned_mps
                         && match report.outcome() {
                             TailFlightTickOutcome::Advanced(state) =>
-                                final(record).recorded_samples().last().flight_state == state.flight_state()
+                                final(record).latest_matches_tail_state(state)
+                                    && final(record).recorded_samples().last().flight_state == state.flight_state()
                                     && final(record).recorded_samples().last().tick_index == state.tick_index(),
                             TailFlightTickOutcome::WaterContact(sample) =>
                                 final(record).recorded_samples().last().flight_state == sample.flight_state()

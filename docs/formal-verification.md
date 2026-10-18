@@ -248,7 +248,12 @@ finalize拒否の回帰には内部不整合を明示的に注入し、利用者
 newly applied controlsを持たない。その実bodyと、同じpreviousによる公開begin/NoElapsed append/finalizeを呼ぶ
 private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、
 sampleのinput/telemetryを保持することを結合する。初期sampleには独立したpilot target fieldがないため、
-targetはreportのprevious保持に限定する。数値接触検出や任意tickのrecord/previous相関は別の未証明範囲である。
+targetはreportのprevious保持に限定する。
+実Vec上のlatest_matches_tail_stateはtick・整数fraction・FlightState・held incidenceを結合し、begin成功とAdvanced append成功が確立する。
+同じ本番Running bodyは、正常に受理された継続Runningのstateと最新sampleの対応を保証する。
+別のprivate clientは任意長recordへ実Advanced appendを行い、その同stateから既存ContactAtStart producerを呼び、
+NoElapsed append/finalizeまで物理payloadと保存済みinput/telemetryを保持する。相関をrequiresへ追加しない。
+数値接触検出と外側callback wiringは未証明であり、任意の別previousに由来するNoElapsed reportを同じstateとして扱わない。
 初期controlsとNoElapsed分類は既存の純粋関数の`dual_spec`を`open`とし、同じ実bodyから生成した定義を展開する。
 [公式dual_spec仕様](https://verus-lang.github.io/verus/guide/exec_to_spec.html)に従い、数値仮定や模倣modelは追加しない。
 
@@ -266,6 +271,10 @@ validatorの実bodyを検証し、エラー分類・record保持を接続する�
 接触fraction 0/1は対応する実stateを直接保持する。補間/detectの非自明state・signed zero回帰と、
 実tail producer→record→GameSession Resultの接続回帰を維持する。NoElapsed reportを任意の別previousから生成して
 公開appendへ渡す場合の相関は保証しない。最新sampleとreportの等値を未証明のrequiresへ追加しない。
+
+append成功後のfinalize拒否には一般的な全Err保持を要求しない。WaterContactでは旧Runningと追加sampleが残り得る。
+公開経路は同sampleのtick/fractionを確定へ渡すため、有効producerのfractionが[0,1]なら同guardの拒否例は確認していない。
+既存の拒否回帰は内部不整合を注入する。IEEE数値producerとwrapperの到達不能証明を、この正常継続の契約から導かない。
 
 独立proof clientは同じ検証で生成したcore/vstdの`rmeta`/`vir`とbuiltinを、固定配布物の
 `rust_verify`へ明示して読み込む。実行bodyや実型の複写、外部仕様による実装免除、新たな数値公理は追加しない。

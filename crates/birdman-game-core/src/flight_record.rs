@@ -197,6 +197,14 @@ verus! {
             self.sample_capacity
         }
 
+        pub open spec fn latest_matches_tail_state(self, state: crate::TailFlightTickState) -> bool {
+            self.recorded_samples().len() > 0
+                && self.recorded_samples().last().tick_index == state.tick_index()
+                && self.recorded_samples().last().fraction == 0.0f64
+                && self.recorded_samples().last().flight_state == state.flight_state()
+                && self.recorded_samples().last().controls.incidence == state.incidence()
+        }
+
         /// States that finalization retained the header, sample sequence, and reserved capacity.
         pub closed spec fn finalized_from(
             self,
@@ -321,6 +329,7 @@ impl FlightRecord {
                     && final(self).finalization() == old(self).finalization()
                     && final(self).sample_limit() == old(self).sample_limit()
                     && final(self).sample_count() == 1
+                    && final(self).latest_matches_tail_state(initial)
                     && final(self).recorded_samples() == old(self).recorded_samples().push(
                         FlightRecordSample {
                             tick_index: 0,
@@ -377,7 +386,8 @@ impl FlightRecord {
                         crate::TailFlightTickOutcome::Advanced(state) =>
                             old(self).recorded_samples().last().tick_index.checked_add(1)
                                 == Some(state.tick_index())
-                                && state.tick_index() <= old(self).header().maximum_flight_ticks,
+                                && state.tick_index() <= old(self).header().maximum_flight_ticks
+                                && final(self).latest_matches_tail_state(state),
                         crate::TailFlightTickOutcome::WaterContact(sample) =>
                             sample.interval_start_tick() == old(self).recorded_samples().last().tick_index
                                 && sample.interval_start_tick() < old(self).header().maximum_flight_ticks,
