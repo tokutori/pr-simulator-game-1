@@ -1,7 +1,8 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it, vi } from "vitest";
-import { DataTexture, SRGBColorSpace } from "three";
-import { LakeCloudsBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { Color, DataTexture, NoColorSpace, RGFormat, SRGBColorSpace, Vector4 } from "three";
+import { LakeCloudsBridge, lake_scene_ambient_color_srgb,
+  lake_scene_sunlight_color_srgb } from "../../web/pkg/birdman_game_wasm.js";
 import { createLakeClouds, disposeLakeClouds } from "../../web/src/render/engines/three/lake-clouds.js";
 
 const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25,
@@ -31,6 +32,22 @@ describe("finite shared cloud projection", () => {
       if (!(atlas.image.data instanceof Uint8Array)) throw new Error("Missing atlas byte upload");
       expect(Buffer.from(atlas.image.data).equals(Buffer.from(packet.rgba()))).toBe(true);
       expect(atlas.colorSpace).toBe(SRGBColorSpace);
+      const normals: unknown = mesh.material.uniforms.normalAtlas?.value;
+      if (!(normals instanceof DataTexture) || !(normals.image.data instanceof Uint8Array)) throw new Error("Missing normal atlas");
+      expect(Buffer.from(normals.image.data).equals(Buffer.from(packet.normal_rg()))).toBe(true);
+      expect(normals.colorSpace).toBe(NoColorSpace);
+      expect(normals.format).toBe(RGFormat);
+      const sun: unknown = mesh.material.uniforms.sunDirection?.value;
+      if (!(sun instanceof Vector4)) throw new Error("Missing world sunlight");
+      const direction = packet.sun_direction_ned();
+      expect(sun.toArray()).toEqual([direction[1], -(direction[2] ?? NaN), -(direction[0] ?? NaN), direction[3]]);
+      for (const [name, srgb] of [["shadeTint", lake_scene_ambient_color_srgb()], ["sunTint", lake_scene_sunlight_color_srgb()]] as const) {
+        const actual: unknown = mesh.material.uniforms[name]?.value;
+        if (!(actual instanceof Color)) throw new Error("Missing shared light colour");
+        const expected = new Color(srgb);
+        expected.multiplyScalar(1 / Math.max(expected.r, expected.g, expected.b));
+        expect(actual.toArray()).toEqual(expected.toArray());
+      }
       expect(mesh.layers.isEnabled(0)).toBe(true);
       expect(mesh.layers.isEnabled(1)).toBe(true);
       expect(mesh.material.depthWrite).toBe(false);
@@ -61,20 +78,27 @@ describe("finite shared cloud projection", () => {
     const mesh = createLakeClouds(condition);
     const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
     if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
-    const released = [vi.spyOn(atlas, "dispose"), vi.spyOn(mesh.geometry, "dispose"), vi.spyOn(mesh.material, "dispose")];
+    const normals: unknown = mesh.material.uniforms.normalAtlas?.value;
+    if (!(normals instanceof DataTexture)) throw new Error("Missing normal atlas");
+    const released = [vi.spyOn(atlas, "dispose"), vi.spyOn(normals, "dispose"),
+      vi.spyOn(mesh.geometry, "dispose"), vi.spyOn(mesh.material, "dispose")];
     disposeLakeClouds(mesh);
     for (const release of released) expect(release).toHaveBeenCalledTimes(1);
   });
 
-  it("attempts independent geometry and material cleanup after an atlas listener fails", () => {
+  it("attempts independent normal, geometry and material cleanup after an atlas listener fails", () => {
     const mesh = createLakeClouds(condition);
     const atlas: unknown = mesh.material.uniforms.cloudAtlas?.value;
     if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
     const cause = new Error("atlas listener");
     atlas.addEventListener("dispose", () => { throw cause; });
+    const normals: unknown = mesh.material.uniforms.normalAtlas?.value;
+    if (!(normals instanceof DataTexture)) throw new Error("Missing normal atlas");
+    const normalCleanup = vi.spyOn(normals, "dispose");
     const geometry = vi.spyOn(mesh.geometry, "dispose");
     const material = vi.spyOn(mesh.material, "dispose");
     expect(() => { disposeLakeClouds(mesh); }).toThrow(AggregateError);
+    expect(normalCleanup).toHaveBeenCalledTimes(1);
     expect(geometry).toHaveBeenCalledTimes(1);
     expect(material).toHaveBeenCalledTimes(1);
   });

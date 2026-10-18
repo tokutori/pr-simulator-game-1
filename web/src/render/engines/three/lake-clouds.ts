@@ -1,6 +1,7 @@
-import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, LinearFilter, Mesh,
-  RGBAFormat, ShaderMaterial, SRGBColorSpace, UnsignedByteType, Vector2 } from "three";
-import { LakeCloudsBridge } from "../../../../pkg/birdman_game_wasm.js";
+import { BufferGeometry, Color, DataTexture, DoubleSide, Float32BufferAttribute, LinearFilter, Mesh,
+  RGBAFormat, RGFormat, ShaderMaterial, SRGBColorSpace, UnsignedByteType, Vector2, Vector4 } from "three";
+import { LakeCloudsBridge, lake_scene_ambient_color_srgb,
+  lake_scene_sunlight_color_srgb } from "../../../../pkg/birdman_game_wasm.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 
 export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<BufferGeometry, ShaderMaterial> {
@@ -9,6 +10,7 @@ export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<Buffe
     condition.visibilityMeters, condition.cloudBaseMeters);
   const geometry = new BufferGeometry();
   let atlas: DataTexture | null = null;
+  let normals: DataTexture | null = null;
   try {
     const vertices = packet.vertices();
     const positions: number[] = [];
@@ -33,13 +35,33 @@ export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<Buffe
     atlas.minFilter = LinearFilter;
     atlas.magFilter = LinearFilter;
     atlas.needsUpdate = true;
+    normals = new DataTexture(packet.normal_rg(), packet.width, packet.height, RGFormat, UnsignedByteType);
+    normals.minFilter = LinearFilter;
+    normals.magFilter = LinearFilter;
+    normals.needsUpdate = true;
+    const sun = packet.sun_direction_ned();
+    const sunComponent = (index: number): number => {
+      const value = sun[index];
+      if (value === undefined || !Number.isFinite(value)) throw new RangeError("Invalid shared cloud sunlight packet");
+      return value;
+    };
+    const tint = (srgb: number): Color => {
+      const color = new Color(srgb);
+      return color.multiplyScalar(1 / Math.max(color.r, color.g, color.b));
+    };
     const visibility = condition?.visibilityMeters ?? 80_000;
     const material = new ShaderMaterial({
-      uniforms: { cloudAtlas: { value: atlas }, hazeRange: { value: new Vector2(visibility * 0.175, visibility) } },
+      uniforms: { cloudAtlas: { value: atlas }, normalAtlas: { value: normals },
+        sunDirection: { value: new Vector4(sunComponent(1), -sunComponent(2), -sunComponent(0), sunComponent(3)) },
+        shadeTint: { value: tint(lake_scene_ambient_color_srgb()) },
+        sunTint: { value: tint(lake_scene_sunlight_color_srgb()) },
+        hazeRange: { value: new Vector2(visibility * 0.175, visibility) } },
       vertexShader: `
         attribute vec2 cloudOffset;
+        uniform vec4 sunDirection;
         varying vec2 cloudUv;
         varying float cloudDistance;
+        varying vec3 cloudSun;
         void main() {
           vec3 toEye = cameraPosition - position;
           vec3 right = vec3(toEye.z, 0.0, -toEye.x);
@@ -48,17 +70,28 @@ export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<Buffe
           vec4 centerView = viewMatrix * vec4(worldPoint, 1.0);
           cloudUv = uv;
           cloudDistance = length(centerView.xyz);
+          vec3 front = vec3(-right.z, 0.0, right.x);
+          cloudSun = vec3(dot(sunDirection.xyz, right), sunDirection.y, dot(sunDirection.xyz, front));
           gl_Position = projectionMatrix * centerView;
         }`,
       fragmentShader: `
         uniform sampler2D cloudAtlas;
+        uniform sampler2D normalAtlas;
+        uniform vec4 sunDirection;
+        uniform vec3 shadeTint;
+        uniform vec3 sunTint;
         uniform vec2 hazeRange;
         varying vec2 cloudUv;
         varying float cloudDistance;
+        varying vec3 cloudSun;
         void main() {
           vec4 cloud = texture2D(cloudAtlas, cloudUv);
+          vec2 normalXY = texture2D(normalAtlas, cloudUv).rg * 2.0 - 1.0;
+          vec3 normal = normalize(vec3(normalXY, sqrt(max(1.0 - dot(normalXY, normalXY), 0.0))));
+          float sunlight = clamp(dot(normal, cloudSun), 0.0, 1.0) * sunDirection.w;
+          vec3 color = cloud.rgb * mix(shadeTint, sunTint, sunlight);
           float haze = smoothstep(hazeRange.x, hazeRange.y, cloudDistance);
-          gl_FragColor = vec4(cloud.rgb, cloud.a * (1.0 - haze));
+          gl_FragColor = vec4(color, cloud.a * (1.0 - haze));
           #include <colorspace_fragment>
         }`,
       transparent: true, depthWrite: false, side: DoubleSide, toneMapped: false
@@ -71,16 +104,21 @@ export function createLakeClouds(condition: LakeSkyCondition | null): Mesh<Buffe
     mesh.layers.enable(1);
     return mesh;
   } catch (cause) {
-    geometry.dispose();
-    atlas?.dispose();
+    const failures: unknown[] = [cause];
+    for (const release of [() => { geometry.dispose(); }, () => { atlas?.dispose(); }, () => { normals?.dispose(); }]) {
+      try { release(); } catch (cleanupCause) { failures.push(cleanupCause); }
+    }
+    if (failures.length > 1) throw new AggregateError(failures, "Cloud projection failed during transfer and cleanup", { cause });
     throw cause;
   } finally { packet.free(); }
 }
 
 export function disposeLakeClouds(clouds: Mesh<BufferGeometry, ShaderMaterial>): void {
   const atlas: unknown = clouds.material.uniforms.cloudAtlas?.value;
+  const normals: unknown = clouds.material.uniforms.normalAtlas?.value;
   const failures: unknown[] = [];
   for (const release of [() => { if (atlas instanceof DataTexture) atlas.dispose(); },
+    () => { if (normals instanceof DataTexture) normals.dispose(); },
     () => { clouds.geometry.dispose(); }, () => { clouds.material.dispose(); }]) {
     try { release(); } catch (cause) { failures.push(cause); }
   }
