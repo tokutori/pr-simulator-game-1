@@ -80,7 +80,16 @@ try {
   report.briefing = await page.locator(".screen-ui-shell").innerText();
   await click("game-briefing-start");
   await scene("Flight");
-  if (await page.evaluate(() => window.__liveAuto.phase) === 5) await click("game-flight-pause");
+  if (await page.evaluate(() => window.__liveAuto.phase) === 5) {
+    try { await control("game-flight-pause").click({ timeout: 1000 }); }
+    catch (cause) {
+      const phase = await page.evaluate(() => window.__liveAuto.phase).catch(() => null);
+      const settingsVisible = await control("game-pause-open-settings").isVisible().catch(() => false);
+      if (phase !== 6 || !settingsVisible) throw cause;
+      report.pausePreparation = { phase, settingsVisible,
+        clickFailure: cause instanceof Error ? cause.message : String(cause) };
+    }
+  }
   await control("game-pause-open-settings").waitFor();
   await click("game-pause-open-settings");
   await click("presentation-water-quality-high");
