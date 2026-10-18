@@ -106,6 +106,8 @@ struct RetainedHud {
     readouts: Entity,
     fields: BTreeMap<&'static str, Entity>,
     previous: Option<GameUiHud>,
+    #[cfg(test)]
+    structure_projections: usize,
 }
 
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
@@ -624,6 +626,8 @@ fn setup_hud(commands: &mut Commands, font: &NativeFont) -> RetainedHud {
         readouts,
         fields,
         previous: None,
+        #[cfg(test)]
+        structure_projections: 0,
     }
 }
 
@@ -1021,35 +1025,13 @@ fn project_hud(
         return Ok(());
     }
     let layout = &hud.layout;
-    let ink = color(&theme.text, 1.0)?;
-    let background = BackgroundColor(color(&theme.panel_background, layout.opacity)?);
-    retained_node(world, retained.shell).set_if_neq(Node {
-        position_type: PositionType::Absolute,
-        left: px(layout.offset_px[0]),
-        top: px(layout.offset_px[1]),
-        width: px(layout.width_px),
-        max_height: px(layout.maximum_height_px),
-        padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
-        flex_direction: FlexDirection::Column,
-        row_gap: px(layout.gap_px[1]),
-        overflow: Overflow::scroll_y(),
-        ..default()
-    });
-    world
-        .get_mut::<BackgroundColor>(retained.shell)
-        .expect("HUD shell background is retained")
-        .set_if_neq(background);
-    retained_node(world, retained.instruments).set_if_neq(Node {
-        display: Display::Grid,
-        width: percent(100),
-        grid_template_columns: vec![RepeatedGridTrack::flex(
-            layout.instrument_columns as u16,
-            1.0,
-        )],
-        column_gap: px(layout.gap_px[0]),
-        row_gap: px(layout.gap_px[1]),
-        ..default()
-    });
+    if retained
+        .previous
+        .as_ref()
+        .is_none_or(|previous| previous.layout != hud.layout)
+    {
+        project_hud_structure(world, retained, hud, theme)?;
+    }
     let horizon = hud.geometry.adi.and_then(|adi| adi.horizon());
     let flight_path_y_ratio = hud.geometry.adi.and_then(|adi| adi.flight_path_y_ratio());
     retained_node(world, retained.attitude).set_if_neq(Node {
@@ -1177,10 +1159,6 @@ fn project_hud(
         ..default()
     });
     set_text(world, retained.readouts, hud.readouts.clone());
-    world
-        .get_mut::<TextColor>(retained.readouts)
-        .expect("HUD text color is retained")
-        .set_if_neq(TextColor(ink));
     let heading = hud
         .heading
         .as_ref()
@@ -1236,14 +1214,6 @@ fn project_hud(
         let entity = retained.fields[key];
         set_text(world, entity, value.to_owned());
         world
-            .get_mut::<TextColor>(entity)
-            .expect("HUD text color is retained")
-            .set_if_neq(TextColor(if key == "warning" {
-                Color::srgb(1.0, 0.6, 0.4)
-            } else {
-                ink
-            }));
-        world
             .get_mut::<Node>(entity)
             .expect("HUD node is retained")
             .map_unchanged(|node| &mut node.display)
@@ -1257,10 +1227,6 @@ fn project_hud(
     let entity = retained.fields["supplementary"];
     set_text(world, entity, supplementary.clone());
     world
-        .get_mut::<TextColor>(entity)
-        .expect("HUD text color is retained")
-        .set_if_neq(TextColor(ink));
-    world
         .get_mut::<Node>(entity)
         .expect("HUD node is retained")
         .map_unchanged(|node| &mut node.display)
@@ -1269,6 +1235,64 @@ fn project_hud(
         } else {
             Display::Flex
         });
+    retained.previous = Some(hud.clone());
+    Ok(())
+}
+
+fn project_hud_structure(
+    world: &mut World,
+    retained: &mut RetainedHud,
+    hud: &GameUiHud,
+    theme: &GameUiTheme,
+) -> Result<(), String> {
+    let layout = &hud.layout;
+    let ink = color(&theme.text, 1.0)?;
+    let background = BackgroundColor(color(&theme.panel_background, layout.opacity)?);
+    retained_node(world, retained.shell).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        left: px(layout.offset_px[0]),
+        top: px(layout.offset_px[1]),
+        width: px(layout.width_px),
+        max_height: px(layout.maximum_height_px),
+        padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
+        flex_direction: FlexDirection::Column,
+        row_gap: px(layout.gap_px[1]),
+        overflow: Overflow::scroll_y(),
+        ..default()
+    });
+    world
+        .get_mut::<BackgroundColor>(retained.shell)
+        .expect("HUD shell background is retained")
+        .set_if_neq(background);
+    retained_node(world, retained.instruments).set_if_neq(Node {
+        display: Display::Grid,
+        width: percent(100),
+        grid_template_columns: vec![RepeatedGridTrack::flex(
+            layout.instrument_columns as u16,
+            1.0,
+        )],
+        column_gap: px(layout.gap_px[0]),
+        row_gap: px(layout.gap_px[1]),
+        ..default()
+    });
+    #[cfg(test)]
+    {
+        retained.structure_projections += 1;
+    }
+    world
+        .get_mut::<TextColor>(retained.readouts)
+        .expect("HUD text color is retained")
+        .set_if_neq(TextColor(ink));
+    for (key, entity) in &retained.fields {
+        world
+            .get_mut::<TextColor>(*entity)
+            .expect("HUD text color is retained")
+            .set_if_neq(TextColor(if *key == "warning" {
+                Color::srgb(1.0, 0.6, 0.4)
+            } else {
+                ink
+            }));
+    }
     let entities = retained
         .fields
         .values()
@@ -1282,7 +1306,6 @@ fn project_hud(
             font.font_size = FontSize::Px(layout.font_size_px as f32);
         }
     }
-    retained.previous = Some(hud.clone());
     Ok(())
 }
 
@@ -4601,6 +4624,7 @@ mod tests {
             let font = entity.get_ref::<TextFont>().unwrap();
             (text.0.clone(), text.last_changed(), font.last_changed())
         });
+        let previous_structure_projections = retained.hud.structure_projections;
         projected.wind_direction_degrees = Some(90.0);
         app.world_mut().increment_change_tick();
         project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
@@ -4610,6 +4634,10 @@ mod tests {
             let font = entity.get_ref::<TextFont>().unwrap();
             (text.0.clone(), text.last_changed(), font.last_changed())
         });
+        assert_eq!(
+            retained.hud.structure_projections,
+            previous_structure_projections
+        );
         assert_eq!(
             current_text, previous_text,
             "Changing only wind geometry must preserve identical text and font change ticks"
@@ -4647,12 +4675,20 @@ mod tests {
         let readouts = readouts.get_ref::<Text>().unwrap();
         assert_eq!(readouts.0, projected.readouts);
         assert_ne!(readouts.last_changed(), previous_text[0].1);
+        assert_eq!(
+            retained.hud.structure_projections,
+            previous_structure_projections
+        );
         assert_eq!(geometry(app.world()), current_geometry);
         assert_eq!(backgrounds(app.world()), previous_backgrounds);
         projected.layout.width_px += 13.0;
         projected.layout.opacity = 0.123;
         app.world_mut().increment_change_tick();
         project_hud(app.world_mut(), &mut retained.hud, Some(&projected), &theme).unwrap();
+        assert_eq!(
+            retained.hud.structure_projections,
+            previous_structure_projections + 1
+        );
         let shell = app.world().entity(retained.hud.shell);
         let shell_node = shell.get_ref::<Node>().unwrap();
         assert_eq!(shell_node.width, px(projected.layout.width_px));
