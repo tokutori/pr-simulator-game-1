@@ -18,6 +18,41 @@ browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する
 BPG-007は現行Hybridのkeyboard/gamepad入力からWASM tick・named snapshot・Screen描画までを検証する。30/60/120 FPS独立性、入力ライフサイクル、pause/resume、座標変換、terminal同期を対象とする。旧fixtureの飛距離を現行modelの受入条件へ流用しない。
 正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
 
+## Web実Flight中AutoのCUI観測
+
+`npm run measure:web-auto -- VITE_URL OUTPUT_DIRECTORY`は、既存Rust / Three.jsの実Flightをheadless Chromiumで観測する。
+tool専用の`playwright-core 1.60.0`を使用する。初回だけ公式CLI `npx playwright-core install chromium`で対応browserを用意する。
+一致するbrowser cacheがあればdownloadを追加しない。[公式browser手順](https://playwright.dev/docs/browsers)を参照する。
+
+```sh
+npm ci
+npm run dev -- --host 127.0.0.1 --port 4202 --strictPort
+```
+
+別のCUIから実行する。
+
+```sh
+npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-live-auto
+```
+
+これはVite開発serverの本番Rust / rendererへの接続観測であり、配信bundleのCPU性能試験と区分する。
+通常UIでTypical / Manualを準備し、Countdown後に一度PauseしてHigh / Autoを選択する。
+準備は最大8秒待機し、未準備・未対応・失敗を保持する。設定後のUI Resumeから固定2秒のRunning窓を観測する。
+窓内停止・終端はそのまま不完全とし、Resumeや再試行で補完しない。画像要求は窓の外だけで実行する。
+1280×720、DPR1を使用し、結果JSONへsource/build HEAD、実WASM hash、GPU・browserと確定条件を保存する。
+
+既存公開bridgeのprototype観測は元method / this / arguments / 戻り値を維持し、実GPU値を変更しない。
+Rust snapshotは既存production decoderを使う。source epoch / frame / timeを持つpolicy-forwarded標本を、到着時刻と分離する。
+確定scale / shadowはsource epochの履歴へ帰属させ、旧標本へ到着時の新pairを付け替えない。実canvas寸法も照合する。
+同じ窓でRAF間隔とRust tick進行・停止・failureを記録し、GPU / CPU / present待機を混同しない。
+
+履歴は各4096件に制限し、切捨ては不完全とする。固定窓に対するsource spanは90%以上、両端gapは100 ms以内を要求する。
+uniqueなepoch / frameは20件以上を要求する。20件は5%尾部の最小1標本に対応する分解能であり、分布の信頼区間や80 FPS達成を保証しない。
+各epoch群20件未満はlimitedとし、12.5 ms予算判定を欠損値として保持する。重複・逆順・stale・不明epoch、標本不足を0や成功へ変換しない。
+query未発行・disjoint・旧epoch破棄の全数は取得しない。coverageは観測source span内のframe番号に限定し、全issued queryのcensusと区分する。
+500 msのbounded drain後にJSONを確定する。observer自体の追加CPU費用、headlessの通常60 Hz上限を記録し、補正で差し引かない。
+GPU 12.5 ms、RAF間隔、実80 FPS表示の受入は独立して判断する。通常ユーザーのbrowser profile、OS Window、物理キーを操作しない。
+
 ## 共有elapsed Countdown
 
 #379の時間規則はcore、実際の生成WASM/facade/Web main、NativeのUpdate接続で検査する。800 msの表示3秒、1秒の表示2秒、3秒の一度だけのlaunch、不規則差分、同時刻・重複callback、負・非有限・overflow、取消後の旧token、stale owner、frame不可用時の安全取消を対象とする。
