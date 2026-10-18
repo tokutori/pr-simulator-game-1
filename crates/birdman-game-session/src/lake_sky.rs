@@ -35,13 +35,21 @@ pub struct LakeSceneHaze {
 }
 
 impl LakeSceneHaze {
-    /// Retains absent metadata and rejects bounds that cannot form a GPU fade interval.
+    /// Retains absent metadata; GPU endpoints, span and reciprocal must be positive normal values.
     pub fn try_new(visibility_m: Option<f64>) -> Result<Self, EnvironmentFormatError> {
         let far_m = visibility_m.unwrap_or(80_000.0);
         let near_m = far_m * 0.175;
         let gpu_far = far_m as f32;
         let gpu_near = near_m as f32;
-        if !far_m.is_finite() || gpu_far <= 0.0 || !gpu_far.is_finite() || gpu_near >= gpu_far {
+        let gpu_span = gpu_far - gpu_near;
+        if !far_m.is_finite()
+            || gpu_near <= 0.0
+            || !gpu_far.is_normal()
+            || !gpu_near.is_normal()
+            || gpu_span <= 0.0
+            || !gpu_span.is_normal()
+            || !(1.0 / gpu_span).is_normal()
+        {
             return Err(EnvironmentFormatError::InvalidSky);
         }
         Ok(Self {
@@ -531,7 +539,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_haze_rejects_nonfinite_or_collapsed_gpu_intervals() {
+    fn scene_haze_rejects_nonfinite_subnormal_or_collapsed_gpu_intervals() {
         for visibility in [
             0.0,
             -0.0,
@@ -541,13 +549,19 @@ mod tests {
             f64::NEG_INFINITY,
             f64::MAX,
             f64::MIN_POSITIVE,
+            1e-40,
+            f64::from(f32::MIN_POSITIVE),
+            f64::from(f32::MAX),
+            f64::from(f32::MAX) * 0.5,
         ] {
             assert_eq!(
                 LakeSceneHaze::try_new(Some(visibility)),
                 Err(EnvironmentFormatError::InvalidSky)
             );
         }
-        assert!(LakeSceneHaze::try_new(Some(f64::from(f32::MAX))).is_ok());
+        for visibility in [1e9, f64::from(f32::MIN_POSITIVE) * 8.0] {
+            assert!(LakeSceneHaze::try_new(Some(visibility)).is_ok());
+        }
     }
 
     #[test]

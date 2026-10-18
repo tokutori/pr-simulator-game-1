@@ -17,7 +17,7 @@ describe("shared lake sky", () => {
   it("transfers shared haze bounds without replacing absent visibility with weather metadata", () => {
     expect(lakeSkyHaze(undefined)).toEqual([0x9aafb1, 14_000, 80_000]);
     expect(lakeSkyHaze(condition.visibilityMeters)).toEqual([0x9aafb1, 4_375, 25_000]);
-    for (const visibility of [0, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE, Number.MIN_VALUE]) {
+    for (const visibility of [0, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE, Number.MIN_VALUE, 1e-40, 3e38]) {
       expect(() => lakeSkyHaze(visibility)).toThrow();
     }
   });
