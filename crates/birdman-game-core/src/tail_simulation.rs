@@ -269,6 +269,7 @@ pub struct TailFlightTickReport {
 impl TailFlightTickReport {
     #[cfg(verus_only)]
     verus! {
+        /// States that an unelapsed report retains its preceding physical payload.
         pub open spec fn unelapsed_retains(self, previous: TailFlightTickState) -> bool {
             self.applied_controls().is_none() ==> match self.outcome() {
                 TailFlightTickOutcome::WaterContact(sample) =>
