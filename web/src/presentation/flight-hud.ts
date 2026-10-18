@@ -278,7 +278,7 @@ function sameLayout(previous: FlightHudModel["layout"], layout: FlightHudModel["
     const value = layout[key as keyof typeof layout];
     const retained = previous[key as keyof typeof previous];
     return typeof value === "object"
-      ? typeof retained === "object" && value.length === retained.length && value.every((entry, index) => entry === retained[index])
+      ? typeof retained === "object" && value.every((entry, index) => entry === retained[index])
       : value === retained;
   });
 }

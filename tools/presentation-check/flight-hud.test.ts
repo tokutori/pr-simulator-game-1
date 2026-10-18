@@ -10,10 +10,10 @@ describe("Flight HUD DOM lifecycle", () => {
     const root = window.document.createElement("section") as unknown as HTMLElement;
     const hud = new FlightHudAdapter(root);
     const model = currentSharedHudFixture();
-    const width = vi.spyOn(root.style, "width", "set");
+    const layout = vi.spyOn(hud as unknown as { applyLayout: (value: typeof model) => void }, "applyLayout");
     try {
       hud.render(model);
-      expect(width).toHaveBeenCalledTimes(1);
+      expect(layout).toHaveBeenCalledTimes(1);
       const heading = root.querySelector('svg[aria-label="方位目盛"] > g');
       const ticks = Array.from(heading?.childNodes ?? []);
       expect(ticks.length).toBeGreaterThan(0);
@@ -21,12 +21,12 @@ describe("Flight HUD DOM lifecycle", () => {
         geometry: { ...model.geometry, heading_ticks: model.geometry.heading_ticks.map((tick) => ({ ...tick })) },
         readouts: "air 12.3 m/s", telemetry: "time 2.0 s" };
       hud.render(next);
-      expect(width).toHaveBeenCalledTimes(1);
+      expect(layout).toHaveBeenCalledTimes(1);
       expect(Array.from(heading?.childNodes ?? [])).toEqual(ticks);
       expect(root.querySelector(".flight-hud-telemetry")?.textContent).toBe(next.telemetry);
       hud.render({ ...next, layout: { ...next.layout, width_px: next.layout.width_px + 10 },
         theme: { ...next.theme, text: "#123456" } });
-      expect(width).toHaveBeenCalledTimes(2);
+      expect(layout).toHaveBeenCalledTimes(2);
       expect(root.style.width).toBe(`${String(next.layout.width_px + 10)}px`);
       expect(root.style.color).toBe("#123456");
       hud.render({ ...next, geometry: { ...next.geometry, heading_ticks: [{ position_ratio: 0.5, major: true, label: "X" }] },
@@ -35,7 +35,7 @@ describe("Flight HUD DOM lifecycle", () => {
       expect(Array.from(heading?.childNodes ?? [])).not.toEqual(ticks);
       expect(root.querySelector(".flight-hud-instruments span")?.textContent).toBe("HEADING UPDATED");
     } finally {
-      width.mockRestore();
+      layout.mockRestore();
       await window.happyDOM.abort();
     }
   });
