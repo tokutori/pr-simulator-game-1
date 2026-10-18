@@ -737,7 +737,7 @@ pub(crate) fn apply_environment(
             .sky
             .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0)
         {
-            18_000.0
+            super::world::SCENE_SUN_ILLUMINANCE_LUX
         } else {
             0.0
         };
@@ -967,24 +967,23 @@ mod tests {
         })
     }
 
-    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 4] {
+    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 5] {
         let material = &environment_materials(app)[EnvironmentSurface::Near.index()];
         let world = app.world_mut();
         let cloud = world.query_filtered::<
             &MeshMaterial3d<super::super::clouds::CloudMaterial>,
             With<super::super::clouds::CloudLayer>,
         >().single(world).unwrap().0.id();
-        let cloud_atlas = world
+        let cloud_material = world
             .resource::<Assets<super::super::clouds::CloudMaterial>>()
             .get(cloud)
-            .unwrap()
-            .atlas
-            .id();
+            .unwrap();
         [
             material.detail_near.as_ref().unwrap().id(),
             material.detail_far.as_ref().unwrap().id(),
             material.sky_texture.as_ref().unwrap().id(),
-            cloud_atlas,
+            cloud_material.atlas.id(),
+            cloud_material.normals.id(),
         ]
     }
 

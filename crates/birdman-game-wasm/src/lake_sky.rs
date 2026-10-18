@@ -1,9 +1,33 @@
 use birdman_game_format::SkyStateDocument;
 use birdman_game_session::lake_sky::{
-    LakeCloudAvailability, LakeClouds, LakeSkyImage, LakeSkyRenderCondition, generate_lake_clouds,
-    generate_lake_sky,
+    LAKE_SCENE_LIGHTING, LakeCloudAvailability, LakeClouds, LakeSkyImage, LakeSkyRenderCondition,
+    generate_lake_clouds, generate_lake_sky,
 };
 use wasm_bindgen::prelude::*;
+
+/// Returns the shared ambient sRGB colour as 0xRRGGBB.
+#[wasm_bindgen]
+pub fn lake_scene_ambient_color_srgb() -> u32 {
+    LAKE_SCENE_LIGHTING.ambient_color_srgb
+}
+
+/// Returns the shared Web-reference hemispherical irradiance scale.
+#[wasm_bindgen]
+pub fn lake_scene_ambient_irradiance() -> f64 {
+    LAKE_SCENE_LIGHTING.ambient_irradiance
+}
+
+/// Returns the shared directional sunlight sRGB colour as 0xRRGGBB.
+#[wasm_bindgen]
+pub fn lake_scene_sunlight_color_srgb() -> u32 {
+    LAKE_SCENE_LIGHTING.sunlight_color_srgb
+}
+
+/// Returns the shared daylight directional irradiance scale.
+#[wasm_bindgen]
+pub fn lake_scene_sunlight_irradiance() -> f64 {
+    LAKE_SCENE_LIGHTING.sunlight_irradiance
+}
 
 /// Owns a shared sky panorama until the adapter copies its sRGB RGBA bytes.
 #[wasm_bindgen]
@@ -59,6 +83,16 @@ impl LakeCloudsBridge {
     /// Copies bottom-row-first straight-alpha sRGB RGBA atlas pixels.
     pub fn rgba(&self) -> Vec<u8> {
         self.clouds.rgba().to_vec()
+    }
+
+    /// Copies the linear RG8 normal atlas, sharing color-atlas dimensions and UVs.
+    pub fn normal_rg(&self) -> Vec<u8> {
+        self.clouds.normal_rg().to_vec()
+    }
+
+    /// Copies N/E/D toward the recorded sun and W=daylight as one float4.
+    pub fn sun_direction_ned(&self) -> Vec<f32> {
+        self.clouds.sun_direction_ned().to_vec()
     }
 
     /// Returns the atlas width.
