@@ -52,7 +52,7 @@ export interface NamedWindGrid {
 export function parseNamedRecordSummary(json: string, physicsHz: number): NamedRecordSummary {
   const document = ownBoundaryValue(boundedJson(json));
   if (!validateSummaryDocument(document)) throw new RangeError("Invalid named summary structure");
-  if (document.schema_version !== 2 || boundaryInteger(document.physics_hz, 1) !== boundaryInteger(physicsHz, 1)) {
+  if (boundaryInteger(document.physics_hz, 1) !== boundaryInteger(physicsHz, 1)) {
     throw new RangeError("Named summary physics frequency or schema disagrees with its session");
   }
   const context = decodeNamedRecordContext(document.context);
@@ -76,7 +76,6 @@ export function parseNamedRecordSummary(json: string, physicsHz: number): NamedR
 export function parseNamedWindGrid(json: string, context: NamedRecordContext, request: NamedWindGridRequest, source: NamedWindSource): NamedWindGrid {
   const document = ownBoundaryValue(boundedJson(json));
   if (!validateWindDocument(document)) throw new RangeError("Invalid named wind grid structure");
-  if (document.schema_version !== 2) throw new RangeError("Unsupported named wind grid schema");
   const savedContext = decodeNamedRecordContext(document.context);
   if (!sameNamedRecordContext(savedContext, context)) throw new RangeError("Wind grid belongs to another saved record context");
   const grid = decodeGridRequest(document.grid, request);
@@ -98,7 +97,7 @@ export function parseNamedWindGrid(json: string, context: NamedRecordContext, re
         || eastMeters !== grid.eastMinimumMeters + (index % grid.columns) * grid.spacingMeters) {
       throw new RangeError("Wind samples must preserve the requested north-row/east-column ordering");
     }
-    const velocityNedMetersPerSecond = Object.freeze([...sample.velocity_ned_mps]) as NamedWindSample["velocityNedMetersPerSecond"];
+    const velocityNedMetersPerSecond: NamedWindSample["velocityNedMetersPerSecond"] = Object.freeze([...sample.velocity_ned_mps]);
     return Object.freeze({ northMeters, eastMeters, velocityNedMetersPerSecond });
   });
   return Object.freeze({ schemaVersion: 2, context: savedContext, grid,

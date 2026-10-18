@@ -1,4 +1,6 @@
 use super::*;
+use birdman_game_core::FlightRecordSummary;
+use birdman_game_session::record_query::SummaryMetrics;
 use serde_json::{Value, json};
 
 fn complete(weather_code: u32) -> HybridGameSessionBridge {
@@ -124,7 +126,7 @@ fn bundled_grid_samples_the_same_registered_provider_before_and_after_archive_im
     let mut bridge = complete(2);
     let owner = crate::environment::bundled_environment().unwrap();
     let grid = &owner.document().wind_grid;
-    let request = GridRequest::try_new(
+    let request = grid_request(
         grid.origin_ned_m[0],
         grid.origin_ned_m[1],
         -grid.origin_ned_m[2],
@@ -189,7 +191,7 @@ fn bundled_grid_samples_the_same_registered_provider_before_and_after_archive_im
 #[test]
 fn unknown_saved_identity_and_outside_grid_have_explicit_reasons_without_partial_samples() {
     let bridge = complete(2);
-    let request = GridRequest::try_new(1e6, 1e6, 10.0, 10.0).unwrap();
+    let request = grid_request(1e6, 1e6, 10.0, 10.0).unwrap();
     let outside = wind(&bridge, request);
     assert_eq!(outside["projection"]["kind"], "unavailable");
     assert_eq!(outside["projection"]["reason"], "outside_registered_domain");
@@ -230,10 +232,7 @@ fn attract_summary_and_uniform_wind_use_the_demo_record_without_changing_playbac
     assert_eq!(projected["context"]["phase"], "attract");
     assert_eq!(projected["context"]["scenario"]["environment_version"], 1);
     assert_metrics(&bridge, &projected);
-    let requested = wind(
-        &bridge,
-        GridRequest::try_new(-10.0, -10.0, 5.0, 5.0).unwrap(),
-    );
+    let requested = wind(&bridge, grid_request(-10.0, -10.0, 5.0, 5.0).unwrap());
     assert_eq!(requested["projection"]["source"], "attract");
     assert_eq!(requested["context"], projected["context"]);
     for sample in requested["projection"]["samples"].as_array().unwrap() {
@@ -279,7 +278,7 @@ fn invalid_grid_and_unprepared_phase_are_rejected_without_updating_the_session()
         [1e308, 0.0, 1.0, 1.0],
     ] {
         assert!(matches!(
-            GridRequest::try_new(
+            grid_request(
                 coordinates[0],
                 coordinates[1],
                 coordinates[2],
@@ -294,7 +293,7 @@ fn invalid_grid_and_unprepared_phase_are_rejected_without_updating_the_session()
     assert!(unprepared.summary_internal().is_err());
     assert!(
         unprepared
-            .wind_grid_internal(GridRequest::try_new(0.0, 0.0, 1.0, 1.0).unwrap())
+            .wind_grid_internal(grid_request(0.0, 0.0, 1.0, 1.0).unwrap())
             .is_err()
     );
     assert_eq!(unprepared.snapshot_internal().unwrap(), before);

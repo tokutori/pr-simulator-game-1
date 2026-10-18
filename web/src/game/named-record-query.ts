@@ -80,7 +80,6 @@ export function decodeNamedRecordContext(value: unknown): NamedRecordContext {
   const phase = document.phase;
   const layout = document.control_layout;
   const finalization = document.finalization;
-  if (finalization.layout !== layout) throw new RangeError("Playback finalization and physical control layout disagree");
   const envelope: PlaybackEnvelope = { schemaVersion: 2, scenario: decodeTailScenarioIdentity(document.scenario),
     difficulty: decodeRecordedDifficulty(document.difficulty) };
 
@@ -156,7 +155,7 @@ function decodePhysicalControls(controls: RecordedPlaybackSample["controls"]): R
 }
 
 function decodeSavedState(state: RecordedPlaybackSample["state"]): NamedRecordState {
-  const attitude = Object.freeze([...state.attitude_body_to_ned]) as NamedRecordState["attitudeBodyToNed"];
+  const attitude: NamedRecordState["attitudeBodyToNed"] = Object.freeze([...state.attitude_body_to_ned]);
   if (Math.abs(Math.hypot(...attitude) - 1) > 1e-8) throw new RangeError("Saved attitude must be a unit quaternion");
   const telemetry = state.telemetry;
   const angle = (value: unknown) => value === null ? null : boundaryNumber(value);
