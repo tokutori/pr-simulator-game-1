@@ -159,6 +159,8 @@ LakeWaveProjection projectLakeWaves(vec3 localPosition, vec2 worldXZ, float grid
       float visibility = 1.0 - smoothstep(1.3, 2.5, waveNumber * gridSpacing);
       float transition = clamp((waveNumber * gridSpacing - 1.3) / 1.2, 0.0, 1.0);
       vec2 visibilityGradient = (-6.0 * waveNumber / 1.2 * transition * (1.0 - transition)) * spacingGradient;
+      result.slopeEnergy += waveNumber * wave.w;
+      if (visibility == 0.0 && all(equal(visibilityGradient, vec2(0.0)))) continue;
       mat3 modulation = lakeWaveModulation(worldXZ, direction, waveNumber, timing.y);
       vec3 packet = modulation[0];
       vec3 warp = modulation[1];
@@ -176,7 +178,6 @@ LakeWaveProjection projectLakeWaves(vec3 localPosition, vec2 worldXZ, float grid
       result.heightGradient += amplitude * 3.0 * crestBasis * crestBasis * phaseCosine * phaseGradient
         + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
       result.crest += phaseSine * waveNumber * amplitude;
-      result.slopeEnergy += waveNumber * wave.w;
     }
   }
   return result;

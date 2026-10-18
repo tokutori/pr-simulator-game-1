@@ -1290,7 +1290,7 @@ float lakeNoise(vec2 point) {
   return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
 }
 
-vec2 lakeWaveSlope(vec2 worldXZ, vec2 worldDerivativeX, vec2 worldDerivativeY) {
+vec2 lakeWaveSlope(vec2 worldXZ) {
   // Add only wave detail that the vertex grid cannot resolve. Derivative based
   // filtering fades subpixel wavelengths smoothly as they recede from the eye.
   float waveSlopeX = 0.0;
@@ -1301,20 +1301,15 @@ vec2 lakeWaveSlope(vec2 worldXZ, vec2 worldDerivativeX, vec2 worldDerivativeY) {
       vec4 op = uWaveOmegaPhase[i];
       float k = ka.z;
       vec2 direction = ka.xy;
-      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vGridSpacing);
-      float geometricTransfer = 1.0 - geometricVisibility;
-      if (geometricTransfer <= 0.0) continue;
       mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
       vec3 warp = modulation[1];
+      float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
       vec2 phaseGradient = k * direction + warp.yz;
-      float phaseFootprint = abs(dot(phaseGradient, worldDerivativeX))
-        + abs(dot(phaseGradient, worldDerivativeY));
-      float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, phaseFootprint);
-      if (pixelVisibility <= 0.0) continue;
+      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vGridSpacing);
+      float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
       // Transfer waves that outgrow the mesh to the pixel normal. A weak
       // transfer creates an empty band wherever geometric detail ends.
-      float normalWeight = geometricTransfer * pixelVisibility * 0.65;
-      float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
+      float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
       float crestBasis = 0.5 + 0.5 * sin(phase);
       vec3 packet = modulation[0];
       vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient
@@ -1447,17 +1442,15 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
 }
 
 void main() {
-  vec2 worldDerivativeX = dFdx(vBaseXZ);
-  vec2 worldDerivativeY = dFdy(vBaseXZ);
   // The 160 km calm backing supplies only the area beyond the 6 km animated
   // plane. Clipping its center prevents coplanar overlap from flattening wave
   // troughs or creating a visible square transition.
   if (uWaterBackingClip > 0.5 &&
       all(lessThan(abs(vBaseXZ - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
-  vec2 footprintX = worldDerivativeX * 0.25;
-  vec2 footprintY = worldDerivativeY * 0.25;
+  vec2 footprintX = dFdx(vBaseXZ) * 0.25;
+  vec2 footprintY = dFdy(vBaseXZ) * 0.25;
   vec2 center = vBaseXZ;
-  vec2 waveSlope = lakeWaveSlope(center, worldDerivativeX, worldDerivativeY);
+  vec2 waveSlope = lakeWaveSlope(center);
   // Supersample subpixel normal detail, then shade the filtered normal once.
   vec3 microDetail = (
     lakeMicroDetail(center - footprintX - footprintY) +

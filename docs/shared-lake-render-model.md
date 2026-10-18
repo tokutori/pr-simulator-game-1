@@ -63,7 +63,6 @@ Three.jsはowned RGBAからDataTextureを構築し、bridgeを `finally` で解�
 Bevy consumerは同じ24-slot uploadと6/10/18成分を直接使用する。
 近景meshはWeb基準の6 km非均一格子、96/144/224分割を採用し、頂点のUV1へgrid spacingを格納する。
 WGSLは有限wave packet、位相warp、visibility勾配、horizontal Jacobianとheight勾配を移植し、共有choppiness reserveを使用する。
-Web/Nativeのfragment波法線は、一様な位置微分と既存の解析的phase gradientからpixel footprintを導出する。既存filterの閾値を保持し、geometry transferが0のpacket評価とpixel visibilityが0の位相・三角関数評価を省略する。非線形位相のquad有限差分との演算同値は保証せず、filter遷移と遠方のaliasingを本番shaderと実画像で確認する。
 独自JONSWAP、seeded geometry phase、4成分選択、0.35 mの独自高さ上限は撤去した。
 
 近景・遠景の512×512 RGBAは共通Rustから生成し、線形RGBA、periodic wrapping、anisotropy 8でBevy Imageへ投影する。
