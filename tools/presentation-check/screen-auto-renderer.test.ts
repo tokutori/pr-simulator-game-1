@@ -55,7 +55,9 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       trial.renderer.restored();
       trial.gl.getExtension.mockReturnValue(null);
       for (let repetition = 0; repetition < 2; repetition++) {
-        trial.renderer.selectAuto(true); trial.renderer.boundary(true); trial.renderer.begin();
+        trial.renderer.selectAuto(true);
+        trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
+        trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
         expect(trial.state().status.kind).toBe("unsupported");
         trial.renderer.selectAuto(false);
       }
@@ -86,6 +88,31 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       expect(trial.gl.getExtension).not.toHaveBeenCalled();
       expect(trial.gl.getQueryParameter).not.toHaveBeenCalled();
       expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it("starts queries only after a complete frame and repeats preparation after interruption", () => {
+    const trial = fixture();
+    try {
+      trial.renderer.selectAuto(true);
+      trial.renderer.boundary(true);
+      trial.renderer.begin(); trial.renderer.end(false);
+      expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+      trial.renderer.boundary(true);
+      trial.renderer.begin(); trial.renderer.end(true);
+      expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+      trial.renderer.boundary(true);
+      trial.renderer.begin(); trial.renderer.end(true);
+      expect(trial.gl.beginQuery).toHaveBeenCalledTimes(1);
+      const previous = trial.policy.epoch();
+      trial.renderer.invalidate("quality_changed");
+      expect(trial.policy.epoch()).toBeGreaterThan(previous);
+      trial.renderer.boundary(true);
+      trial.renderer.begin(); trial.renderer.end(true);
+      expect(trial.gl.beginQuery).toHaveBeenCalledTimes(1);
+      trial.renderer.boundary(true);
+      trial.renderer.begin(); trial.renderer.end(true);
+      expect(trial.gl.beginQuery).toHaveBeenCalledTimes(2);
     } finally { trial.renderer.dispose(); }
   });
 });

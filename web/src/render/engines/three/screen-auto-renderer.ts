@@ -8,6 +8,7 @@ export class ScreenAutoRenderer {
   private lastPublished = "";
   private lastFrame: number | null = null;
   private eligible = false;
+  private prepared = false;
   private readonly timer: GpuWorkTimer;
 
   constructor(gl: WebGLRenderingContext | WebGL2RenderingContext, private readonly binding: ScreenRenderAutoBinding,
@@ -45,14 +46,17 @@ export class ScreenAutoRenderer {
       const epoch = this.binding.policy.requested_epoch();
       try {
         this.timer.clear();
-        if (this.applyScale(percent / 100)) this.binding.policy.applied(epoch, percent, now);
+        if (this.applyScale(percent / 100)) {
+          this.prepared = false;
+          this.binding.policy.applied(epoch, percent, now);
+        }
       } catch (error: unknown) { this.binding.policy.failed(epoch, percent, message(error), now); }
     }
     this.publish();
   }
 
   begin(): void {
-    if (!this.eligible || !this.binding.policy.measurement_enabled()) return;
+    if (!this.eligible || !this.prepared || !this.binding.policy.measurement_enabled()) return;
     const now = this.now();
     if (this.frame === 0xffff_ffff) {
       this.invalidateAt("interrupted", now);
@@ -70,6 +74,10 @@ export class ScreenAutoRenderer {
     try { this.timer.end(complete); }
     catch (error: unknown) { this.unavailable(error, this.now()); }
     if (!complete) this.invalidate("interrupted");
+    else if (this.eligible && !this.prepared) {
+      this.invalidateAt("quality_changed", this.now());
+      this.prepared = true;
+    }
   }
 
   invalidate(reason: ScreenRenderInvalidation): void {
@@ -77,6 +85,7 @@ export class ScreenAutoRenderer {
   }
 
   private invalidateAt(reason: ScreenRenderInvalidation, now: number): void {
+    this.prepared = false;
     try { this.timer.clear(); }
     finally {
       this.binding.policy.invalidate(reason, now);
