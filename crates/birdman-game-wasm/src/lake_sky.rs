@@ -1,9 +1,33 @@
 use birdman_game_format::SkyStateDocument;
 use birdman_game_session::lake_sky::{
-    LakeCloudAvailability, LakeClouds, LakeSkyImage, LakeSkyRenderCondition, generate_lake_clouds,
-    generate_lake_sky,
+    LAKE_SCENE_LIGHTING, LakeCloudAvailability, LakeClouds, LakeSkyImage, LakeSkyRenderCondition,
+    generate_lake_clouds, generate_lake_sky,
 };
 use wasm_bindgen::prelude::*;
+
+/// Returns the shared ambient sRGB colour as 0xRRGGBB.
+#[wasm_bindgen]
+pub fn lake_scene_ambient_color_srgb() -> u32 {
+    LAKE_SCENE_LIGHTING.ambient_color_srgb
+}
+
+/// Returns the shared Web-reference hemispherical irradiance scale.
+#[wasm_bindgen]
+pub fn lake_scene_ambient_irradiance() -> f64 {
+    LAKE_SCENE_LIGHTING.ambient_irradiance
+}
+
+/// Returns the shared directional sunlight sRGB colour as 0xRRGGBB.
+#[wasm_bindgen]
+pub fn lake_scene_sunlight_color_srgb() -> u32 {
+    LAKE_SCENE_LIGHTING.sunlight_color_srgb
+}
+
+/// Returns the shared daylight directional irradiance scale.
+#[wasm_bindgen]
+pub fn lake_scene_sunlight_irradiance() -> f64 {
+    LAKE_SCENE_LIGHTING.sunlight_irradiance
+}
 
 /// Owns a shared sky panorama until the adapter copies its sRGB RGBA bytes.
 #[wasm_bindgen]
