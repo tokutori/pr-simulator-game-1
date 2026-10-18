@@ -33,7 +33,8 @@ use std::collections::BTreeSet;
 
 pub(crate) const GPU_WORK: DiagnosticPath =
     DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
-const METADATA: [DiagnosticPath; 6] = [
+const METADATA_WORDS: usize = 6;
+const METADATA: [DiagnosticPath; METADATA_WORDS] = [
     DiagnosticPath::const_new("render/screen_epoch"),
     DiagnosticPath::const_new("render/screen_frame"),
     DiagnosticPath::const_new("render/screen_source_low"),
@@ -41,7 +42,7 @@ const METADATA: [DiagnosticPath; 6] = [
     DiagnosticPath::const_new("render/screen_scale"),
     DiagnosticPath::const_new("render/screen_shadow"),
 ];
-const METADATA_NAMES: [&str; 6] = [
+const METADATA_NAMES: [&str; METADATA_WORDS] = [
     "screen_epoch",
     "screen_frame",
     "screen_source_low",
@@ -177,7 +178,7 @@ impl FromWorld for MetadataBuffer {
                 .resource::<RenderDevice>()
                 .create_buffer(&BufferDescriptor {
                     label: Some("screen_auto_metadata"),
-                    size: (METADATA.len() * 4) as u64,
+                    size: (METADATA_WORDS * 4) as u64,
                     usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }),
@@ -260,7 +261,7 @@ fn begin_work(world: &mut World) {
         packet.scale.percent(),
         packet.shadow.size(),
     ];
-    let mut bytes = [0_u8; METADATA.len() * 4];
+    let mut bytes = [0_u8; METADATA_WORDS * 4];
     for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
         chunk.copy_from_slice(&word.to_le_bytes());
     }
@@ -433,8 +434,8 @@ pub(crate) fn source_work(
 fn metadata_words(
     store: &DiagnosticsStore,
     gpu: &DiagnosticMeasurement,
-) -> Result<[u32; METADATA.len()], TimingFailure> {
-    let mut words = [0; METADATA.len()];
+) -> Result<[u32; METADATA_WORDS], TimingFailure> {
+    let mut words = [0; METADATA_WORDS];
     for (destination, path) in words.iter_mut().zip(&METADATA) {
         let metadata = store
             .get_measurement(path)
@@ -453,7 +454,7 @@ fn metadata_words(
 }
 
 fn decode_work(
-    words: [u32; METADATA.len()],
+    words: [u32; METADATA_WORDS],
     gpu_work_ms: f64,
 ) -> Result<SourceWork, TimingFailure> {
     let [epoch, frame, low, high, scale, shadow] = words;
