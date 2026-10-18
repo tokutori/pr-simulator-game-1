@@ -605,13 +605,89 @@ pub fn advance_tail_flight_tick_with_contact_report(
         None => TailReportedOutcome::Advanced(evaluation.next, evaluation.controls),
         Some(contact) => {
             if contact.fraction == 0.0 {
-                TailReportedOutcome::ContactAtStart(contact)
+                return Ok(contact_at_start_report(
+                    previous,
+                    contact.fraction,
+                    contact.contact_point_index,
+                ));
             } else {
                 TailReportedOutcome::ContactWithinInterval(contact, evaluation.controls)
             }
         }
     };
     Ok(TailFlightTickReport { result })
+}
+
+#[cfg_attr(verus_only, verus_spec(report =>
+    ensures report.applied_controls().is_none(),
+        match report.outcome() {
+            TailFlightTickOutcome::WaterContact(sample) =>
+                sample.interval_start_tick() == previous.tick_index()
+                    && sample.fraction() == fraction
+                    && sample.flight_state() == previous.flight_state()
+                    && sample.incidence() == previous.incidence()
+                    && sample.pilot_position_target() == previous.pilot_position_target(),
+            _ => false,
+        },
+))]
+fn contact_at_start_report(
+    previous: TailFlightTickState,
+    fraction: f64,
+    contact_point_index: usize,
+) -> TailFlightTickReport {
+    TailFlightTickReport {
+        result: TailReportedOutcome::ContactAtStart(TailWaterContactSample {
+            interval_start_tick: previous.tick_index,
+            fraction,
+            contact_point_index,
+            flight_state: previous.flight_state,
+            incidence: previous.incidence,
+            pilot_position_target: previous.pilot_position_target,
+        }),
+    }
+}
+
+#[cfg(verus_only)]
+verus! {
+    fn verify_contact_at_start_record_payload(
+        record: &mut crate::FlightRecord,
+        previous: TailFlightTickState,
+        fraction: f64,
+        contact_point_index: usize,
+        telemetry: crate::FlightTelemetry,
+        score: Option<crate::DistanceScore>,
+    ) -> (outcome: Result<(TailFlightTickReport, crate::FlightRecordFinalization), crate::FlightRecordError>)
+        ensures match outcome {
+            Ok((report, metadata)) => final(record).sample_count() == 1
+                && final(record).recorded_samples().last().flight_state == previous.flight_state()
+                && final(record).recorded_samples().last().controls == crate::FlightRecordControls::initial_tail(previous)
+                && final(record).recorded_samples().last().telemetry == telemetry
+                && final(record).finalization() == Some(metadata)
+                && report.applied_controls().is_none()
+                && match report.outcome() {
+                    TailFlightTickOutcome::WaterContact(sample) =>
+                        final(record).recorded_samples().last().flight_state == sample.flight_state()
+                            && final(record).recorded_samples().last().controls.incidence == sample.incidence()
+                            && sample.pilot_position_target() == previous.pilot_position_target(),
+                    _ => false,
+                },
+            Err(_) => true,
+        },
+    {
+        record.begin_tail(previous, telemetry)?;
+        let report = contact_at_start_report(previous, fraction, contact_point_index);
+        record.append_tail_report(report, telemetry)?;
+        let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {
+            return Err(crate::FlightRecordError::InvalidTime);
+        };
+        let metadata = record.finalize(
+            crate::SessionEndReason::WaterContact,
+            sample.interval_start_tick(),
+            sample.fraction(),
+            score,
+        )?;
+        Ok((report, metadata))
+    }
 }
 
 #[cfg(test)]
