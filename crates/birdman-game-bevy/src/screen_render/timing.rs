@@ -4,7 +4,7 @@ use bevy::{
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
     diagnostic::{DiagnosticPath, DiagnosticsStore, FrameCount},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
-    pbr::Shadow,
+    pbr::{PendingMeshMaterialQueues, Shadow},
     platform::time::Instant,
     prelude::*,
     render::{
@@ -278,6 +278,12 @@ fn add_binned_pipelines<B: BinnedPhaseItem>(
 }
 
 fn scene_preparation(world: &World) -> PipelinePreparation {
+    if world
+        .get_resource::<PendingMeshMaterialQueues>()
+        .is_some_and(|queues| queues.values().any(|queue| !queue.current_frame.is_empty()))
+    {
+        return PipelinePreparation::Pending;
+    }
     let Some(cache) = world.get_resource::<PipelineCache>() else {
         return PipelinePreparation::Pending;
     };
