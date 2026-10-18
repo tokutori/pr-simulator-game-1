@@ -41,6 +41,16 @@ attribution = "Copyright (c) 2015-2021 Evgeny Poberezkin; Copyright (c) 2020 Eva
 processing = "tools/game-ui-build/generator.ts; concatenate the installed packages' complete license notices in fixed ajv/esbuild order; preserve notice text and normalize UTF-8 LF output"
 
 [[assets]]
+path = "assets/earcut.LICENSE.txt"
+sha256 = "fc68b2292916b040304bdb603502e04de10801889d8c460c9ad5a45a34e1eee4"
+source = "https://github.com/georust/earcut/blob/v0.4.11/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.11/LICENSE-ISC"
+source_version = "earcut 0.4.11; exact Cargo dependency pin"
+license = "MIT AND ISC"
+license_url = "https://github.com/georust/earcut/blob/v0.4.11/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.11/LICENSE-ISC"
+attribution = "Copyright (c) 2026 The GeoRust Project Developers; Copyright (c) 2016, Mapbox"
+processing = "Complete upstream MIT option and derived Mapbox ISC notices in that order, with dependency identity; UTF-8 LF"
+
+[[assets]]
 path = "assets/biwa-launch-venue.json"
 sha256 = "7c851dcddf28dfd8fffe9ffe18ef835d8c5c2135c419d8f5d191fd8bdab2ba04"
 source = "User-supplied Hikone Matsubara launch origin and approximate platform geometry"

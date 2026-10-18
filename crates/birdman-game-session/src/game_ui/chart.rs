@@ -698,17 +698,6 @@ fn wind_grid(
 struct VenueMapAsset {
     shorelines_north_east_meters: Vec<Vec<[f64; 2]>>,
 }
-#[derive(Deserialize)]
-struct VenueFeaturesAsset {
-    features: Vec<VenueFeature>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VenueFeature {
-    kind: String,
-    name: Option<String>,
-    north_east_meters: Vec<[f64; 2]>,
-}
 struct VenueGeometry {
     lines: Vec<GameUiChartSeries>,
     markers: Vec<GameUiChartMarker>,
@@ -774,9 +763,8 @@ fn build_venue() -> Result<VenueGeometry, GameUiError> {
     let map: VenueMapAsset =
         serde_json::from_str(include_str!("../../../../assets/biwa-analysis-map.json"))
             .map_err(|_| GameUiError::InvalidVenueMap)?;
-    let features: VenueFeaturesAsset =
-        serde_json::from_str(include_str!("../../../../assets/biwa-venue-features.json"))
-            .map_err(|_| GameUiError::InvalidVenueMap)?;
+    let features =
+        crate::venue_structures::registered_features().map_err(|_| GameUiError::InvalidVenueMap)?;
     let to_points = |positions: &[[f64; 2]]| {
         positions
             .iter()
@@ -800,7 +788,7 @@ fn build_venue() -> Result<VenueGeometry, GameUiError> {
         })
         .collect();
     let mut markers = Vec::new();
-    for feature in features.features {
+    for feature in &features.features {
         let beach = feature.kind == "beach";
         if matches!(feature.kind.as_str(), "pier" | "quay" | "breakwater")
             || (beach && feature.name.as_deref() == Some("松原水泳場"))
@@ -818,12 +806,12 @@ fn build_venue() -> Result<VenueGeometry, GameUiError> {
             ));
         }
         if beach
-            && let Some(name) = feature.name
+            && let Some(name) = &feature.name
             && !feature.north_east_meters.is_empty()
         {
             let count = feature.north_east_meters.len() as f64;
             markers.push(marker(
-                &name,
+                name,
                 "#d8c89b",
                 point(
                     feature

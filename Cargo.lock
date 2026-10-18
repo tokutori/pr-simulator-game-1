@@ -1444,6 +1444,7 @@ version = "0.1.0"
 dependencies = [
  "birdman-game-core",
  "birdman-game-format",
+ "earcut",
  "image",
  "ryu-js",
  "schemars",
@@ -1972,6 +1973,15 @@ name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
+
+[[package]]
+name = "earcut"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f03dd5350900133e14471c90d513eb5ba264004cd833adecab7dfa5fb5a2974"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "either"
