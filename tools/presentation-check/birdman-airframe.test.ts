@@ -331,7 +331,7 @@ describe("synthetic Birdman airframe", () => {
   it.each([false, true])("releases all instance and shared resources after a dispose listener fails, texture failure=%s", (textureFailure) => {
     const airframe = createBirdmanAirframe();
     const instances: InstancedMesh[] = [];
-    airframe.root.traverse((part) => { if (part instanceof InstancedMesh) instances.push(part); });
+    airframe.root.traverse((part) => { if (part instanceof InstancedMesh) instances.push(part as InstancedMesh); });
     const first = instances[0];
     if (first === undefined) throw new Error("Missing instanced rods");
     const textures = ["left-wing", "right-wing"].map((name) => {

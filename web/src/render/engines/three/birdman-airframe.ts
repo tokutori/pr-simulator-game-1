@@ -383,7 +383,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       const materials = new Set<MeshLambertMaterial | MeshBasicMaterial>();
       root.traverse((part) => {
         if (part instanceof Mesh) {
-          if (part instanceof InstancedMesh) instances.push(part);
+          if (part instanceof InstancedMesh) instances.push(part as InstancedMesh);
           geometries.add(part.geometry as BufferGeometry);
           for (const material of Array.isArray(part.material) ? part.material : [part.material]) {
             materials.add(material as MeshLambertMaterial | MeshBasicMaterial);
