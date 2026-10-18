@@ -18,6 +18,7 @@ pub mod screen_render_auto;
 pub mod screen_render_scale;
 pub mod tail_geometry;
 pub mod venue_structures;
+pub mod venue_terrain;
 pub mod wing_geometry;
 pub mod wing_texture;
 

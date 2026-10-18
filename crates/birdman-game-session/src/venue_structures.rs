@@ -109,7 +109,7 @@ pub(crate) struct VenueFeature {
     pub(crate) kind: String,
     pub(crate) name: Option<String>,
     pub(crate) north_east_meters: Vec<[f64; 2]>,
-    closed: bool,
+    pub(crate) closed: bool,
 }
 
 pub(crate) fn registered_features() -> Result<&'static VenueFeaturesAsset, VenueStructureError> {
