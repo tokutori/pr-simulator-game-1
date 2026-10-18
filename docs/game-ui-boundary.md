@@ -38,6 +38,8 @@ standalone validatorはbrowser用ESMへbundleし、実行時の`eval`を使用�
 
 ## Platform差分
 
+HUD adapterは前回の共有観測を参照し、値だけのframeでは静的layout/themeの再投影を省く。Nativeは既存layout比較とtheme失効を使い、必要時だけgrid・背景・文字色・fontを適用する。Webはlayout値と使用色を比較し、同じheading目盛のSVG nodeを保持する。表示内容や共有UIの正本・構造revisionは増やさない。CPU/ECS/DOM回帰の合格はGPU負荷や80 FPS達成の根拠とは区別する。
+
 メニューは既存Webの設定フォーム・確認・primary CTA・secondary CTA・技術情報を基準とする。
 logical pixel、600px breakpoint、最大scroll高、候補列数は共通Viewの値を使う。
 OSの表示倍率、safe-area、font metrics、入力イベント、focusとscrollの保持は各adapterで処理する。

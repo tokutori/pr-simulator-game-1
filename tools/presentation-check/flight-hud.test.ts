@@ -1,10 +1,45 @@
 import { Window } from "happy-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
 describe("Flight HUD DOM lifecycle", () => {
+  it("retains layout writes and heading nodes on numeric frames and applies changed structure", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const hud = new FlightHudAdapter(root);
+    const model = currentSharedHudFixture();
+    const width = vi.spyOn(root.style, "width", "set");
+    try {
+      hud.render(model);
+      expect(width).toHaveBeenCalledTimes(1);
+      const heading = root.querySelector('svg[aria-label="方位目盛"] > g');
+      const ticks = Array.from(heading?.childNodes ?? []);
+      expect(ticks.length).toBeGreaterThan(0);
+      const next = { ...model, layout: { ...model.layout, offset_px: [...model.layout.offset_px] as const },
+        geometry: { ...model.geometry, heading_ticks: model.geometry.heading_ticks.map((tick) => ({ ...tick })) },
+        readouts: "air 12.3 m/s", telemetry: "time 2.0 s" };
+      hud.render(next);
+      expect(width).toHaveBeenCalledTimes(1);
+      expect(Array.from(heading?.childNodes ?? [])).toEqual(ticks);
+      expect(root.querySelector(".flight-hud-telemetry")?.textContent).toBe(next.telemetry);
+      hud.render({ ...next, layout: { ...next.layout, width_px: next.layout.width_px + 10 },
+        theme: { ...next.theme, text: "#123456" } });
+      expect(width).toHaveBeenCalledTimes(2);
+      expect(root.style.width).toBe(`${String(next.layout.width_px + 10)}px`);
+      expect(root.style.color).toBe("#123456");
+      hud.render({ ...next, geometry: { ...next.geometry, heading_ticks: [{ position_ratio: 0.5, major: true, label: "X" }] },
+        labels: { ...next.labels, heading: "HEADING UPDATED" } });
+      expect(heading?.querySelector("text")?.textContent).toBe("X");
+      expect(Array.from(heading?.childNodes ?? [])).not.toEqual(ticks);
+      expect(root.querySelector(".flight-hud-instruments span")?.textContent).toBe("HEADING UPDATED");
+    } finally {
+      width.mockRestore();
+      await window.happyDOM.abort();
+    }
+  });
+
   it("hides an absent shared observation while retaining HUD nodes and the next model update", async () => {
     const window = new Window();
     const nativeRoot = window.document.createElement("section");

@@ -2,6 +2,7 @@ import type { FlightHudModel } from "./flight-hud-model.js";
 import { gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
 export class FlightHudAdapter {
+  private previous: FlightHudModel | null = null;
   private readonly status: HTMLOutputElement;
   private readonly warning: HTMLOutputElement;
   private readonly telemetry: HTMLOutputElement;
@@ -189,24 +190,13 @@ export class FlightHudAdapter {
   }
 
   private applyModel(model: FlightHudModel): void {
-    const layout = model.layout;
-    this.root.dataset.shared = "true";
-    this.root.style.left = `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`;
-    this.root.style.top = `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`;
-    this.root.style.width = `${String(layout.width_px)}px`;
-    this.root.style.maxHeight = `${String(layout.maximum_height_px)}px`;
-    this.root.style.padding = `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`;
-    this.root.style.gap = `${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px`;
-    this.root.style.gridTemplateColumns = `${String(layout.attitude_size_px[0])}px minmax(0, 1fr)`;
-    this.root.style.fontSize = `${String(layout.font_size_px)}px`;
-    this.root.style.color = model.theme.text;
-    this.root.style.background = `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`;
-    this.adi.style.width = `${String(layout.attitude_size_px[0])}px`;
-    this.adi.style.height = `${String(layout.attitude_size_px[1])}px`;
-    this.instruments.style.gridTemplateColumns = `repeat(${String(layout.instrument_columns)}, minmax(0, 1fr))`;
-    this.controls.hidden = !layout.controls_visible;
+    const previous = this.previous;
+    if (previous === null || !sameLayout(previous.layout, model.layout)
+        || previous.theme.text !== model.theme.text || previous.theme.panel_background !== model.theme.panel_background) {
+      this.applyLayout(model);
+    }
     const labels = [model.labels.heading, model.labels.pilotPosition, model.labels.wind, model.labels.angleOfAttack];
-    labels.forEach((label, index) => { const caption = this.instrumentLabels[index]; if (caption !== undefined) caption.textContent = label; });
+    labels.forEach((label, index) => { const caption = this.instrumentLabels[index]; if (caption !== undefined && caption.textContent !== label) caption.textContent = label; });
     this.status.textContent = model.status;
     this.warning.textContent = model.warning ?? "";
     this.warning.hidden = model.warning === null;
@@ -229,7 +219,9 @@ export class FlightHudAdapter {
     }
     this.headingInstrument.hidden = model.heading === null;
     this.headingReadout.textContent = model.heading ?? "";
-    renderHeadingScale(this.headingScale, model.geometry.heading_ticks);
+    if (previous === null || !sameHeadingTicks(previous.geometry.heading_ticks, model.geometry.heading_ticks)) {
+      renderHeadingScale(this.headingScale, model.geometry.heading_ticks);
+    }
     this.pilotPositionInstrument.hidden = model.pilotPosition === null;
     this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
     this.windInstrument.hidden = model.wind === null;
@@ -249,6 +241,26 @@ export class FlightHudAdapter {
     if (horizon !== null) {
       this.horizon.setAttribute("transform", `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})`);
     }
+    this.previous = model;
+  }
+
+  private applyLayout(model: FlightHudModel): void {
+    const layout = model.layout;
+    this.root.dataset.shared = "true";
+    this.root.style.left = `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`;
+    this.root.style.top = `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`;
+    this.root.style.width = `${String(layout.width_px)}px`;
+    this.root.style.maxHeight = `${String(layout.maximum_height_px)}px`;
+    this.root.style.padding = `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`;
+    this.root.style.gap = `${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px`;
+    this.root.style.gridTemplateColumns = `${String(layout.attitude_size_px[0])}px minmax(0, 1fr)`;
+    this.root.style.fontSize = `${String(layout.font_size_px)}px`;
+    this.root.style.color = model.theme.text;
+    this.root.style.background = `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`;
+    this.adi.style.width = `${String(layout.attitude_size_px[0])}px`;
+    this.adi.style.height = `${String(layout.attitude_size_px[1])}px`;
+    this.instruments.style.gridTemplateColumns = `repeat(${String(layout.instrument_columns)}, minmax(0, 1fr))`;
+    this.controls.hidden = !layout.controls_visible;
   }
 
   fail(message: string): void {
@@ -259,6 +271,23 @@ export class FlightHudAdapter {
     this.root.hidden = !visible;
     this.root.setAttribute("aria-hidden", String(!visible));
   }
+}
+
+function sameLayout(previous: FlightHudModel["layout"], layout: FlightHudModel["layout"]): boolean {
+  return Object.keys(layout).every((key) => {
+    const value = layout[key as keyof typeof layout];
+    const retained = previous[key as keyof typeof previous];
+    return typeof value === "object"
+      ? typeof retained === "object" && value.length === retained.length && value.every((entry, index) => entry === retained[index])
+      : value === retained;
+  });
+}
+
+function sameHeadingTicks(previous: FlightHudModel["geometry"]["heading_ticks"], ticks: FlightHudModel["geometry"]["heading_ticks"]): boolean {
+  return previous.length === ticks.length && ticks.every((tick, index) => {
+    const retained = previous[index];
+    return retained !== undefined && tick.position_ratio === retained.position_ratio && tick.major === retained.major && tick.label === retained.label;
+  });
 }
 
 function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement; readonly caption: HTMLSpanElement } {
