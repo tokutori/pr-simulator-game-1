@@ -2278,10 +2278,8 @@ fn advance_step(
                 if let ScreenRenderAutoStatus::Failed { cause } = &snapshot.status {
                     return Err(format!("Auto resource application failed: {cause}"));
                 }
-                let accepted = matches!(
-                    snapshot.status,
-                    ScreenRenderAutoStatus::Ready | ScreenRenderAutoStatus::CoverageLimited
-                ) || snapshot.applied != ScreenRenderScale::Full;
+                let accepted = matches!(snapshot.status, ScreenRenderAutoStatus::Ready)
+                    || snapshot.applied != ScreenRenderScale::Full;
                 let unsupported =
                     matches!(snapshot.status, ScreenRenderAutoStatus::Unsupported { .. });
                 let observed = verification.stage_started.elapsed();
