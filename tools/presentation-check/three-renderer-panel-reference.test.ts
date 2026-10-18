@@ -2,7 +2,7 @@ import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Texture, Vector2, Vector3, Vector4 } from "three";
+import { AmbientLight, BufferGeometry, DataTexture, DirectionalLight, Fog, Matrix4, Mesh, Quaternion, ShaderMaterial, Texture, Vector2, Vector3, Vector4 } from "three";
 import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
@@ -31,7 +31,8 @@ import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "..
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
-import { ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
+  lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../web/pkg/birdman_game_wasm.js";
 import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
@@ -534,6 +535,12 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     if (scene === null || !(scene.background instanceof DataTexture) || !(scene.fog instanceof Fog)) throw new Error("Missing sky scene");
     const solar = scene.children.find((object) => object instanceof DirectionalLight);
     if (!(solar instanceof DirectionalLight)) throw new Error("Missing directional sun");
+    const ambient = scene.children.find((object) => object instanceof AmbientLight);
+    if (!(ambient instanceof AmbientLight)) throw new Error("Missing ambient light");
+    expect(ambient.color.getHex()).toBe(lake_scene_ambient_color_srgb());
+    expect(ambient.intensity).toBe(lake_scene_ambient_irradiance());
+    expect(solar.color.getHex()).toBe(lake_scene_sunlight_color_srgb());
+    expect(solar.intensity).toBe(lake_scene_sunlight_irradiance());
     const materials: ShaderMaterial[] = [];
     scene.traverse((object) => {
       if (object instanceof Mesh && object.material instanceof ShaderMaterial && "uSkyTexture" in object.material.uniforms) materials.push(object.material);

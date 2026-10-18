@@ -93,6 +93,7 @@ pub(crate) fn setup_reflection(
         RenderTarget::Image(image.clone().into()),
         RenderLayers::layer(1),
         Tonemapping::None,
+        super::world::scene_exposure(),
         Msaa::Off,
         Transform::IDENTITY,
     ));
@@ -446,10 +447,14 @@ mod tests {
             assert_eq!(material.reflection_parameters.x, 1.0);
         }
         let world = app.world_mut();
-        let mut query = world
-            .query_filtered::<(&Camera, &RenderTarget, &RenderLayers), With<LakeReflectionCamera>>(
-            );
-        let (camera, target, layers) = query.single(world).unwrap();
+        let mut query = world.query_filtered::<(
+            &Camera,
+            &RenderTarget,
+            &RenderLayers,
+            &bevy::camera::Exposure,
+        ), With<LakeReflectionCamera>>();
+        let (camera, target, layers, exposure) = query.single(world).unwrap();
+        assert_eq!(exposure.ev100, super::super::world::scene_exposure().ev100);
         assert!(camera.is_active && camera.invert_culling);
         assert_eq!(camera.order, -1);
         assert_eq!(*layers, RenderLayers::layer(1));

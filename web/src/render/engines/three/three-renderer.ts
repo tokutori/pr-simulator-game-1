@@ -49,6 +49,8 @@ import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture } from "./lake-sky-texture.js";
 import { createLakeClouds, disposeLakeClouds } from "./lake-clouds.js";
+import { lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
+  lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../../../pkg/birdman_game_wasm.js";
 import { createLakeGeometry } from "./lake-water-geometry.js";
 import { createLakeWaveProjection, LAKE_WAVE_PACKET_GLSL, LAKE_WAVE_PROJECTION_GLSL } from "./lake-wave-projection.js";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
@@ -184,10 +186,10 @@ export function createThreeRenderer(
   scene.background = skyTexture;
   const lakeFog = new Fog(0x9aafb1, 14_000, 80_000);
   scene.fog = lakeFog;
-  const ambient = new AmbientLight(0xdceaf0, 1.15);
+  const ambient = new AmbientLight(lake_scene_ambient_color_srgb(), lake_scene_ambient_irradiance());
   ambient.layers.enable(1);
   scene.add(ambient);
-  const sun = new DirectionalLight(0xffefd8, 0);
+  const sun = new DirectionalLight(lake_scene_sunlight_color_srgb(), 0);
   const sunDistanceMeters = Math.hypot(20, 35, 18);
   sun.position.set(0, sunDistanceMeters, 0);
   sun.layers.enable(1);
@@ -848,7 +850,7 @@ export function createThreeRenderer(
       const up = direction === null ? 1 : -direction.down;
       sunOffset.set(east, up, -north).multiplyScalar(sunDistanceMeters);
       sun.position.copy(sun.target.position).add(sunOffset);
-      sun.intensity = 1.45 * daylight;
+      sun.intensity = lake_scene_sunlight_irradiance() * daylight;
       sun.castShadow = daylight === 1;
       lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
       lakeFog.far = nextCondition?.visibilityMeters ?? 80_000;
