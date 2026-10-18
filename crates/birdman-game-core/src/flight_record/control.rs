@@ -129,7 +129,7 @@ impl FlightRecordControls {
     }
 
     /// Creates the initial sample with no newly applied interval input.
-    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec, open))]
     #[cfg_attr(verus_only, verus_spec(returns Self::initial_tail(state)))]
     pub const fn initial_tail(state: TailFlightTickState) -> Self {
         Self {
@@ -139,7 +139,7 @@ impl FlightRecordControls {
     }
 
     /// Captures only controls committed by one successfully elapsed interval.
-    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_verify(dual_spec, open))]
     #[cfg_attr(verus_only, verus_spec(returns Self::from_tail_report(report)))]
     pub const fn from_tail_report(report: TailFlightTickReport) -> FlightRecordControlCapture {
         match report.applied_controls() {

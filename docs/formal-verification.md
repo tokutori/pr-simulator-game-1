@@ -249,6 +249,8 @@ newly applied controlsを持たない。その実bodyと、同じpreviousによ�
 private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、
 sampleのinput/telemetryを保持することを結合する。初期sampleには独立したpilot target fieldがないため、
 targetはreportのprevious保持に限定する。数値接触検出や任意tickのrecord/previous相関は別の未証明範囲である。
+初期controlsとNoElapsed分類は既存の純粋関数の`dual_spec`を`open`とし、同じ実bodyから生成した定義を展開する。
+[公式dual_spec仕様](https://verus-lang.github.io/verus/guide/exec_to_spec.html)に従い、数値仮定や模倣modelは追加しない。
 
 公開`begin_tail`/`append_tail_report`は同じ実bodyの認可、実reportからstate/control/telemetryへの転送、
 bounded Vecへの追加、拒否時のowner全保持を検証する。NoElapsedIntervalは結果の成否にかかわらずrecord全体を保持する。
