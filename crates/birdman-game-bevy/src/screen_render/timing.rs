@@ -642,7 +642,10 @@ pub(crate) mod tests {
         let mut store = DiagnosticsStore::default();
         let arrival = Instant::now();
         packet(&mut store, arrival, 7, 10, 100, 18.0);
-        let first = store.get_measurement(&GPU_WORK).unwrap().clone();
+        let first = DiagnosticMeasurement {
+            time: arrival,
+            value: 18.0,
+        };
         packet_quality(
             &mut store,
             arrival + Duration::from_millis(20),
