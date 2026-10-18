@@ -614,6 +614,7 @@ async function initializePresentation(requestId: number): Promise<void> {
     presentationOwner = { kind: "policy", policy };
     if (retainedSelection !== undefined) {
       policy.select_manual(Number(retainedSelection.kind === "auto" ? retainedSelection.manual_scale : retainedSelection.scale), performance.now());
+      policy.select_water_quality(retainedSelection.kind === "auto" ? retainedSelection.manual_water_quality : retainedSelection.water_quality, performance.now());
       if (retainedSelection.kind === "auto") policy.select_auto(true, performance.now());
     }
     dispatch({ type: "screen-render-observed", snapshot: parseScreenRenderAutoSnapshot(policy.snapshot_json()) });

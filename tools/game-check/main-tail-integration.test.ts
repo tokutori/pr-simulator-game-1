@@ -58,8 +58,16 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const acknowledgeScreenScale = (): void => {
     if (screenBinding === undefined) throw new Error("Missing shared Screen policy binding");
     const policy = screenBinding.policy;
-    if (policy.requested_scale_percent() !== 0) policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), policy.requested_shadow_map_size(), nowMilliseconds);
+    if (policy.requested_scale_percent() !== 0) {
+      const quality = policy.requested_water_quality();
+      if (quality !== "low" && quality !== "medium" && quality !== "high") throw new Error("Missing requested water quality");
+      policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), policy.requested_shadow_map_size(), quality, nowMilliseconds);
+    }
     screenBinding.onSnapshot(parseScreenRenderAutoSnapshot(policy.snapshot_json()));
+  };
+  const acknowledgeWaterQuality = (quality: Parameters<RendererAdapter["setLakeWaterQuality"]>[0]): void => {
+    screenBinding?.policy.select_water_quality(quality, nowMilliseconds);
+    acknowledgeScreenScale();
   };
   const renderer = {
     startLoop: vi.fn<RendererAdapter["startLoop"]>((callback) => {
@@ -68,7 +76,10 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     }),
     beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(),
     setFlightPose: vi.fn<RendererAdapter["setFlightPose"]>(), setLakeVisualCondition: vi.fn(),
-    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
+    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>((quality) => {
+      acknowledgeWaterQuality(quality);
+      return Promise.resolve({ kind: "complete" });
+    }),
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
@@ -184,7 +195,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     callback?.();
   };
   return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, replayTicks, observeCountdown,
-    countdownTick, countdown,
+    countdownTick, countdown, acknowledgeWaterQuality,
     advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
     sessionOwner: () => {
       const result = initializeSession.mock.results[0];
@@ -497,7 +508,9 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("game-title-start");
     let complete: () => void = () => { throw new Error("Quality request is missing"); };
-    trial.renderer.setLakeWaterQuality.mockImplementationOnce(() => new Promise<LakeWaterQualityCleanupResult>((resolve) => { complete = () => { resolve({ kind: "complete" }); }; }));
+    trial.renderer.setLakeWaterQuality.mockImplementationOnce(() => new Promise<LakeWaterQualityCleanupResult>((resolve) => {
+      complete = () => { trial.acknowledgeWaterQuality("low"); resolve({ kind: "complete" }); };
+    }));
     trial.click("presentation-water-quality-low");
     expect(trial.renderer.setLakeWaterQuality).toHaveBeenCalledWith("low");
     expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Lowを適用中");
@@ -539,7 +552,10 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("game-title-start");
-    trial.renderer.setLakeWaterQuality.mockResolvedValueOnce({ kind: "failed", message: "Injected retired geometry cleanup failure" });
+    trial.renderer.setLakeWaterQuality.mockImplementationOnce((quality) => {
+      trial.acknowledgeWaterQuality(quality);
+      return Promise.resolve({ kind: "failed", message: "Injected retired geometry cleanup failure" });
+    });
     trial.click("presentation-water-quality-medium");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-medium"]')?.getAttribute("aria-pressed")).toBe("true"); });
     expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Mediumを適用した。旧geometryの解放に失敗した");

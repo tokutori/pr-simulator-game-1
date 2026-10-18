@@ -88,8 +88,8 @@ declare global {
   const observer: BrowserObserver = {
     phase: null, tick: null, snapshotJson: null, policyJson: null, contextLosses: 0,
     attach(prototype) {
-      const names = ["select_manual", "select_auto", "observe", "pending", "invalidate", "applied", "failed", "unsupported"] as const;
-      const timeIndex = [1, 1, 4, 0, 1, 3, 4, 1];
+      const names = ["select_manual", "select_auto", "select_water_quality", "observe", "pending", "invalidate", "applied", "failed", "unsupported"] as const;
+      const timeIndex = [1, 1, 1, 4, 0, 1, 4, 5, 1];
       for (const [index, name] of names.entries()) {
         const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
         if (descriptor === undefined || typeof descriptor.value !== "function") throw new Error(`Missing existing policy method: ${name}`);

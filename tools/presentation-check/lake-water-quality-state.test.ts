@@ -36,7 +36,7 @@ describe("manual lake water quality ownership", () => {
     const requested = select(initial, "low").model;
     expect(updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId - 1, quality: "low", cleanup: { kind: "complete" } }).model).toBe(requested);
     expect(updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "high", cleanup: { kind: "complete" } }).model).toBe(requested);
-    const completed = updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "low", cleanup: { kind: "complete" } });
+    const completed = completeQuality(requested, "low", initial.nextRequestId);
     expect(completed.model.lakeWaterQuality).toEqual({ kind: "ready", applied: "low", cleanup: { kind: "complete" } });
     expect(completed.effects).toEqual([]);
     expect(select(completed.model, "low").model).toBe(completed.model);
@@ -52,7 +52,7 @@ describe("manual lake water quality ownership", () => {
     const retried = select(failed, "low").model;
     expect(updateApp(retried, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "low", cleanup: { kind: "complete" } }).model).toBe(retried);
     expect(updateApp(retried, { type: "lake-water-quality-failed", requestId: initial.nextRequestId, message: "late failure" }).model).toBe(retried);
-    const completed = updateApp(retried, { type: "lake-water-quality-applied", requestId: failed.nextRequestId, quality: "low", cleanup: { kind: "complete" } });
+    const completed = completeQuality(retried, "low", failed.nextRequestId);
     expect(completed.model.lakeWaterQuality).toEqual({ kind: "ready", applied: "low", cleanup: { kind: "complete" } });
   });
 
@@ -80,7 +80,7 @@ describe("manual lake water quality ownership", () => {
   it("retains quality across Rust phase synchronization, Retry and backend switching", () => {
     const initial = readyModel();
     const requested = select(initial, "medium").model;
-    const selected = updateApp(requested, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "medium", cleanup: { kind: "complete" } }).model;
+    const selected = completeQuality(requested, "medium", initial.nextRequestId).model;
     const synchronized = updateApp(selected, {
       type: "game-session-synced", phaseCode: 3, controlModeCode: 0, difficulty: selected.difficulty,
       configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }, canResume: false, controlLayout: "tail_incidence"
@@ -100,9 +100,24 @@ describe("manual lake water quality ownership", () => {
     const initial = readyModel();
     const requested = select(initial, "low").model;
     const suspended = updateApp(requested, { type: "page-suspended" }).model;
-    const completed = updateApp(suspended, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "low", cleanup: { kind: "complete" } }).model;
+    const completed = completeQuality(suspended, "low", initial.nextRequestId).model;
     expect(completed.presentation.type).toBe("cached");
     expect(completed.lakeWaterQuality).toEqual({ kind: "ready", applied: "low", cleanup: { kind: "complete" } });
+  });
+
+  it("projects Auto-applied water during Running without changing the retained upper quality or domain state", () => {
+    const initial = readyModel(5);
+    const snapshot = { ...sharedScreenRenderSnapshot("50", "low"),
+      selection: { kind: "auto" as const, manual_scale: "100" as const, manual_shadow: "full" as const, manual_water_quality: "high" as const } };
+    const observed = updateApp(initial, { type: "screen-render-observed", snapshot });
+    expect(observed.model.lakeWaterQuality.applied).toBe("low");
+    expect(observed.model.screenRenderScale?.selection).toMatchObject({ manual_water_quality: "high" });
+    expect(observed.model.gameSession).toBe(initial.gameSession);
+    expect(observed.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
+    expect(observed.effects).toEqual([]);
+    const paused = { ...observed.model, gameSession: readyModel(6).gameSession, sharedGameUi: readyModel(6).sharedGameUi };
+    const requested = select(paused, "low");
+    expect(requested.effects).toEqual([{ type: "apply-lake-water-quality", requestId: paused.nextRequestId, quality: "low" }]);
   });
 
   it.each(["screen", "phone-vr", "webxr"] as const)("projects applied and pending quality into %s Setup and Settings", (mode) => {
@@ -164,8 +179,7 @@ describe("manual lake water quality ownership", () => {
       expect(root.querySelector('[data-control-id="game-pause-settings-back"]')).toBe(back);
       expect(documentRef.activeElement).toBe(back);
       expect(shell.scrollTop).toBe(40);
-      const completed = updateApp(requested, { type: "lake-water-quality-applied", requestId: requested.lakeWaterQuality.requestId,
-        quality: "low", cleanup: { kind: "complete" } }).model;
+      const completed = completeQuality(requested, "low", requested.lakeWaterQuality.requestId).model;
       adapter.render(createGameViewModel(qualityView(completed)));
       expect(documentRef.activeElement).toBe(back);
       expect(shell.scrollTop).toBe(40);
@@ -242,6 +256,11 @@ function select(model: AppModel, quality: LakeWaterQuality): AppTransition {
   });
 }
 
+function completeQuality(model: AppModel, quality: LakeWaterQuality, requestId: number): AppTransition {
+  const observed = updateApp(model, { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot("100", quality) }).model;
+  return updateApp(observed, { type: "lake-water-quality-applied", requestId, quality, cleanup: { kind: "complete" } });
+}
+
 function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
   const phase = gameSessionPhaseCode(model.gameSession);
   const mode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
@@ -254,6 +273,7 @@ function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
   return { ...(phase === 6 && overlay !== "menu" ? { actions: [{ kind: "set_pause_overlay", overlay }] } : {}),
     platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
       operation_pending: model.pendingGameRequestId !== null,
+      ...(model.screenRenderScale === null ? {} : { screen_render_scale: model.screenRenderScale }),
       water_quality: quality.applied, water_quality_operation: operation } };
 }
 
