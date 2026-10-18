@@ -58,6 +58,7 @@ import { createLakeVenue } from "./lake-venue-mesh.js";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
 import type { ScreenRenderAutoBinding } from "../../contracts/screen-render-auto.js";
 import { ScreenAutoRenderer } from "./screen-auto-renderer.js";
+import { applyScreenRenderResources } from "./screen-render-resources.js";
 
 type ThreeWebXrState =
   | { readonly type: "idle" }
@@ -425,7 +426,9 @@ export function createThreeRenderer(
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
   const screenAuto = screenAutoBinding === undefined ? null
-    : new ScreenAutoRenderer(renderer.getContext(), screenAutoBinding, applyScreenRenderScale);
+    : new ScreenAutoRenderer(renderer.getContext(), screenAutoBinding, (factor, shadowMapSize) =>
+      hasScreenRenderArea(factor) && applyScreenRenderResources(sun, renderer, shadowMapSize,
+        () => applyScreenRenderScale(factor)));
   const onContextLost = (): void => { screenAuto?.invalidate("interrupted"); };
   const onContextRestored = (): void => { screenAuto?.restored(); };
   if (screenAuto !== null) {
@@ -1025,8 +1028,13 @@ export function createThreeRenderer(
     fixedCamera.updateProjectionMatrix();
   }
 
+  function hasScreenRenderArea(factor: number): boolean {
+    return Math.floor(width * pixelRatio * factor) >= 1 && Math.floor(height * pixelRatio * factor) >= 1;
+  }
+
   function applyScreenRenderScale(factor: number): boolean {
-    if (Math.floor(width * pixelRatio * factor) < 1 || Math.floor(height * pixelRatio * factor) < 1) return false;
+    if (!hasScreenRenderArea(factor)) return false;
+    if (factor === screenRenderScale) return true;
     const previous = screenRenderScale;
     const previousReflection = { width: reflectionTarget.width, height: reflectionTarget.height };
     try {

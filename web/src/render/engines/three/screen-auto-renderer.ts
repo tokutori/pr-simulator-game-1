@@ -12,7 +12,8 @@ export class ScreenAutoRenderer {
   private readonly timer: GpuWorkTimer;
 
   constructor(gl: WebGLRenderingContext | WebGL2RenderingContext, private readonly binding: ScreenRenderAutoBinding,
-    private readonly applyScale: (factor: number) => boolean, private readonly now: () => number = () => performance.now()) {
+    private readonly applyResources: (factor: number, shadowMapSize: number) => false | { readonly cleanupFailure?: string },
+    private readonly now: () => number = () => performance.now()) {
     if (!("beginQuery" in gl)) throw new Error("The Screen renderer requires WebGL2");
     this.timer = new GpuWorkTimer(gl);
   }
@@ -44,13 +45,15 @@ export class ScreenAutoRenderer {
     const percent = this.binding.policy.requested_scale_percent();
     if (percent !== 0 && eligible) {
       const epoch = this.binding.policy.requested_epoch();
+      const shadowMapSize = this.binding.policy.requested_shadow_map_size();
       try {
         this.timer.clear();
-        if (this.applyScale(percent / 100)) {
+        const result = this.applyResources(percent / 100, shadowMapSize);
+        if (result !== false) {
           this.prepared = false;
-          this.binding.policy.applied(epoch, percent, now);
+          this.binding.policy.applied(epoch, percent, shadowMapSize, now, result.cleanupFailure);
         }
-      } catch (error: unknown) { this.binding.policy.failed(epoch, percent, message(error), now); }
+      } catch (error: unknown) { this.binding.policy.failed(epoch, percent, shadowMapSize, message(error), now); }
     }
     this.publish();
   }

@@ -14,6 +14,7 @@ export interface ScreenRenderAutoPolicy {
   epoch(): number;
   measurement_enabled(): boolean;
   requested_scale_percent(): number;
+  requested_shadow_map_size(): number;
   requested_epoch(): number;
   select_manual(percent: number, now: number): void;
   select_auto(enabled: boolean, now: number): void;
@@ -21,8 +22,8 @@ export interface ScreenRenderAutoPolicy {
   pending(now: number): void;
   invalidate(reason: ScreenRenderInvalidation, now: number): void;
   unsupported(cause: string, now: number): void;
-  applied(epoch: number, percent: number, now: number): void;
-  failed(epoch: number, percent: number, cause: string, now: number): void;
+  applied(epoch: number, percent: number, shadowMapSize: number, now: number, cleanupFailure?: string): void;
+  failed(epoch: number, percent: number, shadowMapSize: number, cause: string, now: number): void;
   free(): void;
 }
 

@@ -53,7 +53,7 @@ export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100"): 
   const bridge = new ScreenRenderAutoBridge();
   try {
     bridge.select_manual(Number(scale), 0);
-    if (bridge.requested_scale_percent() !== 0) bridge.applied(bridge.requested_epoch(), Number(scale), 0);
+    if (bridge.requested_scale_percent() !== 0) bridge.applied(bridge.requested_epoch(), Number(scale), bridge.requested_shadow_map_size(), 0);
     return parseScreenRenderAutoSnapshot(bridge.snapshot_json());
   } finally { bridge.free(); }
 }

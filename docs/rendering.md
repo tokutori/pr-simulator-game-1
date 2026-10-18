@@ -25,6 +25,7 @@ Webは`EXT_disjoint_timer_query_webgl2`で反射と主描画を含むGPU command
 2秒窓の8 ms区間ごとの有効GPU sample最大値を代表値とし、そのp95を判断に用いる。12.5 ms超は最低8代表値・1秒のsource span・500 ms以内の鮮度で下降を許可する。9.5 ms未満の上昇は最低30代表値・1.8秒のspan・100 ms以内の鮮度・同時間域のsource frame受領率90%以上を必要とする。適用後3秒は次の変更を保留する。
 このp95は選別したGPU spanの統計である。全frame時間、CPU時間、present待機、全raw sampleのp95と区別する。欠損は有効な高負荷の履歴を消去せず、coverage不足時は上昇を保留する。resize、backend切替、context復帰、環境・描画品質変更、中断、disjointで古い窓を失効する。計測履歴と時刻はUIの構造cache keyへ含めない。
 shadow調整は既存のDirectionalLightの実map寸法だけを変更し、cascade数・投影範囲・bias・太陽条件は維持する。shadowだけの変更では解像度targetを再生成しない。水面とreflectionの品質・最低寸法、物理・記録・100 Hz tickは変更しない。Webは新shadow targetの準備後に解像度とshadowをcommitし、Nativeは両資源の検査後に適用する。UIは要求中と実適用のshadow寸法を区別する。
+Webのshadow mapはrenderer共有資源として、Phone VR/WebXRへの切替後も適用値を保持する。VR中はScreen Autoの測定と要求を停止し、Screen復帰時は既存epoch/readinessで再準備する。VR向けAutoとbackend別shadow所有者は今回追加しない。
 
 ## 湖面
 

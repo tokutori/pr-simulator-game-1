@@ -11,7 +11,7 @@ function fixture() {
   const gpu = gpuTimerFixture();
   const policy = new ScreenRenderAutoBridge();
   let now = 0;
-  const applied = vi.fn(() => true);
+  const applied = vi.fn<(factor: number, shadowMapSize: number) => false | { readonly cleanupFailure?: string }>(() => ({}));
   const snapshot = vi.fn();
   const renderer = new ScreenAutoRenderer(gpu.context, { policy, onSnapshot: snapshot }, applied, () => now++);
   return { ...gpu, policy, renderer, applied, snapshot, time: (value: number) => { now = value; },
@@ -46,7 +46,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
         trial.renderer.boundary(true);
         trial.renderer.begin(); trial.renderer.end(true);
       }
-      expect(trial.applied).toHaveBeenCalledWith(0.75);
+      expect(trial.applied).toHaveBeenCalledWith(0.75, 2048);
       expect(trial.state()).toMatchObject({ selection: { kind: "auto", manual_scale: "100" }, applied: "75" });
       trial.renderer.selectAuto(false);
       trial.renderer.boundary(true);
@@ -71,7 +71,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       trial.renderer.selectManual(0.5);
       trial.renderer.boundary(true);
       expect(trial.state()).toMatchObject({ applied: "100", status: { kind: "applying", requested: "50" } });
-      trial.applied.mockReturnValue(true);
+      trial.applied.mockReturnValue({});
       trial.renderer.boundary(true);
       expect(trial.state()).toMatchObject({ applied: "50", status: { kind: "manual" } });
       trial.renderer.selectManual(0.75);
@@ -88,6 +88,36 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       expect(trial.gl.getExtension).not.toHaveBeenCalled();
       expect(trial.gl.getQueryParameter).not.toHaveBeenCalled();
       expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it("reduces shadow only after minimum resolution and restores the full Manual resource pair", () => {
+    const trial = fixture();
+    try {
+      trial.renderer.selectAuto(true);
+      for (let frame = 0; frame < 800; frame++) {
+        trial.time(frame * 20 + 10);
+        trial.renderer.boundary(true);
+        trial.renderer.begin(); trial.renderer.end(true);
+      }
+      expect(trial.applied.mock.calls).toEqual([[0.75, 2048], [0.5, 2048], [0.5, 1024], [0.5, 512]]);
+      expect(trial.state()).toMatchObject({ applied: "50", shadow: "quarter" });
+      trial.renderer.selectAuto(false);
+      trial.renderer.boundary(true);
+      expect(trial.applied).toHaveBeenLastCalledWith(1, 2048);
+      expect(trial.state()).toMatchObject({ selection: { kind: "manual", shadow: "full" }, applied: "100", shadow: "full" });
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it("retains the new applied resources and original retired-map cleanup failure", () => {
+    const trial = fixture();
+    try {
+      trial.applied.mockReturnValue({ cleanupFailure: "retired shadow texture cleanup failed" });
+      trial.renderer.selectManual(0.5);
+      trial.renderer.boundary(true);
+      expect(trial.state()).toMatchObject({ applied: "50", shadow: "full", status: {
+        kind: "failed", cause: "retired shadow texture cleanup failed"
+      } });
     } finally { trial.renderer.dispose(); }
   });
 

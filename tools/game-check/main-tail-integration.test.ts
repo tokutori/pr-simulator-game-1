@@ -58,7 +58,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const acknowledgeScreenScale = (): void => {
     if (screenBinding === undefined) throw new Error("Missing shared Screen policy binding");
     const policy = screenBinding.policy;
-    if (policy.requested_scale_percent() !== 0) policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), nowMilliseconds);
+    if (policy.requested_scale_percent() !== 0) policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), policy.requested_shadow_map_size(), nowMilliseconds);
     screenBinding.onSnapshot(parseScreenRenderAutoSnapshot(policy.snapshot_json()));
   };
   const renderer = {
