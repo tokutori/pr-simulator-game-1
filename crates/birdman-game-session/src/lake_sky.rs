@@ -2,6 +2,27 @@
 
 use birdman_game_format::{EnvironmentFormatError, SkyStateDocument};
 
+/// Display-only scene light convention retained from the Web reference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LakeSceneLighting {
+    /// Ambient sRGB colour as 0xRRGGBB.
+    pub ambient_color_srgb: u32,
+    /// Hemispherical irradiance scale used by the Web Lambert material.
+    pub ambient_irradiance: f64,
+    /// Directional sunlight sRGB colour as 0xRRGGBB.
+    pub sunlight_color_srgb: u32,
+    /// Directional irradiance scale while recorded sunlight is above the horizon.
+    pub sunlight_irradiance: f64,
+}
+
+/// Existing Web appearance parameters; these scales are not observed weather data.
+pub const LAKE_SCENE_LIGHTING: LakeSceneLighting = LakeSceneLighting {
+    ambient_color_srgb: 0xdceaf0,
+    ambient_irradiance: 1.15,
+    sunlight_color_srgb: 0xffefd8,
+    sunlight_irradiance: 1.45,
+};
+
 /// Horizontal resolution of the Web reference panorama.
 pub const LAKE_SKY_IMAGE_WIDTH: u32 = 1024;
 /// Vertical resolution of the Web reference panorama.

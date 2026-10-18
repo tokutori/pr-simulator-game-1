@@ -21,7 +21,10 @@ mod wing_texture;
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
-pub use lake_sky::{LakeCloudsBridge, LakeSkyImageBridge};
+pub use lake_sky::{
+    LakeCloudsBridge, LakeSkyImageBridge, lake_scene_ambient_color_srgb,
+    lake_scene_ambient_irradiance, lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance,
+};
 pub use lake_water::{LakeDetailImageBridge, LakeWaveProjectionBridge};
 pub use screen_render_auto::ScreenRenderAutoBridge;
 pub use tail_geometry::TailGeometryBridge;
