@@ -246,6 +246,8 @@ observerはPause・Result・Retryで無効化する。Pause中のcore state・re
 水面検証processだけに公式`FrameTimeDiagnosticsPlugin`と`RenderDiagnosticsPlugin`を追加する。
 この明示検証ではManual 100%でも既存`screen_work` root spanを記録し、Auto判定や描画倍率を変更しない。
 初期observerは既存Chase cameraの位置・姿勢を発進時に一度取得し、Static区間ではworld固定する。
+各motionのEnd画像保存後、次motionは既存Abort・Retry・Countdownにより同じsealed blueprintの個別flightから開始する。
+連続2秒区間内の自然終端・ProcessingDelayは失敗として保持し、coreがResultの場合は実終了理由とfailureをlogへ記録する。
 機体と通常Pilot cameraは従来の追従を維持する。撮影は指定observerと実Flight cameraのTransform一致後に要求し、実poseを観測logへ記録する。
 通常Manualではroot spanを実行しない。root GPU時間はRenderGraphの描画命令区間であり、準備・upload、後段のscreenshot/readback、present待機を含まない。
 `frame_time`と各`elapsed_cpu`/`elapsed_gpu`の既存履歴を4096件へ拡張し、Motion区間終了時、撮影要求前に
