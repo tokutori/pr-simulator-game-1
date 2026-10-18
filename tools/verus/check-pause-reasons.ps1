@@ -87,12 +87,14 @@ $suites = @(
 $domainDriver = Join-Path $repository 'proofs/flight_record_finalization.rs'
 $domainProofs = @(
     'verify_domain_session_initial_projection',
+    'verify_domain_session_countdown_rejection',
     'verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit',
     'verify_domain_record_begin', 'verify_domain_record_append', 'verify_domain_record_no_elapsed',
     'verify_domain_no_elapsed_terminal_tick'
 )
 $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/game_session_initial_running_negative.rs'; Assertion = 'admitted' },
+    @{ Path = Join-Path $repository 'proofs/game_session_countdown_admission_negative.rs'; Assertion = 'admitted' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_retention_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' },
@@ -379,6 +381,22 @@ try {
           'birdman_game_core::game_session::GameSession::enter_replay',
           'birdman_game_core::game_session::GameSession::leave_replay',
           'birdman_game_core::game_session::GameSession::advance_tail_flight_tick_with',
+          'birdman_game_core::game_session::GameSession::open_setup',
+          'birdman_game_core::game_session::GameSession::return_to_title',
+          'birdman_game_core::game_session::GameSession::prepare_flight_with_record_factory',
+          'birdman_game_core::game_session::GameSession::cancel_briefing',
+          'birdman_game_core::game_session::GameSession::mark_briefing_ready',
+          'birdman_game_core::game_session::GameSession::fail_briefing',
+          'birdman_game_core::game_session::GameSession::retry_briefing_with_record_factory',
+          'birdman_game_core::game_session::GameSession::start_countdown',
+          'birdman_game_core::game_session::GameSession::countdown_token',
+          'birdman_game_core::game_session::GameSession::observe_countdown_with',
+          'birdman_game_core::game_session::GameSession::cancel_countdown',
+          'birdman_game_core::game_session::GameSession::retry_with_record_factory',
+          'birdman_game_core::game_session::lifecycle::create_configured_record',
+          'birdman_game_core::game_session::lifecycle::verify_game_session_configured_lifecycle',
+          'birdman_game_core::flight_record::FlightRecordHeader::try_new',
+          'birdman_game_core::flight_record::FlightRecordHeader::is_valid',
           'birdman_game_core::game_session::running::verify_game_session_tick_pause_projection',
           'birdman_game_core::flight_record::FlightRecord::finalize',
           'birdman_game_core::flight_record::FlightRecord::finalize_with_failure',

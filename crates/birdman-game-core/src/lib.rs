@@ -102,6 +102,7 @@ pub use replay_clock::{ReplayClock, ReplayClockError, ReplayRate};
 /// ```
 /// assert_eq!(birdman_game_core::PHYSICS_HZ, 100);
 /// ```
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub const PHYSICS_HZ: u32 = 100;
 
 /// Version of the physical equations and integration semantics used by this core.

@@ -25,6 +25,7 @@ use crate::tail_simulation::{
 };
 use crate::wind_field::WindError;
 
+mod lifecycle;
 mod running;
 mod terminal;
 
@@ -342,6 +343,7 @@ impl From<FlightExecutionError> for GameSessionError {
 
 /// Outcome of one externally timed observation of the current Countdown attempt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum CountdownProgress {
     /// The attempt is obsolete or Countdown is no longer active.
     Ignored,
@@ -517,6 +519,110 @@ verus! {
                     },
                 (SessionLifecycle::ArchivedReplay { .. }, SessionLifecycle::Title) => !entering && outcome == Ok(()),
                 _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+            }
+        }
+    }
+}
+
+#[cfg(verus_only)]
+verus! {
+    impl<'a> GameSession<'a> {
+        /// Preparation retains the attract owner and monotonic attempt token.
+        pub closed spec fn lifecycle_globals_preserved(self, before: Self) -> bool {
+            self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
+        }
+
+        /// Setup is admitted only from the actual public lifecycle phases.
+        pub closed spec fn opened_setup(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && if matches!(before.phase(), SessionPhase::Title | SessionPhase::BriefingPreparing
+                | SessionPhase::BriefingReady | SessionPhase::BriefingFailed { .. }
+                | SessionPhase::Countdown { .. } | SessionPhase::Result) {
+                outcome == Ok(()) && self.lifecycle == SessionLifecycle::FlightSetup
+            } else { outcome == Err(GameSessionError::InvalidTransition) && self == before }
+        }
+
+        /// Title navigation rejects without changing an inadmissible owner.
+        pub closed spec fn returned_to_title(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && if matches!(before.phase(), SessionPhase::FlightSetup | SessionPhase::Result) {
+                outcome == Ok(()) && self.lifecycle == SessionLifecycle::Title
+            } else { outcome == Err(GameSessionError::InvalidTransition) && self == before }
+        }
+
+        /// Briefing cancellation drops only the configured preparation owner.
+        pub closed spec fn cancelled_briefing(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && if matches!(before.phase(), SessionPhase::BriefingPreparing
+                | SessionPhase::BriefingReady | SessionPhase::BriefingFailed { .. }) {
+                outcome == Ok(()) && self.lifecycle == SessionLifecycle::FlightSetup
+            } else { outcome == Err(GameSessionError::InvalidTransition) && self == before }
+        }
+
+        closed spec fn briefing_updated(self, before: Self, phase: ConfiguredPhase,
+            outcome: Result<(), GameSessionError>, admitted: bool) -> bool {
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && if admitted {
+                outcome == Ok(()) && match (before.lifecycle, self.lifecycle) {
+                    (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                        next.configuration == previous.configuration && next.record == previous.record
+                            && next.phase == phase,
+                    _ => false,
+                }
+            } else { outcome == Err(GameSessionError::InvalidTransition) && self == before }
+        }
+
+        /// Readiness retains the same configuration and record.
+        pub closed spec fn briefing_ready(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.briefing_updated(before, ConfiguredPhase::Ready, outcome,
+                before.phase() == SessionPhase::BriefingPreparing)
+        }
+
+        /// Preparation failure retains its original typed reason and payloads.
+        pub closed spec fn briefing_failed(self, before: Self, reason: BriefingFailure, outcome: Result<(), GameSessionError>) -> bool {
+            self.briefing_updated(before, ConfiguredPhase::Failed { reason }, outcome,
+                before.phase() == SessionPhase::BriefingPreparing)
+        }
+
+        /// Countdown cancellation retains the sealed payloads and attempt token.
+        pub closed spec fn countdown_cancelled(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.briefing_updated(before, ConfiguredPhase::Ready, outcome,
+                matches!(before.phase(), SessionPhase::Countdown { .. }))
+        }
+
+        /// The public token comes from the same active Countdown payload.
+        pub closed spec fn countdown_token_matches(self, token: Option<u32>) -> bool {
+            token == match self.lifecycle {
+                SessionLifecycle::Configured(configured) => match configured.phase {
+                    ConfiguredPhase::Countdown(countdown) => Some(countdown.token_value()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+
+        /// Start either creates a valid new attempt or preserves the entire owner.
+        pub closed spec fn countdown_started(self, before: Self, duration: u32,
+            outcome: Result<(), GameSessionError>) -> bool {
+            self.attract_record == before.attract_record && self.projection_valid()
+            && match outcome {
+                Ok(()) => before.phase() == SessionPhase::BriefingReady
+                    && match (before.lifecycle, self.lifecycle) {
+                        (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                            next.configuration == previous.configuration && next.record == previous.record
+                            && match next.phase {
+                                ConfiguredPhase::Countdown(countdown) => countdown.valid()
+                                    && countdown.token_value() == before.countdown_token as int + 1
+                                    && countdown.duration_value() == duration && countdown.elapsed_value() == 0
+                                    && self.countdown_token == countdown.token_value(),
+                                _ => false,
+                            },
+                        _ => false,
+                    },
+                Err(error) => self == before && if before.phase() != SessionPhase::BriefingReady {
+                    error == GameSessionError::InvalidTransition
+                } else if duration == 0 { error == GameSessionError::InvalidCountdown }
+                else { error == GameSessionError::CountdownTokenExhausted && before.countdown_token == u32::MAX },
             }
         }
     }
@@ -966,6 +1072,10 @@ impl<'a> GameSession<'a> {
     }
 
     /// Opens FlightSetup from Title, Briefing, Countdown, or Result.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).opened_setup(*old(self), outcome),
+    ))]
     pub fn open_setup(&mut self) -> Result<(), GameSessionError> {
         if !matches!(
             self.phase(),
@@ -983,6 +1093,10 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns to Title from FlightSetup or Result.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).returned_to_title(*old(self), outcome),
+    ))]
     pub fn return_to_title(&mut self) -> Result<(), GameSessionError> {
         if !matches!(
             self.phase(),
@@ -999,22 +1113,14 @@ impl<'a> GameSession<'a> {
         &mut self,
         configuration: GameSessionConfiguration<'a>,
     ) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::FlightSetup {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        let header =
-            FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
-                .map_err(GameSessionError::Record)?;
-        let record = FlightRecord::try_new(header).map_err(GameSessionError::Record)?;
-        self.lifecycle = SessionLifecycle::Configured(ConfiguredSession {
-            configuration,
-            record,
-            phase: ConfiguredPhase::Preparing,
-        });
-        Ok(())
+        self.prepare_flight_with_record_factory(configuration, FlightRecord::try_new)
     }
 
     /// Cancels Briefing preparation and returns to FlightSetup.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).cancelled_briefing(*old(self), outcome),
+    ))]
     pub fn cancel_briefing(&mut self) -> Result<(), GameSessionError> {
         if !matches!(
             self.phase(),
@@ -1029,8 +1135,12 @@ impl<'a> GameSession<'a> {
     }
 
     /// Confirms required assets are available and marks Briefing ready.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).briefing_ready(*old(self), outcome),
+    ))]
     pub fn mark_briefing_ready(&mut self) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::BriefingPreparing {
+        if !matches!(self.phase(), SessionPhase::BriefingPreparing) {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configured_mut()?.phase = ConfiguredPhase::Ready;
@@ -1038,8 +1148,12 @@ impl<'a> GameSession<'a> {
     }
 
     /// Records a typed preparation failure without creating a flight result.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).briefing_failed(*old(self), reason, outcome),
+    ))]
     pub fn fail_briefing(&mut self, reason: BriefingFailure) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::BriefingPreparing {
+        if !matches!(self.phase(), SessionPhase::BriefingPreparing) {
             return Err(GameSessionError::InvalidTransition);
         }
         self.configured_mut()?.phase = ConfiguredPhase::Failed { reason };
@@ -1048,37 +1162,38 @@ impl<'a> GameSession<'a> {
 
     /// Retries preparation after a classified failure.
     pub fn retry_briefing(&mut self) -> Result<(), GameSessionError> {
-        if !matches!(self.phase(), SessionPhase::BriefingFailed { .. }) {
-            return Err(GameSessionError::InvalidTransition);
-        }
-        let configured = self.configured_mut()?;
-        let configuration = &configured.configuration;
-        let header =
-            FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks)
-                .map_err(GameSessionError::Record)?;
-        let record = FlightRecord::try_new(header).map_err(GameSessionError::Record)?;
-        configured.record = record;
-        configured.phase = ConfiguredPhase::Preparing;
-        Ok(())
+        self.retry_briefing_with_record_factory(FlightRecord::try_new)
     }
 
     /// Starts a whole-second presentation countdown without advancing physical time.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).countdown_started(*old(self), duration_seconds, outcome),
+            final(self).projection_valid(),
+            outcome.is_err() ==> *final(self) == *old(self),
+            !matches!(old(self).snapshot(), SessionSnapshot::BriefingReady { .. })
+                ==> outcome == Err(GameSessionError::InvalidTransition),
+    ))]
     pub fn start_countdown(&mut self, duration_seconds: u32) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::BriefingReady {
+        if !matches!(self.phase(), SessionPhase::BriefingReady) {
             return Err(GameSessionError::InvalidTransition);
         }
-        let countdown = start_countdown(self.countdown_token, duration_seconds).map_err(
-            |error| match error {
-                CountdownStartError::InvalidDuration => GameSessionError::InvalidCountdown,
-                CountdownStartError::TokenExhausted => GameSessionError::CountdownTokenExhausted,
-            },
-        )?;
+        let countdown = match start_countdown(self.countdown_token, duration_seconds) {
+            Ok(countdown) => countdown,
+            Err(CountdownStartError::InvalidDuration) => {
+                return Err(GameSessionError::InvalidCountdown);
+            }
+            Err(CountdownStartError::TokenExhausted) => {
+                return Err(GameSessionError::CountdownTokenExhausted);
+            }
+        };
         self.configured_mut()?.phase = ConfiguredPhase::Countdown(countdown);
         self.countdown_token = countdown.token();
         Ok(())
     }
 
     /// Returns the current attempt token; cancellation or launch makes it unavailable.
+    #[cfg_attr(verus_only, verus_spec(result => ensures self.countdown_token_matches(result)))]
     pub const fn countdown_token(&self) -> Option<u32> {
         match self.configured() {
             Some(ConfiguredSession {
@@ -1114,53 +1229,27 @@ impl<'a> GameSession<'a> {
         elapsed_seconds: f64,
         frame_available: bool,
     ) -> Result<CountdownProgress, GameSessionError> {
-        let Some(configured) = self.configured() else {
-            return Ok(CountdownProgress::Ignored);
-        };
-        let ConfiguredPhase::Countdown(countdown) = configured.phase else {
-            return Ok(CountdownProgress::Ignored);
-        };
-        let advanced = Duration::try_from_secs_f64(elapsed_seconds)
-            .ok()
-            .and_then(|elapsed| {
-                Duration::from_nanos(countdown.elapsed_nanos()).checked_add(elapsed)
-            })
-            .map(|elapsed| elapsed.as_nanos());
-        let advance = countdown
-            .observe(token, advanced, frame_available)
-            .map_err(|()| GameSessionError::InvalidCountdownElapsed)?;
-        let configured = self.configured_mut()?;
-        match advance {
-            CountdownAdvance::Ignored => return Ok(CountdownProgress::Ignored),
-            CountdownAdvance::Cancelled => {
-                configured.phase = ConfiguredPhase::Ready;
-                return Ok(CountdownProgress::Cancelled);
-            }
-            CountdownAdvance::Waiting(countdown) => {
-                configured.phase = ConfiguredPhase::Countdown(countdown);
-                return Ok(CountdownProgress::Waiting {
-                    remaining_seconds: countdown.remaining_seconds(),
-                });
-            }
-            CountdownAdvance::LaunchReady => {}
-        }
-        let configuration = &configured.configuration;
-        let initial = configuration.initial_state();
-        let telemetry = configuration
-            .telemetry(initial.flight_state())
-            .map_err(GameSessionError::Telemetry)?;
-        configured
-            .record
-            .begin_tail(initial, telemetry)
-            .map_err(GameSessionError::Record)?;
-        configured.phase = ConfiguredPhase::Flight(ActiveFlight {
-            state: initial,
-            execution: FlightExecution::Running,
-        });
-        Ok(CountdownProgress::Launched)
+        self.observe_countdown_with(
+            token,
+            frame_available,
+            |countdown| {
+                Duration::try_from_secs_f64(elapsed_seconds)
+                    .ok()
+                    .and_then(|elapsed| {
+                        Duration::from_nanos(countdown.elapsed_nanos()).checked_add(elapsed)
+                    })
+                    .map(|elapsed| elapsed.as_nanos())
+            },
+            |configuration| configuration.initial_state(),
+            |configuration, state| configuration.telemetry(state),
+        )
     }
 
     /// Cancels Countdown and returns to the same ready Briefing.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).countdown_cancelled(*old(self), outcome),
+    ))]
     pub fn cancel_countdown(&mut self) -> Result<(), GameSessionError> {
         if !matches!(self.phase(), SessionPhase::Countdown { .. }) {
             return Err(GameSessionError::InvalidTransition);
@@ -1248,24 +1337,6 @@ impl<'a> GameSession<'a> {
     /// A failed record reservation preserves the finalized result and record.
     pub fn retry(&mut self) -> Result<(), GameSessionError> {
         self.retry_with_record_factory(FlightRecord::try_new)
-    }
-
-    fn retry_with_record_factory(
-        &mut self,
-        create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
-    ) -> Result<(), GameSessionError> {
-        self.configured_mut()?
-            .retry_with_record_factory(|configuration| {
-                let header = FlightRecordHeader::try_new(
-                    configuration.identity,
-                    configuration.maximum_flight_ticks,
-                )?;
-                create_record(header)
-            })
-            .map_err(|error| match error {
-                RetryError::InvalidTransition => GameSessionError::InvalidTransition,
-                RetryError::Record(error) => GameSessionError::Record(error),
-            })
     }
 
     fn finalize_tick(

@@ -20,6 +20,7 @@ pub use control::{
 };
 
 /// Maximum configured physical flight ticks in the initial record implementation.
+#[cfg_attr(verus_only, verus_verify)]
 pub const MAX_FLIGHT_RECORD_TICKS: usize = 4_000;
 
 /// Maximum sample count includes tick zero and the configured maximum integer tick.
@@ -39,6 +40,16 @@ pub struct FlightRecordHeader {
 
 impl FlightRecordHeader {
     /// Creates a header within the core tick and version metadata contracts.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(
+        ensures match Self::try_new(scenario, maximum_flight_ticks) {
+            Ok(header) => header == (Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ })
+                && header.valid(),
+            Err(error) => error == FlightRecordError::InvalidHeader
+                && !(Self { scenario, maximum_flight_ticks, physics_hz: crate::PHYSICS_HZ }).valid(),
+        },
+        returns Self::try_new(scenario, maximum_flight_ticks),
+    ))]
     pub const fn try_new(
         scenario: SessionScenarioIdentity,
         maximum_flight_ticks: u64,
@@ -49,11 +60,14 @@ impl FlightRecordHeader {
             physics_hz: crate::PHYSICS_HZ,
         };
         if !header.is_valid() {
-            return Err(FlightRecordError::InvalidHeader);
+            Err(FlightRecordError::InvalidHeader)
+        } else {
+            Ok(header)
         }
-        Ok(header)
     }
 
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.is_valid()))]
     const fn is_valid(self) -> bool {
         self.maximum_flight_ticks > 0
             && self.maximum_flight_ticks <= MAX_FLIGHT_RECORD_TICKS as u64
@@ -186,6 +200,11 @@ pub type FlightRecord =
 
 #[cfg(verus_only)]
 verus! {
+    impl FlightRecordHeader {
+        /// Projects the executable header validator without exposing its implementation.
+        pub closed spec fn valid(self) -> bool { self.is_valid() }
+    }
+
     impl FlightRecord {
         /// Returns the sequence held by the actual record buffer.
         pub closed spec fn recorded_samples(self) -> Seq<FlightRecordSample> {

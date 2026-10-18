@@ -234,6 +234,26 @@ Result.scoreは同じconfigurationとterminalを受け取ったscore callbackの
 公開数値closureのbody、control modeと物理関数の具体bind、allocator、Duration変換、Replay clockの浮動小数点演算は未証明である。
 既存のowner回帰は同じGameSession境界を通し、callback順序・元エラー優先順・戻りsnapshotを確認する。
 
+### 準備・Countdown・Retryのcaller接続
+
+実GameSessionのSetup・Briefing・Countdownの認可と遷移を検証し、拒否時のowner全保持、
+同じconfiguration・attract記録・attempt tokenの保持を接続する。実header constructorのvalidatorを
+dual_specで参照し、封印済みidentityとtick上限から生成したheaderを同じrecord factoryへ渡す。
+準備と二種類のRetryはfactory成功後だけrecordを交換し、失敗時は旧ownerを保持する。
+factoryが返した同じrecordへの置換を保証し、allocatorが生成する空recordの全形式保証とは区分する。
+
+公開observe_countdownは従来のDuration変換・初期状態生成・telemetryをbindし、同じowner上のprivate methodが
+既存CountdownState::observeとrecord.begin_tailを呼ぶ。非Countdownはcallbackを呼ばずIgnoredとなる。
+古いtokenの拒否優先順、有効な整数deadline、同じconfigurationからのcallback出力転送、begin成功後だけの
+FlightRunning commitを保証する。Launch後の再観測はownerを保持してIgnoredとなり、再発進しない。
+合成clientは実prepare・ready・start・observe・beginとRetryを呼び、空recordやtick0を事前条件に追加しない。
+Titleからの発進拒否は公開APIを用いるpositiveと指定negativeでも確認する。
+
+Duration/IEEE変換、初期状態とtelemetryの数値関数本体、allocatorとtry_reserve_exactは未証明である。
+公開prepare/retryの具体的なFlightRecord::try_new bindとrecord新規化は通常Rust回帰で確認し、
+private factoryの返却値転送の形式保証からallocatorの正しさを導かない。scenario・seed・初期条件の保持は
+同configurationの構造的保持であり、物理妥当性や数値計算全体の証明ではない。
+
 ### Running tickの制御body
 
 GameSessionのprivate owner境界は、既存ConfiguredSessionのprivate methodへ制御を委譲する。

@@ -382,6 +382,81 @@ fn countdown_preserves_clock_validation_order_and_large_duration_inputs() {
 }
 
 #[test]
+fn countdown_owner_orders_callbacks_and_launches_only_once() {
+    let mut current = GameSession::new();
+    assert_eq!(
+        current.observe_countdown_with(
+            0,
+            false,
+            |_| panic!("Title must not observe the clock"),
+            |_| panic!("Title must not create initial state"),
+            |_, _| panic!("Title must not evaluate telemetry"),
+        ),
+        Ok(CountdownProgress::Ignored)
+    );
+    current.open_setup().unwrap();
+    let configuration = configuration(100);
+    let identity = configuration.identity;
+    let initial = configuration.initial_state();
+    let reading = configuration.telemetry(initial.flight_state()).unwrap();
+    current.prepare_flight(configuration).unwrap();
+    current.mark_briefing_ready().unwrap();
+    current.start_countdown(1).unwrap();
+    let token = current.countdown_token().unwrap();
+    let before = current.snapshot();
+    assert_eq!(
+        current.observe_countdown_with(
+            token - 1,
+            false,
+            |_| None,
+            |_| panic!("An obsolete token must not create initial state"),
+            |_, _| panic!("An obsolete token must not evaluate telemetry"),
+        ),
+        Ok(CountdownProgress::Ignored)
+    );
+    assert_eq!(current.snapshot(), before);
+    let callbacks = core::cell::RefCell::new(alloc::vec::Vec::new());
+    assert_eq!(
+        current.observe_countdown_with(
+            token,
+            true,
+            |_| {
+                callbacks.borrow_mut().push("clock");
+                Some(1_000_000_000)
+            },
+            |sealed| {
+                callbacks.borrow_mut().push("initial");
+                assert_eq!(sealed.identity, identity);
+                initial
+            },
+            |sealed, state| {
+                callbacks.borrow_mut().push("telemetry");
+                assert_eq!(sealed.identity, identity);
+                assert_eq!(state, initial.flight_state());
+                Ok(reading)
+            },
+        ),
+        Ok(CountdownProgress::Launched)
+    );
+    assert_eq!(*callbacks.borrow(), ["clock", "initial", "telemetry"]);
+    let launched = current.snapshot();
+    assert_eq!(launched.tail_flight_state(), Some(initial));
+    assert_eq!(current.flight_record().unwrap().sample_count(), 1);
+    assert_eq!(
+        current.observe_countdown_with(
+            token,
+            false,
+            |_| panic!("Running must not observe the Countdown clock"),
+            |_| panic!("Running must not recreate initial state"),
+            |_, _| panic!("Running must not reevaluate launch telemetry"),
+        ),
+        Ok(CountdownProgress::Ignored)
+    );
+    assert_eq!(current.snapshot(), launched);
+    assert_eq!(current.flight_record().unwrap().sample_count(), 1);
+}
+
+#[test]
 fn countdown_nanosecond_boundary_and_record_start_failure_preserve_commit_order() {
     let mut current = session(100);
     current.start_countdown(3).unwrap();
@@ -1053,4 +1128,68 @@ fn briefing_failure_is_typed_retryable_and_never_creates_result() {
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingPreparing);
     session.mark_briefing_ready().unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
+}
+
+#[test]
+fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_sealed_header() {
+    let mut session = GameSession::new();
+    session
+        .install_attract_record(finalized_demo_record())
+        .unwrap();
+    session.countdown_token = 9;
+    session.open_setup().unwrap();
+    let sealed = configuration(100);
+    let identity = sealed.identity;
+    let initial = sealed.initial_state();
+    let header = crate::FlightRecordHeader::try_new(identity, 100).unwrap();
+    let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
+    let setup = session.snapshot();
+    assert_eq!(
+        session.prepare_flight_with_record_factory(sealed, |requested| {
+            assert_eq!(requested, header);
+            Err(crate::FlightRecordError::AllocationFailed)
+        }),
+        Err(GameSessionError::Record(
+            crate::FlightRecordError::AllocationFailed
+        ))
+    );
+    assert_eq!(session.snapshot(), setup);
+    assert!(session.flight_record().is_none());
+    session.prepare_flight(configuration(100)).unwrap();
+    session
+        .fail_briefing(super::BriefingFailure::AssetUnavailable)
+        .unwrap();
+    let failed = session.snapshot();
+    let record_storage = session.flight_record().unwrap().samples().as_ptr();
+    assert_eq!(
+        session.retry_briefing_with_record_factory(|requested| {
+            assert_eq!(requested, header);
+            Err(crate::FlightRecordError::AllocationFailed)
+        }),
+        Err(GameSessionError::Record(
+            crate::FlightRecordError::AllocationFailed
+        ))
+    );
+    assert_eq!(session.snapshot(), failed);
+    assert_eq!(
+        session.flight_record().unwrap().samples().as_ptr(),
+        record_storage
+    );
+    session
+        .retry_briefing_with_record_factory(|requested| {
+            assert_eq!(requested, header);
+            crate::FlightRecord::try_new(requested)
+        })
+        .unwrap();
+    assert_eq!(session.configuration_identity(), Some(identity));
+    assert_eq!(session.prepared_launch_state(), Some(initial));
+    assert_eq!(session.flight_record().unwrap().header(), header);
+    assert_eq!(session.flight_record().unwrap().sample_count(), 0);
+    assert!(session.flight_record().unwrap().finalization().is_none());
+    assert_eq!(session.snapshot().phase(), SessionPhase::BriefingPreparing);
+    assert_eq!(session.countdown_token, 9);
+    assert_eq!(
+        session.attract_record.as_ref().unwrap().samples().as_ptr(),
+        attract_storage
+    );
 }
