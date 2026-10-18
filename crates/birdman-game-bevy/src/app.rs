@@ -157,7 +157,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
     water_verification = verification_water_auto(water_verification, water_auto)?;
     let flight_log_export =
-        flight_log::FlightLogExport::new(&std::env::current_dir()?, export_directory.as_deref());
+        flight_log::FlightLogExport::new(&std::env::current_dir()?, export_directory.as_deref())?;
     println!(
         "飛行ログの保存先: {}",
         flight_log_export.directory().display()

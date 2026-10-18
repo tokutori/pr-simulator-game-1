@@ -72,15 +72,11 @@ impl Error for FlightLogError {
 }
 
 impl FlightLogExport {
-    pub(crate) fn new(current_directory: &Path, configured: Option<&Path>) -> Self {
+    pub(crate) fn new(current_directory: &Path, configured: Option<&Path>) -> io::Result<Self> {
         let requested = configured.unwrap_or_else(|| Path::new("flight-logs"));
-        Self {
-            directory: if requested.is_absolute() {
-                requested.to_owned()
-            } else {
-                current_directory.join(requested)
-            },
-        }
+        Ok(Self {
+            directory: std::path::absolute(current_directory.join(requested))?,
+        })
     }
 
     pub(crate) fn directory(&self) -> &Path {
@@ -204,17 +200,27 @@ pub(crate) mod tests {
     fn resolves_default_relative_and_absolute_without_changing_working_directory() {
         let base = std::env::temp_dir();
         assert_eq!(
-            FlightLogExport::new(&base, None).directory(),
+            FlightLogExport::new(&base, None).unwrap().directory(),
             base.join("flight-logs")
         );
         assert_eq!(
-            FlightLogExport::new(&base, Some(Path::new("nested/logs"))).directory(),
+            FlightLogExport::new(&base, Some(Path::new("nested/logs")))
+                .unwrap()
+                .directory(),
             base.join("nested/logs")
         );
         assert_eq!(
-            FlightLogExport::new(&base.join("other"), Some(&base)).directory(),
+            FlightLogExport::new(&base.join("other"), Some(&base))
+                .unwrap()
+                .directory(),
             base
         );
+        for requested in [r"\flight-logs", r"C:flight-logs"] {
+            let export = FlightLogExport::new(&base, Some(Path::new(requested))).unwrap();
+            assert!(export.directory().is_absolute());
+            assert!(export.directory().ends_with("flight-logs"));
+        }
+        assert!(FlightLogExport::new(&base, Some(Path::new("invalid\0path"))).is_err());
     }
 
     #[test]
@@ -235,7 +241,7 @@ pub(crate) mod tests {
     #[test]
     fn unavailable_record_does_not_create_output_directory() {
         let directory = TestDirectory::new();
-        let export = FlightLogExport::new(&directory.0, None);
+        let export = FlightLogExport::new(&directory.0, None).unwrap();
         assert!(matches!(
             export.save(&NativeSession::default(), FlightLogFormat::Json),
             Err(FlightLogError::RecordUnavailable)

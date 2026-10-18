@@ -3269,7 +3269,7 @@ mod tests {
             let node = app.world().resource::<RetainedUi>().widgets[id].node;
             assert!(!app.world().get::<MenuButton>(node).unwrap().enabled);
         }
-        app.insert_resource(FlightLogExport::new(&directory.0, None));
+        app.insert_resource(FlightLogExport::new(&directory.0, None).unwrap());
         app.update();
         let expected = {
             let session = app.world().resource::<NativeSession>();
@@ -3355,7 +3355,7 @@ mod tests {
         let blocked = directory.0.join("existing-file");
         std::fs::write(&blocked, b"preserve\n").unwrap();
         let mut app = analysis_app();
-        app.insert_resource(FlightLogExport::new(&directory.0, Some(&blocked)));
+        app.insert_resource(FlightLogExport::new(&directory.0, Some(&blocked)).unwrap());
         app.update();
         let before = app
             .world()
@@ -3373,6 +3373,37 @@ mod tests {
         assert_eq!(std::fs::read(&blocked).unwrap(), b"preserve\n");
         assert!(std::fs::read_dir(&directory.0).unwrap().count() == 1);
         assert!(platform_input(app.world_mut()).flight_log_available);
+    }
+
+    #[test]
+    fn flight_log_destination_notice_is_not_projected_over_live_flight_or_existing_failure() {
+        use super::super::flight_log::tests::TestDirectory;
+
+        let directory = TestDirectory::new();
+        let mut app = analysis_app();
+        app.insert_resource(FlightLogExport::new(&directory.0, None).unwrap());
+        assert!(
+            platform_input(app.world_mut())
+                .notification
+                .contains("飛行ログの保存先: ")
+        );
+        press(&mut app, "game-result-retry");
+        press(&mut app, "game-briefing-start");
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            assert_eq!(
+                session.game.core_session().snapshot().phase(),
+                birdman_game_core::SessionPhase::FlightRunning
+            );
+            session.notice = Some("既存の操作失敗".to_owned());
+        }
+        assert_eq!(
+            platform_input(app.world_mut()).notification,
+            "既存の操作失敗"
+        );
     }
 
     fn add_ui_layout(app: &mut App, width: u32, height: u32) -> Entity {
