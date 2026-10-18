@@ -6,6 +6,12 @@ use birdman_game_core::{
 use vstd::prelude::*;
 
 verus! {
+    fn verify_domain_session_initial_projection() {
+        let session = birdman_game_core::GameSession::new();
+        assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
+        assert(session.flight_record().is_none());
+    }
+
     fn verify_domain_finalization_commit(
         record: &mut FlightRecord,
         reason: SessionEndReason,

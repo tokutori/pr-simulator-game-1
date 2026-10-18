@@ -214,13 +214,29 @@ Err時の実owner保持、header・sample列・capacity保持、成功時のreas
 score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
 公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
 時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
-Running認可と実tickの制御bodyは次節の契約へ接続する。外側のGameSession wrapper全体、
+Running認可と実tickの制御bodyは次節の契約へ接続する。数値callbackをbindする外側GameSession wrapper全体、
 数値関数が生成するreportの由来、全tickの最新sample/terminal state相関、数値score評価は未証明の境界である。
 これらを仮定して終端化全体を完了扱いにせず、親#382を継続する。
 
+### GameSessionの所有境界
+
+実`GameSession`と`SessionLifecycle`を検証し、同じconfiguration・record・physical stateと無関係なownerの保持を接続する。
+到達するscenario、polar、geometry、wind等の既存データ型へ検証属性を付けるが、その数値関数の本体を免除しない。
+公開pause/clear/resumeは実ActiveFlightへ委譲し、拒否分類と外的停止理由の保持を保証する。
+エラー変換は固定vstdのFromSpecImplへ同じ本番From bodyを接続し、変換用の外部仕様を追加しない。
+ResultとReplayの往復は同じconfiguration・record・resultを保持し、ArchivedReplayからの退出だけがTitleへ戻る。
+公開snapshot/recordの投影は`dual_spec`により実bodyへ接続する。Countdownの秒数投影には、実start_countdownが生成する
+有効なCountdown状態を要求し、Duration変換や全ての構築経路の検証済みを意味しない。
+
+公開advanceは数値closureのbindだけを残し、同じGameSession上のprivate methodでowner認可、封印済みtick上限/identity、
+既存Running呼出し、返すsnapshotを扱う。callbackのrequiresは従来の呼出し可能性だけであり、latestとpreviousの相関を追加しない。
+Result.scoreは同じconfigurationとterminalを受け取ったscore callbackの返却値へ接続し、scoreの数式の正しさとは区分する。
+公開数値closureのbody、control modeと物理関数の具体bind、allocator、Duration変換、Replay clockの浮動小数点演算は未証明である。
+既存のowner回帰は同じGameSession境界を通し、callback順序・元エラー優先順・戻りsnapshotを確認する。
+
 ### Running tickの制御body
 
-公開GameSessionのadvanceは、既存ConfiguredSessionのprivate methodへ制御を委譲する。
+GameSessionのprivate owner境界は、既存ConfiguredSessionのprivate methodへ制御を委譲する。
 実ConfiguredPhaseのrunning_stateだけがRunningのstateを返し、拒否時は数値callbackを呼ばずowner全体を保持する。
 この認可getterは同じproduction moduleを用いる既存suiteの必須positiveと指定negativeへ接続する。
 認可getter単体の保証と、実tick bodyのactual core直接検証を区分する。
@@ -243,7 +259,8 @@ NoElapsedIntervalの必須clientは同じ公開append/finalizeを呼び、sample
 finalize拒否の回帰には内部不整合を明示的に注入し、利用者操作から発生した障害とは扱わない。
 
 外側の実callerは既存scenario/telemetry/score関数をbindし、同じconfigurationのtick上限・identityを渡す。
-この具体wiring、数値callbackのbody、任意reportと前sampleの等値、wrapper全体は形式証明の対象外である。
+封印済み上限/identityとownerへの転送は所有境界の契約へ接続する。
+数値callbackの具体bind/body、任意reportと前sampleの等値、wrapper全体は形式証明の対象外である。
 0-fractionの本番private producerは同じpreviousのFlightState・incidence・pilot targetを構造的に保持し、
 newly applied controlsを持たない。その実bodyと、同じpreviousによる公開begin/NoElapsed append/finalizeを呼ぶ
 private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、
