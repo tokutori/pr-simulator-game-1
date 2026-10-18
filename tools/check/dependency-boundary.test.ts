@@ -49,6 +49,14 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
+it("keeps the registered presentation triangulator in the shared session layer", () => {
+  const earcut = { name: "earcut" };
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [earcut] }]); }).not.toThrow();
+  expect(() => { assertDependencyBoundary(core(earcut)); }).toThrow("Forbidden dependency");
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-wasm", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
+});
+
 describe("core proof dependency boundary", () => {
   const proof = { ...schemaDependency, name: "vstd", req: "=0.0.0-2026-10-04-0306", features: ["alloc"] };
   const features = { "verus-proof": ["dep:vstd"] };
