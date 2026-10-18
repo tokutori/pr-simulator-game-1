@@ -2,7 +2,7 @@ use super::NativeScreenRender;
 use bevy::ecs as bevy_ecs;
 use bevy::{
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
+    diagnostic::{Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
     pbr::{PendingMeshMaterialQueues, Shadow},
     platform::time::Instant,
@@ -29,7 +29,7 @@ use birdman_game_session::{
     screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const GPU_WORK: DiagnosticPath =
     DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
@@ -424,31 +424,67 @@ pub(crate) struct SourceWork {
     pub(crate) shadow: ScreenShadowMap,
 }
 
-pub(crate) fn source_work(
+pub(crate) fn source_history(
     store: &DiagnosticsStore,
-    gpu: &DiagnosticMeasurement,
-) -> Result<SourceWork, TimingFailure> {
-    decode_work(metadata_words(store, gpu)?, gpu.value)
+) -> impl Iterator<Item = (Instant, Result<SourceWork, TimingFailure>)> + '_ {
+    let mut batches = BTreeMap::new();
+    for (index, path) in METADATA.iter().enumerate() {
+        if let Some(diagnostic) = store.get(path) {
+            for measurement in diagnostic.measurements() {
+                let values = batches
+                    .entry(measurement.time)
+                    .or_insert([None; METADATA_WORDS]);
+                values[index] = Some(if values[index].is_none() {
+                    measurement.value
+                } else {
+                    f64::NAN
+                });
+            }
+        }
+    }
+    store
+        .get(&GPU_WORK)
+        .into_iter()
+        .flat_map(Diagnostic::measurements)
+        .map(move |gpu| {
+            let words = batches
+                .get(&gpu.time)
+                .copied()
+                .ok_or(TimingFailure::IncompleteBatch)
+                .and_then(decode_metadata);
+            (
+                gpu.time,
+                words.and_then(|words| decode_work(words, gpu.value)),
+            )
+        })
 }
 
 fn metadata_words(
     store: &DiagnosticsStore,
     gpu: &DiagnosticMeasurement,
 ) -> Result<[u32; METADATA_WORDS], TimingFailure> {
-    let mut words = [0; METADATA_WORDS];
-    for (destination, path) in words.iter_mut().zip(&METADATA) {
-        let metadata = store
-            .get_measurement(path)
+    decode_metadata(METADATA.map(|path| {
+        store
+            .get_measurement(&path)
             .filter(|value| value.time == gpu.time)
             .or_else(|| {
-                store.get(path).and_then(|diagnostic| {
+                store.get(&path).and_then(|diagnostic| {
                     diagnostic
                         .measurements()
                         .find(|value| value.time == gpu.time)
                 })
             })
-            .ok_or(TimingFailure::IncompleteBatch)?;
-        *destination = word(metadata.value).ok_or(TimingFailure::InvalidMetadata)?;
+            .map(|value| value.value)
+    }))
+}
+
+fn decode_metadata(
+    values: [Option<f64>; METADATA_WORDS],
+) -> Result<[u32; METADATA_WORDS], TimingFailure> {
+    let mut words = [0; METADATA_WORDS];
+    for (destination, value) in words.iter_mut().zip(values) {
+        *destination = word(value.ok_or(TimingFailure::IncompleteBatch)?)
+            .ok_or(TimingFailure::InvalidMetadata)?;
     }
     Ok(words)
 }
@@ -655,12 +691,16 @@ pub(crate) mod tests {
             9.0,
             (ScreenRenderScale::Half, ScreenShadowMap::Quarter),
         );
-        let old = source_work(&store, &first).unwrap();
+        let old = source_history(&store)
+            .find(|(time, _)| *time == first.time)
+            .unwrap()
+            .1
+            .unwrap();
         assert_eq!(
             (old.sample.epoch, old.scale, old.shadow),
             (7, ScreenRenderScale::Full, ScreenShadowMap::Full)
         );
-        let latest = source_work(&store, store.get_measurement(&GPU_WORK).unwrap()).unwrap();
+        let latest = source_history(&store).last().unwrap().1.unwrap();
         assert_eq!(
             (latest.sample.epoch, latest.scale, latest.shadow),
             (8, ScreenRenderScale::Half, ScreenShadowMap::Quarter)

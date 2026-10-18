@@ -438,9 +438,11 @@ fn summarize_source_timing(
     };
     let mut grouped: BTreeMap<_, Vec<timing::SourceWork>> = BTreeMap::new();
     let mut frames = BTreeSet::new();
+    let mut history_limit = TIMING_HISTORY_LIMIT;
     for diagnostic in diagnostics.iter().filter(|diagnostic| {
         diagnostic.path() == &timing::GPU_WORK || timing::is_source_metadata(diagnostic.path())
     }) {
+        history_limit = history_limit.min(diagnostic.get_max_history_length());
         summary.history_incomplete |= diagnostic.history_len()
             >= diagnostic.get_max_history_length()
             && diagnostic
@@ -448,37 +450,35 @@ fn summarize_source_timing(
                 .next()
                 .is_some_and(|value| value.time >= arrivals_since);
     }
-    if let Some(diagnostic) = diagnostics.get(&timing::GPU_WORK) {
-        for measurement in diagnostic.measurements() {
-            let source = match timing::source_work(diagnostics, measurement) {
-                Ok(source) => source,
-                Err(_) => {
-                    summary.unassigned_arrivals += usize::from(measurement.time >= arrivals_since);
-                    continue;
-                }
-            };
-            if source.sample.frame <= start.frame || source.sample.frame > end.frame {
+    for (arrival, source) in timing::source_history(diagnostics) {
+        let source = match source {
+            Ok(source) => source,
+            Err(_) => {
+                summary.unassigned_arrivals += usize::from(arrival >= arrivals_since);
                 continue;
             }
-            if source.sample.source_ms < start.milliseconds as f64
-                || source.sample.source_ms > end.milliseconds as f64
-            {
-                summary.unassigned_arrivals += 1;
-                continue;
-            }
-            if !frames.insert(source.sample.frame) {
-                summary.duplicate_frames += 1;
-                continue;
-            }
-            grouped
-                .entry((
-                    source.sample.epoch,
-                    source.scale.percent(),
-                    source.shadow.size(),
-                ))
-                .or_default()
-                .push(source);
+        };
+        if source.sample.frame <= start.frame || source.sample.frame > end.frame {
+            continue;
         }
+        if source.sample.source_ms < start.milliseconds as f64
+            || source.sample.source_ms > end.milliseconds as f64
+        {
+            summary.unassigned_arrivals += 1;
+            continue;
+        }
+        if !frames.insert(source.sample.frame) {
+            summary.duplicate_frames += 1;
+            continue;
+        }
+        grouped
+            .entry((
+                source.sample.epoch,
+                source.scale.percent(),
+                source.shadow.size(),
+            ))
+            .or_default()
+            .push(source);
     }
     summary.received_frames = frames.len();
     for (key, samples) in grouped {
@@ -498,7 +498,7 @@ fn summarize_source_timing(
                 received_count: samples.len(),
                 invalid_count: 0,
                 sample_span_ms: Some(maximum - minimum),
-                history_limit: TIMING_HISTORY_LIMIT,
+                history_limit,
                 history_incomplete: summary.history_incomplete,
                 mean_ms: None,
                 p95_ms: None,
