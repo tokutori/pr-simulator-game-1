@@ -77,7 +77,7 @@ try {
   await click("game-setup-select-assistance-3");
   await click("game-setup-start");
   await scene("Briefing");
-  report.briefing = await control("game-briefing-conditions").innerText();
+  report.briefing = await page.locator(".screen-ui-shell").innerText();
   await click("game-briefing-start");
   await scene("Flight");
   if (await page.evaluate(() => window.__liveAuto.phase) === 5) await click("game-flight-pause");
