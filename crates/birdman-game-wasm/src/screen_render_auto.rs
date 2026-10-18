@@ -140,6 +140,7 @@ impl ScreenRenderAutoBridge {
             "disjoint" => ScreenRenderInvalidation::Disjoint,
             "interrupted" => ScreenRenderInvalidation::Interrupted,
             "quality_changed" => ScreenRenderInvalidation::QualityChanged,
+            "scene_preparation" => ScreenRenderInvalidation::ScenePreparation { ready: true },
             _ => return Err(JsValue::from_str("unknown Screen rendering invalidation")),
         };
         self.controller.invalidate(reason, now_ms).map_err(error)

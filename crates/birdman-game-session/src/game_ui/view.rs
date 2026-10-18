@@ -1343,7 +1343,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 group_label: "3D描画品質".to_owned(),
                 selected: automatic,
                 description:
-                    "有効GPU計測で解像度を調整し、50%でも負荷が高い場合はshadowを段階調整する。"
+                    "有効GPU計測で解像度、shadow、水面の順に調整する。水面は保持選択を上限とする。"
                         .to_owned(),
             },
         },
