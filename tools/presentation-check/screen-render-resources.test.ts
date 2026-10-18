@@ -91,4 +91,21 @@ describe("production Screen shadow and resolution resource exchange", () => {
     expect(trial.sun.shadow.map).toBe(trial.previous);
     expect(trial.retired).not.toHaveBeenCalled();
   });
+
+  it("commits the prepared water after the shadow swap and attempts both retired cleanups", () => {
+    const trial = fixture();
+    let waterCommitted = false;
+    trial.previous.addEventListener("dispose", () => {
+      expect(waterCommitted).toBe(true);
+      throw new Error("shadow cleanup failed");
+    });
+    const result = applyScreenRenderResources(trial.sun, { initRenderTarget: vi.fn() }, 512, () => true, () => {
+      expect(trial.sun.shadow.map).not.toBe(trial.previous);
+      expect(trial.sun.shadow.mapSize.toArray()).toEqual([512, 512]);
+      waterCommitted = true;
+      return "water cleanup failed";
+    });
+    expect(result).toEqual({ cleanupFailure: "water cleanup failed; Shadow map cleanup failed: shadow cleanup failed" });
+    expect(trial.retired).toHaveBeenCalledOnce();
+  });
 });

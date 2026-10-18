@@ -2,7 +2,7 @@
 //!
 //! These models do not provide water-contact geometry or aerodynamic loads.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 mod detail;
 mod projection;
@@ -143,7 +143,8 @@ impl LakeVisualCondition {
 }
 
 /// Existing Web component and mesh budgets, without GPU types.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum LakeWaterQuality {
     /// Six representative components and a 96-segment mesh.
@@ -151,10 +152,23 @@ pub enum LakeWaterQuality {
     /// Ten representative components and a 144-segment mesh.
     Medium,
     /// All 18 canonical components and a 224-segment mesh.
+    #[default]
     High,
 }
 
 impl LakeWaterQuality {
+    /// Ordered water budgets from highest to lowest quality.
+    pub const ALL: [Self; 3] = [Self::High, Self::Medium, Self::Low];
+
+    /// Shared user-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+
     /// Returns the number of selected wave components.
     pub const fn component_count(self) -> usize {
         match self {

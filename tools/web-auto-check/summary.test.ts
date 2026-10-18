@@ -15,8 +15,8 @@ const finalSnapshotJson = session.flightPort.snapshot_json();
 session.executeOperation("pause");
 const pausedSnapshotJson = session.flightPort.snapshot_json();
 session.dispose();
-const policy = (applied = "100") => JSON.stringify({ selection: { kind: "auto", manual_scale: "100", manual_shadow: "full" },
-  applied, shadow: "full", status: { kind: "ready" } });
+const policy = (applied = "100") => JSON.stringify({ selection: { kind: "auto", manual_scale: "100", manual_shadow: "full", manual_water_quality: "high" },
+  applied, shadow: "full", water_quality: "high", status: { kind: "ready" } });
 
 function fixture(): LiveObservation {
   return { startMs: 1000, endMs: 3000, observedEndMs: 3010, interrupted: null, initialSnapshotJson, finalSnapshotJson,

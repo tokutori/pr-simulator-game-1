@@ -48,6 +48,7 @@ impl Default for NativeScreenRender {
             controller: ScreenRenderAutoController::new(
                 ScreenRenderScale::Full,
                 ScreenShadowMap::Full,
+                birdman_game_session::lake_water::LakeWaterQuality::High,
             ),
         }
     }
@@ -85,6 +86,7 @@ pub(crate) enum ScreenRenderFailure {
     CompositionCameraUnavailable,
     CompositionImageUnavailable,
     ShadowMapUnavailable,
+    Water(super::water_quality::WaterQualityFailure),
     Policy(ScreenRenderAutoError),
 }
 
@@ -129,6 +131,19 @@ pub(crate) fn select_auto(world: &mut World, enabled: bool) -> Result<(), Screen
         .resource_mut::<NativeScreenRender>()
         .controller
         .select_auto(enabled, now_ms)
+        .map_err(ScreenRenderFailure::Policy)?;
+    apply_request(world, request, now_ms)
+}
+
+pub(crate) fn select_water_quality(
+    world: &mut World,
+    quality: super::water_quality::WaterQuality,
+) -> Result<(), ScreenRenderFailure> {
+    let now_ms = now_ms(world);
+    let request = world
+        .resource_mut::<NativeScreenRender>()
+        .controller
+        .select_water_quality(quality.shared(), now_ms)
         .map_err(ScreenRenderFailure::Policy)?;
     apply_request(world, request, now_ms)
 }
@@ -179,12 +194,35 @@ fn exchange_resources(
     world
         .get_resource::<DirectionalLightShadowMap>()
         .ok_or(ScreenRenderFailure::ShadowMapUnavailable)?;
+    let quality = match request.water_quality {
+        birdman_game_session::lake_water::LakeWaterQuality::Low => {
+            super::water_quality::WaterQuality::Low
+        }
+        birdman_game_session::lake_water::LakeWaterQuality::Medium => {
+            super::water_quality::WaterQuality::Medium
+        }
+        birdman_game_session::lake_water::LakeWaterQuality::High => {
+            super::water_quality::WaterQuality::High
+        }
+    };
+    let prepared_water = if world
+        .resource::<super::water_quality::WaterQualitySelection>()
+        .applied()
+        != quality
+    {
+        Some(super::water::prepare_quality(world, quality).map_err(ScreenRenderFailure::Water)?)
+    } else {
+        None
+    };
     if request.scale != world.resource::<NativeScreenRender>().applied() {
         exchange_scale(world, request.scale)?;
     }
     let size = request.shadow.size() as usize;
     if world.resource::<DirectionalLightShadowMap>().size != size {
         world.resource_mut::<DirectionalLightShadowMap>().size = size;
+    }
+    if let Some(prepared) = prepared_water {
+        super::water::commit_quality(world, prepared);
     }
     Ok(())
 }
@@ -367,9 +405,7 @@ pub(crate) fn observe_auto(world: &mut World) {
                 || window.resolution.physical_size().min_element() == 0
         });
     let device_changed = world.is_resource_changed::<bevy::render::renderer::RenderDevice>();
-    let quality_changed = world
-        .is_resource_changed::<super::water_quality::WaterQualitySelection>()
-        || world.is_resource_changed::<super::environment::NativeEnvironment>();
+    let quality_changed = world.is_resource_changed::<super::environment::NativeEnvironment>();
     let support = world
         .get_resource::<bevy::render::renderer::RenderDevice>()
         .map(|device| timing::supported(device.features()));
@@ -511,6 +547,7 @@ mod tests {
             .init_resource::<ManualTextureViews>()
             .init_resource::<NativeScreenRender>()
             .init_resource::<DirectionalLightShadowMap>()
+            .init_resource::<super::super::water_quality::WaterQualitySelection>()
             .init_resource::<NativeSession>()
             .init_resource::<InputFocus>()
             .add_message::<WindowCreated>()
@@ -563,6 +600,55 @@ mod tests {
             .add(WaterMaterial::registered(false).unwrap());
         app.update();
         (app, window, camera, material)
+    }
+
+    #[test]
+    fn water_preparation_rejection_retains_the_entire_resource_triple() {
+        let (mut app, window, camera, _) = app();
+        let original = app
+            .world()
+            .get::<RenderTarget>(camera)
+            .unwrap()
+            .normalize(Some(window))
+            .unwrap();
+        let request = {
+            let mut rendering = app.world_mut().resource_mut::<NativeScreenRender>();
+            rendering
+                .controller
+                .select_manual(ScreenRenderScale::Half, 0.0)
+                .unwrap();
+            rendering
+                .controller
+                .select_water_quality(birdman_game_session::lake_water::LakeWaterQuality::Low, 0.0)
+                .unwrap()
+                .unwrap()
+        };
+        assert_eq!(
+            apply_request(app.world_mut(), Some(request), 0.0),
+            Err(ScreenRenderFailure::Water(
+                super::super::water_quality::WaterQualityFailure::NearSurfaceUnavailable
+            ))
+        );
+        let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
+        assert_eq!(
+            (snapshot.applied, snapshot.shadow, snapshot.water_quality),
+            (
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                birdman_game_session::lake_water::LakeWaterQuality::High
+            )
+        );
+        assert!(matches!(
+            app.world().resource::<NativeScreenRender>().target,
+            ScreenTarget::Direct
+        ));
+        assert_eq!(
+            app.world()
+                .get::<RenderTarget>(camera)
+                .unwrap()
+                .normalize(Some(window)),
+            Some(original)
+        );
     }
 
     #[test]
@@ -726,6 +812,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::ThreeQuarters,
                 shadow: ScreenShadowMap::Full,
+                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High
             }
         );
         select_auto(app.world_mut(), true).unwrap();
@@ -755,6 +842,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
+                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High
             }
         );
         assert_eq!(
@@ -815,11 +903,18 @@ mod tests {
                     app.world().resource::<DirectionalLightShadowMap>().size,
                     request.shadow.size() as usize
                 );
+                if request.shadow == ScreenShadowMap::Quarter {
+                    break;
+                }
             }
         }
         let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
         assert_eq!(snapshot.applied, ScreenRenderScale::Half);
         assert_eq!(snapshot.shadow, ScreenShadowMap::Quarter);
+        assert_eq!(
+            snapshot.water_quality,
+            birdman_game_session::lake_water::LakeWaterQuality::High
+        );
         select_auto(app.world_mut(), false).unwrap();
         let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
         assert_eq!(snapshot.applied, ScreenRenderScale::ThreeQuarters);

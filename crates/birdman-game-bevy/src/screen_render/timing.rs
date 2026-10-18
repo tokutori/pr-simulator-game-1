@@ -26,6 +26,7 @@ use bevy::{
     window::PrimaryWindow,
 };
 use birdman_game_session::{
+    lake_water::LakeWaterQuality,
     screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
@@ -33,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const GPU_WORK: DiagnosticPath =
     DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
-const METADATA_WORDS: usize = 6;
+const METADATA_WORDS: usize = 7;
 const METADATA: [DiagnosticPath; METADATA_WORDS] = [
     DiagnosticPath::const_new("render/screen_epoch"),
     DiagnosticPath::const_new("render/screen_frame"),
@@ -41,6 +42,7 @@ const METADATA: [DiagnosticPath; METADATA_WORDS] = [
     DiagnosticPath::const_new("render/screen_source_high"),
     DiagnosticPath::const_new("render/screen_scale"),
     DiagnosticPath::const_new("render/screen_shadow"),
+    DiagnosticPath::const_new("render/screen_water"),
 ];
 const METADATA_NAMES: [&str; METADATA_WORDS] = [
     "screen_epoch",
@@ -49,6 +51,7 @@ const METADATA_NAMES: [&str; METADATA_WORDS] = [
     "screen_source_high",
     "screen_scale",
     "screen_shadow",
+    "screen_water",
 ];
 
 pub(crate) fn is_source_metadata(path: &DiagnosticPath) -> bool {
@@ -156,6 +159,7 @@ struct TimingPacket {
     source_ms: u64,
     scale: ScreenRenderScale,
     shadow: ScreenShadowMap,
+    water_quality: LakeWaterQuality,
     preparation: PipelinePreparation,
 }
 
@@ -207,6 +211,7 @@ fn extract_packet(
         source_ms: time.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
         scale: rendering.snapshot().applied,
         shadow: rendering.snapshot().shadow,
+        water_quality: rendering.snapshot().water_quality,
         preparation: PipelinePreparation::Pending,
     });
 }
@@ -261,6 +266,7 @@ fn begin_work(world: &mut World) {
         (packet.source_ms >> 32) as u32,
         packet.scale.percent(),
         packet.shadow.size(),
+        packet.water_quality.component_count() as u32,
     ];
     let mut bytes = [0_u8; METADATA_WORDS * 4];
     for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
@@ -424,6 +430,7 @@ pub(crate) struct SourceWork {
     pub(crate) sample: ScreenGpuSample,
     pub(crate) scale: ScreenRenderScale,
     pub(crate) shadow: ScreenShadowMap,
+    pub(crate) water_quality: LakeWaterQuality,
 }
 
 pub(crate) fn source_history(
@@ -495,7 +502,7 @@ fn decode_work(
     words: [u32; METADATA_WORDS],
     gpu_work_ms: f64,
 ) -> Result<SourceWork, TimingFailure> {
-    let [epoch, frame, low, high, scale, shadow] = words;
+    let [epoch, frame, low, high, scale, shadow, water] = words;
     let scale = ScreenRenderScale::ALL
         .into_iter()
         .find(|value| value.percent() == scale)
@@ -505,6 +512,10 @@ fn decode_work(
         .find(|value| value.size() == shadow)
         .ok_or(TimingFailure::InvalidMetadata)?;
     let source_ms = u64::from(low) | (u64::from(high) << 32);
+    let water_quality = LakeWaterQuality::ALL
+        .into_iter()
+        .find(|quality| quality.component_count() == water as usize)
+        .ok_or(TimingFailure::InvalidMetadata)?;
     if source_ms > (1_u64 << 53) {
         return Err(TimingFailure::SourceOverflow);
     }
@@ -520,6 +531,7 @@ fn decode_work(
         },
         scale,
         shadow,
+        water_quality,
     })
 }
 
@@ -639,7 +651,11 @@ pub(crate) mod tests {
             frame,
             source,
             work,
-            (ScreenRenderScale::Full, ScreenShadowMap::Full),
+            (
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                LakeWaterQuality::High,
+            ),
         );
     }
 
@@ -650,7 +666,7 @@ pub(crate) mod tests {
         frame: u32,
         source: u64,
         work: f64,
-        quality: (ScreenRenderScale, ScreenShadowMap),
+        quality: (ScreenRenderScale, ScreenShadowMap, LakeWaterQuality),
     ) {
         for (path, value) in std::iter::once((GPU_WORK, work)).chain(
             METADATA
@@ -662,6 +678,7 @@ pub(crate) mod tests {
                     (source >> 32) as u32,
                     quality.0.percent(),
                     quality.1.size(),
+                    quality.2.component_count() as u32,
                 ])
                 .map(|(path, word)| (path, f64::from(word))),
         ) {
@@ -691,7 +708,11 @@ pub(crate) mod tests {
             11,
             120,
             9.0,
-            (ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+            (
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                LakeWaterQuality::Low,
+            ),
         );
         let old = source_history(&store)
             .find(|(time, _)| *time == first.time)
@@ -699,20 +720,35 @@ pub(crate) mod tests {
             .1
             .unwrap();
         assert_eq!(
-            (old.sample.epoch, old.scale, old.shadow),
-            (7, ScreenRenderScale::Full, ScreenShadowMap::Full)
+            (old.sample.epoch, old.scale, old.shadow, old.water_quality),
+            (
+                7,
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                LakeWaterQuality::High
+            )
         );
         let latest = source_history(&store).last().unwrap().1.unwrap();
         assert_eq!(
-            (latest.sample.epoch, latest.scale, latest.shadow),
-            (8, ScreenRenderScale::Half, ScreenShadowMap::Quarter)
+            (
+                latest.sample.epoch,
+                latest.scale,
+                latest.shadow,
+                latest.water_quality
+            ),
+            (
+                8,
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                LakeWaterQuality::Low
+            )
         );
         assert_eq!(
-            decode_work([7, 10, 100, 0, 80, 2048], 1.0),
+            decode_work([7, 10, 100, 0, 80, 2048, 18], 1.0),
             Err(TimingFailure::InvalidMetadata)
         );
         assert_eq!(
-            decode_work([7, 10, 100, 0, 100, 1000], 1.0),
+            decode_work([7, 10, 100, 0, 100, 1000, 18], 1.0),
             Err(TimingFailure::InvalidMetadata)
         );
         packet(
@@ -1031,6 +1067,7 @@ pub(crate) mod tests {
                     source_ms: (1_u64 << 32) + 123,
                     scale: ScreenRenderScale::Full,
                     shadow: ScreenShadowMap::Full,
+                    water_quality: LakeWaterQuality::High,
                     preparation: PipelinePreparation::Pending,
                 });
                 for _ in 0..2 {

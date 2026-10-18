@@ -774,86 +774,139 @@ pub(crate) fn apply_environment(
     }
 }
 
-pub(crate) fn apply_quality(
-    session: Res<NativeSession>,
-    environment: Res<NativeEnvironment>,
-    mut selection: ResMut<WaterQualitySelection>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<WaterMaterial>>,
-    mut near: Query<(&mut Mesh3d, &MeshMaterial3d<WaterMaterial>), With<NearWaterSurface>>,
-    surfaces: Query<(&EnvironmentSurface, &MeshMaterial3d<WaterMaterial>)>,
-) {
-    let Some(requested) = selection.pending() else {
+pub(crate) struct PreparedWaterQuality {
+    entity: Entity,
+    previous: AssetId<Mesh>,
+    near_handle: Handle<WaterMaterial>,
+    far_handle: Handle<WaterMaterial>,
+    mesh: Mesh,
+    near_material: WaterMaterial,
+    far_material: WaterMaterial,
+    quality: WaterQuality,
+}
+
+pub(crate) fn prepare_quality(
+    world: &mut World,
+    requested: WaterQuality,
+) -> Result<PreparedWaterQuality, WaterQualityFailure> {
+    let (entity, previous, near_handle) = world
+            .query_filtered::<(Entity, &Mesh3d, &MeshMaterial3d<WaterMaterial>), With<NearWaterSurface>>()
+            .single(world)
+            .map(|(entity, mesh, material)| (entity, mesh.0.id(), material.0.clone()))
+            .map_err(|_| WaterQualityFailure::NearSurfaceUnavailable)?;
+    let mut far_handle = None;
+    let mut duplicated_far = false;
+    for (role, handle) in world
+        .query::<(&EnvironmentSurface, &MeshMaterial3d<WaterMaterial>)>()
+        .iter(world)
+    {
+        if *role == EnvironmentSurface::Far && far_handle.replace(handle.0.clone()).is_some() {
+            duplicated_far = true;
+        }
+    }
+    let meshes = world.resource::<Assets<Mesh>>();
+    let materials = world.resource::<Assets<WaterMaterial>>();
+    if meshes.get(previous).is_none() {
+        return Err(WaterQualityFailure::MeshUnavailable);
+    }
+    let current_material = materials
+        .get(near_handle.id())
+        .ok_or(WaterQualityFailure::MaterialUnavailable)?;
+    if duplicated_far {
+        return Err(WaterQualityFailure::EnvironmentProjection(
+            EnvironmentFailure::SurfaceDuplicated(EnvironmentSurface::Far),
+        ));
+    }
+    let far_handle = far_handle.ok_or(WaterQualityFailure::EnvironmentProjection(
+        EnvironmentFailure::SurfaceUnavailable(EnvironmentSurface::Far),
+    ))?;
+    if far_handle == near_handle {
+        return Err(WaterQualityFailure::EnvironmentProjection(
+            EnvironmentFailure::SharedMaterial,
+        ));
+    }
+    let mut prepared_far = materials
+        .get(far_handle.id())
+        .ok_or(WaterQualityFailure::EnvironmentProjection(
+            EnvironmentFailure::MaterialUnavailable(EnvironmentSurface::Far),
+        ))?
+        .clone();
+    let session = world.resource::<NativeSession>();
+    let environment = world.resource::<NativeEnvironment>();
+    let target = EnvironmentTarget::project(
+        session.game.core_session().snapshot().phase(),
+        session.game.core_session().configuration_identity(),
+    );
+    let condition = environment
+        .condition_for(target)
+        .map_err(WaterQualityFailure::EnvironmentProjection)?;
+    let prepared_mesh = near_mesh_for_quality(requested);
+    let mut prepared_material = WaterMaterial::from_environment(condition, false)
+        .map_err(WaterQualityFailure::WavePreparation)?;
+    prepared_material
+        .apply_profile(requested)
+        .map_err(WaterQualityFailure::WavePreparation)?;
+    prepared_material.camera_time = current_material.camera_time;
+    prepared_material.geometry_patch = current_material.geometry_patch;
+    prepared_material.detail_near = current_material.detail_near.clone();
+    prepared_material.detail_far = current_material.detail_far.clone();
+    prepared_material.sky_texture = current_material.sky_texture.clone();
+    prepared_material.reflection_texture = current_material.reflection_texture.clone();
+    prepared_material.reflection_clip_from_world = current_material.reflection_clip_from_world;
+    prepared_material.reflection_parameters = current_material.reflection_parameters;
+    prepared_far
+        .apply_profile(requested)
+        .map_err(WaterQualityFailure::WavePreparation)?;
+    Ok(PreparedWaterQuality {
+        entity,
+        previous,
+        near_handle,
+        far_handle,
+        mesh: prepared_mesh,
+        near_material: prepared_material,
+        far_material: prepared_far,
+        quality: requested,
+    })
+}
+
+pub(crate) fn commit_quality(world: &mut World, prepared: PreparedWaterQuality) {
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(prepared.mesh);
+    world.entity_mut(prepared.entity).insert(Mesh3d(mesh));
+    let mut materials = world.resource_mut::<Assets<WaterMaterial>>();
+    *materials
+        .get_mut(prepared.near_handle.id())
+        .expect("Validated near material") = prepared.near_material;
+    *materials
+        .get_mut(prepared.far_handle.id())
+        .expect("Validated far material") = prepared.far_material;
+    world
+        .resource_mut::<Assets<Mesh>>()
+        .remove(prepared.previous);
+    *world.resource_mut::<WaterQualitySelection>() =
+        WaterQualitySelection::committed(prepared.quality);
+}
+
+pub(crate) fn apply_quality(world: &mut World) {
+    let Some(requested) = world.resource::<WaterQualitySelection>().pending() else {
         return;
     };
-    let result = (|| {
-        let (mut current, material_handle) = near
-            .single_mut()
-            .map_err(|_| WaterQualityFailure::NearSurfaceUnavailable)?;
-        let previous = current.0.id();
-        if meshes.get(previous).is_none() {
-            return Err(WaterQualityFailure::MeshUnavailable);
+    match super::screen_render::select_water_quality(world, requested) {
+        Ok(()) => {
+            let applied = world.resource::<WaterQualitySelection>().applied();
+            *world.resource_mut::<WaterQualitySelection>() =
+                WaterQualitySelection::committed(applied);
         }
-        let current_material = materials
-            .get(material_handle.0.id())
-            .ok_or(WaterQualityFailure::MaterialUnavailable)?;
-        let mut far_handle = None;
-        for (role, handle) in &surfaces {
-            if *role == EnvironmentSurface::Far && far_handle.replace(handle.0.clone()).is_some() {
-                return Err(WaterQualityFailure::EnvironmentProjection(
-                    EnvironmentFailure::SurfaceDuplicated(EnvironmentSurface::Far),
-                ));
-            }
+        Err(cause) => {
+            let cause = match cause {
+                super::screen_render::ScreenRenderFailure::Water(cause) => cause,
+                cause => WaterQualityFailure::RenderResources(format!("{cause:?}")),
+            };
+            let failed = world
+                .resource::<WaterQualitySelection>()
+                .completed(Err(cause));
+            *world.resource_mut::<WaterQualitySelection>() = failed;
         }
-        let far_handle = far_handle.ok_or(WaterQualityFailure::EnvironmentProjection(
-            EnvironmentFailure::SurfaceUnavailable(EnvironmentSurface::Far),
-        ))?;
-        if far_handle == material_handle.0 {
-            return Err(WaterQualityFailure::EnvironmentProjection(
-                EnvironmentFailure::SharedMaterial,
-            ));
-        }
-        let mut prepared_far = materials
-            .get(far_handle.id())
-            .ok_or(WaterQualityFailure::EnvironmentProjection(
-                EnvironmentFailure::MaterialUnavailable(EnvironmentSurface::Far),
-            ))?
-            .clone();
-        let target = EnvironmentTarget::project(
-            session.game.core_session().snapshot().phase(),
-            session.game.core_session().configuration_identity(),
-        );
-        let condition = environment
-            .condition_for(target)
-            .map_err(WaterQualityFailure::EnvironmentProjection)?;
-        let prepared_mesh = near_mesh_for_quality(requested);
-        let mut prepared_material = WaterMaterial::from_environment(condition, false)
-            .map_err(WaterQualityFailure::WavePreparation)?;
-        prepared_material
-            .apply_profile(requested)
-            .map_err(WaterQualityFailure::WavePreparation)?;
-        prepared_material.camera_time = current_material.camera_time;
-        prepared_material.geometry_patch = current_material.geometry_patch;
-        prepared_material.detail_near = current_material.detail_near.clone();
-        prepared_material.detail_far = current_material.detail_far.clone();
-        prepared_material.sky_texture = current_material.sky_texture.clone();
-        prepared_material.reflection_texture = current_material.reflection_texture.clone();
-        prepared_material.reflection_clip_from_world = current_material.reflection_clip_from_world;
-        prepared_material.reflection_parameters = current_material.reflection_parameters;
-        prepared_far
-            .apply_profile(requested)
-            .map_err(WaterQualityFailure::WavePreparation)?;
-        current.0 = meshes.add(prepared_mesh);
-        *materials
-            .get_mut(material_handle.0.id())
-            .expect("Validated near material") = prepared_material;
-        *materials
-            .get_mut(far_handle.id())
-            .expect("Validated far material") = prepared_far;
-        meshes.remove(previous);
-        Ok(())
-    })();
-    *selection = selection.completed(result);
+    }
 }
 
 pub(crate) fn far_mesh() -> Mesh {
@@ -908,6 +961,8 @@ mod tests {
     fn environment_app() -> App {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .init_resource::<super::super::screen_render::NativeScreenRender>()
             .init_resource::<CameraMode>()
             .init_resource::<WaterQualitySelection>()
@@ -938,6 +993,89 @@ mod tests {
             })
             .unwrap();
         session.action(MenuAction::Prepare).unwrap();
+    }
+
+    #[test]
+    fn running_resource_exchange_preserves_physics_record_and_water_clock_and_retries_failure() {
+        use super::super::screen_render;
+        let mut app = environment_app();
+        app.init_resource::<Time<Real>>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>();
+        prepare_calm(&mut app);
+        app.update();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            session.tick(FlightInput::default());
+        }
+        app.update();
+        let session = &app.world().resource::<NativeSession>().game;
+        let before = session.core_session().snapshot();
+        assert!(matches!(
+            before.phase(),
+            birdman_game_core::SessionPhase::FlightRunning
+        ));
+        let samples = session
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .to_vec();
+        let materials = environment_materials(&mut app);
+        screen_render::select_water_quality(app.world_mut(), WaterQuality::Low).unwrap();
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Low
+        );
+        let exchanged = environment_materials(&mut app);
+        for (previous, current) in materials.iter().zip(&exchanged) {
+            assert_eq!(current.camera_time, previous.camera_time);
+            assert_eq!(current.detail_near, previous.detail_near);
+            assert_eq!(current.detail_far, previous.detail_far);
+            assert_eq!(current.sky_texture, previous.sky_texture);
+            assert_eq!(current.reflection_texture, previous.reflection_texture);
+        }
+        let (_, far) = environment_surface(&mut app, EnvironmentSurface::Far);
+        let retired = app
+            .world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .remove(far.id())
+            .unwrap();
+        assert!(screen_render::select_water_quality(app.world_mut(), WaterQuality::High).is_err());
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::Low
+        );
+        assert_eq!(
+            app.world()
+                .resource::<screen_render::NativeScreenRender>()
+                .snapshot()
+                .water_quality,
+            birdman_game_session::lake_water::LakeWaterQuality::Low
+        );
+        app.world_mut()
+            .resource_mut::<Assets<WaterMaterial>>()
+            .insert(far.id(), retired)
+            .unwrap();
+        screen_render::select_water_quality(app.world_mut(), WaterQuality::High).unwrap();
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.core_session().snapshot(), before);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples(),
+            samples
+        );
+        assert_eq!(
+            app.world().resource::<WaterQualitySelection>().applied(),
+            WaterQuality::High
+        );
     }
 
     fn shared_ui_text(app: &mut App) -> String {
@@ -1800,6 +1938,9 @@ mod tests {
     fn quality_exchange_updates_near_far_and_releases_only_owned_near_meshes() {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<super::super::screen_render::NativeScreenRender>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .insert_resource(NativeEnvironment::try_default().unwrap())
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
@@ -1908,6 +2049,9 @@ mod tests {
     fn quality_preparation_failure_preserves_applied_selection_and_mesh() {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
+            .init_resource::<Time<Real>>()
+            .init_resource::<super::super::screen_render::NativeScreenRender>()
+            .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .insert_resource(NativeEnvironment::try_default().unwrap())
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -1954,6 +2098,9 @@ mod tests {
         ] {
             let mut app = App::new();
             app.init_resource::<NativeSession>()
+                .init_resource::<Time<Real>>()
+                .init_resource::<super::super::screen_render::NativeScreenRender>()
+                .init_resource::<bevy::light::DirectionalLightShadowMap>()
                 .insert_resource(NativeEnvironment::try_default().unwrap())
                 .init_resource::<Assets<Mesh>>()
                 .init_resource::<Assets<WaterMaterial>>()
@@ -2042,6 +2189,9 @@ mod tests {
         for has_surface in [false, true] {
             let mut app = App::new();
             app.init_resource::<NativeSession>()
+                .init_resource::<Time<Real>>()
+                .init_resource::<super::super::screen_render::NativeScreenRender>()
+                .init_resource::<bevy::light::DirectionalLightShadowMap>()
                 .insert_resource(NativeEnvironment::try_default().unwrap())
                 .init_resource::<Assets<Mesh>>()
                 .init_resource::<Assets<WaterMaterial>>()

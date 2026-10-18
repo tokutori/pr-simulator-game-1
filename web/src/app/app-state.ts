@@ -603,7 +603,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
 
   switch (message.type) {
     case "screen-render-observed":
-      return transition(withModel(model, { screenRenderScale: message.snapshot }));
+      return transition(withModel(model, { screenRenderScale: message.snapshot,
+        lakeWaterQuality: model.lakeWaterQuality.applied === message.snapshot.water_quality ? model.lakeWaterQuality
+          : Object.freeze({ ...model.lakeWaterQuality, applied: message.snapshot.water_quality }) }));
     case "shared-game-ui-observed": {
       const next = withModel(model, { sharedGameUi: message.view });
       return [9, 10].includes(gameSessionPhaseCode(model.gameSession)) && next.replayCameraMode !== model.replayCameraMode
@@ -615,7 +617,8 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const quality = model.lakeWaterQuality;
       if (quality.kind !== "applying" || quality.requestId !== message.requestId || quality.requested !== message.quality) return transition(model);
       return transition(withModel(model, {
-        lakeWaterQuality: Object.freeze({ kind: "ready", applied: message.quality, cleanup: Object.freeze({ ...message.cleanup }) })
+        lakeWaterQuality: Object.freeze({ kind: "ready", applied: model.screenRenderScale?.water_quality ?? message.quality,
+          cleanup: Object.freeze({ ...message.cleanup }) })
       }));
     }
     case "lake-water-quality-failed": {
@@ -1163,8 +1166,10 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
           && canSelectRenderingSettings(model)
         ? transition(model, [{ type: "select-screen-render-auto", enabled: command.enabled }]) : transition(model);
     case "set_water_quality": {
+      const selection = model.screenRenderScale?.selection;
+      const selected = selection?.kind === "auto" ? selection.manual_water_quality : selection?.water_quality ?? model.lakeWaterQuality.applied;
       if (!canSelectLakeWaterQuality(model)
-          || command.quality === model.lakeWaterQuality.applied && model.lakeWaterQuality.kind === "ready"
+          || command.quality === selected && model.lakeWaterQuality.kind === "ready"
           || !Number.isSafeInteger(model.nextRequestId) || model.nextRequestId >= Number.MAX_SAFE_INTEGER) return transition(model);
       const requestId = model.nextRequestId;
       return transition(withModel(model, { lakeWaterQuality: Object.freeze({ kind: "applying", applied: model.lakeWaterQuality.applied,

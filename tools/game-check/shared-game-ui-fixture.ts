@@ -9,6 +9,7 @@ import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import type { FlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { neutralTailInput } from "./current-session-fixture.js";
+import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -49,11 +50,16 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
   });
 }
 
-export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100"): GameUiPlatformInput["screen_render_scale"] {
+export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", quality: LakeWaterQuality = "high"): GameUiPlatformInput["screen_render_scale"] {
   const bridge = new ScreenRenderAutoBridge();
   try {
     bridge.select_manual(Number(scale), 0);
-    if (bridge.requested_scale_percent() !== 0) bridge.applied(bridge.requested_epoch(), Number(scale), bridge.requested_shadow_map_size(), 0);
+    bridge.select_water_quality(quality, 0);
+    if (bridge.requested_scale_percent() !== 0) {
+      const requestedQuality = bridge.requested_water_quality();
+      if (requestedQuality === undefined) throw new Error("Missing requested water quality");
+      bridge.applied(bridge.requested_epoch(), Number(scale), bridge.requested_shadow_map_size(), requestedQuality, 0);
+    }
     return parseScreenRenderAutoSnapshot(bridge.snapshot_json());
   } finally { bridge.free(); }
 }

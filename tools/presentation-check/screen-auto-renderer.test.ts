@@ -4,6 +4,7 @@ import { initSync, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_was
 import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { ScreenAutoRenderer } from "../../web/src/render/engines/three/screen-auto-renderer.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
+import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -11,7 +12,7 @@ function fixture() {
   const gpu = gpuTimerFixture();
   const policy = new ScreenRenderAutoBridge();
   let now = 0;
-  const applied = vi.fn<(factor: number, shadowMapSize: number) => false | { readonly cleanupFailure?: string }>(() => ({}));
+  const applied = vi.fn<(factor: number, shadowMapSize: number, quality: LakeWaterQuality, screen: boolean) => false | { readonly cleanupFailure?: string }>(() => ({}));
   const snapshot = vi.fn();
   const renderer = new ScreenAutoRenderer(gpu.context, { policy, onSnapshot: snapshot }, applied, () => now++);
   return { ...gpu, policy, renderer, applied, snapshot, time: (value: number) => { now = value; },
@@ -46,7 +47,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
         trial.renderer.boundary(true);
         trial.renderer.begin(); trial.renderer.end(true);
       }
-      expect(trial.applied).toHaveBeenCalledWith(0.75, 2048);
+      expect(trial.applied).toHaveBeenCalledWith(0.75, 2048, "high", true);
       expect(trial.state()).toMatchObject({ selection: { kind: "auto", manual_scale: "100" }, applied: "75" });
       trial.renderer.selectAuto(false);
       trial.renderer.boundary(true);
@@ -91,21 +92,22 @@ describe("Screen renderer with the production Rust GPU policy", () => {
     } finally { trial.renderer.dispose(); }
   });
 
-  it("reduces shadow only after minimum resolution and restores the full Manual resource pair", () => {
+  it("reduces water only after minimum resolution and shadow, and restores the Manual triple", () => {
     const trial = fixture();
     try {
       trial.renderer.selectAuto(true);
-      for (let frame = 0; frame < 800; frame++) {
+      for (let frame = 0; frame < 1200; frame++) {
         trial.time(frame * 20 + 10);
         trial.renderer.boundary(true);
         trial.renderer.begin(); trial.renderer.end(true);
       }
-      expect(trial.applied.mock.calls).toEqual([[0.75, 2048], [0.5, 2048], [0.5, 1024], [0.5, 512]]);
-      expect(trial.state()).toMatchObject({ applied: "50", shadow: "quarter" });
+      expect(trial.applied.mock.calls).toEqual([[0.75, 2048, "high", true], [0.5, 2048, "high", true],
+        [0.5, 1024, "high", true], [0.5, 512, "high", true], [0.5, 512, "medium", true], [0.5, 512, "low", true]]);
+      expect(trial.state()).toMatchObject({ applied: "50", shadow: "quarter", water_quality: "low" });
       trial.renderer.selectAuto(false);
       trial.renderer.boundary(true);
-      expect(trial.applied).toHaveBeenLastCalledWith(1, 2048);
-      expect(trial.state()).toMatchObject({ selection: { kind: "manual", shadow: "full" }, applied: "100", shadow: "full" });
+      expect(trial.applied).toHaveBeenLastCalledWith(1, 2048, "high", true);
+      expect(trial.state()).toMatchObject({ selection: { kind: "manual", shadow: "full", water_quality: "high" }, applied: "100", shadow: "full", water_quality: "high" });
     } finally { trial.renderer.dispose(); }
   });
 
@@ -123,6 +125,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
 
   it("starts queries only after a complete frame and repeats preparation after interruption", () => {
     const trial = fixture();
+    const invalidation = vi.spyOn(trial.policy, "invalidate");
     try {
       trial.renderer.selectAuto(true);
       trial.renderer.boundary(true);
@@ -131,6 +134,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       trial.renderer.boundary(true);
       trial.renderer.begin(); trial.renderer.end(true);
       expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+      expect(invalidation).toHaveBeenLastCalledWith("scene_preparation", expect.any(Number));
       trial.renderer.boundary(true);
       trial.renderer.begin(); trial.renderer.end(true);
       expect(trial.gl.beginQuery).toHaveBeenCalledTimes(1);

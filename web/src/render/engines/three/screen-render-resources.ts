@@ -5,7 +5,8 @@ export function applyScreenRenderResources(
   sun: DirectionalLight,
   renderer: Pick<WebGLRenderer, "initRenderTarget">,
   shadowMapSize: number,
-  applyResolution: () => boolean
+  applyResolution: () => boolean,
+  commitWater: () => string | undefined = () => undefined
 ): false | { readonly cleanupFailure?: string } {
   const previous = sun.shadow.map;
   let next: WebGLRenderTarget | null = null;
@@ -36,11 +37,16 @@ export function applyScreenRenderResources(
   }
   sun.shadow.mapSize.set(shadowMapSize, shadowMapSize);
   if (next !== null) sun.shadow.map = next;
+  const failures: string[] = [];
+  try {
+    const cleanup = commitWater();
+    if (cleanup !== undefined) failures.push(cleanup);
+  } catch (cause: unknown) { failures.push(message(cause)); }
   if (next !== null && previous !== null) {
     try { disposeShadowMap(previous); }
-    catch (cause: unknown) { return { cleanupFailure: message(cause) }; }
+    catch (cause: unknown) { failures.push(message(cause)); }
   }
-  return {};
+  return failures.length === 0 ? {} : { cleanupFailure: failures.join("; ") };
 }
 
 function disposeShadowMap(target: NonNullable<DirectionalLight["shadow"]["map"]>): void {

@@ -2327,13 +2327,16 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
         selection: ScreenRenderSelection::Auto {
             manual_scale: ScreenRenderScale::Full,
             manual_shadow: ScreenShadowMap::Full,
+            manual_water_quality: crate::lake_water::LakeWaterQuality::High,
         },
         applied: ScreenRenderScale::ThreeQuarters,
         shadow: ScreenShadowMap::Full,
+        water_quality: crate::lake_water::LakeWaterQuality::Low,
         status: ScreenRenderAutoStatus::Unsupported {
             cause: "missing GPU timer".to_owned(),
         },
     };
+    platform.water_quality = GameUiWaterQuality::Low;
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::Webxr,
@@ -2358,6 +2361,18 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
         assert!(
             matches!(&status.content, GameUiControlContent::Status { value } if value.contains("Auto") && value.contains("75%") && value.contains("missing GPU timer"))
         );
+        let water = control(&view, "presentation-water-quality-status");
+        assert!(
+            matches!(&water.content, GameUiControlContent::Status { value }
+            if value.contains("保持選択High") && value.contains("適用済みLow"))
+        );
+        assert!(matches!(
+            &control(&view, "presentation-water-quality-high").content,
+            GameUiControlContent::Button {
+                presentation: GameUiButtonPresentation::Choice { selected: true, .. },
+                ..
+            }
+        ));
         assert_eq!(
             update.unwrap().effects,
             vec![GameUiEffect::Platform {
@@ -2377,7 +2392,7 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
     for (operation, expected, enabled) in [
         (
             GameUiWaterQualityOperation::Idle {},
-            "High · 水面の描画密度",
+            "保持選択High · 適用済みHigh",
             true,
         ),
         (
