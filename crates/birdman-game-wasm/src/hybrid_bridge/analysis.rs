@@ -1,162 +1,42 @@
 use super::*;
 use crate::environment_snapshot::{EnvironmentProjection, EnvironmentSource};
-use birdman_game_core::{FlightRecordSummary, NedPoint, NedVector, WindError, WindField};
+use birdman_game_core::{NedPoint, NedVector, WindError, WindField};
 
-const GRID_SIZE: u32 = 5;
+use birdman_game_session::record_query::{
+    GridRequest, RecordWindSource, SummaryDocument, WIND_GRID_SIZE as GRID_SIZE, WindDocument,
+    WindProjection, WindSample, WindUnavailableReason,
+};
 
-#[derive(Serialize)]
-struct SummaryMetrics {
-    sample_count: usize,
-    duration_seconds: f64,
-    maximum_altitude_m: f64,
-    maximum_airspeed_mps: f64,
-    maximum_groundspeed_mps: f64,
-    maximum_angle_of_attack_rad: AngleMetric,
-    maximum_absolute_roll_rad: f64,
-    score_m: ScoreMetric,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum AngleUnavailableReason {
-    NoDefinedSample,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum AngleMetric {
-    Available { value: f64 },
-    Unavailable { reason: AngleUnavailableReason },
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ScoreUnavailableReason {
-    ScoreNotRecorded,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ScoreMetric {
-    Available { value: ProgressDocument },
-    Unavailable { reason: ScoreUnavailableReason },
-}
-
-impl From<FlightRecordSummary> for SummaryMetrics {
-    fn from(summary: FlightRecordSummary) -> Self {
-        Self {
-            sample_count: summary.sample_count,
-            duration_seconds: summary.duration_seconds,
-            maximum_altitude_m: summary.maximum_altitude_m,
-            maximum_airspeed_mps: summary.maximum_airspeed_mps,
-            maximum_groundspeed_mps: summary.maximum_groundspeed_mps,
-            maximum_angle_of_attack_rad: match summary.maximum_angle_of_attack_rad {
-                Some(value) => AngleMetric::Available { value },
-                None => AngleMetric::Unavailable {
-                    reason: AngleUnavailableReason::NoDefinedSample,
-                },
-            },
-            maximum_absolute_roll_rad: summary.maximum_absolute_roll_rad,
-            score_m: match summary.score {
-                Some(score) => ScoreMetric::Available {
-                    value: score.into(),
-                },
-                None => ScoreMetric::Unavailable {
-                    reason: ScoreUnavailableReason::ScoreNotRecorded,
-                },
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct SummaryDocument<'identity> {
-    schema_version: u32,
-    physics_hz: u32,
-    context: record::PlaybackContext<'identity>,
-    summary: SummaryMetrics,
-}
-
-#[derive(Clone, Copy, Serialize)]
-struct GridRequest {
+fn grid_request(
     north_min_m: f64,
     east_min_m: f64,
     altitude_m: f64,
     spacing_m: f64,
-    rows: u32,
-    columns: u32,
-}
-
-impl GridRequest {
-    fn try_new(
-        north_min_m: f64,
-        east_min_m: f64,
-        altitude_m: f64,
-        spacing_m: f64,
-    ) -> Result<Self, BoundaryError> {
-        let north_max_m = north_min_m + f64::from(GRID_SIZE - 1) * spacing_m;
-        let east_max_m = east_min_m + f64::from(GRID_SIZE - 1) * spacing_m;
-        if !north_min_m.is_finite()
-            || !east_min_m.is_finite()
-            || !altitude_m.is_finite()
-            || altitude_m < 0.0
-            || !spacing_m.is_finite()
-            || spacing_m <= 0.0
-            || !north_max_m.is_finite()
-            || !east_max_m.is_finite()
-            || north_max_m <= north_min_m
-            || east_max_m <= east_min_m
-        {
-            return Err(BoundaryError::InvalidWindGrid);
-        }
-        Ok(Self {
-            north_min_m,
-            east_min_m,
-            altitude_m,
-            spacing_m,
-            rows: GRID_SIZE,
-            columns: GRID_SIZE,
-        })
+) -> Result<GridRequest, BoundaryError> {
+    let north_max_m = north_min_m + f64::from(GRID_SIZE - 1) * spacing_m;
+    let east_max_m = east_min_m + f64::from(GRID_SIZE - 1) * spacing_m;
+    if !north_min_m.is_finite()
+        || !east_min_m.is_finite()
+        || !altitude_m.is_finite()
+        || altitude_m < 0.0
+        || !spacing_m.is_finite()
+        || spacing_m <= 0.0
+        || !north_max_m.is_finite()
+        || !east_max_m.is_finite()
+        || north_max_m <= north_min_m
+        || east_max_m <= east_min_m
+    {
+        return Err(BoundaryError::InvalidWindGrid);
     }
+    Ok(GridRequest {
+        north_min_m,
+        east_min_m,
+        altitude_m,
+        spacing_m,
+        rows: GRID_SIZE,
+        columns: GRID_SIZE,
+    })
 }
-
-#[derive(Serialize)]
-struct WindSample {
-    north_m: f64,
-    east_m: f64,
-    velocity_ned_mps: [f64; 3],
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum WindUnavailableReason {
-    UnregisteredEnvironmentIdentity,
-    OutsideRegisteredDomain,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum WindProjection {
-    Available {
-        source: EnvironmentSource,
-        identity: EnvironmentIdentity,
-        samples: Vec<WindSample>,
-    },
-    Unavailable {
-        source: EnvironmentSource,
-        identity: EnvironmentIdentity,
-        reason: WindUnavailableReason,
-    },
-}
-
-#[derive(Serialize)]
-struct WindDocument<'identity> {
-    schema_version: u32,
-    context: record::PlaybackContext<'identity>,
-    grid: GridRequest,
-    projection: WindProjection,
-}
-
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
     /// Returns Rust record metrics and the same saved terminal identity and cause.
@@ -172,7 +52,7 @@ impl HybridGameSessionBridge {
         altitude_m: f64,
         spacing_m: f64,
     ) -> Result<String, JsValue> {
-        let request = GridRequest::try_new(north_min_m, east_min_m, altitude_m, spacing_m)
+        let request = grid_request(north_min_m, east_min_m, altitude_m, spacing_m)
             .map_err(BoundaryError::into_js)?;
         self.wind_grid_internal(request)
             .map_err(BoundaryError::into_js)
@@ -212,13 +92,20 @@ impl HybridGameSessionBridge {
             ))?;
         let identity = record.header().scenario;
         let source = match self.session.core_session().snapshot().phase() {
-            SessionPhase::Attract => EnvironmentSource::Attract,
-            SessionPhase::Replay if self.archived.is_some() => EnvironmentSource::Archive,
-            SessionPhase::Result | SessionPhase::Replay => EnvironmentSource::Record,
+            SessionPhase::Attract => RecordWindSource::Attract,
+            SessionPhase::Replay if self.archived.is_some() => RecordWindSource::Archive,
+            SessionPhase::Result | SessionPhase::Replay => RecordWindSource::Record,
             _ => return Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
         };
-        let registry = crate::environment_snapshot::for_identity(source, identity.into())
-            .map_err(BoundaryError::Environment)?;
+        let registry = crate::environment_snapshot::for_identity(
+            match source {
+                RecordWindSource::Record => EnvironmentSource::Record,
+                RecordWindSource::Archive => EnvironmentSource::Archive,
+                RecordWindSource::Attract => EnvironmentSource::Attract,
+            },
+            identity.into(),
+        )
+        .map_err(BoundaryError::Environment)?;
         let projection = match registry {
             EnvironmentProjection::Unavailable { .. } => WindProjection::Unavailable {
                 source,
@@ -276,7 +163,7 @@ impl HybridGameSessionBridge {
 fn sample_grid(
     wind: WindField<'_>,
     request: GridRequest,
-    source: EnvironmentSource,
+    source: RecordWindSource,
     identity: EnvironmentIdentity,
 ) -> Result<WindProjection, BoundaryError> {
     let mut samples = Vec::with_capacity((GRID_SIZE * GRID_SIZE) as usize);

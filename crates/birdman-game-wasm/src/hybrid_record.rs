@@ -6,8 +6,9 @@ use birdman_game_format::{
     AssistanceLevel, FlightRecordFormatError, PersonalBestContentHashes, TailFlightRecordDocument,
     TailPersonalBestConfiguration, canonical_tail_personal_best_key,
 };
-use birdman_game_session::replay_camera::RecordedPlaybackSample as PlaybackDocument;
-use serde::Serialize;
+use birdman_game_session::{
+    record_query::AnalysisDocument, replay_camera::RecordedPlaybackSample as PlaybackDocument,
+};
 
 #[derive(Clone, Copy)]
 pub(crate) struct HybridRecordMetadata<'identity> {
@@ -89,12 +90,6 @@ pub(crate) fn playback_sample_json(
         .playback_sample_at_seconds(time_seconds)
         .map_err(HybridRecordError::Session)?;
     serde_json::to_string(&PlaybackDocument::from(sample)).map_err(HybridRecordError::Json)
-}
-
-#[derive(Serialize)]
-struct AnalysisDocument {
-    schema_version: u32,
-    samples: Vec<PlaybackDocument>,
 }
 
 pub(crate) fn analysis_samples_json(record: &FlightRecord) -> Result<String, HybridRecordError> {

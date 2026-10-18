@@ -31,6 +31,10 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<GameUiFrame>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
+    output.subschema_for::<crate::record_query::PlaybackContext<'_>>();
+    output.subschema_for::<crate::record_query::AnalysisDocument>();
+    output.subschema_for::<crate::record_query::SummaryDocument<'_>>();
+    output.subschema_for::<crate::record_query::WindDocument<'_>>();
     output.subschema_for::<birdman_game_format::TailSnapshotDocument<'_>>();
     output.subschema_for::<birdman_game_format::TailPreparedLaunchDocument<'_>>();
     output.subschema_for::<birdman_game_format::FlightRecordDifficultyDocument>();
@@ -64,9 +68,14 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "tail-input" => ("deserialize", "TailInputDocument"),
         "tail-snapshot" => ("serialize", "TailSnapshotDocument"),
         "tail-prepared" => ("serialize", "TailPreparedLaunchDocument"),
+        "record-context" => ("serialize", "PlaybackContext"),
+        "record-sample" => ("serialize", "RecordedPlaybackSample"),
+        "record-analysis" => ("serialize", "AnalysisDocument"),
+        "record-summary" => ("serialize", "SummaryDocument"),
+        "record-wind" => ("serialize", "WindDocument"),
         _ => {
             return Err(
-                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-input, tail-snapshot or tail-prepared"
+                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-input, tail-snapshot, tail-prepared, record-context, record-sample, record-analysis, record-summary or record-wind"
                     .to_owned(),
             );
         }

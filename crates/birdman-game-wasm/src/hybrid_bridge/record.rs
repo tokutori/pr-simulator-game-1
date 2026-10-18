@@ -4,6 +4,7 @@ use birdman_game_format::{
     FlightRecordDifficultyDocument, FlightRecordPresetDocument, HudProfile,
     PersonalBestContentHashes, TailFlightRecordDocument, TailPersonalBestSelection,
 };
+use birdman_game_session::record_query::{PlaybackContext, PlaybackFinalization, RecordQueryPhase};
 
 pub(super) struct ArchiveMetadata {
     difficulty: FlightRecordDifficultyDocument,
@@ -45,29 +46,6 @@ impl ArchiveMetadata {
         }
         settings
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum PlaybackLayout {
-    TailIncidence,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "layout", content = "value", rename_all = "snake_case")]
-enum PlaybackFinalization {
-    TailIncidence(TailFlightRecordFinalizationDocument),
-}
-
-#[derive(Serialize)]
-pub(super) struct PlaybackContext<'identity> {
-    schema_version: u32,
-    phase: &'static str,
-    scenario: EnvironmentIdentity,
-    control_layout: PlaybackLayout,
-    control_identity: Option<&'identity FlightRecordTailIdentityDocument>,
-    difficulty: FlightRecordDifficultyDocument,
-    finalization: PlaybackFinalization,
 }
 
 #[wasm_bindgen]
@@ -310,9 +288,9 @@ impl HybridGameSessionBridge {
     pub(super) fn record_context(&self) -> Result<PlaybackContext<'_>, BoundaryError> {
         let phase = self.session.core_session().snapshot().phase();
         let phase_name = match phase {
-            SessionPhase::Result => "result",
-            SessionPhase::Replay => "replay",
-            SessionPhase::Attract => "attract",
+            SessionPhase::Result => RecordQueryPhase::Result,
+            SessionPhase::Replay => RecordQueryPhase::Replay,
+            SessionPhase::Attract => RecordQueryPhase::Attract,
             _ => return Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
         };
         let record = self
@@ -326,7 +304,7 @@ impl HybridGameSessionBridge {
                 .attract()
                 .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
             (
-                PlaybackLayout::TailIncidence,
+                ControlLayout::TailIncidence,
                 Some(&metadata.record_identity),
                 metadata.difficulty.into(),
             )
@@ -337,12 +315,12 @@ impl HybridGameSessionBridge {
                     control_identity,
                     ..
                 }) => (
-                    PlaybackLayout::TailIncidence,
+                    ControlLayout::TailIncidence,
                     Some(control_identity),
                     *difficulty,
                 ),
                 None => (
-                    PlaybackLayout::TailIncidence,
+                    ControlLayout::TailIncidence,
                     Some(
                         &self
                             .session

@@ -30,9 +30,12 @@ pub struct ReplayCameraView {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct RecordedPlaybackSample {
+    #[cfg_attr(feature = "schema", schemars(extend("const" = 2)))]
     schema_version: u32,
     tick_index: u64,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     fraction: f64,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     flight_time_s: f64,
     state: FlightRecordStateDocument,
     controls: PhysicalControlsDocument,

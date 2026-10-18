@@ -2700,6 +2700,11 @@ fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
         ("tail-input", "deserialize", "TailInputDocument"),
         ("tail-snapshot", "serialize", "TailSnapshotDocument"),
         ("tail-prepared", "serialize", "TailPreparedLaunchDocument"),
+        ("record-context", "serialize", "PlaybackContext"),
+        ("record-sample", "serialize", "RecordedPlaybackSample"),
+        ("record-analysis", "serialize", "AnalysisDocument"),
+        ("record-summary", "serialize", "SummaryDocument"),
+        ("record-wind", "serialize", "WindDocument"),
     ] {
         let schema: serde_json::Value =
             serde_json::from_str(&export_game_ui_schema(name).unwrap()).unwrap();

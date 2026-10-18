@@ -197,6 +197,86 @@
         }
       ]
     },
+    "AnalysisDocument": {
+      "additionalProperties": false,
+      "description": "Every saved sample, without re-running the simulation.",
+      "properties": {
+        "samples": {
+          "description": "Chronological initial, integer and optional fractional terminal samples.",
+          "items": {
+            "$ref": "#/$defs/RecordedPlaybackSample"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Schema-two query version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "samples"
+      ],
+      "type": "object"
+    },
+    "AngleMetric": {
+      "description": "Defined angle and unavailable angle are exclusive.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Available angle in radians.",
+          "properties": {
+            "kind": {
+              "const": "available",
+              "type": "string"
+            },
+            "value": {
+              "description": "Core-derived angle.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit absence.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/AngleUnavailableReason",
+              "description": "Core-derived absence reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AngleUnavailableReason": {
+      "description": "Reason an angle metric has no value.",
+      "oneOf": [
+        {
+          "const": "no_defined_sample",
+          "description": "No sample has a defined angle.",
+          "type": "string"
+        }
+      ]
+    },
     "AssistanceLevel": {
       "description": "Controller category resolved from the Assistance axis.",
       "oneOf": [
@@ -3613,6 +3693,57 @@
         }
       ]
     },
+    "GridRequest": {
+      "additionalProperties": false,
+      "description": "Echo of a validated five-by-five wind grid request.",
+      "properties": {
+        "altitude_m": {
+          "description": "Altitude above still water in metres.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "columns": {
+          "const": 5,
+          "description": "Number of east columns.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "east_min_m": {
+          "description": "Minimum local east coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "north_min_m": {
+          "description": "Minimum local north coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "rows": {
+          "const": 5,
+          "description": "Number of north rows.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spacing_m": {
+          "description": "Positive grid spacing in metres.",
+          "exclusiveMinimum": 0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "north_min_m",
+        "east_min_m",
+        "altitude_m",
+        "spacing_m",
+        "rows",
+        "columns"
+      ],
+      "type": "object"
+    },
     "HudCue": {
       "description": "Stable identity for one independently configurable HUD cue.",
       "oneOf": [
@@ -3999,6 +4130,83 @@
         }
       ]
     },
+    "PlaybackContext": {
+      "additionalProperties": false,
+      "description": "Metadata of the exact record selected by the application owner.",
+      "properties": {
+        "control_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlightRecordTailIdentityDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Saved controller identity; consumers require its presence for tail records."
+        },
+        "control_layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Saved physical-control layout."
+        },
+        "difficulty": {
+          "$ref": "#/$defs/FlightRecordDifficultyDocument",
+          "description": "Saved difficulty, including an explicit Custom HUD profile."
+        },
+        "finalization": {
+          "$ref": "#/$defs/PlaybackFinalization",
+          "description": "Exact terminal stamp, score and original cause."
+        },
+        "phase": {
+          "$ref": "#/$defs/RecordQueryPhase",
+          "description": "Current record-owning phase."
+        },
+        "scenario": {
+          "$ref": "#/$defs/EnvironmentIdentity",
+          "description": "Saved environment identity."
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Query wire version, independent of the persisted archive version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "phase",
+        "scenario",
+        "control_layout",
+        "control_identity",
+        "difficulty",
+        "finalization"
+      ],
+      "type": "object"
+    },
+    "PlaybackFinalization": {
+      "description": "Layout-tagged immutable finalization.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Current two-tail finalization.",
+          "properties": {
+            "layout": {
+              "const": "tail_incidence",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/TailFlightRecordFinalizationDocument"
+            }
+          },
+          "required": [
+            "layout",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "RecordCommand": {
       "description": "Canonical operations on the retained record and its existing playback clock.",
       "oneOf": [
@@ -4079,6 +4287,46 @@
         }
       ]
     },
+    "RecordQueryPhase": {
+      "description": "Admitted record-owning phases, distinct from live flight snapshots.",
+      "oneOf": [
+        {
+          "const": "result",
+          "description": "Finalized current flight.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Current or archived playback.",
+          "type": "string"
+        },
+        {
+          "const": "attract",
+          "description": "Bundled demonstration record.",
+          "type": "string"
+        }
+      ]
+    },
+    "RecordWindSource": {
+      "description": "Record owner from which wind identity was obtained.",
+      "oneOf": [
+        {
+          "const": "record",
+          "description": "Current finalized record.",
+          "type": "string"
+        },
+        {
+          "const": "archive",
+          "description": "Imported archive.",
+          "type": "string"
+        },
+        {
+          "const": "attract",
+          "description": "Bundled demonstration record.",
+          "type": "string"
+        }
+      ]
+    },
     "RecordedPlaybackSample": {
       "additionalProperties": false,
       "description": "Existing schema-two single-sample wire projection, shared with record queries.",
@@ -4088,13 +4336,17 @@
         },
         "flight_time_s": {
           "format": "double",
+          "minimum": 0,
           "type": "number"
         },
         "fraction": {
           "format": "double",
+          "maximum": 1,
+          "minimum": 0,
           "type": "number"
         },
         "schema_version": {
+          "const": 2,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -4150,6 +4402,59 @@
         "cinematic"
       ],
       "type": "object"
+    },
+    "ScoreMetric": {
+      "description": "Defined distance score and its absence are exclusive.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Available recorded distance.",
+          "properties": {
+            "kind": {
+              "const": "available",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/TailProgressDocument",
+              "description": "Along-course, cross-course and horizontal net metres."
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit absence.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/ScoreUnavailableReason",
+              "description": "Recorded absence reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ScoreUnavailableReason": {
+      "description": "Reason a finalized record has no score.",
+      "oneOf": [
+        {
+          "const": "score_not_recorded",
+          "description": "The finalization did not record a score.",
+          "type": "string"
+        }
+      ]
     },
     "ScreenRenderAutoSnapshot": {
       "additionalProperties": false,
@@ -4744,6 +5049,100 @@
           "type": "object"
         }
       ]
+    },
+    "SummaryDocument": {
+      "additionalProperties": false,
+      "description": "Aggregate query with the exact record context and physics frequency.",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/PlaybackContext",
+          "description": "Saved source context."
+        },
+        "physics_hz": {
+          "description": "Saved fixed physics ticks per second.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Schema-two query version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "summary": {
+          "$ref": "#/$defs/SummaryMetrics",
+          "description": "Core-derived metrics."
+        }
+      },
+      "required": [
+        "schema_version",
+        "physics_hz",
+        "context",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "SummaryMetrics": {
+      "additionalProperties": false,
+      "description": "Aggregate metrics calculated by the core record query.",
+      "properties": {
+        "duration_seconds": {
+          "description": "Exact terminal time in seconds.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "maximum_absolute_roll_rad": {
+          "description": "Maximum absolute roll in radians.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "maximum_airspeed_mps": {
+          "description": "Maximum air-relative speed in metres per second.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "maximum_altitude_m": {
+          "description": "Maximum altitude above still water in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "maximum_angle_of_attack_rad": {
+          "$ref": "#/$defs/AngleMetric",
+          "description": "Maximum defined angle of attack or its absence reason."
+        },
+        "maximum_groundspeed_mps": {
+          "description": "Maximum ground-relative speed in metres per second.",
+          "format": "double",
+          "minimum": 0,
+          "type": "number"
+        },
+        "sample_count": {
+          "description": "Number of saved samples, including the initial state.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "score_m": {
+          "$ref": "#/$defs/ScoreMetric",
+          "description": "Recorded score or its absence reason."
+        }
+      },
+      "required": [
+        "sample_count",
+        "duration_seconds",
+        "maximum_altitude_m",
+        "maximum_airspeed_mps",
+        "maximum_groundspeed_mps",
+        "maximum_angle_of_attack_rad",
+        "maximum_absolute_roll_rad",
+        "score_m"
+      ],
+      "type": "object"
     },
     "TailControlFailureDocument": {
       "description": "Original two-tail control failure.",
@@ -5406,6 +5805,38 @@
         }
       ]
     },
+    "WindDocument": {
+      "additionalProperties": false,
+      "description": "Registered wind query and its exact saved record context.",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/PlaybackContext",
+          "description": "Saved record context."
+        },
+        "grid": {
+          "$ref": "#/$defs/GridRequest",
+          "description": "Validated request echo."
+        },
+        "projection": {
+          "$ref": "#/$defs/WindProjection",
+          "description": "Complete available or unavailable provider result."
+        },
+        "schema_version": {
+          "const": 2,
+          "description": "Schema-two query version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "context",
+        "grid",
+        "projection"
+      ],
+      "type": "object"
+    },
     "WindFailureDocument": {
       "description": "Original wind-field construction or sampling failure.",
       "oneOf": [
@@ -5437,6 +5868,121 @@
         {
           "const": "outside_grid",
           "description": "Query outside the closed grid domain.",
+          "type": "string"
+        }
+      ]
+    },
+    "WindProjection": {
+      "description": "Complete provider samples or an explicit unavailability reason.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Every grid point is available.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/EnvironmentIdentity",
+              "description": "Saved environment identity."
+            },
+            "kind": {
+              "const": "available",
+              "type": "string"
+            },
+            "samples": {
+              "description": "All provider evaluations.",
+              "items": {
+                "$ref": "#/$defs/WindSample"
+              },
+              "maxItems": 25,
+              "minItems": 25,
+              "type": "array"
+            },
+            "source": {
+              "$ref": "#/$defs/RecordWindSource",
+              "description": "Record owner."
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "identity",
+            "samples"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "No partial sample grid is exposed.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/EnvironmentIdentity",
+              "description": "Saved environment identity."
+            },
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/WindUnavailableReason",
+              "description": "Provider failure classification."
+            },
+            "source": {
+              "$ref": "#/$defs/RecordWindSource",
+              "description": "Record owner."
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "identity",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WindSample": {
+      "additionalProperties": false,
+      "description": "One registered provider evaluation, in north-row/east-column order.",
+      "properties": {
+        "east_m": {
+          "description": "Local east position in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "north_m": {
+          "description": "Local north position in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "velocity_ned_mps": {
+          "description": "Wind velocity in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "north_m",
+        "east_m",
+        "velocity_ned_mps"
+      ],
+      "type": "object"
+    },
+    "WindUnavailableReason": {
+      "description": "Reason the registered wind provider cannot supply the entire grid.",
+      "oneOf": [
+        {
+          "const": "unregistered_environment_identity",
+          "description": "The saved environment identity is not registered.",
+          "type": "string"
+        },
+        {
+          "const": "outside_registered_domain",
+          "description": "At least one sample lies outside the provider domain.",
           "type": "string"
         }
       ]

@@ -48,7 +48,7 @@ export interface RecordedPlaybackSample {
     readonly controls: PhysicalControlsDocument;
     readonly flight_time_s: number;
     readonly fraction: number;
-    readonly schema_version: number;
+    readonly schema_version: 2;
     readonly state: FlightRecordStateDocument;
     readonly tick_index: number;
 }
