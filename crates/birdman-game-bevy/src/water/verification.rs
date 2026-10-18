@@ -17,12 +17,13 @@ use bevy::{
 };
 
 const SIDE: u32 = 16;
-const CASES: [(&str, WaterQuality, bool, bool); 5] = [
-    ("flat", WaterQuality::High, true, true),
-    ("low", WaterQuality::Low, false, false),
-    ("medium", WaterQuality::Medium, false, false),
-    ("high", WaterQuality::High, false, false),
-    ("far", WaterQuality::High, false, true),
+const CASES: [(&str, WaterQuality, bool, bool, bool); 6] = [
+    ("flat", WaterQuality::High, true, true, false),
+    ("low", WaterQuality::Low, false, false, false),
+    ("medium", WaterQuality::Medium, false, false, false),
+    ("high", WaterQuality::High, false, false, false),
+    ("far", WaterQuality::High, false, true, false),
+    ("detail-cutoff", WaterQuality::High, false, false, true),
 ];
 const PROBE_COUNT: usize = CASES.len() * ProbeOutput::ALL.len();
 
@@ -135,7 +136,7 @@ fn setup(
         return;
     };
     let camera = Transform::from_xyz(0.0, 30.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
-    for (case_index, (label, quality, flat, far)) in CASES.into_iter().enumerate() {
+    for (case_index, (label, quality, flat, far, detail_cutoff)) in CASES.into_iter().enumerate() {
         let mut base = source.clone();
         if let Err(cause) = base.apply_profile(quality) {
             verification.state = ProbeState::Failed(cause);
@@ -148,6 +149,9 @@ fn setup(
         if flat {
             base.geometry_parameters.x = 0.0;
             base.waves_sky = Vec4::ZERO;
+        }
+        if detail_cutoff {
+            base.geometry_parameters.x = 0.0;
         }
         let bounds = base.displacement_bounds;
         for (output_index, output) in ProbeOutput::ALL.into_iter().enumerate() {
@@ -186,7 +190,19 @@ fn setup(
                 .build();
             mesh.insert_attribute(
                 Mesh::ATTRIBUTE_UV_1,
-                vec![[if far { 1200.0 } else { 0.05 }, 0.0]; mesh.count_vertices()],
+                vec![
+                    [
+                        if detail_cutoff {
+                            2.8
+                        } else if far {
+                            1200.0
+                        } else {
+                            0.05
+                        },
+                        0.0,
+                    ];
+                    mesh.count_vertices()
+                ],
             );
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0; 4]; mesh.count_vertices()]);
             let mesh = meshes.add(mesh);
@@ -204,7 +220,7 @@ fn setup(
                 .id();
             commands.spawn(Readback::texture(image.clone())).observe(move |event: On<ReadbackComplete>, mut commands: Commands, mut verification: ResMut<WaterShaderVerification>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ProbeMaterial>>, mut accepted: Local<bool>| {
                 if *accepted || !matches!(verification.state, ProbeState::Reading(_)) { return; }
-                let result = inspect_pixels(&event.data, output, flat, !far, bounds);
+                let result = inspect_pixels(&event.data, output, flat, !far && !detail_cutoff, bounds);
                 let Some(result) = result else { return; };
                 *accepted = true;
                 match result {
