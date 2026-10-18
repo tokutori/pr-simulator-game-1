@@ -513,6 +513,7 @@ pub(crate) fn setup_world(
             Mesh3d(meshes.add(mesh)),
             MeshMaterial3d(land.clone()),
             Transform::IDENTITY,
+            NotShadowCaster,
         ));
     }
     let mut registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
@@ -2087,6 +2088,7 @@ mod tests {
             Option<&RenderLayers>,
             Option<&EnvironmentSurface>,
             Option<&NotShadowCaster>,
+            Option<&bevy::light::NotShadowReceiver>,
             Option<&MeshMaterial3d<StandardMaterial>>,
             Option<&Name>,
             &Transform,
@@ -2099,10 +2101,20 @@ mod tests {
         let mut main_beams = 0;
         let mut transparent_films = 0;
         let mut excluded_meshes = 0;
+        let mut terrain_meshes = 0;
         let mut cloud_layers = 0;
         let materials = world.resource::<Assets<StandardMaterial>>();
-        for (_, layers, water, shadow_exclusion, material, name, transform, cloud) in
-            meshes.iter(world)
+        for (
+            _,
+            layers,
+            water,
+            shadow_exclusion,
+            receiver_exclusion,
+            material,
+            name,
+            transform,
+            cloud,
+        ) in meshes.iter(world)
         {
             if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
                 assert!(water.is_none());
@@ -2158,8 +2170,20 @@ mod tests {
                 }
             } else {
                 excluded_meshes += 1;
+                if material.is_some_and(|handle| {
+                    let material = materials.get(&handle.0).unwrap();
+                    material.base_color == Color::WHITE && material.perceptual_roughness == 1.0
+                }) {
+                    assert!(shadow_exclusion.is_some());
+                    assert!(receiver_exclusion.is_none());
+                    assert_eq!(*transform, Transform::IDENTITY);
+                    terrain_meshes += 1;
+                }
             }
         }
+        let terrain: Terrain =
+            serde_json::from_str(include_str!("../../../assets/biwa-terrain.json")).unwrap();
+        assert_eq!(terrain_meshes, 1 + terrain.fine_patches.len());
         assert_eq!(reflected_meshes, 41);
         assert_eq!(reflected_tails, 24);
         assert_eq!(reflected_spars, 24);
