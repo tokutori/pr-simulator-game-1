@@ -5,6 +5,7 @@ use super::{
     },
     native_session::NativeSession,
     projection::{sky_sun_direction, sunlight_transform},
+    terrain_haze::{TerrainHazeExtension, TerrainMaterial},
     water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection},
 };
 use bevy::{
@@ -37,7 +38,7 @@ use bevy::{
     },
     shader::{ShaderCacheError, ShaderDefVal, ShaderRef},
 };
-use birdman_game_session::lake_sky::{LakeSkyRenderCondition, generate_lake_sky};
+use birdman_game_session::lake_sky::{LakeSceneHaze, LakeSkyRenderCondition, generate_lake_sky};
 use birdman_game_session::lake_water::{
     LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
     production_lake_detail_configs,
@@ -146,11 +147,8 @@ impl WaterMaterial {
             sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
                 .extend(sky.cloud_fraction as f32)
         });
-        let visibility = condition.sky.map_or(80_000.0, |sky| sky.visibility_m) as f32;
-        let haze_start = visibility * 0.175;
-        if !visibility.is_finite() || visibility <= 0.0 || haze_start >= visibility {
-            return Err("水面hazeのvisibilityをGPU表現へ変換できない".to_owned());
-        }
+        let haze = LakeSceneHaze::try_new(condition.sky.map(|sky| sky.visibility_m))
+            .map_err(|cause| format!("共有水面hazeを準備できない: {cause:?}"))?;
         let daylight = f32::from(
             condition
                 .sky
@@ -190,14 +188,12 @@ impl WaterMaterial {
             geometry_parameters: Vec4::ZERO,
             detail_near: None,
             detail_far: None,
-            water_palette: [
-                [0x17, 0x28, 0x31],
-                [0x29, 0x3b, 0x43],
-                [0x50, 0x63, 0x6a],
-                [0x9a, 0xaf, 0xb1],
-            ]
-            .map(|[red, green, blue]| Color::srgb_u8(red, green, blue).to_linear().to_vec4()),
-            haze_parameters: Vec4::new(haze_start, visibility, daylight, 0.0),
+            water_palette: [0x172831, 0x293b43, 0x50636a, haze.color_srgb].map(|color| {
+                Color::srgb_u8((color >> 16) as u8, (color >> 8) as u8, color as u8)
+                    .to_linear()
+                    .to_vec4()
+            }),
+            haze_parameters: Vec4::new(haze.near_m as f32, haze.far_m as f32, daylight, 0.0),
             sky_texture: None,
             reflection_texture: None,
             reflection_clip_from_world: Mat4::IDENTITY,
@@ -587,11 +583,13 @@ pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
 pub(crate) struct NearWaterSurface;
 
 #[derive(SystemParam)]
-pub(crate) struct EnvironmentAssets<'w> {
+pub(crate) struct EnvironmentAssets<'w, 's> {
     materials: ResMut<'w, Assets<WaterMaterial>>,
     images: ResMut<'w, Assets<Image>>,
     cloud_materials: ResMut<'w, Assets<super::clouds::CloudMaterial>>,
     meshes: ResMut<'w, Assets<Mesh>>,
+    terrain_materials: ResMut<'w, Assets<TerrainMaterial>>,
+    terrain: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
 }
 
 pub(crate) fn apply_environment(
@@ -624,12 +622,32 @@ pub(crate) fn apply_environment(
         mut images,
         mut cloud_materials,
         mut meshes,
+        mut terrain_materials,
+        terrain,
     } = assets;
     let result = (|| {
         let resolved = target.resolve()?;
         let condition = resolved.condition();
         let high = WaterMaterial::from_environment(condition, false)
             .map_err(EnvironmentFailure::WavePreparation)?;
+        let terrain_haze = TerrainHazeExtension::try_new(condition.sky.map(|sky| sky.visibility_m))
+            .map_err(EnvironmentFailure::WavePreparation)?;
+        let mut terrain_handles = Vec::new();
+        for handle in &terrain {
+            if terrain_materials.get(handle.0.id()).is_none() {
+                return Err(EnvironmentFailure::WavePreparation(
+                    "terrain haze materialが欠損した".into(),
+                ));
+            }
+            if !terrain_handles.contains(&handle.0) {
+                terrain_handles.push(handle.0.clone());
+            }
+        }
+        if terrain_handles.is_empty() {
+            return Err(EnvironmentFailure::WavePreparation(
+                "terrain haze surfaceが欠損した".into(),
+            ));
+        }
         let bounds = high.near_bounds();
         let mut near = high.clone();
         near.apply_profile(quality.applied())
@@ -713,6 +731,12 @@ pub(crate) fn apply_environment(
             material.detail_near = Some(near_image.clone());
             material.detail_far = Some(far_image.clone());
             material.sky_texture = Some(sky_image.clone());
+        }
+        for handle in terrain_handles {
+            terrain_materials
+                .get_mut(handle.id())
+                .expect("Validated terrain material")
+                .extension = terrain_haze;
         }
         for (role, handle, current_bounds) in &mut surfaces {
             *materials
@@ -889,6 +913,7 @@ mod tests {
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -985,6 +1010,14 @@ mod tests {
             cloud_material.atlas.id(),
             cloud_material.normals.id(),
         ]
+    }
+
+    fn terrain_haze(app: &App) -> Vec<TerrainHazeExtension> {
+        app.world()
+            .resource::<Assets<TerrainMaterial>>()
+            .iter()
+            .map(|(_, material)| material.extension)
+            .collect()
     }
 
     fn assert_environment_image_exchange(
@@ -1156,10 +1189,18 @@ mod tests {
     #[test]
     fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
         let mut app = environment_app();
+        assert_eq!(
+            terrain_haze(&app),
+            [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap()]
+        );
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
         let retired_images = environment_image_ids(&mut app);
         prepare_calm(&mut app);
         app.update();
+        assert_eq!(
+            terrain_haze(&app),
+            [TerrainHazeExtension::try_new(None).unwrap()]
+        );
         let briefing = shared_ui_text(&mut app);
         assert!(briefing.contains("Calm"));
         assert!(!briefing.contains("Typical"));
@@ -1393,6 +1434,7 @@ mod tests {
             let (_, far_handle) = environment_surface(&mut app, EnvironmentSurface::Far);
             let (_, sky_handle) = environment_surface(&mut app, EnvironmentSurface::Sky);
             let initial = environment_materials(&mut app);
+            let initial_haze = terrain_haze(&app);
             let initial_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
             let sunlight = environment_light(&mut app);
             let sun = app
@@ -1485,6 +1527,69 @@ mod tests {
                 sunlight.0
             );
             assert_eq!(*app.world().get::<Transform>(sun).unwrap(), sunlight.1);
+            assert_eq!(terrain_haze(&app), initial_haze);
+        }
+    }
+
+    #[test]
+    fn missing_terrain_haze_rejects_environment_before_resource_or_session_commit() {
+        for missing_material in [false, true] {
+            let mut app = environment_app();
+            let world = app.world_mut();
+            let handles: Vec<_> = world
+                .query::<(Entity, &MeshMaterial3d<TerrainMaterial>)>()
+                .iter(world)
+                .map(|(entity, material)| (entity, material.0.clone()))
+                .collect();
+            assert!(!handles.is_empty());
+            if missing_material {
+                world
+                    .resource_mut::<Assets<TerrainMaterial>>()
+                    .remove(handles[0].1.id());
+            } else {
+                for (entity, _) in handles {
+                    world
+                        .entity_mut(entity)
+                        .remove::<MeshMaterial3d<TerrainMaterial>>();
+                }
+            }
+            let before = environment_materials(&mut app);
+            let images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
+            let light = environment_light(&mut app);
+            prepare_calm(&mut app);
+            let session = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
+                session
+            );
+            assert_eq!(environment_light(&mut app), light);
+            let retained = app.world().resource::<Assets<Image>>();
+            assert_eq!(retained.len(), images.len());
+            assert!(
+                images
+                    .into_iter()
+                    .all(|image| retained.get(image).is_some())
+            );
+            for (current, previous) in environment_materials(&mut app).iter().zip(before) {
+                assert_eq!(current.haze_parameters, previous.haze_parameters);
+                assert_eq!(current.sky_texture, previous.sky_texture);
+                assert_eq!(current.sun_cloud, previous.sun_cloud);
+            }
+            assert!(
+                matches!(app.world().resource::<NativeEnvironment>().condition_for(EnvironmentTarget::Sealed(
+                app.world().resource::<NativeSession>().game.core_session().configuration_identity().unwrap()
+            )), Err(EnvironmentFailure::WavePreparation(cause)) if cause.contains("terrain haze"))
+            );
         }
     }
 

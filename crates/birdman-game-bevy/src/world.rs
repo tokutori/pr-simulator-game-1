@@ -6,6 +6,7 @@ use super::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
         sunlight_transform,
     },
+    terrain_haze::{TerrainHazeExtension, TerrainMaterial},
     water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
 };
 use bevy::ecs as bevy_ecs;
@@ -467,6 +468,7 @@ pub(crate) fn setup_world(
     mut water: ResMut<Assets<WaterMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut clouds: ResMut<Assets<super::clouds::CloudMaterial>>,
+    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
 ) {
     commands.init_resource::<RenderHistory>();
     commands.insert_resource(GlobalAmbientLight {
@@ -487,10 +489,16 @@ pub(crate) fn setup_world(
     let masks: LandMasks =
         serde_json::from_str(include_str!("../../../assets/biwa-land-mask.json"))
             .expect("登録land mask JSONが不正");
-    let land = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        perceptual_roughness: 1.0,
-        ..default()
+    let land = terrain_materials.add(TerrainMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            fog_enabled: false,
+            opaque_render_method: bevy::pbr::OpaqueRendererMethod::Forward,
+            ..default()
+        },
+        extension: TerrainHazeExtension::try_new(sky.map(|sky| sky.visibility_m))
+            .expect("登録terrain hazeが不正"),
     });
     for (id, grid, finer) in std::iter::once((
         "broad-terrain",
@@ -1032,6 +1040,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -1886,6 +1895,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -2003,6 +2013,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -2077,6 +2088,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
@@ -2090,6 +2102,7 @@ mod tests {
             Option<&NotShadowCaster>,
             Option<&bevy::light::NotShadowReceiver>,
             Option<&MeshMaterial3d<StandardMaterial>>,
+            Option<&MeshMaterial3d<TerrainMaterial>>,
             Option<&Name>,
             &Transform,
             Option<&super::super::clouds::CloudLayer>,
@@ -2104,6 +2117,7 @@ mod tests {
         let mut terrain_meshes = 0;
         let mut cloud_layers = 0;
         let materials = world.resource::<Assets<StandardMaterial>>();
+        let terrain_materials = world.resource::<Assets<TerrainMaterial>>();
         for (
             _,
             layers,
@@ -2111,6 +2125,7 @@ mod tests {
             shadow_exclusion,
             receiver_exclusion,
             material,
+            terrain_material,
             name,
             transform,
             cloud,
@@ -2170,10 +2185,15 @@ mod tests {
                 }
             } else {
                 excluded_meshes += 1;
-                if material.is_some_and(|handle| {
-                    let material = materials.get(&handle.0).unwrap();
-                    material.base_color == Color::WHITE && material.perceptual_roughness == 1.0
-                }) {
+                if let Some(handle) = terrain_material {
+                    let material = terrain_materials.get(&handle.0).unwrap();
+                    assert_eq!(material.base.base_color, Color::WHITE);
+                    assert_eq!(material.base.perceptual_roughness, 1.0);
+                    assert!(!material.base.fog_enabled);
+                    assert_eq!(
+                        material.extension,
+                        TerrainHazeExtension::try_new(Some(25_000.0)).unwrap()
+                    );
                     assert!(shadow_exclusion.is_some());
                     assert!(receiver_exclusion.is_none());
                     assert_eq!(*transform, Transform::IDENTITY);
@@ -2407,6 +2427,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
+            .init_resource::<Assets<TerrainMaterial>>()
             .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
