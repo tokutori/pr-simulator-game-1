@@ -61,6 +61,16 @@ impl LakeCloudsBridge {
         self.clouds.rgba().to_vec()
     }
 
+    /// Copies the linear RG8 normal atlas, sharing color-atlas dimensions and UVs.
+    pub fn normal_rg(&self) -> Vec<u8> {
+        self.clouds.normal_rg().to_vec()
+    }
+
+    /// Copies N/E/D toward the recorded sun and W=daylight as one float4.
+    pub fn sun_direction_ned(&self) -> Vec<f32> {
+        self.clouds.sun_direction_ned().to_vec()
+    }
+
     /// Returns the atlas width.
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 {
