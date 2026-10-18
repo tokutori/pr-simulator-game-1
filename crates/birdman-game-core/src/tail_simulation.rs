@@ -268,8 +268,8 @@ impl TailFlightTickReport {
     /// Returns the authoritative physical incidence and pilot target through the state/sample.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(outcome =>
-        returns self.outcome(),
-        ensures match outcome {
+        ensures outcome == self.outcome(),
+            match outcome {
             TailFlightTickOutcome::Advanced(_) => self.applied_controls().is_some(),
             TailFlightTickOutcome::WaterContact(_) => true,
         },
