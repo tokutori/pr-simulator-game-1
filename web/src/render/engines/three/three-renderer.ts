@@ -57,6 +57,7 @@ import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.
 import { createLakeVenue } from "./lake-venue-mesh.js";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
 import type { ScreenRenderAutoBinding } from "../../contracts/screen-render-auto.js";
+import { parseScreenRenderAutoSnapshot } from "../../contracts/screen-render-auto.js";
 import { ScreenAutoRenderer } from "./screen-auto-renderer.js";
 import { applyScreenRenderResources } from "./screen-render-resources.js";
 
@@ -427,16 +428,20 @@ export function createThreeRenderer(
     lakeQuality?: LakeQualityRequest;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
+  const settleManualLakeQuality = (snapshot: ReturnType<typeof parseScreenRenderAutoSnapshot>): void => {
+    const request = manualLakeQualityRequest;
+    if (request === null || screenAutoBinding === undefined || snapshot.status.kind === "applying"
+        || screenAutoBinding.policy.requested_scale_percent() !== 0) return;
+    manualLakeQualityRequest = null;
+    if (snapshot.status.kind === "failed" || snapshot.status.kind === "unsupported") request.reject(new Error(snapshot.status.cause));
+    else request.resolve({ kind: "complete" });
+  };
   const screenAuto = screenAutoBinding === undefined ? null
     : new ScreenAutoRenderer(renderer.getContext(), {
       policy: screenAutoBinding.policy,
       onSnapshot(snapshot) {
         screenAutoBinding.onSnapshot(snapshot);
-        const request = manualLakeQualityRequest;
-        if (request === null || snapshot.status.kind === "applying" || screenAutoBinding.policy.requested_scale_percent() !== 0) return;
-        manualLakeQualityRequest = null;
-        if (snapshot.status.kind === "failed" || snapshot.status.kind === "unsupported") request.reject(new Error(snapshot.status.cause));
-        else request.resolve({ kind: "complete" });
+        settleManualLakeQuality(snapshot);
       }
     }, (factor, shadowMapSize, quality, screen) => {
       if (screen ? !hasScreenRenderArea(factor) : factor !== screenRenderScale || shadowMapSize !== sun.shadow.mapSize.x) return false;
@@ -505,7 +510,10 @@ export function createThreeRenderer(
   const applyLakeQuality = (request: LakeQualityRequest): void => {
     if (screenAuto !== null) {
       manualLakeQualityRequest = request;
-      try { screenAuto.selectWaterQuality(request.quality); }
+      try {
+        screenAuto.selectWaterQuality(request.quality);
+        if (screenAutoBinding !== undefined) settleManualLakeQuality(parseScreenRenderAutoSnapshot(screenAutoBinding.policy.snapshot_json()));
+      }
       catch (cause: unknown) { manualLakeQualityRequest = null; request.reject(cause); }
       return;
     }

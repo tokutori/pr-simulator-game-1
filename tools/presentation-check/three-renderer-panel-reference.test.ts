@@ -364,7 +364,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("projects shared Auto water steps and restores the retained upper quality without recreating detail textures", async () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const published = vi.fn();
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: published });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing Auto water recording driver");
     let now = 0;
@@ -378,6 +379,13 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const detail: unknown = original.material.uniforms.uDetailNear?.value;
       const applied = new Set<string>();
       trial.renderer.startLoop(() => { trial.renderer.beginViewFrame(); trial.renderer.render(frame()); });
+      recording.tick(now, null);
+      const initialGeometry = original.mesh.geometry;
+      const manualPublications = published.mock.calls.length;
+      await trial.renderer.setLakeWaterQuality("high");
+      await trial.renderer.setLakeWaterQuality("high");
+      expect(original.mesh.geometry).toBe(initialGeometry);
+      expect(published).toHaveBeenCalledTimes(manualPublications);
       trial.renderer.setScreenRenderAuto(true);
       for (let index = 0; index < 240; index++) {
         now = index * 100;
@@ -392,6 +400,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", shadow: "quarter", water_quality: "low" });
       const geometry = original.mesh.geometry;
       await trial.renderer.setLakeWaterQuality("medium");
+      const autoPublications = published.mock.calls.length;
+      await trial.renderer.setLakeWaterQuality("medium");
+      expect(published).toHaveBeenCalledTimes(autoPublications);
       expect(original.mesh.geometry).toBe(geometry);
       expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ selection: { manual_water_quality: "medium" }, water_quality: "low" });
       trial.renderer.setScreenRenderAuto(false);
