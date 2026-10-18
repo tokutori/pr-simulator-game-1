@@ -494,7 +494,7 @@ pub(crate) fn setup_world(
             base_color: Color::WHITE,
             perceptual_roughness: 1.0,
             fog_enabled: false,
-            opaque_render_method: bevy::pbr::OpaqueRendererMethod::Forward,
+            opaque_render_method: bevy::material::OpaqueRendererMethod::Forward,
             ..default()
         },
         extension: TerrainHazeExtension::try_new(sky.map(|sky| sky.visibility_m))

@@ -1,6 +1,4 @@
-use bevy::{
-    asset as bevy_asset, image as bevy_image, reflect as bevy_reflect, render as bevy_render,
-};
+use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     pbr::{ExtendedMaterial, MaterialExtension},
     prelude::*,
