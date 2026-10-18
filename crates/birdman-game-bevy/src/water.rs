@@ -590,6 +590,7 @@ pub(crate) struct EnvironmentAssets<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     terrain_materials: ResMut<'w, Assets<TerrainMaterial>>,
     terrain: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
+    structures: Query<'w, 's, &'static mut Visibility, With<super::world::VenueStructure>>,
 }
 
 pub(crate) fn apply_environment(
@@ -624,9 +625,18 @@ pub(crate) fn apply_environment(
         mut meshes,
         mut terrain_materials,
         terrain,
+        mut structures,
     } = assets;
+    let resolved = target.resolve();
+    for mut visibility in &mut structures {
+        visibility.set_if_neq(if resolved.is_ok() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
     let result = (|| {
-        let resolved = target.resolve()?;
+        let resolved = resolved?;
         let condition = resolved.condition();
         let high = WaterMaterial::from_environment(condition, false)
             .map_err(EnvironmentFailure::WavePreparation)?;
@@ -993,6 +1003,86 @@ mod tests {
             })
             .unwrap();
         session.action(MenuAction::Prepare).unwrap();
+    }
+
+    fn assert_structure_visibility(app: &mut App, expected: Visibility) {
+        let world = app.world_mut();
+        let mut structures = world.query_filtered::<&Visibility, With<world::VenueStructure>>();
+        let projected: Vec<_> = structures.iter(world).copied().collect();
+        assert_eq!(projected, vec![expected; 3]);
+    }
+
+    #[test]
+    fn archived_unknown_identity_hides_structures_without_changing_record_or_clock() {
+        use birdman_game_core::FlightRecord;
+
+        let mut app = environment_app();
+        assert_structure_visibility(&mut app, Visibility::Inherited);
+        prepare_calm(&mut app);
+        let (mut header, samples, finalization) = {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _step in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            session.tick(FlightInput::default());
+            session.action(MenuAction::Abort).unwrap();
+            let record = session.game.core_session().flight_record().unwrap();
+            (
+                record.header(),
+                record.samples().to_vec(),
+                record.finalization().unwrap(),
+            )
+        };
+        header.scenario.environment_version = 99;
+        let record =
+            FlightRecord::try_from_finalized_samples(header, samples.clone(), finalization)
+                .unwrap();
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .game
+            .open_archived_replay(record)
+            .unwrap();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        let clock = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .playback_clock();
+        app.update();
+        assert_structure_visibility(&mut app, Visibility::Hidden);
+        app.update();
+        assert_structure_visibility(&mut app, Visibility::Hidden);
+        let session = app.world().resource::<NativeSession>();
+        assert_eq!(session.game.core_session().snapshot(), before);
+        assert_eq!(session.game.core_session().playback_clock(), clock);
+        assert_eq!(
+            session
+                .game
+                .core_session()
+                .playback_record()
+                .unwrap()
+                .samples(),
+            samples
+        );
+        assert!(
+            app.world()
+                .resource::<NativeEnvironment>()
+                .condition_for(EnvironmentTarget::Sealed(header.scenario))
+                .is_err()
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .execute_ui_command(SessionCommand::ReturnToTitle {})
+            .unwrap();
+        app.update();
+        assert_structure_visibility(&mut app, Visibility::Inherited);
     }
 
     #[test]
@@ -1745,6 +1835,7 @@ mod tests {
             .remove::<EnvironmentSurface>();
         prepare_calm(&mut app);
         app.update();
+        assert_structure_visibility(&mut app, Visibility::Inherited);
         let target = EnvironmentTarget::Sealed(
             app.world()
                 .resource::<NativeSession>()

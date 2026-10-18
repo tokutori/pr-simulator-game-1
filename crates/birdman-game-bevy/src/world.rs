@@ -28,6 +28,7 @@ use birdman_game_core::{HybridMockDefinition, HybridSurfaceRole};
 use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::lake_sky::LAKE_SCENE_LIGHTING;
 use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
+use birdman_game_session::venue_structures::{ShoreStructureMesh, registered_structures};
 use birdman_game_session::wing_geometry::{
     CARBON_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial,
     WingRodKind, WingSurface,
@@ -55,6 +56,9 @@ pub(crate) enum WorldProjection {
     SkyDome,
     LakeSurface,
 }
+
+#[derive(Component)]
+pub(crate) struct VenueStructure;
 
 #[derive(Resource, Default)]
 pub(crate) struct RenderHistory {
@@ -461,6 +465,24 @@ fn wing_color(value: u32) -> Color {
     Color::srgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8)
 }
 
+fn shore_structure_mesh(source: &ShoreStructureMesh) -> Mesh {
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        source
+            .positions_ned
+            .iter()
+            .map(|&[north, east, down]| [east, -down, -north])
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_indices(Indices::U32(source.indices.clone()));
+    mesh.compute_area_weighted_normals();
+    mesh
+}
+
 pub(crate) fn setup_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -522,6 +544,30 @@ pub(crate) fn setup_world(
             MeshMaterial3d(land.clone()),
             Transform::IDENTITY,
             NotShadowCaster,
+        ));
+    }
+    for structure in registered_structures().expect("登録OSM構造物が不正") {
+        commands.spawn((
+            VenueStructure,
+            Name::new(format!("lake-biwa-{}-features-osm", structure.kind.name())),
+            Mesh3d(meshes.add(shore_structure_mesh(structure))),
+            MeshMaterial3d(
+                terrain_materials.add(TerrainMaterial {
+                    base: StandardMaterial {
+                        base_color: wing_color(structure.kind.color_srgb()),
+                        perceptual_roughness: 1.0,
+                        reflectance: 0.0,
+                        double_sided: true,
+                        cull_mode: None,
+                        fog_enabled: false,
+                        opaque_render_method: bevy::material::OpaqueRendererMethod::Forward,
+                        ..default()
+                    },
+                    extension: TerrainHazeExtension::try_new(sky.map(|sky| sky.visibility_m))
+                        .expect("登録構造物hazeが不正"),
+                }),
+            ),
+            Transform::IDENTITY,
         ));
     }
     let mut registered_water = WaterMaterial::registered(false).expect("登録wavesが不正");
@@ -2084,7 +2130,8 @@ mod tests {
     }
 
     #[test]
-    fn reflection_layer_contains_airframe_clouds_and_sun_but_excludes_water_and_terrain() {
+    fn reflection_layer_contains_airframe_clouds_and_sun_but_excludes_water_terrain_and_structures()
+    {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
@@ -2106,6 +2153,7 @@ mod tests {
             Option<&Name>,
             &Transform,
             Option<&super::super::clouds::CloudLayer>,
+            Option<&VenueStructure>,
         )>();
         let mut reflected_meshes = 0;
         let mut reflected_spars = 0;
@@ -2116,10 +2164,12 @@ mod tests {
         let mut excluded_meshes = 0;
         let mut terrain_meshes = 0;
         let mut cloud_layers = 0;
+        let mut structures = 0;
         let materials = world.resource::<Assets<StandardMaterial>>();
         let terrain_materials = world.resource::<Assets<TerrainMaterial>>();
+        let mesh_assets = world.resource::<Assets<Mesh>>();
         for (
-            _,
+            mesh,
             layers,
             water,
             shadow_exclusion,
@@ -2129,6 +2179,7 @@ mod tests {
             name,
             transform,
             cloud,
+            structure,
         ) in meshes.iter(world)
         {
             if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
@@ -2187,6 +2238,64 @@ mod tests {
                 excluded_meshes += 1;
                 if let Some(handle) = terrain_material {
                     let material = terrain_materials.get(&handle.0).unwrap();
+                    if structure.is_some() {
+                        let source = registered_structures()
+                            .unwrap()
+                            .iter()
+                            .find(|source| {
+                                name.unwrap().as_str()
+                                    == format!("lake-biwa-{}-features-osm", source.kind.name())
+                            })
+                            .unwrap();
+                        assert_eq!(
+                            material.base.base_color,
+                            wing_color(source.kind.color_srgb())
+                        );
+                        assert_eq!(material.base.reflectance, 0.0);
+                        assert!(material.base.double_sided);
+                        assert!(material.base.cull_mode.is_none());
+                        assert_eq!(material.base.perceptual_roughness, 1.0);
+                        assert!(!material.base.fog_enabled);
+                        assert_eq!(
+                            material.extension,
+                            TerrainHazeExtension::try_new(Some(25_000.0)).unwrap()
+                        );
+                        assert!(shadow_exclusion.is_none());
+                        assert!(receiver_exclusion.is_none());
+                        assert!(layers.is_none());
+                        assert_eq!(*transform, Transform::IDENTITY);
+                        let mesh = mesh_assets.get(mesh.0.id()).unwrap();
+                        let expected_positions: Vec<_> = source
+                            .positions_ned
+                            .iter()
+                            .map(|&[north, east, down]| [east, -down, -north])
+                            .collect();
+                        assert_eq!(
+                            mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                                .unwrap()
+                                .as_float3()
+                                .unwrap(),
+                            expected_positions
+                        );
+                        assert_eq!(mesh.indices(), Some(&Indices::U32(source.indices.clone())));
+                        let normals = mesh
+                            .attribute(Mesh::ATTRIBUTE_NORMAL)
+                            .unwrap()
+                            .as_float3()
+                            .unwrap();
+                        assert!(normals.iter().all(|normal| {
+                            let normal = Vec3::from_array(*normal);
+                            normal.is_finite() && (normal.length() - 1.0).abs() < 1e-5
+                        }));
+                        assert!(Vec3::from_array(normals[0]).distance(Vec3::Y) < 1e-5);
+                        assert!(expected_positions.iter().zip(normals).any(
+                            |(position, normal)| {
+                                *position == expected_positions[0] && normal[1].abs() < 1e-5
+                            }
+                        ));
+                        structures += 1;
+                        continue;
+                    }
                     assert_eq!(material.base.base_color, Color::WHITE);
                     assert_eq!(material.base.perceptual_roughness, 1.0);
                     assert!(!material.base.fog_enabled);
@@ -2204,6 +2313,7 @@ mod tests {
         let terrain: Terrain =
             serde_json::from_str(include_str!("../../../assets/biwa-terrain.json")).unwrap();
         assert_eq!(terrain_meshes, 1 + terrain.fine_patches.len());
+        assert_eq!(structures, 3);
         assert_eq!(reflected_meshes, 41);
         assert_eq!(reflected_tails, 24);
         assert_eq!(reflected_spars, 24);

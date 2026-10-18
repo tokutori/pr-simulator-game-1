@@ -121,6 +121,7 @@ Native runtime assetの入力経路は次のとおりである。
 | `native_water.wgsl`・`native_clouds.wgsl`・`native_terrain_haze.wgsl` | Bevy 0.19.1標準の`embedded_asset!`でbinaryへ含め、Materialと検証処理が同じ`embedded://` sourceを`AssetServer`で読む | 本repositoryのproject-authored shader、MIT |
 | `indigo-resist-decal.png` | Native worldの`include_bytes!`からdecode | `assets/manifest.toml`の生成画像・MIT契約 |
 | `biwa-terrain.json`・`biwa-land-mask.json` | Native worldの`include_str!`からdecode | manifestのJAXA AW3D30・Copernicus・OpenStreetMapの出典・利用条件 |
+| `biwa-venue-features.json` | 共有Rustで登録原点を検証し、桟橋5・岸壁4・防波堤3件の静的meshを両adapterへ投影 | OpenStreetMap contributors、ODbL-1.0。三角化のearcut通知は`earcut.LICENSE.txt` |
 | environment v6・launch venue・analysis map・venue featuresのJSON | 共有Rustの既存`include_*`からdecode | manifestに記載した気象庁・OpenStreetMap・利用者提供の設定と加工条件 |
 | 水面detail・sky panorama・cloud color/normal・主翼/尾翼のmesh/texture | 既存共有Rustの表示モデルと登録済み入力から生成 | 既存source/manifestの帰属を保持し、別fileの手作業配置は不要 |
 | 日本語font | 対象WindowsのMeiryo、または`--font PATH`で明示したローカルfile | 下記のOS font前提・利用条件。binaryへ含めない |
@@ -164,6 +165,8 @@ Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択�
 vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow caster・prepassは無効とし、平面のdefault prepassとの不一致を回避する。shadow receiverは変位後のworld positionとgeometric normalを公式samplingへ渡す。reflection targetはUI・水面・空・地形を含めず、resizeで旧targetだけを退役させる。環境・quality交換は同じ反射passを保持する。geometry・micro-normal・反射pass・cascade shadowの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
 登録broad/fine地形はWebと同じ非shadow casterとし、現在のshadow receiverを保持する。不透明な機体被覆・骨格とplatformのcaster、既存cascade・水面samplingは維持する。
 地形のvisibility hazeは共有near/farとsRGB色を使用する。公式PBR照明の後にWeb Screen基準のsmoothstep(view-depth)を適用し、BevyのsRGB出力用にlinearへ戻す。水面のradial hazeとreflection対象は保持する。環境交換では実terrain materialを事前検査し、水面・cloud・太陽と同じcommit境界で更新する。
+
+登録OSM構造物の形状・寸法・色は既存Web実装を共有Rustへ移し、Web/WASMとNativeで同じbulk meshを使う。原点と固定water面を基準とするNED座標を一度だけ描画座標へ変換し、上面と側面の硬辺、側面の面積重み平滑法線、両面描画、shadow caster/receiverを維持する。Nativeは既存terrain haze材質へ投影し、reflection layerへ追加しない。要求中の環境identityが未知または欠損の場合は、以前の適用済み環境が残っても構造物を表示しない。登録済み環境の水面資源準備失敗では静的構造物の表示を保持する。CPU検査は実mesh・材質・可視性を確認するが、実描画、視差、高さの視認性は[#9](https://github.com/tokutori/pr-simulator-game-1/issues/9)の未受入条件として残す。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 主翼とcockpitの形状はWeb基準の共有Rustを使用する。cockpitは白いframe、透明nose canopy、後部fairingを表示する。主翼上面の藍染textureも共有Rustで生成し、登録decalのalphaを左右へ投影する。Nativeではlinear-light mipを生成してsRGB textureへ格納する。T字骨格を表示し、全160本の主翼rod・44個のfoamが同じWingFrameの曲げへ追従する。rodのunit meshと左右同形foamのmeshを共有する。機体fidelityは未検証である。
