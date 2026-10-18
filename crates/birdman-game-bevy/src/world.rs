@@ -618,6 +618,7 @@ pub(crate) fn setup_world(
         materials.add(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(images.add(image)),
+            reflectance: 0.0,
             double_sided: true,
             cull_mode: None,
             ..default()
@@ -1100,6 +1101,7 @@ mod tests {
         }
         for (_, material, _) in cover {
             assert_eq!(material.base_color, Color::WHITE);
+            assert_eq!(material.reflectance, 0.0);
             assert_eq!(material.cull_mode, None);
             assert!(material.double_sided);
         }

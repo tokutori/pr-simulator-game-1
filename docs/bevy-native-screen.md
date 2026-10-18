@@ -73,7 +73,8 @@ GPUへの投影、mesh、WGSLはBevy adapterが所有する。
 Nativeは既存18,000 luxをadapterの換算基準とし、`Exposure = 2^(-EV100)/1.2`からDirectの基準値へ対応付ける。
 Ambientは等方光の`E = πL`と同じExposureから輝度へ換算し、main/反射cameraへ同一のExposureを設定する。
 Webの既定と同じNoToneMappingを使用する。これらは描画規約であり、実測の気象光量を表す値ではない。
-PBRとLambertのBRDF・specular、縮小投影による模様の視認差は残る。白模様の明瞭な視認受入は[#417](https://github.com/tokutori/pr-simulator-game-1/issues/417)で継続する。
+主翼CoverはWebの非光沢Lambertへ合わせてreflectanceを0とし、藍地を灰色方向へ持ち上げるspecular寄与を抑える。共有texture・sRGB・照明は維持する。
+PBRとLambertの白の明度差、縮小投影による細部の視認制約は残る。同記録の近景GPU比較と検証境界は[#417](https://github.com/tokutori/pr-simulator-game-1/issues/417)へ記録した。
 水面のfinite wave packet、解析的勾配、4層micro-normal、subpixel filtering、Fresnel、glitter、crest/compressionの色調・白波とhazeをWeb基準へ移植した。波と全天画像の生成は共有Rustへ集約し、Web/BevyはGPU投影を担当する。検証境界と未完了項目は[共有モデル](shared-lake-render-model.md#検証境界と残作業)へ記載する。
 現在の適用済み画質と選択状態は単一のpresentation Resourceから導出する。交換中は選択を停止し、失敗時は適用済み画質と原因を表示する。
 Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持する。画質変更はGameSession、Difficulty、飛行記録、simulation時刻を変更しない。
