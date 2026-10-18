@@ -20,6 +20,10 @@ CIはコード・設計文書・assetを検査する。Issue本文や依存関�
 commitは目的別のConventional Commitsとする。検査未実施の機能を完了として扱わない。
 通常の開発ではmainへの変更をPR経由で管理する。
 
+Issueは達成目標または独立した障害を単位とし、補助関数や個別試験ごとの増設を避ける。
+PRは関連する機能・全adapter・検証をまとめ、目的別のcommitを保持する。
+局所的に整合した変更群をまとめてpushし、最終combined treeのCIを確認する。専用の文書PRや追加gateで待機を増やさない。
+
 feature branchは早期にDraft PRを作成する。`Check`はmain/bevyへのpush、無条件のpull_request、手動実行で起動する。
 PRは仮merge tree、pushと手動実行は対象headを検査する。未PR・merge conflict中の先行head検査が必要な場合は、
 local検査または対象branchの手動実行（`deploy_pages=false`）で補完する。競合解消後はPRの3gateを確認する。
