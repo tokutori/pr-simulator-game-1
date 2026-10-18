@@ -2,7 +2,7 @@ use super::NativeScreenRender;
 use bevy::ecs as bevy_ecs;
 use bevy::{
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    diagnostic::{DiagnosticPath, DiagnosticsStore, FrameCount},
+    diagnostic::{Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
     pbr::{PendingMeshMaterialQueues, Shadow},
     platform::time::Instant,
@@ -25,22 +25,35 @@ use bevy::{
     shader::ShaderCacheError,
     window::PrimaryWindow,
 };
-use birdman_game_session::screen_render_auto::ScreenGpuSample;
-use std::collections::BTreeSet;
+use birdman_game_session::{
+    screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
+    screen_render_scale::ScreenRenderScale,
+};
+use std::collections::{BTreeMap, BTreeSet};
 
-const GPU_WORK: DiagnosticPath = DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
-const METADATA: [DiagnosticPath; 4] = [
+pub(crate) const GPU_WORK: DiagnosticPath =
+    DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
+const METADATA_WORDS: usize = 6;
+const METADATA: [DiagnosticPath; METADATA_WORDS] = [
     DiagnosticPath::const_new("render/screen_epoch"),
     DiagnosticPath::const_new("render/screen_frame"),
     DiagnosticPath::const_new("render/screen_source_low"),
     DiagnosticPath::const_new("render/screen_source_high"),
+    DiagnosticPath::const_new("render/screen_scale"),
+    DiagnosticPath::const_new("render/screen_shadow"),
 ];
-const METADATA_NAMES: [&str; 4] = [
+const METADATA_NAMES: [&str; METADATA_WORDS] = [
     "screen_epoch",
     "screen_frame",
     "screen_source_low",
     "screen_source_high",
+    "screen_scale",
+    "screen_shadow",
 ];
+
+pub(crate) fn is_source_metadata(path: &DiagnosticPath) -> bool {
+    METADATA.contains(path)
+}
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum TimingMode {
@@ -141,6 +154,8 @@ struct TimingPacket {
     epoch: u32,
     frame: u32,
     source_ms: u64,
+    scale: ScreenRenderScale,
+    shadow: ScreenShadowMap,
     preparation: PipelinePreparation,
 }
 
@@ -163,7 +178,7 @@ impl FromWorld for MetadataBuffer {
                 .resource::<RenderDevice>()
                 .create_buffer(&BufferDescriptor {
                     label: Some("screen_auto_metadata"),
-                    size: 16,
+                    size: (METADATA_WORDS * 4) as u64,
                     usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
                     mapped_at_creation: false,
                 }),
@@ -189,6 +204,8 @@ fn extract_packet(
         epoch: rendering.controller.epoch(),
         frame: frame.0,
         source_ms: time.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+        scale: rendering.snapshot().applied,
+        shadow: rendering.snapshot().shadow,
         preparation: PipelinePreparation::Pending,
     });
 }
@@ -241,8 +258,10 @@ fn begin_work(world: &mut World) {
         packet.frame,
         packet.source_ms as u32,
         (packet.source_ms >> 32) as u32,
+        packet.scale.percent(),
+        packet.shadow.size(),
     ];
-    let mut bytes = [0_u8; 16];
+    let mut bytes = [0_u8; METADATA_WORDS * 4];
     for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
         chunk.copy_from_slice(&word.to_le_bytes());
     }
@@ -391,11 +410,115 @@ pub(super) struct TimingReadout {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum TimingFailure {
+pub(crate) enum TimingFailure {
     IncompleteBatch,
     InvalidMetadata,
     InvalidWork,
     SourceOverflow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SourceWork {
+    pub(crate) sample: ScreenGpuSample,
+    pub(crate) scale: ScreenRenderScale,
+    pub(crate) shadow: ScreenShadowMap,
+}
+
+pub(crate) fn source_history(
+    store: &DiagnosticsStore,
+) -> impl Iterator<Item = (Instant, Result<SourceWork, TimingFailure>)> + '_ {
+    let mut batches = BTreeMap::new();
+    for (index, path) in METADATA.iter().enumerate() {
+        if let Some(diagnostic) = store.get(path) {
+            for measurement in diagnostic.measurements() {
+                let values = batches
+                    .entry(measurement.time)
+                    .or_insert([None; METADATA_WORDS]);
+                values[index] = Some(if values[index].is_none() {
+                    measurement.value
+                } else {
+                    f64::NAN
+                });
+            }
+        }
+    }
+    store
+        .get(&GPU_WORK)
+        .into_iter()
+        .flat_map(Diagnostic::measurements)
+        .map(move |gpu| {
+            let words = batches
+                .get(&gpu.time)
+                .copied()
+                .ok_or(TimingFailure::IncompleteBatch)
+                .and_then(decode_metadata);
+            (
+                gpu.time,
+                words.and_then(|words| decode_work(words, gpu.value)),
+            )
+        })
+}
+
+fn metadata_words(
+    store: &DiagnosticsStore,
+    gpu: &DiagnosticMeasurement,
+) -> Result<[u32; METADATA_WORDS], TimingFailure> {
+    decode_metadata(METADATA.map(|path| {
+        store
+            .get_measurement(&path)
+            .filter(|value| value.time == gpu.time)
+            .or_else(|| {
+                store.get(&path).and_then(|diagnostic| {
+                    diagnostic
+                        .measurements()
+                        .find(|value| value.time == gpu.time)
+                })
+            })
+            .map(|value| value.value)
+    }))
+}
+
+fn decode_metadata(
+    values: [Option<f64>; METADATA_WORDS],
+) -> Result<[u32; METADATA_WORDS], TimingFailure> {
+    let mut words = [0; METADATA_WORDS];
+    for (destination, value) in words.iter_mut().zip(values) {
+        *destination = word(value.ok_or(TimingFailure::IncompleteBatch)?)
+            .ok_or(TimingFailure::InvalidMetadata)?;
+    }
+    Ok(words)
+}
+
+fn decode_work(
+    words: [u32; METADATA_WORDS],
+    gpu_work_ms: f64,
+) -> Result<SourceWork, TimingFailure> {
+    let [epoch, frame, low, high, scale, shadow] = words;
+    let scale = ScreenRenderScale::ALL
+        .into_iter()
+        .find(|value| value.percent() == scale)
+        .ok_or(TimingFailure::InvalidMetadata)?;
+    let shadow = ScreenShadowMap::ALL
+        .into_iter()
+        .find(|value| value.size() == shadow)
+        .ok_or(TimingFailure::InvalidMetadata)?;
+    let source_ms = u64::from(low) | (u64::from(high) << 32);
+    if source_ms > (1_u64 << 53) {
+        return Err(TimingFailure::SourceOverflow);
+    }
+    if !gpu_work_ms.is_finite() || gpu_work_ms < 0.0 {
+        return Err(TimingFailure::InvalidWork);
+    }
+    Ok(SourceWork {
+        sample: ScreenGpuSample {
+            epoch,
+            frame,
+            source_ms: source_ms as f64,
+            gpu_work_ms,
+        },
+        scale,
+        shadow,
+    })
 }
 
 impl TimingReadout {
@@ -411,21 +534,13 @@ impl TimingReadout {
             return Ok(None);
         }
         self.arrival = Some(gpu.time);
-        let mut words = [0; 4];
-        for (destination, path) in words.iter_mut().zip(&METADATA) {
-            let metadata = store
-                .get_measurement(path)
-                .filter(|value| value.time == gpu.time)
-                .ok_or(TimingFailure::IncompleteBatch)?;
-            *destination = word(metadata.value).ok_or(TimingFailure::InvalidMetadata)?;
-        }
-        let [received_epoch, frame, low, high] = words;
-        if received_epoch != epoch {
+        let words = metadata_words(store, gpu)?;
+        if words[0] != epoch {
             return Ok(None);
         }
-        if !gpu.value.is_finite() || gpu.value < 0.0 {
-            return Err(TimingFailure::InvalidWork);
-        }
+        let source = decode_work(words, gpu.value)?;
+        let sample = source.sample;
+        let frame = sample.frame;
         if self
             .previous
             .is_some_and(|(previous_epoch, previous_frame)| {
@@ -434,17 +549,8 @@ impl TimingReadout {
         {
             return Ok(None);
         }
-        let source_ms = u64::from(low) | (u64::from(high) << 32);
-        if source_ms > (1_u64 << 53) {
-            return Err(TimingFailure::SourceOverflow);
-        }
         self.previous = Some((epoch, frame));
-        Ok(Some(ScreenGpuSample {
-            epoch,
-            frame,
-            source_ms: source_ms as f64,
-            gpu_work_ms: gpu.value,
-        }))
+        Ok(Some(sample))
     }
 }
 
@@ -454,7 +560,7 @@ fn word(value: f64) -> Option<u32> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use bevy::{
         app::SubApp,
@@ -516,7 +622,7 @@ mod tests {
         }
     }
 
-    fn packet(
+    pub(crate) fn packet(
         store: &mut DiagnosticsStore,
         time: Instant,
         epoch: u32,
@@ -524,10 +630,37 @@ mod tests {
         source: u64,
         work: f64,
     ) {
+        packet_quality(
+            store,
+            time,
+            epoch,
+            frame,
+            source,
+            work,
+            (ScreenRenderScale::Full, ScreenShadowMap::Full),
+        );
+    }
+
+    pub(crate) fn packet_quality(
+        store: &mut DiagnosticsStore,
+        time: Instant,
+        epoch: u32,
+        frame: u32,
+        source: u64,
+        work: f64,
+        quality: (ScreenRenderScale, ScreenShadowMap),
+    ) {
         for (path, value) in std::iter::once((GPU_WORK, work)).chain(
             METADATA
                 .into_iter()
-                .zip([epoch, frame, source as u32, (source >> 32) as u32])
+                .zip([
+                    epoch,
+                    frame,
+                    source as u32,
+                    (source >> 32) as u32,
+                    quality.0.percent(),
+                    quality.1.size(),
+                ])
                 .map(|(path, word)| (path, f64::from(word))),
         ) {
             if store.get(&path).is_none() {
@@ -538,6 +671,57 @@ mod tests {
                 .unwrap()
                 .add_measurement(DiagnosticMeasurement { time, value });
         }
+    }
+
+    #[test]
+    fn historical_batches_keep_source_quality_instead_of_the_latest_pair() {
+        let mut store = DiagnosticsStore::default();
+        let arrival = Instant::now();
+        packet(&mut store, arrival, 7, 10, 100, 18.0);
+        let first = DiagnosticMeasurement {
+            time: arrival,
+            value: 18.0,
+        };
+        packet_quality(
+            &mut store,
+            arrival + Duration::from_millis(20),
+            8,
+            11,
+            120,
+            9.0,
+            (ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+        );
+        let old = source_history(&store)
+            .find(|(time, _)| *time == first.time)
+            .unwrap()
+            .1
+            .unwrap();
+        assert_eq!(
+            (old.sample.epoch, old.scale, old.shadow),
+            (7, ScreenRenderScale::Full, ScreenShadowMap::Full)
+        );
+        let latest = source_history(&store).last().unwrap().1.unwrap();
+        assert_eq!(
+            (latest.sample.epoch, latest.scale, latest.shadow),
+            (8, ScreenRenderScale::Half, ScreenShadowMap::Quarter)
+        );
+        assert_eq!(
+            decode_work([7, 10, 100, 0, 80, 2048], 1.0),
+            Err(TimingFailure::InvalidMetadata)
+        );
+        assert_eq!(
+            decode_work([7, 10, 100, 0, 100, 1000], 1.0),
+            Err(TimingFailure::InvalidMetadata)
+        );
+        packet(
+            &mut store,
+            arrival + Duration::from_millis(30),
+            9,
+            12,
+            (1_u64 << 53) + 1,
+            f64::NAN,
+        );
+        assert!(TimingReadout::default().read(&store, 8).unwrap().is_none());
     }
 
     #[test]
@@ -602,7 +786,12 @@ mod tests {
                 time: arrival + Duration::from_millis(1),
                 value: 11.0,
             });
-        assert_eq!(readout.read(&store, 1), Err(TimingFailure::IncompleteBatch));
+        assert_eq!(readout.read(&store, 1).unwrap().unwrap().frame, 10);
+        *store.get_mut(&METADATA[1]).unwrap() = Diagnostic::new(METADATA[1].clone());
+        assert_eq!(
+            TimingReadout::default().read(&store, 1),
+            Err(TimingFailure::IncompleteBatch)
+        );
         for (index, work) in [f64::NAN, f64::INFINITY, -1.0].into_iter().enumerate() {
             packet(
                 &mut store,
@@ -838,6 +1027,8 @@ mod tests {
                     epoch: 7,
                     frame: 42,
                     source_ms: (1_u64 << 32) + 123,
+                    scale: ScreenRenderScale::Full,
+                    shadow: ScreenShadowMap::Full,
                     preparation: PipelinePreparation::Pending,
                 });
                 for _ in 0..2 {

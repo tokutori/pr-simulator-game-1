@@ -7,7 +7,7 @@ use super::{
     },
     screen_render::{
         NativeScreenRender,
-        timing::{TimingMode, shader_is_pending},
+        timing::{self, TimingMode, shader_is_pending},
     },
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
@@ -20,7 +20,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::{
     asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
     camera::RenderTarget,
-    diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameCount, FrameTimeDiagnosticsPlugin},
     input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex},
     material::descriptor::PipelineDescriptor,
     prelude::*,
@@ -52,6 +52,7 @@ use birdman_game_session::{
     screen_render_scale::ScreenRenderScale,
 };
 use std::{
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
@@ -66,6 +67,7 @@ const TIMING_HISTORY_LIMIT: usize = 4096;
 pub(crate) struct WaterVerificationCase {
     weather: WeatherClass,
     quality: WaterQuality,
+    auto: bool,
 }
 
 impl WaterVerificationCase {
@@ -84,7 +86,16 @@ impl WaterVerificationCase {
             "high" => WaterQuality::High,
             _ => return Err("Water verification quality must be low, medium or high"),
         };
-        Ok(Self { weather, quality })
+        Ok(Self {
+            weather,
+            quality,
+            auto: false,
+        })
+    }
+
+    pub(crate) fn with_auto(mut self) -> Self {
+        self.auto = true;
+        self
     }
 
     fn alternate_quality(self) -> WaterQuality {
@@ -180,6 +191,41 @@ enum MotionInterval {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SourceBoundary {
+    frame: u32,
+    milliseconds: u64,
+}
+
+impl SourceBoundary {
+    fn before_extract(frame: FrameCount, elapsed: Duration) -> Self {
+        Self {
+            frame: frame.0.wrapping_add(1),
+            milliseconds: elapsed.as_millis() as u64,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MotionSourceWindow {
+    Observing {
+        start: SourceBoundary,
+    },
+    Complete {
+        start: SourceBoundary,
+        end: SourceBoundary,
+    },
+}
+
+impl MotionSourceWindow {
+    fn finish(self, end: SourceBoundary) -> Self {
+        match self {
+            Self::Observing { start } => Self::Complete { start, end },
+            complete => complete,
+        }
+    }
+}
+
 impl MotionInterval {
     fn observe(self, phase: SessionPhase, delta: Duration) -> Self {
         let Self::Observing(mut metrics) = self else {
@@ -222,7 +268,7 @@ fn timing_kind(diagnostic: &Diagnostic) -> Option<&'static str> {
 
 pub(crate) fn maintain_timing_history(mut diagnostics: ResMut<DiagnosticsStore>) {
     for diagnostic in diagnostics.iter_mut() {
-        if timing_kind(diagnostic).is_some()
+        if (timing_kind(diagnostic).is_some() || timing::is_source_metadata(diagnostic.path()))
             && diagnostic.get_max_history_length() < TIMING_HISTORY_LIMIT
         {
             let placeholder = Diagnostic::new(diagnostic.path().clone());
@@ -247,6 +293,15 @@ struct TimingSummary {
 impl TimingSummary {
     fn is_complete(&self) -> bool {
         self.received_count > 0 && self.invalid_count == 0 && !self.history_incomplete
+    }
+
+    fn with_values(mut self, mut values: Vec<f64>) -> Self {
+        values.sort_unstable_by(f64::total_cmp);
+        self.mean_ms =
+            (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64);
+        self.p95_ms = (!values.is_empty()).then(|| values[values.len() - values.len() / 20 - 1]);
+        self.maximum_ms = values.last().copied();
+        self
     }
 }
 
@@ -275,7 +330,6 @@ fn summarize_timing(diagnostic: &Diagnostic, start: Instant, end: Instant) -> Ti
             invalid_count += 1;
         }
     }
-    values.sort_unstable_by(f64::total_cmp);
     TimingSummary {
         received_count,
         invalid_count,
@@ -284,10 +338,11 @@ fn summarize_timing(diagnostic: &Diagnostic, start: Instant, end: Instant) -> Ti
             .map(|(first, last)| last.duration_since(first).as_secs_f64() * 1000.0),
         history_limit,
         history_incomplete,
-        mean_ms: (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64),
-        p95_ms: (!values.is_empty()).then(|| values[values.len() - values.len() / 20 - 1]),
-        maximum_ms: values.last().copied(),
+        mean_ms: None,
+        p95_ms: None,
+        maximum_ms: None,
     }
+    .with_values(values)
 }
 
 fn report_motion_timings(
@@ -356,6 +411,167 @@ fn report_motion_timings(
     }
 }
 
+#[derive(Debug, PartialEq)]
+struct SourceTimingSummary {
+    expected_frames: u32,
+    received_frames: usize,
+    duplicate_frames: usize,
+    unassigned_arrivals: usize,
+    history_incomplete: bool,
+    groups: BTreeMap<(u32, u32, u32), TimingSummary>,
+}
+
+fn summarize_source_timing(
+    diagnostics: &DiagnosticsStore,
+    window: MotionSourceWindow,
+    arrivals_since: Instant,
+) -> Result<SourceTimingSummary, &'static str> {
+    let MotionSourceWindow::Complete { start, end } = window else {
+        return Err("Source interval did not complete");
+    };
+    let expected_frames = end
+        .frame
+        .checked_sub(start.frame)
+        .filter(|frames| *frames > 0)
+        .ok_or("Source frame interval is empty or wrapped")?;
+    if end.milliseconds < start.milliseconds {
+        return Err("Source clock regressed");
+    }
+    let mut summary = SourceTimingSummary {
+        expected_frames,
+        received_frames: 0,
+        duplicate_frames: 0,
+        unassigned_arrivals: 0,
+        history_incomplete: false,
+        groups: BTreeMap::new(),
+    };
+    let mut grouped: BTreeMap<_, Vec<timing::SourceWork>> = BTreeMap::new();
+    let mut frames = BTreeSet::new();
+    let mut history_limit = TIMING_HISTORY_LIMIT;
+    for diagnostic in diagnostics.iter().filter(|diagnostic| {
+        diagnostic.path() == &timing::GPU_WORK || timing::is_source_metadata(diagnostic.path())
+    }) {
+        history_limit = history_limit.min(diagnostic.get_max_history_length());
+        summary.history_incomplete |= diagnostic.history_len()
+            >= diagnostic.get_max_history_length()
+            && diagnostic
+                .measurements()
+                .next()
+                .is_some_and(|value| value.time >= arrivals_since);
+    }
+    for (arrival, source) in timing::source_history(diagnostics) {
+        let source = match source {
+            Ok(source) => source,
+            Err(_) => {
+                summary.unassigned_arrivals += usize::from(arrival >= arrivals_since);
+                continue;
+            }
+        };
+        if source.sample.frame <= start.frame || source.sample.frame > end.frame {
+            continue;
+        }
+        if source.sample.source_ms < start.milliseconds as f64
+            || source.sample.source_ms > end.milliseconds as f64
+        {
+            summary.unassigned_arrivals += 1;
+            continue;
+        }
+        if !frames.insert(source.sample.frame) {
+            summary.duplicate_frames += 1;
+            continue;
+        }
+        grouped
+            .entry((
+                source.sample.epoch,
+                source.scale.percent(),
+                source.shadow.size(),
+            ))
+            .or_default()
+            .push(source);
+    }
+    summary.received_frames = frames.len();
+    for (key, samples) in grouped {
+        let minimum = samples
+            .iter()
+            .map(|value| value.sample.source_ms)
+            .min_by(f64::total_cmp)
+            .unwrap();
+        let maximum = samples
+            .iter()
+            .map(|value| value.sample.source_ms)
+            .max_by(f64::total_cmp)
+            .unwrap();
+        summary.groups.insert(
+            key,
+            TimingSummary {
+                received_count: samples.len(),
+                invalid_count: 0,
+                sample_span_ms: Some(maximum - minimum),
+                history_limit,
+                history_incomplete: summary.history_incomplete,
+                mean_ms: None,
+                p95_ms: None,
+                maximum_ms: None,
+            }
+            .with_values(
+                samples
+                    .iter()
+                    .map(|value| value.sample.gpu_work_ms)
+                    .collect(),
+            ),
+        );
+    }
+    Ok(summary)
+}
+
+fn report_motion_sources(
+    verification: &Verification,
+    motion: WaterMotion,
+    diagnostics: Option<&DiagnosticsStore>,
+) {
+    let Some(window) = verification.motion_source else {
+        println!(
+            "Motion source timing motion={} unavailable: missing source interval",
+            motion.label()
+        );
+        return;
+    };
+    let Some(diagnostics) = diagnostics else {
+        println!(
+            "Motion source timing motion={} unavailable: DiagnosticsStore absent",
+            motion.label()
+        );
+        return;
+    };
+    match summarize_source_timing(diagnostics, window, verification.stage_started) {
+        Ok(summary) => {
+            let missing = summary.expected_frames as usize - summary.received_frames;
+            println!(
+                "Motion source timing motion={} window={window:?} missing_frames={missing} duplicate_frames={} unassigned_arrivals={} history_incomplete={}; End capture-save is the arrival cutoff, not query-drain confirmation; frame inclusion is (start,end], source_ms is truncated to whole milliseconds",
+                motion.label(),
+                summary.duplicate_frames,
+                summary.unassigned_arrivals,
+                summary.history_incomplete,
+            );
+            for ((epoch, scale, shadow), group) in summary.groups {
+                println!(
+                    "Motion source timing motion={} epoch={epoch} applied_scale={scale} shadow_map_size={shadow} root_gpu={group:?} partial_motion_group={} source_coverage_complete={}; each pair is a separate descriptive distribution, not an 80FPS acceptance",
+                    motion.label(),
+                    group.received_count < summary.expected_frames as usize,
+                    missing == 0
+                        && summary.duplicate_frames == 0
+                        && summary.unassigned_arrivals == 0
+                        && !summary.history_incomplete,
+                );
+            }
+        }
+        Err(cause) => println!(
+            "Motion source timing motion={} unavailable: {cause}",
+            motion.label()
+        ),
+    }
+}
+
 pub(crate) fn project_observer(
     mut verification: ResMut<Verification>,
     session: Res<NativeSession>,
@@ -365,6 +581,7 @@ pub(crate) fn project_observer(
         Res<TimingMode>,
         Res<NativeScreenRender>,
         Option<Res<DiagnosticsStore>>,
+        Res<FrameCount>,
     ),
     windows: Query<&Window>,
     mut commands: Commands,
@@ -378,6 +595,10 @@ pub(crate) fn project_observer(
         if matches!(interval, MotionInterval::Observing(_))
             && !matches!(observed, MotionInterval::Observing(_))
         {
+            if let Some(window) = verification.motion_source {
+                verification.motion_source =
+                    Some(window.finish(SourceBoundary::before_extract(*timing.3, time.elapsed())));
+            }
             report_motion_timings(
                 &verification,
                 motion,
@@ -976,6 +1197,7 @@ pub(crate) struct Verification {
     observer_base: Option<Transform>,
     motion_start_time: Option<f32>,
     motion_interval: Option<MotionInterval>,
+    motion_source: Option<MotionSourceWindow>,
     paused_sample_count: usize,
     paused_water_time: Option<f32>,
     paused_window: Option<(UVec2, f32)>,
@@ -1046,6 +1268,7 @@ impl Verification {
                 observer_base: None,
                 motion_start_time: None,
                 motion_interval: None,
+                motion_source: None,
                 paused_sample_count: 0,
                 paused_water_time: None,
                 paused_window: None,
@@ -1070,6 +1293,7 @@ impl Verification {
     }
 
     fn next(&mut self, stage: VerificationStage) {
+        self.motion_source = None;
         self.motion_interval = matches!(
             stage,
             VerificationStage::WaterMotion(_, MotionEndpoint::End)
@@ -1381,6 +1605,8 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
     rendering: Res<'w, NativeScreenRender>,
+    frame: Res<'w, FrameCount>,
+    diagnostics: Option<Res<'w, DiagnosticsStore>>,
     shadow_map: Res<'w, bevy::light::DirectionalLightShadowMap>,
     offscreen: Option<Res<'w, super::offscreen::OffscreenTarget>>,
     images: Res<'w, Assets<Image>>,
@@ -1822,6 +2048,11 @@ fn advance_step(
                     VerificationStage::WaterMotion(motion, MotionEndpoint::End)
                 }
                 VerificationStage::WaterMotion(motion, MotionEndpoint::End) => {
+                    report_motion_sources(
+                        verification,
+                        motion,
+                        presentation.diagnostics.as_deref(),
+                    );
                     if let Some(next) = motion.next() {
                         restart_water_motion(verification, session)?;
                         commands.remove_resource::<VerificationObserver>();
@@ -1959,7 +2190,14 @@ fn advance_step(
                 }
                 _ => return Err("Unexpected screenshot stage".into()),
             };
+            let source_start = matches!(
+                verification.stage,
+                VerificationStage::WaterMotion(_, MotionEndpoint::Start)
+            )
+            .then_some(SourceBoundary::before_extract(*presentation.frame, elapsed));
             verification.next(next);
+            verification.motion_source =
+                source_start.map(|start| MotionSourceWindow::Observing { start });
         }
         return Ok(());
     }
@@ -2005,6 +2243,30 @@ fn advance_step(
                     if quality.pending().is_none() {
                         if quality.applied() != case.quality {
                             return Err(format!("Setup water quality failed: {quality:?}"));
+                        }
+                        if case.auto {
+                            let rendering = presentation.rendering.snapshot();
+                            if matches!(rendering.selection, ScreenRenderSelection::Manual { .. }) {
+                                queue_ui_control(commands, "presentation-render-scale-auto", None);
+                                return Ok(());
+                            }
+                            match rendering.status {
+                                ScreenRenderAutoStatus::Ready => println!(
+                                    "Water Auto initial valid window and resource ACK confirmed: {rendering:?}; later flight adaptation remains active"
+                                ),
+                                ScreenRenderAutoStatus::Unsupported { cause }
+                                | ScreenRenderAutoStatus::Failed { cause } => {
+                                    return Err(format!("Water Auto unavailable: {cause}"));
+                                }
+                                _ if verification.stage_started.elapsed()
+                                    > Duration::from_secs(10) =>
+                                {
+                                    return Err(format!(
+                                        "Water Auto initial valid window timed out: {rendering:?}"
+                                    ));
+                                }
+                                _ => return Ok(()),
+                            }
                         }
                         verification.next(VerificationStage::Prepare);
                     }
@@ -2128,6 +2390,19 @@ fn advance_step(
         }
         VerificationStage::WaterMotion(motion, endpoint) => {
             require_phase(phase, SessionPhase::FlightRunning)?;
+            if verification.water_case.is_some_and(|case| case.auto) {
+                let rendering = presentation.rendering.snapshot();
+                if !matches!(rendering.selection, ScreenRenderSelection::Auto { .. }) {
+                    return Err(format!(
+                        "Water Auto selection changed during flight: {rendering:?}"
+                    ));
+                }
+                if let ScreenRenderAutoStatus::Unsupported { cause }
+                | ScreenRenderAutoStatus::Failed { cause } = rendering.status
+                {
+                    return Err(format!("Water Auto unavailable during flight: {cause}"));
+                }
+            }
             let state = session
                 .game
                 .core_session()
@@ -4342,6 +4617,41 @@ mod tests {
                 phase
             );
             app.update();
+            if phase == SessionPhase::FlightSetup {
+                let before = app
+                    .world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot();
+                for automatic in [true, false] {
+                    queue_ui_control(
+                        &mut app.world_mut().commands(),
+                        "presentation-render-scale-auto",
+                        None,
+                    );
+                    app.world_mut().flush();
+                    app.update();
+                    assert_eq!(
+                        matches!(
+                            app.world()
+                                .resource::<super::NativeScreenRender>()
+                                .snapshot()
+                                .selection,
+                            ScreenRenderSelection::Auto { .. }
+                        ),
+                        automatic
+                    );
+                    assert_eq!(
+                        app.world()
+                            .resource::<NativeSession>()
+                            .game
+                            .core_session()
+                            .snapshot(),
+                        before
+                    );
+                }
+            }
         }
         {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
@@ -4949,6 +5259,149 @@ mod tests {
     }
 
     #[test]
+    fn source_boundary_matches_the_real_last_frame_increment_before_render_extraction() {
+        use bevy::ecs as bevy_ecs;
+        use bevy::prelude::*;
+        #[derive(Resource, Default)]
+        struct Observed(Option<super::SourceBoundary>);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<Observed>()
+            .add_systems(
+                Update,
+                |frame: Res<super::FrameCount>,
+                 time: Res<Time<Real>>,
+                 mut observed: ResMut<Observed>| {
+                    observed.0 = Some(super::SourceBoundary::before_extract(
+                        *frame,
+                        time.elapsed(),
+                    ));
+                },
+            );
+        for frame in [0, 1, u32::MAX] {
+            app.world_mut().resource_mut::<super::FrameCount>().0 = frame;
+            app.update();
+            let boundary = app.world().resource::<Observed>().0.unwrap();
+            assert_eq!(
+                boundary.frame,
+                app.world().resource::<super::FrameCount>().0
+            );
+            assert_eq!(
+                boundary.milliseconds,
+                app.world().resource::<Time<Real>>().elapsed().as_millis() as u64
+            );
+        }
+    }
+
+    #[test]
+    fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplicate_samples() {
+        use super::timing::{
+            self,
+            tests::{packet, packet_quality},
+        };
+        use super::{MotionSourceWindow, SourceBoundary, summarize_source_timing};
+        use bevy::diagnostic::{DiagnosticMeasurement, DiagnosticsStore};
+        let arrival = std::time::Instant::now();
+        let mut store = DiagnosticsStore::default();
+        packet(&mut store, arrival, 1, 10, 16_123, 50.0);
+        packet(
+            &mut store,
+            arrival + Duration::from_millis(1),
+            1,
+            11,
+            16_123,
+            20.0,
+        );
+        packet_quality(
+            &mut store,
+            arrival + Duration::from_millis(4),
+            2,
+            12,
+            16_150,
+            10.0,
+            (super::ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+        );
+        packet_quality(
+            &mut store,
+            arrival + Duration::from_millis(5),
+            2,
+            12,
+            16_150,
+            100.0,
+            (super::ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+        );
+        packet(
+            &mut store,
+            arrival + Duration::from_millis(6),
+            2,
+            14,
+            16_190,
+            1.0,
+        );
+        let window = MotionSourceWindow::Observing {
+            start: SourceBoundary {
+                frame: 10,
+                milliseconds: 16_123,
+            },
+        }
+        .finish(SourceBoundary {
+            frame: 13,
+            milliseconds: 16_180,
+        });
+        let summary = summarize_source_timing(&store, window, arrival).unwrap();
+        assert_eq!(summary.expected_frames, 3);
+        assert_eq!(summary.received_frames, 2);
+        assert_eq!(summary.duplicate_frames, 1);
+        assert_eq!(summary.groups.len(), 2);
+        assert_eq!(summary.groups[&(1, 100, 2048)].mean_ms, Some(20.0));
+        assert_eq!(summary.groups[&(2, 50, 512)].mean_ms, Some(10.0));
+        store
+            .get_mut(&timing::GPU_WORK)
+            .unwrap()
+            .add_measurement(DiagnosticMeasurement {
+                time: arrival + Duration::from_millis(7),
+                value: 8.0,
+            });
+        let summary = summarize_source_timing(&store, window, arrival).unwrap();
+        assert_eq!(summary.unassigned_arrivals, 1);
+        assert_eq!(summary.received_frames, 2);
+        for diagnostic in store.iter_mut() {
+            let placeholder = bevy::diagnostic::Diagnostic::new(diagnostic.path().clone());
+            let owned = std::mem::replace(diagnostic, placeholder);
+            *diagnostic = owned.with_max_history_length(2);
+        }
+        assert!(
+            summarize_source_timing(&store, window, arrival)
+                .unwrap()
+                .history_incomplete
+        );
+        assert!(
+            summarize_source_timing(
+                &store,
+                MotionSourceWindow::Observing {
+                    start: SourceBoundary {
+                        frame: 10,
+                        milliseconds: 0
+                    }
+                },
+                arrival
+            )
+            .is_err()
+        );
+        let wrapped = MotionSourceWindow::Complete {
+            start: SourceBoundary {
+                frame: u32::MAX,
+                milliseconds: 0,
+            },
+            end: SourceBoundary {
+                frame: 2,
+                milliseconds: 100,
+            },
+        };
+        assert!(summarize_source_timing(&store, wrapped, arrival).is_err());
+    }
+
+    #[test]
     fn timing_summary_selects_closed_arrival_window_and_nearest_rank_p95() {
         let base = std::time::Instant::now();
         let start = base + Duration::from_secs(1);
@@ -5108,6 +5561,19 @@ mod tests {
                 "render/invalid_elapsed_gpu"
             ))),
             None,
+        );
+        let metadata = DiagnosticPath::const_new("render/screen_scale");
+        app.world_mut()
+            .resource_mut::<DiagnosticsStore>()
+            .add(Diagnostic::new(metadata.clone()));
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<DiagnosticsStore>()
+                .get(&metadata)
+                .unwrap()
+                .get_max_history_length(),
+            super::TIMING_HISTORY_LIMIT
         );
     }
 

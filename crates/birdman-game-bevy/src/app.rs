@@ -68,6 +68,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_directory = None;
     let mut verification_size = None;
     let mut water_verification = None;
+    let mut water_auto = false;
     let mut verification_timing = None;
     let mut replay_camera_verification = false;
     let mut no_vsync = false;
@@ -76,6 +77,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
             "--offscreen" => offscreen = true,
+            "--verify-water-auto" => water_auto = true,
             "--verify-replay-cameras" => replay_camera_verification = true,
             "--font" => {
                 font_path = arguments
@@ -115,6 +117,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 println!(
                     "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはManualにもroot-only計測を許可し、fullは従来の全pass診断を使用する。省略時はfull。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
                 );
+                println!(
+                    "--verify-water-auto: --verify-waterの5 motionを通常UIと同じ実Auto policyで観測する。既定Manual100は保持する。"
+                );
                 return Ok(());
             }
             _ => return Err(format!("Unknown argument: {argument}").into()),
@@ -137,6 +142,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     }
     let timing_mode =
         verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
+    water_verification = verification_water_auto(water_verification, water_auto)?;
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
             "日本語フォントを読めない: {} ({error})。--font PATH を指定する。",
@@ -309,6 +315,17 @@ fn verification_timing_mode(
         (true, None | Some("full")) => Ok(TimingMode::Full),
         (true, Some("root")) => Ok(TimingMode::Root),
         (true, Some(_)) => Err("--verify-timing must be root or full"),
+    }
+}
+
+fn verification_water_auto(
+    case: Option<verification::WaterVerificationCase>,
+    enabled: bool,
+) -> Result<Option<verification::WaterVerificationCase>, &'static str> {
+    match (case, enabled) {
+        (None, true) => Err("--verify-water-auto requires --verify-water"),
+        (Some(case), true) => Ok(Some(case.with_auto())),
+        (case, false) => Ok(case),
     }
 }
 
@@ -535,6 +552,19 @@ mod tests {
         keyboard::{Key, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion},
     };
+
+    #[test]
+    fn water_auto_is_explicit_and_requires_a_water_case() {
+        let case = verification::WaterVerificationCase::parse("typical-high").unwrap();
+        assert_eq!(verification_water_auto(None, false), Ok(None));
+        assert!(verification_water_auto(None, true).is_err());
+        assert_eq!(verification_water_auto(Some(case), false), Ok(Some(case)));
+        assert_eq!(
+            verification_water_auto(Some(case), true),
+            Ok(Some(case.with_auto()))
+        );
+        assert_ne!(case, case.with_auto());
+    }
 
     #[test]
     fn verification_timing_only_overrides_explicit_water_diagnostics() {

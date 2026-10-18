@@ -279,8 +279,16 @@ cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-
 ```
 
 同じ5 motionをroot-only診断で観測する場合は、上記へ`--verify-timing root`を追加する。
-この選択は診断方式だけを変更する。5 motion・画質・固定tick・150 ms安全条件は同一であり、source-frame別集計と飛行中Autoの負荷試験は対象外である。
-計測logのscale/shadowは区間終了時の確定値であり、到着時刻基準の各標本へ同じ資源pairが対応する保証を追加しない。
+この選択は診断方式だけを変更する。5 motion・水面画質・固定tick・150 ms安全条件は同一である。
+飛行中の実Autoを観測する場合は`--verify-water-auto`を追加する。省略時は従来のManual100を維持する。
+Setupの公開Auto操作を通し、最初の有効窓と資源ACKまで既存Setup内で最大10秒待つ。未対応・失敗・未達は原因を保持する。
+この準備確認は最適画質への収束を意味しない。飛行中も同じ共有policyが実GPU標本を受け、倍率とshadowを適応させる。
+到着時刻基準の従来集計とは別に、root GPUの同一完了batchのepoch・source-frame・実適用scale/shadowで分布を分ける。
+source区間はStart画像保存frameを除き、2秒motionの完了frameまでを含む。整数msは同じReal時計から取得し、frame包含の判定に小数時刻を用いない。
+Bevy 0.19.1は`Last`でFrameCountを増加させてからExtractを実行するため、Update境界を同じ描画元frameへ変換する。区間中のframe wrapは未対応として明示する。
+既存End画像保存完了を受信cutoffとする。GPU query全件のdrainは保証せず、欠損・重複・metadata不一致・履歴不足とpair別の部分区間を明示する。
+履歴は既存DiagnosticsStoreの4096件をmetadataにも適用し、別collectorを保持しない。GPU非対応や不足標本を0msへ置換しない。
+通常Windowの80 FPS受入、Release性能、CPU時間とGPU時間の同frame合算は別の確認対象である。
 
 この組合せはrunnerの人工的な待機だけを解除する。100 Hz物理、Real時刻、入力割当、150 ms安全停止、画質は維持する。
 Real Update周期と有効root GPU標本数・時間分布を分けて確認し、offscreen throughputと通常Windowの80 FPS表示受入を区別する。
