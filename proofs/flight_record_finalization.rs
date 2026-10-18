@@ -129,4 +129,26 @@ verus! {
     {
         let _ = record.append_tail_report(report, telemetry);
     }
+
+    fn verify_domain_no_elapsed_terminal_tick(
+        record: &mut FlightRecord,
+        report: TailFlightTickReport,
+        telemetry: FlightTelemetry,
+        score: Option<DistanceScore>,
+    ) -> (outcome: Result<FlightRecordFinalization, FlightRecordError>)
+        requires FlightRecordControls::from_tail_report(report) matches FlightRecordControlCapture::NoElapsedInterval,
+        ensures final(record).recorded_samples() == old(record).recorded_samples(),
+            match outcome {
+                Ok(metadata) => old(record).recorded_samples().len() > 0
+                    && metadata.terminal_tick == old(record).recorded_samples().last().tick_index
+                    && final(record).finalization() == Some(metadata),
+                Err(_) => *final(record) == *old(record),
+            },
+    {
+        record.append_tail_report(report, telemetry)?;
+        let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {
+            return Err(FlightRecordError::InvalidTime);
+        };
+        record.finalize(SessionEndReason::WaterContact, sample.interval_start_tick(), sample.fraction(), score)
+    }
 }

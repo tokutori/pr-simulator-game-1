@@ -480,6 +480,8 @@ impl FlightRecord {
                     && final(self).header() == old(self).header()
                     && final(self).sample_count() == old(self).sample_count()
                     && metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && old(self).recorded_samples().len() > 0
+                    && metadata.terminal_tick == old(self).recorded_samples().last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                     && metadata.failure.is_none(),
                 Err(_) => true,
@@ -507,6 +509,8 @@ impl FlightRecord {
                     && final(self).header() == old(self).header()
                     && final(self).sample_count() == old(self).sample_count()
                     && metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && old(self).recorded_samples().len() > 0
+                    && metadata.terminal_tick == old(self).recorded_samples().last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                     && metadata.failure == Some(failure),
                 Err(_) => true,
@@ -538,6 +542,8 @@ impl FlightRecord {
             match outcome {
                 Ok(metadata) => final(self).finalization == Some(metadata)
                     && metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && old(self).samples@.len() > 0
+                    && metadata.terminal_tick == old(self).samples@.last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                     && metadata.failure == failure,
                 Err(_) => true,
@@ -555,6 +561,7 @@ impl FlightRecord {
             #[cfg_attr(verus_only, verus_spec(metadata =>
                 ensures match metadata {
                     Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                        && metadata.terminal_tick == latest.tick_index
                         && metadata.terminal_fraction == terminal_fraction && metadata.score == score
                         && metadata.failure == failure,
                     Err(_) => true,
@@ -787,6 +794,7 @@ impl FlightRecord {
 #[cfg_attr(verus_only, verus_spec(outcome =>
     ensures match outcome {
         Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
+            && metadata.terminal_tick == latest.tick_index
             && metadata.terminal_fraction == terminal_fraction && metadata.score == score
             && metadata.failure == failure,
         Err(_) => true,

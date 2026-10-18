@@ -87,14 +87,16 @@ $suites = @(
 $domainDriver = Join-Path $repository 'proofs/flight_record_finalization.rs'
 $domainProofs = @(
     'verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit',
-    'verify_domain_record_begin', 'verify_domain_record_append', 'verify_domain_record_no_elapsed'
+    'verify_domain_record_begin', 'verify_domain_record_append', 'verify_domain_record_no_elapsed',
+    'verify_domain_no_elapsed_terminal_tick'
 )
 $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_retention_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_metadata_negative.rs'; Assertion = 'discarded' },
     @{ Path = Join-Path $repository 'proofs/flight_record_finalization_commit_negative.rs'; Assertion = 'missing' },
     @{ Path = Join-Path $repository 'proofs/flight_record_append_admission_negative.rs'; Assertion = 'appended' },
-    @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_negative.rs'; Assertion = 'added' }
+    @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_negative.rs'; Assertion = 'added' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_terminal_tick_negative.rs'; Assertion = 'shifted' }
 )
 
 function Invoke-NativeCapture {
