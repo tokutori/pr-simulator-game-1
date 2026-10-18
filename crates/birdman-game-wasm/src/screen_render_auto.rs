@@ -1,3 +1,4 @@
+use birdman_game_session::lake_water::LakeWaterQuality;
 use birdman_game_session::screen_render_auto::{
     ScreenGpuSample, ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderInvalidation,
     ScreenRenderResourceRequest, ScreenShadowMap,
@@ -20,6 +21,7 @@ impl ScreenRenderAutoBridge {
             controller: ScreenRenderAutoController::new(
                 ScreenRenderScale::default(),
                 ScreenShadowMap::Full,
+                LakeWaterQuality::High,
             ),
         }
     }
@@ -54,6 +56,18 @@ impl ScreenRenderAutoBridge {
             .map_or(0, |request| request.shadow.size())
     }
 
+    /// Returns the requested water quality, or no value when no request is pending.
+    pub fn requested_water_quality(&self) -> Option<String> {
+        self.controller.requested().map(|request| {
+            match request.water_quality {
+                LakeWaterQuality::Low => "low",
+                LakeWaterQuality::Medium => "medium",
+                LakeWaterQuality::High => "high",
+            }
+            .to_owned()
+        })
+    }
+
     /// Returns zero when no resource request identity exists.
     pub fn requested_epoch(&self) -> u32 {
         self.controller
@@ -65,6 +79,18 @@ impl ScreenRenderAutoBridge {
     pub fn select_manual(&mut self, scale_percent: u32, now_ms: f64) -> Result<(), JsValue> {
         self.controller
             .select_manual(scale(scale_percent)?, now_ms)
+            .map(|_| ())
+            .map_err(error)
+    }
+
+    /// Selects manual water quality, or Auto's retained upper bound.
+    pub fn select_water_quality(
+        &mut self,
+        water_quality: &str,
+        now_ms: f64,
+    ) -> Result<(), JsValue> {
+        self.controller
+            .select_water_quality(quality(water_quality)?, now_ms)
             .map(|_| ())
             .map_err(error)
     }
@@ -132,6 +158,7 @@ impl ScreenRenderAutoBridge {
         request_epoch: u32,
         scale_percent: u32,
         shadow_map_size: u32,
+        water_quality: &str,
         now_ms: f64,
         cleanup_failure: Option<String>,
     ) -> Result<(), JsValue> {
@@ -141,6 +168,7 @@ impl ScreenRenderAutoBridge {
                     epoch: request_epoch,
                     scale: scale(scale_percent)?,
                     shadow: shadow(shadow_map_size)?,
+                    water_quality: quality(water_quality)?,
                 },
                 now_ms,
                 cleanup_failure,
@@ -154,6 +182,7 @@ impl ScreenRenderAutoBridge {
         request_epoch: u32,
         scale_percent: u32,
         shadow_map_size: u32,
+        water_quality: &str,
         cause: &str,
         now_ms: f64,
     ) -> Result<(), JsValue> {
@@ -163,6 +192,7 @@ impl ScreenRenderAutoBridge {
                     epoch: request_epoch,
                     scale: scale(scale_percent)?,
                     shadow: shadow(shadow_map_size)?,
+                    water_quality: quality(water_quality)?,
                 },
                 cause.to_owned(),
                 now_ms,
@@ -189,6 +219,15 @@ fn shadow(size: u32) -> Result<ScreenShadowMap, JsValue> {
         .into_iter()
         .find(|shadow| shadow.size() == size)
         .ok_or_else(|| JsValue::from_str("unsupported Screen shadow map size"))
+}
+
+fn quality(value: &str) -> Result<LakeWaterQuality, JsValue> {
+    match value {
+        "low" => Ok(LakeWaterQuality::Low),
+        "medium" => Ok(LakeWaterQuality::Medium),
+        "high" => Ok(LakeWaterQuality::High),
+        _ => Err(JsValue::from_str("unsupported water quality")),
+    }
 }
 
 fn error(error: ScreenRenderAutoError) -> JsValue {

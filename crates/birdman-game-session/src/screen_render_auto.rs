@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
+use crate::lake_water::LakeWaterQuality;
 use crate::screen_render_scale::ScreenRenderScale;
 
 const WINDOW_MS: f64 = 2_000.0;
@@ -50,6 +51,8 @@ pub enum ScreenRenderSelection {
         scale: ScreenRenderScale,
         /// Retained manual shadow-map resolution.
         shadow: ScreenShadowMap,
+        /// Retained manual water quality.
+        water_quality: LakeWaterQuality,
     },
     /// GPU-work-based adjustment.
     Auto {
@@ -57,6 +60,8 @@ pub enum ScreenRenderSelection {
         manual_scale: ScreenRenderScale,
         /// Restored with the retained manual resolution.
         manual_shadow: ScreenShadowMap,
+        /// Upper bound while automatic, restored when Auto is disabled.
+        manual_water_quality: LakeWaterQuality,
     },
 }
 
@@ -82,6 +87,8 @@ pub struct ScreenRenderResourceRequest {
     pub scale: ScreenRenderScale,
     /// Desired directional shadow-map resolution.
     pub shadow: ScreenShadowMap,
+    /// Desired water mesh and wave-component budget.
+    pub water_quality: LakeWaterQuality,
 }
 
 /// Small UI state; timing samples and history are intentionally excluded.
@@ -110,6 +117,8 @@ pub enum ScreenRenderAutoStatus {
         requested: ScreenRenderScale,
         /// Requested shadow map, distinct from the applied value.
         shadow: ScreenShadowMap,
+        /// Requested water quality, distinct from the applied value.
+        water_quality: LakeWaterQuality,
     },
     /// The last resource application failed; the applied value is retained.
     Failed {
@@ -129,6 +138,8 @@ pub struct ScreenRenderAutoSnapshot {
     pub applied: ScreenRenderScale,
     /// Last successfully applied directional shadow-map resolution.
     pub shadow: ScreenShadowMap,
+    /// Last successfully applied water quality.
+    pub water_quality: LakeWaterQuality,
     /// Stable measurement or resource state.
     pub status: ScreenRenderAutoStatus,
 }
@@ -140,9 +151,11 @@ impl ScreenRenderAutoSnapshot {
             selection: ScreenRenderSelection::Manual {
                 scale,
                 shadow: ScreenShadowMap::Full,
+                water_quality: LakeWaterQuality::High,
             },
             applied: scale,
             shadow: ScreenShadowMap::Full,
+            water_quality: LakeWaterQuality::High,
             status: ScreenRenderAutoStatus::Manual,
         }
     }
@@ -218,6 +231,7 @@ pub struct ScreenRenderAutoController {
     selection: ScreenRenderSelection,
     applied: ScreenRenderScale,
     shadow: ScreenShadowMap,
+    water_quality: LakeWaterQuality,
     resource: ResourceState,
     measurement: MeasurementState,
     epoch: u32,
@@ -233,14 +247,20 @@ pub struct ScreenRenderAutoController {
 
 impl ScreenRenderAutoController {
     /// Starts with the backend's confirmed resolution and manual selection.
-    pub fn new(applied: ScreenRenderScale, shadow: ScreenShadowMap) -> Self {
+    pub fn new(
+        applied: ScreenRenderScale,
+        shadow: ScreenShadowMap,
+        water_quality: LakeWaterQuality,
+    ) -> Self {
         Self {
             selection: ScreenRenderSelection::Manual {
                 scale: applied,
                 shadow,
+                water_quality,
             },
             applied,
             shadow,
+            water_quality,
             resource: ResourceState::Ready,
             measurement: MeasurementState::Measuring,
             epoch: 1,
@@ -261,6 +281,7 @@ impl ScreenRenderAutoController {
             ResourceState::Applying(request) => ScreenRenderAutoStatus::Applying {
                 requested: request.scale,
                 shadow: request.shadow,
+                water_quality: request.water_quality,
             },
             ResourceState::Failed(cause) => ScreenRenderAutoStatus::Failed {
                 cause: cause.clone(),
@@ -280,6 +301,7 @@ impl ScreenRenderAutoController {
             selection: self.selection,
             applied: self.applied,
             shadow: self.shadow,
+            water_quality: self.water_quality,
             status,
         }
     }
@@ -322,21 +344,82 @@ impl ScreenRenderAutoController {
         now_ms: f64,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        let shadow = match self.selection {
-            ScreenRenderSelection::Manual { shadow, .. } => shadow,
-            ScreenRenderSelection::Auto { manual_shadow, .. } => manual_shadow,
+        let (shadow, water_quality) = match self.selection {
+            ScreenRenderSelection::Manual {
+                shadow,
+                water_quality,
+                ..
+            } => (shadow, water_quality),
+            ScreenRenderSelection::Auto {
+                manual_shadow,
+                manual_water_quality,
+                ..
+            } => (manual_shadow, manual_water_quality),
         };
-        if self.selection == (ScreenRenderSelection::Manual { scale, shadow })
+        if self.selection
+            == (ScreenRenderSelection::Manual {
+                scale,
+                shadow,
+                water_quality,
+            })
             && !matches!(self.resource, ResourceState::Failed(_))
         {
             return Ok(self.requested());
         }
         self.reset_window(now_ms)?;
         self.initial_observation_epoch = None;
-        self.selection = ScreenRenderSelection::Manual { scale, shadow };
+        self.selection = ScreenRenderSelection::Manual {
+            scale,
+            shadow,
+            water_quality,
+        };
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
-        self.request(scale, shadow)
+        self.request(scale, shadow, water_quality)
+    }
+
+    /// Changes manual water quality, or the upper bound without raising Auto's applied quality.
+    pub fn select_water_quality(
+        &mut self,
+        quality: LakeWaterQuality,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        let (selection, scale, shadow, water_quality) = match self.selection {
+            ScreenRenderSelection::Manual { scale, shadow, .. } => (
+                ScreenRenderSelection::Manual {
+                    scale,
+                    shadow,
+                    water_quality: quality,
+                },
+                scale,
+                shadow,
+                quality,
+            ),
+            ScreenRenderSelection::Auto {
+                manual_scale,
+                manual_shadow,
+                ..
+            } => (
+                ScreenRenderSelection::Auto {
+                    manual_scale,
+                    manual_shadow,
+                    manual_water_quality: quality,
+                },
+                self.applied,
+                self.shadow,
+                self.water_quality.min(quality),
+            ),
+        };
+        if self.selection == selection && !matches!(self.resource, ResourceState::Failed(_)) {
+            return Ok(self.requested());
+        }
+        self.reset_window(now_ms)?;
+        self.initial_observation_epoch = None;
+        self.selection = selection;
+        self.resource = ResourceState::Ready;
+        self.measurement = MeasurementState::Measuring;
+        self.request(scale, shadow, water_quality)
     }
 
     /// Enables Auto or restores its retained manual selection.
@@ -347,12 +430,20 @@ impl ScreenRenderAutoController {
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         match (enabled, self.selection) {
-            (true, ScreenRenderSelection::Manual { scale, shadow }) => {
+            (
+                true,
+                ScreenRenderSelection::Manual {
+                    scale,
+                    shadow,
+                    water_quality,
+                },
+            ) => {
                 self.reset_window(now_ms)?;
                 self.initial_observation_epoch = None;
                 self.selection = ScreenRenderSelection::Auto {
                     manual_scale: scale,
                     manual_shadow: shadow,
+                    manual_water_quality: water_quality,
                 };
                 if matches!(self.resource, ResourceState::Failed(_)) {
                     self.resource = ResourceState::Ready;
@@ -494,6 +585,7 @@ impl ScreenRenderAutoController {
         };
         self.applied = request.scale;
         self.shadow = request.shadow;
+        self.water_quality = request.water_quality;
         if self.epoch == u32::MAX {
             self.initial_observation_epoch = None;
             self.measurement =
@@ -564,8 +656,9 @@ impl ScreenRenderAutoController {
         &mut self,
         scale: ScreenRenderScale,
         shadow: ScreenShadowMap,
+        water_quality: LakeWaterQuality,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
-        if scale == self.applied && shadow == self.shadow {
+        if scale == self.applied && shadow == self.shadow && water_quality == self.water_quality {
             Ok(None)
         } else {
             self.check_epoch_capacity(1)?;
@@ -573,6 +666,7 @@ impl ScreenRenderAutoController {
                 epoch: self.epoch,
                 scale,
                 shadow,
+                water_quality,
             };
             self.resource = ResourceState::Applying(request);
             Ok(Some(request))
@@ -651,16 +745,33 @@ impl ScreenRenderAutoController {
             .iter()
             .position(|shadow| *shadow == self.shadow)
             .unwrap();
+        let water = LakeWaterQuality::ALL
+            .iter()
+            .position(|quality| *quality == self.water_quality)
+            .unwrap();
+        let water_limit = match self.selection {
+            ScreenRenderSelection::Auto {
+                manual_water_quality,
+                ..
+            } => manual_water_quality,
+            ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
+        };
         let next = if percentile > 12.5 {
             ScreenRenderScale::ALL
                 .get(current + 1)
                 .copied()
-                .map(|scale| (scale, self.shadow))
+                .map(|scale| (scale, self.shadow, self.water_quality))
                 .or_else(|| {
                     ScreenShadowMap::ALL
                         .get(shadow + 1)
                         .copied()
-                        .map(|shadow| (self.applied, shadow))
+                        .map(|shadow| (self.applied, shadow, self.water_quality))
+                })
+                .or_else(|| {
+                    LakeWaterQuality::ALL
+                        .get(water + 1)
+                        .copied()
+                        .map(|quality| (self.applied, self.shadow, quality))
                 })
         } else if percentile < 9.5
             && self.samples.len() >= 30
@@ -668,20 +779,35 @@ impl ScreenRenderAutoController {
             && freshness <= 100.0
             && complete
         {
-            shadow
+            water
                 .checked_sub(1)
-                .map(|index| (self.applied, ScreenShadowMap::ALL[index]))
+                .map(|index| LakeWaterQuality::ALL[index])
+                .filter(|quality| *quality <= water_limit)
+                .map(|quality| (self.applied, self.shadow, quality))
                 .or_else(|| {
-                    current
-                        .checked_sub(1)
-                        .map(|index| (ScreenRenderScale::ALL[index], self.shadow))
+                    shadow.checked_sub(1).map(|index| {
+                        (
+                            self.applied,
+                            ScreenShadowMap::ALL[index],
+                            self.water_quality,
+                        )
+                    })
+                })
+                .or_else(|| {
+                    current.checked_sub(1).map(|index| {
+                        (
+                            ScreenRenderScale::ALL[index],
+                            self.shadow,
+                            self.water_quality,
+                        )
+                    })
                 })
         } else {
             None
         };
-        if let Some((scale, shadow)) = next {
+        if let Some((scale, shadow, water_quality)) = next {
             self.reset_window(now_ms)?;
-            self.request(scale, shadow)
+            self.request(scale, shadow, water_quality)
         } else {
             Ok(None)
         }
@@ -726,8 +852,11 @@ mod tests {
 
     #[test]
     fn manual_choice_and_success_failure_ack_are_distinct_from_applied_resources() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         let request = controller
             .select_manual(ScreenRenderScale::ThreeQuarters, 0.0)
             .unwrap()
@@ -747,6 +876,7 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::ThreeQuarters,
                 manual_shadow: ScreenShadowMap::Full,
+                manual_water_quality: crate::lake_water::LakeWaterQuality::High
             }
         );
         let request = controller
@@ -778,8 +908,11 @@ mod tests {
 
     #[test]
     fn sparse_high_load_can_degrade_without_resetting_evidence_for_pending_or_gaps() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for index in 0..=10 {
@@ -804,6 +937,7 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
                 manual_shadow: ScreenShadowMap::Full,
+                manual_water_quality: crate::lake_water::LakeWaterQuality::High
             }
         ));
         for index in 0..=13 {
@@ -815,8 +949,11 @@ mod tests {
 
     #[test]
     fn initial_window_starts_at_the_first_valid_gpu_source_after_preparation() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         assert_eq!(controller.pending(10_000.0).unwrap(), None);
         for frame in 0..=19 {
@@ -847,8 +984,11 @@ mod tests {
 
     #[test]
     fn ready_is_derived_from_a_complete_valid_window_and_old_epochs_cannot_start_it() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let obsolete = sample(&controller, 0, 1.0, 11.0);
         controller
@@ -882,8 +1022,11 @@ mod tests {
 
     #[test]
     fn complete_initial_window_survives_ack_and_continuous_adaptation_without_snapshot_ready() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let initial_epoch = controller.epoch();
         let mut start = 0.0;
@@ -925,8 +1068,11 @@ mod tests {
 
     #[test]
     fn insufficient_coverage_and_obsolete_sources_never_create_initial_completion() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let obsolete = sample(&controller, 0, 0.0, 20.0);
         let request = evaluated_window(&mut controller, 0.0, 2).unwrap();
@@ -951,8 +1097,11 @@ mod tests {
             ScreenRenderInvalidation::Interrupted,
             ScreenRenderInvalidation::QualityChanged,
         ] {
-            let mut controller =
-                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+            let mut controller = ScreenRenderAutoController::new(
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High,
+            );
             controller.select_auto(true, 0.0).unwrap();
             let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
             let now = controller.now_ms;
@@ -964,8 +1113,11 @@ mod tests {
             assert_eq!(controller.initial_observation_epoch(), None, "{reason:?}");
         }
         for failure in 0..4 {
-            let mut controller =
-                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+            let mut controller = ScreenRenderAutoController::new(
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High,
+            );
             controller.select_auto(true, 0.0).unwrap();
             let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
             let now = controller.now_ms;
@@ -1002,8 +1154,11 @@ mod tests {
 
     #[test]
     fn missing_low_load_never_increases_quality() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Half,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         for index in 0..=100 {
             let now_ms = f64::from(index) * 20.0;
@@ -1019,8 +1174,11 @@ mod tests {
 
     #[test]
     fn high_rate_valid_delivery_preserves_the_full_observation_span_and_coverage() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Half,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for frame in 0..=2_000 {
@@ -1037,8 +1195,11 @@ mod tests {
 
     #[test]
     fn interval_maximum_prevents_sampling_from_discarding_high_gpu_work() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for frame in 0..=2_000 {
@@ -1056,8 +1217,11 @@ mod tests {
     #[test]
     fn production_auto_decision_reserves_ack_capacity_or_stops_with_a_visible_cause() {
         for remaining in [1, 2] {
-            let mut controller =
-                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+            let mut controller = ScreenRenderAutoController::new(
+                ScreenRenderScale::Full,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High,
+            );
             controller.select_auto(true, 0.0).unwrap();
             controller.epoch = u32::MAX - remaining;
             let mut decision = Ok(None);
@@ -1108,8 +1272,11 @@ mod tests {
 
     #[test]
     fn pending_acknowledgment_retains_epoch_capacity_across_invalidation() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         let request = controller
             .select_manual(ScreenRenderScale::Half, 0.0)
             .unwrap()
@@ -1135,8 +1302,11 @@ mod tests {
 
     #[test]
     fn new_requests_reserve_ack_capacity_and_final_failure_retains_original_cause() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.epoch = u32::MAX - 1;
         let before = controller.snapshot();
         assert_eq!(
@@ -1147,7 +1317,11 @@ mod tests {
         assert_eq!(controller.requested(), None);
         assert_eq!(
             controller
-                .request(ScreenRenderScale::Half, ScreenShadowMap::Full)
+                .request(
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Full,
+                    crate::lake_water::LakeWaterQuality::High
+                )
                 .unwrap()
                 .unwrap()
                 .scale,
@@ -1166,15 +1340,22 @@ mod tests {
             }
         );
         assert_eq!(
-            controller.request(ScreenRenderScale::Half, ScreenShadowMap::Full),
+            controller.request(
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High
+            ),
             Err(ScreenRenderAutoError::EpochExhausted)
         );
     }
 
     #[test]
     fn quantized_source_time_accepts_distinct_frames_without_fabricating_duplicates() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         for frame in [1, 2, 2] {
             controller
@@ -1193,8 +1374,11 @@ mod tests {
 
     #[test]
     fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Half,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let old = sample(&controller, 0, 0.0, 1.0);
         controller
@@ -1238,8 +1422,11 @@ mod tests {
 
     #[test]
     fn enabling_auto_preserves_a_manual_resource_application_already_in_progress() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         let request = controller
             .select_manual(ScreenRenderScale::ThreeQuarters, 0.0)
             .unwrap()
@@ -1256,6 +1443,7 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::ThreeQuarters,
                 manual_shadow: ScreenShadowMap::Full,
+                manual_water_quality: crate::lake_water::LakeWaterQuality::High
             }
         ));
     }
@@ -1263,8 +1451,11 @@ mod tests {
     #[test]
     fn received_frame_coverage_allows_small_loss_and_rejects_insufficient_delivery() {
         for (drop_every, can_upgrade) in [(0, true), (10, true), (9, false), (5, false)] {
-            let mut controller =
-                ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
+            let mut controller = ScreenRenderAutoController::new(
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High,
+            );
             controller.select_auto(true, 0.0).unwrap();
             let mut request = None;
             for frame in 0..=120 {
@@ -1291,7 +1482,11 @@ mod tests {
             (ScreenRenderScale::Half, 9.5, false),
             (ScreenRenderScale::Half, 9.499_999, true),
         ] {
-            let mut controller = ScreenRenderAutoController::new(start, ScreenShadowMap::Full);
+            let mut controller = ScreenRenderAutoController::new(
+                start,
+                ScreenShadowMap::Full,
+                crate::lake_water::LakeWaterQuality::High,
+            );
             controller.select_auto(true, 0.0).unwrap();
             let mut request = None;
             for frame in 0..=120 {
@@ -1305,8 +1500,11 @@ mod tests {
             }
             assert_eq!(request.is_some(), change);
         }
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let mut changes = Vec::new();
         for frame in 0..=400 {
@@ -1339,36 +1537,91 @@ mod tests {
     }
 
     #[test]
-    fn shadow_reduction_follows_minimum_resolution_and_recovers_in_reverse_order() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+    fn water_reduction_follows_resolution_and_shadow_and_recovers_in_reverse_order() {
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         controller.select_auto(true, 0.0).unwrap();
         let mut changes = Vec::new();
-        for frame in 0..=800 {
+        for frame in 0..=1_400 {
             let now = f64::from(frame) * 50.0;
-            let work = if now < 15_000.0 { 20.0 } else { 4.0 };
+            let work = if now < 22_000.0 { 20.0 } else { 4.0 };
             if let Some(request) = controller
                 .observe(sample(&controller, frame, now, work), now)
                 .unwrap()
             {
-                changes.push((now, request.scale, request.shadow));
+                changes.push((now, request.scale, request.shadow, request.water_quality));
                 controller.applied(request, now, None).unwrap();
             }
         }
         assert_eq!(
             changes
                 .iter()
-                .map(|change| (change.1, change.2))
+                .map(|change| (change.1, change.2, change.3))
                 .collect::<Vec<_>>(),
             vec![
-                (ScreenRenderScale::ThreeQuarters, ScreenShadowMap::Full),
-                (ScreenRenderScale::Half, ScreenShadowMap::Full),
-                (ScreenRenderScale::Half, ScreenShadowMap::Half),
-                (ScreenRenderScale::Half, ScreenShadowMap::Quarter),
-                (ScreenRenderScale::Half, ScreenShadowMap::Half),
-                (ScreenRenderScale::Half, ScreenShadowMap::Full),
-                (ScreenRenderScale::ThreeQuarters, ScreenShadowMap::Full),
-                (ScreenRenderScale::Full, ScreenShadowMap::Full),
+                (
+                    ScreenRenderScale::ThreeQuarters,
+                    ScreenShadowMap::Full,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Full,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Half,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Quarter,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Quarter,
+                    LakeWaterQuality::Medium
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Quarter,
+                    LakeWaterQuality::Low
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Quarter,
+                    LakeWaterQuality::Medium
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Quarter,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Half,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Half,
+                    ScreenShadowMap::Full,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::ThreeQuarters,
+                    ScreenShadowMap::Full,
+                    LakeWaterQuality::High
+                ),
+                (
+                    ScreenRenderScale::Full,
+                    ScreenShadowMap::Full,
+                    LakeWaterQuality::High
+                ),
             ]
         );
         assert!(
@@ -1383,6 +1636,7 @@ mod tests {
         let mut controller = ScreenRenderAutoController::new(
             ScreenRenderScale::ThreeQuarters,
             ScreenShadowMap::Half,
+            crate::lake_water::LakeWaterQuality::High,
         );
         controller.select_auto(true, 0.0).unwrap();
         for frame in 0..=120 {
@@ -1432,6 +1686,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::ThreeQuarters,
                 shadow: ScreenShadowMap::Half,
+                water_quality: crate::lake_water::LakeWaterQuality::High
             }
         );
         assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Half);
@@ -1439,8 +1694,11 @@ mod tests {
 
     #[test]
     fn cleanup_failure_keeps_the_new_resources_and_the_original_cause() {
-        let mut controller =
-            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Half);
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Half,
+            ScreenShadowMap::Half,
+            crate::lake_water::LakeWaterQuality::High,
+        );
         let request = controller
             .select_manual(ScreenRenderScale::Full, 0.0)
             .unwrap()
@@ -1461,5 +1719,121 @@ mod tests {
             }
         );
         assert!(!controller.measurement_enabled());
+    }
+
+    #[test]
+    fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple() {
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Half,
+            ScreenShadowMap::Quarter,
+            LakeWaterQuality::Medium,
+        );
+        controller.select_auto(true, 0.0).unwrap();
+        let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
+        assert_eq!(request.water_quality, LakeWaterQuality::Low);
+        controller.applied(request, 2_251.0, None).unwrap();
+        assert!(
+            controller
+                .select_water_quality(LakeWaterQuality::High, 2_252.0)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(controller.snapshot().water_quality, LakeWaterQuality::Low);
+        assert!(
+            controller
+                .select_water_quality(LakeWaterQuality::Medium, 2_253.0)
+                .unwrap()
+                .is_none()
+        );
+        let mut recovered = None;
+        for frame in 0..=120 {
+            let now = 5_300.0 + f64::from(frame) * 20.0;
+            recovered = controller
+                .observe(sample(&controller, frame, now, 4.0), now)
+                .unwrap();
+            if recovered.is_some() {
+                break;
+            }
+        }
+        let recovered = recovered.unwrap();
+        assert_eq!(
+            (recovered.scale, recovered.shadow, recovered.water_quality),
+            (
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                LakeWaterQuality::Medium
+            )
+        );
+        controller
+            .applied(recovered, controller.now_ms, None)
+            .unwrap();
+        let request = controller
+            .select_water_quality(LakeWaterQuality::Low, controller.now_ms + 1.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.water_quality, LakeWaterQuality::Low);
+        assert_eq!(
+            controller.applied(
+                ScreenRenderResourceRequest {
+                    water_quality: LakeWaterQuality::High,
+                    ..request
+                },
+                controller.now_ms + 1.0,
+                None
+            ),
+            Err(ScreenRenderAutoError::StaleRequest)
+        );
+        controller
+            .failed(
+                request,
+                "water preparation failed".to_owned(),
+                controller.now_ms + 1.0,
+            )
+            .unwrap();
+        assert_eq!(
+            controller.snapshot().water_quality,
+            LakeWaterQuality::Medium
+        );
+        let retry = controller
+            .select_water_quality(LakeWaterQuality::Low, controller.now_ms + 1.0)
+            .unwrap()
+            .unwrap();
+        controller
+            .applied(
+                retry,
+                controller.now_ms + 1.0,
+                Some("water cleanup failed".to_owned()),
+            )
+            .unwrap();
+        assert_eq!(controller.snapshot().water_quality, LakeWaterQuality::Low);
+        assert!(
+            matches!(controller.snapshot().status, ScreenRenderAutoStatus::Failed { cause } if cause == "water cleanup failed")
+        );
+        controller
+            .select_water_quality(LakeWaterQuality::Medium, controller.now_ms + 1.0)
+            .unwrap();
+        let restore = controller
+            .select_auto(false, controller.now_ms + 1.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (restore.scale, restore.shadow, restore.water_quality),
+            (
+                ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                LakeWaterQuality::Medium
+            )
+        );
+        controller
+            .applied(restore, controller.now_ms + 1.0, None)
+            .unwrap();
+        assert_eq!(
+            controller.snapshot().selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::Half,
+                shadow: ScreenShadowMap::Quarter,
+                water_quality: LakeWaterQuality::Medium
+            }
+        );
     }
 }

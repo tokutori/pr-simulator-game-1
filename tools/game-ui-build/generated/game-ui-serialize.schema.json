@@ -3895,6 +3895,26 @@
         }
       ]
     },
+    "LakeWaterQuality": {
+      "description": "Existing Web component and mesh budgets, without GPU types.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Six representative components and a 96-segment mesh.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Ten representative components and a 144-segment mesh.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "All 18 canonical components and a 224-segment mesh.",
+          "type": "string"
+        }
+      ]
+    },
     "LoadFailureDocument": {
       "description": "Original external-load failure.",
       "oneOf": [
@@ -4150,12 +4170,17 @@
         "status": {
           "$ref": "#/$defs/ScreenRenderAutoStatus",
           "description": "Stable measurement or resource state."
+        },
+        "water_quality": {
+          "$ref": "#/$defs/LakeWaterQuality",
+          "description": "Last successfully applied water quality."
         }
       },
       "required": [
         "selection",
         "applied",
         "shadow",
+        "water_quality",
         "status"
       ],
       "type": "object"
@@ -4267,12 +4292,17 @@
             "shadow": {
               "$ref": "#/$defs/ScreenShadowMap",
               "description": "Requested shadow map, distinct from the applied value."
+            },
+            "water_quality": {
+              "$ref": "#/$defs/LakeWaterQuality",
+              "description": "Requested water quality, distinct from the applied value."
             }
           },
           "required": [
             "kind",
             "requested",
-            "shadow"
+            "shadow",
+            "water_quality"
           ],
           "type": "object"
         },
@@ -4335,12 +4365,17 @@
             "shadow": {
               "$ref": "#/$defs/ScreenShadowMap",
               "description": "Retained manual shadow-map resolution."
+            },
+            "water_quality": {
+              "$ref": "#/$defs/LakeWaterQuality",
+              "description": "Retained manual water quality."
             }
           },
           "required": [
             "kind",
             "scale",
-            "shadow"
+            "shadow",
+            "water_quality"
           ],
           "type": "object"
         },
@@ -4359,12 +4394,17 @@
             "manual_shadow": {
               "$ref": "#/$defs/ScreenShadowMap",
               "description": "Restored with the retained manual resolution."
+            },
+            "manual_water_quality": {
+              "$ref": "#/$defs/LakeWaterQuality",
+              "description": "Upper bound while automatic, restored when Auto is disabled."
             }
           },
           "required": [
             "kind",
             "manual_scale",
-            "manual_shadow"
+            "manual_shadow",
+            "manual_water_quality"
           ],
           "type": "object"
         }

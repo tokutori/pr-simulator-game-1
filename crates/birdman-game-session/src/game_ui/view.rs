@@ -1203,7 +1203,25 @@ fn feedback(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 }
 
 fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    use crate::lake_water::LakeWaterQuality;
+    use crate::screen_render_auto::ScreenRenderSelection;
     let current = context.platform.water_quality;
+    let retained = match context.platform.screen_render_scale.selection {
+        ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
+        ScreenRenderSelection::Auto {
+            manual_water_quality,
+            ..
+        } => manual_water_quality,
+    };
+    let retained = match retained {
+        LakeWaterQuality::Low => GameUiWaterQuality::Low,
+        LakeWaterQuality::Medium => GameUiWaterQuality::Medium,
+        LakeWaterQuality::High => GameUiWaterQuality::High,
+    };
+    let automatic = matches!(
+        context.platform.screen_render_scale.selection,
+        ScreenRenderSelection::Auto { .. }
+    );
     let label = |quality| match quality {
         GameUiWaterQuality::Low => "Low",
         GameUiWaterQuality::Medium => "Medium",
@@ -1214,7 +1232,13 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "水面画質",
         &match &context.platform.water_quality_operation {
             GameUiWaterQualityOperation::Idle {} => format!(
-                "{} · 水面の描画密度を選択する。飛行物理と記録条件は維持する。",
+                "保持選択{}{} · 適用済み{}。飛行物理と記録条件は維持する。",
+                label(retained),
+                if automatic {
+                    "（Screen Auto上限）"
+                } else {
+                    ""
+                },
                 label(current)
             ),
             GameUiWaterQualityOperation::Applying { requested } => {
@@ -1255,7 +1279,7 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 presentation: GameUiButtonPresentation::Choice {
                     group: "water-quality".to_owned(),
                     group_label: "水面画質".to_owned(),
-                    selected: current == quality,
+                    selected: retained == quality,
                     description: description.to_owned(),
                 },
             },
@@ -1278,8 +1302,17 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         ScreenRenderAutoStatus::CoverageLimited => "計測欠損あり。倍率上昇を保留する。".to_owned(),
         ScreenRenderAutoStatus::Unsupported { cause } => format!("GPU計測非対応: {cause}"),
         ScreenRenderAutoStatus::Interrupted => "中断後のGPU計測待ち".to_owned(),
-        ScreenRenderAutoStatus::Applying { requested, shadow } => {
-            format!("{}・shadow {}へ変更中", requested.label(), shadow.size())
+        ScreenRenderAutoStatus::Applying {
+            requested,
+            shadow,
+            water_quality,
+        } => {
+            format!(
+                "{}・shadow {}・水面{}へ変更中",
+                requested.label(),
+                shadow.size(),
+                water_quality.label()
+            )
         }
         ScreenRenderAutoStatus::Failed { cause } => format!("描画資源処理失敗: {cause}"),
     };
@@ -1287,10 +1320,11 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "presentation-render-scale-status",
         "3D描画品質",
         &format!(
-            "{} · 適用済み{}・shadow {} · {status}。UI・画角・飛行物理・記録は維持する。",
+            "{} · 適用済み{}・shadow {}・水面{} · {status}。Autoは解像度→shadow→水面の順に調整する。UI・画角・飛行物理・記録は維持する。",
             if automatic { "Auto" } else { "Manual" },
             render.applied.label(),
             render.shadow.size(),
+            render.water_quality.label(),
         ),
     );
     menu.push(

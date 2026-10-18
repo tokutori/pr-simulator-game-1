@@ -136,6 +136,10 @@ export interface ScreenRenderAutoSnapshot {
          * Retained manual shadow-map resolution.
          */
         readonly shadow: "full" | "half" | "quarter";
+        /**
+         * Retained manual water quality.
+         */
+        readonly water_quality: "low" | "medium" | "high";
     } | {
         readonly kind: "auto";
         /**
@@ -146,6 +150,10 @@ export interface ScreenRenderAutoSnapshot {
          * Restored with the retained manual resolution.
          */
         readonly manual_shadow: "full" | "half" | "quarter";
+        /**
+         * Upper bound while automatic, restored when Auto is disabled.
+         */
+        readonly manual_water_quality: "low" | "medium" | "high";
     };
     /**
      * Last successfully applied directional shadow-map resolution.
@@ -180,6 +188,10 @@ export interface ScreenRenderAutoSnapshot {
          * Requested shadow map, distinct from the applied value.
          */
         readonly shadow: "full" | "half" | "quarter";
+        /**
+         * Requested water quality, distinct from the applied value.
+         */
+        readonly water_quality: "low" | "medium" | "high";
     } | {
         /**
          * Original adapter failure.
@@ -187,6 +199,10 @@ export interface ScreenRenderAutoSnapshot {
         readonly cause: string;
         readonly kind: "failed";
     };
+    /**
+     * Last successfully applied water quality.
+     */
+    readonly water_quality: "low" | "medium" | "high";
 }
 /**
  * Persistence metadata, not an independent flight record.
