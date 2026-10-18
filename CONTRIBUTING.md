@@ -73,6 +73,7 @@ ChatGPT固有の参照マーカーと数式区切りは転記しない。
 
 READMEのコマンドと `docs/verification.md` を参照する。
 ローカルは変更箇所のlint、freshなbindingを用いた型検査、関連試験を先行する。Rust UI/ABI変更時は必要な生成を一回行う。
+Cargoのtarget/build directoryにはソースの祖先または同一directoryを指定しない。workspace配下の通常targetまたはソースと兄弟のcacheを使用する。WASM生成入口はCargo metadataの実解決先を検査し、危険配置を生成前に拒否する。
 UI-only変更では無関係な数値fixtureの反復を省き、最終CIの全検査を保持する。
 Windows CIはworkspace試験からnative packageを除外し、その後native単独の試験とbuildを実行する。
 これによりWebやcoreのdev依存によるfeature統合をnative試験から分離する。全packageのtests/doctestsを保持し、

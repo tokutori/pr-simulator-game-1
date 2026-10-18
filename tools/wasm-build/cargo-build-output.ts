@@ -1,10 +1,43 @@
-import { normalize } from "node:path";
-import { record, strings } from "../shared/validation.js";
+import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { nonEmpty, record, strings } from "../shared/validation.js";
 
 export interface CargoWasmBuildOutput {
   readonly diagnostics: readonly string[];
   readonly artifactFilenames: readonly string[];
   readonly succeeded: boolean;
+}
+
+export async function assertSafeCargoBuildDirectories(stdout: string): Promise<void> {
+  const metadata = record(JSON.parse(stdout) as unknown);
+  const sourcePaths = [nonEmpty(metadata.workspace_root)];
+  if (!Array.isArray(metadata.packages)) throw new Error("Cargo metadata requires workspace packages");
+  for (const value of metadata.packages) {
+    const member = record(value);
+    sourcePaths.push(dirname(nonEmpty(member.manifest_path)));
+    if (!Array.isArray(member.targets)) throw new Error("Cargo metadata requires package targets");
+    for (const target of member.targets) sourcePaths.push(nonEmpty(record(target).src_path));
+  }
+  const sources = await Promise.all(sourcePaths.map(canonicalPath));
+  for (const field of ["target_directory", "build_directory"] as const) {
+    const directory = await canonicalPath(nonEmpty(metadata[field]));
+    for (const source of sources) {
+      const contained = relative(directory, source);
+      if (contained === "" || (!isAbsolute(contained) && contained !== ".." && !contained.startsWith(`..${sep}`))) {
+        throw new Error(`Unsafe Cargo ${field}: ${directory} contains workspace/source ${source}. Keep Cargo output outside source ancestors, using the workspace target subdirectory or a sibling cache.`);
+      }
+    }
+  }
+}
+
+async function canonicalPath(path: string): Promise<string> {
+  if (!isAbsolute(path)) throw new Error(`Cargo metadata requires an absolute path: ${path}`);
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT") || dirname(path) === path) throw error;
+    return join(await canonicalPath(dirname(path)), basename(path));
+  }
 }
 
 export function parseCargoWasmBuildOutput(stdout: string, manifestPath: string): CargoWasmBuildOutput {

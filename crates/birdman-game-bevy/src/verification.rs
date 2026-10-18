@@ -651,6 +651,8 @@ enum VerificationStage {
     Countdown,
     Pilot,
     Chase,
+    WaterLaunch(WaterMotion),
+    WaterCountdown(WaterMotion),
     WaterMotion(WaterMotion, MotionEndpoint),
     Pause,
     PausedCapture,
@@ -1615,6 +1617,7 @@ pub(crate) fn advance(
         }
         Ok(()) => {}
         Err(error) => {
+            let error = verification_failure(error, &session);
             error!("Native verification: {error}");
             verification.complete(Err(error.clone()));
             verification.failure = Some(error);
@@ -1683,7 +1686,9 @@ fn advance_step(
     let phase = session.game.core_session().snapshot().phase();
     let waiting_for_countdown = matches!(
         verification.stage,
-        VerificationStage::Launch | VerificationStage::InputTrialLaunch
+        VerificationStage::Launch
+            | VerificationStage::InputTrialLaunch
+            | VerificationStage::WaterLaunch(_)
     ) || countdown_stage(verification.stage);
     if !focused
         && !(waiting_for_countdown
@@ -1725,13 +1730,11 @@ fn advance_step(
                 "Countdown acceptance exhausted {MAX_COUNTDOWN_ATTEMPTS} explicit attempts; focused={focused}, Real delta={frame_delta:?}"
             ));
         }
-        verification.next(
-            if verification.stage == VerificationStage::InputTrialCountdown {
-                VerificationStage::InputTrialLaunch
-            } else {
-                VerificationStage::Launch
-            },
-        );
+        verification.next(match verification.stage {
+            VerificationStage::InputTrialCountdown => VerificationStage::InputTrialLaunch,
+            VerificationStage::WaterCountdown(motion) => VerificationStage::WaterLaunch(motion),
+            _ => VerificationStage::Launch,
+        });
         return Ok(());
     }
     observe_countdown_launch(verification, session, elapsed)?;
@@ -1775,9 +1778,13 @@ fn advance_step(
                     VerificationStage::WaterMotion(motion, MotionEndpoint::End)
                 }
                 VerificationStage::WaterMotion(motion, MotionEndpoint::End) => {
-                    motion.next().map_or(VerificationStage::Pause, |next| {
-                        VerificationStage::WaterMotion(next, MotionEndpoint::Start)
-                    })
+                    if let Some(next) = motion.next() {
+                        restart_water_motion(verification, session)?;
+                        commands.remove_resource::<VerificationObserver>();
+                        VerificationStage::WaterLaunch(next)
+                    } else {
+                        VerificationStage::Pause
+                    }
                 }
                 VerificationStage::PausedCapture if verification.water_case.is_some() => {
                     let case = verification.water_case.ok_or("Missing water case")?;
@@ -1995,7 +2002,7 @@ fn advance_step(
                 }
             }
         }
-        VerificationStage::Launch => {
+        VerificationStage::Launch | VerificationStage::WaterLaunch(_) => {
             start_countdown(verification, session, focused && normal_frame, elapsed)?
         }
         VerificationStage::CountdownCapture => {
@@ -2006,28 +2013,33 @@ fn advance_step(
                 verification.capture(commands, "01c-countdown.png");
             }
         }
-        VerificationStage::Countdown => match session.game.core_session().snapshot() {
-            SessionSnapshot::Countdown { .. } => {}
-            SessionSnapshot::TailFlightRunning { state, .. } => {
-                if verification.water_case.is_some() {
-                    let flight = state.flight_state();
-                    verification.observer_base = Some(camera_transform(
-                        aircraft_transform(flight),
-                        flight.pilot_position_m(),
-                        session.initial_pilot_position_m,
-                        true,
-                        Vec2::ZERO,
-                    ));
-                    verification.next(VerificationStage::WaterMotion(
-                        WaterMotion::Static,
-                        MotionEndpoint::Start,
-                    ));
-                } else {
-                    verification.next(VerificationStage::Pilot);
+        VerificationStage::Countdown | VerificationStage::WaterCountdown(_) => {
+            match session.game.core_session().snapshot() {
+                SessionSnapshot::Countdown { .. } => {}
+                SessionSnapshot::TailFlightRunning { state, .. } => {
+                    if verification.water_case.is_some() {
+                        let flight = state.flight_state();
+                        verification.observer_base = Some(camera_transform(
+                            aircraft_transform(flight),
+                            flight.pilot_position_m(),
+                            session.initial_pilot_position_m,
+                            true,
+                            Vec2::ZERO,
+                        ));
+                        verification.next(VerificationStage::WaterMotion(
+                            match verification.stage {
+                                VerificationStage::WaterCountdown(motion) => motion,
+                                _ => WaterMotion::Static,
+                            },
+                            MotionEndpoint::Start,
+                        ));
+                    } else {
+                        verification.next(VerificationStage::Pilot);
+                    }
                 }
+                snapshot => return Err(format!("Countdown ended with {snapshot:?}")),
             }
-            snapshot => return Err(format!("Countdown ended with {snapshot:?}")),
-        },
+        }
         VerificationStage::Pilot => {
             require_phase(phase, SessionPhase::FlightRunning)?;
             let state = session
@@ -2745,7 +2757,36 @@ fn countdown_stage(stage: VerificationStage) -> bool {
         VerificationStage::CountdownCapture
             | VerificationStage::Countdown
             | VerificationStage::InputTrialCountdown
+            | VerificationStage::WaterCountdown(_)
     )
+}
+
+fn restart_water_motion(
+    verification: &mut Verification,
+    session: &mut NativeSession,
+) -> Result<(), String> {
+    if !matches!(
+        session.game.core_session().snapshot().phase(),
+        SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+    ) {
+        return Err("Completed water motion cannot restart from a terminal flight".into());
+    }
+    session.action(MenuAction::Abort)?;
+    session.execute_ui_command(SessionCommand::Retry {})?;
+    require_phase(
+        session.game.core_session().snapshot().phase(),
+        SessionPhase::BriefingReady,
+    )?;
+    require_unstarted_countdown(verification, session)?;
+    verification.countdown_attempts = 0;
+    verification.countdown_started = None;
+    verification.observer_base = None;
+    verification.motion_start_time = None;
+    println!(
+        "Completed water motion retained its sealed blueprint for the next independent Countdown: {:?}",
+        session.game.core_session().configuration_identity()
+    );
+    Ok(())
 }
 
 fn require_unstarted_countdown(
@@ -2808,7 +2849,14 @@ fn start_countdown(
     if verification.countdown_attempts >= MAX_COUNTDOWN_ATTEMPTS {
         return Err("Countdown attempt bound exceeded".into());
     }
-    let input_trial = verification.stage == VerificationStage::InputTrialLaunch;
+    let next = match verification.stage {
+        VerificationStage::InputTrialLaunch => VerificationStage::InputTrialCountdown,
+        VerificationStage::WaterLaunch(motion) => VerificationStage::WaterCountdown(motion),
+        _ if verification.water_case.is_some() => {
+            VerificationStage::WaterCountdown(WaterMotion::Static)
+        }
+        _ => VerificationStage::CountdownCapture,
+    };
     session.action(MenuAction::Launch)?;
     require_phase(
         session.game.core_session().snapshot().phase(),
@@ -2822,13 +2870,7 @@ fn start_countdown(
         "Explicit Countdown attempt {} started after normal focused frame and render readiness",
         verification.countdown_attempts
     );
-    verification.next(if input_trial {
-        VerificationStage::InputTrialCountdown
-    } else if verification.water_case.is_some() {
-        VerificationStage::Countdown
-    } else {
-        VerificationStage::CountdownCapture
-    });
+    verification.next(next);
     Ok(())
 }
 
@@ -2906,6 +2948,7 @@ fn recover_processing_delay(
         VerificationStage::CountdownCapture
             | VerificationStage::Countdown
             | VerificationStage::InputTrialCountdown
+            | VerificationStage::WaterCountdown(_)
             | VerificationStage::Pilot
             | VerificationStage::Chase
             | VerificationStage::Pause
@@ -3039,6 +3082,13 @@ fn require_phase(actual: SessionPhase, expected: SessionPhase) -> Result<(), Str
         Ok(())
     } else {
         Err(format!("Expected {expected:?}, observed {actual:?}"))
+    }
+}
+
+fn verification_failure(error: String, session: &NativeSession) -> String {
+    match session.game.core_session().snapshot().result() {
+        Some(result) => format!("{error}; actual core Result: {result:?}"),
+        None => error,
     }
 }
 
@@ -3192,6 +3242,103 @@ mod tests {
         assert!(base.translation.distance(aircraft.translation) > 12.0);
         assert_eq!(WaterMotion::Static.pose(base, 0.0), base);
         assert_eq!(WaterMotion::Static.pose(base, 1.0), base);
+    }
+
+    #[test]
+    fn water_motion_retry_preserves_blueprint_and_launches_selected_interval() {
+        let mut app = countdown_driver_app();
+        app.world_mut()
+            .resource_mut::<super::Verification>()
+            .water_case = Some(WaterVerificationCase::parse("typical-high").unwrap());
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+            if app
+                .world()
+                .resource::<super::Verification>()
+                .observer_base
+                .is_some()
+            {
+                break;
+            }
+        }
+        let mut verification = app
+            .world_mut()
+            .remove_resource::<super::Verification>()
+            .unwrap();
+        let header = verification.countdown_header.unwrap();
+        let initial = verification.launch_state.unwrap();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            for _ in 0..20 {
+                session.tick(super::FlightInput::default());
+            }
+            assert!(
+                session
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap()
+                    .tick_index()
+                    > 0
+            );
+            super::restart_water_motion(&mut verification, &mut session).unwrap();
+            super::require_unstarted_countdown(&verification, &session).unwrap();
+            assert_eq!(verification.countdown_header, Some(header));
+            assert_eq!(verification.launch_state, Some(initial));
+        }
+        verification.next(VerificationStage::WaterLaunch(WaterMotion::Forward));
+        app.insert_resource(verification);
+        for _ in 0..4 * birdman_game_core::PHYSICS_HZ {
+            app.update();
+            if app
+                .world()
+                .resource::<super::Verification>()
+                .observer_base
+                .is_some()
+            {
+                break;
+            }
+        }
+        let verification = app.world().resource::<super::Verification>();
+        assert_eq!(
+            verification.stage,
+            VerificationStage::WaterMotion(WaterMotion::Forward, MotionEndpoint::Start)
+        );
+        assert_eq!(verification.countdown_header, Some(header));
+        assert_eq!(verification.launch_state, Some(initial));
+        assert_eq!(verification.countdown_attempts, 1);
+        let session = app.world().resource::<NativeSession>();
+        let record = session.game.core_session().flight_record().unwrap();
+        assert_eq!(record.header(), header);
+        assert_eq!(record.samples()[0].flight_state, initial.flight_state());
+    }
+
+    #[test]
+    fn water_motion_terminal_failure_retains_actual_core_result_without_retry() {
+        let mut app = countdown_driver_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+            session.action(MenuAction::Abort).unwrap();
+        }
+        let mut verification = app
+            .world_mut()
+            .remove_resource::<super::Verification>()
+            .unwrap();
+        let mut session = app.world_mut().resource_mut::<NativeSession>();
+        let terminal = session.game.core_session().snapshot().result().unwrap();
+        let cause = super::restart_water_motion(&mut verification, &mut session).unwrap_err();
+        let diagnostic = super::verification_failure(cause.clone(), &session);
+        assert!(diagnostic.starts_with(&cause));
+        assert!(diagnostic.contains(&format!("{terminal:?}")));
+        assert_eq!(
+            session.game.core_session().snapshot().result(),
+            Some(terminal)
+        );
     }
 
     #[test]

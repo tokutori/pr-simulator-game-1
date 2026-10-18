@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { parseCargoWasmBuildOutput, selectWasmBuildArtifact } from "./cargo-build-output.js";
+import { access, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { assertSafeCargoBuildDirectories, parseCargoWasmBuildOutput, selectWasmBuildArtifact } from "./cargo-build-output.js";
 
 const manifest = "C:/checkout/crates/birdman-game-wasm/Cargo.toml";
 
@@ -14,6 +17,74 @@ function messages(...values: readonly unknown[]): string {
 }
 
 const finished = { reason: "build-finished", success: true };
+
+describe("Cargo build directory source boundary", () => {
+  let directory: string;
+  let workspace: string;
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "cargo-output-boundary-"));
+    workspace = join(directory, "source");
+    await mkdir(workspace);
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  function metadata(target = join(workspace, "target"), build = target, sources: readonly string[] = []) {
+    return JSON.stringify({ workspace_root: workspace, target_directory: target, build_directory: build,
+      packages: [{ manifest_path: join(workspace, "Cargo.toml"), targets: sources.map((src_path) => ({ src_path })) }] });
+  }
+
+  it("accepts the default target and an uncreated sibling cache without creating directories", async () => {
+    await expect(assertSafeCargoBuildDirectories(metadata())).resolves.toBeUndefined();
+    await expect(assertSafeCargoBuildDirectories(metadata(join(directory, "cache", "new")))).resolves.toBeUndefined();
+    await expect(access(join(workspace, "target"))).rejects.toHaveProperty("code", "ENOENT");
+    await expect(access(join(directory, "cache"))).rejects.toHaveProperty("code", "ENOENT");
+  });
+
+  it.each(["target_directory", "build_directory"] as const)("rejects an ancestor or identical %s", async (field) => {
+    for (const output of [directory, workspace]) {
+      const document = field === "target_directory" ? metadata(output) : metadata(undefined, output);
+      await expect(assertSafeCargoBuildDirectories(document)).rejects.toThrow(`Unsafe Cargo ${field}`);
+    }
+  });
+
+  it("compares path components instead of matching a textual prefix", async () => {
+    await expect(assertSafeCargoBuildDirectories(metadata(join(directory, "sour")))).resolves.toBeUndefined();
+  });
+
+  it("rejects output containing an external package or entry source", async () => {
+    const external = join(directory, "external");
+    await mkdir(external);
+    const document = JSON.parse(metadata(external)) as Record<string, unknown>;
+    document.packages = [{ manifest_path: join(external, "Cargo.toml"), targets: [] }];
+    await expect(assertSafeCargoBuildDirectories(JSON.stringify(document))).rejects.toThrow("contains workspace/source");
+    await writeFile(join(external, "lib.rs"), "", "utf8");
+    await expect(assertSafeCargoBuildDirectories(metadata(external, undefined, [join(external, "lib.rs")]))).rejects.toThrow("contains workspace/source");
+  });
+
+  it("resolves directory symlinks or Windows junctions for both output and source", async () => {
+    const alias = join(directory, "alias");
+    await symlink(workspace, alias, process.platform === "win32" ? "junction" : "dir");
+    await expect(assertSafeCargoBuildDirectories(metadata(alias))).rejects.toThrow("Unsafe Cargo target_directory");
+    const document = JSON.parse(metadata(directory)) as Record<string, unknown>;
+    document.workspace_root = alias;
+    await expect(assertSafeCargoBuildDirectories(JSON.stringify(document))).rejects.toThrow("Unsafe Cargo target_directory");
+    await expect(assertSafeCargoBuildDirectories(metadata(join(alias, "target", "new")))).resolves.toBeUndefined();
+  });
+
+  it.skipIf(process.platform !== "win32")("rejects case-varied Windows output ancestors", async () => {
+    await expect(assertSafeCargoBuildDirectories(metadata(directory.toUpperCase()))).rejects.toThrow("Unsafe Cargo target_directory");
+  });
+
+  it("fails closed when Cargo omits the effective build directory", async () => {
+    const document = JSON.parse(metadata()) as Record<string, unknown>;
+    delete document.build_directory;
+    await expect(assertSafeCargoBuildDirectories(JSON.stringify(document))).rejects.toThrow("non-empty string");
+  });
+});
 
 describe("Cargo WASM build artifact selection", () => {
   it.each([
