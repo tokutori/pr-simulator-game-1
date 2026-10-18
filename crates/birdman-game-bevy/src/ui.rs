@@ -1599,6 +1599,11 @@ fn section_node(section: GameUiSectionLayout, layout: &GameUiLayout) -> Node {
         } else {
             Vec::new()
         },
+        grid_auto_rows: if section == GameUiSectionLayout::ChoiceGrid {
+            vec![GridTrack::max_content()]
+        } else {
+            Vec::new()
+        },
         flex_wrap: if section == GameUiSectionLayout::Row {
             FlexWrap::Wrap
         } else {
@@ -3935,7 +3940,13 @@ mod tests {
                         let button_bounds = bounds(app.world(), *button);
                         assert!(button_bounds.size().y >= view.theme.button_min_height_px as f32);
                         for other in &buttons[index + 1..] {
-                            assert!(disjoint(button_bounds, bounds(app.world(), *other)));
+                            let other_bounds = bounds(app.world(), *other);
+                            assert!(
+                                disjoint(button_bounds, other_bounds),
+                                "{width}x{height} {information:?}/{overlay:?}: {:?}={button_bounds:?} overlaps {:?}={other_bounds:?}",
+                                app.world().get::<Name>(*button),
+                                app.world().get::<Name>(*other),
+                            );
                         }
                     }
                     let navigation = retained.widgets[match overlay {
