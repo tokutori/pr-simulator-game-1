@@ -369,6 +369,7 @@ try {
       $coreSummary = $coreReport.'verification-results'
       $coreSymbols = @(
           'birdman_game_core::game_session::GameSession::new',
+          'birdman_game_core::game_session::GameSessionError::from_flight_execution',
           'birdman_game_core::game_session::GameSession::snapshot',
           'birdman_game_core::game_session::GameSession::phase',
           'birdman_game_core::game_session::GameSession::configured',

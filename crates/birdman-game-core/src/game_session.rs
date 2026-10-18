@@ -331,9 +331,10 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
-#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-impl From<FlightExecutionError> for GameSessionError {
-    fn from(error: FlightExecutionError) -> Self {
+impl GameSessionError {
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::from_flight_execution(error)))]
+    const fn from_flight_execution(error: FlightExecutionError) -> Self {
         match error {
             FlightExecutionError::NotPaused => Self::NotPaused,
             FlightExecutionError::PauseConditionsRemain => Self::PauseConditionsRemain,
@@ -398,17 +399,6 @@ pub struct GameSession<'a> {
 
 #[cfg(verus_only)]
 verus! {
-    impl vstd::std_specs::convert::FromSpecImpl<FlightExecutionError> for GameSessionError {
-        open spec fn obeys_from_spec() -> bool { true }
-
-        closed spec fn from_spec(error: FlightExecutionError) -> Self {
-            match error {
-                FlightExecutionError::NotPaused => Self::NotPaused,
-                FlightExecutionError::PauseConditionsRemain => Self::PauseConditionsRemain,
-            }
-        }
-    }
-
     impl<'a> GameSession<'a> {
         /// Countdown arithmetic is defined for the state created by start_countdown.
         pub closed spec fn projection_valid(self) -> bool {
@@ -1280,7 +1270,7 @@ impl<'a> GameSession<'a> {
         };
         flight
             .clear_pause_reason(reason)
-            .map_err(GameSessionError::from)
+            .map_err(GameSessionError::from_flight_execution)
     }
 
     /// Resumes only after every pause cause has cleared and Resume is explicit.
@@ -1292,7 +1282,9 @@ impl<'a> GameSession<'a> {
         let ConfiguredPhase::Flight(flight) = &mut configured.phase else {
             return Err(GameSessionError::NotPaused);
         };
-        flight.resume().map_err(GameSessionError::from)
+        flight
+            .resume()
+            .map_err(GameSessionError::from_flight_execution)
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.

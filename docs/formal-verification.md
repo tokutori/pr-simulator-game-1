@@ -223,7 +223,8 @@ Running認可と実tickの制御bodyは次節の契約へ接続する。数値ca
 実`GameSession`と`SessionLifecycle`を検証し、同じconfiguration・record・physical stateと無関係なownerの保持を接続する。
 到達するscenario、polar、geometry、wind等の既存データ型へ検証属性を付けるが、その数値関数の本体を免除しない。
 公開pause/clear/resumeは実ActiveFlightへ委譲し、拒否分類と外的停止理由の保持を保証する。
-エラー変換は固定vstdのFromSpecImplへ同じ本番From bodyを接続し、変換用の外部仕様を追加しない。
+privateな停止エラーの変換は単一のnamed methodへ集約し、dual_specで同じ本番matchを参照する。
+変換用のtrait仕様の複写や外部仕様を追加せず、入力のprivate型を公開しない。
 ResultとReplayの往復は同じconfiguration・record・resultを保持し、ArchivedReplayからの退出だけがTitleへ戻る。
 公開snapshot/recordの投影は`dual_spec`により実bodyへ接続する。Countdownの秒数投影には、実start_countdownが生成する
 有効なCountdown状態を要求し、Duration変換や全ての構築経路の検証済みを意味しない。
