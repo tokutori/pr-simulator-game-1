@@ -686,8 +686,12 @@ export function createThreeRenderer(
         const previousBackground = scene.background;
         const previousAlpha = renderer.getClearAlpha();
         const previousXrEnabled = renderer.xr.enabled;
+        const previousShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+        const previousShadowNeedsUpdate = renderer.shadowMap.needsUpdate;
         renderer.getClearColor(savedClearColor);
         try {
+          renderer.shadowMap.autoUpdate = false;
+          renderer.shadowMap.needsUpdate = false;
           scene.background = null;
           renderer.xr.enabled = false;
           renderer.setRenderTarget(reflectionTarget);
@@ -696,6 +700,8 @@ export function createThreeRenderer(
           renderer.render(scene, reflectionCamera);
           reflectionEnabled.value = 1;
         } finally {
+          renderer.shadowMap.autoUpdate = previousShadowAutoUpdate;
+          renderer.shadowMap.needsUpdate = previousShadowNeedsUpdate;
           renderer.setRenderTarget(previousTarget);
           renderer.setClearColor(savedClearColor, previousAlpha);
           renderer.xr.enabled = previousXrEnabled;
