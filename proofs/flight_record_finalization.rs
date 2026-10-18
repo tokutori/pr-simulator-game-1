@@ -12,6 +12,15 @@ verus! {
         assert(session.flight_record().is_none());
     }
 
+    fn verify_domain_session_countdown_rejection() {
+        let mut session = birdman_game_core::GameSession::new();
+        let ghost before = session;
+        let outcome = session.start_countdown(1);
+        assert(outcome == Err(birdman_game_core::GameSessionError::InvalidTransition));
+        assert(session == before);
+        assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
+    }
+
     fn verify_domain_finalization_commit(
         record: &mut FlightRecord,
         reason: SessionEndReason,
