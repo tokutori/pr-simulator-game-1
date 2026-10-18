@@ -90,7 +90,7 @@ $domainProofs = @(
     'verify_domain_session_countdown_rejection',
     'verify_domain_finalization_retention', 'verify_domain_finalization_metadata', 'verify_domain_finalization_commit',
     'verify_domain_record_begin', 'verify_domain_record_append', 'verify_domain_record_no_elapsed',
-    'verify_domain_no_elapsed_terminal_tick'
+    'verify_domain_no_elapsed_terminal_tick', 'verify_domain_contact_terminal_payload'
 )
 $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/game_session_initial_running_negative.rs'; Assertion = 'admitted' },
@@ -102,6 +102,7 @@ $domainNegatives = @(
     @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_negative.rs'; Assertion = 'added' },
     @{ Path = Join-Path $repository 'proofs/flight_record_no_elapsed_payload_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_latest_payload_negative.rs'; Assertion = 'mismatched' },
+    @{ Path = Join-Path $repository 'proofs/flight_record_contact_payload_negative.rs'; Assertion = 'changed' },
     @{ Path = Join-Path $repository 'proofs/flight_record_terminal_tick_negative.rs'; Assertion = 'shifted' }
 )
 
@@ -399,6 +400,7 @@ try {
           'birdman_game_core::flight_record::FlightRecordHeader::try_new',
           'birdman_game_core::flight_record::FlightRecordHeader::is_valid',
           'birdman_game_core::game_session::running::verify_game_session_tick_pause_projection',
+          'birdman_game_core::game_session::running::verify_evaluated_report_session_payload',
           'birdman_game_core::flight_record::FlightRecord::finalize',
           'birdman_game_core::flight_record::FlightRecord::finalize_with_failure',
           'birdman_game_core::flight_record::FlightRecord::finalize_record',
@@ -411,6 +413,7 @@ try {
           'birdman_game_core::aerodynamics_contract::AerodynamicEvaluationError::cause',
           'birdman_game_core::aerodynamics_contract::HybridError::cause',
           'birdman_game_core::game_session::SessionTerminalState::record_time',
+          'birdman_game_core::game_session::SessionTerminalState::flight_state',
           'birdman_game_core::flight_record::FlightRecord::finalization',
           'birdman_game_core::flight_record::FlightRecord::finalized_from',
           'birdman_game_core::flight_record::FlightRecord::begin_tail',
@@ -425,6 +428,7 @@ try {
           'birdman_game_core::tail_simulation::TailFlightTickReport::outcome',
           'birdman_game_core::tail_simulation::TailFlightTickReport::applied_controls',
           'birdman_game_core::tail_simulation::contact_at_start_report',
+          'birdman_game_core::tail_simulation::evaluated_tick_report',
           'birdman_game_core::tail_simulation::verify_contact_at_start_record_payload',
           'birdman_game_core::tail_simulation::verify_advanced_contact_at_start_record_payload',
           'birdman_game_core::flight_record::validate_telemetry',

@@ -8,6 +8,66 @@ use crate::{
 use core::cell::Cell;
 
 #[test]
+fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
+    let definition = HybridMockDefinition::try_new().unwrap();
+    let aircraft = definition.aircraft();
+    let previous = state(
+        &aircraft,
+        [10.0, 0.0, 0.0],
+        [0.0; 3],
+        TailIncidence::try_new(-0.02, 0.01).unwrap(),
+        -10.0,
+    );
+    let next = TailFlightTickState {
+        tick_index: previous.tick_index + 1,
+        pilot_position_target: PilotPositionTarget::try_new(&aircraft, 0.1).unwrap(),
+        ..state(
+            &aircraft,
+            [9.0, 0.0, 1.0],
+            [0.0; 3],
+            TailIncidence::try_new(0.03, -0.01).unwrap(),
+            0.0,
+        )
+    };
+    let input = input_holding_incidence(next.incidence);
+    let controls = TailAppliedControls {
+        input,
+        commands: commands(previous, config(&aircraft, ControlMode::Manual, 1.0), input).commands(),
+    };
+    let report = evaluated_tick_report(previous, next, controls, None);
+    assert_eq!(report.outcome(), TailFlightTickOutcome::Advanced(next));
+    assert_eq!(report.applied_controls(), Some(controls));
+    for fraction in [0.0, -0.0, f64::from_bits(1), 0.5, 1.0] {
+        let contact = TailWaterContactSample {
+            interval_start_tick: previous.tick_index,
+            fraction,
+            contact_point_index: 3,
+            flight_state: next.flight_state,
+            incidence: next.incidence,
+            pilot_position_target: next.pilot_position_target,
+        };
+        let report = evaluated_tick_report(previous, next, controls, Some(contact));
+        let TailFlightTickOutcome::WaterContact(published) = report.outcome() else {
+            panic!("expected the evaluated contact");
+        };
+        assert_eq!(published.fraction().to_bits(), fraction.to_bits());
+        assert_eq!(published.contact_point_index(), 3);
+        if fraction == 0.0 {
+            assert_eq!(report.applied_controls(), None);
+            assert_eq!(published.flight_state(), previous.flight_state());
+            assert_eq!(published.incidence(), previous.incidence());
+            assert_eq!(
+                published.pilot_position_target(),
+                previous.pilot_position_target()
+            );
+        } else {
+            assert_eq!(report.applied_controls(), Some(controls));
+            assert_eq!(published, contact);
+        }
+    }
+}
+
+#[test]
 fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_hold_set_reports() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();

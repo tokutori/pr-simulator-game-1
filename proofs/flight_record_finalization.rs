@@ -147,6 +147,37 @@ verus! {
         let _ = record.append_tail_report(report, telemetry);
     }
 
+    fn verify_domain_contact_terminal_payload(
+        record: &mut FlightRecord,
+        report: TailFlightTickReport,
+        telemetry: FlightTelemetry,
+        score: Option<DistanceScore>,
+    ) -> (outcome: Result<FlightRecordFinalization, FlightRecordError>)
+        ensures match outcome {
+            Ok(metadata) => final(record).finalization() == Some(metadata)
+                && match report.outcome() {
+                    TailFlightTickOutcome::WaterContact(sample) =>
+                        final(record).recorded_samples().len() > 0
+                            && final(record).recorded_samples().last().flight_state == sample.flight_state()
+                            && final(record).recorded_samples().last().controls.incidence == sample.incidence()
+                            && final(record).recorded_samples().last().telemetry == telemetry
+                            && metadata.terminal_tick == sample.interval_start_tick()
+                            && metadata.terminal_fraction == sample.fraction(),
+                    _ => false,
+                },
+            Err(_) => true,
+        },
+    {
+        let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {
+            return Err(FlightRecordError::InvalidTime);
+        };
+        if report.applied_controls().is_none() {
+            return Err(FlightRecordError::InvalidTime);
+        }
+        record.append_tail_report(report, telemetry)?;
+        record.finalize(SessionEndReason::WaterContact, sample.interval_start_tick(), sample.fraction(), score)
+    }
+
     fn verify_domain_no_elapsed_terminal_tick(
         record: &mut FlightRecord,
         report: TailFlightTickReport,

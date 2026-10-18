@@ -160,6 +160,8 @@ impl SessionTerminalState {
     }
 
     /// Returns one body and moving-pilot state at the retained terminal time.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.flight_state()))]
     pub const fn flight_state(self) -> FlightState {
         match self {
             Self::TailWaterContact(sample) => sample.flight_state(),

@@ -47,8 +47,9 @@ Countdownのcutは`crates/birdman-game-core/src/countdown.rs`の本番`Countdown
 
 GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetryと`record.begin_tail`が成功した後だけRunningへcommitする。
 認可計算は候補値を返すため、record開始失敗時は直前のCountdownのtoken・elapsed・phaseを保持する。
-標準Durationとf64変換、wrapperのphase代入・物理payload・tick・record保持、古いcallbackの発進後拒否は形式証明範囲に含めず、
-実GameSessionの接続回帰を維持する。Retry、Replay wrapper全体、異常tickからの終端化も未証明である。
+標準Durationとf64変換は未証明であり、実GameSessionの接続回帰を維持する。
+phase代入・payload・tick・record保持、発進後の再観測拒否とRetryのcaller接続は後述の実所有境界で検証する。
+数値producerとReplay clockを含むwrapper全体の正しさとは区分する。
 
 既存runnerでPauseReasonsに加えてCountdownの全体positive、必須4群の名前別検証、exact compiler inventory、
 renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
@@ -69,7 +70,8 @@ Manual解除後の再開認可、外的理由が残る場合のPaused維持、Ru
 実行遷移の必須4群とpayloadの必須3群にexact inventory・名前別検証・rename fixture・missing-target検査を適用する。
 負例は外的理由を残したResumeの成功と、最後の理由をclearした時点の自動再開を意図的に主張する。
 payload負例は実pauseの後にpayloadが変化したと意図的に主張し、指定assertの拒否を要求する。
-GameSession wrapperの全分岐、configuration・record保持、record初期化・Retry・異常tick終端化は引き続き未証明であり、#382の残範囲とする。
+GameSessionのconfiguration・record保持、Retryと異常tick終端化の離散的接続は後述の所有境界で検証する。
+数値callback、allocatorによるrecord新規化、全wrapper分岐を一括した保証は#382の残範囲とする。
 
 ### Result / Replay の本番遷移
 
@@ -188,7 +190,7 @@ cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 | 優先度 | 契約・対象body | 適性と現在の根拠 | 残る境界 |
 |---|---|---|---|
 | P0 | PauseReasonsの4bit集合・Resume predicate | 同一bodyのtracked checkerで正37義務と指定負検証を確認した | 外部原因の発生条件は未証明 |
-| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown認可、FlightExecutionとActiveFlight payload、実ConfiguredPhaseのResult / Replay更新を直接検証し、実GameSession通常回帰で接続を確認する | wrapper全体、configuration・record保持、Retry、archived Replay / Attract、終端原子性は未証明 |
+| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown・FlightExecution・Result / Replay、公開owner選択と停止操作、Prepared/Countdown/Retry callerの離散的保持を直接検証する | 数値callback、allocatorによる新規化、Duration・Replay clock、archived Replay / Attractの全経路、wrapper全体は未証明 |
 | P1 | record/finalization・codec・identity・PB分離 | 純粋な整合性判定とschema別分岐は候補となる。保存値とlayoutを仕様として固定する必要がある | 現在の通常回帰は形式証明ではなく、既存archive全体も未証明 |
 | P1 | tick原子性・bounded保護候補探索 | 副作用commit条件・探索回数は離散契約として扱える | 浮動小数点、全RK stageの荷重域、安全な候補の存在は未証明 |
 | P1 | owner世代・stale query・資源解放 | immutableな観測tokenと有限lifecycleは候補となる | browser/Bevyの再入・非同期・OS資源は環境仮定が必要であり未証明 |
@@ -214,8 +216,8 @@ Err時の実owner保持、header・sample列・capacity保持、成功時のreas
 score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
 公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
 時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
-Running認可と実tickの制御bodyは次節の契約へ接続する。数値callbackをbindする外側GameSession wrapper全体、
-数値関数が生成するreportの由来、全tickの最新sample/terminal state相関、数値score評価は未証明の境界である。
+Running認可と実tickの制御bodyは後述の契約へ接続する。外側GameSessionのowner選択と戻り値も直接検証するが、
+数値callbackの具体bind/body、数値関数が生成する評価結果の妥当性、数値score評価は未証明の境界である。
 これらを仮定して終端化全体を完了扱いにせず、親#382を継続する。
 
 ### GameSessionの所有境界
@@ -282,6 +284,16 @@ finalize拒否の回帰には内部不整合を明示的に注入し、利用者
 外側の実callerは既存scenario/telemetry/score関数をbindし、同じconfigurationのtick上限・identityを渡す。
 封印済み上限/identityとownerへの転送は所有境界の契約へ接続する。
 数値callbackの具体bind/body、任意reportと前sampleの等値、wrapper全体は形式証明の対象外である。
+実producerは数値評価後のreport包装を必ず同じ`evaluated_tick_report`へ渡す。この本番bodyでAdvancedのnext/control転送、
+接触途中のsample/control転送、実fraction-zero分岐で同じpreviousのstate/incidence/target保持と新control除去を検証する。
+分岐に使うIEEE比較の数学的意味は標準仕様の境界に残し、実数上のゼロ判定の証明へ拡張しない。
+
+RunningとGameSessionのpostconditionは、既存recordがpreviousと対応し、評価callbackのreportがunelapsed payloadを保持する場合に、
+Resultの最新sampleとterminalの整数tick・FlightState・incidenceが一致することを保証する。これは追加requiresではない。
+合成clientは任意長recordへの実Advanced appendからpreviousとの対応を確立し、同じ本番包装を用いたcallbackを実ownerへ渡す。
+相関を仮定せず、正常継続・接触・score失敗を含むResultのpayload保持へ接続する。NoElapsedでは保存済みinput/telemetryを変更しない。
+任意の別previousに由来するreportや不整合な内部ownerへ、この条件付きpostを無条件適用しない。
+fractionのIEEE等値とspec値等号の区別、数値evaluation、allocatorの未証明境界を維持する。
 0-fractionの本番private producerは同じpreviousのFlightState・incidence・pilot targetを構造的に保持し、
 newly applied controlsを持たない。その実bodyと、同じpreviousによる公開begin/NoElapsed append/finalizeを呼ぶ
 private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、

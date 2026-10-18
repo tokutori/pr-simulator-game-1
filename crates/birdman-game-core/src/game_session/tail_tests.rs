@@ -219,6 +219,16 @@ fn accepted_running_ticks_retain_the_latest_record_physical_payload() {
             session.advance_tail_flight_tick(applied).unwrap();
         }
     }
+    let snapshot = session.advance_tail_flight_tick(applied).unwrap();
+    let result = snapshot.result().unwrap();
+    let SessionTerminalState::TailTick(terminal) = result.state else {
+        panic!("expected the configured time limit");
+    };
+    let latest = session.flight_record().unwrap().samples().last().unwrap();
+    assert_eq!(result.reason, SessionEndReason::TimeLimit);
+    assert_eq!(terminal.tick_index(), 4);
+    assert_eq!(latest.flight_state, terminal.flight_state());
+    assert_eq!(latest.controls.incidence, terminal.incidence());
 }
 
 #[test]

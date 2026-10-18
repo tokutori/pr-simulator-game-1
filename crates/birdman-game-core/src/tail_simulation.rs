@@ -265,6 +265,20 @@ pub struct TailFlightTickReport {
 }
 
 impl TailFlightTickReport {
+    #[cfg(verus_only)]
+    verus! {
+        pub open spec fn unelapsed_retains(self, previous: TailFlightTickState) -> bool {
+            self.applied_controls().is_none() ==> match self.outcome() {
+                TailFlightTickOutcome::WaterContact(sample) =>
+                    sample.interval_start_tick() == previous.tick_index()
+                        && sample.flight_state() == previous.flight_state()
+                        && sample.incidence() == previous.incidence()
+                        && sample.pilot_position_target() == previous.pilot_position_target(),
+                _ => false,
+            }
+        }
+    }
+
     /// Returns the authoritative physical incidence and pilot target through the state/sample.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(outcome =>
@@ -607,21 +621,52 @@ pub fn advance_tail_flight_tick_with_contact_report(
 ) -> Result<TailFlightTickReport, TailFlightTickError> {
     let evaluation =
         evaluate_tail_flight_tick(aircraft, previous, config, input, loads, Some(geometry))?;
-    let result = match evaluation.contact {
-        None => TailReportedOutcome::Advanced(evaluation.next, evaluation.controls),
+    Ok(evaluated_tick_report(
+        previous,
+        evaluation.next,
+        evaluation.controls,
+        evaluation.contact,
+    ))
+}
+
+#[cfg_attr(verus_only, verus_spec(report =>
+    ensures report.unelapsed_retains(previous),
+        match contact {
+            None => report.outcome() == TailFlightTickOutcome::Advanced(next)
+                && report.applied_controls() == Some(controls),
+            Some(sample) => match report.applied_controls() {
+                Some(applied) => applied == controls
+                    && report.outcome() == TailFlightTickOutcome::WaterContact(sample),
+                None => match report.outcome() {
+                    TailFlightTickOutcome::WaterContact(published) =>
+                        published.fraction() == sample.fraction()
+                            && published.contact_point_index == sample.contact_point_index,
+                    _ => false,
+                },
+            },
+        },
+))]
+pub(crate) fn evaluated_tick_report(
+    previous: TailFlightTickState,
+    next: TailFlightTickState,
+    controls: TailAppliedControls,
+    contact: Option<TailWaterContactSample>,
+) -> TailFlightTickReport {
+    let result = match contact {
+        None => TailReportedOutcome::Advanced(next, controls),
         Some(contact) => {
             if contact.fraction == 0.0 {
-                return Ok(contact_at_start_report(
+                return contact_at_start_report(
                     previous,
                     contact.fraction,
                     contact.contact_point_index,
-                ));
+                );
             } else {
-                TailReportedOutcome::ContactWithinInterval(contact, evaluation.controls)
+                TailReportedOutcome::ContactWithinInterval(contact, controls)
             }
         }
     };
-    Ok(TailFlightTickReport { result })
+    TailFlightTickReport { result }
 }
 
 #[cfg_attr(verus_only, verus_spec(report =>

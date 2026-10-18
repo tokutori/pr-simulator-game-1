@@ -24,6 +24,16 @@ use crate::tail_simulation::{
 
 #[cfg(verus_only)]
 verus! {
+    pub open spec fn terminal_payload_matches(record: FlightRecord, terminal: SessionTerminalState) -> bool {
+        record.recorded_samples().len() > 0
+            && record.recorded_samples().last().tick_index == terminal.record_time().0
+            && record.recorded_samples().last().flight_state == terminal.flight_state()
+            && record.recorded_samples().last().controls.incidence == match terminal {
+                SessionTerminalState::TailTick(state) => state.incidence(),
+                SessionTerminalState::TailWaterContact(sample) => sample.incidence(),
+            }
+    }
+
     pub open spec fn report_physical_state(report: TailFlightTickReport) -> FlightState {
         match report.outcome() {
             TailFlightTickOutcome::Advanced(state) => state.flight_state(),
@@ -132,6 +142,57 @@ verus! {
         assert(session.snapshot() == projected);
         Ok(())
     }
+
+    fn verify_evaluated_report_session_payload<'a>(
+        configuration: GameSessionConfiguration<'a>,
+        mut record: FlightRecord,
+        advanced: TailFlightTickReport,
+        next: TailFlightTickState,
+        controls: crate::TailAppliedControls,
+        contact: Option<crate::TailWaterContactSample>,
+        input: TailFlightTickInput,
+        reading: FlightTelemetry,
+        score_result: Result<DistanceScore, DistanceScoreError>,
+    ) -> Result<(), GameSessionError> {
+        let TailFlightTickOutcome::Advanced(previous) = advanced.outcome() else {
+            return Err(GameSessionError::InvalidTransition);
+        };
+        record.append_tail_report(advanced, reading).map_err(GameSessionError::Record)?;
+        let report = crate::tail_simulation::evaluated_tick_report(previous, next, controls, contact);
+        let mut session = GameSession {
+            lifecycle: SessionLifecycle::Configured(ConfiguredSession {
+                configuration,
+                record,
+                phase: ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }),
+            }),
+            attract_record: None,
+            countdown_token: 0,
+        };
+        let evaluate = |_configuration: &GameSessionConfiguration<'a>, state: TailFlightTickState,
+                        _input: TailFlightTickInput| -> (returned: Result<TailFlightTickReport, TailFlightTickError>)
+            ensures returned == Ok(report),
+                state == previous ==> report.unelapsed_retains(state),
+        { Ok(report) };
+        let telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+            -> (returned: Result<FlightTelemetry, FlightTelemetryError>)
+            ensures returned == Ok(reading),
+        { Ok(reading) };
+        let score = |_configuration: &GameSessionConfiguration<'a>, _state: SessionTerminalState|
+            -> (returned: Result<DistanceScore, DistanceScoreError>)
+            ensures returned == score_result,
+        { score_result };
+        let outcome = session.advance_tail_flight_tick_with(input, evaluate, telemetry, score);
+        match session.snapshot() {
+            SessionSnapshot::Result(result) => {
+                assert(terminal_payload_matches(session.flight_record().unwrap(), result.state));
+            },
+            SessionSnapshot::TailFlightRunning { state, .. } if outcome.is_ok() => {
+                assert(session.flight_record().unwrap().latest_matches_tail_state(state));
+            },
+            _ => {},
+        }
+        outcome.map(|_| ())
+    }
 }
 
 impl<'a> GameSession<'a> {
@@ -149,6 +210,24 @@ impl<'a> GameSession<'a> {
         ensures
             final(self).attract_record == old(self).attract_record,
             final(self).countdown_token == old(self).countdown_token,
+            match old(self).lifecycle {
+                SessionLifecycle::Configured(before) => match before.phase {
+                    ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }) =>
+                        (before.record.latest_matches_tail_state(previous)
+                            && (forall|report: TailFlightTickReport|
+                                #[trigger] evaluate.ensures((&before.configuration, previous, input), Ok(report))
+                                    ==> report.unelapsed_retains(previous)))
+                        ==> match final(self).lifecycle {
+                            SessionLifecycle::Configured(after) => match after.phase {
+                                ConfiguredPhase::Result { result } => terminal_payload_matches(after.record, result.state),
+                                _ => true,
+                            },
+                            _ => false,
+                        },
+                    _ => true,
+                },
+                _ => true,
+            },
             match outcome {
                 Ok(snapshot) => final(self).projection_valid() && snapshot == final(self).snapshot(),
                 Err(_) => true,
@@ -244,6 +323,18 @@ impl<Configuration, Clock>
             final(self).record.recorded_samples().take(old(self).record.recorded_samples().len() as int)
                 =~= old(self).record.recorded_samples(),
             final(self).record.recorded_samples().len() <= old(self).record.recorded_samples().len() + 1,
+            match old(self).phase {
+                ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }) =>
+                    (old(self).record.latest_matches_tail_state(previous)
+                        && (forall|report: TailFlightTickReport|
+                            #[trigger] evaluate.ensures((&old(self).configuration, previous, input), Ok(report))
+                                ==> report.unelapsed_retains(previous)))
+                    ==> match final(self).phase {
+                        ConfiguredPhase::Result { result } => terminal_payload_matches(final(self).record, result.state),
+                        _ => true,
+                    },
+                _ => true,
+            },
             outcome.is_ok() ==> match final(self).phase {
                 ConfiguredPhase::Flight(flight) => flight.execution == FlightExecution::Running
                     && final(self).record.latest_matches_tail_state(flight.state),
