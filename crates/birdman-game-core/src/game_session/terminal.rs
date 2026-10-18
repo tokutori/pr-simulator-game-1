@@ -22,6 +22,8 @@ impl<Configuration, Clock>
                 Err(GameSessionError::Record(_)) => *final(self) == *old(self),
                 _ => match final(self).phase {
                     ConfiguredPhase::Result { result } => result.state == state
+                        && final(self).record.recorded_samples().len() > 0
+                        && result.state.record_time().0 == final(self).record.recorded_samples().last().tick_index
                         && result.scenario == scenario && result.failure == failure
                         && result.score == match score_result { Ok(score) => Some(score), Err(_) => None }
                         && result.reason == match score_result {

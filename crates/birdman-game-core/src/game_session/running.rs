@@ -160,6 +160,8 @@ impl<Configuration, Clock>
                 ConfiguredPhase::Flight(ActiveFlight { execution: FlightExecution::Running, .. }) =>
                     match final(self).phase {
                         ConfiguredPhase::Result { result } => result.scenario == identity
+                            && final(self).record.recorded_samples().len() > 0
+                            && result.state.record_time().0 == final(self).record.recorded_samples().last().tick_index
                             && match final(self).record.finalization() {
                                 Some(metadata) => metadata.reason == result.reason && metadata.score == result.score
                                     && metadata.failure == result.failure
