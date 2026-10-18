@@ -5260,6 +5260,7 @@ mod tests {
 
     #[test]
     fn source_boundary_matches_the_real_last_frame_increment_before_render_extraction() {
+        use bevy::ecs as bevy_ecs;
         use bevy::prelude::*;
         #[derive(Resource, Default)]
         struct Observed(Option<super::SourceBoundary>);
