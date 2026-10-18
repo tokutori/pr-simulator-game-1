@@ -655,6 +655,8 @@ enum VerificationStage {
     RenderScaleFull,
     RenderScale75,
     RenderScale50,
+    ShadowMap1024,
+    ShadowMap512,
     RenderScaleRestored,
     RenderScaleAuto,
     RenderScaleAutoRestored,
@@ -688,6 +690,8 @@ impl VerificationStage {
                 Some((ScreenRenderScale::ThreeQuarters, "03f-paused-scale-75.png"))
             }
             Self::RenderScale50 => Some((ScreenRenderScale::Half, "03g-paused-scale-50.png")),
+            Self::ShadowMap1024 => Some((ScreenRenderScale::Half, "03g1-paused-shadow-1024.png")),
+            Self::ShadowMap512 => Some((ScreenRenderScale::Half, "03g2-paused-shadow-512.png")),
             Self::RenderScaleRestored => {
                 Some((ScreenRenderScale::Full, "03h-paused-scale-restored.png"))
             }
@@ -695,6 +699,15 @@ impl VerificationStage {
                 ScreenRenderScale::Full,
                 "03j-paused-scale-auto-restored.png",
             )),
+            _ => None,
+        }
+    }
+
+    fn shadow_draw_fixture_target(self) -> Option<ScreenShadowMap> {
+        match self {
+            Self::ShadowMap1024 => Some(ScreenShadowMap::Half),
+            Self::ShadowMap512 => Some(ScreenShadowMap::Quarter),
+            Self::RenderScaleRestored => Some(ScreenShadowMap::Full),
             _ => None,
         }
     }
@@ -718,6 +731,8 @@ impl VerificationStage {
                         | Self::RenderScaleFull
                         | Self::RenderScale75
                         | Self::RenderScale50
+                        | Self::ShadowMap1024
+                        | Self::ShadowMap512
                         | Self::RenderScaleRestored
                         | Self::RenderScaleAuto
                         | Self::RenderScaleAutoRestored
@@ -951,6 +966,12 @@ pub(crate) struct Verification {
     timeout: Duration,
     replay_cameras: bool,
     replay_record: Option<ReplayCaptureRecord>,
+}
+
+pub(super) fn shadow_draw_fixture_target(world: &World) -> Option<ScreenShadowMap> {
+    world
+        .get_resource::<Verification>()
+        .and_then(|verification| verification.stage.shadow_draw_fixture_target())
 }
 
 impl Verification {
@@ -1336,6 +1357,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
     rendering: Res<'w, NativeScreenRender>,
+    shadow_map: Res<'w, bevy::light::DirectionalLightShadowMap>,
     offscreen: Option<Res<'w, super::offscreen::OffscreenTarget>>,
     images: Res<'w, Assets<Image>>,
     scene_cameras: Query<
@@ -1489,6 +1511,11 @@ impl VerificationPresentation<'_, '_> {
     ) -> Result<(), String> {
         if self.rendering.applied() != expected {
             return Err("Screen render scale differs from the selected shared control".into());
+        }
+        if self.shadow_map.size != self.rendering.snapshot().shadow.size() as usize {
+            return Err(
+                "Directional shadow map differs from the acknowledged shared resources".into(),
+            );
         }
         let window_extent = window.resolution.physical_size();
         let (_, camera, target, projection, _) = self
@@ -1838,6 +1865,11 @@ fn advance_step(
                     VerificationStage::RenderScale50
                 }
                 VerificationStage::RenderScale50 => {
+                    queue_ui_control(commands, "presentation-render-scale-auto", None);
+                    VerificationStage::ShadowMap1024
+                }
+                VerificationStage::ShadowMap1024 => VerificationStage::ShadowMap512,
+                VerificationStage::ShadowMap512 => {
                     queue_ui_control(commands, "presentation-render-scale-100", None);
                     VerificationStage::RenderScaleRestored
                 }
@@ -2242,6 +2274,8 @@ fn advance_step(
         VerificationStage::RenderScaleFull
         | VerificationStage::RenderScale75
         | VerificationStage::RenderScale50
+        | VerificationStage::ShadowMap1024
+        | VerificationStage::ShadowMap512
         | VerificationStage::RenderScaleRestored
         | VerificationStage::RenderScaleAuto
         | VerificationStage::RenderScaleAutoRestored => {
@@ -2263,7 +2297,49 @@ fn advance_step(
             {
                 return Err("Screen render scale changed Window size or UI scale".into());
             }
-            if verification.stage == VerificationStage::RenderScaleAuto {
+            if matches!(
+                verification.stage,
+                VerificationStage::ShadowMap1024 | VerificationStage::ShadowMap512
+            ) {
+                let snapshot = presentation.rendering.snapshot();
+                let expected = verification
+                    .stage
+                    .shadow_draw_fixture_target()
+                    .ok_or("Missing shadow draw fixture target")?;
+                if !matches!(
+                    snapshot.selection,
+                    ScreenRenderSelection::Auto {
+                        manual_scale: ScreenRenderScale::Half,
+                        manual_shadow: ScreenShadowMap::Full,
+                    }
+                ) || snapshot.applied != ScreenRenderScale::Half
+                {
+                    return Err(
+                        "Shadow draw fixture did not retain its shared Auto/manual resolution"
+                            .into(),
+                    );
+                }
+                if let ScreenRenderAutoStatus::Failed { cause }
+                | ScreenRenderAutoStatus::Unsupported { cause } = &snapshot.status
+                {
+                    return Err(format!("Shadow draw fixture resource failure: {cause}"));
+                }
+                if verification.stage_started.elapsed() > Duration::from_secs(8) {
+                    return Err(format!(
+                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}"
+                    ));
+                }
+                if snapshot.shadow == expected && verification.readiness.can_capture() {
+                    presentation.verify_render_scale(ScreenRenderScale::Half, window)?;
+                    let (_, filename) =
+                        scale_capture.ok_or("Missing shadow draw fixture capture")?;
+                    println!(
+                        "Shadow draw connection fixture: synthetic_gpu_work_ms=20, source=Time<Real>/FrameCount, performance_evidence=false, actual_shadow_size={}, snapshot={snapshot:?}",
+                        presentation.shadow_map.size
+                    );
+                    verification.capture(commands, filename);
+                }
+            } else if verification.stage == VerificationStage::RenderScaleAuto {
                 let snapshot = presentation.rendering.snapshot();
                 let projection_settled = verification.auto_capture_scale == Some(snapshot.applied);
                 verification.auto_capture_scale = Some(snapshot.applied);
@@ -2303,12 +2379,16 @@ fn advance_step(
             } else if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
             {
-                if verification.stage == VerificationStage::RenderScaleAutoRestored
-                    && presentation.rendering.snapshot().selection
-                        != (ScreenRenderSelection::Manual {
-                            scale: ScreenRenderScale::Full,
-                            shadow: ScreenShadowMap::Full,
-                        })
+                if matches!(
+                    verification.stage,
+                    VerificationStage::RenderScaleRestored
+                        | VerificationStage::RenderScaleAutoRestored
+                ) && (presentation.rendering.snapshot().selection
+                    != (ScreenRenderSelection::Manual {
+                        scale: ScreenRenderScale::Full,
+                        shadow: ScreenShadowMap::Full,
+                    })
+                    || presentation.rendering.snapshot().shadow != ScreenShadowMap::Full)
                 {
                     return Err("Auto verification did not restore explicit Manual 100%".into());
                 }
@@ -3189,6 +3269,34 @@ mod tests {
         }
         app.world_mut().resource_mut::<super::Verification>().stage = VerificationStage::Launch;
         app
+    }
+
+    #[test]
+    fn shadow_draw_fixture_is_isolated_from_real_gpu_auto_and_holds_until_manual_restore() {
+        let mut app = countdown_driver_app();
+        for (stage, target) in [
+            (VerificationStage::RenderScale50, None),
+            (
+                VerificationStage::ShadowMap1024,
+                Some(ScreenShadowMap::Half),
+            ),
+            (
+                VerificationStage::ShadowMap512,
+                Some(ScreenShadowMap::Quarter),
+            ),
+            (
+                VerificationStage::RenderScaleRestored,
+                Some(ScreenShadowMap::Full),
+            ),
+            (VerificationStage::RenderScaleAuto, None),
+            (VerificationStage::RenderScaleAutoRestored, None),
+            (VerificationStage::Finished, None),
+        ] {
+            app.world_mut().resource_mut::<super::Verification>().stage = stage;
+            assert_eq!(super::shadow_draw_fixture_target(app.world()), target);
+        }
+        app.world_mut().remove_resource::<super::Verification>();
+        assert_eq!(super::shadow_draw_fixture_target(app.world()), None);
     }
 
     #[test]

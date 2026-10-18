@@ -402,14 +402,15 @@ pub(crate) fn observe_auto(world: &mut World) {
             if !rendering.measuring() || interrupted {
                 return Ok(None);
             }
-            if support == Some(false) {
+            let shadow_fixture = super::verification::shadow_draw_fixture_target(world);
+            if shadow_fixture.is_none() && support == Some(false) {
                 rendering.controller.unsupported(
                     "GPU timestamp query inside command encodersを使用できない".into(),
                     now_ms,
                 )?;
                 return Ok(None);
             }
-            if support.is_none() {
+            if shadow_fixture.is_none() && support.is_none() {
                 return rendering.controller.pending(now_ms);
             }
             match &readout.preparation {
@@ -419,6 +420,27 @@ pub(crate) fn observe_auto(world: &mut World) {
                     rendering.controller.unsupported(cause.clone(), now_ms)?;
                     return Ok(None);
                 }
+            }
+            if let Some(target) = shadow_fixture {
+                if rendering.snapshot().shadow.size() <= target.size() {
+                    return Ok(None);
+                }
+                let epoch = rendering.controller.epoch();
+                let request = rendering.controller.observe(
+                    birdman_game_session::screen_render_auto::ScreenGpuSample {
+                        epoch,
+                        frame,
+                        source_ms: now_ms,
+                        gpu_work_ms: 20.0,
+                    },
+                    now_ms,
+                )?;
+                if let Some(request) = request {
+                    println!(
+                        "Shadow draw fixture request: synthetic_gpu_work_ms=20, performance_evidence=false, epoch={epoch}, frame={frame}, source_ms={now_ms}, request={request:?}"
+                    );
+                }
+                return Ok(request);
             }
             let sample = match world.get_resource::<bevy::diagnostic::DiagnosticsStore>() {
                 Some(store) => readout.read(store, rendering.controller.epoch()),

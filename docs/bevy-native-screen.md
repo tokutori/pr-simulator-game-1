@@ -204,6 +204,7 @@ cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 `03b-paused-quality-low.png`、`03c-paused-quality-medium.png`、`03d-paused-quality-high.png`を追加保存する。
 新near meshがGPU資源へ反映され、既存shader/pipeline readinessが成立した後に撮影する。
 この経路は画質交換の起動検査であり、時間的optic flow、複数Weather、性能目標の全面的な受入とは分離する。
+同じ停止状態の50%解像度から、共有Auto controllerへ20 msの明示的な人工標本を実`Time<Real>`・`FrameCount`とともに渡し、実際のshadow mapを1024→512へ交換して各画像を保存する。その後、通常のManual 100%操作で2048へ復帰する。各段階では実shadow資源と共有ACK、描画準備、停止中の記録・state・水面時刻の保持を確認する。人工標本は専用段階に限定し、復帰時の既存epoch失効を経て、後続の実GPU Auto窓と分離する。この検査は描画接続fixtureであり、実GPU負荷・Auto判断・80 FPS達成の根拠には含めない。
 OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS倍率により異なりうるため、保存ログの実寸も確認する。
 
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
