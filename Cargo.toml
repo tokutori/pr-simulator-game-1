@@ -33,5 +33,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_only)'] }
 all = "deny"
 
 [profile.release]
-lto = true
+lto = "thin"
 codegen-units = 1

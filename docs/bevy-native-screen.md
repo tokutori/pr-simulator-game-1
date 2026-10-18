@@ -31,7 +31,8 @@ tearingやGPU負荷・消費電力の増加が生じうる。物理tick・入力
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
 [公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従うWindowsのnative build環境とGPU driverが必要である。
 Node.js、npm、TypeScript、ブラウザ、WASM runtimeはnative版の起動条件に含めない。
-初回やRust改修後のrelease buildは最適化・LTOに時間を要する。初回buildは26分17秒、継続修正の再buildは26分07秒で完了した。
+workspaceのReleaseはThinLTO、codegen-units=1、opt-level既定3を使用する。同じprofileはWeb生成時のRelease WASMとRelease CLI/WASIにも適用され、通常の起動コマンドは保持する。
+初回やprofile変更後は依存の再compileを伴うため、定常の最終crate最適化時間と区別する。従来のfat LTOでは初回build26分17秒、継続修正の再build26分07秒を記録した。ThinLTOの検証と採否は[#501](https://github.com/tokutori/pr-simulator-game-1/issues/501)に記録する。
 build完了後の同じ起動コマンドでは、生成済みbinaryを再利用する。
 
 ## モデルと状態の正本
