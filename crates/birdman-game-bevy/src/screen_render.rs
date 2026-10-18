@@ -354,6 +354,7 @@ pub(crate) fn observe_auto(world: &mut World) {
             readout.source_frame = Some(frame);
             readout.window_extent = extent;
             readout.interrupted = interrupted;
+            let preparation_changed = std::mem::take(&mut readout.preparation_changed);
             let reason = if device_changed {
                 Some(ScreenRenderInvalidation::ContextRestored)
             } else if resized {
@@ -362,6 +363,14 @@ pub(crate) fn observe_auto(world: &mut World) {
                 Some(ScreenRenderInvalidation::QualityChanged)
             } else if interrupted_now || wrapped {
                 Some(ScreenRenderInvalidation::Interrupted)
+            } else if preparation_changed {
+                Some(
+                    if readout.preparation == timing::PipelinePreparation::Ready {
+                        ScreenRenderInvalidation::QualityChanged
+                    } else {
+                        ScreenRenderInvalidation::Interrupted
+                    },
+                )
             } else {
                 None
             };
@@ -380,6 +389,14 @@ pub(crate) fn observe_auto(world: &mut World) {
             }
             if support.is_none() {
                 return rendering.controller.pending(now_ms);
+            }
+            match &readout.preparation {
+                timing::PipelinePreparation::Ready => {}
+                timing::PipelinePreparation::Pending => return Ok(None),
+                timing::PipelinePreparation::Failed(cause) => {
+                    rendering.controller.unsupported(cause.clone(), now_ms)?;
+                    return Ok(None);
+                }
             }
             let sample = match world.get_resource::<bevy::diagnostic::DiagnosticsStore>() {
                 Some(store) => readout.read(store, rendering.controller.epoch()),
@@ -517,7 +534,7 @@ mod tests {
             .resource::<NativeScreenRender>()
             .controller
             .epoch();
-        for index in 0..=8_u32 {
+        for index in 0..=16_u32 {
             app.world_mut().resource_mut::<Time<Real>>().advance_to(
                 std::time::Duration::from_millis(3_200 + u64::from(index) * 150),
             );

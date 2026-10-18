@@ -5,7 +5,7 @@ use super::{
     projection::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
     },
-    screen_render::NativeScreenRender,
+    screen_render::{NativeScreenRender, timing::shader_is_pending},
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
     water_quality::{WaterQuality, WaterQualitySelection},
@@ -28,7 +28,7 @@ use bevy::{
         render_resource::{CachedPipelineState, PipelineCache},
         view::screenshot::{Screenshot, ScreenshotCaptured},
     },
-    shader::{Shader, ShaderCacheError, ShaderRef},
+    shader::{Shader, ShaderRef},
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
     ui::{OverrideClip, clip_check_recursive},
 };
@@ -529,13 +529,6 @@ fn observe_render_readiness(
     if let Some(mut verification) = main_world.get_resource_mut::<Verification>() {
         verification.readiness = readiness;
     }
-}
-
-fn shader_is_pending(error: &ShaderCacheError) -> bool {
-    matches!(
-        error,
-        ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable
-    )
 }
 
 pub(crate) struct VerificationCompletion(Receiver<Result<(), String>>);

@@ -21,6 +21,7 @@ Phone VRは元の描画倍率を使用し、WebXRのcompositor解像度は変更
 
 Autoは共有Rustの`ScreenRenderAutoController`が同じ3候補を一段ずつ選択する。ユーザーのAuto/Manual選択、保持した手動値、実際の適用済み倍率を分離し、資源交換が成功したACKだけを適用済み値へ反映する。極小viewportではACKを保留し、交換失敗時は既存資源と原因を保持する。
 Webは`EXT_disjoint_timer_query_webgl2`で反射と主描画を含むGPU command spanを非同期計測する。Nativeもsource frame・source時刻・epochに対応したGPU spanだけを受理する。通常のManualではAuto計測用GPU queryを発行しない。計測非対応は原因付きで表示し、欠損を0 msとして補完しない。
+初期の2秒窓は最初の有効GPU source時刻から開始する。Webは反射と主描画が成功したframeの後から採取し、中断・資源交換後も再準備する。Nativeは現在の3D・shadow phaseが参照するpipelineの準備状態を確認し、作成中の短い未完成frameをAuto標本へ含めない。未使用pipelineは待機条件へ含めない。準備状態の変化は既存epochで失効させ、Readyは有効窓から導出する。新たなbenchmark phaseや物理clockは追加しない。
 2秒窓の8 ms区間ごとの有効GPU sample最大値を代表値とし、そのp95を判断に用いる。12.5 ms超は最低8代表値・1秒のsource span・500 ms以内の鮮度で下降を許可する。9.5 ms未満の上昇は最低30代表値・1.8秒のspan・100 ms以内の鮮度・同時間域のsource frame受領率90%以上を必要とする。適用後3秒は次の変更を保留する。
 このp95は選別したGPU spanの統計である。全frame時間、CPU時間、present待機、全raw sampleのp95と区別する。欠損は有効な高負荷の履歴を消去せず、coverage不足時は上昇を保留する。resize、backend切替、context復帰、環境・描画品質変更、中断、disjointで古い窓を失効する。計測履歴と時刻はUIの構造cache keyへ含めない。
 

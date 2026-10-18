@@ -1,26 +1,32 @@
 use super::NativeScreenRender;
 use bevy::ecs as bevy_ecs;
 use bevy::{
+    core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
     diagnostic::{DiagnosticPath, DiagnosticsStore, FrameCount},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
+    pbr::Shadow,
     platform::time::Instant,
     prelude::*,
     render::{
-        Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderSystems,
+        Extract, ExtractSchedule, GpuResourceAppExt, MainWorld, Render, RenderApp, RenderSystems,
         diagnostic::{
             DiagnosticsRecorder, RecordDiagnostics, RenderDiagnosticsPlugin,
             begin_diagnostics_frame, resolve_encoder,
         },
+        render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases, ViewSortedRenderPhases},
         render_resource::{
-            Buffer, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, WgpuFeatures,
+            Buffer, BufferDescriptor, BufferUsages, CachedPipelineState, CachedRenderPipelineId,
+            CommandEncoderDescriptor, PipelineCache, WgpuFeatures,
         },
         renderer::{
             PendingCommandBuffers, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue,
         },
     },
+    shader::ShaderCacheError,
     window::PrimaryWindow,
 };
 use birdman_game_session::screen_render_auto::ScreenGpuSample;
+use std::collections::BTreeSet;
 
 const GPU_WORK: DiagnosticPath = DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
 const METADATA: [DiagnosticPath; 4] = [
@@ -52,7 +58,10 @@ impl Plugin for ScreenTimingPlugin {
                 .init_resource::<ParkedRecorder>()
                 .init_resource::<TimingPacket>()
                 .init_gpu_resource::<MetadataBuffer>()
-                .add_systems(ExtractSchedule, extract_packet)
+                .add_systems(
+                    ExtractSchedule,
+                    (observe_preparation, extract_packet).chain(),
+                )
                 .add_systems(
                     Render,
                     select_recorder
@@ -113,12 +122,30 @@ struct FullDiagnostics(bool);
 #[derive(Resource, Default)]
 struct ParkedRecorder(Option<DiagnosticsRecorder>);
 
-#[derive(Resource, Default, Clone, Copy)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) enum PipelinePreparation {
+    #[default]
+    Pending,
+    Ready,
+    Failed(String),
+}
+
+#[derive(Resource, Default, Clone)]
 struct TimingPacket {
     active: bool,
     epoch: u32,
     frame: u32,
     source_ms: u64,
+    preparation: PipelinePreparation,
+}
+
+fn observe_preparation(packet: Res<TimingPacket>, mut main: ResMut<MainWorld>) {
+    if let Some(mut readout) = main.get_resource_mut::<TimingReadout>()
+        && readout.preparation != packet.preparation
+    {
+        readout.preparation = packet.preparation.clone();
+        readout.preparation_changed = true;
+    }
 }
 
 #[derive(Resource)]
@@ -157,6 +184,7 @@ fn extract_packet(
         epoch: rendering.controller.epoch(),
         frame: frame.0,
         source_ms: time.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+        preparation: PipelinePreparation::Pending,
     });
 }
 
@@ -180,8 +208,20 @@ pub(super) fn supported(features: WgpuFeatures) -> bool {
 }
 
 fn begin_work(world: &mut World) {
-    let packet = *world.resource::<TimingPacket>();
-    if !packet.active || !world.contains_resource::<DiagnosticsRecorder>() {
+    let mut packet = world.resource::<TimingPacket>().clone();
+    if !packet.active {
+        return;
+    }
+    packet.preparation = scene_preparation(world);
+    if packet.preparation != PipelinePreparation::Ready && !world.resource::<FullDiagnostics>().0 {
+        packet.active = false;
+    }
+    world.insert_resource(packet.clone());
+    if !packet.active {
+        world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
+        return;
+    }
+    if !world.contains_resource::<DiagnosticsRecorder>() {
         return;
     }
     let device = world.resource::<RenderDevice>();
@@ -219,6 +259,85 @@ fn begin_work(world: &mut World) {
     }
 }
 
+fn add_binned_pipelines<B: BinnedPhaseItem>(
+    ids: &mut BTreeSet<CachedRenderPipelineId>,
+    phases: Option<&ViewBinnedRenderPhases<B>>,
+    pipeline: impl Fn(&B::BatchSetKey) -> CachedRenderPipelineId,
+) {
+    for phase in phases.into_iter().flat_map(|phases| phases.values()) {
+        ids.extend(phase.multidrawable_meshes.keys().map(&pipeline));
+        ids.extend(phase.batchable_meshes.keys().map(|(key, _)| pipeline(key)));
+        ids.extend(
+            phase
+                .unbatchable_meshes
+                .keys()
+                .map(|(key, _)| pipeline(key)),
+        );
+        ids.extend(phase.non_mesh_items.keys().map(|(key, _)| pipeline(key)));
+    }
+}
+
+fn scene_preparation(world: &World) -> PipelinePreparation {
+    let Some(cache) = world.get_resource::<PipelineCache>() else {
+        return PipelinePreparation::Pending;
+    };
+    let mut ids = BTreeSet::new();
+    add_binned_pipelines(
+        &mut ids,
+        world.get_resource::<ViewBinnedRenderPhases<Opaque3d>>(),
+        |key| key.pipeline,
+    );
+    add_binned_pipelines(
+        &mut ids,
+        world.get_resource::<ViewBinnedRenderPhases<AlphaMask3d>>(),
+        |key| key.pipeline,
+    );
+    add_binned_pipelines(
+        &mut ids,
+        world.get_resource::<ViewBinnedRenderPhases<Shadow>>(),
+        |key| key.pipeline,
+    );
+    if let Some(phases) = world.get_resource::<ViewSortedRenderPhases<Transparent3d>>() {
+        ids.extend(
+            phases
+                .values()
+                .flat_map(|phase| phase.items.values().map(|item| item.pipeline)),
+        );
+    }
+    selected_preparation(ids, |id| cache.get_render_pipeline_state(id))
+}
+
+fn selected_preparation<'state>(
+    ids: impl IntoIterator<Item = CachedRenderPipelineId>,
+    state: impl Fn(CachedRenderPipelineId) -> &'state CachedPipelineState,
+) -> PipelinePreparation {
+    let mut observed = false;
+    let mut pending = false;
+    for id in ids {
+        observed = true;
+        match state(id) {
+            CachedPipelineState::Ok(_) => {}
+            CachedPipelineState::Queued | CachedPipelineState::Creating(_) => pending = true,
+            CachedPipelineState::Err(cause) if shader_is_pending(cause) => pending = true,
+            CachedPipelineState::Err(cause) => {
+                return PipelinePreparation::Failed(format!("GPU pipeline {id:?}: {cause:?}"));
+            }
+        }
+    }
+    if observed && !pending {
+        PipelinePreparation::Ready
+    } else {
+        PipelinePreparation::Pending
+    }
+}
+
+pub(crate) fn shader_is_pending(error: &ShaderCacheError) -> bool {
+    matches!(
+        error,
+        ShaderCacheError::ShaderNotLoaded(_) | ShaderCacheError::ShaderImportNotYetAvailable
+    )
+}
+
 fn end_work(world: &mut World) {
     if !world.resource::<TimingPacket>().active
         || !supported(world.resource::<RenderDevice>().features())
@@ -254,6 +373,8 @@ pub(super) struct TimingReadout {
     pub(super) source_frame: Option<u32>,
     pub(super) window_extent: Option<UVec2>,
     pub(super) interrupted: bool,
+    pub(super) preparation: PipelinePreparation,
+    pub(super) preparation_changed: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -327,6 +448,58 @@ mod tests {
         diagnostic::{Diagnostic, DiagnosticMeasurement},
     };
     use std::time::Duration;
+
+    #[test]
+    fn active_phase_states_exclude_pending_work_and_do_not_consult_unused_pipelines() {
+        let queued = CachedPipelineState::Queued;
+        let pool = bevy::tasks::TaskPool::new();
+        let creating = CachedPipelineState::Creating(pool.spawn(std::future::pending()));
+        let importing = CachedPipelineState::Err(ShaderCacheError::ShaderImportNotYetAvailable);
+        let failure = CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
+            "invalid scene shader".into(),
+        ));
+        for state in [&queued, &creating, &importing] {
+            let selected = std::cell::Cell::new(0);
+            assert_eq!(
+                selected_preparation([CachedRenderPipelineId::new(7)], |id| {
+                    assert_eq!(id, CachedRenderPipelineId::new(7));
+                    selected.set(selected.get() + 1);
+                    state
+                }),
+                PipelinePreparation::Pending
+            );
+            assert_eq!(selected.get(), 1);
+        }
+        assert!(
+            matches!(selected_preparation([CachedRenderPipelineId::new(7)], |_| &failure),
+            PipelinePreparation::Failed(cause) if cause.contains("invalid scene shader"))
+        );
+        assert_eq!(
+            selected_preparation([], |_| panic!("No active pipeline")),
+            PipelinePreparation::Pending
+        );
+    }
+
+    #[test]
+    fn production_begin_rejects_an_unprepared_scene_before_using_gpu_resources() {
+        let mut world = World::new();
+        world.insert_resource(TimingPacket {
+            active: true,
+            ..default()
+        });
+        world.insert_resource(FullDiagnostics(false));
+        world.init_resource::<ParkedRecorder>();
+        begin_work(&mut world);
+        assert!(!world.resource::<TimingPacket>().active);
+        assert_eq!(
+            world.resource::<TimingPacket>().preparation,
+            PipelinePreparation::Pending
+        );
+        assert!(!world.contains_resource::<RenderDevice>());
+        world.insert_resource(TimingPacket::default());
+        world.remove_resource::<FullDiagnostics>();
+        begin_work(&mut world);
+    }
 
     fn packet(
         store: &mut DiagnosticsStore,
@@ -605,8 +778,10 @@ mod tests {
                 (false, true, false),
                 (true, false, false),
                 (false, true, true),
+                (true, true, false),
+                (true, true, true),
             ] {
-                let enabled = full_diagnostics || (active && timestamp_queries);
+                let enabled = full_diagnostics;
                 let mut app = App::new();
                 app.init_resource::<DiagnosticsStore>();
                 let mut render_app = SubApp::new();
@@ -644,6 +819,7 @@ mod tests {
                     epoch: 7,
                     frame: 42,
                     source_ms: (1_u64 << 32) + 123,
+                    preparation: PipelinePreparation::Pending,
                 });
                 for _ in 0..2 {
                     let render_app = app.get_sub_app_mut(RenderApp).unwrap();
@@ -677,7 +853,7 @@ mod tests {
                         .any(|diagnostic| diagnostic.path().as_str().contains("root_only_probe")),
                     full_diagnostics
                 );
-                if active && timestamp_queries {
+                if full_diagnostics && active && timestamp_queries {
                     let sample = TimingReadout::default()
                         .read(store, 7)
                         .unwrap()
@@ -687,7 +863,7 @@ mod tests {
                     assert_eq!(sample.source_ms, ((1_u64 << 32) + 123) as f64);
                     assert!(sample.gpu_work_ms.is_finite() && sample.gpu_work_ms >= 0.0);
                     assert!(TimingReadout::default().read(store, 8).unwrap().is_none());
-                    assert_eq!(store.iter().count(), METADATA.len() + 2);
+                    assert_eq!(store.iter().count(), METADATA.len() + 4);
                 } else {
                     assert!(store.get(&GPU_WORK).is_none());
                 }
