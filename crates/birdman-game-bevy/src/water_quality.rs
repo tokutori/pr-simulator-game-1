@@ -50,6 +50,7 @@ pub(crate) enum WaterQualityFailure {
     MaterialUnavailable,
     WavePreparation(String),
     EnvironmentProjection(EnvironmentFailure),
+    RenderResources(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +139,12 @@ impl WaterQualitySelection {
                     cause,
                 },
             },
+        }
+    }
+
+    pub(crate) fn committed(quality: WaterQuality) -> Self {
+        Self {
+            state: WaterQualityState::Ready(quality),
         }
     }
 }

@@ -284,8 +284,9 @@ cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-
 飛行中の実Autoを観測する場合は`--verify-water-auto`を追加する。省略時は従来のManual100を維持する。
 Setupの公開Auto操作を通し、最初の有効窓と資源ACKまで既存Setup内で最大10秒待つ。未対応・失敗・未達は原因を保持する。
 初期完了は共有controllerが保持する成熟・受領率90%以上の窓のepochから導出し、ACK後のpipeline Readyと500 ms以内のGPU sourceを併せて確認する。継続適応で現在窓がMeasuringへ戻っても完了事実を保持し、外部contextの失効・適用失敗では破棄する。停止中のAuto接続確認にも同じ完了条件を使用し、倍率低下だけを有効窓の証拠にしない。
-この準備確認は最適画質への収束を意味しない。飛行中も同じ共有policyが実GPU標本を受け、倍率とshadowを適応させる。
-到着時刻基準の従来集計とは別に、root GPUの同一完了batchのepoch・source-frame・実適用scale/shadowで分布を分ける。
+この準備確認は最適画質への収束を意味しない。飛行中も同じ共有policyが実GPU標本を受け、倍率、shadow、水面High/Medium/Lowの順に適応させる。水面は保持した手動選択が上限であり、Auto解除では手動の三値へ復帰する。
+5 motion後は既存Auto解除で手動の三値へ戻してから、停止中の手動画質交換・指定画質復帰を確認する。Autoの上限復帰だけで実適用値の復帰を代用しない。
+到着時刻基準の従来集計とは別に、root GPUの同一完了batchのepoch・source-frame・実適用scale/shadow/水面品質で分布を分ける。
 source区間はStart画像保存frameを除き、2秒motionの完了frameまでを含む。整数msは同じReal時計から取得し、frame包含の判定に小数時刻を用いない。
 Bevy 0.19.1は`Last`でFrameCountを増加させてからExtractを実行するため、Update境界を同じ描画元frameへ変換する。区間中のframe wrapは未対応として明示する。
 既存End画像保存完了を受信cutoffとする。GPU query全件のdrainは保証せず、欠損・重複・metadata不一致・履歴不足とpair別の部分区間を明示する。

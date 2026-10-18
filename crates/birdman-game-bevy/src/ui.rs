@@ -826,11 +826,11 @@ pub(crate) fn button_actions(world: &mut World) {
                             .core_session()
                             .snapshot()
                             .phase();
-                        let current = world.resource::<WaterQualitySelection>();
-                        let next = current
-                            .request(native_quality(quality), phase)
-                            .ok_or_else(|| "湖面画質の変更を受理できない".to_owned())?;
-                        *world.resource_mut::<WaterQualitySelection>() = next;
+                        if !world.resource::<WaterQualitySelection>().can_select(phase) {
+                            return Err("湖面画質の変更を受理できない".to_owned());
+                        }
+                        screen_render::select_water_quality(world, native_quality(quality))
+                            .map_err(|cause| format!("水面画質を適用できない: {cause:?}"))?;
                     }
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetScreenRenderScale { scale },
@@ -2702,6 +2702,7 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
                 manual_shadow: ScreenShadowMap::Full,
+                manual_water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -2712,6 +2713,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
+                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -2723,6 +2725,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::ThreeQuarters,
                 shadow: ScreenShadowMap::Full,
+                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
             }
         );
         assert_eq!(

@@ -357,7 +357,7 @@ fn report_motion_timings(
     let end = Instant::now();
     let rendering = rendering.snapshot();
     println!(
-        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} selection={:?} applied_scale={:?} shadow_map_size={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
+        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} selection={:?} applied_scale={:?} shadow_map_size={} water_quality={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
         verification.water_case,
         motion.label(),
         end.duration_since(verification.stage_started).as_secs_f64() * 1000.0,
@@ -365,6 +365,7 @@ fn report_motion_timings(
         rendering.selection,
         rendering.applied,
         rendering.shadow.size(),
+        rendering.water_quality.label(),
     );
     for window in windows {
         println!(
@@ -418,7 +419,15 @@ struct SourceTimingSummary {
     duplicate_frames: usize,
     unassigned_arrivals: usize,
     history_incomplete: bool,
-    groups: BTreeMap<(u32, u32, u32), TimingSummary>,
+    groups: BTreeMap<
+        (
+            u32,
+            u32,
+            u32,
+            birdman_game_session::lake_water::LakeWaterQuality,
+        ),
+        TimingSummary,
+    >,
 }
 
 fn summarize_source_timing(
@@ -485,6 +494,7 @@ fn summarize_source_timing(
                 source.sample.epoch,
                 source.scale.percent(),
                 source.shadow.size(),
+                source.water_quality,
             ))
             .or_default()
             .push(source);
@@ -553,10 +563,11 @@ fn report_motion_sources(
                 summary.unassigned_arrivals,
                 summary.history_incomplete,
             );
-            for ((epoch, scale, shadow), group) in summary.groups {
+            for ((epoch, scale, shadow, water), group) in summary.groups {
                 println!(
-                    "Motion source timing motion={} epoch={epoch} applied_scale={scale} shadow_map_size={shadow} root_gpu={group:?} partial_motion_group={} source_coverage_complete={}; each pair is a separate descriptive distribution, not an 80FPS acceptance",
+                    "Motion source timing motion={} epoch={epoch} applied_scale={scale} shadow_map_size={shadow} water_quality={} root_gpu={group:?} partial_motion_group={} source_coverage_complete={}; each triple is a separate descriptive distribution, not an 80FPS acceptance",
                     motion.label(),
+                    water.label(),
                     group.received_count < summary.expected_frames as usize,
                     missing == 0
                         && summary.duplicate_frames == 0
@@ -2242,11 +2253,23 @@ fn advance_step(
             if verification.readiness.can_capture() {
                 if let Some(case) = verification.water_case {
                     if quality.pending().is_none() {
-                        if quality.applied() != case.quality {
+                        let rendering = presentation.rendering.snapshot();
+                        let applied = quality.applied().shared();
+                        let valid_quality = applied == rendering.water_quality
+                            && match rendering.selection {
+                                ScreenRenderSelection::Auto {
+                                    manual_water_quality,
+                                    ..
+                                } if case.auto => {
+                                    manual_water_quality == case.quality.shared()
+                                        && applied <= manual_water_quality
+                                }
+                                _ => applied == case.quality.shared(),
+                            };
+                        if !valid_quality {
                             return Err(format!("Setup water quality failed: {quality:?}"));
                         }
                         if case.auto {
-                            let rendering = presentation.rendering.snapshot();
                             if matches!(rendering.selection, ScreenRenderSelection::Manual { .. }) {
                                 queue_ui_control(commands, "presentation-render-scale-auto", None);
                                 return Ok(());
@@ -2503,6 +2526,16 @@ fn advance_step(
                 .flight_record()
                 .map_or(0, |record| record.sample_count());
             session.action(MenuAction::Pause)?;
+            if verification.water_case.is_some_and(|case| case.auto) {
+                commands.queue(|world: &mut World| {
+                    if let Err(cause) = super::screen_render::select_auto(world, false) {
+                        world.resource_mut::<Verification>().failure = Some(format!(
+                            "Water Auto manual triple restoration failed: {cause:?}"));
+                    } else {
+                        println!("Water Auto flight intervals completed; retained manual triple restored before paused quality captures");
+                    }
+                });
+            }
             if !matches!(
                 session.game.core_session().snapshot().phase(),
                 SessionPhase::FlightPaused { .. }
@@ -2627,6 +2660,8 @@ fn advance_step(
                     ScreenRenderSelection::Auto {
                         manual_scale: ScreenRenderScale::Half,
                         manual_shadow: ScreenShadowMap::Full,
+                        manual_water_quality:
+                            birdman_game_session::lake_water::LakeWaterQuality::High
                     }
                 ) || snapshot.applied != ScreenRenderScale::Half
                 {
@@ -2664,6 +2699,8 @@ fn advance_step(
                     ScreenRenderSelection::Auto {
                         manual_scale: ScreenRenderScale::Full,
                         manual_shadow: ScreenShadowMap::Full,
+                        manual_water_quality:
+                            birdman_game_session::lake_water::LakeWaterQuality::High
                     }
                 ) {
                     return Err("Auto verification did not execute the shared Auto control".into());
@@ -2708,6 +2745,7 @@ fn advance_step(
                     != (ScreenRenderSelection::Manual {
                         scale: ScreenRenderScale::Full,
                         shadow: ScreenShadowMap::Full,
+                        water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
                     })
                     || presentation.rendering.snapshot().shadow != ScreenShadowMap::Full)
                 {
@@ -4748,10 +4786,12 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
                 manual_shadow: ScreenShadowMap::Full,
+                manual_water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
             },
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
+                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
             },
         ] {
             queue_ui_control(
@@ -5342,7 +5382,11 @@ mod tests {
             12,
             16_150,
             10.0,
-            (super::ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+            (
+                super::ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                birdman_game_session::lake_water::LakeWaterQuality::Low,
+            ),
         );
         packet_quality(
             &mut store,
@@ -5351,7 +5395,11 @@ mod tests {
             12,
             16_150,
             100.0,
-            (super::ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+            (
+                super::ScreenRenderScale::Half,
+                ScreenShadowMap::Quarter,
+                birdman_game_session::lake_water::LakeWaterQuality::Low,
+            ),
         );
         packet(
             &mut store,
@@ -5376,8 +5424,26 @@ mod tests {
         assert_eq!(summary.received_frames, 2);
         assert_eq!(summary.duplicate_frames, 1);
         assert_eq!(summary.groups.len(), 2);
-        assert_eq!(summary.groups[&(1, 100, 2048)].mean_ms, Some(20.0));
-        assert_eq!(summary.groups[&(2, 50, 512)].mean_ms, Some(10.0));
+        assert_eq!(
+            summary.groups[&(
+                1,
+                100,
+                2048,
+                birdman_game_session::lake_water::LakeWaterQuality::High
+            )]
+                .mean_ms,
+            Some(20.0)
+        );
+        assert_eq!(
+            summary.groups[&(
+                2,
+                50,
+                512,
+                birdman_game_session::lake_water::LakeWaterQuality::Low
+            )]
+                .mean_ms,
+            Some(10.0)
+        );
         store
             .get_mut(&timing::GPU_WORK)
             .unwrap()
