@@ -47,10 +47,6 @@ Ubuntu・Windowsの検査成功後に、同じrunで生成したartifactだけ�
 Rust cacheの保存はmainへのpushと非公開の手動検査（`deploy_pages=false`）が担当し、Pages公開runは復元だけを行う。
 保存元のrunが失敗した場合は、同じmainの非公開手動検査でcacheを更新できる。
 
-Rust cacheの追加keyは検査laneの安定名とし、manifest全内容hashでpartial restoreのprefixを分断しない。
-OS・architecture・toolchain・compiler環境と依存manifest/lockfileのkeyは固定Actionへ委ね、復元後もCargoが必要な再ビルドを判定し全検査を実行する。
-keyのnamespaceを変更した初回はcoldとなる。trusted main保存後の後続runで復元を確認し、単発のstep時間から短縮率を断定しない。
-
 ## Fast-forward優先
 
 GitHubの通常mergeボタンは `--no-ff` 相当である。Rebase and mergeはSHAを変更するため、
