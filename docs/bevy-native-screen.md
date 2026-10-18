@@ -144,6 +144,8 @@ near meshは全画質で6 km四方の非一様gridを使用し、cameraの水平
 
 Low・Medium・Highは共有18成分のspectrumから6・10・18成分を選択し、near/farへ同じ投影を原子的に適用する。実meshの間隔に対する波長filterと非反転reserveを使用し、選択した環境の全quality共通Aabbを保持する。detail画像、4層micro-normal、環境時刻と固定phase、sky資源を再利用する。描画負荷と視覚品質の差、時間的aliasing、全画質のoptic flow、80 FPS達成は実GPUで別途確認する。
 vertex shaderでworld位置を変位させ、変位量を含むAabbを使用する。sky domeは変位から除外する。水面のshadow caster・prepassは無効とし、平面のdefault prepassとの不一致を回避する。shadow receiverは変位後のworld positionとgeometric normalを公式samplingへ渡す。reflection targetはUI・水面・空・地形を含めず、resizeで旧targetだけを退役させる。環境・quality交換は同じ反射passを保持する。geometry・micro-normal・反射pass・cascade shadowの負荷を含む80 FPS目標の達成は実GPUでの計測を必要とする。
+登録broad/fine地形はWebと同じ非shadow casterとし、現在のshadow receiverを保持する。不透明な機体被覆・骨格とplatformのcaster、既存cascade・水面samplingは維持する。
+地形のvisibility hazeは共有near/farとsRGB色を使用する。公式PBR照明の後にWeb Screen基準のsmoothstep(view-depth)を適用し、BevyのsRGB出力用にlinearへ戻す。水面のradial hazeとreflection対象は保持する。環境交換では実terrain materialを事前検査し、水面・cloud・太陽と同じcommit境界で更新する。
 遠方波は[#257](https://github.com/tokutori/pr-simulator-game-1/issues/257)の修正として、
 画素footprintに応じて解像できない法線・色変調成分を減衰させる。近距離の波と既存反射式を保持する。
 主翼とcockpitの形状はWeb基準の共有Rustを使用する。cockpitは白いframe、透明nose canopy、後部fairingを表示する。主翼上面の藍染textureも共有Rustで生成し、登録decalのalphaを左右へ投影する。Nativeではlinear-light mipを生成してsRGB textureへ格納する。T字骨格を表示し、全160本の主翼rod・44個のfoamが同じWingFrameの曲げへ追従する。rodのunit meshと左右同形foamのmeshを共有する。機体fidelityは未検証である。
@@ -215,7 +217,7 @@ Resultから共有control IDの実操作経路を使ってMap→Altitude→Speed
 再試行では全nose-up入力による実フライトの終端と技術情報も撮影し、元cause・score・recordの一致を確認する。
 WaterContact/TimeLimitの正常終了も受理する。診断表示のために通常入力の失敗を必須としない。
 途中のwindow終了とtimeoutは失敗になる。
-水面/PBR shaderのロードと実pipelineのcompile完了を5連続frame確認してから撮影する。
+水面/PBR/terrain haze shaderのロードと実pipelineのcompile完了を5連続frame確認してから撮影する。
 撮影frameのUI layout後に、ボタンlabelのglyph・寸法・包含、viewport内の配置、本文と下部操作の非重複を検査する。
 shader/assetの確定エラーは原因を保持して返す。timeoutはGPU初期化後の最初のUpdateから90秒とする。
 検査中はnativeウィンドウをアクティブに維持する。通常のfocus・処理遅延による停止契約も適用される。

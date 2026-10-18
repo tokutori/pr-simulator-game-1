@@ -23,6 +23,43 @@ pub const LAKE_SCENE_LIGHTING: LakeSceneLighting = LakeSceneLighting {
     sunlight_irradiance: 1.45,
 };
 
+/// Web-reference airlight and distance bounds, independent of the backend fog curve.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LakeSceneHaze {
+    /// Airlight sRGB colour as 0xRRGGBB.
+    pub color_srgb: u32,
+    /// Distance at which the atmospheric fade starts, in metres.
+    pub near_m: f64,
+    /// Recorded visibility, or the existing unrecorded display default, in metres.
+    pub far_m: f64,
+}
+
+impl LakeSceneHaze {
+    /// Retains absent metadata; GPU endpoints, span and reciprocal must be positive normal values.
+    pub fn try_new(visibility_m: Option<f64>) -> Result<Self, EnvironmentFormatError> {
+        let far_m = visibility_m.unwrap_or(80_000.0);
+        let near_m = far_m * 0.175;
+        let gpu_far = far_m as f32;
+        let gpu_near = near_m as f32;
+        let gpu_span = gpu_far - gpu_near;
+        if !far_m.is_finite()
+            || gpu_near <= 0.0
+            || !gpu_far.is_normal()
+            || !gpu_near.is_normal()
+            || gpu_span <= 0.0
+            || !gpu_span.is_normal()
+            || !(1.0 / gpu_span).is_normal()
+        {
+            return Err(EnvironmentFormatError::InvalidSky);
+        }
+        Ok(Self {
+            color_srgb: 0x9aafb1,
+            near_m,
+            far_m,
+        })
+    }
+}
+
 /// Horizontal resolution of the Web reference panorama.
 pub const LAKE_SKY_IMAGE_WIDTH: u32 = 1024;
 /// Vertical resolution of the Web reference panorama.
@@ -483,6 +520,49 @@ pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyIm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_haze_retains_registered_and_unrecorded_web_bounds() {
+        assert_eq!(
+            LakeSceneHaze::try_new(None).unwrap(),
+            LakeSceneHaze {
+                color_srgb: 0x9aafb1,
+                near_m: 14_000.0,
+                far_m: 80_000.0,
+            }
+        );
+        let sky = crate::bundled_environment().unwrap().document().sky;
+        let haze = LakeSceneHaze::try_new(Some(sky.visibility_m)).unwrap();
+        assert_eq!(haze.color_srgb, 0x9aafb1);
+        assert_eq!([haze.near_m, haze.far_m], [4_375.0, 25_000.0]);
+        assert_ne!(haze, LakeSceneHaze::try_new(None).unwrap());
+    }
+
+    #[test]
+    fn scene_haze_rejects_nonfinite_subnormal_or_collapsed_gpu_intervals() {
+        for visibility in [
+            0.0,
+            -0.0,
+            -1.0,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+            1e-40,
+            f64::from(f32::MIN_POSITIVE),
+            f64::from(f32::MAX),
+            f64::from(f32::MAX) * 0.5,
+        ] {
+            assert_eq!(
+                LakeSceneHaze::try_new(Some(visibility)),
+                Err(EnvironmentFormatError::InvalidSky)
+            );
+        }
+        for visibility in [1e9, f64::from(f32::MIN_POSITIVE) * 8.0] {
+            assert!(LakeSceneHaze::try_new(Some(visibility)).is_ok());
+        }
+    }
 
     #[test]
     fn missing_sky_preserves_the_web_neutral_horizon_and_zenith() {

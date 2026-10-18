@@ -17,7 +17,7 @@ use bevy::{
 };
 use birdman_game_format::SkyStateDocument;
 use birdman_game_session::lake_sky::{
-    LAKE_SCENE_LIGHTING, LakeCloudAvailability, generate_lake_clouds,
+    LAKE_SCENE_LIGHTING, LakeCloudAvailability, LakeSceneHaze, generate_lake_clouds,
 };
 
 const CLOUD_OFFSET: MeshVertexAttribute =
@@ -140,15 +140,13 @@ pub(crate) fn prepare(sky: Option<SkyStateDocument>) -> Result<PreparedClouds, S
         image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
         image
     });
-    let visibility = sky.map_or(80_000.0, |sky| sky.visibility_m) as f32;
-    if !visibility.is_finite() || visibility <= 0.0 {
-        return Err("cloud hazeのvisibilityをGPU表現へ変換できない".into());
-    }
+    let haze = LakeSceneHaze::try_new(sky.map(|sky| sky.visibility_m))
+        .map_err(|cause| format!("共有cloud hazeを準備できない: {cause:?}"))?;
     let [north, east, down, daylight] = packet.sun_direction_ned();
     Ok(PreparedClouds {
         mesh,
         atlases,
-        haze: Vec4::new(visibility * 0.175, visibility, 0.0, 0.0),
+        haze: Vec4::new(haze.near_m as f32, haze.far_m as f32, 0.0, 0.0),
         sun: Vec4::new(east, -down, -north, daylight),
     })
 }

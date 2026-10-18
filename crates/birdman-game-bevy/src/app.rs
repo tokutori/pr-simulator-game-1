@@ -16,6 +16,8 @@ mod offscreen;
 mod projection;
 #[path = "screen_render.rs"]
 mod screen_render;
+#[path = "terrain_haze.rs"]
+mod terrain_haze;
 #[path = "ui.rs"]
 mod ui;
 #[path = "verification.rs"]
@@ -162,6 +164,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .add_plugins((
             MaterialPlugin::<water::WaterMaterial>::default(),
             MaterialPlugin::<clouds::CloudMaterial>::default(),
+            MaterialPlugin::<terrain_haze::TerrainMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             screen_render::timing::ScreenTimingPlugin {
                 full_diagnostics: water_verification.is_some(),

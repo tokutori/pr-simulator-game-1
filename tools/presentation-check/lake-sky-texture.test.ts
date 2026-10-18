@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { ClampToEdgeWrapping, EquirectangularReflectionMapping, LinearFilter,
   LinearMipmapLinearFilter, RepeatWrapping, SRGBColorSpace } from "three";
 import { LakeSkyImageBridge } from "../../web/pkg/birdman_game_wasm.js";
-import { createLakeSkyTexture } from "../../web/src/render/engines/three/lake-sky-texture.js";
+import { createLakeSkyTexture, lakeSkyHaze } from "../../web/src/render/engines/three/lake-sky-texture.js";
 
 const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
 
@@ -14,6 +14,14 @@ function fingerprint(texture: ReturnType<typeof createLakeSkyTexture>): string {
 }
 
 describe("shared lake sky", () => {
+  it("transfers shared haze bounds without replacing absent visibility with weather metadata", () => {
+    expect(lakeSkyHaze(undefined)).toEqual([0x9aafb1, 14_000, 80_000]);
+    expect(lakeSkyHaze(condition.visibilityMeters)).toEqual([0x9aafb1, 4_375, 25_000]);
+    for (const visibility of [0, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_VALUE, Number.MIN_VALUE, 1e-40, 3e38]) {
+      expect(() => lakeSkyHaze(visibility)).toThrow();
+    }
+  });
+
   it.each([{ sky: null }, { sky: condition }])("frees the owned bridge after copying the panorama", ({ sky }) => {
     const release = vi.spyOn(LakeSkyImageBridge.prototype, "free");
     try {

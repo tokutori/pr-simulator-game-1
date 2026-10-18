@@ -1,7 +1,7 @@
 use birdman_game_format::SkyStateDocument;
 use birdman_game_session::lake_sky::{
-    LAKE_SCENE_LIGHTING, LakeCloudAvailability, LakeClouds, LakeSkyImage, LakeSkyRenderCondition,
-    generate_lake_clouds, generate_lake_sky,
+    LAKE_SCENE_LIGHTING, LakeCloudAvailability, LakeClouds, LakeSceneHaze, LakeSkyImage,
+    LakeSkyRenderCondition, generate_lake_clouds, generate_lake_sky,
 };
 use wasm_bindgen::prelude::*;
 
@@ -27,6 +27,14 @@ pub fn lake_scene_sunlight_color_srgb() -> u32 {
 #[wasm_bindgen]
 pub fn lake_scene_sunlight_irradiance() -> f64 {
     LAKE_SCENE_LIGHTING.sunlight_irradiance
+}
+
+/// Copies shared airlight 0xRRGGBB and near/far metres without constructing a sky owner.
+#[wasm_bindgen]
+pub fn lake_scene_haze(visibility_m: Option<f64>) -> Result<Vec<f64>, JsValue> {
+    let haze = LakeSceneHaze::try_new(visibility_m)
+        .map_err(|cause| JsValue::from_str(&format!("lake scene haze: {cause:?}")))?;
+    Ok(vec![f64::from(haze.color_srgb), haze.near_m, haze.far_m])
 }
 
 /// Owns a shared sky panorama until the adapter copies its sRGB RGBA bytes.

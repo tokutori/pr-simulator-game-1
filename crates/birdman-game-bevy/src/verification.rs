@@ -419,6 +419,7 @@ struct RenderReadiness {
     pending_pipelines: usize,
     water_pipelines: usize,
     material_pipelines: usize,
+    terrain_pipelines: usize,
     assets_loaded: bool,
     confirmation_frames: usize,
     error: Option<String>,
@@ -429,6 +430,7 @@ impl RenderReadiness {
         if self.assets_loaded
             && self.water_pipelines > 0
             && self.material_pipelines > 0
+            && self.terrain_pipelines > 0
             && self.pending_pipelines == 0
             && self.error.is_none()
         {
@@ -505,6 +507,9 @@ fn observe_render_readiness(
                         }
                         if fragment.shader.id() == scene_shaders[1].id() {
                             readiness.material_pipelines += 1;
+                        }
+                        if fragment.shader.id() == scene_shaders[2].id() {
+                            readiness.terrain_pipelines += 1;
                         }
                     }
                 }
@@ -941,7 +946,7 @@ pub(crate) struct Verification {
     countdown_started: Option<Duration>,
     countdown_attempts: usize,
     countdown_header: Option<FlightRecordHeader>,
-    scene_shaders: [Handle<Shader>; 2],
+    scene_shaders: [Handle<Shader>; 3],
     readiness: RenderReadiness,
     processing_delay_reported: bool,
     capture: CaptureState,
@@ -1007,7 +1012,11 @@ impl Verification {
                 countdown_started: None,
                 countdown_attempts: 0,
                 countdown_header: None,
-                scene_shaders: [asset_server.load("native_water.wgsl"), material_shader],
+                scene_shaders: [
+                    asset_server.load("native_water.wgsl"),
+                    material_shader,
+                    asset_server.load("native_terrain_haze.wgsl"),
+                ],
                 readiness: RenderReadiness::default(),
                 processing_delay_reported: false,
                 capture: CaptureState::Idle,
@@ -3256,6 +3265,7 @@ mod tests {
             assets_loaded: true,
             water_pipelines: 1,
             material_pipelines: 1,
+            terrain_pipelines: 1,
             confirmation_frames: READY_CONFIRMATION_FRAMES,
             ..Default::default()
         };
@@ -5140,6 +5150,7 @@ mod tests {
         readiness.assets_loaded = true;
         readiness.water_pipelines = 1;
         readiness.material_pipelines = 1;
+        readiness.terrain_pipelines = 1;
         for _ in 0..READY_CONFIRMATION_FRAMES {
             readiness.confirm_frame();
         }
@@ -5411,6 +5422,7 @@ mod tests {
             assets_loaded: true,
             water_pipelines: 1,
             material_pipelines: 1,
+            terrain_pipelines: 1,
             ..Default::default()
         };
         for _ in 0..READY_CONFIRMATION_FRAMES - 1 {

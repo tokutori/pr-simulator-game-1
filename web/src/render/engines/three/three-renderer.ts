@@ -47,7 +47,7 @@ import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyCondition } 
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
-import { createLakeSkyTexture } from "./lake-sky-texture.js";
+import { createLakeSkyTexture, lakeSkyHaze } from "./lake-sky-texture.js";
 import { createLakeClouds, disposeLakeClouds } from "./lake-clouds.js";
 import { lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../../../pkg/birdman_game_wasm.js";
@@ -185,7 +185,7 @@ export function createThreeRenderer(
   let clouds = createLakeClouds(activeSkyCondition);
   scene.add(clouds);
   scene.background = skyTexture;
-  const lakeFog = new Fog(0x9aafb1, 14_000, 80_000);
+  const lakeFog = new Fog(...lakeSkyHaze(undefined));
   scene.fog = lakeFog;
   const ambient = new AmbientLight(lake_scene_ambient_color_srgb(), lake_scene_ambient_irradiance());
   ambient.layers.enable(1);
@@ -842,6 +842,7 @@ export function createThreeRenderer(
       const nextCondition = condition === null ? null : createLakeSkyCondition(condition);
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ sky: nextCondition }); return; }
       if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyCondition(activeSkyCondition, nextCondition)) return;
+      const [, hazeNear, hazeFar] = lakeSkyHaze(nextCondition?.visibilityMeters);
       const nextTexture = createLakeSkyTexture(nextCondition);
       let nextClouds;
       try { nextClouds = createLakeClouds(nextCondition); }
@@ -856,8 +857,8 @@ export function createThreeRenderer(
       sun.intensity = lake_scene_sunlight_irradiance() * daylight;
       sun.castShadow = daylight === 1;
       lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
-      lakeFog.far = nextCondition?.visibilityMeters ?? 80_000;
-      lakeFog.near = lakeFog.far * 0.175;
+      lakeFog.far = hazeFar;
+      lakeFog.near = hazeNear;
       lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
       const previousClouds = clouds;
       const previousTexture = skyTexture;
