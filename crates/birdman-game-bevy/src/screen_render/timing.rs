@@ -42,8 +42,16 @@ const METADATA_NAMES: [&str; 4] = [
     "screen_source_high",
 ];
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum TimingMode {
+    #[default]
+    Automatic,
+    Root,
+    Full,
+}
+
 pub(crate) struct ScreenTimingPlugin {
-    pub(crate) full_diagnostics: bool,
+    pub(crate) mode: TimingMode,
 }
 
 impl Plugin for ScreenTimingPlugin {
@@ -51,10 +59,10 @@ impl Plugin for ScreenTimingPlugin {
         assert!(!app.is_plugin_added::<RenderDiagnosticsPlugin>());
         RenderDiagnosticsPlugin.build(app);
         app.init_resource::<TimingReadout>()
-            .insert_resource(FullDiagnostics(self.full_diagnostics));
+            .insert_resource(self.mode);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
-                .insert_resource(FullDiagnostics(self.full_diagnostics))
+                .insert_resource(self.mode)
                 .init_resource::<ParkedRecorder>()
                 .init_resource::<TimingPacket>()
                 .init_gpu_resource::<MetadataBuffer>()
@@ -116,9 +124,6 @@ impl Plugin for ScreenTimingPlugin {
     }
 }
 
-#[derive(Resource)]
-struct FullDiagnostics(bool);
-
 #[derive(Resource, Default)]
 struct ParkedRecorder(Option<DiagnosticsRecorder>);
 
@@ -169,12 +174,12 @@ impl FromWorld for MetadataBuffer {
 fn extract_packet(
     mut commands: Commands,
     rendering: Extract<Res<NativeScreenRender>>,
-    full_diagnostics: Extract<Res<FullDiagnostics>>,
+    mode: Extract<Res<TimingMode>>,
     time: Extract<Res<Time<Real>>>,
     frame: Extract<Res<FrameCount>>,
     windows: Extract<Query<&Window, With<PrimaryWindow>>>,
 ) {
-    let active = (full_diagnostics.0 || rendering.measuring())
+    let active = (**mode != TimingMode::Automatic || rendering.measuring())
         && windows.single().is_ok_and(|window| {
             window.focused && window.visible && window.resolution.physical_size().min_element() > 0
         })
@@ -189,7 +194,7 @@ fn extract_packet(
 }
 
 fn select_recorder(world: &mut World) {
-    let enabled = world.resource::<FullDiagnostics>().0
+    let enabled = *world.resource::<TimingMode>() == TimingMode::Full
         || (world.resource::<TimingPacket>().active
             && supported(world.resource::<RenderDevice>().features()));
     if enabled {
@@ -213,7 +218,9 @@ fn begin_work(world: &mut World) {
         return;
     }
     packet.preparation = scene_preparation(world);
-    if packet.preparation != PipelinePreparation::Ready && !world.resource::<FullDiagnostics>().0 {
+    if packet.preparation != PipelinePreparation::Ready
+        && *world.resource::<TimingMode>() != TimingMode::Full
+    {
         packet.active = false;
     }
     world.insert_resource(packet.clone());
@@ -254,7 +261,7 @@ fn begin_work(world: &mut World) {
     world
         .resource_mut::<PendingCommandBuffers>()
         .push([encoder.finish()]);
-    if !world.resource::<FullDiagnostics>().0 {
+    if *world.resource::<TimingMode>() != TimingMode::Full {
         world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
     }
 }
@@ -488,23 +495,25 @@ mod tests {
 
     #[test]
     fn production_begin_rejects_an_unprepared_scene_before_using_gpu_resources() {
-        let mut world = World::new();
-        world.insert_resource(TimingPacket {
-            active: true,
-            ..default()
-        });
-        world.insert_resource(FullDiagnostics(false));
-        world.init_resource::<ParkedRecorder>();
-        begin_work(&mut world);
-        assert!(!world.resource::<TimingPacket>().active);
-        assert_eq!(
-            world.resource::<TimingPacket>().preparation,
-            PipelinePreparation::Pending
-        );
-        assert!(!world.contains_resource::<RenderDevice>());
-        world.insert_resource(TimingPacket::default());
-        world.remove_resource::<FullDiagnostics>();
-        begin_work(&mut world);
+        for mode in [TimingMode::Automatic, TimingMode::Root] {
+            let mut world = World::new();
+            world.insert_resource(TimingPacket {
+                active: true,
+                ..default()
+            });
+            world.insert_resource(mode);
+            world.init_resource::<ParkedRecorder>();
+            begin_work(&mut world);
+            assert!(!world.resource::<TimingPacket>().active);
+            assert_eq!(
+                world.resource::<TimingPacket>().preparation,
+                PipelinePreparation::Pending
+            );
+            assert!(!world.contains_resource::<RenderDevice>());
+            world.insert_resource(TimingPacket::default());
+            world.remove_resource::<TimingMode>();
+            begin_work(&mut world);
+        }
     }
 
     fn packet(
@@ -634,52 +643,52 @@ mod tests {
     fn explicit_diagnostics_measure_manual_without_changing_auto_policy_or_safety_gates() {
         use bevy::render::MainWorld;
 
-        for (full, automatic, focused, visible, area, delta_ms, expected) in [
-            (false, false, true, true, true, 16, false),
-            (false, true, true, true, true, 16, true),
-            (true, false, true, true, true, 16, true),
-            (true, true, true, true, true, 16, true),
-            (true, false, false, true, true, 16, false),
-            (true, false, true, false, true, 16, false),
-            (true, false, true, true, false, 16, false),
-            (true, false, true, true, true, 1_000, false),
-        ] {
-            let mut source = MainWorld::default();
-            let mut rendering = NativeScreenRender::default();
-            if automatic {
-                rendering.controller.select_auto(true, 0.0).unwrap();
+        for mode in [TimingMode::Automatic, TimingMode::Root, TimingMode::Full] {
+            for (automatic, focused, visible, area, delta_ms, expected) in [
+                (false, true, true, true, 16, mode != TimingMode::Automatic),
+                (true, true, true, true, 16, true),
+                (false, false, true, true, 16, false),
+                (false, true, false, true, 16, false),
+                (false, true, true, false, 16, false),
+                (false, true, true, true, 1_000, false),
+            ] {
+                let mut source = MainWorld::default();
+                let mut rendering = NativeScreenRender::default();
+                if automatic {
+                    rendering.controller.select_auto(true, 0.0).unwrap();
+                }
+                let before = rendering.snapshot();
+                let mut time = Time::<Real>::default();
+                time.advance_by(Duration::from_millis(delta_ms));
+                source.insert_resource(rendering);
+                source.insert_resource(mode);
+                source.insert_resource(time);
+                source.insert_resource(FrameCount(42));
+                source.spawn((
+                    Window {
+                        focused,
+                        visible,
+                        resolution: if area { (1280, 720) } else { (0, 0) }.into(),
+                        ..default()
+                    },
+                    PrimaryWindow,
+                ));
+                let mut app = App::new();
+                app.insert_resource(source)
+                    .add_systems(Update, extract_packet);
+                app.update();
+                let packet = app.world().resource::<TimingPacket>();
+                assert_eq!(packet.active, expected);
+                assert_eq!(packet.frame, 42);
+                assert_eq!(packet.source_ms, delta_ms);
+                assert_eq!(
+                    app.world()
+                        .resource::<MainWorld>()
+                        .resource::<NativeScreenRender>()
+                        .snapshot(),
+                    before
+                );
             }
-            let before = rendering.snapshot();
-            let mut time = Time::<Real>::default();
-            time.advance_by(Duration::from_millis(delta_ms));
-            source.insert_resource(rendering);
-            source.insert_resource(FullDiagnostics(full));
-            source.insert_resource(time);
-            source.insert_resource(FrameCount(42));
-            source.spawn((
-                Window {
-                    focused,
-                    visible,
-                    resolution: if area { (1280, 720) } else { (0, 0) }.into(),
-                    ..default()
-                },
-                PrimaryWindow,
-            ));
-            let mut app = App::new();
-            app.insert_resource(source)
-                .add_systems(Update, extract_packet);
-            app.update();
-            let packet = app.world().resource::<TimingPacket>();
-            assert_eq!(packet.active, expected);
-            assert_eq!(packet.frame, 42);
-            assert_eq!(packet.source_ms, delta_ms);
-            assert_eq!(
-                app.world()
-                    .resource::<MainWorld>()
-                    .resource::<NativeScreenRender>()
-                    .snapshot(),
-                before
-            );
         }
     }
 
@@ -701,7 +710,7 @@ mod tests {
         );
         app.insert_sub_app(RenderApp, render_app);
         let plugin = ScreenTimingPlugin {
-            full_diagnostics: false,
+            mode: TimingMode::Automatic,
         };
         plugin.build(&mut app);
         plugin.finish(&mut app);
@@ -779,14 +788,18 @@ mod tests {
                 resources.0.features()
             );
             assert_eq!(supported(resources.0.features()), timestamp_queries);
-            for (full_diagnostics, active, fail_render) in [
-                (false, false, false),
-                (false, true, false),
-                (true, false, false),
-                (false, true, true),
-                (true, true, false),
-                (true, true, true),
+            for (mode, active, fail_render) in [
+                (TimingMode::Automatic, false, false),
+                (TimingMode::Automatic, true, false),
+                (TimingMode::Root, false, false),
+                (TimingMode::Root, true, false),
+                (TimingMode::Full, false, false),
+                (TimingMode::Automatic, true, true),
+                (TimingMode::Root, true, true),
+                (TimingMode::Full, true, false),
+                (TimingMode::Full, true, true),
             ] {
+                let full_diagnostics = mode == TimingMode::Full;
                 let enabled = full_diagnostics;
                 let mut app = App::new();
                 app.init_resource::<DiagnosticsStore>();
@@ -807,7 +820,7 @@ mod tests {
                 app.set_error_handler(|error, _| {
                     assert_eq!(error.to_string().trim_end(), "expected render failure")
                 });
-                let plugin = ScreenTimingPlugin { full_diagnostics };
+                let plugin = ScreenTimingPlugin { mode };
                 plugin.build(&mut app);
                 plugin.finish(&mut app);
                 let render_app = app.get_sub_app_mut(RenderApp).unwrap();

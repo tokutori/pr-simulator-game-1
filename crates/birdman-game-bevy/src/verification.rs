@@ -5,7 +5,10 @@ use super::{
     projection::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
     },
-    screen_render::{NativeScreenRender, timing::shader_is_pending},
+    screen_render::{
+        NativeScreenRender,
+        timing::{TimingMode, shader_is_pending},
+    },
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
     water_quality::{WaterQuality, WaterQualitySelection},
@@ -293,14 +296,20 @@ fn report_motion_timings(
     interval: MotionInterval,
     diagnostics: Option<&DiagnosticsStore>,
     windows: &Query<&Window>,
+    mode: TimingMode,
+    rendering: &NativeScreenRender,
 ) {
     let end = Instant::now();
+    let rendering = rendering.snapshot();
     println!(
-        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
+        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} selection={:?} applied_scale={:?} shadow_map_size={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
         verification.water_case,
         motion.label(),
         end.duration_since(verification.stage_started).as_secs_f64() * 1000.0,
         cfg!(debug_assertions),
+        rendering.selection,
+        rendering.applied,
+        rendering.shadow.size(),
     );
     for window in windows {
         println!(
@@ -352,7 +361,11 @@ pub(crate) fn project_observer(
     session: Res<NativeSession>,
     time: Res<Time<Real>>,
     observer: Option<ResMut<VerificationObserver>>,
-    diagnostics: Option<Res<DiagnosticsStore>>,
+    timing: (
+        Res<TimingMode>,
+        Res<NativeScreenRender>,
+        Option<Res<DiagnosticsStore>>,
+    ),
     windows: Query<&Window>,
     mut commands: Commands,
 ) {
@@ -369,8 +382,10 @@ pub(crate) fn project_observer(
                 &verification,
                 motion,
                 observed,
-                diagnostics.as_deref(),
+                timing.2.as_deref(),
                 &windows,
+                *timing.0,
+                &timing.1,
             );
         }
     }

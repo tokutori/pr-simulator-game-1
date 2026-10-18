@@ -254,6 +254,10 @@ observerはPause・Result・Retryで無効化する。Pause中のcore state・re
 区間外のProcessingDelayは既存の安全停止と明示的な回復経路を維持する。GPU readbackの負荷は別途計測する。
 水面検証processだけに公式`FrameTimeDiagnosticsPlugin`と`RenderDiagnosticsPlugin`を追加する。
 この明示検証ではManual 100%でも既存`screen_work` root spanを記録し、Auto判定や描画倍率を変更しない。
+`--verify-timing root|full`は`--verify-water`との併用を必須とし、省略時は従来の`full`を維持する。
+`root`はManualにも通常Autoと同じroot-only計測を許可し、RenderGraph本体では既存recorderを退避して全pass診断を停止する。
+`full`はrootに加えて従来の全pass診断を収集する。通常起動のManualは計測なし、Autoはroot-onlyを維持する。
+Motion logへ診断方式・選択・実適用scale・shadow map寸法を出力する。通常Manualへ診断費用を追加せず、明示検証のquery自体の費用は残る。
 初期observerは既存Chase cameraの位置・姿勢を発進時に一度取得し、Static区間ではworld固定する。
 各motionのEnd画像保存後、次motionは既存Abort・Retry・Countdownにより同じsealed blueprintの個別flightから開始する。
 連続2秒区間内の自然終端・ProcessingDelayは失敗として保持し、coreがResultの場合は実終了理由とfailureをlogへ記録する。
@@ -273,6 +277,10 @@ render CPU/GPUの時刻はMainへの診断受領時刻であり、同Motion内�
 ```sh
 cargo run -p birdman-game-bevy --release --locked -- --verify target/bevy-water-unpaced --offscreen --no-vsync --verify-size 1280x720 --verify-water typical-high
 ```
+
+同じ5 motionをroot-only診断で観測する場合は、上記へ`--verify-timing root`を追加する。
+この選択は診断方式だけを変更する。5 motion・画質・固定tick・150 ms安全条件は同一であり、source-frame別集計と飛行中Autoの負荷試験は対象外である。
+計測logのscale/shadowは区間終了時の確定値であり、到着時刻基準の各標本へ同じ資源pairが対応する保証を追加しない。
 
 この組合せはrunnerの人工的な待機だけを解除する。100 Hz物理、Real時刻、入力割当、150 ms安全停止、画質は維持する。
 Real Update周期と有効root GPU標本数・時間分布を分けて確認し、offscreen throughputと通常Windowの80 FPS表示受入を区別する。

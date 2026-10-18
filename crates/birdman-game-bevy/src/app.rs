@@ -68,6 +68,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut verification_directory = None;
     let mut verification_size = None;
     let mut water_verification = None;
+    let mut verification_timing = None;
     let mut replay_camera_verification = false;
     let mut no_vsync = false;
     let mut offscreen = false;
@@ -103,9 +104,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--verify-water requires WEATHER-QUALITY")?,
                 )?);
             }
+            "--verify-timing" => {
+                verification_timing = Some(
+                    arguments
+                        .next()
+                        .ok_or("--verify-timing requires root or full")?,
+                );
+            }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
+                    "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはManualにもroot-only計測を許可し、fullは従来の全pass診断を使用する。省略時はfull。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
                 );
                 return Ok(());
             }
@@ -127,6 +135,8 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     if replay_camera_verification && water_verification.is_some() {
         return Err("--verify-replay-cameras cannot be combined with --verify-water".into());
     }
+    let timing_mode =
+        verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
     let font_bytes = std::fs::read(&font_path).map_err(|error| {
         format!(
             "日本語フォントを読めない: {} ({error})。--font PATH を指定する。",
@@ -166,9 +176,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             MaterialPlugin::<clouds::CloudMaterial>::default(),
             MaterialPlugin::<terrain_haze::TerrainMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
-            screen_render::timing::ScreenTimingPlugin {
-                full_diagnostics: water_verification.is_some(),
-            },
+            screen_render::timing::ScreenTimingPlugin { mode: timing_mode },
         ))
         .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
         .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
@@ -288,6 +296,20 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         return Err("Native app exited with an error".into());
     }
     Ok(())
+}
+
+fn verification_timing_mode(
+    water_verification: bool,
+    value: Option<&str>,
+) -> Result<screen_render::timing::TimingMode, &'static str> {
+    use screen_render::timing::TimingMode;
+    match (water_verification, value) {
+        (false, None) => Ok(TimingMode::Automatic),
+        (false, Some(_)) => Err("--verify-timing requires --verify-water"),
+        (true, None | Some("full")) => Ok(TimingMode::Full),
+        (true, Some("root")) => Ok(TimingMode::Root),
+        (true, Some(_)) => Err("--verify-timing must be root or full"),
+    }
 }
 
 fn offscreen_runner(no_vsync: bool) -> ScheduleRunnerPlugin {
@@ -513,6 +535,25 @@ mod tests {
         keyboard::{Key, KeyboardInput},
         mouse::{MouseButtonInput, MouseMotion},
     };
+
+    #[test]
+    fn verification_timing_only_overrides_explicit_water_diagnostics() {
+        use screen_render::timing::TimingMode;
+        for (water, value, expected) in [
+            (false, None, TimingMode::Automatic),
+            (true, None, TimingMode::Full),
+            (true, Some("full"), TimingMode::Full),
+            (true, Some("root"), TimingMode::Root),
+        ] {
+            assert_eq!(verification_timing_mode(water, value), Ok(expected));
+        }
+        for value in ["root", "full", "", "automatic", "ROOT"] {
+            assert!(verification_timing_mode(false, Some(value)).is_err());
+        }
+        for value in ["", "automatic", "ROOT"] {
+            assert!(verification_timing_mode(true, Some(value)).is_err());
+        }
+    }
 
     #[test]
     fn offscreen_runner_only_removes_wait_when_explicitly_selected() {
