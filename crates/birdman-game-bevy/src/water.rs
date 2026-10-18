@@ -1079,7 +1079,7 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(SessionCommand::ReturnToTitle {})
+            .execute_ui_command(SessionCommand::LeaveReplay {})
             .unwrap();
         app.update();
         assert_structure_visibility(&mut app, Visibility::Inherited);
