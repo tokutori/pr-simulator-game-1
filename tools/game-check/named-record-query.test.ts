@@ -4,6 +4,7 @@ import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/bir
 import { decodeNamedRecordContext, parseNamedAnalysisSamples, parseNamedAttractContext, parseNamedPlaybackClock, parseNamedPlaybackContext, parseNamedRecordSample, parseNamedReplayClock, parseNamedReplayContext,
   tailResultRecordContext } from "../../web/src/game/named-record-query.js";
 import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import { validatePlaybackContext, validateRecordedPlaybackSample, validateAnalysisDocument } from "../../web/src/generated/game-ui-validators.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -34,6 +35,38 @@ function tailResult(ticks = 2, customHud = false): HybridGameSessionBridge {
 }
 
 describe("named saved-record query boundary", () => {
+  it("validates actual record queries with generated required fields and nested structures", () => {
+    const session = tailResult();
+    try {
+      session.enter_replay();
+      const sample = jsonObject(session.flight_record_sample_at_seconds(0.005));
+      for (const [document, validate] of [
+        [jsonObject(session.playback_context_json()), validatePlaybackContext],
+        [sample, validateRecordedPlaybackSample],
+        [jsonObject(session.flight_analysis_samples_json()), validateAnalysisDocument]
+      ] as const) {
+        expect(validate(document)).toBe(true);
+        expect(validate({ ...document, unknown: true })).toBe(false);
+        for (const field of Object.keys(document)) {
+          const missing = { ...document };
+          Reflect.deleteProperty(missing, field);
+          expect(validate(missing), field).toBe(false);
+        }
+      }
+      for (const path of [["state"], ["state", "telemetry"], ["controls"], ["controls", "physical_incidence"]]) {
+        const malformed = structuredClone(sample);
+        let object = malformed;
+        for (const field of path) object = nested(object, field);
+        object.unknown = true;
+        expect(validateRecordedPlaybackSample(malformed), path.join(".")).toBe(false);
+      }
+      nested(sample, "state").attitude_body_to_ned = [1, 0, 0];
+      expect(validateRecordedPlaybackSample(sample)).toBe(false);
+    } finally {
+      session.free();
+    }
+  });
+
   it("decodes the independent Rust Attract record and clock without a live snapshot", () => {
     const session = new HybridGameSessionBridge(0, 41, 42);
     try {

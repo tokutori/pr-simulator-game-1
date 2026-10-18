@@ -5,6 +5,7 @@ import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { parseNamedRecordSummary, parseNamedWindGrid } from "../../web/src/game/named-record-analysis.js";
 import type { NamedWindGridRequest } from "../../web/src/game/named-record-analysis.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { validateSummaryDocument, validateWindDocument } from "../../web/src/generated/game-ui-validators.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const request: NamedWindGridRequest = { northMinimumMeters: -10, eastMinimumMeters: -10, altitudeMeters: 10, spacingMeters: 5 };
@@ -37,6 +38,38 @@ function windJson(bridge: HybridGameSessionBridge, grid = request): string {
 }
 
 describe("named Rust record summary and wind boundary", () => {
+  it("validates actual summary and wind with generated finite, required and tagged structures", () => {
+    const bridge = result();
+    try {
+      const summary = jsonObject(bridge.flight_record_summary_json());
+      const wind = jsonObject(windJson(bridge));
+      for (const [document, validate] of [[summary, validateSummaryDocument], [wind, validateWindDocument]] as const) {
+        expect(validate(document)).toBe(true);
+        expect(validate({ ...document, unknown: true })).toBe(false);
+        for (const field of Object.keys(document)) {
+          const missing = { ...document };
+          Reflect.deleteProperty(missing, field);
+          expect(validate(missing), field).toBe(false);
+        }
+      }
+      for (const count of [0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+        const malformed = structuredClone(summary);
+        nested(malformed, "summary").sample_count = count;
+        expect(validateSummaryDocument(malformed)).toBe(false);
+      }
+      nested(summary, "summary").maximum_altitude_m = Infinity;
+      expect(validateSummaryDocument(summary)).toBe(false);
+      const projection = nested(wind, "projection");
+      projection.source = "selected";
+      expect(validateWindDocument(wind)).toBe(false);
+      projection.source = "record";
+      projection.samples = [];
+      expect(validateWindDocument(wind)).toBe(false);
+    } finally {
+      bridge.free();
+    }
+  });
+
   it("preserves Rust Result metrics and provider values through Replay without moving the cursor", () => {
     const bridge = result();
     const facade = new TailAppSessionFacade(bridge, physics_hz());

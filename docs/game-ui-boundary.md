@@ -22,6 +22,8 @@ npm run check:game-ui
 各groupは独立したSchemarsの`SchemaGenerator`を使用し、同じRust型を一度だけ`$defs`へ登録する。
 View、update、frame、Tail snapshotとprepared launchはSerialize、Action、platform input、TailInputはDeserializeの契約を使用する。
 Tailのscenario/control identity、physical incidence、finalizationのquery入口も同じSerialize定義から構造検査を生成する。
+Analysis/Replay/Attractのcontext、sample、batch、summary、windは共有`record_query`と既存`RecordedPlaybackSample`の実DTOを使用し、同じ生成経路へ含める。
+WASMは実DTOを直接serializeし、Webは生成validatorで構造検査後に表示用のcamelCaseへ投影する。queryのsample数・順序、terminal対応、score、providerとrequestの対応、query/record世代の意味検査は維持する。
 phaseとframe、exact stampと時刻、quaternion、距離の幾何、failureの整合、identityのUTF-8制約はWebの意味検査へ保持する。
 Ajvは各groupを`$id`で登録し、公開validatorを共通定義への参照から生成する。
 `allErrors`とnumeric formatsを維持し、同じgroupのvalidatorを再利用する。

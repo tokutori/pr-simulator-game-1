@@ -1,3 +1,10 @@
+export function ownBoundaryValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(ownBoundaryValue);
+  return typeof value === "object" && value !== null
+    ? Object.setPrototypeOf(Object.fromEntries(Object.entries(value).map(([key, field]) => [key, ownBoundaryValue(field)])), null) as Record<string, unknown>
+    : value;
+}
+
 export function boundaryObject(value: unknown, fields: readonly string[]): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new RangeError("Tail boundary value must be an object");

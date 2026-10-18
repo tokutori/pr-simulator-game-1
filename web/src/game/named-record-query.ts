@@ -1,16 +1,19 @@
-import { boundaryInteger, boundaryNumber, boundaryObject, boundaryTag, boundaryTuple } from "./tail-boundary-values.js";
+import type { PlaybackContext } from "../generated/record-context.js";
+import type { RecordedPlaybackSample } from "../generated/record-sample.js";
+import { validatePlaybackContext, validateRecordedPlaybackSample, validateAnalysisDocument } from "../generated/game-ui-validators.js";
+import { boundaryInteger, boundaryNumber, ownBoundaryValue } from "./tail-boundary-values.js";
 import { decodeRecordedDifficulty, decodeTailControlIdentity, decodeTailPhysicalIncidence, decodeTailScenarioIdentity, decodeTailTerminalFinalization } from "./tail-session-codec.js";
 import type { RecordedDifficulty, TailControlIdentity, TailFlightTelemetry, TailScenarioIdentity, TailSessionSnapshot, TailTerminalFinalization } from "./tail-session-codec.js";
 import type { PhysicalFlightControls } from "../render/contracts/flight-controls.js";
 
 export type { RecordedDifficulty, RecordedHudProfile } from "./tail-session-codec.js";
 
-type Vector3 = readonly [number, number, number];
+type Vector3 = RecordedPlaybackSample["state"]["datum_position_ned_m"];
 export type RecordedPhysicalControls = PhysicalFlightControls;
 export interface NamedRecordState {
   readonly datumPositionNedMeters: Vector3;
   readonly datumVelocityNedMetersPerSecond: Vector3;
-  readonly attitudeBodyToNed: readonly [number, number, number, number];
+  readonly attitudeBodyToNed: RecordedPlaybackSample["state"]["attitude_body_to_ned"];
   readonly angularVelocityBodyRadiansPerSecond: Vector3;
   readonly pilotPositionMeters: number;
   readonly pilotVelocityMetersPerSecond: number;
@@ -25,19 +28,19 @@ export interface NamedRecordSample {
   readonly state: NamedRecordState;
   readonly controls: RecordedPhysicalControls;
 }
-export type RecordQueryContext = Readonly<{ controlLayout: "tail_incidence"; scenario: TailScenarioIdentity;
+export type RecordQueryContext = Readonly<{ controlLayout: PlaybackContext["control_layout"]; scenario: TailScenarioIdentity;
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 interface PlaybackEnvelope {
   readonly schemaVersion: 2;
   readonly scenario: TailScenarioIdentity;
   readonly difficulty: RecordedDifficulty;
 }
-export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay"; controlLayout: "tail_incidence";
+export type NamedReplayContext = PlaybackEnvelope & Readonly<{ phase: "replay"; controlLayout: PlaybackContext["control_layout"];
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
-export type NamedAttractContext = PlaybackEnvelope & Readonly<{ phase: "attract"; controlLayout: "tail_incidence";
+export type NamedAttractContext = PlaybackEnvelope & Readonly<{ phase: "attract"; controlLayout: PlaybackContext["control_layout"];
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 export type NamedPlaybackContext = NamedReplayContext | NamedAttractContext;
-export type NamedResultContext = PlaybackEnvelope & Readonly<{ phase: "result"; controlLayout: "tail_incidence";
+export type NamedResultContext = PlaybackEnvelope & Readonly<{ phase: "result"; controlLayout: PlaybackContext["control_layout"];
   controlIdentity: TailControlIdentity; finalization: TailTerminalFinalization }>;
 export type NamedRecordContext = NamedResultContext | NamedPlaybackContext;
 export interface NamedPlaybackClock {
@@ -72,11 +75,11 @@ export function parseNamedPlaybackContext(json: string): NamedPlaybackContext {
 }
 
 export function decodeNamedRecordContext(value: unknown): NamedRecordContext {
-  const document = boundaryObject(value, ["schema_version", "phase", "scenario", "control_layout", "control_identity", "difficulty", "finalization"]);
-  if (document.schema_version !== 2) throw new RangeError("Unsupported named playback context schema");
-  const phase = boundaryTag(document.phase, ["result", "replay", "attract"]);
-  const layout = boundaryTag(document.control_layout, ["tail_incidence"]);
-  const finalization = boundaryObject(document.finalization, ["layout", "value"]);
+  const document = ownBoundaryValue(value);
+  if (!validatePlaybackContext(document)) throw new RangeError("Invalid named playback context structure");
+  const phase = document.phase;
+  const layout = document.control_layout;
+  const finalization = document.finalization;
   if (finalization.layout !== layout) throw new RangeError("Playback finalization and physical control layout disagree");
   const envelope: PlaybackEnvelope = { schemaVersion: 2, scenario: decodeTailScenarioIdentity(document.scenario),
     difficulty: decodeRecordedDifficulty(document.difficulty) };
@@ -90,11 +93,9 @@ export function parseNamedRecordSample(json: string, physicsHz: number, context:
 }
 
 export function parseNamedAnalysisSamples(json: string, physicsHz: number, context: RecordQueryContext): readonly NamedRecordSample[] {
-  const document = boundaryObject(boundedJson(json, 16 * 1024 * 1024), ["schema_version", "samples"]);
-  if (document.schema_version !== 2 || !Array.isArray(document.samples) || document.samples.length === 0) {
-    throw new RangeError("Named Analysis requires a nonempty schema-two sample batch");
-  }
-  const samples = document.samples.map((sample: unknown) => decodeNamedRecordSample(sample, physicsHz, context));
+  const document = ownBoundaryValue(boundedJson(json, 16 * 1024 * 1024));
+  if (!validateAnalysisDocument(document)) throw new RangeError("Invalid named Analysis sample batch structure");
+  const samples = document.samples.map((sample) => projectRecordSample(sample, physicsHz, context));
   const first = samples[0];
   const last = samples.at(-1);
   if (first?.tickIndex !== 0 || first.fraction !== 0 || last?.tickIndex !== context.finalization.terminalTick
@@ -136,8 +137,12 @@ export function parseNamedPlaybackClock(values: ArrayLike<number>, physicsHz: nu
 }
 
 export function decodeNamedRecordSample(value: unknown, physicsHz: number, context: RecordQueryContext): NamedRecordSample {
-  const sample = boundaryObject(value, ["schema_version", "tick_index", "fraction", "flight_time_s", "state", "controls"]);
-  if (sample.schema_version !== 2) throw new RangeError("Unsupported named record sample schema");
+  const sample = ownBoundaryValue(value);
+  if (!validateRecordedPlaybackSample(sample)) throw new RangeError("Invalid named record sample structure");
+  return projectRecordSample(sample, physicsHz, context);
+}
+
+function projectRecordSample(sample: RecordedPlaybackSample, physicsHz: number, context: RecordQueryContext): NamedRecordSample {
   const tickIndex = boundaryInteger(sample.tick_index);
   const fraction = boundaryNumber(sample.fraction, 0, 1);
   const timeSeconds = boundaryNumber(sample.flight_time_s, 0, terminalTime(physicsHz, context));
@@ -146,21 +151,14 @@ export function decodeNamedRecordSample(value: unknown, physicsHz: number, conte
   return Object.freeze({ schemaVersion: 2, tickIndex, fraction, timeSeconds, state: decodeSavedState(sample.state), controls });
 }
 
-function decodePhysicalControls(value: unknown): RecordedPhysicalControls {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new RangeError("Record query requires physical controls");
-  const layout = boundaryTag((value as Record<string, unknown>).layout, ["tail_incidence"]);
-
-  const controls = boundaryObject(value, ["layout", "physical_incidence"]);
-  return Object.freeze({ layout, physicalIncidence: decodeTailPhysicalIncidence(controls.physical_incidence) });
+function decodePhysicalControls(controls: RecordedPlaybackSample["controls"]): RecordedPhysicalControls {
+  return Object.freeze({ layout: controls.layout, physicalIncidence: decodeTailPhysicalIncidence(controls.physical_incidence) });
 }
 
-function decodeSavedState(value: unknown): NamedRecordState {
-  const state = boundaryObject(value, ["datum_position_ned_m", "datum_velocity_ned_mps", "attitude_body_to_ned", "angular_velocity_body_rad_s",
-    "pilot_position_m", "pilot_velocity_mps", "wind_at_cg_ned_mps", "telemetry"]);
-  const attitude = boundaryTuple(state.attitude_body_to_ned, 4) as readonly [number, number, number, number];
+function decodeSavedState(state: RecordedPlaybackSample["state"]): NamedRecordState {
+  const attitude = Object.freeze([...state.attitude_body_to_ned]) as NamedRecordState["attitudeBodyToNed"];
   if (Math.abs(Math.hypot(...attitude) - 1) > 1e-8) throw new RangeError("Saved attitude must be a unit quaternion");
-  const telemetry = boundaryObject(state.telemetry, ["composite_cg_position_ned_m", "altitude_m", "airspeed_mps", "groundspeed_mps",
-    "angle_of_attack_rad", "sideslip_angle_rad", "attitude_euler_rad"]);
+  const telemetry = state.telemetry;
   const angle = (value: unknown) => value === null ? null : boundaryNumber(value);
   return Object.freeze({ datumPositionNedMeters: vector3(state.datum_position_ned_m), datumVelocityNedMetersPerSecond: vector3(state.datum_velocity_ned_mps),
     attitudeBodyToNed: attitude, angularVelocityBodyRadiansPerSecond: vector3(state.angular_velocity_body_rad_s),
@@ -178,8 +176,8 @@ function terminalTime(physicsHz: number, context: RecordQueryContext): number {
   return boundaryNumber((context.finalization.terminalTick + context.finalization.terminalFraction) / physicsHz, 0);
 }
 
-function vector3(value: unknown): Vector3 {
-  return boundaryTuple(value, 3) as Vector3;
+function vector3(value: Vector3): Vector3 {
+  return Object.freeze([...value]);
 }
 
 function boundedJson(json: string, maximum: number): unknown {

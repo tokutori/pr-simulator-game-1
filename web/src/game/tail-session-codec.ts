@@ -1,4 +1,4 @@
-import { boundaryNumber, boundaryObject, boundaryTuple } from "./tail-boundary-values.js";
+import { boundaryNumber, boundaryObject, boundaryTuple, ownBoundaryValue } from "./tail-boundary-values.js";
 import { decodeTailTickFailure, tailFailureIsEnvelope } from "./tail-session-failure.js";
 import type { TailTickFailure } from "./tail-session-failure.js";
 import type { TailInputDocument } from "../generated/tail-input.js";
@@ -197,13 +197,6 @@ export function parseTailSessionSnapshot(json: string, physicsHz = 100): TailSes
 function parseBoundaryJson(json: string): unknown {
   return JSON.parse(json, (_key, value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value)
     ? Object.setPrototypeOf(value, null) as Record<string, unknown> : value) as unknown;
-}
-
-function ownBoundaryValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(ownBoundaryValue);
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? Object.setPrototypeOf(Object.fromEntries(Object.entries(value).map(([key, field]) => [key, ownBoundaryValue(field)])), null) as Record<string, unknown>
-    : value;
 }
 
 function decodeIdentity(scenarioValue: TailSnapshotDocument["scenario"], controlsValue: TailSnapshotDocument["control_identity"]): TailSessionIdentity {

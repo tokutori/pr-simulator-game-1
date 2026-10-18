@@ -77,6 +77,8 @@ CLIは共有HybridSessionPreparationで公開Playable model・Calm環境・contr
 TailInput schema 2はformatのRust wire型から生成したreadonly TS型・構造validatorを使い、生成freshness、必須・余剰field、Hold/Set、finite・normalized範囲を検査する。
 Web入力はcommandのown enumerable fieldsをplain wire objectへ一度投影してから検証し、prototype・toJSON・getterによる検査値と送信値の不一致を防ぐ。
 rate上限と1024-byte上限のRust拒否、および拒否時のsnapshot・record sample数不変を検査する。snapshot/query/保存形式と性能検証は入力schema生成のscopeから分離する。
+schema 2のrecord queryは実WASM出力を生成validatorへ通し、context/sample/batch/summary/windの欠損・余剰field、variant、tuple、finiteとsafe integerを検査する。exactstamp、quaternion、連続性、終端とscoreの一致、風providerとrequest、世代の意味検査を既存回帰へ保持する。
+100 Hz JSON往復の限定CPU計測は[#307の既存結果](https://github.com/tokutori/pr-simulator-game-1/issues/307#issuecomment-6205379441)を参照する。過去sourceの計測値を現行browser/GPU/FPSの根拠へ転用しない。
 単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
 Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、current archive/PB routingを対象とする。
 CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
