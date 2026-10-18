@@ -110,6 +110,12 @@ fn fallback_fills_only_mapped_land_and_uses_the_rendered_two_triangles() {
     );
     assert_eq!(asymmetric.height_at(7.5, 2.5), Some(17.5));
     assert_eq!(asymmetric.height_at(2.5, 7.5), Some(62.5));
+    let mut raw_reference = asymmetric.clone();
+    raw_reference.land_mask[0] = false;
+    let filtered = with_fallback(&raw_reference, std::slice::from_ref(&raw_reference));
+    assert_eq!(filtered.elevation_meters_above_water[0], None);
+    assert_eq!(raw_reference.elevation_meters_above_water[0], Some(10.0));
+    assert_eq!(raw_reference.height_at(7.5, 2.5), Some(17.5));
 }
 
 #[test]
@@ -169,6 +175,7 @@ fn sparse_island_fill_stays_inside_the_registered_outline_without_extra_tree_hei
             .filter(|(index, height)| {
                 let [north, east] = source.point(index / source.columns, index % source.columns);
                 height.is_some()
+                    && source.land_mask[*index]
                     && point_in_ring(north, east, contour(&island.ring_north_east_meters))
             })
             .count();
@@ -338,4 +345,161 @@ fn shoreline_uses_the_mapped_land_side_for_both_open_and_reversed_closed_rings()
             .chunks_exact(4)
             .all(|rings| rings[3][1] >= 30.0)
     );
+}
+
+#[test]
+fn patch_subtraction_keeps_the_original_triangle_height_constraint() {
+    let pieces = subtract_patch(
+        &[[-1.0, -3.0, -1.0], [2.0, 0.0, -1.0], [-1.0, 3.0, 2.0]],
+        Bounds {
+            min_east: 0.0,
+            max_east: 1.0,
+            min_north: -1.0,
+            max_north: 0.0,
+        },
+    );
+    let mut area = 0.0;
+    for piece in &pieces {
+        area += piece
+            .iter()
+            .zip(piece.iter().cycle().skip(1))
+            .take(piece.len())
+            .map(|(current, next)| current[0] * next[2] - next[0] * current[2])
+            .sum::<f64>()
+            .abs()
+            * 0.5;
+        for point in piece {
+            assert!((point[1] - point[0] - 2.0 * point[2]).abs() < 1e-12);
+        }
+        let east = piece.iter().map(|point| point[0]).sum::<f64>() / piece.len() as f64;
+        let south = piece.iter().map(|point| point[2]).sum::<f64>() / piece.len() as f64;
+        assert!(!(east > 0.0 && east < 1.0 && south > 0.0 && south < 1.0));
+    }
+    assert!((area - 4.0).abs() < 1e-12);
+}
+
+#[test]
+fn broad_and_detail_packets_use_the_same_normal_at_their_shared_boundary() {
+    let height =
+        |north: f64, east: f64| 24.0 + north * 0.018 + east * 0.027 + north * east * 0.0002;
+    let mut broad = grid(9, 9, 60.0, vec![None; 81], vec![true; 81]);
+    broad.north_min_meters = -240.0;
+    broad.east_min_meters = -240.0;
+    for index in 0..81 {
+        let [north, east] = broad.point(index / 9, index % 9);
+        broad.elevation_meters_above_water[index] = Some(height(north, east));
+    }
+    let mut fine = grid(5, 5, 30.0, vec![None; 25], vec![true; 25]);
+    fine.north_min_meters = -60.0;
+    fine.east_min_meters = -60.0;
+    for index in 0..25 {
+        let row = index / 5;
+        let column = index % 5;
+        let [north, east] = fine.point(row, column);
+        let edge = row.min(4 - row).min(column).min(4 - column) as f64 * 30.0;
+        fine.elevation_meters_above_water[index] = Some(
+            height(north, east) + (north * 0.1).sin() * (east * 0.1).cos() * (edge / 30.0).min(1.0),
+        );
+    }
+    let references = [broad.clone(), fine.clone()];
+    let coarse_mesh = terrain_mesh("broad".into(), &broad, &[&fine], &references).unwrap();
+    let fine_mesh = terrain_mesh("fine".into(), &fine, &[], &references).unwrap();
+    let normal = |mesh: &VenueTerrainMesh| {
+        mesh.positions_ned
+            .iter()
+            .position(|point| {
+                point[0].abs() < 0.01
+                    && (point[1] + 60.0).abs() < 0.01
+                    && (f64::from(-point[2]) - height(0.0, -60.0)).abs() < 0.01
+            })
+            .map(|index| mesh.normals_ned[index])
+            .unwrap()
+    };
+    for (coarse, fine) in normal(&coarse_mesh).into_iter().zip(normal(&fine_mesh)) {
+        assert!((coarse - fine).abs() < 1e-5);
+    }
+}
+
+fn rendered_height(mesh: &VenueTerrainMesh, north: f64, east: f64) -> Option<f64> {
+    for triangle in mesh.indices.chunks_exact(3) {
+        let [first, second, third] = [triangle[0], triangle[1], triangle[2]]
+            .map(|index| mesh.positions_ned[index as usize].map(f64::from));
+        let denominator = (second[1] - third[1]) * (first[0] - third[0])
+            + (third[0] - second[0]) * (first[1] - third[1]);
+        if denominator.abs() < 1e-12 {
+            continue;
+        }
+        let first_weight = ((second[1] - third[1]) * (north - third[0])
+            + (third[0] - second[0]) * (east - third[1]))
+            / denominator;
+        let second_weight = ((third[1] - first[1]) * (north - third[0])
+            + (first[0] - third[0]) * (east - third[1]))
+            / denominator;
+        let third_weight = 1.0 - first_weight - second_weight;
+        if first_weight >= -1e-6 && second_weight >= -1e-6 && third_weight >= -1e-6 {
+            return Some(
+                -(first[2] * first_weight + second[2] * second_weight + third[2] * third_weight),
+            );
+        }
+    }
+    None
+}
+
+#[test]
+fn launch_shore_collar_joins_the_actual_regional_mesh_without_background_gaps() {
+    let (terrain, mut shore) = registered_inputs().unwrap();
+    let launch = shore.shorelines_north_east_meters[33].clone();
+    shore.shorelines_north_east_meters = vec![launch];
+    shore.shoreline_land_side_signs = vec![1];
+    shore.islands.clear();
+    let grids: Vec<_> = std::iter::once(terrain.grid)
+        .chain(terrain.fine_patches.into_iter().map(|patch| patch.grid))
+        .collect();
+    let collar = shoreline::generate(&shore, &grids).unwrap();
+    let regional = registered_terrain()
+        .unwrap()
+        .iter()
+        .find(|mesh| mesh.name == "lake-biwa-terrain-patch-regional-shore")
+        .unwrap();
+    let mut joined = 0;
+    let mut unjoined = 0;
+    let mut panels = 0;
+    for rings in collar.positions_ned.chunks_exact(4) {
+        let point = rings[3].map(f64::from);
+        let width =
+            f64::from(rings[3][0] - rings[2][0]).hypot(f64::from(rings[3][1] - rings[2][1])) * 2.0;
+        assert!(width <= 600.0);
+        if !grids[1].bounds().contains(point[0], point[1]) {
+            continue;
+        }
+        joined += 1;
+        if point[2] <= 0.0
+            && rendered_height(regional, point[0], point[1])
+                .is_none_or(|height| (-point[2] - height + 0.15).abs() > 0.003)
+        {
+            unjoined += 1;
+        }
+    }
+    assert!(joined > 100);
+    assert!((unjoined as f64) < joined as f64 * 0.01);
+    for pair in collar
+        .positions_ned
+        .chunks_exact(4)
+        .collect::<Vec<_>>()
+        .windows(2)
+    {
+        for ring in 0..3 {
+            let corners = [
+                pair[0][ring],
+                pair[0][ring + 1],
+                pair[1][ring],
+                pair[1][ring + 1],
+            ];
+            let north = corners.iter().map(|point| f64::from(point[0])).sum::<f64>() / 4.0;
+            let east = corners.iter().map(|point| f64::from(point[1])).sum::<f64>() / 4.0;
+            assert!(rendered_height(&collar, north, east).is_some());
+            panels += 1;
+        }
+    }
+    assert!(panels > 500);
 }

@@ -913,15 +913,6 @@ fn registered_inputs() -> Result<(TerrainAsset, Shoreline), String> {
                     .ok_or_else(|| format!("Invalid land mask encoding: {id}"))
             })
             .collect::<Result<_, _>>()?;
-        for (height, land) in grid
-            .elevation_meters_above_water
-            .iter_mut()
-            .zip(&grid.land_mask)
-        {
-            if !land {
-                *height = None;
-            }
-        }
     }
     if shore
         .shorelines_north_east_meters
