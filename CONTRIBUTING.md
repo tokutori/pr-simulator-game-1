@@ -50,8 +50,9 @@ Rust cacheの保存はmainへのpushと非公開の手動検査（`deploy_pages=
 Windowsは公式[sccache-action](https://github.com/mozilla-actions/sccache-action)と固定sccache v0.18.0で、
 既存target cacheを補完する。compiler cacheも同じ条件でのみ書き込み、PR・Pages公開は`READ_ONLY`とする。
 既存rust-cacheのroot profile識別を保持し、compiler cacheは実際のcompiler・target・引数・入力が適合する成果だけを再利用する。
-Windows CIだけincrementalを無効化し、Clippyではwrapperを明示解除する。最終link・試験実行・Web検査は引き続き実行する。
-wrapperとincremental設定による初回target cacheのnamespace変更、読取り専用の導入PR、main保存後の自然な後続runを区分する。
+既存targetの復元後にWindowsのwrapperを有効化し、rust-cacheが両OSへ適用するincremental無効化を維持する。
+Clippyではwrapperを明示解除する。最終link・試験実行・Web検査は引き続き実行する。
+既存targetを保持する読取り専用の導入PRとcompiler側の初回cold、main保存後の自然な後続runを区分する。
 公式Actionのpost統計と既存step時間・repo cache容量で効果を確認し、初回cold runから短縮率を断定しない。
 Windows先行の範囲と、両OS・設定変更後の再利用・容量の残条件は[#511](https://github.com/tokutori/pr-simulator-game-1/issues/511)に保持する。
 
