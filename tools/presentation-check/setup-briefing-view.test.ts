@@ -49,7 +49,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     expect(controls.map((control) => control.id)).not.toContain("game-state");
     expect(view.panels.flatMap((panel) => panel.sections?.map((section) => section.label) ?? []).filter(Boolean))
       .toEqual(presentation_mode === "screen"
-        ? ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画解像度"]
+        ? ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画品質"]
         : ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
     expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({
       label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" }
@@ -123,7 +123,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const initial = currentSharedGameUiFixture(1, { platform });
       adapter.render(createGameViewModel(initial));
       expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
-        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画解像度"]);
+        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画品質"]);
       expect([...root.querySelectorAll('[data-section-id="render-scale"] button')].map((button) => ({
         id: button.getAttribute("data-control-id"), label: button.querySelector(".screen-ui-choice-label")?.textContent,
         selected: button.getAttribute("aria-pressed")
