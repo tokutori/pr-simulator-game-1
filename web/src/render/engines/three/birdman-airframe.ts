@@ -6,11 +6,13 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  InstancedMesh,
   LinearFilter,
   LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  Object3D,
   RGBAFormat,
   SRGBColorSpace,
   UnsignedByteType,
@@ -70,8 +72,7 @@ function indigoWingTextures(onVisualReady?: () => void): Readonly<{
   }
   return { left, right, dispose() {
     if (decal !== undefined) { decal.onload = null; decal.onerror = null; decal = undefined; }
-    left.dispose();
-    right.dispose();
+    disposeResources([() => { left.dispose(); }, () => { right.dispose(); }]);
   } };
 }
 
@@ -95,7 +96,7 @@ function registeredHorizontalTailArmMeters(kind: string, armMeters: number, regi
   throw new RangeError("Tail presentation requires registered aircraft geometry");
 }
 
-function pointRod(rod: Mesh, from: Vector3, to: Vector3): void {
+function pointRod(rod: Object3D, from: Vector3, to: Vector3): void {
   const vector = to.clone().sub(from);
   rod.position.copy(from).add(to).multiplyScalar(0.5);
   rod.scale.y = vector.length();
@@ -259,17 +260,43 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const rodKinds = sharedWing.rod_kinds();
   const rodRadii = sharedWing.rod_radii();
   const rodEndpoints = sharedWing.rod_endpoints();
-  const rods: Mesh[] = [];
+  const rodGroups = [
+    { name: "main-wing-spar-segment", parent: wingSpar, material: carbon, indices: [] as number[] },
+    { name: "balsa-stringer", parent: root, material: ribMaterial, indices: [] as number[] },
+    { name: "left-trailing-rib", parent: root, material: ribMaterial, indices: [] as number[] },
+    { name: "right-trailing-rib", parent: root, material: ribMaterial, indices: [] as number[] }
+  ];
   for (let index = 0; index < rodKinds.length; index++) {
     const kind = bulkNumber(rodKinds, index);
-    const rod = addRod(kind === 0 ? wingSpar : root,
-      new Vector3().fromArray(rodEndpoints, index * 6),
-      new Vector3().fromArray(rodEndpoints, index * 6 + 3),
-      bulkNumber(rodRadii, index), kind === 0 ? carbon : ribMaterial);
-    rod.name = kind === 0 ? "main-wing-spar-segment" : kind === 2 ? "balsa-stringer" :
-      `${bulkNumber(rodEndpoints, index * 6 + 3) < 0 ? "left" : "right"}-trailing-rib`;
-    rods.push(rod);
+    const group = rodGroups[kind === 0 ? 0 : kind === 2 ? 1 : kind === 1
+      ? bulkNumber(rodEndpoints, index * 6 + 3) < 0 ? 2 : 3 : -1];
+    if (group === undefined) throw new RangeError("Unknown shared wing rod kind");
+    group.indices.push(index);
   }
+  const rodGeometry = new CylinderGeometry(1, 1, 1, 8);
+  const rods = rodGroups.map((group) => {
+    const mesh = new InstancedMesh(rodGeometry, group.material, group.indices.length);
+    mesh.name = group.name;
+    group.parent.add(mesh);
+    return { mesh, indices: group.indices };
+  });
+  const rodTransform = new Object3D();
+  const rodFrom = new Vector3();
+  const rodTo = new Vector3();
+  const updateRods = (endpoints: Float64Array): void => {
+    for (const group of rods) {
+      for (const [instance, index] of group.indices.entries()) {
+        const radius = bulkNumber(rodRadii, index);
+        rodTransform.scale.set(radius, 1, radius);
+        pointRod(rodTransform, rodFrom.fromArray(endpoints, index * 6), rodTo.fromArray(endpoints, index * 6 + 3));
+        rodTransform.updateMatrix();
+        group.mesh.setMatrixAt(instance, rodTransform.matrix);
+      }
+      group.mesh.instanceMatrix.needsUpdate = true;
+      group.mesh.computeBoundingSphere();
+    }
+  };
+  updateRods(rodEndpoints);
   const foamVertices = sharedWing.foam_vertices();
   const foamIndices = sharedWing.foam_indices();
   const foamPositions = sharedWing.foam_positions();
@@ -323,10 +350,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
         position.needsUpdate = true;
         wing.geometry.computeVertexNormals();
       }
-      const endpoints = sharedWing.rod_endpoints();
-      for (const [index, rod] of rods.entries()) {
-        pointRod(rod, new Vector3().fromArray(endpoints, index * 6), new Vector3().fromArray(endpoints, index * 6 + 3));
-      }
+      updateRods(sharedWing.rod_endpoints());
       const translations = sharedWing.foam_positions();
       for (const [index, foam] of foamRibs.entries()) foam.position.fromArray(translations, index * 3);
     }
@@ -354,22 +378,36 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     dispose() {
       if (disposed) return;
       disposed = true;
-      sharedWing.free();
+      const instances: InstancedMesh[] = [];
       const geometries = new Set<BufferGeometry>();
       const materials = new Set<MeshLambertMaterial | MeshBasicMaterial>();
       root.traverse((part) => {
         if (part instanceof Mesh) {
+          if (part instanceof InstancedMesh) instances.push(part as InstancedMesh);
           geometries.add(part.geometry as BufferGeometry);
           for (const material of Array.isArray(part.material) ? part.material : [part.material]) {
             materials.add(material as MeshLambertMaterial | MeshBasicMaterial);
           }
         }
       });
-      for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
-      wingPatterns.dispose();
+      disposeResources([
+        () => { sharedWing.free(); },
+        ...instances.map((part) => () => { part.dispose(); }),
+        ...Array.from(geometries, (geometry) => () => { geometry.dispose(); }),
+        ...Array.from(materials, (material) => () => { material.dispose(); }),
+        () => { wingPatterns.dispose(); }
+      ]);
     }
   };
+}
+
+function disposeResources(releases: readonly (() => void)[]): void {
+  const failures: unknown[] = [];
+  for (const release of releases) {
+    try { release(); } catch (cause) { failures.push(cause); }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "Airframe resource cleanup failed", { cause: failures[0] });
 }
 
 function rectangularTailSurface(vertices: readonly (readonly [number, number, number])[], material: MeshLambertMaterial): Mesh {
