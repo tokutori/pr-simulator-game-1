@@ -8,6 +8,7 @@ use crate::wind_field::WindField;
 
 /// The analysis family for one table; this does not establish its aircraft scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum PolarAnalysisMethod {
     /// Vortex lattice analysis with one consistent configuration.
     VortexLattice,
@@ -21,6 +22,7 @@ pub enum PolarAnalysisMethod {
 
 /// Axes in which the table's dimensionless moments are supplied at fixed point P.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum PolarMomentAxes {
     /// Body forward-right-down axes.
     BodyFrd,
@@ -30,6 +32,7 @@ pub enum PolarMomentAxes {
 
 /// Provenance identifying one discrete configuration and model version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct StaticPolarMetadata<'a> {
     analysis_method: PolarAnalysisMethod,
     configuration_id: &'a str,
@@ -71,6 +74,7 @@ impl<'a> StaticPolarMetadata<'a> {
 
 /// Seven independent dimensionless columns; lift CL and roll Cl have distinct names.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct StaticPolarCoefficients {
     lift: f64,
     induced_drag: f64,
@@ -174,6 +178,7 @@ impl StaticPolarCoefficients {
 
 /// One finite angle-of-attack knot in radians and its independent coefficient columns.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct StaticPolarRow {
     alpha_rad: f64,
     coefficients: StaticPolarCoefficients,
@@ -225,6 +230,7 @@ impl StaticPolarRow {
 /// let _ = table.coefficients_at(0.);
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct StaticPolar<'a> {
     rows: &'a [StaticPolarRow],
     reference: ElementReference,

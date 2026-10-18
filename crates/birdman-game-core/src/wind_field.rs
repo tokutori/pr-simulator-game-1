@@ -20,11 +20,13 @@ pub enum WindError {
 
 /// An immutable, time-independent wind velocity field in NED coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct WindField<'a> {
     model: WindModel<'a>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 enum WindModel<'a> {
     Uniform(NedVector),
     LinearGradient {
@@ -36,6 +38,7 @@ enum WindModel<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 struct GridWindField<'a> {
     origin_ned: NedPoint,
     spacing_m: [f64; 3],

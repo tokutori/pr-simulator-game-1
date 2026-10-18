@@ -608,14 +608,13 @@ fn running_owner_rejects_non_running_phases_before_evaluation() {
     ));
     let reject = |session: &mut GameSession<'_>| {
         let snapshot = session.snapshot();
-        let samples = session.flight_record().unwrap().samples().to_vec();
-        let metadata = session.flight_record().unwrap().finalization();
-        let configured = session.configured_mut().unwrap();
+        let samples = session
+            .flight_record()
+            .map(|record| record.samples().to_vec());
+        let metadata = session.flight_record().map(FlightRecord::finalization);
         assert_eq!(
-            configured.advance_tail_flight_tick(
+            session.advance_tail_flight_tick_with(
                 input(),
-                10,
-                identity(),
                 |_, _, _| panic!("rejected tick evaluated physics"),
                 |_, _| panic!("rejected tick evaluated telemetry"),
                 |_, _| panic!("rejected tick evaluated score"),
@@ -623,9 +622,21 @@ fn running_owner_rejects_non_running_phases_before_evaluation() {
             Err(GameSessionError::InvalidTransition)
         );
         assert_eq!(session.snapshot(), snapshot);
-        assert_eq!(session.flight_record().unwrap().samples(), samples);
-        assert_eq!(session.flight_record().unwrap().finalization(), metadata);
+        assert_eq!(
+            session
+                .flight_record()
+                .map(|record| record.samples().to_vec()),
+            samples
+        );
+        assert_eq!(
+            session.flight_record().map(FlightRecord::finalization),
+            metadata
+        );
     };
+    let mut unconfigured = GameSession::new();
+    reject(&mut unconfigured);
+    unconfigured.open_setup().unwrap();
+    reject(&mut unconfigured);
     session.pause(PauseReason::Manual).unwrap();
     reject(&mut session);
     session.abort_flight().unwrap();
@@ -678,15 +689,14 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
             let observed = Cell::new(None);
             let tick_failure = TailFlightTickError::TickOverflow;
             let telemetry_failure = FlightTelemetryError::Wind(crate::WindError::OutsideGrid);
-            let configured = session.configured_mut().unwrap();
-            let outcome = configured.advance_tail_flight_tick(
+            let outcome = session.advance_tail_flight_tick_with(
                 input(),
-                maximum_ticks,
-                identity(),
                 |configuration, state, sampled_input| {
                     events.borrow_mut().push("evaluate");
                     assert_eq!(state, previous);
                     assert_eq!(sampled_input, input());
+                    assert_eq!(configuration.identity(), identity());
+                    assert_eq!(configuration.maximum_flight_ticks, maximum_ticks);
                     if stage == Stage::Tick {
                         return Err(tick_failure);
                     }
@@ -749,7 +759,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                 },
             );
             if stage == Stage::Advanced {
-                assert_eq!(outcome, Ok(()));
+                assert_eq!(outcome, Ok(session.snapshot()));
                 assert_eq!(*events.borrow(), ["evaluate", "telemetry"]);
                 assert_eq!(
                     session.snapshot().tail_flight_state().unwrap().tick_index(),
@@ -778,7 +788,11 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
                     _ => unreachable!(),
                 }
             };
-            assert_eq!(outcome, expected, "{stage:?}, score_fails={score_fails}");
+            assert_eq!(
+                outcome.map(|snapshot| assert_eq!(snapshot, session.snapshot())),
+                expected,
+                "{stage:?}, score_fails={score_fails}"
+            );
             let result = session.snapshot().result().unwrap();
             assert_eq!(
                 result.failure,
@@ -834,10 +848,8 @@ fn running_owner_finalization_rejection_retains_the_previous_owner() {
     let samples = session.flight_record().unwrap().samples().to_vec();
     let metadata = session.flight_record().unwrap().finalization();
     assert_eq!(
-        session.configured_mut().unwrap().advance_tail_flight_tick(
+        session.advance_tail_flight_tick_with(
             input(),
-            10,
-            identity(),
             |_, _, _| Err(TailFlightTickError::TickOverflow),
             |_, _| panic!("failed tick evaluated telemetry"),
             |_, _| Err(DistanceScoreError::NonFinite),

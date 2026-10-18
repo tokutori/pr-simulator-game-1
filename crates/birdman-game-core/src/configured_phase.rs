@@ -37,18 +37,18 @@ verus! {
             matches!(self, Self::Result { .. })
         }
 
-        pub closed spec fn is_replay(self) -> bool {
+        pub(crate) open spec fn is_replay(self) -> bool {
             matches!(self, Self::Replay { .. })
         }
 
-        pub closed spec fn result_payload(self) -> Option<Payload> {
+        pub(crate) open spec fn result_payload(self) -> Option<Payload> {
             match self {
                 Self::Result { result } | Self::Replay { result, .. } => Some(result),
                 _ => None,
             }
         }
 
-        pub closed spec fn clock_payload(self) -> Option<Clock> {
+        pub(crate) open spec fn clock_payload(self) -> Option<Clock> {
             match self {
                 Self::Replay { clock, .. } => Some(clock),
                 _ => None,

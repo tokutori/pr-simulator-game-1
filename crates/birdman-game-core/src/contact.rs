@@ -19,6 +19,7 @@ pub enum ContactError {
 
 /// A non-empty list of fixed contact points in aircraft-datum body coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct WaterContactGeometry<'a> {
     points_body: &'a [BodyPoint],
 }

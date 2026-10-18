@@ -29,6 +29,7 @@ mod running;
 mod terminal;
 
 /// Physical configuration sealed when a flight enters preparation.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct GameSessionConfiguration<'a> {
     scenario: TailFlightScenario<'a>,
     control_mode: ControlMode,
@@ -59,6 +60,8 @@ impl<'a> GameSessionConfiguration<'a> {
     }
 
     /// Returns the deterministic scenario identity retained by the session.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.identity()))]
     pub const fn identity(&self) -> SessionScenarioIdentity {
         self.identity
     }
@@ -100,6 +103,7 @@ fn validate_configuration_identity(
 
 /// High-level lifecycle of one game session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum SessionPhase {
     /// No active flight configuration exists.
     Title,
@@ -181,6 +185,7 @@ pub struct SessionResult {
 
 /// Exclusive replay source selected by the session.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum SessionReplaySource {
     /// Playback of the result produced by the active session.
     CurrentSessionResult,
@@ -190,6 +195,7 @@ pub enum SessionReplaySource {
 
 /// Read-only lifecycle projection whose payload is exclusive to its phase.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum SessionSnapshot {
     /// No flight configuration exists.
     Title,
@@ -324,6 +330,7 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 impl From<FlightExecutionError> for GameSessionError {
     fn from(error: FlightExecutionError) -> Self {
         match error {
@@ -353,6 +360,7 @@ pub enum CountdownProgress {
     clippy::large_enum_variant,
     reason = "Lifecycle payloads remain inline without allocating on state transitions."
 )]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 enum SessionLifecycle<'a> {
     Title,
     FlightSetup,
@@ -379,14 +387,149 @@ type ConfiguredPhase =
     crate::configured_phase::ConfiguredPhase<TailFlightTickState, SessionResult, ReplayClock>;
 
 /// Rust-owned lifecycle, physics gating, terminal result, and retry blueprint.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct GameSession<'a> {
     lifecycle: SessionLifecycle<'a>,
     attract_record: Option<FlightRecord>,
     countdown_token: u32,
 }
 
+#[cfg(verus_only)]
+verus! {
+    impl vstd::std_specs::convert::FromSpecImpl<FlightExecutionError> for GameSessionError {
+        open spec fn obeys_from_spec() -> bool { true }
+
+        closed spec fn from_spec(error: FlightExecutionError) -> Self {
+            match error {
+                FlightExecutionError::NotPaused => Self::NotPaused,
+                FlightExecutionError::PauseConditionsRemain => Self::PauseConditionsRemain,
+            }
+        }
+    }
+
+    impl<'a> GameSession<'a> {
+        /// Countdown arithmetic is defined for the state created by start_countdown.
+        pub closed spec fn projection_valid(self) -> bool {
+            match self.lifecycle {
+                SessionLifecycle::Configured(configured) => match configured.phase {
+                    ConfiguredPhase::Countdown(countdown) => countdown.valid(),
+                    _ => true,
+                },
+                _ => true,
+            }
+        }
+
+        /// Pause operations retain the configuration, samples, physical state and unrelated owners.
+        pub closed spec fn flight_data_preserved(self, before: Self) -> bool {
+            self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
+            && match (before.lifecycle, self.lifecycle) {
+                (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                    previous.configuration == next.configuration && previous.record == next.record
+                    && match (previous.phase, next.phase) {
+                        (ConfiguredPhase::Flight(previous), ConfiguredPhase::Flight(next)) => previous.state == next.state,
+                        _ => previous.phase == next.phase,
+                    },
+                _ => self.lifecycle == before.lifecycle,
+            }
+        }
+
+        /// The public pause wrapper admits only a configured flight and inserts one reason.
+        pub closed spec fn paused_with(self, before: Self, reason: PauseReason, outcome: Result<(), GameSessionError>) -> bool {
+            self.flight_data_preserved(before)
+            && (outcome.is_err() ==> self == before)
+            && match before.lifecycle {
+                SessionLifecycle::Configured(previous) => match previous.phase {
+                    ConfiguredPhase::Flight(flight) => outcome == Ok(())
+                        && match self.lifecycle {
+                            SessionLifecycle::Configured(next) => next.configuration == previous.configuration
+                                && next.record == previous.record
+                                && match next.phase {
+                                    ConfiguredPhase::Flight(next_flight) => next_flight.state == flight.state
+                                        && !next_flight.execution.running()
+                                        && next_flight.execution.pause_bits() == (flight.execution.pause_bits() | reason.mask()),
+                                    _ => false,
+                                },
+                            _ => false,
+                        },
+                    _ => outcome == Err(GameSessionError::InvalidTransition),
+                },
+                _ => outcome == Err(GameSessionError::InvalidTransition),
+            }
+        }
+
+        /// Clearing a reason never resumes the physical state or a running execution.
+        pub closed spec fn cleared_with(self, before: Self, reason: PauseReason, outcome: Result<(), GameSessionError>) -> bool {
+            self.flight_data_preserved(before)
+            && match (before.lifecycle, self.lifecycle) {
+                (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                    match (previous.phase, next.phase) {
+                        (ConfiguredPhase::Flight(previous), ConfiguredPhase::Flight(next)) => match outcome {
+                            Ok(()) => !previous.execution.running() && !next.execution.running()
+                                && next.execution.pause_bits() == (previous.execution.pause_bits() & !reason.mask()),
+                            Err(GameSessionError::NotPaused) => previous.execution.running() && self == before,
+                            _ => false,
+                        },
+                        _ => outcome == Err(GameSessionError::NotPaused) && self == before,
+                    },
+                _ => outcome == Err(GameSessionError::NotPaused) && self == before,
+            }
+        }
+
+        /// Resume clears Manual while retaining every unresolved external pause reason.
+        pub closed spec fn resumed_from(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.flight_data_preserved(before)
+            && match (before.lifecycle, self.lifecycle) {
+                (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                    match (previous.phase, next.phase) {
+                        (ConfiguredPhase::Flight(previous), ConfiguredPhase::Flight(next)) => match outcome {
+                            Ok(()) => !previous.execution.running() && next.execution.running()
+                                && previous.execution.pause_bits() & !PauseReason::Manual.mask() == 0,
+                            Err(GameSessionError::NotPaused) => previous.execution.running() && self == before,
+                            Err(GameSessionError::PauseConditionsRemain) => !previous.execution.running()
+                                && !next.execution.running() && next.execution.pause_bits() != 0
+                                && next.execution.pause_bits() == (previous.execution.pause_bits() & !PauseReason::Manual.mask()),
+                            _ => false,
+                        },
+                        _ => outcome == Err(GameSessionError::NotPaused) && self == before,
+                    },
+                _ => outcome == Err(GameSessionError::NotPaused) && self == before,
+            }
+        }
+
+        /// Replay wrappers retain the same configured result and record, or reject without changes.
+        pub closed spec fn replay_changed(self, before: Self, entering: bool, outcome: Result<(), GameSessionError>) -> bool {
+            self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
+            && match (before.lifecycle, self.lifecycle) {
+                (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                    previous.configuration == next.configuration && previous.record == next.record
+                    && if entering {
+                        match previous.phase {
+                            ConfiguredPhase::Result { result } => outcome == Ok(())
+                                && next.phase == (ConfiguredPhase::Replay { result, clock: ReplayClock::new() }),
+                            _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+                        }
+                    } else {
+                        match previous.phase {
+                            ConfiguredPhase::Replay { result, .. } => outcome == Ok(())
+                                && next.phase == (ConfiguredPhase::Result { result }),
+                            _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+                        }
+                    },
+                (SessionLifecycle::ArchivedReplay { .. }, SessionLifecycle::Title) => !entering && outcome == Ok(()),
+                _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+            }
+        }
+    }
+}
+
 impl<'a> GameSession<'a> {
     /// Creates a session at Title with no active flight configuration.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(
+        ensures Self::new().projection_valid(), Self::new().snapshot() == SessionSnapshot::Title,
+            Self::new().flight_record().is_none(),
+        returns Self::new(),
+    ))]
     pub const fn new() -> Self {
         Self {
             lifecycle: SessionLifecycle::Title,
@@ -394,8 +537,9 @@ impl<'a> GameSession<'a> {
             countdown_token: 0,
         }
     }
-
     /// Returns the current immutable session projection.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(requires self.projection_valid(), returns self.snapshot()))]
     pub fn snapshot(&self) -> SessionSnapshot {
         match &self.lifecycle {
             SessionLifecycle::Title => SessionSnapshot::Title,
@@ -441,6 +585,8 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(requires self.projection_valid(), returns self.phase()))]
     const fn phase(&self) -> SessionPhase {
         match &self.lifecycle {
             SessionLifecycle::Title => SessionPhase::Title,
@@ -468,6 +614,8 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.configured()))]
     const fn configured(&self) -> Option<&ConfiguredSession<'a>> {
         match &self.lifecycle {
             SessionLifecycle::Configured(configured) => Some(configured),
@@ -475,6 +623,17 @@ impl<'a> GameSession<'a> {
         }
     }
 
+    #[cfg_attr(verus_only, verus_spec(result => ensures
+        final(self).attract_record == old(self).attract_record,
+        final(self).countdown_token == old(self).countdown_token,
+        match result {
+            Ok(configured) => old(self).lifecycle == SessionLifecycle::Configured(*configured)
+                && final(self).lifecycle == SessionLifecycle::Configured(*final(configured)),
+            Err(error) => error == GameSessionError::InvalidTransition
+                && !matches!(old(self).lifecycle, SessionLifecycle::Configured(_))
+                && *final(self) == *old(self),
+        },
+    ))]
     fn configured_mut(&mut self) -> Result<&mut ConfiguredSession<'a>, GameSessionError> {
         match &mut self.lifecycle {
             SessionLifecycle::Configured(configured) => Ok(configured),
@@ -483,6 +642,13 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns whether an explicit resume can succeed under the current pause causes.
+    #[cfg_attr(verus_only, verus_spec(result =>
+        requires self.projection_valid(),
+        ensures result == match self.snapshot() {
+            SessionSnapshot::TailFlightPaused { reasons, .. } => reasons.bits() & !PauseReason::Manual.mask() == 0,
+            _ => false,
+        },
+    ))]
     pub const fn can_resume(&self) -> bool {
         match self.phase() {
             SessionPhase::FlightPaused { reasons } => reasons.can_resume_after_manual(),
@@ -521,6 +687,8 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns the immutable flight record after one has been initialized.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.flight_record()))]
     pub const fn flight_record(&self) -> Option<&FlightRecord> {
         match &self.lifecycle {
             SessionLifecycle::Configured(configured) => Some(&configured.record),
@@ -613,11 +781,16 @@ impl<'a> GameSession<'a> {
     }
 
     /// Enters read-only playback while retaining the finalized result and record.
+    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).replay_changed(*old(self), true, result)))]
     pub fn enter_replay(&mut self) -> Result<(), GameSessionError> {
-        self.configured_mut()?
+        let configured = self.configured_mut()?;
+        configured
             .phase
             .enter_replay(ReplayClock::new())
-            .map_err(|()| GameSessionError::InvalidTransition)
+            .map_err(
+                #[cfg_attr(verus_only, verus_spec(error: GameSessionError => ensures error == GameSessionError::InvalidTransition))]
+                |_cause: ()| GameSessionError::InvalidTransition,
+            )
     }
 
     /// Opens a finalized archived record directly in read-only playback from Title or Result.
@@ -635,13 +808,17 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns from read-only playback to the same finalized result.
+    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).replay_changed(*old(self), false, result)))]
     pub fn leave_replay(&mut self) -> Result<(), GameSessionError> {
         match &mut self.lifecycle {
             SessionLifecycle::Configured(configured) => {
                 configured
                     .phase
                     .leave_replay()
-                    .map_err(|()| GameSessionError::InvalidTransition)?;
+                    .map_err(
+                        #[cfg_attr(verus_only, verus_spec(error: GameSessionError => ensures error == GameSessionError::InvalidTransition))]
+                        |_cause: ()| GameSessionError::InvalidTransition,
+                    )?;
             }
             SessionLifecycle::ArchivedReplay { .. } => self.lifecycle = SessionLifecycle::Title,
             _ => return Err(GameSessionError::InvalidTransition),
@@ -993,6 +1170,7 @@ impl<'a> GameSession<'a> {
     }
 
     /// Adds a pause cause while running or already paused.
+    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).paused_with(*old(self), reason, result)))]
     pub fn pause(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
         let configured = self.configured_mut()?;
         let ConfiguredPhase::Flight(flight) = &mut configured.phase else {
@@ -1003,6 +1181,7 @@ impl<'a> GameSession<'a> {
     }
 
     /// Removes a resolved pause cause without resuming physics.
+    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).cleared_with(*old(self), reason, result)))]
     pub fn clear_pause_reason(&mut self, reason: PauseReason) -> Result<(), GameSessionError> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
@@ -1016,6 +1195,7 @@ impl<'a> GameSession<'a> {
     }
 
     /// Resumes only after every pause cause has cleared and Resume is explicit.
+    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).resumed_from(*old(self), result)))]
     pub fn resume(&mut self) -> Result<(), GameSessionError> {
         let SessionLifecycle::Configured(configured) = &mut self.lifecycle else {
             return Err(GameSessionError::NotPaused);
@@ -1031,11 +1211,8 @@ impl<'a> GameSession<'a> {
         &mut self,
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        let configured = self.configured_mut()?;
-        configured.advance_tail_flight_tick(
+        self.advance_tail_flight_tick_with(
             input,
-            configured.configuration.maximum_flight_ticks,
-            configured.configuration.identity,
             |configuration, previous, input| {
                 configuration.scenario.advance_tick_with_contact_report(
                     previous,
@@ -1054,8 +1231,7 @@ impl<'a> GameSession<'a> {
                     configuration.course_axis(),
                 )
             },
-        )?;
-        Ok(self.snapshot())
+        )
     }
 
     /// Aborts at the current input boundary and retains the last valid tick.

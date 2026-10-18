@@ -15,6 +15,7 @@ pub use polar::{
 
 /// A proper rotation from one element's local axes into the aircraft body axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct ElementOrientation {
     local_to_body: [[f64; 3]; 3],
 }
@@ -114,6 +115,7 @@ impl ElementOrientation {
 
 /// Reference dimensions used to scale dimensionless aerodynamic coefficients.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct ElementReference {
     area_square_meters: f64,
     span_meters: f64,

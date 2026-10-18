@@ -1,7 +1,12 @@
 #[cfg(verus_only)]
 use vstd::prelude::*;
 
-use super::{GameSessionError, SessionResult, SessionTerminalState};
+#[cfg(verus_only)]
+use super::SessionLifecycle;
+use super::{
+    GameSession, GameSessionConfiguration, GameSessionError, SessionResult, SessionSnapshot,
+    SessionTerminalState,
+};
 use crate::configured_phase::ConfiguredPhase;
 use crate::configured_session::ConfiguredSession;
 use crate::dynamics::FlightState;
@@ -70,6 +75,153 @@ verus! {
                 })
             },
         }
+    }
+
+    fn verify_game_session_tick_pause_projection<'a>(
+        configuration: GameSessionConfiguration<'a>,
+        record: FlightRecord,
+        previous: TailFlightTickState,
+        input: TailFlightTickInput,
+        report: TailFlightTickReport,
+        reading: FlightTelemetry,
+        score_result: Result<DistanceScore, DistanceScoreError>,
+    ) -> Result<(), GameSessionError> {
+        let ghost identity = configuration.identity;
+        let mut session = GameSession {
+            lifecycle: SessionLifecycle::Configured(ConfiguredSession {
+                configuration,
+                record,
+                phase: ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }),
+            }),
+            attract_record: None,
+            countdown_token: 0,
+        };
+        let evaluate = |_configuration: &GameSessionConfiguration<'a>, _previous: TailFlightTickState,
+                        _input: TailFlightTickInput| -> (returned: Result<TailFlightTickReport, TailFlightTickError>)
+            ensures returned == Ok(report),
+        { Ok(report) };
+        let telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+            -> (returned: Result<FlightTelemetry, FlightTelemetryError>)
+            ensures returned == Ok(reading),
+        { Ok(reading) };
+        let score = |_configuration: &GameSessionConfiguration<'a>, _state: SessionTerminalState|
+            -> (returned: Result<DistanceScore, DistanceScoreError>)
+            ensures returned == score_result,
+        { score_result };
+        let projected = session.advance_tail_flight_tick_with(input, evaluate, telemetry, score)?;
+        let ghost accepted = session;
+        match projected {
+            SessionSnapshot::TailFlightRunning { scenario, state } => {
+                assert(scenario == identity);
+                assert(session.flight_record().unwrap().latest_matches_tail_state(state));
+                session.pause(super::PauseReason::Manual)?;
+                session.resume()?;
+                assert(session == accepted);
+            },
+            SessionSnapshot::Result(result) => {
+                assert(result.scenario == identity);
+                assert(result.score == match score_result { Ok(distance) => Some(distance), Err(_) => None });
+                let metadata = session.flight_record().unwrap().finalization().unwrap();
+                assert(metadata.reason == result.reason && metadata.score == result.score
+                    && metadata.failure == result.failure
+                    && metadata.terminal_tick == result.state.record_time().0
+                    && metadata.terminal_fraction == result.state.record_time().1);
+            },
+            _ => { assert(false); },
+        }
+        assert(session.snapshot() == projected);
+        Ok(())
+    }
+}
+
+impl<'a> GameSession<'a> {
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires match old(self).lifecycle {
+            SessionLifecycle::Configured(configured) => match configured.phase {
+                ConfiguredPhase::Flight(ActiveFlight { state, execution: FlightExecution::Running }) =>
+                    evaluate.requires((&configured.configuration, state, input))
+                    && (forall|state: FlightState| telemetry.requires((&configured.configuration, state)))
+                    && (forall|state: SessionTerminalState| score.requires((&configured.configuration, state))),
+                _ => true,
+            },
+            _ => true,
+        },
+        ensures
+            final(self).attract_record == old(self).attract_record,
+            final(self).countdown_token == old(self).countdown_token,
+            match outcome {
+                Ok(snapshot) => final(self).projection_valid() && snapshot == final(self).snapshot(),
+                Err(_) => true,
+            },
+            match old(self).lifecycle {
+                SessionLifecycle::Configured(before) => match final(self).lifecycle {
+                    SessionLifecycle::Configured(after) => after.configuration == before.configuration
+                        && after.record.header() == before.record.header()
+                        && after.record.sample_limit() == before.record.sample_limit()
+                        && after.record.recorded_samples().take(before.record.recorded_samples().len() as int)
+                            =~= before.record.recorded_samples()
+                        && after.record.recorded_samples().len() <= before.record.recorded_samples().len() + 1
+                        && match before.phase {
+                            ConfiguredPhase::Flight(ActiveFlight { state: previous, execution: FlightExecution::Running }) => {
+                                (outcome.is_ok() ==> exists|report: TailFlightTickReport, reading: FlightTelemetry|
+                                    #[trigger] evaluate.ensures((&before.configuration, previous, input), Ok(report))
+                                    && #[trigger] telemetry.ensures((&before.configuration, report_physical_state(report)), Ok(reading))
+                                    && recorded_report(before.record, after.record, report, reading)
+                                    && report_phase(after.phase, report, before.configuration.maximum_flight_ticks))
+                                && (outcome.is_ok() ==> match after.phase {
+                                    ConfiguredPhase::Flight(flight) => flight.execution == FlightExecution::Running
+                                        && after.record.latest_matches_tail_state(flight.state),
+                                    _ => true,
+                                })
+                                && match after.phase {
+                                    ConfiguredPhase::Result { result } => result.scenario == before.configuration.identity
+                                        && (exists|returned: Result<DistanceScore, DistanceScoreError>|
+                                            #[trigger] score.ensures((&before.configuration, result.state), returned)
+                                            && result.score == match returned { Ok(distance) => Some(distance), Err(_) => None })
+                                        && match after.record.finalization() {
+                                            Some(metadata) => metadata.reason == result.reason && metadata.score == result.score
+                                                && metadata.failure == result.failure
+                                                && metadata.terminal_tick == result.state.record_time().0
+                                                && metadata.terminal_fraction == result.state.record_time().1,
+                                            None => false,
+                                        },
+                                    _ => true,
+                                }
+                            },
+                            _ => outcome == Err(GameSessionError::InvalidTransition) && *final(self) == *old(self),
+                        },
+                    _ => false,
+                },
+                _ => outcome == Err(GameSessionError::InvalidTransition) && *final(self) == *old(self),
+            },
+    ))]
+    pub(super) fn advance_tail_flight_tick_with(
+        &mut self,
+        input: TailFlightTickInput,
+        evaluate: impl FnOnce(
+            &GameSessionConfiguration<'a>,
+            TailFlightTickState,
+            TailFlightTickInput,
+        ) -> Result<TailFlightTickReport, TailFlightTickError>,
+        telemetry: impl FnOnce(
+            &GameSessionConfiguration<'a>,
+            FlightState,
+        ) -> Result<FlightTelemetry, FlightTelemetryError>,
+        score: impl FnOnce(
+            &GameSessionConfiguration<'a>,
+            SessionTerminalState,
+        ) -> Result<DistanceScore, DistanceScoreError>,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        let configured = self.configured_mut()?;
+        configured.advance_tail_flight_tick(
+            input,
+            configured.configuration.maximum_flight_ticks,
+            configured.configuration.identity,
+            evaluate,
+            telemetry,
+            score,
+        )?;
+        Ok(self.snapshot())
     }
 }
 
@@ -165,6 +317,9 @@ impl<Configuration, Clock>
                 ConfiguredPhase::Flight(ActiveFlight { execution: FlightExecution::Running, .. }) =>
                     match final(self).phase {
                         ConfiguredPhase::Result { result } => result.scenario == identity
+                            && (exists|returned: Result<DistanceScore, DistanceScoreError>|
+                                #[trigger] score.ensures((&old(self).configuration, result.state), returned)
+                                && result.score == match returned { Ok(distance) => Some(distance), Err(_) => None })
                             && final(self).record.recorded_samples().len() > 0
                             && result.state.record_time().0 == final(self).record.recorded_samples().last().tick_index
                             && match final(self).record.finalization() {
@@ -203,6 +358,7 @@ impl<Configuration, Clock>
             let ghost before = *self;
             let ghost evaluation_contract = evaluate;
             let ghost telemetry_contract = telemetry;
+            let ghost score_contract = score;
         }
         let Some(previous) = self.phase.running_state() else {
             return Err(GameSessionError::InvalidTransition);
@@ -212,6 +368,10 @@ impl<Configuration, Clock>
             Err(error) => {
                 let terminal = SessionTerminalState::TailTick(previous);
                 let score_result = score(&self.configuration, terminal);
+                #[cfg(verus_only)]
+                proof! {
+                    assert(score_contract.ensures((&before.configuration, terminal), score_result));
+                }
                 self.finalize_terminal(
                     error.end_reason(),
                     terminal,
@@ -231,6 +391,10 @@ impl<Configuration, Clock>
             Err(error) => {
                 let terminal = SessionTerminalState::TailTick(previous);
                 let score_result = score(&self.configuration, terminal);
+                #[cfg(verus_only)]
+                proof! {
+                    assert(score_contract.ensures((&before.configuration, terminal), score_result));
+                }
                 self.finalize_terminal(
                     SessionEndReason::FatalSimulationError,
                     terminal,
@@ -244,6 +408,10 @@ impl<Configuration, Clock>
         if let Err(error) = self.record.append_tail_report(report, telemetry) {
             let terminal = SessionTerminalState::TailTick(previous);
             let score_result = score(&self.configuration, terminal);
+            #[cfg(verus_only)]
+            proof! {
+                assert(score_contract.ensures((&before.configuration, terminal), score_result));
+            }
             self.finalize_terminal(
                 SessionEndReason::FatalSimulationError,
                 terminal,
@@ -268,6 +436,10 @@ impl<Configuration, Clock>
                 if next.tick_index() >= maximum_ticks {
                     let terminal = SessionTerminalState::TailTick(next);
                     let score_result = score(&self.configuration, terminal);
+                    #[cfg(verus_only)]
+                    proof! {
+                        assert(score_contract.ensures((&before.configuration, terminal), score_result));
+                    }
                     let finalized = self.finalize_terminal(
                         SessionEndReason::TimeLimit,
                         terminal,
@@ -289,6 +461,10 @@ impl<Configuration, Clock>
             TailFlightTickOutcome::WaterContact(sample) => {
                 let terminal = SessionTerminalState::TailWaterContact(sample);
                 let score_result = score(&self.configuration, terminal);
+                #[cfg(verus_only)]
+                proof! {
+                    assert(score_contract.ensures((&before.configuration, terminal), score_result));
+                }
                 let finalized = self.finalize_terminal(
                     SessionEndReason::WaterContact,
                     terminal,

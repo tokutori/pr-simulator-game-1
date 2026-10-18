@@ -5,6 +5,7 @@ pub const COURSE_DISTANCE_SCORE_VERSION: u32 = 1;
 
 /// A validated horizontal unit vector defining the launch course in NED axes.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct CourseAxis {
     north: f64,
     east: f64,

@@ -1,5 +1,9 @@
+#[cfg(verus_only)]
+use vstd::prelude::*;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// Supported playback rates for stored flight records.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum ReplayRate {
     /// Half of wall-clock playback speed.
     Half,
@@ -44,6 +48,7 @@ pub enum ReplayClockError {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 /// Playback cursor and rate for a finalized flight record.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct ReplayClock {
     time_seconds: f64,
     rate: ReplayRate,
@@ -52,6 +57,8 @@ pub struct ReplayClock {
 
 impl ReplayClock {
     /// Creates a stopped clock at the record's initial state and normal rate.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::new()))]
     pub const fn new() -> Self {
         Self {
             time_seconds: 0.0,

@@ -80,9 +80,11 @@ impl CountdownState {
         self.elapsed_nanos
     }
 
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(result =>
         requires self.valid(),
         ensures
+            result == self.remaining_seconds(),
             result == self.duration_value() as int - self.elapsed_value() as int / 1_000_000_000,
             1 <= result <= self.duration_value(),
     ))]

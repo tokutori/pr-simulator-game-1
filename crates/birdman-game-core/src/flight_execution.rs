@@ -75,11 +75,11 @@ impl<State> ActiveFlight<State> {
 #[cfg(verus_only)]
 verus! {
     impl FlightExecution {
-        pub closed spec fn running(self) -> bool {
+        pub(crate) open spec fn running(self) -> bool {
             matches!(self, Self::Running)
         }
 
-        pub closed spec fn pause_bits(self) -> u8 {
+        pub(crate) open spec fn pause_bits(self) -> u8 {
             match self {
                 Self::Running => 0,
                 Self::Paused { reasons } => reasons.bits(),

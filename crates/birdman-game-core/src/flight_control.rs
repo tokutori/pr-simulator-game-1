@@ -27,6 +27,7 @@ pub(crate) fn saturated_rate_command(
 
 /// Validated FBW contribution to a pilot/FBW command blend.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct FbwAuthority(f64);
 
 impl FbwAuthority {
@@ -49,6 +50,7 @@ impl FbwAuthority {
 
 /// Flight-control mode selecting pilot and FBW authority.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub enum ControlMode {
     /// Pilot command has full authority.
     Manual,
@@ -70,6 +72,7 @@ impl ControlMode {
 
 /// Physical limit for one control-surface actuator.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct ActuatorConfig {
     maximum_deflection_rad: f64,
     maximum_rate_rad_per_second: f64,

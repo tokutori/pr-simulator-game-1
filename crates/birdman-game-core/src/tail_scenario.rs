@@ -32,6 +32,7 @@ pub enum TailFlightScenarioError {
 
 /// Sealed physical launch, initial tail incidence, trim mapping and contact conditions.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailFlightScenarioParameters<'a> {
     aircraft: AircraftModel,
     initial_state: TailFlightTickState,
@@ -83,6 +84,7 @@ impl<'a> TailFlightScenarioParameters<'a> {
 /// The caller owns polar rows, surfaces, wind samples and contact points. This Copy view
 /// introduces neither self-references nor a second wind or physical-state owner.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailFlightScenario<'a> {
     parameters: TailFlightScenarioParameters<'a>,
     loads: HybridAerodynamicLoad<'a>,
