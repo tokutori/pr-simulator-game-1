@@ -157,7 +157,9 @@ verus! {
         let TailFlightTickOutcome::Advanced(previous) = advanced.outcome() else {
             return Err(GameSessionError::InvalidTransition);
         };
-        record.append_tail_report(advanced, reading).map_err(GameSessionError::Record)?;
+        if let Err(error) = record.append_tail_report(advanced, reading) {
+            return Err(GameSessionError::Record(error));
+        }
         let report = crate::tail_simulation::evaluated_tick_report(previous, next, controls, contact);
         let mut session = GameSession {
             lifecycle: SessionLifecycle::Configured(ConfiguredSession {
