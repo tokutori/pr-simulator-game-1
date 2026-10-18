@@ -690,8 +690,10 @@ export function createThreeRenderer(
         const previousShadowNeedsUpdate = renderer.shadowMap.needsUpdate;
         renderer.getClearColor(savedClearColor);
         try {
-          renderer.shadowMap.autoUpdate = false;
-          renderer.shadowMap.needsUpdate = false;
+          if (sun.shadow.map !== null) {
+            renderer.shadowMap.autoUpdate = false;
+            renderer.shadowMap.needsUpdate = false;
+          }
           scene.background = null;
           renderer.xr.enabled = false;
           renderer.setRenderTarget(reflectionTarget);
