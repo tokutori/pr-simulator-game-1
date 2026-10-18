@@ -11,6 +11,34 @@ const SAMPLE_INTERVAL_MS: f64 = 8.0;
 const MAX_SAMPLES: usize = 512;
 const COOLDOWN_MS: f64 = 3_000.0;
 
+/// Directional shadow-map resolutions supported by both Screen adapters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenShadowMap {
+    /// Existing manual shadow quality.
+    #[default]
+    Full,
+    /// Half the manual map dimensions.
+    Half,
+    /// Minimum retained shadow-map dimensions.
+    Quarter,
+}
+
+impl ScreenShadowMap {
+    /// Ordered resolutions from highest to lowest quality.
+    pub const ALL: [Self; 3] = [Self::Full, Self::Half, Self::Quarter];
+
+    /// Width and height of each directional shadow map or cascade.
+    pub const fn size(self) -> u32 {
+        match self {
+            Self::Full => 2_048,
+            Self::Half => 1_024,
+            Self::Quarter => 512,
+        }
+    }
+}
+
 /// User selection; Auto retains the previous manual choice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -20,11 +48,15 @@ pub enum ScreenRenderSelection {
     Manual {
         /// Retained user choice.
         scale: ScreenRenderScale,
+        /// Retained manual shadow-map resolution.
+        shadow: ScreenShadowMap,
     },
     /// GPU-work-based adjustment.
     Auto {
         /// Restored when Auto is disabled.
         manual_scale: ScreenRenderScale,
+        /// Restored with the retained manual resolution.
+        manual_shadow: ScreenShadowMap,
     },
 }
 
@@ -43,11 +75,13 @@ pub struct ScreenGpuSample {
 
 /// Identity of a rendering-resource change awaiting acknowledgment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScreenRenderScaleRequest {
+pub struct ScreenRenderResourceRequest {
     /// Unique request identity, retained across unrelated invalidations.
     pub epoch: u32,
     /// Desired rendering resolution.
     pub scale: ScreenRenderScale,
+    /// Desired directional shadow-map resolution.
+    pub shadow: ScreenShadowMap,
 }
 
 /// Small UI state; timing samples and history are intentionally excluded.
@@ -74,6 +108,8 @@ pub enum ScreenRenderAutoStatus {
     Applying {
         /// Requested resolution, distinct from the applied value.
         requested: ScreenRenderScale,
+        /// Requested shadow map, distinct from the applied value.
+        shadow: ScreenShadowMap,
     },
     /// The last resource application failed; the applied value is retained.
     Failed {
@@ -91,6 +127,8 @@ pub struct ScreenRenderAutoSnapshot {
     pub selection: ScreenRenderSelection,
     /// Last successfully applied rendering resolution.
     pub applied: ScreenRenderScale,
+    /// Last successfully applied directional shadow-map resolution.
+    pub shadow: ScreenShadowMap,
     /// Stable measurement or resource state.
     pub status: ScreenRenderAutoStatus,
 }
@@ -99,8 +137,12 @@ impl ScreenRenderAutoSnapshot {
     /// Builds a confirmed manual observation for startup and adapter fixtures.
     pub const fn manual(scale: ScreenRenderScale) -> Self {
         Self {
-            selection: ScreenRenderSelection::Manual { scale },
+            selection: ScreenRenderSelection::Manual {
+                scale,
+                shadow: ScreenShadowMap::Full,
+            },
             applied: scale,
+            shadow: ScreenShadowMap::Full,
             status: ScreenRenderAutoStatus::Manual,
         }
     }
@@ -153,7 +195,7 @@ struct RetainedSample {
 
 enum ResourceState {
     Ready,
-    Applying(ScreenRenderScaleRequest),
+    Applying(ScreenRenderResourceRequest),
     Failed(String),
 }
 
@@ -170,6 +212,7 @@ enum MeasurementState {
 pub struct ScreenRenderAutoController {
     selection: ScreenRenderSelection,
     applied: ScreenRenderScale,
+    shadow: ScreenShadowMap,
     resource: ResourceState,
     measurement: MeasurementState,
     epoch: u32,
@@ -184,10 +227,14 @@ pub struct ScreenRenderAutoController {
 
 impl ScreenRenderAutoController {
     /// Starts with the backend's confirmed resolution and manual selection.
-    pub fn new(applied: ScreenRenderScale) -> Self {
+    pub fn new(applied: ScreenRenderScale, shadow: ScreenShadowMap) -> Self {
         Self {
-            selection: ScreenRenderSelection::Manual { scale: applied },
+            selection: ScreenRenderSelection::Manual {
+                scale: applied,
+                shadow,
+            },
             applied,
+            shadow,
             resource: ResourceState::Ready,
             measurement: MeasurementState::Measuring,
             epoch: 1,
@@ -206,6 +253,7 @@ impl ScreenRenderAutoController {
         let status = match &self.resource {
             ResourceState::Applying(request) => ScreenRenderAutoStatus::Applying {
                 requested: request.scale,
+                shadow: request.shadow,
             },
             ResourceState::Failed(cause) => ScreenRenderAutoStatus::Failed {
                 cause: cause.clone(),
@@ -224,6 +272,7 @@ impl ScreenRenderAutoController {
         ScreenRenderAutoSnapshot {
             selection: self.selection,
             applied: self.applied,
+            shadow: self.shadow,
             status,
         }
     }
@@ -234,7 +283,7 @@ impl ScreenRenderAutoController {
     }
 
     /// Returns the outstanding resource request, if any.
-    pub const fn requested(&self) -> Option<ScreenRenderScaleRequest> {
+    pub const fn requested(&self) -> Option<ScreenRenderResourceRequest> {
         match self.resource {
             ResourceState::Applying(request) => Some(request),
             _ => None,
@@ -246,18 +295,22 @@ impl ScreenRenderAutoController {
         &mut self,
         scale: ScreenRenderScale,
         now_ms: f64,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if self.selection == (ScreenRenderSelection::Manual { scale })
+        let shadow = match self.selection {
+            ScreenRenderSelection::Manual { shadow, .. } => shadow,
+            ScreenRenderSelection::Auto { manual_shadow, .. } => manual_shadow,
+        };
+        if self.selection == (ScreenRenderSelection::Manual { scale, shadow })
             && !matches!(self.resource, ResourceState::Failed(_))
         {
             return Ok(self.requested());
         }
         self.reset_window(now_ms)?;
-        self.selection = ScreenRenderSelection::Manual { scale };
+        self.selection = ScreenRenderSelection::Manual { scale, shadow };
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
-        self.request(scale)
+        self.request(scale, shadow)
     }
 
     /// Enables Auto or restores its retained manual selection.
@@ -265,13 +318,14 @@ impl ScreenRenderAutoController {
         &mut self,
         enabled: bool,
         now_ms: f64,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         match (enabled, self.selection) {
-            (true, ScreenRenderSelection::Manual { scale }) => {
+            (true, ScreenRenderSelection::Manual { scale, shadow }) => {
                 self.reset_window(now_ms)?;
                 self.selection = ScreenRenderSelection::Auto {
                     manual_scale: scale,
+                    manual_shadow: shadow,
                 };
                 if matches!(self.resource, ResourceState::Failed(_)) {
                     self.resource = ResourceState::Ready;
@@ -279,7 +333,7 @@ impl ScreenRenderAutoController {
                 self.measurement = MeasurementState::Measuring;
                 Ok(None)
             }
-            (false, ScreenRenderSelection::Auto { manual_scale }) => {
+            (false, ScreenRenderSelection::Auto { manual_scale, .. }) => {
                 self.select_manual(manual_scale, now_ms)
             }
             _ => Ok(self.requested()),
@@ -291,7 +345,7 @@ impl ScreenRenderAutoController {
         &mut self,
         sample: ScreenGpuSample,
         now_ms: f64,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         if !self.measurement_enabled()
             || sample.epoch != self.epoch
@@ -344,7 +398,7 @@ impl ScreenRenderAutoController {
     pub fn pending(
         &mut self,
         now_ms: f64,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         self.evaluate(now_ms)
     }
@@ -386,19 +440,24 @@ impl ScreenRenderAutoController {
         Ok(())
     }
 
-    /// Commits only the still-owned request after resource application succeeds.
+    /// Commits the still-owned request, retaining any retired-resource cleanup failure.
     pub fn applied(
         &mut self,
-        request: ScreenRenderScaleRequest,
+        request: ScreenRenderResourceRequest,
         now_ms: f64,
+        cleanup_failure: Option<String>,
     ) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         if self.requested() != Some(request) {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window_reserving_ack(now_ms, false)?;
-        self.resource = ResourceState::Ready;
+        self.resource = match cleanup_failure {
+            Some(cause) => ResourceState::Failed(cause),
+            None => ResourceState::Ready,
+        };
         self.applied = request.scale;
+        self.shadow = request.shadow;
         if self.epoch == u32::MAX {
             self.measurement =
                 MeasurementState::Unsupported("GPU timing epoch exhausted".to_owned());
@@ -412,7 +471,7 @@ impl ScreenRenderAutoController {
     /// Holds the last confirmed resources and failure until an explicit selection changes.
     pub fn failed(
         &mut self,
-        request: ScreenRenderScaleRequest,
+        request: ScreenRenderResourceRequest,
         cause: String,
         now_ms: f64,
     ) -> Result<(), ScreenRenderAutoError> {
@@ -466,14 +525,16 @@ impl ScreenRenderAutoController {
     fn request(
         &mut self,
         scale: ScreenRenderScale,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
-        if scale == self.applied {
+        shadow: ScreenShadowMap,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        if scale == self.applied && shadow == self.shadow {
             Ok(None)
         } else {
             self.check_epoch_capacity(1)?;
-            let request = ScreenRenderScaleRequest {
+            let request = ScreenRenderResourceRequest {
                 epoch: self.epoch,
                 scale,
+                shadow,
             };
             self.resource = ResourceState::Applying(request);
             Ok(Some(request))
@@ -492,7 +553,7 @@ impl ScreenRenderAutoController {
     fn evaluate(
         &mut self,
         now_ms: f64,
-    ) -> Result<Option<ScreenRenderScaleRequest>, ScreenRenderAutoError> {
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         if !self.measurement_enabled() {
             return Ok(None);
         }
@@ -544,23 +605,41 @@ impl ScreenRenderAutoController {
             .iter()
             .position(|scale| *scale == self.applied)
             .unwrap();
+        let shadow = ScreenShadowMap::ALL
+            .iter()
+            .position(|shadow| *shadow == self.shadow)
+            .unwrap();
         let next = if percentile > 12.5 {
-            ScreenRenderScale::ALL.get(current + 1).copied()
+            ScreenRenderScale::ALL
+                .get(current + 1)
+                .copied()
+                .map(|scale| (scale, self.shadow))
+                .or_else(|| {
+                    ScreenShadowMap::ALL
+                        .get(shadow + 1)
+                        .copied()
+                        .map(|shadow| (self.applied, shadow))
+                })
         } else if percentile < 9.5
             && self.samples.len() >= 30
             && span >= 1_800.0
             && freshness <= 100.0
             && complete
         {
-            current
+            shadow
                 .checked_sub(1)
-                .map(|index| ScreenRenderScale::ALL[index])
+                .map(|index| (self.applied, ScreenShadowMap::ALL[index]))
+                .or_else(|| {
+                    current
+                        .checked_sub(1)
+                        .map(|index| (ScreenRenderScale::ALL[index], self.shadow))
+                })
         } else {
             None
         };
-        if let Some(scale) = next {
+        if let Some((scale, shadow)) = next {
             self.reset_window(now_ms)?;
-            self.request(scale)
+            self.request(scale, shadow)
         } else {
             Ok(None)
         }
@@ -587,7 +666,8 @@ mod tests {
 
     #[test]
     fn manual_choice_and_success_failure_ack_are_distinct_from_applied_resources() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         let request = controller
             .select_manual(ScreenRenderScale::ThreeQuarters, 0.0)
             .unwrap()
@@ -596,7 +676,7 @@ mod tests {
         controller
             .invalidate(ScreenRenderInvalidation::Resize, 1.0)
             .unwrap();
-        controller.applied(request, 2.0).unwrap();
+        controller.applied(request, 2.0, None).unwrap();
         assert_eq!(
             controller.snapshot().applied,
             ScreenRenderScale::ThreeQuarters
@@ -605,7 +685,8 @@ mod tests {
         assert_eq!(
             controller.snapshot().selection,
             ScreenRenderSelection::Auto {
-                manual_scale: ScreenRenderScale::ThreeQuarters
+                manual_scale: ScreenRenderScale::ThreeQuarters,
+                manual_shadow: ScreenShadowMap::Full,
             }
         );
         let request = controller
@@ -626,7 +707,7 @@ mod tests {
             }
         );
         assert_eq!(
-            controller.applied(request, 6.0),
+            controller.applied(request, 6.0, None),
             Err(ScreenRenderAutoError::StaleRequest)
         );
         controller
@@ -637,7 +718,8 @@ mod tests {
 
     #[test]
     fn sparse_high_load_can_degrade_without_resetting_evidence_for_pending_or_gaps() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for index in 0..=10 {
@@ -656,11 +738,12 @@ mod tests {
         assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
         assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
         let applied_ms = controller.now_ms + 1.0;
-        controller.applied(request, applied_ms).unwrap();
+        controller.applied(request, applied_ms, None).unwrap();
         assert!(matches!(
             controller.snapshot().selection,
             ScreenRenderSelection::Auto {
-                manual_scale: ScreenRenderScale::Full
+                manual_scale: ScreenRenderScale::Full,
+                manual_shadow: ScreenShadowMap::Full,
             }
         ));
         for index in 0..=13 {
@@ -672,7 +755,8 @@ mod tests {
 
     #[test]
     fn initial_window_starts_at_the_first_valid_gpu_source_after_preparation() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         assert_eq!(controller.pending(10_000.0).unwrap(), None);
         for frame in 0..=19 {
@@ -694,7 +778,7 @@ mod tests {
         let request = controller.pending(12_250.0).unwrap().unwrap();
         assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
         assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
-        controller.applied(request, 12_251.0).unwrap();
+        controller.applied(request, 12_251.0, None).unwrap();
         assert_eq!(
             controller.snapshot().applied,
             ScreenRenderScale::ThreeQuarters
@@ -703,7 +787,8 @@ mod tests {
 
     #[test]
     fn ready_is_derived_from_a_complete_valid_window_and_old_epochs_cannot_start_it() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let obsolete = sample(&controller, 0, 1.0, 11.0);
         controller
@@ -733,7 +818,8 @@ mod tests {
 
     #[test]
     fn missing_low_load_never_increases_quality() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         for index in 0..=100 {
             let now_ms = f64::from(index) * 20.0;
@@ -749,7 +835,8 @@ mod tests {
 
     #[test]
     fn high_rate_valid_delivery_preserves_the_full_observation_span_and_coverage() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for frame in 0..=2_000 {
@@ -766,7 +853,8 @@ mod tests {
 
     #[test]
     fn interval_maximum_prevents_sampling_from_discarding_high_gpu_work() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let mut request = None;
         for frame in 0..=2_000 {
@@ -784,7 +872,8 @@ mod tests {
     #[test]
     fn production_auto_decision_reserves_ack_capacity_or_stops_with_a_visible_cause() {
         for remaining in [1, 2] {
-            let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+            let mut controller =
+                ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
             controller.select_auto(true, 0.0).unwrap();
             controller.epoch = u32::MAX - remaining;
             let mut decision = Ok(None);
@@ -800,7 +889,9 @@ mod tests {
             if remaining == 2 {
                 let request = decision.unwrap().unwrap();
                 assert_eq!(controller.epoch(), u32::MAX - 1);
-                controller.applied(request, decision_time + 1.0).unwrap();
+                controller
+                    .applied(request, decision_time + 1.0, None)
+                    .unwrap();
                 assert_eq!(
                     controller.snapshot().applied,
                     ScreenRenderScale::ThreeQuarters
@@ -833,7 +924,8 @@ mod tests {
 
     #[test]
     fn pending_acknowledgment_retains_epoch_capacity_across_invalidation() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         let request = controller
             .select_manual(ScreenRenderScale::Half, 0.0)
             .unwrap()
@@ -848,7 +940,7 @@ mod tests {
         assert_eq!(controller.snapshot(), before);
         assert_eq!(controller.requested(), Some(request));
         assert_eq!(controller.epoch(), u32::MAX - 1);
-        controller.applied(request, 3.0).unwrap();
+        controller.applied(request, 3.0, None).unwrap();
         assert_eq!(controller.epoch(), u32::MAX);
         assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
         assert!(!controller.measurement_enabled());
@@ -859,7 +951,8 @@ mod tests {
 
     #[test]
     fn new_requests_reserve_ack_capacity_and_final_failure_retains_original_cause() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.epoch = u32::MAX - 1;
         let before = controller.snapshot();
         assert_eq!(
@@ -870,7 +963,7 @@ mod tests {
         assert_eq!(controller.requested(), None);
         assert_eq!(
             controller
-                .request(ScreenRenderScale::Half)
+                .request(ScreenRenderScale::Half, ScreenShadowMap::Full)
                 .unwrap()
                 .unwrap()
                 .scale,
@@ -889,14 +982,15 @@ mod tests {
             }
         );
         assert_eq!(
-            controller.request(ScreenRenderScale::Half),
+            controller.request(ScreenRenderScale::Half, ScreenShadowMap::Full),
             Err(ScreenRenderAutoError::EpochExhausted)
         );
     }
 
     #[test]
     fn quantized_source_time_accepts_distinct_frames_without_fabricating_duplicates() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         for frame in [1, 2, 2] {
             controller
@@ -915,7 +1009,8 @@ mod tests {
 
     #[test]
     fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let old = sample(&controller, 0, 0.0, 1.0);
         controller
@@ -959,14 +1054,15 @@ mod tests {
 
     #[test]
     fn enabling_auto_preserves_a_manual_resource_application_already_in_progress() {
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         let request = controller
             .select_manual(ScreenRenderScale::ThreeQuarters, 0.0)
             .unwrap()
             .unwrap();
         controller.select_auto(true, 1.0).unwrap();
         assert_eq!(controller.requested(), Some(request));
-        controller.applied(request, 2.0).unwrap();
+        controller.applied(request, 2.0, None).unwrap();
         assert_eq!(
             controller.snapshot().applied,
             ScreenRenderScale::ThreeQuarters
@@ -974,7 +1070,8 @@ mod tests {
         assert!(matches!(
             controller.snapshot().selection,
             ScreenRenderSelection::Auto {
-                manual_scale: ScreenRenderScale::ThreeQuarters
+                manual_scale: ScreenRenderScale::ThreeQuarters,
+                manual_shadow: ScreenShadowMap::Full,
             }
         ));
     }
@@ -982,7 +1079,8 @@ mod tests {
     #[test]
     fn received_frame_coverage_allows_small_loss_and_rejects_insufficient_delivery() {
         for (drop_every, can_upgrade) in [(0, true), (10, true), (9, false), (5, false)] {
-            let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Half);
+            let mut controller =
+                ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Full);
             controller.select_auto(true, 0.0).unwrap();
             let mut request = None;
             for frame in 0..=120 {
@@ -1009,7 +1107,7 @@ mod tests {
             (ScreenRenderScale::Half, 9.5, false),
             (ScreenRenderScale::Half, 9.499_999, true),
         ] {
-            let mut controller = ScreenRenderAutoController::new(start);
+            let mut controller = ScreenRenderAutoController::new(start, ScreenShadowMap::Full);
             controller.select_auto(true, 0.0).unwrap();
             let mut request = None;
             for frame in 0..=120 {
@@ -1023,7 +1121,8 @@ mod tests {
             }
             assert_eq!(request.is_some(), change);
         }
-        let mut controller = ScreenRenderAutoController::new(ScreenRenderScale::Full);
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
         controller.select_auto(true, 0.0).unwrap();
         let mut changes = Vec::new();
         for frame in 0..=400 {
@@ -1034,13 +1133,15 @@ mod tests {
                 .unwrap()
             {
                 changes.push((now_ms, request.scale));
-                controller.applied(request, now_ms).unwrap();
+                controller.applied(request, now_ms, None).unwrap();
             }
         }
         assert_eq!(
             changes.iter().map(|change| change.1).collect::<Vec<_>>(),
             vec![
                 ScreenRenderScale::ThreeQuarters,
+                ScreenRenderScale::Half,
+                ScreenRenderScale::Half,
                 ScreenRenderScale::Half,
                 ScreenRenderScale::ThreeQuarters,
                 ScreenRenderScale::Full
@@ -1051,5 +1152,130 @@ mod tests {
                 .windows(2)
                 .all(|pair| pair[1].0 - pair[0].0 >= COOLDOWN_MS)
         );
+    }
+
+    #[test]
+    fn shadow_reduction_follows_minimum_resolution_and_recovers_in_reverse_order() {
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Full, ScreenShadowMap::Full);
+        controller.select_auto(true, 0.0).unwrap();
+        let mut changes = Vec::new();
+        for frame in 0..=800 {
+            let now = f64::from(frame) * 50.0;
+            let work = if now < 15_000.0 { 20.0 } else { 4.0 };
+            if let Some(request) = controller
+                .observe(sample(&controller, frame, now, work), now)
+                .unwrap()
+            {
+                changes.push((now, request.scale, request.shadow));
+                controller.applied(request, now, None).unwrap();
+            }
+        }
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| (change.1, change.2))
+                .collect::<Vec<_>>(),
+            vec![
+                (ScreenRenderScale::ThreeQuarters, ScreenShadowMap::Full),
+                (ScreenRenderScale::Half, ScreenShadowMap::Full),
+                (ScreenRenderScale::Half, ScreenShadowMap::Half),
+                (ScreenRenderScale::Half, ScreenShadowMap::Quarter),
+                (ScreenRenderScale::Half, ScreenShadowMap::Half),
+                (ScreenRenderScale::Half, ScreenShadowMap::Full),
+                (ScreenRenderScale::ThreeQuarters, ScreenShadowMap::Full),
+                (ScreenRenderScale::Full, ScreenShadowMap::Full),
+            ]
+        );
+        assert!(
+            changes
+                .windows(2)
+                .all(|pair| pair[1].0 - pair[0].0 >= COOLDOWN_MS)
+        );
+    }
+
+    #[test]
+    fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::ThreeQuarters,
+            ScreenShadowMap::Half,
+        );
+        controller.select_auto(true, 0.0).unwrap();
+        for frame in 0..=120 {
+            let now = f64::from(frame) * 50.0;
+            if let Some(request) = controller
+                .observe(sample(&controller, frame, now, 20.0), now)
+                .unwrap()
+            {
+                controller.applied(request, now, None).unwrap();
+            }
+        }
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+        assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
+        let request = controller.select_auto(false, 6_001.0).unwrap().unwrap();
+        assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(request.shadow, ScreenShadowMap::Half);
+        assert_eq!(
+            controller.applied(
+                ScreenRenderResourceRequest {
+                    shadow: ScreenShadowMap::Full,
+                    ..request
+                },
+                6_002.0,
+                None,
+            ),
+            Err(ScreenRenderAutoError::StaleRequest)
+        );
+        assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
+        controller
+            .failed(request, "shadow allocation failed".to_owned(), 6_003.0)
+            .unwrap();
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+        assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
+        assert_eq!(
+            controller.snapshot().status,
+            ScreenRenderAutoStatus::Failed {
+                cause: "shadow allocation failed".to_owned(),
+            }
+        );
+        let retry = controller
+            .select_manual(ScreenRenderScale::ThreeQuarters, 6_004.0)
+            .unwrap()
+            .unwrap();
+        controller.applied(retry, 6_005.0, None).unwrap();
+        assert_eq!(
+            controller.snapshot().selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::ThreeQuarters,
+                shadow: ScreenShadowMap::Half,
+            }
+        );
+        assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Half);
+    }
+
+    #[test]
+    fn cleanup_failure_keeps_the_new_resources_and_the_original_cause() {
+        let mut controller =
+            ScreenRenderAutoController::new(ScreenRenderScale::Half, ScreenShadowMap::Half);
+        let request = controller
+            .select_manual(ScreenRenderScale::Full, 0.0)
+            .unwrap()
+            .unwrap();
+        controller
+            .applied(
+                request,
+                1.0,
+                Some("retired shadow map cleanup failed".to_owned()),
+            )
+            .unwrap();
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
+        assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Half);
+        assert_eq!(
+            controller.snapshot().status,
+            ScreenRenderAutoStatus::Failed {
+                cause: "retired shadow map cleanup failed".to_owned(),
+            }
+        );
+        assert!(!controller.measurement_enabled());
     }
 }

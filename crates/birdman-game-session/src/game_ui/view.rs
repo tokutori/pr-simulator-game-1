@@ -1278,16 +1278,19 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         ScreenRenderAutoStatus::CoverageLimited => "計測欠損あり。倍率上昇を保留する。".to_owned(),
         ScreenRenderAutoStatus::Unsupported { cause } => format!("GPU計測非対応: {cause}"),
         ScreenRenderAutoStatus::Interrupted => "中断後のGPU計測待ち".to_owned(),
-        ScreenRenderAutoStatus::Applying { requested } => format!("{}へ変更中", requested.label()),
-        ScreenRenderAutoStatus::Failed { cause } => format!("適用失敗: {cause}"),
+        ScreenRenderAutoStatus::Applying { requested, shadow } => {
+            format!("{}・shadow {}へ変更中", requested.label(), shadow.size())
+        }
+        ScreenRenderAutoStatus::Failed { cause } => format!("描画資源処理失敗: {cause}"),
     };
     menu.status(
         "presentation-render-scale-status",
-        "3D描画解像度",
+        "3D描画品質",
         &format!(
-            "{} · 適用済み{} · {status}。UI・画角・飛行物理・記録は維持する。",
+            "{} · 適用済み{}・shadow {} · {status}。UI・画角・飛行物理・記録は維持する。",
             if automatic { "Auto" } else { "Manual" },
-            render.applied.label()
+            render.applied.label(),
+            render.shadow.size(),
         ),
     );
     menu.push(
@@ -1303,9 +1306,11 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             },
             presentation: GameUiButtonPresentation::Choice {
                 group: "render-scale".to_owned(),
-                group_label: "3D描画解像度".to_owned(),
+                group_label: "3D描画品質".to_owned(),
                 selected: automatic,
-                description: "有効GPU計測に応じて3D解像度だけを調整する。".to_owned(),
+                description:
+                    "有効GPU計測で解像度を調整し、50%でも負荷が高い場合はshadowを段階調整する。"
+                        .to_owned(),
             },
         },
     );
@@ -1321,8 +1326,8 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 },
                 presentation: GameUiButtonPresentation::Choice {
                     group: "render-scale".to_owned(),
-                    group_label: "3D描画解像度".to_owned(),
-                    selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected } if selected == scale),
+                    group_label: "3D描画品質".to_owned(),
+                    selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected, .. } if selected == scale),
                     description: "各描画軸の倍率。低い値ほど描画負荷を抑える。".to_owned(),
                 },
             },

@@ -132,13 +132,25 @@ export interface ScreenRenderAutoSnapshot {
          * Retained user choice.
          */
         readonly scale: "100" | "75" | "50";
+        /**
+         * Retained manual shadow-map resolution.
+         */
+        readonly shadow: "full" | "half" | "quarter";
     } | {
         readonly kind: "auto";
         /**
          * Restored when Auto is disabled.
          */
         readonly manual_scale: "100" | "75" | "50";
+        /**
+         * Restored with the retained manual resolution.
+         */
+        readonly manual_shadow: "full" | "half" | "quarter";
     };
+    /**
+     * Last successfully applied directional shadow-map resolution.
+     */
+    readonly shadow: "full" | "half" | "quarter";
     /**
      * Stable measurement or resource state.
      */
@@ -164,6 +176,10 @@ export interface ScreenRenderAutoSnapshot {
          * Requested resolution, distinct from the applied value.
          */
         readonly requested: "100" | "75" | "50";
+        /**
+         * Requested shadow map, distinct from the applied value.
+         */
+        readonly shadow: "full" | "half" | "quarter";
     } | {
         /**
          * Original adapter failure.

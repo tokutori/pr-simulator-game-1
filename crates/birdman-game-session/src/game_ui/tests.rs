@@ -2316,7 +2316,7 @@ fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings()
 #[test]
 fn screen_render_auto_projects_selection_applied_status_and_admission() {
     use crate::screen_render_auto::{
-        ScreenRenderAutoSnapshot, ScreenRenderAutoStatus, ScreenRenderSelection,
+        ScreenRenderAutoSnapshot, ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
     };
     use crate::screen_render_scale::ScreenRenderScale;
     let mut session = GameSession::new();
@@ -2326,8 +2326,10 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
     platform.screen_render_scale = ScreenRenderAutoSnapshot {
         selection: ScreenRenderSelection::Auto {
             manual_scale: ScreenRenderScale::Full,
+            manual_shadow: ScreenShadowMap::Full,
         },
         applied: ScreenRenderScale::ThreeQuarters,
+        shadow: ScreenShadowMap::Full,
         status: ScreenRenderAutoStatus::Unsupported {
             cause: "missing GPU timer".to_owned(),
         },

@@ -4143,6 +4143,10 @@
           "$ref": "#/$defs/ScreenRenderSelection",
           "description": "User choice, independent of the current automatic resolution."
         },
+        "shadow": {
+          "$ref": "#/$defs/ScreenShadowMap",
+          "description": "Last successfully applied directional shadow-map resolution."
+        },
         "status": {
           "$ref": "#/$defs/ScreenRenderAutoStatus",
           "description": "Stable measurement or resource state."
@@ -4151,6 +4155,7 @@
       "required": [
         "selection",
         "applied",
+        "shadow",
         "status"
       ],
       "type": "object"
@@ -4258,11 +4263,16 @@
             "requested": {
               "$ref": "#/$defs/ScreenRenderScale",
               "description": "Requested resolution, distinct from the applied value."
+            },
+            "shadow": {
+              "$ref": "#/$defs/ScreenShadowMap",
+              "description": "Requested shadow map, distinct from the applied value."
             }
           },
           "required": [
             "kind",
-            "requested"
+            "requested",
+            "shadow"
           ],
           "type": "object"
         },
@@ -4321,11 +4331,16 @@
             "scale": {
               "$ref": "#/$defs/ScreenRenderScale",
               "description": "Retained user choice."
+            },
+            "shadow": {
+              "$ref": "#/$defs/ScreenShadowMap",
+              "description": "Retained manual shadow-map resolution."
             }
           },
           "required": [
             "kind",
-            "scale"
+            "scale",
+            "shadow"
           ],
           "type": "object"
         },
@@ -4340,13 +4355,38 @@
             "manual_scale": {
               "$ref": "#/$defs/ScreenRenderScale",
               "description": "Restored when Auto is disabled."
+            },
+            "manual_shadow": {
+              "$ref": "#/$defs/ScreenShadowMap",
+              "description": "Restored with the retained manual resolution."
             }
           },
           "required": [
             "kind",
-            "manual_scale"
+            "manual_scale",
+            "manual_shadow"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "ScreenShadowMap": {
+      "description": "Directional shadow-map resolutions supported by both Screen adapters.",
+      "oneOf": [
+        {
+          "const": "full",
+          "description": "Existing manual shadow quality.",
+          "type": "string"
+        },
+        {
+          "const": "half",
+          "description": "Half the manual map dimensions.",
+          "type": "string"
+        },
+        {
+          "const": "quarter",
+          "description": "Minimum retained shadow-map dimensions.",
+          "type": "string"
         }
       ]
     },

@@ -1,5 +1,6 @@
 use birdman_game_session::screen_render_auto::{
     ScreenGpuSample, ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderInvalidation,
+    ScreenRenderResourceRequest, ScreenShadowMap,
 };
 use birdman_game_session::screen_render_scale::ScreenRenderScale;
 use wasm_bindgen::{JsValue, prelude::*};
@@ -16,7 +17,10 @@ impl ScreenRenderAutoBridge {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            controller: ScreenRenderAutoController::new(ScreenRenderScale::default()),
+            controller: ScreenRenderAutoController::new(
+                ScreenRenderScale::default(),
+                ScreenShadowMap::Full,
+            ),
         }
     }
 
@@ -41,6 +45,13 @@ impl ScreenRenderAutoBridge {
         self.controller
             .requested()
             .map_or(0, |request| request.scale.percent())
+    }
+
+    /// Returns zero when no shadow resource application is pending.
+    pub fn requested_shadow_map_size(&self) -> u32 {
+        self.controller
+            .requested()
+            .map_or(0, |request| request.shadow.size())
     }
 
     /// Returns zero when no resource request identity exists.
@@ -120,15 +131,19 @@ impl ScreenRenderAutoBridge {
         &mut self,
         request_epoch: u32,
         scale_percent: u32,
+        shadow_map_size: u32,
         now_ms: f64,
+        cleanup_failure: Option<String>,
     ) -> Result<(), JsValue> {
         self.controller
             .applied(
-                birdman_game_session::screen_render_auto::ScreenRenderScaleRequest {
+                ScreenRenderResourceRequest {
                     epoch: request_epoch,
                     scale: scale(scale_percent)?,
+                    shadow: shadow(shadow_map_size)?,
                 },
                 now_ms,
+                cleanup_failure,
             )
             .map_err(error)
     }
@@ -138,14 +153,16 @@ impl ScreenRenderAutoBridge {
         &mut self,
         request_epoch: u32,
         scale_percent: u32,
+        shadow_map_size: u32,
         cause: &str,
         now_ms: f64,
     ) -> Result<(), JsValue> {
         self.controller
             .failed(
-                birdman_game_session::screen_render_auto::ScreenRenderScaleRequest {
+                ScreenRenderResourceRequest {
                     epoch: request_epoch,
                     scale: scale(scale_percent)?,
+                    shadow: shadow(shadow_map_size)?,
                 },
                 cause.to_owned(),
                 now_ms,
@@ -165,6 +182,13 @@ fn scale(percent: u32) -> Result<ScreenRenderScale, JsValue> {
         .into_iter()
         .find(|scale| scale.percent() == percent)
         .ok_or_else(|| JsValue::from_str("unsupported Screen rendering scale"))
+}
+
+fn shadow(size: u32) -> Result<ScreenShadowMap, JsValue> {
+    ScreenShadowMap::ALL
+        .into_iter()
+        .find(|shadow| shadow.size() == size)
+        .ok_or_else(|| JsValue::from_str("unsupported Screen shadow map size"))
 }
 
 fn error(error: ScreenRenderAutoError) -> JsValue {
