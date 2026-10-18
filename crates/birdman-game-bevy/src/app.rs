@@ -167,7 +167,11 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             MaterialPlugin::<terrain_haze::TerrainMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             screen_render::timing::ScreenTimingPlugin {
-                full_diagnostics: water_verification.is_some(),
+                mode: if water_verification.is_some() {
+                    screen_render::timing::TimingMode::Full
+                } else {
+                    screen_render::timing::TimingMode::Automatic
+                },
             },
         ))
         .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
