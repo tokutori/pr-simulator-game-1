@@ -113,11 +113,18 @@ describe("flight log download state and common presentation", () => {
           ...(phaseCode === 7 ? [{ id: "result-navigation", label: "", layout: "row" }] : [
             ...(!analysisFlow ? [{ id: "replay-status", label: "", layout: "column" }] : []),
             ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
-            { id: "replay-actions", label: "", layout: "row" }, { id: "replay-navigation", label: "", layout: "row" }
+            { id: "replay-actions", label: "", layout: "row" }, { id: "replay-technical", label: "", layout: "column" },
+            { id: "replay-navigation", label: "", layout: "row" }
           ]),
           { id: "flight-log-actions", label: "飛行ログ", layout: "row" }, { id: "flight-log-notice", label: "", layout: "column" }
         ]);
         expect(exports.map((control) => control.section)).toEqual(["flight-log-actions", "flight-log-actions", "flight-log-notice"]);
+        if (phaseCode === 9) {
+          expect(panel.controls.find((control) => control.id === "game-replay-technical")).toMatchObject({
+            kind: "button", section: "replay-technical", presentation: { kind: "disclosure", expanded: false }
+          });
+          expect(panel.controls.find((control) => control.id === "game-replay-technical-content")).toBeUndefined();
+        }
         expect(panel.controls.map((control) => control.id)).toEqual(panel.sections.flatMap((section) =>
           panel.controls.filter((control) => control.section === section.id).map((control) => control.id)));
         expect([panel.size.width, panel.size.height].every(Number.isFinite)).toBe(true);
