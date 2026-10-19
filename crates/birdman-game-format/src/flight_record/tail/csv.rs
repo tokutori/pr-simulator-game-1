@@ -51,6 +51,17 @@ const COLUMNS: &[&str] = &[
     "hud_warnings",
     "aircraft_configuration_id_json",
     "controller_profile_id_json",
+    "personal_best_comparison_status",
+    "personal_best_comparison_version",
+    "build_cargo_lock_sha256",
+    "build_rustc_version",
+    "build_target",
+    "build_profile",
+    "build_declared_source_commit",
+    "build_scenario_sha256",
+    "build_aircraft_sha256",
+    "build_environment_sha256",
+    "build_physics_sha256",
     "tick_index",
     "fraction",
     "time_s",
@@ -172,6 +183,36 @@ pub(super) fn encode(
         json(&document.control_identity.aircraft_configuration_id)?,
         json(&document.control_identity.controller_profile_id)?,
     ]);
+    metadata.push(
+        match &document.identity_metadata {
+            crate::FlightRecordIdentityMetadata::Unspecified => "unspecified",
+            crate::FlightRecordIdentityMetadata::Resolved(_) => "resolved",
+            crate::FlightRecordIdentityMetadata::Unrecognized(_) => "unrecognized",
+        }
+        .to_string(),
+    );
+    metadata.push(
+        document
+            .identity_metadata
+            .comparison_version()
+            .map_or_else(String::new, |version| version.to_string()),
+    );
+    if let Some(identity) = document.identity_metadata.resolved() {
+        let build = &identity.build;
+        metadata.extend([
+            digest_hex(build.cargo_lock_sha256),
+            build.rustc_version.clone().unwrap_or_default(),
+            build.target.clone().unwrap_or_default(),
+            build.profile.clone().unwrap_or_default(),
+            build.declared_source_commit.clone().unwrap_or_default(),
+            digest_hex(build.source_fingerprints.scenario),
+            digest_hex(build.source_fingerprints.aircraft),
+            digest_hex(build.source_fingerprints.environment),
+            digest_hex(build.source_fingerprints.physics_build),
+        ]);
+    } else {
+        metadata.extend(core::iter::repeat_n(String::new(), 9));
+    }
     let finalization = &document.finalization;
     let mut terminal = vec![
         enum_name(&finalization.reason)?,
@@ -291,6 +332,10 @@ pub(super) fn encode(
 
 fn json(value: &impl serde::Serialize) -> Result<String, FlightRecordFormatError> {
     serde_json::to_string(value).map_err(|_| FlightRecordFormatError::EncodingFailed)
+}
+
+fn digest_hex(digest: [u8; 32]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn time_s(tick_index: u64, fraction: f64, physics_hz: u32) -> f64 {

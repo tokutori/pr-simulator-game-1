@@ -486,6 +486,8 @@ pub struct GameUiContext<'view, 'session> {
     pub identity: Option<SessionScenarioIdentity>,
     /// Existing authoritative record selected for this view.
     pub record: Option<&'view FlightRecord>,
+    /// Saved comparison/provenance metadata when an external archive is displayed.
+    pub archived_identity: Option<&'view birdman_game_format::FlightRecordIdentityMetadata>,
     /// Registered environment briefing readout derived in Rust.
     pub environment_readout: &'view str,
     /// Actual adapter observations and capabilities.

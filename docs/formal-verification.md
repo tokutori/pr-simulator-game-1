@@ -128,7 +128,7 @@ private fieldはghost-onlyのclosed viewを通して仕様から参照し、mask
 [公式exec属性](https://verus-lang.github.io/verus/guide/exec_attr.html)、[dual spec](https://verus-lang.github.io/verus/guide/exec_to_spec.html)に従う。
 
 既存WASM build fingerprintはcoreのRust sourceを再帰収集するため、抽出moduleも対象になる。
-source配置の変更によるfingerprint差を固定・無視せず、保存済みrecordには元metadataを保持する。
+source配置や証明注釈の変更もbuild来歴のfingerprint差として保持する。Personal Best比較方式v2は意味versionと保存済み解決条件を使用するため、意味が変わらない証明変更では比較群を分割しない。意味versionの更新責務は`docs/flight-record.md`に従う。
 
 ## 証明する性質と通常回帰
 

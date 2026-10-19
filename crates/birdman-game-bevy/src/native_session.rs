@@ -162,6 +162,10 @@ impl NativeSession {
             preset: self.game.display_preset(),
             identity: self.ui_identity(),
             record: self.game.core_session().playback_record(),
+            archived_identity: self
+                .game
+                .archive()
+                .map(|archive| archive.identity_metadata()),
             environment_readout: environment,
             platform,
         }

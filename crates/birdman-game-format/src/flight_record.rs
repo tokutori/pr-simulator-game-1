@@ -241,6 +241,44 @@ impl From<DifficultySettings> for FlightRecordDifficultyDocument {
     }
 }
 
+impl FlightRecordDifficultyDocument {
+    /// Projects the saved axes and cue values without selecting current preset defaults.
+    pub fn resolved_settings(self) -> DifficultySettings {
+        let information = match self.information {
+            FlightRecordInformationDocument::Full => InformationLevel::Full,
+            FlightRecordInformationDocument::Standard => InformationLevel::Standard,
+            FlightRecordInformationDocument::Minimal => InformationLevel::Minimal,
+            FlightRecordInformationDocument::Realistic => InformationLevel::Realistic,
+            FlightRecordInformationDocument::Custom => InformationLevel::Custom,
+        };
+        let assistance = match self.assistance {
+            FlightRecordAssistanceDocument::Strong => AssistanceLevel::Strong,
+            FlightRecordAssistanceDocument::Assisted => AssistanceLevel::Assisted,
+            FlightRecordAssistanceDocument::Light => AssistanceLevel::Light,
+            FlightRecordAssistanceDocument::Manual => AssistanceLevel::Manual,
+        };
+        let weather = match self.weather {
+            FlightRecordWeatherDocument::Calm => WeatherClass::Calm,
+            FlightRecordWeatherDocument::Mild => WeatherClass::Mild,
+            FlightRecordWeatherDocument::Typical => WeatherClass::Typical,
+            FlightRecordWeatherDocument::Challenging => WeatherClass::Challenging,
+            FlightRecordWeatherDocument::NearLimit => WeatherClass::NearLimit,
+        };
+        let mut settings = DifficultySettings::custom(information, assistance, weather);
+        if let Some(profile) = self.hud_profile {
+            settings = settings.with_hud_profile(HudProfile::new(
+                profile.telemetry,
+                profile.attitude,
+                profile.wind,
+                profile.flight_path,
+                profile.angle_of_attack,
+                profile.warnings,
+            ));
+        }
+        settings
+    }
+}
+
 impl From<DifficultyPreset> for FlightRecordPresetDocument {
     fn from(value: DifficultyPreset) -> Self {
         match value {

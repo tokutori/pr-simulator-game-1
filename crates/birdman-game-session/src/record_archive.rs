@@ -2,8 +2,8 @@
 
 use birdman_game_core::{ControlMode, CourseAxis, GameSession};
 use birdman_game_format::{
-    AssistanceLevel, FlightRecordFormatError, PersonalBestContentHashes, TailFlightRecordDocument,
-    TailPersonalBestConfiguration, canonical_tail_personal_best_key,
+    AssistanceLevel, FlightRecordBuildProvenance, FlightRecordFormatError,
+    FlightRecordSourceFingerprints, TailFlightRecordDocument, TailPersonalBestConfiguration,
 };
 
 use crate::application::ApplicationSession;
@@ -15,25 +15,35 @@ mod fingerprints {
 /// SHA-256 of the existing bundled environment bytes.
 pub const ENVIRONMENT_V6_SHA256: &str = env!("BPG_ENVIRONMENT_V6_SHA256");
 
-/// Returns the same root-relative source identities for every platform build.
-pub const fn personal_best_content_hashes() -> PersonalBestContentHashes {
-    PersonalBestContentHashes {
-        scenario: fingerprints::SCENARIO_SOURCE_FINGERPRINT,
-        aircraft: fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
-        environment: fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
-        physics_build: fingerprints::PHYSICS_BUILD_FINGERPRINT,
+/// Exact existing environment source fingerprint, independent of build-string allocation.
+pub const ENVIRONMENT_SOURCE_FINGERPRINT: [u8; 32] = fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT;
+
+/// Returns exact build observations without granting them comparison authority.
+pub fn record_build_provenance() -> FlightRecordBuildProvenance {
+    FlightRecordBuildProvenance {
+        source_fingerprints: FlightRecordSourceFingerprints {
+            scenario: fingerprints::SCENARIO_SOURCE_FINGERPRINT,
+            aircraft: fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
+            environment: fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
+            physics_build: fingerprints::PHYSICS_BUILD_FINGERPRINT,
+        },
+        cargo_lock_sha256: fingerprints::CARGO_LOCK_SHA256,
+        rustc_version: fingerprints::RUSTC_VERSION.map(str::to_owned),
+        target: fingerprints::TARGET.map(str::to_owned),
+        profile: fingerprints::PROFILE.map(str::to_owned),
+        declared_source_commit: fingerprints::DECLARED_SOURCE_COMMIT.map(str::to_owned),
     }
 }
 
 /// Sealed configuration and source identities associated with the retained record.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RecordExportMetadata<'identity> {
     /// Exact scenario, settings and controller.
     pub configuration: TailPersonalBestConfiguration<'identity>,
     /// Sealed distance-scoring direction.
     pub course_axis: CourseAxis,
-    /// Build-time content identities, independent of presentation backend.
-    pub content_hashes: PersonalBestContentHashes,
+    /// Build observations, saved independently of comparison compatibility.
+    pub build_provenance: FlightRecordBuildProvenance,
 }
 
 /// Classified failures before a canonical document can be exported.
@@ -71,15 +81,12 @@ pub fn export_record_document(
         configuration.identity.clone(),
     )
     .map_err(RecordExportError::Format)?;
-    let key = canonical_tail_personal_best_key(
-        &document,
-        configuration,
-        metadata.course_axis,
-        metadata.content_hashes,
-    )
-    .map_err(RecordExportError::Format)?;
     document
-        .with_personal_best_key(key)
+        .with_personal_best_configuration(
+            configuration,
+            metadata.course_axis,
+            metadata.build_provenance,
+        )
         .map_err(RecordExportError::Format)
 }
 
@@ -102,7 +109,7 @@ impl ApplicationSession {
                     controller_profile: prepared.controller_profile,
                 },
                 course_axis: prepared.course_axis,
-                content_hashes: personal_best_content_hashes(),
+                build_provenance: record_build_provenance(),
             },
         )
     }
@@ -175,7 +182,7 @@ mod tests {
                     controller_profile: prepared.controller_profile,
                 },
                 course_axis: prepared.course_axis,
-                content_hashes: personal_best_content_hashes(),
+                build_provenance: record_build_provenance(),
             },
         )
         .unwrap();

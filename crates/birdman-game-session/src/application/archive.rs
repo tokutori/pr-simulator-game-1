@@ -1,9 +1,8 @@
 use birdman_game_core::{FlightRecord, GameSessionError};
 use birdman_game_format::{
-    AssistanceLevel, DifficultyPreset, DifficultySettings, FlightRecordAssistanceDocument,
-    FlightRecordDifficultyDocument, FlightRecordFormatError, FlightRecordInformationDocument,
-    FlightRecordPresetDocument, FlightRecordTailIdentityDocument, FlightRecordWeatherDocument,
-    HudProfile, InformationLevel, TailFlightRecordDocument, WeatherClass,
+    DifficultyPreset, DifficultySettings, FlightRecordDifficultyDocument, FlightRecordFormatError,
+    FlightRecordIdentityMetadata, FlightRecordPresetDocument, FlightRecordTailIdentityDocument,
+    TailFlightRecordDocument,
 };
 
 /// Classified failures before an external record can replace the current view.
@@ -19,6 +18,7 @@ pub enum ArchiveError {
 pub struct ArchiveMetadata {
     difficulty: FlightRecordDifficultyDocument,
     control_identity: FlightRecordTailIdentityDocument,
+    identity_metadata: FlightRecordIdentityMetadata,
     original_json: String,
 }
 
@@ -31,6 +31,7 @@ impl ArchiveMetadata {
             Self {
                 difficulty: document.header.difficulty,
                 control_identity: document.control_identity,
+                identity_metadata: document.identity_metadata,
                 original_json: json.to_owned(),
             },
         ))
@@ -44,6 +45,11 @@ impl ArchiveMetadata {
     /// Borrows the saved model/controller names without requiring reintegration support.
     pub fn control_identity(&self) -> &FlightRecordTailIdentityDocument {
         &self.control_identity
+    }
+
+    /// Borrows saved comparison metadata without replacing missing values with current defaults.
+    pub fn identity_metadata(&self) -> &FlightRecordIdentityMetadata {
+        &self.identity_metadata
     }
 
     /// Borrows the imported bytes as text for an exact JSON re-export.
@@ -63,38 +69,6 @@ impl ArchiveMetadata {
     }
 
     pub(super) fn settings(&self) -> DifficultySettings {
-        let difficulty = self.difficulty;
-        let information = match difficulty.information {
-            FlightRecordInformationDocument::Full => InformationLevel::Full,
-            FlightRecordInformationDocument::Standard => InformationLevel::Standard,
-            FlightRecordInformationDocument::Minimal => InformationLevel::Minimal,
-            FlightRecordInformationDocument::Realistic => InformationLevel::Realistic,
-            FlightRecordInformationDocument::Custom => InformationLevel::Custom,
-        };
-        let assistance = match difficulty.assistance {
-            FlightRecordAssistanceDocument::Strong => AssistanceLevel::Strong,
-            FlightRecordAssistanceDocument::Assisted => AssistanceLevel::Assisted,
-            FlightRecordAssistanceDocument::Light => AssistanceLevel::Light,
-            FlightRecordAssistanceDocument::Manual => AssistanceLevel::Manual,
-        };
-        let weather = match difficulty.weather {
-            FlightRecordWeatherDocument::Calm => WeatherClass::Calm,
-            FlightRecordWeatherDocument::Mild => WeatherClass::Mild,
-            FlightRecordWeatherDocument::Typical => WeatherClass::Typical,
-            FlightRecordWeatherDocument::Challenging => WeatherClass::Challenging,
-            FlightRecordWeatherDocument::NearLimit => WeatherClass::NearLimit,
-        };
-        let mut settings = DifficultySettings::custom(information, assistance, weather);
-        if let Some(profile) = difficulty.hud_profile {
-            settings = settings.with_hud_profile(HudProfile::new(
-                profile.telemetry,
-                profile.attitude,
-                profile.wind,
-                profile.flight_path,
-                profile.angle_of_attack,
-                profile.warnings,
-            ));
-        }
-        settings
+        self.difficulty.resolved_settings()
     }
 }

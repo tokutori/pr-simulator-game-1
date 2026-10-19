@@ -7,7 +7,7 @@ use birdman_game_format::{
 use serde::Serialize;
 
 use crate::environment::bundled_environment;
-use birdman_game_session::record_archive::{ENVIRONMENT_V6_SHA256, personal_best_content_hashes};
+use birdman_game_session::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
 
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
@@ -212,7 +212,7 @@ fn preset_metadata(
     Ok(EnvironmentMetadata {
         name: environment.name.to_owned(),
         content_hash: ContentHash::SourceFingerprint {
-            sha256: personal_best_content_hashes().environment
+            sha256: ENVIRONMENT_SOURCE_FINGERPRINT
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),

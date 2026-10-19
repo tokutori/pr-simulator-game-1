@@ -10,8 +10,8 @@ use birdman_game_core::{
 };
 use birdman_game_format::{
     AssistanceLevel, DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
-    InformationLevel, PersonalBestContentHashes, TailFlightRecordDocument,
-    TailPersonalBestConfiguration, TailPersonalBestSelection, WeatherClass,
+    InformationLevel, TailFlightRecordDocument, TailPersonalBestConfiguration,
+    TailPersonalBestSelection, WeatherClass,
 };
 use birdman_game_session::record_archive::{
     RecordExportError, RecordExportMetadata, export_record_document,
@@ -69,12 +69,7 @@ fn metadata<'identity>(
             controller_profile: TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
         },
         course_axis: CourseAxis::try_new(1.0, 0.0).unwrap(),
-        content_hashes: PersonalBestContentHashes {
-            scenario: [1; 32],
-            aircraft: [2; 32],
-            environment: [3; 32],
-            physics_build: [4; 32],
-        },
+        build_provenance: birdman_game_session::record_archive::record_build_provenance(),
     }
 }
 
@@ -103,14 +98,29 @@ fn export_preserves_v6_saved_outputs_and_never_mutates_the_session() {
     assert_eq!(document.control_identity, identity);
     assert_eq!(document.header.seed, u64::MAX);
     assert_eq!(document.header.personal_best_key, None);
+    let expected = birdman_game_format::TailFlightRecordDocument::from_record(
+        session.flight_record().unwrap(),
+        metadata(&session, &identity).configuration.difficulty,
+        identity.clone(),
+    )
+    .unwrap();
+    assert_eq!(document.header, expected.header);
+    assert_eq!(document.samples, expected.samples);
+    assert_eq!(document.finalization, expected.finalization);
+    let saved_identity = document.identity_metadata.resolved().unwrap();
     assert_eq!(
-        document,
-        &birdman_game_format::TailFlightRecordDocument::from_record(
-            session.flight_record().unwrap(),
-            metadata(&session, &identity).configuration.difficulty,
-            identity.clone(),
+        saved_identity.build,
+        metadata(&session, &identity).build_provenance
+    );
+    assert_eq!(
+        saved_identity.conditions,
+        birdman_game_format::TailPersonalBestConditions::from_resolved(
+            ControlMode::Manual,
+            metadata(&session, &identity)
+                .configuration
+                .controller_profile,
+            CourseAxis::try_new(1.0, 0.0).unwrap(),
         )
-        .unwrap()
     );
     let restored = archive.to_finalized_core_record().unwrap();
     for (saved, original) in restored
@@ -320,13 +330,14 @@ fn saved_contact_candidate_uses_the_tail_key_and_tracks_sealed_profile_and_conte
         profile.header.personal_best_key
     );
     changed = metadata(&session, &identity);
-    changed.content_hashes.aircraft = [7; 32];
+    changed.build_provenance.source_fingerprints.aircraft = [7; 32];
     let content = TailFlightRecordDocument::decode_json(
         export_record_json(&session, changed).unwrap().as_bytes(),
     )
     .unwrap();
-    assert_ne!(
+    assert_eq!(
         first.header.personal_best_key,
         content.header.personal_best_key
     );
+    assert_ne!(first.identity_metadata, content.identity_metadata);
 }

@@ -307,6 +307,11 @@ pub struct TailPersonalBestSelectionBridge {
 
 #[wasm_bindgen]
 impl TailPersonalBestSelectionBridge {
+    /// Returns the sole comparison revision admitted by the shared selector.
+    pub fn comparison_version() -> u32 {
+        birdman_game_format::PERSONAL_BEST_COMPARISON_VERSION
+    }
+
     /// Validates the candidate v6 archive and retains only the core comparison state.
     #[wasm_bindgen(constructor)]
     pub fn new(candidate_json: &str) -> Result<Self, JsValue> {

@@ -3,14 +3,15 @@ use super::{
     FlightRecordHeaderDocument, FlightRecordInformationDocument, FlightRecordTelemetryDocument,
     MAX_FLIGHT_RECORD_JSON_BYTES,
 };
-use crate::DifficultySettings;
+use crate::personal_best::validated_tail_personal_best_candidate;
+use crate::{DifficultySettings, FlightRecordIdentityMetadata};
 use alloc::{string::String, vec::Vec};
 use birdman_game_core::{
     BodyVector, DistanceScore, FlightRecord, FlightRecordControls, FlightRecordFinalization,
     FlightRecordHeader, FlightRecordSample, FlightRecordTailInput, FlightState, FlightTelemetry,
-    NedPoint, NedVector, PersonalBestComparison, PersonalBestKey, SessionScenarioIdentity,
-    TailFlightTickInput, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailRateTarget, UnitQuaternion, compare_personal_best,
+    NedPoint, NedVector, PersonalBestComparison, SessionScenarioIdentity, TailFlightTickInput,
+    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailRateTarget, UnitQuaternion, compare_personal_best,
 };
 use serde::{Deserialize, Serialize};
 
@@ -231,6 +232,12 @@ pub struct TailFlightRecordDocument {
     pub header: FlightRecordHeaderDocument,
     /// Model/controller configuration names, independent of their version counters.
     pub control_identity: FlightRecordTailIdentityDocument,
+    /// Saved comparison method and build observations; absence preserves an existing archive.
+    #[serde(
+        default,
+        skip_serializing_if = "FlightRecordIdentityMetadata::is_unspecified"
+    )]
+    pub identity_metadata: FlightRecordIdentityMetadata,
     /// Chronological initial/successful-tick/optional terminal samples.
     pub samples: Vec<TailFlightRecordSampleDocument>,
     /// Immutable exact terminal time, disposition and score.
@@ -268,6 +275,7 @@ impl TailFlightRecordDocument {
                 personal_best_key: None,
             },
             control_identity: identity,
+            identity_metadata: FlightRecordIdentityMetadata::Unspecified,
             samples: record
                 .samples()
                 .iter()
@@ -296,6 +304,7 @@ impl TailFlightRecordDocument {
         if self.schema_version != TAIL_FLIGHT_RECORD_SCHEMA_VERSION {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
+        self.identity_metadata.validate()?;
         let valid_id = |value: &str| {
             !value.trim().is_empty() && value.len() <= 128 && !value.chars().any(char::is_control)
         };
@@ -385,17 +394,7 @@ impl TailFlightRecordDocument {
 
     /// Validates all archive semantics without reintegrating saved inputs.
     pub fn validate(&self) -> Result<(), FlightRecordFormatError> {
-        self.to_finalized_core_record().map(|_| ())
-    }
-
-    /// Attaches the separately derived canonical comparison key to eligible finalized data.
-    pub fn with_personal_best_key(
-        mut self,
-        key: Option<PersonalBestKey>,
-    ) -> Result<Self, FlightRecordFormatError> {
-        self.header.personal_best_key = key.map(PersonalBestKey::digest);
-        self.validate()?;
-        Ok(self)
+        validated_tail_personal_best_candidate(self).map(|_| ())
     }
 
     /// Returns a current-model complete contact score; this does not generate a canonical key.
@@ -467,30 +466,16 @@ pub fn compare_tail_personal_best_records(
     candidate: &TailFlightRecordDocument,
     existing: &TailFlightRecordDocument,
 ) -> Result<Option<PersonalBestComparison>, FlightRecordFormatError> {
-    candidate.to_finalized_core_record()?;
-    existing.to_finalized_core_record()?;
-    let (Some(candidate_score), Some(existing_score)) = (
-        candidate.personal_best_candidate_score()?,
-        existing.personal_best_candidate_score()?,
+    let (Some((candidate_key, candidate_score)), Some((existing_key, existing_score))) = (
+        validated_tail_personal_best_candidate(candidate)?,
+        validated_tail_personal_best_candidate(existing)?,
     ) else {
         return Ok(None);
     };
-    let (Some(candidate_key), Some(existing_key)) = (
-        candidate.header.personal_best_key,
-        existing.header.personal_best_key,
-    ) else {
-        return Ok(None);
-    };
-    if candidate.control_identity != existing.control_identity
-        || candidate.header.aircraft_model_version != existing.header.aircraft_model_version
-        || candidate.header.controller_profile_version != existing.header.controller_profile_version
-    {
-        return Ok(Some(PersonalBestComparison::DifferentConfiguration));
-    }
     Ok(Some(compare_personal_best(
-        PersonalBestKey::from_digest(candidate_key),
+        candidate_key,
         candidate_score,
-        PersonalBestKey::from_digest(existing_key),
+        existing_key,
         existing_score,
     )))
 }

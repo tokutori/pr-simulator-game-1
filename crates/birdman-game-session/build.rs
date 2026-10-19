@@ -1,8 +1,9 @@
-//! Generates shared root-relative source fingerprints for Personal Best identity.
+//! Generates shared root-relative source fingerprints and record build provenance.
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
@@ -112,6 +113,23 @@ fn main() {
         .iter()
         .map(|(name, bytes)| format!("pub const {name}: [u8; 32] = {bytes:?};\n"))
         .collect::<String>();
+    println!("cargo:rerun-if-env-changed=BPG_NATIVE_SOURCE_SHA");
+    println!("cargo:rerun-if-env-changed=RUSTC");
+    let lock_digest: [u8; 32] =
+        Sha256::digest(fs::read(workspace_dir.join("Cargo.lock")).unwrap()).into();
+    let rustc_version = env::var_os("RUSTC")
+        .and_then(|rustc| Command::new(rustc).arg("--version").output().ok())
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|version| version.trim().to_owned());
+    let declared_source = env::var("BPG_NATIVE_SOURCE_SHA")
+        .ok()
+        .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let output = format!(
+        "{output}pub const CARGO_LOCK_SHA256: [u8; 32] = {lock_digest:?};\npub const RUSTC_VERSION: Option<&str> = {rustc_version:?};\npub const TARGET: Option<&str> = {:?};\npub const PROFILE: Option<&str> = {:?};\npub const DECLARED_SOURCE_COMMIT: Option<&str> = {declared_source:?};\n",
+        env::var("TARGET").ok(),
+        env::var("PROFILE").ok(),
+    );
     let output_path =
         PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("personal_best_fingerprints.rs");
     fs::write(output_path, output).unwrap();

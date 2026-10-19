@@ -218,7 +218,7 @@ impl FlightLogExport {
             {
                 if let Some(existing) = selections
                     .iter_mut()
-                    .find(|existing| existing.matches_configuration(&document))
+                    .find(|existing| existing.key() == selection.key())
                 {
                     existing
                         .consider_existing(u64::from(id), &document)
@@ -545,7 +545,11 @@ pub(crate) mod tests {
         document.finalization.reason = FlightRecordEndReasonDocument::WaterContact;
         document.finalization.disposition = FlightRecordDispositionDocument::Complete;
         document.finalization.score_m = Some([score, 0.0, score]);
-        document.header.personal_best_key = Some([key; 32]);
+        document.header.seed = u64::from(key);
+        document.header.personal_best_key =
+            birdman_game_format::canonical_tail_personal_best_key(&document)
+                .unwrap()
+                .map(birdman_game_core::PersonalBestKey::digest);
         document.validate().unwrap();
         document
     }
@@ -620,9 +624,14 @@ pub(crate) mod tests {
             .control_identity
             .controller_profile_id
             .push_str("-other");
+        other_identity.header.personal_best_key =
+            birdman_game_format::canonical_tail_personal_best_key(&other_identity)
+                .unwrap()
+                .map(birdman_game_core::PersonalBestKey::digest);
         let other_identity_path = store_archive(&directory, "003", &other_identity);
         let mut keyless = keyed_archive(400.0, 1);
         keyless.header.personal_best_key = None;
+        keyless.identity_metadata = birdman_game_format::FlightRecordIdentityMetadata::Unspecified;
         let keyless_path = store_archive(&directory, "004", &keyless);
         let interrupted = directory.0.join("flight-log-005.json");
         fs::write(&interrupted, record_json()).unwrap();

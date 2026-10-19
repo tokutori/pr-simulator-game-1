@@ -364,12 +364,28 @@ fn personal_best_binding_validates_layout_identity_and_integer_ids() {
     assert_eq!(ineligible.key_hex(), "");
     let mut candidate = tail_document(&encoded);
     candidate.finalization.reason = FlightRecordEndReasonDocument::WaterContact;
-    candidate.header.personal_best_key = Some([9; 32]);
+    candidate.header.personal_best_key =
+        birdman_game_format::canonical_tail_personal_best_key(&candidate)
+            .unwrap()
+            .map(birdman_game_core::PersonalBestKey::digest);
     let candidate_json = String::from_utf8(candidate.encode_json().unwrap()).unwrap();
     let mut selection = TailPersonalBestSelectionBridge::new(&candidate_json).unwrap();
     assert!(selection.is_eligible());
     assert!(selection.candidate_is_best());
-    assert_eq!(selection.key_hex(), "09".repeat(32));
+    assert_eq!(
+        selection.key_hex(),
+        candidate
+            .header
+            .personal_best_key
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    assert_eq!(
+        TailPersonalBestSelectionBridge::comparison_version(),
+        birdman_game_format::PERSONAL_BEST_COMPARISON_VERSION
+    );
     let mut retired: Value = serde_json::from_str(&candidate_json).unwrap();
     retired["schema_version"] = json!(5);
     let retired = retired.to_string();
@@ -389,6 +405,10 @@ fn personal_best_binding_validates_layout_identity_and_integer_ids() {
         .control_identity
         .controller_profile_id
         .push_str("-other");
+    mismatch.header.personal_best_key =
+        birdman_game_format::canonical_tail_personal_best_key(&mismatch)
+            .unwrap()
+            .map(birdman_game_core::PersonalBestKey::digest);
     selection
         .consider_existing(
             2.0,

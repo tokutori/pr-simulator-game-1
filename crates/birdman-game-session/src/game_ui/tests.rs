@@ -47,6 +47,7 @@ pub(super) fn context<'view>(
     platform: &'view GameUiPlatformInput,
 ) -> GameUiContext<'view, 'static> {
     GameUiContext {
+        archived_identity: None,
         session,
         difficulty,
         preset: difficulty.preset_label(),
@@ -62,6 +63,39 @@ fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
         .flat_map(|panel| &panel.controls)
         .find(|control| control.id == id)
         .unwrap()
+}
+
+#[test]
+fn unknown_archive_metadata_has_bounded_unranked_technical_information() {
+    let mut session = finalized();
+    session.enter_replay().unwrap();
+    let platform = platform();
+    let state = GameUiState {
+        technical_open: true,
+        ..GameUiState::default()
+    };
+    for metadata in [
+        birdman_game_format::FlightRecordIdentityMetadata::Unspecified,
+        birdman_game_format::FlightRecordIdentityMetadata::Unrecognized(
+            serde_json::json!({"comparison_version": "長".repeat(150_000)}),
+        ),
+        birdman_game_format::FlightRecordIdentityMetadata::Unrecognized(
+            serde_json::json!({"comparison_version": u32::MAX, "extra": "長".repeat(150_000)}),
+        ),
+    ] {
+        let mut context = context(&session, difficulty(), &platform);
+        context.archived_identity = Some(&metadata);
+        let view = game_ui_view(&state, &context).unwrap();
+        let GameUiControlContent::Status { value, .. } =
+            &control(&view, "game-replay-technical-content").content
+        else {
+            panic!("technical status");
+        };
+        assert!(value.contains("未順位"));
+        assert!(value.contains("Build来歴: 不明"));
+        assert!(!value.contains("長"));
+        assert!(serde_json::to_vec(&view).unwrap().len() < 32_768);
+    }
 }
 
 fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {

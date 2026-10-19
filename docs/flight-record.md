@@ -132,7 +132,7 @@ scoreのDistanceはversioned score定義に従い、水平累積経路長・直�
 
 complete / interrupted / failed、終了理由、最後の有効tick/fraction、score、元failureを一度だけ確定する。
 失敗tickは保存せず、初期化失敗で有効sampleがない場合はrecord unavailableとする。
-Personal Bestは完全なWaterContact、score、現行score/physics version、有効canonical keyを要求する。
+Personal Bestは完全なWaterContact、score、現行score/physics version、比較方式v2の解決済み条件、有効canonical keyを要求する。
 TailPersonalBestSelectionとTailPersonalBestSelectionBridgeが同identity・同keyの比較を所有し、同点は最初の既存recordを保持する。
 未対応schemaは比較対象から除外する。schema 6の破損は元errorを保持して拒否する。
 WebのIndexedDB名とversion 4は維持し、record追加・metadata・Personal Best更新を同じtransactionで確定する。
@@ -141,11 +141,40 @@ WebのIndexedDB名とversion 4は維持し、record追加・metadata・Personal 
 既存record JSON・ID・保存日時は変更せず、旧record選択時には未対応schemaを通知する。
 失敗時はtransactionをrollbackし、Rust selectorを解放する。
 
-Canonical keyは明示identity、model/controller/scenario/physics/score version、
-difficulty、profile gain/slew/optional alpha guard、course、content hash、初期状態をSHA-256へ入力する。
+比較方式v2のcanonical keyは明示identity、catalog/model/controller/scenario/environment/physics/score version、
+seed・tick上限・Hz、解決済みInformation/HUD/Assistance/Weather、実ControlModeとShared authority、
+profile gain二軸・slew・optional alpha guard、course、初期状態をSHA-256へ入力する。
+初期状態にはdatum位置・速度、quaternion、角速度、wind、tail incidence、pilot位置・速度を含める。
 負zeroはpositive zeroへ正規化し、finite f64をbig-endian IEEE-754で符号化する。
-画質とpresentation backendはkeyへ含めず、保存keyを現在のbuildから再生成しない。
-共有sessionの`record_archive`は確定metadataからdocumentとkeyを生成し、共通build処理でroot-relativeなsource fingerprintを導出する。NativeとWASMは同じproducerを使用する。NativeはJSON保存先の全候補を既存selectorへ渡し、同点ではpath昇順の最初の保存記録を保持する。keyのない記録は未順位のまま閲覧・再出力でき、索引用DBや保存keyの補完は追加しない。
+画質・presentation backend・build来歴は比較条件から除外する。保存record自身の条件からkeyを再生成し、保存keyとの一致を検査する。現在のAssistance既定値からcontrollerを再解決しない。
+
+schema 6の任意`identity_metadata`は、比較方式、解決済みcontrol mode/profile/course、独立したbuild来歴を保持する。
+block欠落は未指定、未知方式または構造情報不足は未知raw、既知v2は型付き条件として排他的に扱う。
+未指定・未知の記録は未順位で閲覧でき、元keyとJSON原文を保持する。新旧方式の横断比較、key補完、既存JSONの書換えは行わない。
+既知v2の非有限値・値域違反・保存keyの不一致は拒否する。
+WebのPB indexはRust由来の比較方式versionを保存し、読取りでも未記録・未知versionを未順位へ分類する。既存entryのbackfillやDB version変更は行わない。
+
+build来歴には既存4source fingerprint、Cargo.lockのSHA-256、観測したrustc・target・profileを保存する。
+`BPG_NATIVE_SOURCE_SHA`が明示された場合だけsource commitの宣言値を保存する。この値はlocal作業ツリーのclean状態を保証しない。
+取得不能値は不明とし、保存されていない来歴へ現在のbuild情報を補完しない。
+共有Result/Replayの技術情報は比較方式と来歴を表示する。未知rawから表示する方式は`u32`だけに制限する。
+CSVは比較方式の状態・有界なversionと既知build来歴のscalar列を出力する。未知rawと完全な解決済みcontroller条件はJSON exportで保持し、各CSV sampleへ反復しない。
+
+意味versionの更新責務は次のとおりである。
+
+| 変更対象 | 更新するversion |
+| --- | --- |
+| 運動方程式、積分、接触算法、数値結果に影響する依存の変更 | physics model |
+| 質量、慣性、空力係数、機体の物理形状 | aircraft model |
+| 操縦支援・controllerの意味 | controller profile |
+| 不変scenario、発進条件、接触proxy・会場条件 | scenarioと必要なcatalog/model |
+| WindField・環境の意味と数値条件 | environmentと必要なscenario |
+| 終了・飛距離・採点の意味 | score definitionと必要なphysics |
+| 比較入力、hash符号化、適格性の意味 | Personal Best comparison |
+
+各変更の実装者とreviewerは該当versionの更新を確認する。テスト・証明注釈・同値なソース整理・描画依存だけの変更はbuild来歴を更新する。意味同値を自動判定するhash表は設けない。
+比較方式の導入だけを理由にphysics/score versionを更新しない。
+共有sessionの`record_archive`が確定条件・来歴からdocumentを生成し、NativeとWASMは同じproducer/selectorを使用する。Nativeは保存先の全候補を比較し、同点ではpath昇順の最初の記録を保持する。索引用DBの追加は行わない。
 
 ## Replay
 

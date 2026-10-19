@@ -105,6 +105,10 @@ fn archive_owner_preserves_saved_settings_text_and_player_selection_without_rein
         )
         .unwrap();
         document.header.aircraft_model_version = 999;
+        document.identity_metadata =
+            birdman_game_format::FlightRecordIdentityMetadata::Unrecognized(
+                serde_json::json!({"comparison_version": 900, "retained": {"description": "未知の来歴"}}),
+            );
         let json = format!(
             "\n{}\n ",
             String::from_utf8(document.encode_json().unwrap()).unwrap()
@@ -114,6 +118,10 @@ fn archive_owner_preserves_saved_settings_text_and_player_selection_without_rein
         viewer.open_archived_record_json(&json).unwrap();
         assert!(viewer.prepared().is_none());
         assert_eq!(viewer.archive().unwrap().original_json(), json);
+        assert_eq!(
+            viewer.archive().unwrap().identity_metadata(),
+            &document.identity_metadata
+        );
         assert_eq!(
             viewer.archive().unwrap().difficulty(),
             document.header.difficulty

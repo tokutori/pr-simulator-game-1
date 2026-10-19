@@ -123,6 +123,10 @@ impl HybridGameSessionBridge {
             preset,
             identity,
             record: self.session.core_session().playback_record(),
+            archived_identity: self
+                .session
+                .archive()
+                .map(|archive| archive.identity_metadata()),
             environment_readout: environment,
             platform,
         })

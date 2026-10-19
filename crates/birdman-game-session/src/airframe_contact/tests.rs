@@ -9,9 +9,8 @@ use birdman_game_core::{
     WaterContactGeometry, WindField, advance_tail_flight_tick_with_contact, course_distance_score,
 };
 use birdman_game_format::{
-    AssistanceLevel, DifficultySettings, InformationLevel, PersonalBestContentHashes,
-    TailFlightRecordDocument, TailPersonalBestConfiguration, WeatherClass,
-    canonical_tail_personal_best_key,
+    AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
+    TailPersonalBestConfiguration, WeatherClass,
 };
 
 use crate::{
@@ -300,25 +299,23 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
         scenario.catalog_version = document.header.catalog_version;
         scenario.scenario_version = document.header.scenario_version;
         scenario.aircraft_model_version = document.header.aircraft_model_version;
-        canonical_tail_personal_best_key(
-            document,
-            TailPersonalBestConfiguration {
-                scenario,
-                difficulty,
-                identity: &document.control_identity,
-                control_mode: ControlMode::Manual,
-                controller_profile: profile,
-            },
-            course,
-            PersonalBestContentHashes {
-                scenario: [1; 32],
-                aircraft: [2; 32],
-                environment: [3; 32],
-                physics_build: [4; 32],
-            },
-        )
-        .unwrap()
-        .unwrap()
+        document
+            .clone()
+            .with_personal_best_configuration(
+                TailPersonalBestConfiguration {
+                    scenario,
+                    difficulty,
+                    identity: &document.control_identity,
+                    control_mode: ControlMode::Manual,
+                    controller_profile: profile,
+                },
+                course,
+                crate::record_archive::record_build_provenance(),
+            )
+            .unwrap()
+            .header
+            .personal_best_key
+            .unwrap()
     };
     let current = key(&document);
     for index in 0..3 {

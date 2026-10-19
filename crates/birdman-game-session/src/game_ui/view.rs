@@ -1143,7 +1143,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 }
 
 fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
-    match context.identity {
+    let mut description = match context.identity {
         Some(identity) => format!(
             "Catalog: v{}\nScenario: {} / v{}\nAircraft: v{}\nEnvironment: v{}\nController: v{}\nSeed: {}:{}",
             identity.catalog_version,
@@ -1156,7 +1156,62 @@ fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
             identity.seed as u32
         ),
         None => "解決済み設定metadataを取得できない".to_owned(),
+    };
+    let current_build = context
+        .archived_identity
+        .is_none()
+        .then(crate::record_archive::record_build_provenance);
+    let (comparison, build) = match context.archived_identity {
+        None => (
+            format!(
+                "v{}（新規保存時に適格性を検証）",
+                birdman_game_format::PERSONAL_BEST_COMPARISON_VERSION
+            ),
+            current_build.as_ref(),
+        ),
+        Some(birdman_game_format::FlightRecordIdentityMetadata::Resolved(identity)) => (
+            format!(
+                "v{}（保存条件を検証済み）",
+                birdman_game_format::PERSONAL_BEST_COMPARISON_VERSION
+            ),
+            Some(&identity.build),
+        ),
+        Some(birdman_game_format::FlightRecordIdentityMetadata::Unspecified) => {
+            ("未記録・未順位".to_owned(), None)
+        }
+        Some(birdman_game_format::FlightRecordIdentityMetadata::Unrecognized(_)) => (
+            format!(
+                "未対応または情報不足・未順位（方式: {}）",
+                context
+                    .archived_identity
+                    .and_then(|identity| identity.comparison_version())
+                    .map_or_else(|| "不明".to_owned(), |version| version.to_string())
+            ),
+            None,
+        ),
+    };
+    description.push_str(&format!("\nPersonal Best比較方式: {comparison}"));
+    if let Some(build) = build {
+        description.push_str(&format!("\nBuild rustc: {}\nTarget: {}\nProfile: {}\n宣言されたsource commit: {}\nCargo.lock SHA-256: {}",
+            build.rustc_version.as_deref().unwrap_or("不明"), build.target.as_deref().unwrap_or("不明"),
+            build.profile.as_deref().unwrap_or("不明"), build.declared_source_commit.as_deref().unwrap_or("不明"),
+            digest_hex(build.cargo_lock_sha256)));
+        for (name, digest) in [
+            ("Scenario", build.source_fingerprints.scenario),
+            ("Aircraft", build.source_fingerprints.aircraft),
+            ("Environment", build.source_fingerprints.environment),
+            ("Physics build", build.source_fingerprints.physics_build),
+        ] {
+            description.push_str(&format!("\n{name} SHA-256: {}", digest_hex(digest)));
+        }
+    } else {
+        description.push_str("\nBuild来歴: 不明（保存情報を現在の値で補完しない）");
     }
+    description
+}
+
+fn digest_hex(digest: [u8; 32]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn configuration(context: &GameUiContext<'_, '_>) -> String {
@@ -1455,6 +1510,26 @@ fn replay(
             ..
         }
     );
+    menu.section("replay-technical", "", GameUiSectionLayout::Column);
+    menu.push(
+        "game-replay-technical",
+        "技術情報",
+        true,
+        "technical",
+        GameUiControlContent::Button {
+            action: GameUiAction::ToggleTechnical {},
+            presentation: GameUiButtonPresentation::Disclosure {
+                expanded: state.technical_open,
+            },
+        },
+    );
+    if state.technical_open {
+        menu.status(
+            "game-replay-technical-content",
+            "技術情報",
+            &technical_configuration(context),
+        );
+    }
     menu.section("replay-navigation", "", GameUiSectionLayout::Row);
     menu.session(
         "game-replay-return",

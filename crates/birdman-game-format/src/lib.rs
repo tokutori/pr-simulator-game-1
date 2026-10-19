@@ -6,6 +6,7 @@ extern crate alloc;
 mod environment;
 mod flight_record;
 mod personal_best;
+mod personal_best_metadata;
 mod tail_input;
 mod tail_snapshot;
 
@@ -41,8 +42,12 @@ pub use flight_record::{
     TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
 };
 pub use personal_best::{
-    PersonalBestContentHashes, TailPersonalBestConfiguration, TailPersonalBestSelection,
-    canonical_tail_personal_best_key,
+    TailPersonalBestConfiguration, TailPersonalBestSelection, canonical_tail_personal_best_key,
+};
+pub use personal_best_metadata::{
+    FlightRecordAlphaGuard, FlightRecordBuildProvenance, FlightRecordControlMode,
+    FlightRecordControllerProfile, FlightRecordIdentityMetadata, FlightRecordSourceFingerprints,
+    PERSONAL_BEST_COMPARISON_VERSION, TailPersonalBestConditions, TailPersonalBestIdentity,
 };
 
 /// Information presentation selected for a session.
