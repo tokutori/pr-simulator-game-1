@@ -445,7 +445,7 @@ mod tests {
                                 center[axis] + rod.radius * direction[axis] / length
                             });
                             assert!(
-                                shell_contains(point),
+                                shell_contains(&geometry.surfaces, point),
                                 "frame rod {rod_index}, fraction {fraction}, point {point:?} escapes shell"
                             );
                         }
@@ -528,17 +528,35 @@ mod tests {
         }
     }
 
-    fn shell_contains([right, up, aft]: [f64; 3]) -> bool {
-        if !(COCKPIT_STATIONS[0][0]..=COCKPIT_STATIONS[9][0]).contains(&aft) {
-            return false;
+    fn shell_contains(surfaces: &[CockpitSurface; 2], point: [f64; 3]) -> bool {
+        let mut compared = false;
+        for surface in surfaces {
+            for triangle in surface.indices.chunks_exact(3) {
+                let [first, second, third] = core::array::from_fn(|index| {
+                    surface.positions[triangle[index] as usize].map(f64::from)
+                });
+                let minimum_aft = first[2].min(second[2]).min(third[2]);
+                let maximum_aft = first[2].max(second[2]).max(third[2]);
+                if point[2] < minimum_aft || point[2] > maximum_aft {
+                    continue;
+                }
+                compared = true;
+                let along_ring: [f64; 3] = core::array::from_fn(|axis| second[axis] - first[axis]);
+                let along_shell: [f64; 3] = core::array::from_fn(|axis| third[axis] - first[axis]);
+                let normal = [
+                    along_ring[1] * along_shell[2] - along_ring[2] * along_shell[1],
+                    along_ring[2] * along_shell[0] - along_ring[0] * along_shell[2],
+                    along_ring[0] * along_shell[1] - along_ring[1] * along_shell[0],
+                ];
+                let distance = (0..3)
+                    .map(|axis| normal[axis] * (point[axis] - first[axis]))
+                    .sum::<f64>();
+                let length = normal.iter().map(|value| value * value).sum::<f64>().sqrt();
+                if distance > 1.0e-7 * length {
+                    return false;
+                }
+            }
         }
-        let section = shell_section(aft);
-        (0..SHELL_STEPS).all(|step| {
-            let first = canopy_point(section, step, SHELL_STEPS);
-            let last = canopy_point(section, step + 1, SHELL_STEPS);
-            let signed =
-                (last[0] - first[0]) * (up - first[1]) - (last[1] - first[1]) * (right - first[0]);
-            signed >= -1.0e-12
-        })
+        compared
     }
 }
