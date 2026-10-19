@@ -72,18 +72,35 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
         env:
           RUSTC_WRAPPER: ''
+      - name: Lint native verification feature
+        run: cargo clippy -p birdman-game-bevy --all-targets --features verify-harness --locked -- -D warnings
+        env:
+          RUSTC_WRAPPER: ''
       - name: Test workspace packages (Linux)
         if: runner.os == 'Linux'
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --features birdman-game-bevy/verify-harness --locked
       - name: Test shared and Web packages (Windows)
         if: runner.os == 'Windows'
         run: cargo test --workspace --exclude birdman-game-bevy --locked
       - name: Test Bevy native Screen (Windows)
         if: runner.os == 'Windows'
-        run: cargo test -p birdman-game-bevy --locked
+        run: cargo test -p birdman-game-bevy --features verify-harness --locked
       - name: Build Bevy native Screen executable (Windows)
         if: runner.os == 'Windows'
         run: cargo build -p birdman-game-bevy --locked
+      - name: Verify ordinary native CLI without the harness (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ./target/debug/birdman-game-bevy.exe --help
+          if ($LASTEXITCODE -ne 0) { throw 'Native help failed' }
+          & ./target/debug/birdman-game-bevy.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Native version failed' }
+          $output = & ./target/debug/birdman-game-bevy.exe --verify unused --offscreen 2>&1 | Out-String
+          if ($LASTEXITCODE -eq 0 -or $output -notmatch 'requires --features verify-harness') {
+            throw "Native harness flag was not rejected: $output"
+          }
+          $global:LASTEXITCODE = 0
       - name: Measure native hybrid hot-path allocations
         run: python tools/allocation-check/main.py
       - name: Verify offline environment source extraction
