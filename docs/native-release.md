@@ -7,6 +7,9 @@ shaderと日本語フォントは実行ファイルへ埋め込む。ソース�
 同梱の `assets` は登録済み公開データと利用条件を含む。
 
 試用配布は無署名である。Windows SmartScreenとmacOS Gatekeeper/notarizationの受入は未確認である。
+WindowsでVC++ runtime不足が報告された場合は、対象CPUに対応する
+[Microsoft公式VC++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/)
+を導入する。実行ファイルのDLL依存は最終成果物の検査結果に従う。
 LinuxはUbuntu 24.04のglibcを基準とし、X11またはWayland、対応GPU driver、Vulkan loaderを必要とする。
 必要なruntime packageには `libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、
 `libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1` がある。GPUとdriverの適合は別途確認する。
