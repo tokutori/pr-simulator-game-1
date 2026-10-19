@@ -33,7 +33,7 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     assert_eq!(bridge.weather_class_code(), 0);
     assert!(bridge.session.core_session().flight_record().is_none());
     assert!(bridge.session.prepared().is_none());
-    assert!(bridge.archived.is_none());
+    assert!(bridge.session.archive().is_none());
     assert_eq!(bridge.session.difficulty(), selected);
     assert_eq!(bridge.session.seed(), 999);
     assert!(bridge.export_record_internal().is_err());

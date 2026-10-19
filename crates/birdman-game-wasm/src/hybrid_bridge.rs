@@ -5,12 +5,11 @@ use birdman_game_core::{
     TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
-    DifficultySettings, FlightRecordFormatError, FlightRecordTailIdentityDocument,
-    InformationLevel, TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION,
-    TailControlLayoutDocument as ControlLayout, TailFlightRecordFinalizationDocument,
-    TailFrameDocument as FrameDocument, TailIncidenceDocument, TailInputDocument,
-    TailPersonalBestConfiguration, TailPilotPositionCommandDocument,
-    TailPreparedLaunchDocument as PreparedLaunchDocument,
+    DifficultySettings, FlightRecordFormatError, InformationLevel,
+    TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
+    TailFlightRecordFinalizationDocument, TailFrameDocument as FrameDocument,
+    TailIncidenceDocument, TailInputDocument, TailPersonalBestConfiguration,
+    TailPilotPositionCommandDocument, TailPreparedLaunchDocument as PreparedLaunchDocument,
     TailPreparedLaunchFrame as PreparedLaunchFrame, TailProgressDocument as ProgressDocument,
     TailSnapshotDocument as SnapshotDocument, TailStateDocument as StateDocument,
     TailTelemetryDocument as TelemetryDocument,
@@ -150,7 +149,6 @@ impl BoundaryError {
 #[wasm_bindgen]
 pub struct HybridGameSessionBridge {
     session: ApplicationSession,
-    archived: Option<record::ArchiveMetadata>,
     ui: birdman_game_session::game_ui::GameUiState,
     ui_view_cache: Option<birdman_game_session::game_ui::GameUiView>,
 }
@@ -350,7 +348,6 @@ impl HybridGameSessionBridge {
     fn from_application(session: ApplicationSession) -> Self {
         Self {
             session,
-            archived: None,
             ui: birdman_game_session::game_ui::GameUiState::default(),
             ui_view_cache: None,
         }
@@ -371,12 +368,6 @@ impl HybridGameSessionBridge {
             .execute(command, readiness)
             .map_err(BoundaryError::Application)
             .map_err(BoundaryError::into_js)?;
-        if matches!(
-            self.session.core_session().snapshot().phase(),
-            SessionPhase::Title | SessionPhase::FlightSetup
-        ) {
-            self.archived = None;
-        }
         Ok(())
     }
 

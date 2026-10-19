@@ -93,7 +93,7 @@ impl HybridGameSessionBridge {
         let identity = record.header().scenario;
         let source = match self.session.core_session().snapshot().phase() {
             SessionPhase::Attract => RecordWindSource::Attract,
-            SessionPhase::Replay if self.archived.is_some() => RecordWindSource::Archive,
+            SessionPhase::Replay if self.session.archive().is_some() => RecordWindSource::Archive,
             SessionPhase::Result | SessionPhase::Replay => RecordWindSource::Record,
             _ => return Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
         };

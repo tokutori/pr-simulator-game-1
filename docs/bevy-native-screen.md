@@ -141,14 +141,15 @@ ICU4X 2.3の`BidiClass::to_icu4c_value`に関する非推奨警告は、公式�
 
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
-水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存一覧UI、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
+水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存記録の管理画面、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
 共有UI接続では記録由来の解析系列、seek、再生停止・再開、再生速度を接続する。
 解析の軸名・単位、目盛、grid、基準線、legend、地図のscaleと北方位、plotの配置は共有`GameUiChart.presentation`から投影する。chart viewportの実測寸法を共有UIへ渡し、静的要素はview revisionの変更時だけ再投影する。seek中は同じcursor entityと共有系列色を使用する。低高さでは共有overflow契約に従ってchart内部をスクロールし、seek操作領域を保持する。文字のbaselineはBevyが使用するフォントの実測metricsから変換する。今回のchart投影に対する実GPU検査は未実施である。
 Replay cameraは共通候補順序のAuto・Pilot・Chase・Orbit・Platform・Shore・Overhead・Side・Front・Telephotoを提供する。既存Webを移植基準とする共有RustのgeometryとDirectorを使用し、Attractも同じrecord時刻からshotを選択する。固定点は登録環境のoriginとwater datumが一致する場合に使用する。退出時は通常Screenの60°FOVへ復帰する。本追加の実GPU描画は未確認である。
-記録一覧・保存済みReplayの読込みはnativeで未提供であり、対応操作は共有capabilityから無効化する。
-Resultと現飛行Replayの「飛行ログ CSV」「元記録 JSON」は、共有Rustの既存形式をfilesystemへ出力する。保存先は起動時の作業directoryの`flight-logs`であり、`--export-dir DIR`で変更できる。相対指定は起動時に絶対pathへ解決し、共通UIへ保存先と完了/失敗を表示する。directoryは出力時に作る。
+Titleは保存先にある`flight-log-*.json`のうち、schema 6の検証に成功した最新3件を共通UIに表示する。起動時とJSON保存成功時に一覧を更新し、更新時点の経過時間を表示する。CSV・他の名前のfile・directory・symbolic linkは一覧の対象外である。読込み不能の記録は原因を通知して除外する。選択時にもサイズ上限と形式を検証し、消失・破損・不正な遷移では既存sessionを保持する。
+保存記録は共有ApplicationSessionへ読み込み、元のsnapshot・設定・終了理由を保持してReplayする。再生・速度変更・seekは既存coreのclock/queryを使用し、Titleへ復帰できる。外部で追加したfileは次回起動またはJSON保存後に一覧へ反映する。削除・rename・file dialog・Personal Best索引は提供しない。
+Resultと現飛行・保存記録Replayの「飛行ログ CSV」「元記録 JSON」は、共有Rustの既存形式をfilesystemへ出力する。保存先は起動時の作業directoryの`flight-logs`であり、`--export-dir DIR`で変更できる。相対指定は起動時に絶対pathへ解決し、共通UIへ保存先と完了/失敗を表示する。directoryは出力時に作る。
 日時・process IDを含むfile名を`create_new`で生成し、既存fileは上書きしない。write/flush失敗では元の原因と実pathを表示し、不完全なfileが残る可能性がある。成功はwrite/flush完了を表し、電源断に対する永続性は保証しない。fileはUTF-8/LFである。
-JSONは元のschema 6 FlightRecordであり、Nativeで未提供のPersonal Best keyは`null`とする。CSVの加速度は既存Rust実装による保存標本のfinite-difference推定値であり、新たな物理計算や記録への値の追加は行わない。保存一覧・PB管理・保存済みReplayの読込み・file dialogは本機能に含まれない。
+新規JSONはschema 6 FlightRecordであり、Nativeで未提供のPersonal Best keyは`null`とする。読込み済みJSONの再出力は原文を保持し、既存keyや未知のidentityを現在のbuildで置換しない。CSVの加速度は既存Rust実装による保存標本のfinite-difference推定値であり、新たな物理計算や記録への値の追加は行わない。
 水面は共有wave spectrum、finite packetと解析的勾配、near/far/fine/rippleの4層micro-normalを使用する。画素footprintによるfilteringと二次momentから未解像varianceを保持し、Fresnel・sun glitterのroughnessへ反映する。
 明暗と白波はWebと同じcrest/compressionから導出する。局所風速を白波の有無へ直結させず、既存の波群を保持する。色調patchのnoiseはWebと同じ`[0,1]`へ正規化する。
 near/farと全画質は同じ環境snapshot、world-space位置、固定phase、simulation timeを使用する。水面は不透明であり、描画qualityはphysics・record・着水面を変更しない。

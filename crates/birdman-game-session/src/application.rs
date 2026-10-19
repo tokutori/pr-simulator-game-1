@@ -1,7 +1,9 @@
 //! Shared execution and ownership of platform-independent application operations.
 
+mod archive;
 pub(crate) mod commands;
 
+pub use archive::{ArchiveError, ArchiveMetadata};
 pub use commands::{ApplicationError, PreparedFlight, RecordCommand, SessionCommand};
 
 use crate::game_ui::{GameUiError, GameUiStructureCache, GameUiStructureKey};
@@ -10,7 +12,8 @@ use birdman_game_core::{
     PauseReason, SessionPhase, SessionSnapshot, TailFlightTickInput,
 };
 use birdman_game_format::{
-    DifficultySettings, FlightRecordTailIdentityDocument, InformationLevel, WeatherClass,
+    DifficultyPreset, DifficultySettings, FlightRecordTailIdentityDocument, InformationLevel,
+    WeatherClass,
 };
 
 /// Readiness of resources owned by the platform adapter.
@@ -61,6 +64,7 @@ pub struct ApplicationSession {
     seed: u64,
     prepared: Option<PreparedFlight>,
     attract: Option<AttractMetadata>,
+    archived: Option<ArchiveMetadata>,
     ui_structure: GameUiStructureCache,
 }
 
@@ -90,6 +94,7 @@ impl ApplicationSession {
             seed,
             prepared: None,
             attract: None,
+            archived: None,
             ui_structure: GameUiStructureCache::default(),
         }
     }
@@ -115,9 +120,24 @@ impl ApplicationSession {
             self.attract
                 .as_ref()
                 .map_or(self.difficulty, |metadata| metadata.difficulty)
+        } else if let Some(archive) = &self.archived {
+            archive.settings()
         } else {
             self.difficulty
         }
+    }
+
+    /// Returns the saved preset when displaying an archive, retaining player selections separately.
+    pub fn display_preset(&self) -> DifficultyPreset {
+        self.archived.as_ref().map_or_else(
+            || self.display_difficulty().preset_label(),
+            ArchiveMetadata::preset,
+        )
+    }
+
+    /// Borrows metadata of the currently opened external record.
+    pub fn archive(&self) -> Option<&ArchiveMetadata> {
+        self.archived.as_ref()
     }
 
     /// Returns the input seed, independent of a displayed demonstration or archive.
@@ -196,6 +216,7 @@ impl ApplicationSession {
             SessionPhase::Title | SessionPhase::FlightSetup
         ) {
             self.prepared = None;
+            self.archived = None;
         }
         Ok(())
     }
@@ -261,6 +282,16 @@ impl ApplicationSession {
         self.ui_structure.invalidate();
         self.session.open_archived_replay(record)?;
         self.prepared = None;
+        self.archived = None;
+        Ok(())
+    }
+
+    /// Validates and installs an external snapshot record with its exact metadata atomically.
+    pub fn open_archived_record_json(&mut self, json: &str) -> Result<(), ArchiveError> {
+        let (record, metadata) = ArchiveMetadata::decode(json).map_err(ArchiveError::Format)?;
+        self.open_archived_replay(record)
+            .map_err(ArchiveError::Session)?;
+        self.archived = Some(metadata);
         Ok(())
     }
 

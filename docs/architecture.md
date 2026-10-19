@@ -41,8 +41,8 @@ CLIはコマンド固有の診断JSONを投影し、FlightRecordの保存codec�
 |---|---|
 | `crates/birdman-game-core` | math、frames、dynamics、aerodynamics、environment、control、scenario、simulation、game session、record集計・再生query |
 | `crates/birdman-game-format` | aircraft/scenario/world/recordの外部表現、version、検証・codec |
-| `crates/birdman-game-session` | application session所有権・command実行、設定と準備metadata、共有UI・描画用モデル |
-| `crates/birdman-game-wasm` | WASM ABI、applicationへの変換、archiveの外部表現、RenderSnapshot・分析query |
+| `crates/birdman-game-session` | application session所有権・command実行、設定と準備・archive metadata、共有UI・描画用モデル |
+| `crates/birdman-game-wasm` | WASM ABI、applicationへの変換、RenderSnapshot・分析query |
 | `crates/birdman-game-cli` | native/WASI実行、CSV出力、profiling入口 |
 | `web/src` | device入力、browser/presentation状態、共通UI、camera pose、画質、WASM呼出し |
 | `web/src/render/contracts` | engine非依存の描画・UI・view・resource識別子の契約 |
@@ -68,7 +68,8 @@ WebはimmutableなViewをAppModelへ観測値として保持し、actionをWASM�
 Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
 アプリのlive sessionと保存recordは二系統tailへ統一する。
 単一facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
-共有`ApplicationSession`はprivateな`GameSession`、選択設定、seed・tick上限、成功した準備metadata、独立したAttract記録metadataを所有する。
+共有`ApplicationSession`はprivateな`GameSession`、選択設定、seed・tick上限、成功した準備metadata、独立したAttract記録metadata、開いたarchiveの元JSON・設定・control identityを所有する。
+archiveはformatで検証した後に既存Replayへ移し、現在のモデルで再積分しない。失敗は既存recordとmetadataを保持する。WASMとNativeは同じ復元処理を使用し、filesystem/IndexedDBの一覧・I/Oだけを各adapterに置く。
 UIはapplicationの`SessionCommand`を生成し、Web/Bevyは同じexecutorを呼ぶ。物理準備と設定解決はapplicationに所属する。
 adapterはresource準備の`BackendReadiness`と、Manualを含まない三種類の`ExternalPauseReason`による可用性を観測する。理由の解消は該当理由だけを解除し、Resumeは明示操作とする。
 Resume拒否時のManual理由解除、異常tickのResult化、確定後の表示変換失敗を区別し、自動巻戻しや再発進を行わない。

@@ -123,43 +123,6 @@ fn information_code(level: InformationLevel) -> u32 {
     }
 }
 
-fn information_from_record(
-    level: birdman_game_format::FlightRecordInformationDocument,
-) -> InformationLevel {
-    match level {
-        birdman_game_format::FlightRecordInformationDocument::Full => InformationLevel::Full,
-        birdman_game_format::FlightRecordInformationDocument::Standard => {
-            InformationLevel::Standard
-        }
-        birdman_game_format::FlightRecordInformationDocument::Minimal => InformationLevel::Minimal,
-        birdman_game_format::FlightRecordInformationDocument::Realistic => {
-            InformationLevel::Realistic
-        }
-        birdman_game_format::FlightRecordInformationDocument::Custom => InformationLevel::Custom,
-    }
-}
-
-fn assistance_from_record(
-    level: birdman_game_format::FlightRecordAssistanceDocument,
-) -> AssistanceLevel {
-    match level {
-        birdman_game_format::FlightRecordAssistanceDocument::Strong => AssistanceLevel::Strong,
-        birdman_game_format::FlightRecordAssistanceDocument::Assisted => AssistanceLevel::Assisted,
-        birdman_game_format::FlightRecordAssistanceDocument::Light => AssistanceLevel::Light,
-        birdman_game_format::FlightRecordAssistanceDocument::Manual => AssistanceLevel::Manual,
-    }
-}
-
-fn weather_from_record(weather: birdman_game_format::FlightRecordWeatherDocument) -> WeatherClass {
-    match weather {
-        birdman_game_format::FlightRecordWeatherDocument::Calm => WeatherClass::Calm,
-        birdman_game_format::FlightRecordWeatherDocument::Mild => WeatherClass::Mild,
-        birdman_game_format::FlightRecordWeatherDocument::Typical => WeatherClass::Typical,
-        birdman_game_format::FlightRecordWeatherDocument::Challenging => WeatherClass::Challenging,
-        birdman_game_format::FlightRecordWeatherDocument::NearLimit => WeatherClass::NearLimit,
-    }
-}
-
 fn weather_from_code(code: u32) -> Result<WeatherClass, JsValue> {
     match code {
         0 => Ok(WeatherClass::Calm),

@@ -159,7 +159,7 @@ impl NativeSession {
         GameUiContext {
             session: self.game.core_session(),
             difficulty: self.game.display_difficulty(),
-            preset: self.game.display_difficulty().preset_label(),
+            preset: self.game.display_preset(),
             identity: self.ui_identity(),
             record: self.game.core_session().playback_record(),
             environment_readout: environment,
@@ -183,6 +183,22 @@ impl NativeSession {
         self.game
             .execute_record(command)
             .map_err(|error| format!("記録操作に失敗した: {error:?}"))
+    }
+
+    pub(crate) fn open_stored_record(&mut self, json: &str) -> Result<(), String> {
+        self.game
+            .open_archived_record_json(json)
+            .map_err(|error| format!("保存記録を開けない: {error:?}"))?;
+        self.initial_pilot_position_m = self
+            .game
+            .core_session()
+            .playback_record()
+            .expect("validated archive retains its record")
+            .samples()[0]
+            .flight_state
+            .pilot_position_m();
+        self.notice = None;
+        Ok(())
     }
 
     #[cfg(test)]
