@@ -59,18 +59,15 @@ describe("tail-aware shared Flight HUD", () => {
       } });
       const readouts = sharedHudNode(model, "hud-primary-readouts").content.value;
       for (const line of [
-        `p ${degrees(rate[0])}  q ${degrees(rate[1])}  r ${degrees(rate[2])} °/s`,
+        `ロール ${degrees(rate[0])} · ピッチ ${degrees(rate[1])} · ヨー ${degrees(rate[2])} °/s`,
         `水平尾翼 ${degrees(snapshot.frame.state.physical_incidence.horizontal_tail_rad)}°  垂直尾翼 ${degrees(snapshot.frame.state.physical_incidence.vertical_tail_rad)}°`,
-        `パイロット目標 ${snapshot.frame.state.pilot_position_target_m.toFixed(2)} m`
+        `${snapshot.frame.state.pilot_position_target_m.toFixed(2)} m`
       ]) expect(readouts).toContain(line);
       expect(readouts).toContain(`距離 ${snapshot.frame.progress_m.course_parallel_m.toFixed(1)} m`);
       expect(readouts).not.toContain("確定距離");
       expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain(snapshot.frame.state.pilot_position_m.toFixed(2));
-      const controls = sharedHudNode(model, "hud-controls").content.value;
-      expect(controls).toContain("機首上げ・下げ");
-      expect(controls).toContain("←/→");
-      expect(controls).toContain("パイロット");
-      expect(controls).not.toContain("A/D roll");
+      expect(model.groups.flatMap((group) => group.nodes).some((node) => node.id === "hud-controls")).toBe(false);
+      expect(readouts).not.toMatch(/intent|Hold|Set/);
       expect(Object.isFrozen(model.groups)).toBe(true);
       session.pause(0);
       expect(sharedHudNode(sharedHud(session), "hud-primary-readouts").label).toBe("一時停止");
@@ -85,12 +82,12 @@ describe("tail-aware shared Flight HUD", () => {
       const attitudeProfile = { telemetry: false, attitude: true,
         wind: false, flight_path: false, angle_of_attack: false, warnings: false };
       const attitudeOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: attitudeProfile, ticks: 0 });
-      expect(sharedHudNode(attitudeOnly, "hud-primary-readouts").content.value).toMatch(/^p /);
+      expect(sharedHudNode(attitudeOnly, "hud-primary-readouts").content.value).toContain("°/s");
       const telemetryProfile = { telemetry: true, attitude: false,
         wind: false, flight_path: false, angle_of_attack: false, warnings: false };
       const telemetryOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: telemetryProfile, ticks: 0 });
       expect(sharedHudNode(telemetryOnly, "hud-primary-readouts").content.value).toContain("水平尾翼 ");
-      expect(sharedHudNode(telemetryOnly, "hud-primary-readouts").content.value).not.toMatch(/^p /);
+      expect(sharedHudNode(telemetryOnly, "hud-primary-readouts").content.value).not.toContain("°/s");
       for (const options of [{ informationCode: 2 as const }, { informationCode: 4 as const, hudProfile: attitudeProfile },
         { informationCode: 4 as const, hudProfile: telemetryProfile }]) {
         withSharedGameUiSession("flight_running", { ...options, ticks: 0 }, (owner) => {
@@ -111,7 +108,7 @@ describe("tail-aware shared Flight HUD", () => {
       adapter.render(model);
       const nodes = [...root.children];
       expect(root.querySelector('[data-node="hud-primary-readouts"] output')?.textContent).toContain("水平尾翼");
-      expect(root.querySelector('[data-node="hud-controls"] output')?.textContent).toBe(sharedHudNode(model, "hud-controls").content.value);
+      expect(root.querySelector('[data-node="hud-controls"]')).toBeNull();
       expect(root.querySelector('[data-node="hud-pilot-position"] output')?.textContent).toBe(sharedHudNode(model, "hud-pilot-position").content.value);
       adapter.setVisible(false);
       adapter.render(currentSharedHudFixture({ informationCode: 2 }));
@@ -162,7 +159,7 @@ describe("tail-aware shared Flight HUD", () => {
       expect(readouts.label).toBe("記録再生");
       expect(readouts.content.value).toContain("保存標本");
       expect(readouts.content.value).not.toContain("確定距離");
-      expect(readouts.content.value).toContain("パイロット目標");
+      expect(readouts.content.value).toContain("目標位置 —");
       expect(snapshot.flight_time_s).toBe(0.005);
     } finally {
       source.free();

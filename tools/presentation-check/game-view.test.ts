@@ -135,7 +135,8 @@ describe("Shared Rust game View projection", () => {
     const title = currentSharedGameUiFixture("title", { platform: { stored_records: records } });
     const control = createGameViewModel(title).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-title-open-record-12");
     expect(control).toMatchObject({ kind: "button", enabled: true });
-    expect(control?.label).toContain("Personal Best");
+    expect(control?.label).toContain("2026/09/28 00:00 UTC");
+    expect(control?.label).toContain("自己ベスト");
     const native = currentSharedGameUiFixture("result", { platform: { stored_records_available: false, flight_log_available: false, supported_replay_cameras: ["pilot", "chase"] } });
     expect(native.panels.flatMap((panel) => panel.controls).filter((control) => control.id.includes("download")).every((control) => !control.enabled)).toBe(true);
   });

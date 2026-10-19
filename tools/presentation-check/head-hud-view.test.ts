@@ -162,7 +162,7 @@ describe("Pure Head Flight HUD layout", () => {
     expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     if (code === 3) {
       const readouts = view.layer.elements.find((element) => element.id === "hud-primary-readouts");
-      expect(readouts?.content.value).toContain("対象機の実機構成は未確認");
+      expect(readouts?.content.value).not.toContain("対象機の実機構成は未確認");
     }
   });
 

@@ -2,7 +2,7 @@
 /**
  * Exclusive current overlay names retained by both renderer adapters.
  */
-export type GameUiOverlay = "Pause" | "PauseSettings" | "PauseHelp";
+export type GameUiOverlay = "Credits" | "Pause" | "PauseSettings" | "PauseHelp";
 /**
  * Pure shared scene and menu projection.
  */
@@ -366,6 +366,12 @@ export interface GameUiControl {
          * Typed semantic action.
          */
         readonly action: {
+            readonly kind: "set_credits";
+            /**
+             * Whether the credits replace the current menu.
+             */
+            readonly open: boolean;
+        } | {
             /**
              * Operation admitted by the current view.
              */
@@ -1310,6 +1316,10 @@ export interface GameUiState {
      * Read-only analysis query position in seconds.
      */
     readonly analysis_time_seconds: number;
+    /**
+     * Shared credits shown without changing the domain phase.
+     */
+    readonly credits_open: boolean;
     /**
      * Paused menu selection.
      */

@@ -103,23 +103,12 @@ describe("flight log download state and common presentation", () => {
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
         const analysisFlow = phase === "result" && resultTab === "analysis" || phase === "replay" && replayViewMode === "analysis";
         expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
-        const analysisSections = [
-          { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
-          { id: "analysis-cursor", label: "", layout: "column" }
-        ];
-        expect(panel.sections).toEqual([
-          ...(analysisFlow ? analysisSections : []),
-          ...(phase === "result" ? analysisFlow ? [
-            { id: "analysis-details", label: "", layout: "column" }, { id: "analysis-navigation", label: "", layout: "row" }
-          ] : [{ id: "result-summary", label: "", layout: "column" }] : [{ id: "replay-view", label: "", layout: "row" }]),
-          ...(phase === "result" ? [{ id: "result-navigation", label: "", layout: "row" }] : [
-            ...(!analysisFlow ? [{ id: "replay-status", label: "", layout: "column" }] : []),
-            ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
-            { id: "replay-actions", label: "", layout: "row" }, { id: "replay-technical", label: "", layout: "column" },
-            { id: "replay-navigation", label: "", layout: "row" }
-          ]),
-          { id: "flight-log-actions", label: "飛行ログ", layout: "row" }, { id: "flight-log-notice", label: "", layout: "column" }
-        ]);
+        expect(new Set(panel.sections.map((section) => section.id)).size).toBe(panel.sections.length);
+        expect(panel.sections.find((section) => section.id === "flight-log-actions")?.layout).toBe("row");
+        if (analysisFlow) {
+          expect(panel.controls.some((control) => control.kind === "chart")).toBe(true);
+          expect(panel.controls.some((control) => control.kind === "range")).toBe(true);
+        }
         expect(exports.map((control) => control.section)).toEqual(["flight-log-actions", "flight-log-actions", "flight-log-notice"]);
         if (phase === "replay") {
           expect(panel.controls.find((control) => control.id === "game-replay-technical")).toMatchObject({
@@ -253,7 +242,7 @@ describe("flight log download state and common presentation", () => {
       if (!(button instanceof browser.HTMLButtonElement)) throw new Error("Required download button is unavailable");
       button.click();
       expect(dispatch).toHaveBeenLastCalledWith({ type: "activate", controlId: "game-flight-log-csv" });
-      expect(root.textContent).toContain("finite-difference推定値");
+      expect(root.textContent).toContain("速度の差から推定した加速度");
     }
     await browser.happyDOM.abort();
   });

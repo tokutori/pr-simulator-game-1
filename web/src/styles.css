@@ -333,49 +333,6 @@ body {
   padding: 0.3rem 0.5rem;
 }
 
-.screen-ui-shell[data-scene="Flight"] {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  width: 100%;
-  max-height: none;
-  flex-direction: column;
-  justify-content: flex-end;
-  overflow: visible;
-  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  pointer-events: none;
-}
-
-.screen-ui-shell[data-scene="Flight"] > h1,
-.screen-ui-shell[data-scene="Flight"] > .screen-ui-description,
-.screen-ui-shell[data-scene="Flight"] .screen-ui-panel > h2 {
-  display: none;
-}
-
-.screen-ui-shell[data-scene="Flight"] .screen-ui-panel {
-  padding: 0;
-  border: 0;
-}
-
-.screen-ui-shell[data-scene="Flight"] .screen-ui-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin: 0;
-  pointer-events: auto;
-}
-
-.screen-ui-shell[data-scene="Flight"] .screen-ui-controls button {
-  min-height: 2.25rem;
-  padding: 0.4rem 0.75rem;
-  border-color: rgb(220 235 224 / 50%);
-  background: rgb(16 36 43 / 72%);
-  font-size: 0.85rem;
-}
 
 .flight-hud {
   position: fixed;
@@ -417,11 +374,6 @@ body {
 .flight-hud-node[data-tone="muted"] { color: #b9c9c2; font-size: 0.85em; }
 .flight-hud-node svg { display: block; width: 100%; height: 2.15rem; max-width: 100%; justify-self: center; }
 .flight-hud-node[data-kind="direction"] svg { width: 3.5rem; height: 3.5rem; }
-.flight-hud-attributions { display: flex; flex-wrap: wrap; gap: 0.15rem 0.45rem; font-size: 0.65rem; }
-.flight-hud-attribution-link { color: #c6d9df; pointer-events: auto; }
-.flight-hud-attribution-notice { flex-basis: 100%; color: #c6d9df; line-height: 1.35; pointer-events: auto; }
-.flight-hud-attribution-notice summary { cursor: pointer; }
-.flight-hud-attribution-notice p { margin: 0.25rem 0 0; }
 .flight-hud[data-shared="true"] { pointer-events: auto; }
 
 .screen-ui-shell h1,

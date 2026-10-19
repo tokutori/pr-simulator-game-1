@@ -128,7 +128,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(trial.session.playback_clock_state()).toEqual(clock);
     expect(trial.session.phase_code()).toBe(9);
     expect(trial.session.is_archived_replay()).toBe(true);
-    expect(trial.browser.document.body.textContent).toContain("finite-difference推定値");
+    expect(trial.browser.document.body.textContent).toContain("速度の差から推定した加速度");
     const csv = trial.session.export_flight_log_csv();
     expect(() => { trial.session.open_archived_flight_record("{invalid archive}"); }).toThrow();
     expect(trial.session.export_current_flight_record_json()).toBe(trial.original);

@@ -230,7 +230,7 @@ export interface GameUiStoredRecord {
      */
     readonly personal_best: boolean;
     /**
-     * Formatted local save timestamp supplied by the platform.
+     * Original RFC 3339 save timestamp; the shared view formats it in UTC.
      */
     readonly saved_at: string;
 }

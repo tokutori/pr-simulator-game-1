@@ -53,6 +53,7 @@ pub fn update_game_ui(
     let mut next = state.clone();
     let mut effects = Vec::new();
     match action {
+        GameUiAction::SetCredits { open } => next.credits_open = open,
         GameUiAction::Session { command } => {
             let entering_replay = command == (SessionCommand::EnterReplay {});
             if command == (SessionCommand::LeaveReplay {}) {
@@ -82,6 +83,7 @@ pub fn update_game_ui(
                     | SessionCommand::OpenSetup {}
                     | SessionCommand::ReturnToTitle {}
             ) {
+                next.credits_open = false;
                 next.technical_open = false;
                 next.result_tab = GameUiResultTab::Summary;
                 next.analysis_time_seconds = 0.0;

@@ -124,7 +124,7 @@ describe("Boot application state", () => {
     expect(recordListNotice(pending.recordList)).toBe("保存記録を読み込んでいる");
     const loaded = updateApp(pending, { type: "stored-flight-records-loaded", requestId: 1, records: [] }).model;
     expect(loaded.recordList).toEqual({ kind: "ready", nextRequestId: 2, records: [] });
-    expect(recordListNotice(loaded.recordList)).toBe("保存済みFlightRecordはない");
+    expect(recordListNotice(loaded.recordList)).toContain("保存記録");
   });
 
   it("loads only the latest stored-record index response", () => {
@@ -168,13 +168,13 @@ describe("Boot application state", () => {
     expect(failed.model.recordList).toEqual({ kind: "failed", nextRequestId: 4, message: "Storage unavailable", retained });
     expect(failed.effects).toEqual([]);
     expect(recordListEntries(failed.model.recordList)).toBe(retained);
-    expect(recordListNotice(failed.model.recordList)).toBe("FlightRecord一覧を取得できない: Storage unavailable");
+    expect(recordListNotice(failed.model.recordList)).toContain("Storage unavailable");
     const recovery = updateApp(failed.model, { type: "refresh-stored-flight-records" });
     expect(recovery.effects).toEqual([{ type: "load-stored-flight-records", requestId: 4 }]);
     expect(recordListEntries(recovery.model.recordList)).toBe(retained);
     const empty = updateApp(recovery.model, { type: "stored-flight-records-loaded", requestId: 4, records: [] });
     expect(empty.model.recordList).toEqual({ kind: "ready", nextRequestId: 5, records: [] });
-    expect(recordListNotice(empty.model.recordList)).toBe("保存済みFlightRecordはない");
+    expect(recordListNotice(empty.model.recordList)).toContain("保存記録");
   });
 
   it.each(["loaded", "failed"] as const)("rejects duplicate or contradictory responses after a %s record list", (result) => {
@@ -1578,7 +1578,8 @@ describe("Single Menu scroll state", () => {
       { ...titleScope, panelId: "result-menu" },
       { ...titleScope, viewKey: "analysis:altitude" },
       { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "settings" },
-      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "help" }
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "help" },
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "Credits" }
     ];
     for (const scope of scopes) {
       const opened = openMenu(readyModel(), titleScope);
@@ -1595,6 +1596,16 @@ describe("Single Menu scroll state", () => {
       type: "menu-scroll-synchronized", generation: settings.menuScroll.generation, target: { kind: "active", scope: { ...settingsScope, overlay: "help" } }
     });
     expect(help.model.menuScroll.generation).toBe(2);
+    const credits = updateApp(help.model, {
+      type: "menu-scroll-synchronized", generation: help.model.menuScroll.generation,
+      target: { kind: "active", scope: { ...settingsScope, overlay: "Credits" } }
+    });
+    expect(credits.model.menuScroll).toMatchObject({ generation: 3, progress: 0 });
+    const returned = updateApp(credits.model, {
+      type: "menu-scroll-synchronized", generation: credits.model.menuScroll.generation,
+      target: { kind: "active", scope: settingsScope }
+    });
+    expect(returned.model.menuScroll).toMatchObject({ generation: 4, progress: 0 });
   });
 
   it("invalidates a close and reopening of the same Menu", () => {

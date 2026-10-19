@@ -363,7 +363,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.tick).toHaveBeenCalledTimes(1);
     trial.frame(1_015);
     expect(trial.tick).toHaveBeenCalledTimes(1);
-    expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("ProcessingDelay");
+    expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("処理に時間がかかった");
+    expect(trial.pause).toHaveBeenCalledWith(3);
     const resume = (): HTMLButtonElement => {
       const button = trial.documentRef.querySelector<HTMLButtonElement>('button[data-control-id="game-flight-resume"]');
       if (button === null) throw new Error("ProcessingDelay must expose explicit Resume");
@@ -389,8 +390,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   });
   it.each([
     ["loading", "保存記録を読み込んでいる"],
-    ["failed", "FlightRecord一覧を取得できない: Injected record listing failure"],
-    ["normal", "保存済みFlightRecordはない"]
+    ["failed", "保存記録一覧を取得できない: Injected record listing failure"],
+    ["normal", "保存記録はまだない。"]
   ] as const)("projects %s record-list feedback into the Rust Title view without leaking into other scenes", async (mode, message) => {
     const trial = await fixture(false, false, false, false, mode);
     const observedView = () => {
@@ -403,8 +404,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain(message);
     });
     const titleView = observedView();
-    expect(titleView.description).toContain(message);
-    const titleStatus = titleView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-state")?.content;
+    expect(titleView.description).not.toContain(message);
+    const titleStatus = titleView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-preparation-feedback")?.content;
     if (titleStatus?.kind !== "status") throw new Error("Shared Title status is unavailable");
     expect(titleStatus.value).toContain(message);
     const assertNoListFeedback = () => {
@@ -438,7 +439,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-replay-return");
     trial.click("game-result-title");
     expect(trial.scene()).toBe("Title");
-    if (mode !== "normal") await vi.waitFor(() => { expect(observedView().description).toContain(message); });
+    if (mode !== "normal") await vi.waitFor(() => { expect(observedView().panels.flatMap((panel) => panel.controls).some((control) => control.content.kind === "status" && control.content.value.includes(message))).toBe(true); });
     else await vi.waitFor(() => {
       expect(observedView().panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-title-open-record-1")).toBe(true);
       expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull();
@@ -536,13 +537,13 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("game-title-start");
-    const weather = trial.documentRef.querySelector("output#game-setup-weather-current")?.textContent;
+    const weather = trial.documentRef.querySelector("output#game-weather-conditions")?.textContent;
     expect(weather).toBeTruthy();
     trial.renderer.setLakeWaterQuality.mockRejectedValueOnce(new Error("Injected quality allocation failure"));
     trial.click("presentation-water-quality-medium");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector("output#presentation-water-quality-status")?.textContent).toContain("Injected quality allocation failure"); });
     expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-high"]')?.getAttribute("aria-pressed")).toBe("true");
-    expect(trial.documentRef.querySelector("output#game-setup-weather-current")?.textContent).toBe(weather);
+    expect(trial.documentRef.querySelector("output#game-weather-conditions")?.textContent).toBe(weather);
     trial.click("presentation-water-quality-medium");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="presentation-water-quality-medium"]')?.getAttribute("aria-pressed")).toBe("true"); });
     expect(trial.renderer.setLakeWaterQuality).toHaveBeenCalledTimes(2);
@@ -664,11 +665,13 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-title-start");
     trial.click("game-setup-select-information-0");
     trial.click("game-setup-select-weather-2");
-    expect(trial.browser.document.body.textContent).toContain("気象による発進風速の上限・下限");
+    expect(trial.browser.document.body.textContent).not.toContain("未定義");
+    expect(trial.browser.document.body.textContent).toContain("m/s");
     trial.click("game-setup-start");
     expect(trial.scene()).toBe("Briefing");
     expect(trial.documentRef.querySelector('[data-control-id="game-briefing-technical"]')?.getAttribute("aria-expanded")).toBe("false");
-    expect(trial.browser.document.body.textContent).toContain("独立したroll入力はない");
+    expect(trial.browser.document.body.textContent).toContain("↑ / ↓");
+    expect(trial.browser.document.body.textContent).not.toContain("incidence");
     trial.launch();
     trial.frame(0);
     trial.frame(10);
@@ -809,7 +812,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected controller creation failure");
     expect(trial.browser.document.body.textContent).toContain("Injected input cleanup failure");
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();
@@ -870,12 +873,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     });
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected Retry reset pose failure");
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-pause"]')).toBeNull();
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-resume"]')).toBeNull();
     trial.frame(20);
     trial.frame(100);
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();

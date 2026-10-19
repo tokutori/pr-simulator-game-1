@@ -1,78 +1,114 @@
 # 第三者データとライセンス
 
-プロジェクトのソースコードはMIT Licenseである。
-第三者データ・画像・地形・機体assetには各出典の利用条件を適用し、MITへ再ライセンスしない。
-ソフトウェア依存のライセンスも各packageの条件を維持する。
+本プロジェクトのソースコードには[MIT License](LICENSE)を適用する。
+第三者のデータ・ソフトウェア・フォントには、それぞれの利用条件を適用する。
 
-配布assetの一覧と個別条件は `assets/manifest.toml` に記載する。候補一覧は `docs/data-sources.md` に記載する。
-候補掲載は取得・再配布の許諾確認を意味しない。
+配布ファイルと出典・加工方法・ハッシュの正本は[`assets/manifest.toml`](assets/manifest.toml)である。
+データの用途と仕様は[データ出典](docs/data-sources.md)を参照する。
 
-## 琵琶湖の局所湖岸
+## ゲーム内と配布物の表示
 
-`assets/biwa-shoreline.json` と `assets/biwa-analysis-map.json` は OpenStreetMap の琵琶湖 relation 63499 から、
-発進地点周辺の外周湖岸線と名前付き島（沖島・多景島・竹生島・オコノ洲を含む）の内周輪郭を切り出して簡略化した加工済みデータである。
-このデータには [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/) を適用する。
-帰属表示は「© OpenStreetMap contributors」であり、ゲーム中の HUD と
-データ内のメタデータに掲載する。ソースコードの MIT License をこのデータへ適用しない。
+- Titleと一時停止メニューの「クレジット・利用条件」から、出典・加工告知・免責・同梱コードの利用条件を閲覧できる。
+- 飛行画面には短い地図帰属を表示し、データとOSSの詳細はクレジットにまとめる。
+- 配布物には本書、必要な著作権・利用条件、第三者ソフトウェアのライセンス一覧を含める。
+- データ内の出典と加工情報も保持する。クレジットの表示によって、再配布時の告知義務がなくなるわけではない。
 
-## 琵琶湖の地形標高
+OpenStreetMapの[ゲーム・シミュレーション向け帰属指針](https://osmfoundation.org/wiki/Licence/Attribution_Guidelines#Computer_games_and_simulations)は、クレジットやメニューでの帰属表示を認めている。
+長い帰属文や免責文の常時HUD表示は、本プロジェクトの配布条件としない。
 
-`assets/biwa-terrain.json` は JAXA Earth API が配布する AW3D30 v3.2 のDSMとmaskを主標高にし、Copernicus DEM GLO-30 PublicをOSM陸地上の欠測補完に使う描画用地形である。
-AW3D30 mask区分0と12を優先し、国土地理院DEM区分4を除外する。水域はOSM陸水maskで補完対象から除く。
-JAXA研究データ利用条件およびCopernicus WorldDEM-30 free and open licenseを適用し、各出典と利用条件をゲーム内HUDとmanifestに記載する。JAXAの商用利用は無償だが事前通知が必要である。
+## 地図・地形・気象
 
-Copernicus GLO-30を改変・再配布するassetには、次の出典表示を維持する。
+### OpenStreetMap
 
-> © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.
+次の加工済みデータはOpenStreetMap contributorsのデータを使用する。
 
-HUDには上記の出典文をリンク付きで常時表示し、加工データ用の告知も初期状態で展開する。
+| ファイル | 用途 |
+| --- | --- |
+| `assets/biwa-shoreline.json` | 琵琶湖の湖岸と島の輪郭 |
+| `assets/biwa-analysis-map.json` | 飛行解析用の局所湖岸図 |
+| `assets/biwa-land-mask.json` | 地形の陸水区分 |
+| `assets/biwa-venue-features.json` | 砂浜・樹林・並木・桟橋・岸壁・防波堤 |
 
-加工した標高assetには、次の表示も維持する。
+湖岸・島・陸水区分は琵琶湖relation 63499を基に抽出・簡略化した。
+周辺地物は松原の局所データを基に抽出・簡略化した。
+元のXMLは配布しない。
 
-> produced using Copernicus WorldDEM-30.
+帰属表示は「© OpenStreetMap contributors」である。
+[Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)を適用し、[OpenStreetMapの著作権・ライセンス案内](https://www.openstreetmap.org/copyright)への参照を保持する。
+派生データベースの公開・再配布には、ODbLの継承条件を適用する。
 
-配布を対象とする利用条件または法的告知には、次の免責文も含める。
+### JAXA AW3D30
+
+`assets/biwa-terrain.json`は、JAXA Earth APIが配布するAW3D30 v3.2の標高・マスクを主な資料として加工した描画用地形である。
+研究データ名と出典は「AW3D30 (JAXA)」として表示する。
+[JAXA研究データ利用条件](https://earth.jaxa.jp/en/data/policy/)を適用する。
+商用利用は無償であるが、JAXAへの事前通知が必要である。
+
+注意: 標高基準の調整は描画用の近似である。測量・航法・飛行物理には使用しない。
+
+### Copernicus WorldDEM-30
+
+`assets/biwa-terrain.json`はCopernicus DEM GLO-30 Publicを加工し、陸地の標高欠測を補完する。
+[Copernicus WorldDEM-30 free and open license](https://documentation.dataspace.copernicus.eu/APIs/SentinelHub/Data/DEM/resources/license/License-COPDEM-30.pdf)を適用する。
+
+クレジット・配布告知・該当データのメタデータには、第6条(a)(b)に基づく出典・加工表示を保持する。
+
+> produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.
+
+抽出・補間・位置合わせを行ったことを併記する。
+第6条(c)に基づく次の免責は、クレジットと配布時の法的告知に保持する。
 
 > The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.
 
-GLO-30はEGM2008、AW3D30はEGM96を標高基準にする。補完値の+0.3 mは当該領域の重複標本から得た視覚的位置合わせであり、測地変換ではない。補完結果も測量・航法・飛行物理に使わない。条件の一次資料は[Copernicus DEM license](https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM)と[AW3D30の利用条件](https://earth.jaxa.jp/en/data/policy/)を参照する。
-EGM96標高から琵琶湖B.S.L.への変換は近似であり、測量・航法・物理計算には使用しない。
+### 気象庁の平年値
 
-## 琵琶湖・松原の局所地物
+`assets/biwa-typical-july-environment-v6.json`は、[気象庁の彦根・月平年値](https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=)から地上平均風速と最多風向を抽出し、湖上の風・波・空の仮定を加えたゲーム用データである。
+[気象庁の利用条件](https://www.jma.go.jp/jma/kishou/info/coment.html)に従い、次の出典・加工表示を保持する。
 
-`assets/biwa-venue-features.json` はOpenStreetMap contributorsの局所データから抽出・簡略化した砂浜、樹林、並木、桟橋、岸壁、防波堤の地物データである。OpenStreetMapデータと同じくODbL-1.0を適用し、帰属表示とライセンスへのリンクを維持する。派生データベースを公開する場合はODbLのshare-alike条件を満たす。原データsnapshotは再配布しない。各assetとmanifestにsnapshot hash、API出典、加工方法を記録する。
+> 出典：気象庁ホームページ。月平年値を加工し、pr-simulator-game-1が仮定に基づくゲーム用環境を作成。
 
-沖の白石はOpenStreetMapの4つの島輪郭を使い、高島市が公表する「4個の岩」「最高14 m」という事実を描画専用の形状上限に利用する。個々の岩の高さは公開資料にないため、輪郭面積に応じた視覚上の推定値であり、地形標高・衝突形状・飛行物理として使用しない。市の文章を出典として記録し、写真・画像は利用していない。
+原HTMLは配布しない。
+本プロジェクトが作成した生成処理・仮定にはMIT Licenseを適用する。
 
-## 彦根の月平年値と環境仮定
+注意: 月平均風速と最多風向は、観測された平均風ベクトルや湖上の三次元風場を表すものではない。波や空もゲーム用の仮定であり、気象庁が作成した湖上気象ではない。
 
-`assets/biwa-typical-july-environment-v6.json` は[気象庁の彦根・月平年値](https://www.data.jma.go.jp/stats/etrn/view/nml_sfc_ym.php?block_no=47761&day=29&month=12&prec_no=60&view=a3s&year=)の
-1991–2020年・7月の地上平均風速と最多風向を抽出し、プロジェクトが湖上外挿・空間分布・波・空の仮定を追加したデータである。
-気象庁のデータには[公共データ利用規約（第1.0版）に基づく利用条件](https://www.jma.go.jp/jma/kishou/info/coment.html)を適用する。
-出典・加工表示と原snapshotのexact-byte hashをassetとmanifestに保持する。原HTMLは配布しない。
-プロジェクト独自のrecipe・生成tool・仮定にはMIT Licenseを適用する。
+### 沖の白石
 
-風速はscalar月平均、風向は最多のfrom-directionであり、観測された平均vectorや湖上3D風場を表さない。
-波のfetch 600 m、鉛直流zero、高度依存・定常性、太陽・雲・視程は明示した仮定／game tuningである。
-気象庁が作成した湖上気象scenario、実測波浪、天文計算結果として扱わない。
-環境version 6は現行hybrid catalogのTypical、WASM bundle、Webの環境描画、nativeのTypicalへ接続済みである。
-asset・manifestの出典と加工表示を維持し、利用者向けの気象庁出典・加工表示と配布artifactの帰属一覧同期はBPG-013 (#13)の公開gateに残す。
-runtime接続や実GPU確認の成功だけでは、この公開gateを満たしたと扱わない。
+島の輪郭にはOpenStreetMapを使用する。
+岩の個数と高さには、高島市が公開する説明を参考として使用する。
+個々の岩の高さは視覚上の推定である。
+市の写真・画像は使用しない。
 
-## 登録要件
+## フォントと同梱ソフトウェア
 
-`assets/manifest.toml` を正本とし、各assetに次の情報を登録する。
+| ファイル・用途 | 出典・利用条件 |
+| --- | --- |
+| `assets/fonts/MPLUS1p-Regular.ttf` | M PLUS 1p Regular。M+ Project AuthorsとRounded M+ Project Authorsの著作物。[SIL Open Font License 1.1](assets/fonts/MPLUS1p-OFL.txt)。元のフォントを改変せず、日本語表示に使用する。 |
+| `assets/test-fonts/FiraMono-subset.ttf` | Mozilla FoundationとTelefonica S.A.の著作物。[SIL Open Font License 1.1](assets/test-fonts/FiraMono-LICENSE.txt)。CPU試験専用であり、製品のフォント読込みとNative配布物には含めない。 |
+| `assets/earcut.LICENSE.txt` | GeoRust earcutのMITと、派生元MapboxのISCの両告知。ポリゴンの三角形分割に使用する。 |
+| `assets/ryu-js.LICENSE.txt` | ryu-jsのBoost Software License 1.0。数値の文字列変換に使用する。 |
+| `assets/game-ui-validators.LICENSE.txt` | AjvとesbuildのMIT。生成したUI検査コードに含まれる告知を保持する。 |
+| `assets/time.LICENSE.txt` | timeと有効な依存ライブラリのMITを選択した告知。保存日時の変換に使用する。 |
 
-- path: `assets/` 内の相対パス
-- sha256: 配布ファイルのSHA-256
-- source: 出典URLまたは自作データの生成元識別子
-- source_version: 元データのversionまたは取得日と識別子
-- license: SPDX識別子または明示的な利用条件名
-- license_url: 条件のURLまたはリポジトリ内の条件ファイル
-- attribution: 実際に表示する帰属文
-- processing: tool versionと処理パラメータ、地理データではoriginと標高基準
+WebのThree.js・SnabbdomとNativeのBevyを含む依存ライブラリにも、各ライセンスを適用する。
+Native配布物の第三者ソフトウェア一覧は、固定した`Cargo.lock`と対象構成から生成する。
+上記の同梱告知を、この依存一覧で置き換えない。
 
-自作assetも生成元とライセンスを登録する。`web/public/` の配布assetも同じ管理経路を使用し、
-未登録ファイルの別経路配布を禁止する。manifestはファイルの存在、hash、登録漏れ、重複をCIで検査する。
-検査はmetadataの存在を保証する。法的な利用可否は採用時の一次資料確認により判断する。
-出典ファイルを移植する場合は元のcopyrightとlicense noticeを保持する。
+## プロジェクト作成データ・画像
+
+- `assets/biwa-launch-venue.json`は、利用者が提示した発進地点と概略寸法を基に作成した設定である。測量データではない。
+- `assets/indigo-resist-decal.png`と`assets/tokushima-fin-artwork.png`は、利用者提供写真を参考に生成した描画用画像である。参考写真は再配布しない。
+- これらの配布ファイルには、manifestに記載したMIT Licenseを適用する。
+
+## 登録・再配布時の確認
+
+新しいファイルは、配布前にmanifestへ次の事項を登録する。
+
+- パスとSHA-256。
+- 出典・元データの版・取得元の識別情報。
+- ライセンス名、利用条件への参照、帰属表示。
+- 加工方法と、地理データの座標・標高基準。
+
+`web/public/`からの配布にも同じ登録規則を適用する。
+CIはファイルの存在・ハッシュ・登録漏れ・重複を検査する。
+利用条件への適合は、採用時の一次資料確認と表示・同梱物の検査によって確認する。

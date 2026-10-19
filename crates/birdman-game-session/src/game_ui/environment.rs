@@ -29,8 +29,26 @@ pub(super) fn registered_wind(
 pub fn game_ui_environment_readout(
     identity: Option<SessionScenarioIdentity>,
 ) -> Result<String, EnvironmentFormatError> {
+    format_environment_readout(identity, false)
+}
+
+pub(super) fn game_ui_environment_diagnostics(
+    identity: Option<SessionScenarioIdentity>,
+) -> Result<String, EnvironmentFormatError> {
+    format_environment_readout(identity, true)
+}
+
+fn format_environment_readout(
+    identity: Option<SessionScenarioIdentity>,
+    technical: bool,
+) -> Result<String, EnvironmentFormatError> {
     let Some(identity) = identity.filter(|identity| registered(*identity)) else {
-        return Ok("代表風情報を取得できない。飛行準備時に条件を確認する。\n気象による発進風速の上限・下限: 未定義。".to_owned());
+        return Ok(if technical {
+            "代表風情報を取得できない。"
+        } else {
+            "気象情報は準備完了後に表示する。"
+        }
+        .to_owned());
     };
     let (name, position, velocity, basis, variation) = if identity.environment_version == 6 {
         let environment = bundled_environment()?;
@@ -46,7 +64,7 @@ pub fn game_ui_environment_readout(
             document.wind_grid.representative_position_ned_m,
             environment.representative_wind()?.components(),
             basis,
-            "位置に応じて変化する定常風",
+            "場所により風向・風速が変わる",
         )
     } else {
         let preset = preset_environment_for_version(identity.environment_version)
@@ -56,7 +74,7 @@ pub fn game_ui_environment_readout(
             [0.0, 0.0, -10.5],
             preset.wind_velocity_ned_mps,
             "仮定した合成環境",
-            "一様な定常風",
+            "位置によらず一定の風",
         )
     };
     let [north, east, down] = velocity;
@@ -78,8 +96,15 @@ pub fn game_ui_environment_readout(
             down.abs()
         )
     };
-    Ok(format!(
-        "{name} · {basis}\n代表水平風速: {speed:.2} m/s · 風向: {direction}\n鉛直流: {vertical}\n速度成分 N/E/D: {north:.2} / {east:.2} / {down:.2} m/s\n代表地点 N/E/D: {:.1} / {:.1} / {:.1} m · 高度 {:.1} m\n空間変動: {variation}\n気象による発進風速の上限・下限: 未定義。",
-        position[0], position[1], position[2], -position[2]
-    ))
+    let mut readout = format!(
+        "代表風: {speed:.2} m/s · {direction}\n水面から {:.1} mでの代表値 · {vertical}\n{variation}",
+        -position[2]
+    );
+    if technical {
+        readout.push_str(&format!(
+            "\n環境名: {name} · {basis}\n速度成分 N/E/D: {north:.2} / {east:.2} / {down:.2} m/s\n代表地点 N/E/D: {:.1} / {:.1} / {:.1} m",
+            position[0], position[1], position[2]
+        ));
+    }
+    Ok(readout)
 }

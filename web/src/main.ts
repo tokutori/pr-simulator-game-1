@@ -676,7 +676,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       activeMode: presentation.currentMode,
       webXrAvailable: webXrAvailability.supported,
       phoneVrAvailable: phoneVrAvailability.supported,
-      status: `${webXrAvailability.message}; ${phoneVrAvailability.message}`
+      status: ""
     });
     syncGameSession();
   } catch (error) {
@@ -1159,9 +1159,9 @@ function isPageHidden(): boolean {
 
 function successStatus(mode: PresentationMode): string {
   switch (mode) {
-    case "screen": return "Screen is active";
-    case "webxr": return "WebXR active; gaze dwell or XR select activates controls";
-    case "phone-vr": return "Phone VR active with gravity-referenced tilt; recenter resets heading only. Device and optical validation remain pending.";
+    case "screen": return "";
+    case "webxr": return "VR表示に切り替えた。視線を留めるか、選択操作で決定する。";
+    case "phone-vr": return "スマートフォンVRに切り替えた。メニューから正面の向きを再設定できる。";
   }
 }
 

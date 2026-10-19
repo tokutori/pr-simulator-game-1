@@ -58,6 +58,8 @@ export class ScreenUiAdapter {
   }
 
   render(viewModel: UiViewModel, visible = true): void {
+    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.scene !== viewModel.scene
+      || this.currentViewModel.activeOverlay !== viewModel.activeOverlay);
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -89,6 +91,13 @@ export class ScreenUiAdapter {
       attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
     }, [shell]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
+    if (scopeChanged) {
+      const element = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
+      if (element !== null) {
+        element.scrollTop = 0;
+        element.scrollLeft = 0;
+      }
+    }
     this.restoreDom();
     this.observeCharts();
   }
@@ -268,7 +277,7 @@ export class ScreenUiAdapter {
         data.attrs = { ...data.attrs, "aria-pressed": String(presentation.selected) };
         children = [
           h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${control.label}`),
-          h("small", presentation.description)
+          ...(presentation.description.length > 0 ? [h("small", presentation.description)] : [])
         ];
       }
       if (presentation?.kind === "disclosure") {
@@ -291,7 +300,7 @@ export class ScreenUiAdapter {
       ]);
     }
     if (control.kind === "chart") return this.createChart(control);
-    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, `${control.label}: ${control.value}`);
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? control.value : `${control.label}: ${control.value}`);
   }
 
   private createChart(control: Extract<UiControl, { readonly kind: "chart" }>): VNode {
