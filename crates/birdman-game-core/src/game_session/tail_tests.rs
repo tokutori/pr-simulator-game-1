@@ -366,14 +366,8 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
     let error = session.advance_tail_flight_tick(input()).unwrap_err();
     let expected = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
         AerodynamicEvaluationError::Hybrid(
-            HybridError::new(
-                HybridSite::Proxy {
-                    surface: crate::HybridSurfaceRole::MainWing,
-                    index: 0,
-                },
-                AeroError::Wind(WindError::OutsideGrid),
-            )
-            .with_stage(AerodynamicStage::Second),
+            HybridError::new(HybridSite::Datum, AeroError::Wind(WindError::OutsideGrid))
+                .with_stage(AerodynamicStage::Second),
         ),
     )));
     assert_eq!(error, GameSessionError::TailTick(expected));

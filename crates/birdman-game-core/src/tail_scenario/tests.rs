@@ -279,13 +279,7 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
         cause.cause(),
         crate::AeroError::Wind(WindError::OutsideGrid)
     );
-    assert_eq!(
-        cause.site(),
-        HybridSite::Proxy {
-            surface: crate::HybridSurfaceRole::MainWing,
-            index: 0
-        }
-    );
+    assert_eq!(cause.site(), HybridSite::Datum);
     assert_eq!(cause.stage(), Some(AerodynamicStage::Second));
     assert_eq!(scenario.initial_state().tick_index(), 0);
 }
