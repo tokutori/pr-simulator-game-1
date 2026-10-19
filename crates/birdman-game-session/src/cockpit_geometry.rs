@@ -279,11 +279,15 @@ mod tests {
     #[test]
     fn pilot_mount_stays_inside_the_actual_shell_over_registered_body_displacements() {
         use birdman_game_core::{
-            HybridMockDefinition, PilotPositionTarget, TailPilotPositionCommand,
+            HybridMockDefinition, HybridMockTrim, PilotPositionTarget, TailPilotPositionCommand,
             TailPilotPositionIntent, TailPilotPositionMapping,
         };
-        let aircraft = HybridMockDefinition::try_new().unwrap().aircraft();
-        let trim = PilotPositionTarget::try_new(&aircraft, 0.0).unwrap();
+        let definition = HybridMockDefinition::try_new().unwrap();
+        let aircraft = definition.aircraft();
+        let initial = HybridMockTrim::try_new(&definition)
+            .unwrap()
+            .pilot_position_m();
+        let trim = PilotPositionTarget::try_new(&aircraft, initial).unwrap();
         let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.position_m()).unwrap();
         let endpoints = [-1.0, 1.0].map(|normalized| {
             mapping
@@ -299,8 +303,8 @@ mod tests {
         });
         let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
         assert_eq!([forward, right, down], [0.06, 0.0, 1.04]);
-        let minimum_aft = -forward - (endpoints[1] - endpoints[0]);
-        let maximum_aft = -forward - (endpoints[0] - endpoints[1]);
+        let minimum_aft = -forward - (endpoints[1] - initial);
+        let maximum_aft = -forward - (endpoints[0] - initial);
         let geometry = CockpitGeometry::new();
         let rings: Vec<_> = geometry
             .surfaces

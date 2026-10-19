@@ -42,12 +42,6 @@ pub(super) fn contact_partitions(
                 3.0 * down_change * norm[2],
             ];
             ensure_finite(&derivative)?;
-            if down_start.max(down_end) + radius < -rounding_distance_m {
-                return Ok(ContactPartitions {
-                    fractions,
-                    rounding_distance_m,
-                });
-            }
             let coefficient_scale = derivative.into_iter().map(f64::abs).fold(0.0, f64::max);
             if coefficient_scale > 0.0 {
                 let roots = polycool::Quadratic::new(
@@ -89,12 +83,6 @@ pub(super) fn contact_partitions(
                 rounding_distance_m,
                 derivative_amplitude,
             ])?;
-            if down_start.max(down_end) + radius < -rounding_distance_m {
-                return Ok(ContactPartitions {
-                    fractions,
-                    rounding_distance_m,
-                });
-            }
             if derivative_amplitude > 0.0 && down_change.abs() <= derivative_amplitude {
                 let phase = libm::atan2(-cosine_coefficient, sine_coefficient);
                 let offset = libm::acos((-down_change / derivative_amplitude).clamp(-1.0, 1.0));

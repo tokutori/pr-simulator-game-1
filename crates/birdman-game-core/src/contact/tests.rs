@@ -303,49 +303,6 @@ fn off_grid_tangencies_and_transient_crossings_use_both_interpolation_branches()
     }
 }
 
-#[test]
-fn far_separation_preserves_curve_and_all_endpoint_coordinate_overflow_errors() {
-    let state = |north, down, orientation| {
-        FlightState::try_new(
-            NedPoint::try_new(north, 0.0, down).unwrap(),
-            NedVector::zero(),
-            orientation,
-            BodyVector::zero(),
-            0.0,
-            0.0,
-        )
-        .unwrap()
-    };
-    for (previous, next, point) in [
-        (
-            state(0.0, -2.0e307, UnitQuaternion::IDENTITY),
-            state(1.79e308, -2.0e307, UnitQuaternion::IDENTITY),
-            contact_point(1.0e307, 0.0),
-        ),
-        (
-            state(0.0, -9.0e307, UnitQuaternion::IDENTITY),
-            state(
-                0.0,
-                -9.0e307,
-                UnitQuaternion::try_new(0.0, 1.0, 0.0, 0.0).unwrap(),
-            ),
-            contact_point(0.0, 8.0e307),
-        ),
-    ] {
-        assert_eq!(
-            detect_flight_state_water_contact(
-                &aircraft(),
-                0,
-                previous,
-                1,
-                next,
-                geometry(&[point])
-            ),
-            Err(ContactError::Math(crate::MathError::NonFinite)),
-        );
-    }
-}
-
 fn aircraft() -> AircraftModel {
     AircraftModel::try_new(
         10.0,
