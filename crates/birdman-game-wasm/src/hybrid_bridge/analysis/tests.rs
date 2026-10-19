@@ -127,7 +127,7 @@ fn result_and_replay_summary_keep_rust_metrics_terminal_identity_and_cursor_dist
 #[test]
 fn bundled_grid_samples_the_same_registered_provider_before_and_after_archive_import() {
     let mut bridge = complete(2);
-    let owner = crate::environment::bundled_environment().unwrap();
+    let owner = birdman_game_session::bundled_environment().unwrap();
     let grid = &owner.document().wind_grid;
     let request = grid_request(
         grid.origin_ned_m[0],

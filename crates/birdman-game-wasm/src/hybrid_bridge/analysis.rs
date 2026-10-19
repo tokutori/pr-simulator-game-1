@@ -114,7 +114,7 @@ impl HybridGameSessionBridge {
             },
             EnvironmentProjection::Available { .. } => {
                 let wind = if identity.environment_version == 6 {
-                    crate::environment::bundled_environment()
+                    birdman_game_session::bundled_environment()
                         .map_err(|error| {
                             BoundaryError::Environment(
                                 crate::environment_snapshot::EnvironmentSnapshotError::Environment(
@@ -131,7 +131,7 @@ impl HybridGameSessionBridge {
                             )
                         })?
                 } else {
-                    let components = crate::environment_snapshot::preset_wind_for_version(
+                    let components = birdman_game_session::preset_wind_for_version(
                         identity.environment_version,
                     )
                     .ok_or(BoundaryError::Environment(

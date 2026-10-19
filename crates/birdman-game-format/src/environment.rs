@@ -45,6 +45,7 @@ pub struct EnvironmentDocument {
 
 /// Right-handed NED frame with down zero at the scenario's fixed water surface.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct LocalNedFrameDocument {
     /// WGS84 origin latitude, in degrees.
@@ -74,6 +75,7 @@ pub struct WindGridDocument {
 
 /// Stable rendering inputs; waves do not change the physics contact surface.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WaveStateDocument {
     /// Horizontal wind history used for the wave approximation, in N/E m/s.
@@ -88,6 +90,7 @@ pub struct WaveStateDocument {
 
 /// Fixed sky inputs in local geographical coordinates, independent of a 3D engine.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SkyStateDocument {
     /// Direction toward the sun, clockwise from north, in [0, 360) degrees.
@@ -104,6 +107,7 @@ pub struct SkyStateDocument {
 
 /// Attribution and identity for one offline input snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentSourceDocument {
     /// Data or document title.
@@ -124,6 +128,7 @@ pub struct EnvironmentSourceDocument {
 
 /// Monthly ground-station evidence, kept separate from a spatial lake-wind estimate.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GroundWindNormalDocument {
     /// Index into the environment source list.
@@ -146,6 +151,7 @@ pub struct GroundWindNormalDocument {
 
 /// Evidence attached to a component; assumptions and tuning require explicit reasons.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentBasisDocument {
     /// Direct observation from one source snapshot.
@@ -177,6 +183,7 @@ pub enum EnvironmentBasisDocument {
 
 /// Required component provenance, with no implicit evidence classification.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentProvenanceDocument {
     /// Origin and fixed-water datum basis.

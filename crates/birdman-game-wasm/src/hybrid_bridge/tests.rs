@@ -762,7 +762,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             );
             assert_eq!(
                 telemetry.wind_velocity_ned_mps,
-                crate::environment::bundled_environment()
+                birdman_game_session::bundled_environment()
                     .unwrap()
                     .wind_field()
                     .unwrap()

@@ -2,15 +2,12 @@
 
 use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
-use birdman_game_session::application::ExternalPauseReason;
+use birdman_game_session::{application::ExternalPauseReason, environment_snapshot};
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod cockpit_geometry;
-mod environment;
-mod environment_snapshot;
 mod hybrid_bridge;
 mod hybrid_record;
-mod hybrid_session;
 mod lake_sky;
 mod lake_water;
 mod screen_render_auto;
@@ -20,9 +17,9 @@ mod venue_terrain;
 mod wing_geometry;
 mod wing_texture;
 
+pub use birdman_game_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
-pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use lake_sky::{
     LakeCloudsBridge, LakeSkyImageBridge, lake_scene_ambient_color_srgb,
     lake_scene_ambient_irradiance, lake_scene_haze, lake_scene_sunlight_color_srgb,
@@ -69,7 +66,11 @@ pub fn environment_snapshot_for_identity_json(identity_json: &JsValue) -> Result
     let json = identity_json.as_string().ok_or_else(|| {
         environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::InvalidInputType)
     })?;
-    environment_snapshot::for_identity_json(json.as_bytes()).map_err(environment_snapshot_error)
+    let snapshot = environment_snapshot::for_identity_json(json.as_bytes())
+        .map_err(environment_snapshot_error)?;
+    serde_json::to_string(&snapshot).map_err(|_| {
+        environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::EncodingFailed)
+    })
 }
 
 fn preset_code(preset: DifficultyPreset) -> u32 {

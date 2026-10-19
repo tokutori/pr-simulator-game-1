@@ -8,6 +8,7 @@ mod airframe_shape;
 pub mod application;
 pub mod cockpit_geometry;
 mod environment;
+pub mod environment_snapshot;
 pub mod game_ui;
 mod hybrid_session;
 mod launch_venue;

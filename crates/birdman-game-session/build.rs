@@ -12,12 +12,9 @@ fn main() {
     let workspace_dir = manifest_dir.join("../..").canonicalize().unwrap();
     let core_source = workspace_dir.join("crates/birdman-game-core/src");
     let wasm_source = workspace_dir.join("crates/birdman-game-wasm/src/lib.rs");
-    let runtime_environment_source =
-        workspace_dir.join("crates/birdman-game-wasm/src/environment.rs");
     let environment_snapshot_source =
-        workspace_dir.join("crates/birdman-game-wasm/src/environment_snapshot.rs");
+        workspace_dir.join("crates/birdman-game-session/src/environment_snapshot.rs");
     let environment_asset = workspace_dir.join("assets/biwa-typical-july-environment-v6.json");
-    let hybrid_source = workspace_dir.join("crates/birdman-game-wasm/src/hybrid_session.rs");
     let shared_defaults_source = workspace_dir.join("crates/birdman-game-session/src/lib.rs");
     let shared_hybrid_source =
         workspace_dir.join("crates/birdman-game-session/src/hybrid_session.rs");
@@ -36,7 +33,6 @@ fn main() {
         wasm_source.clone(),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
-        hybrid_source.clone(),
         shared_defaults_source.clone(),
         shared_hybrid_source.clone(),
         hybrid_aircraft_source,
@@ -44,7 +40,6 @@ fn main() {
     ];
     let environment_files = vec![
         wasm_source.clone(),
-        runtime_environment_source.clone(),
         environment_snapshot_source.clone(),
         aerodynamics_source,
         wind_source,
@@ -54,9 +49,7 @@ fn main() {
     ];
     let scenario_files = vec![
         wasm_source,
-        runtime_environment_source,
         environment_snapshot_source,
-        hybrid_source,
         shared_defaults_source,
         shared_hybrid_source,
         shared_environment_source,

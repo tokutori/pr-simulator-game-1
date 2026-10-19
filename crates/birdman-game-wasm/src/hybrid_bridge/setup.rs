@@ -1,7 +1,4 @@
 use super::*;
-use crate::environment_snapshot::{
-    EnvironmentContext, EnvironmentProjection, EnvironmentSnapshot, EnvironmentSource,
-};
 use birdman_game_format::{
     DifficultyPreset, HudCue, TailControlAxesDocument, TailControlProfileDocument,
 };
@@ -230,60 +227,8 @@ impl HybridGameSessionBridge {
     pub(super) fn environment_internal(
         &self,
     ) -> Result<String, crate::environment_snapshot::EnvironmentSnapshotError> {
-        let phase = self.session.core_session().snapshot().phase();
-        let projection = match phase {
-            SessionPhase::Title => EnvironmentProjection::NoSelection,
-            SessionPhase::FlightSetup => {
-                let selection = HybridSessionPreparation::select_scenario(
-                    self.session.difficulty().weather(),
-                    self.session.seed(),
-                )
-                .map_err(|_| {
-                    crate::environment_snapshot::EnvironmentSnapshotError::InvalidIdentity
-                })?;
-                let identity = crate::hybrid_session::identity_for_selection(selection);
-                crate::environment_snapshot::for_identity(
-                    EnvironmentSource::Selected,
-                    identity.into(),
-                )?
-            }
-            SessionPhase::Replay => {
-                let identity = self.session.core_session().configuration_identity().ok_or(
-                    crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
-                )?;
-                crate::environment_snapshot::for_identity(
-                    if self.session.archive().is_some() {
-                        EnvironmentSource::Archive
-                    } else {
-                        EnvironmentSource::Record
-                    },
-                    identity.into(),
-                )?
-            }
-            SessionPhase::Attract => {
-                let identity = self.session.core_session().configuration_identity().ok_or(
-                    crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
-                )?;
-                crate::environment_snapshot::for_identity(
-                    EnvironmentSource::Attract,
-                    identity.into(),
-                )?
-            }
-            _ => {
-                let identity = self.session.core_session().configuration_identity().ok_or(
-                    crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
-                )?;
-                crate::environment_snapshot::for_identity(
-                    EnvironmentSource::Sealed,
-                    identity.into(),
-                )?
-            }
-        };
-        EnvironmentSnapshot::encode(
-            EnvironmentContext::Session {
-                phase: phase.into(),
-            },
-            projection,
-        )
+        let snapshot = crate::environment_snapshot::for_session(&self.session)?;
+        serde_json::to_string(&snapshot)
+            .map_err(|_| crate::environment_snapshot::EnvironmentSnapshotError::EncodingFailed)
     }
 }
