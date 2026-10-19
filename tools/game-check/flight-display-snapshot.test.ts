@@ -124,10 +124,10 @@ describe("control-layout-aware display snapshots", () => {
   it.each([
     ["bpg041-rectangular-hybrid-mock", 1, null],
     ["bpg041-zero-dihedral-oracle", 1, null],
-    ["bpg041-playable-hybrid-mock", 2, 3.6],
+    ["bpg041-playable-hybrid-mock", 3, 3.6],
     ["bpg041-rectangular-hybrid-mock", 2, null],
     ["bpg041-playable-hybrid-mock", 1, null],
-    ["bpg041-playable-hybrid-mock", 3, null],
+    ["bpg041-playable-hybrid-mock", 2, null],
     ["unknown-aircraft", 2, null]
   ] as const)("projects %s model %s from each sealed live phase", (configurationId, modelVersion, expectedArm) => {
     const session = new HybridGameSessionBridge(0, 21, 22);
@@ -178,7 +178,8 @@ describe("control-layout-aware display snapshots", () => {
       for (const [configurationId, modelVersion, expectedArm] of [
         ["bpg041-rectangular-hybrid-mock", 1, null],
         ["bpg041-zero-dihedral-oracle", 1, null],
-        ["bpg041-playable-hybrid-mock", 2, 3.6],
+        ["bpg041-playable-hybrid-mock", 3, 3.6],
+        ["bpg041-playable-hybrid-mock", 2, null],
         ["bpg041-playable-hybrid-mock", 1, null],
         ["unregistered-record-aircraft", 2, null]
       ] as const) {

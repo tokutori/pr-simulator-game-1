@@ -128,7 +128,7 @@ export function projectPreparedLaunchRenderPose(snapshot: TailPreparedLaunchSnap
 }
 
 function projectTailGeometry(scenario: TailScenarioIdentity, controls: TailControlIdentity): TailPresentationGeometryAvailability {
-  if (scenario.aircraftModelVersion === 2 && controls.aircraftConfigurationId === "bpg041-playable-hybrid-mock") {
+  if (scenario.aircraftModelVersion === 3 && controls.aircraftConfigurationId === "bpg041-playable-hybrid-mock") {
     return available(Object.freeze({ kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 }));
   }
   return unavailable("unregistered_aircraft_geometry");

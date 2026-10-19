@@ -8,7 +8,7 @@ export function currentVenueEnvironmentFixture(): RuntimeEnvironmentProjection {
   const waves = registeredEnvironment.waves;
   return { kind: "available", value: {
     source: "sealed",
-    identity: { catalogVersion: 3, scenarioId: 6, scenarioVersion: 3, aircraftModelVersion: 2,
+    identity: { catalogVersion: 4, scenarioId: 6, scenarioVersion: 4, aircraftModelVersion: 3,
       environmentVersion: 6, controllerProfileVersion: 3, seedLow: 21, seedHigh: 22 },
     localFrame: { kind: "available", value: { latitudeDegrees: localFrame.latitude_degrees,
       longitudeDegrees: localFrame.longitude_degrees, waterLevelDatum: localFrame.water_level_datum } },
