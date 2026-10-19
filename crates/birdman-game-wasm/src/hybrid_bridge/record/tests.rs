@@ -68,6 +68,20 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
     );
     assert_eq!(bridge.snapshot_internal().unwrap(), result);
     bridge.enter_replay().unwrap();
+    let terminal_pose = serde_json::from_str::<Value>(&result).unwrap()["render_pose"].clone();
+    let camera: Value = serde_json::from_str(
+        &bridge
+            .camera_view_internal(
+                terminal_pose["simulationTimeSeconds"].as_f64().unwrap(),
+                "chase",
+                true,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(camera["render_pose"], terminal_pose);
+    assert!(camera["sample"].get("render_pose").is_none());
+    assert!(camera.get("initial_pilot_position_m").is_none());
     bridge.seek_playback(0.005).unwrap();
     bridge.set_playback_rate_code(0).unwrap();
     bridge.set_playback_playing(true).unwrap();
@@ -116,6 +130,14 @@ fn imported_tail_log_keeps_exact_original_text_unknown_identity_and_failed_open_
     bridge.seek_playback(0.005).unwrap();
     let clock = bridge.clock_internal().unwrap();
     let context = bridge.playback_context_internal().unwrap();
+    let camera: Value =
+        serde_json::from_str(&bridge.camera_view_internal(0.005, "chase", true).unwrap()).unwrap();
+    assert_eq!(camera["render_pose"]["tailGeometry"]["kind"], "unavailable");
+    assert_eq!(
+        camera["render_pose"]["tailGeometry"]["reason"],
+        "unregistered_aircraft_geometry"
+    );
+    assert_eq!(bridge.clock_internal().unwrap(), clock);
     assert_eq!(bridge.export_current_record_internal().unwrap(), raw);
     assert_eq!(
         bridge.export_csv_internal().unwrap().as_bytes(),

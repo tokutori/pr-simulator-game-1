@@ -145,6 +145,7 @@ impl HybridGameSessionBridge {
             .ok_or(BoundaryError::Record(HybridRecordError::RecordUnavailable))?;
         let view = replay_camera_view(
             record,
+            self.session.display_control_identity(),
             time_seconds,
             selection,
             if screen {

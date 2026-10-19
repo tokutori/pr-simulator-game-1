@@ -151,6 +151,18 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             assert_eq!(prepared["phase"], "briefing_preparing");
             assert_eq!(prepared["preview"]["kind"], "prepared");
             assert_eq!(prepared["preview"]["state"]["tick"], 0);
+            let initial_pose = prepared["preview"]["render_pose"].clone();
+            assert_eq!(initial_pose["simulationTimeSeconds"], 0.0);
+            assert!(initial_pose["airspeedMetersPerSecond"].is_null());
+            assert!(initial_pose["windVelocityNedMetersPerSecond"].is_null());
+            assert_eq!(initial_pose["tailGeometry"]["kind"], "available");
+            assert_eq!(
+                initial_pose["tailGeometry"]["value"]
+                    .as_object()
+                    .unwrap()
+                    .len(),
+                1
+            );
             let initial = prepared["preview"]["state"].clone();
             let before = bridge.session.core_session().snapshot();
             assert_eq!(
@@ -174,6 +186,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
                     serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
                 assert_eq!(countdown["phase"], "countdown");
                 assert_eq!(countdown["preview"]["state"], initial);
+                assert_eq!(countdown["preview"]["render_pose"], initial_pose);
                 assert_eq!(
                     bridge
                         .session
@@ -188,6 +201,20 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
                     .unwrap();
             }
             assert_eq!(snapshot(&bridge)["frame"]["state"], initial);
+            let live_pose = snapshot(&bridge)["render_pose"].clone();
+            for field in [
+                "datumPositionNed",
+                "attitudeBodyToNed",
+                "pilotPositionMeters",
+                "initialPilotPositionMeters",
+                "simulationTimeSeconds",
+                "controls",
+                "tailGeometry",
+            ] {
+                assert_eq!(live_pose[field], initial_pose[field], "{field}");
+            }
+            assert!(live_pose["airspeedMetersPerSecond"].is_number());
+            assert!(live_pose["windVelocityNedMetersPerSecond"].is_object());
             let live: Value =
                 serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
             assert_eq!(live["preview"]["kind"], "unavailable");
@@ -199,6 +226,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             let retry: Value =
                 serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
             assert_eq!(retry["preview"]["state"], initial);
+            assert_eq!(retry["preview"]["render_pose"], initial_pose);
             assert_eq!(
                 retry["preview"]["scenario"],
                 prepared["preview"]["scenario"]

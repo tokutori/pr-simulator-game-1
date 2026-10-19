@@ -12,6 +12,7 @@ pub mod environment_snapshot;
 pub mod game_ui;
 mod hybrid_session;
 mod launch_venue;
+pub mod render_pose;
 
 pub mod lake_sky;
 pub mod lake_water;

@@ -1708,6 +1708,7 @@ impl VerificationPresentation<'_, '_> {
             .ok_or("Replay camera record is missing")?;
         let view = replay_camera_view(
             record,
+            session.game.display_control_identity(),
             seconds,
             selected,
             GameUiPresentationMode::Screen,

@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use birdman_game_core::{DistanceScore, FlightTelemetry, SessionScenarioIdentity};
 
 use crate::{
-    FlightRecordTailIdentityDocument, TailControlLayoutDocument,
+    FlightRecordTailIdentityDocument, FlightRenderPose, TailControlLayoutDocument,
     TailFlightRecordFinalizationDocument, TailIncidenceDocument,
 };
 
@@ -160,6 +160,8 @@ pub struct TailSnapshotDocument<'identity> {
     pub scenario: Option<EnvironmentIdentity>,
     /// Borrowed model/controller names, explicitly null before preparation.
     pub control_identity: Option<&'identity FlightRecordTailIdentityDocument>,
+    /// Renderer-ready projection of the same committed state.
+    pub render_pose: Option<FlightRenderPose>,
     /// Projection for the current menu, live flight or terminal phase.
     pub frame: TailFrameDocument,
 }
@@ -195,6 +197,8 @@ pub enum TailPreparedLaunchFrame<'identity> {
         control_identity: &'identity FlightRecordTailIdentityDocument,
         /// Zero-tick initial state.
         state: Box<TailStateDocument>,
+        /// Renderer-ready sealed initial state.
+        render_pose: Box<FlightRenderPose>,
     },
 }
 

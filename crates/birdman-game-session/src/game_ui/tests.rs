@@ -2807,6 +2807,10 @@ fn schema_roots_reuse_group_definitions_and_preserve_individual_exports() {
         ("record-analysis", "serialize", "AnalysisDocument"),
         ("record-summary", "serialize", "SummaryDocument"),
         ("record-wind", "serialize", "WindDocument"),
+        ("lifecycle", "serialize", "SessionLifecycleDocument"),
+        ("tail-profile", "serialize", "TailControlProfileDocument"),
+        ("runtime-environment", "serialize", "EnvironmentSnapshot"),
+        ("flight-render-pose", "serialize", "FlightRenderPose"),
     ] {
         let schema: serde_json::Value =
             serde_json::from_str(&export_game_ui_schema(name).unwrap()).unwrap();

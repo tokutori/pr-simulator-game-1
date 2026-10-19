@@ -155,6 +155,24 @@ impl ApplicationSession {
         self.attract.as_ref()
     }
 
+    /// Borrows model and controller names from the currently displayed record or flight.
+    pub fn display_control_identity(&self) -> Option<&FlightRecordTailIdentityDocument> {
+        match self.session.snapshot().phase() {
+            SessionPhase::Attract => self
+                .attract
+                .as_ref()
+                .map(|metadata| &metadata.record_identity),
+            SessionPhase::Replay if self.archived.is_some() => self
+                .archived
+                .as_ref()
+                .map(ArchiveMetadata::control_identity),
+            _ => self
+                .prepared
+                .as_ref()
+                .map(|metadata| &metadata.record_identity),
+        }
+    }
+
     /// Executes one canonical operation, preserving the core's classified failure semantics.
     pub fn execute(
         &mut self,
