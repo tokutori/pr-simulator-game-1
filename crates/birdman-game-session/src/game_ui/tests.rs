@@ -64,6 +64,14 @@ fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
         .unwrap()
 }
 
+fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
+    hud.groups
+        .iter()
+        .flat_map(|group| &group.nodes)
+        .find(|node| node.id == id)
+        .unwrap()
+}
+
 #[test]
 fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
     let records = (1..=2000)
@@ -1522,12 +1530,14 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         };
         assert!(value.contains("最後の有効状態") && value.contains("input disposal failed"));
         let hud = view.hud.unwrap();
-        assert_eq!(hud.status, "飛行処理停止");
-        assert_eq!(
-            hud.warning.as_deref(),
-            Some("停止理由: input disposal failed")
+        let primary = hud_node(&hud, "hud-primary-readouts");
+        assert_eq!(primary.label, "飛行処理停止");
+        assert!(matches!(&hud_node(&hud, "hud-controller-failure").content,
+            GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: input disposal failed"));
+        assert!(
+            primary.content.value().contains("Last valid")
+                && primary.content.value().contains("tick 0")
         );
-        assert!(hud.telemetry.contains("Last valid") && hud.telemetry.contains("tick 0"));
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
@@ -1584,7 +1594,10 @@ fn head_hud_resource_failure_is_independent_of_controller_and_session() {
         panic!("missing head HUD failure")
     };
     assert!(value.contains("insufficient-view-area"));
-    assert_eq!(view.hud.unwrap().status, "滑空中");
+    assert_eq!(
+        hud_node(&view.hud.unwrap(), "hud-primary-readouts").label,
+        "滑空中"
+    );
     assert_eq!(session.snapshot(), before);
     assert!(
         update_game_ui(
@@ -1972,7 +1985,7 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
                 let view = game_ui_view(&state, &context).unwrap();
                 let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
                 let hud = view.hud.as_ref().unwrap();
-                assert_eq!(hud.status, "一時停止");
+                assert_eq!(hud_node(hud, "hud-primary-readouts").label, "一時停止");
                 assert_eq!(frame.hud, view.hud);
                 assert!(view.layout.scroll_y && !view.layout.passthrough);
                 assert!(view.layout.maximum_height_px > 0.0);
@@ -2108,35 +2121,57 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap();
     let telemetry = session.telemetry().unwrap().unwrap();
     let hud = full.hud.unwrap();
+    let GameUiHudNodeContent::Attitude { geometry, value } =
+        &hud_node(&hud, "hud-attitude").content
+    else {
+        panic!("missing typed ADI")
+    };
     assert_eq!(
-        hud.attitude.unwrap().roll_degrees,
-        telemetry.roll_rad.to_degrees()
+        geometry.horizon().unwrap().rotation_degrees,
+        -telemetry.roll_rad.to_degrees()
     );
+    assert!(geometry.flight_path_y_ratio().is_some());
     assert_eq!(
-        hud.angle_of_attack_degrees,
-        telemetry.angle_of_attack_rad.map(f64::to_degrees)
+        value,
+        &format!(
+            "PITCH {:.0}° · ROLL {:.0}°",
+            telemetry.pitch_rad.to_degrees(),
+            telemetry.roll_rad.to_degrees()
+        )
     );
-    assert_eq!(hud.geometry.heading_ticks.len(), 13);
+    let GameUiHudNodeContent::HeadingTape { ticks, .. } = &hud_node(&hud, "hud-heading").content
+    else {
+        panic!("missing heading tape")
+    };
+    assert_eq!(ticks.len(), 13);
+    let GameUiHudNodeContent::LinearGauge {
+        value,
+        position_ratio,
+        ..
+    } = &hud_node(&hud, "hud-angle-of-attack").content
+    else {
+        panic!("missing angle gauge")
+    };
+    assert!(position_ratio.is_some());
     assert_eq!(
-        hud.geometry
-            .adi
-            .unwrap()
-            .horizon()
-            .unwrap()
-            .rotation_degrees,
-        -hud.attitude.unwrap().roll_degrees
+        value,
+        &format!(
+            "{:.1}°",
+            telemetry.angle_of_attack_rad.unwrap().to_degrees()
+        )
     );
-    assert!(hud.geometry.adi.unwrap().flight_path_y_ratio().is_some());
-    assert!(hud.geometry.angle_of_attack_ratio.is_some());
     let airspeed = format!("対気速度 {:.1} m/s", telemetry.airspeed_mps);
-    assert!(hud.readouts.contains(&airspeed) && hud.readouts.contains("PITCH"));
-    assert!(!hud.readouts.contains("IAS"));
-    assert!(
-        hud.telemetry
-            .contains(&format!("対地速度 {:.1} m/s", telemetry.groundspeed_mps))
-    );
-    assert!(hud.wind.is_some());
-    assert_eq!(hud.supplementary_readouts.len(), 3);
+    let primary = hud_node(&hud, "hud-primary-readouts").content.value();
+    assert!(primary.contains(&airspeed));
+    assert!(!primary.contains("IAS"));
+    assert!(primary.contains(&format!("対地速度 {:.1} m/s", telemetry.groundspeed_mps)));
+    assert!(matches!(
+        hud_node(&hud, "hud-wind").content,
+        GameUiHudNodeContent::Direction { .. }
+    ));
+    for readout in ["p ", "水平尾翼", "PILOT TARGET"] {
+        assert!(primary.contains(readout));
+    }
     let minimal = game_ui_view(
         &GameUiState::default(),
         &context(
@@ -2148,13 +2183,14 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap()
     .hud
     .unwrap();
-    assert!(minimal.attitude.is_none() && minimal.wind.is_none());
     assert!(
-        minimal.geometry.adi.is_none()
-            && minimal.geometry.heading_ticks.is_empty()
-            && minimal.geometry.angle_of_attack_ratio.is_none()
+        minimal
+            .groups
+            .iter()
+            .all(|group| group.placement != GameUiHudPlacement::Instruments)
     );
-    assert!(minimal.readouts.contains("ALT") && minimal.readouts.contains("時間"));
+    let primary = hud_node(&minimal, "hud-primary-readouts").content.value();
+    assert!(primary.contains("ALT") && primary.contains("時間"));
     let custom_settings = difficulty()
         .with_information(InformationLevel::Custom)
         .with_hud_cue(HudCue::Attitude, false)
@@ -2166,18 +2202,35 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap()
     .hud
     .unwrap();
-    assert!(custom.attitude.is_none() && custom.wind.is_none());
     assert!(
-        matches!(
-            custom.geometry.adi,
-            Some(GameUiHudAdiGeometry::FlightPathOnly { .. })
-        ) && custom.geometry.heading_ticks.is_empty()
+        custom
+            .groups
+            .iter()
+            .flat_map(|group| &group.nodes)
+            .all(|node| !matches!(
+                node.content,
+                GameUiHudNodeContent::HeadingTape { .. } | GameUiHudNodeContent::Direction { .. }
+            ))
     );
-    assert!(
-        custom.geometry.adi.unwrap().flight_path_y_ratio().is_some()
-            && custom.geometry.angle_of_attack_ratio.is_some()
-    );
-    assert!(custom.readouts.contains(&airspeed) && !custom.readouts.contains("PITCH"));
+    let GameUiHudNodeContent::Attitude { geometry, .. } =
+        &hud_node(&custom, "hud-attitude").content
+    else {
+        panic!("missing flight path region")
+    };
+    assert!(matches!(
+        geometry,
+        GameUiHudAdiGeometry::FlightPathOnly { .. }
+    ));
+    assert!(geometry.flight_path_y_ratio().is_some());
+    assert!(matches!(
+        hud_node(&custom, "hud-angle-of-attack").content,
+        GameUiHudNodeContent::LinearGauge {
+            position_ratio: Some(_),
+            ..
+        }
+    ));
+    let primary = hud_node(&custom, "hud-primary-readouts").content.value();
+    assert!(primary.contains(&airspeed) && !primary.contains("PITCH"));
     let realistic = game_ui_view(
         &GameUiState::default(),
         &context(
@@ -2189,11 +2242,9 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap()
     .hud
     .unwrap();
-    assert!(realistic.readouts.contains(&airspeed));
-    assert_eq!(
-        realistic.telemetry,
-        "代表計器表示 · 対象機の実機構成は未確認"
-    );
+    let primary = hud_node(&realistic, "hud-primary-readouts").content.value();
+    assert!(primary.contains(&airspeed));
+    assert!(primary.contains("代表計器表示 · 対象機の実機構成は未確認"));
 }
 
 #[test]
@@ -2699,11 +2750,7 @@ fn output_schema_requires_serialized_nullable_fields_while_input_accepts_omissio
     let hud_required = bundle["serialize"]["$defs"]["GameUiHud"]["required"]
         .as_array()
         .unwrap();
-    assert!(
-        hud_required
-            .iter()
-            .any(|value| value == "angle_of_attack_degrees")
-    );
+    assert!(hud_required.iter().any(|value| value == "groups"));
     let input_required = bundle["deserialize"]["$defs"]["GameUiPlatformInput"]["required"]
         .as_array()
         .unwrap();
