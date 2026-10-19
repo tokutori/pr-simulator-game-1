@@ -59,7 +59,7 @@ pub enum EnvironmentSource {
 /// Origin of one environment snapshot.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentContext {
     /// One application session observation.
     Session {
@@ -73,6 +73,7 @@ pub enum EnvironmentContext {
 /// Versioned environment metadata without the full wind-grid samples.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct EnvironmentSnapshot {
     /// Current environment snapshot wire version.
     pub schema_version: u32,
@@ -85,7 +86,7 @@ pub struct EnvironmentSnapshot {
 /// Registered environment availability without fallback to another identity.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentProjection {
     /// The current phase has no environment selection.
     NoSelection,
@@ -110,7 +111,12 @@ pub enum EnvironmentProjection {
 /// Explicitly recorded or unavailable metadata.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 pub enum Defined<T> {
     /// No recorded value is available.
     Unavailable,
@@ -121,7 +127,7 @@ pub enum Defined<T> {
 /// Spatial coverage of the shared physical wind provider.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WindDomain {
     /// Spatially uniform wind.
     Uniform,
@@ -137,7 +143,7 @@ pub enum WindDomain {
 /// Asset identity or implementation provenance of an environment definition.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentHash {
     /// Exact registered JSON bytes.
     AssetBytes {
@@ -154,6 +160,7 @@ pub enum ContentHash {
 /// Representative values, spatial domain and source provenance of one provider.
 #[derive(Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct EnvironmentMetadata {
     /// Registered human-readable environment name.
     pub name: String,

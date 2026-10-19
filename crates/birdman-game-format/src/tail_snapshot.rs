@@ -100,6 +100,7 @@ impl From<birdman_game_core::SessionPhase> for SessionPhaseDocument {
 /// Runtime lifecycle values obtained from one session observation.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct SessionLifecycleDocument {
     /// Current named phase.
     pub phase: SessionPhaseDocument,
@@ -114,6 +115,7 @@ pub struct SessionLifecycleDocument {
 /// Pitch and yaw values in the units declared by their containing field.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct TailControlAxesDocument {
     /// Horizontal-tail control axis.
     pub pitch: f64,
@@ -124,6 +126,7 @@ pub struct TailControlAxesDocument {
 /// Resolved controller limits supplied to input adapters.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct TailControlProfileDocument<'identity> {
     /// Current input document version.
     pub schema_version: u32,

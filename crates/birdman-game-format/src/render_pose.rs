@@ -3,7 +3,7 @@ use crate::TailControlLayoutDocument;
 /// Engine-independent presentation of one committed or recorded aircraft state.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FlightRenderPose {
     /// Fixed aircraft datum in NED metres.
     pub datum_position_ned: RenderNedVector,
@@ -28,6 +28,7 @@ pub struct FlightRenderPose {
 /// Named NED vector used by rendering APIs.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct RenderNedVector {
     /// North component.
     pub north: f64,
@@ -46,6 +47,7 @@ impl From<[f64; 3]> for RenderNedVector {
 /// Scalar-first orientation components used by rendering APIs.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
 pub struct RenderAttitude {
     /// Scalar component.
     pub w: f64,
@@ -71,7 +73,7 @@ impl From<[f64; 4]> for RenderAttitude {
 /// Physical tail incidence in the renderer's public units.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderTailIncidence {
     /// Horizontal tail angle in radians.
     pub horizontal_tail_radians: f64,
@@ -82,7 +84,7 @@ pub struct RenderTailIncidence {
 /// Current two-tail layout and held incidence.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderTailControls {
     /// Physical layout.
     pub layout: TailControlLayoutDocument,
@@ -93,7 +95,7 @@ pub struct RenderTailControls {
 /// Registered tail presentation parameters.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenderTailGeometryValue {
     /// Aft distance to the horizontal tail's physical quarter-chord pivot.
     pub horizontal_tail_arm_meters: f64,
@@ -102,7 +104,7 @@ pub struct RenderTailGeometryValue {
 /// Explicit geometry availability for current and imported model identities.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RenderTailGeometry {
     /// Registered physical geometry.
     Available {
