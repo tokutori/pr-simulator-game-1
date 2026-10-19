@@ -7,8 +7,9 @@ versionを分離した合成モデルとRust側の入力保護で改善する。
 
 ## Identity
 
-公開既定は bpg041-playable-hybrid-mock / model 3、catalog 4 / scenario 4、
+公開既定は bpg041-playable-hybrid-mock / model 3、catalog 5 / scenario 5、
 bpg040-tail-rate-feedback / controller 3である。
+catalog/scenario 5は、表示meshから独立した物理構造を接触形状の正本とする[#537](https://github.com/tokutori/pr-simulator-game-1/issues/537)の改訂に対応する。
 Weatherのenvironment対応は1/2/4/5/6、Typicalは共有offline環境6を使用する。
 旧catalog・scenario・controllerの登録と保存schemaの互換処理は提供しない。
 snapshot保存値のqueryと現行モデルの再積分を区別する。
