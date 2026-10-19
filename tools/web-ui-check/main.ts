@@ -42,9 +42,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
   const scene = async (name: string) => page.waitForFunction(expected => document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") === expected, name);
   const screenshot = async (name: string) => page.screenshot({ path: resolve(output, `${name}.png`) });
   const download = async (format: "csv" | "json", prefix: string) => {
-    const received = page.waitForEvent("download");
-    await click(`game-flight-log-${format}`);
-    const file = await received;
+    const [file] = await Promise.all([page.waitForEvent("download"), click(`game-flight-log-${format}`)]);
     assert.equal(await file.failure(), null);
     assert.ok(file.suggestedFilename().endsWith(`.${format}`));
     const path = resolve(output, `${prefix}.${format}`);
@@ -64,7 +62,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     if (/\/pkg\/birdman_game_wasm\.js(?:\?|$)/.test(response.url())) moduleUrl = response.url();
     if (response.url().endsWith(".wasm")) responses.push(response.body().then(body => {
       wasm.push({ url: response.url(), status: response.status(), sha256: createHash("sha256").update(body).digest("hex") });
-    }));
+    }, (cause: unknown) => { errors.push(`WASM body capture failed: ${String(cause)}`); }));
     if (response.status() >= 400 && !response.url().endsWith("/favicon.ico")) errors.push(`HTTP ${String(response.status())} ${response.url()}`);
   });
   try {
@@ -85,7 +83,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const original = descriptor.value as (...args: unknown[]) => unknown;
       const events: { at: number; reason: number }[] = [];
       window.__uiPauseEvents = events;
-      Object.defineProperty(prototype, "pause", { ...descriptor, value: function (this: unknown, ...args: unknown[]): unknown {
+      Object.defineProperty(prototype, "pause", { ...descriptor, value(this: unknown, ...args: unknown[]): unknown {
         const returned: unknown = Reflect.apply(original, this, args);
         if (typeof args[0] === "number" && events.length < 16) events.push({ at: performance.now(), reason: args[0] });
         return returned;
@@ -128,7 +126,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       report.startupPause = await page.evaluate(() => ({ tick: window.__liveAuto.tick,
         snapshotJson: window.__liveAuto.snapshotJson, pauseEvents: window.__uiPauseEvents,
         text: document.querySelector(".screen-ui-shell")?.textContent }));
-      findings.push("Flight suspended during initial launch before the first ten ticks; continued once through the public Resume action");
+      findings.push("Flight suspended before the initial Running observation; continued once through the public Resume action");
       await click("game-flight-resume");
     }
     await page.waitForFunction(() => window.__liveAuto.phase === 5 && (window.__liveAuto.tick ?? 0) >= 10);
