@@ -195,10 +195,11 @@ describe("two-tail controller through the Rust WASM port", () => {
     const trial = fixture(0, 0.5);
     const initial = trial.controller.currentSnapshot.frame.state;
     expect(initial.pilotPositionMeters).not.toBe(initial.pilotPositionTargetMeters);
+    expect(initial.pilotPositionTargetNormalized).toBeCloseTo(0.5, 14);
     expect(trial.input.reset).toHaveBeenCalledWith(initial.pilotPositionTargetNormalized);
     trial.controller.onFrame(0);
     trial.controller.onFrame(10);
-    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(0.5);
+    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(initial.pilotPositionTargetNormalized);
     trial.session.pause(0);
     trial.controller.synchronizeSnapshot(trial.session.snapshot_json());
     trial.controller.resume();
@@ -210,7 +211,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.resume();
     trial.controller.onFrame(2_000);
     trial.controller.onFrame(2_010);
-    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(0.5);
+    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(initial.pilotPositionTargetNormalized);
     for (const [json] of trial.port.advance_tick_json.mock.calls) {
       const decoded: unknown = JSON.parse(json);
       expect(decoded).toMatchObject({ pilot_position_command: { kind: "hold" } });
@@ -266,7 +267,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     delete document.frame.state.pilot_position_target_normalized;
     expect(() => parseTailSessionSnapshot(JSON.stringify(document))).toThrow(RangeError);
     trial.controller.reset(trial.session.snapshot_json());
-    expect(trial.input.reset).toHaveBeenLastCalledWith(0.5);
+    expect(trial.input.reset).toHaveBeenLastCalledWith(retained.frame.state.pilotPositionTargetNormalized);
     trial.controller.onFrame(1_000);
     trial.controller.onFrame(1_010);
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
