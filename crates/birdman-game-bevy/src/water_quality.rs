@@ -20,6 +20,7 @@ pub(crate) struct WaterQualityProfile {
 impl WaterQuality {
     pub(crate) const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
 
+    #[cfg(any(test, feature = "verify-harness"))]
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Low => "Low",
@@ -50,16 +51,19 @@ pub(crate) enum WaterQualityFailure {
     MaterialUnavailable,
     WavePreparation(String),
     EnvironmentProjection(EnvironmentFailure),
+    #[cfg(any(test, feature = "verify-harness"))]
     RenderResources(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum WaterQualityState {
     Ready(WaterQuality),
+    #[cfg(any(test, feature = "verify-harness"))]
     Requested {
         applied: WaterQuality,
         requested: WaterQuality,
     },
+    #[cfg(any(test, feature = "verify-harness"))]
     Failed {
         applied: WaterQuality,
         requested: WaterQuality,
@@ -83,14 +87,16 @@ impl Default for WaterQualitySelection {
 impl WaterQualitySelection {
     pub(crate) const fn applied(&self) -> WaterQuality {
         match &self.state {
-            WaterQualityState::Ready(applied)
-            | WaterQualityState::Requested { applied, .. }
+            WaterQualityState::Ready(applied) => *applied,
+            #[cfg(any(test, feature = "verify-harness"))]
+            WaterQualityState::Requested { applied, .. }
             | WaterQualityState::Failed { applied, .. } => *applied,
         }
     }
 
     pub(crate) const fn pending(&self) -> Option<WaterQuality> {
         match &self.state {
+            #[cfg(any(test, feature = "verify-harness"))]
             WaterQualityState::Requested { requested, .. } => Some(*requested),
             _ => None,
         }
@@ -98,6 +104,7 @@ impl WaterQualitySelection {
 
     pub(crate) const fn failure(&self) -> Option<(WaterQuality, &WaterQualityFailure)> {
         match &self.state {
+            #[cfg(any(test, feature = "verify-harness"))]
             WaterQualityState::Failed {
                 requested, cause, ..
             } => Some((*requested, cause)),
@@ -109,6 +116,7 @@ impl WaterQualitySelection {
         self.pending().is_none() && quality_menu_visible(phase)
     }
 
+    #[cfg(any(test, feature = "verify-harness"))]
     pub(crate) fn request(&self, quality: WaterQuality, phase: SessionPhase) -> Option<Self> {
         if !self.can_select(phase) {
             return None;
@@ -126,6 +134,7 @@ impl WaterQualitySelection {
         })
     }
 
+    #[cfg(any(test, feature = "verify-harness"))]
     pub(crate) fn completed(&self, result: Result<(), WaterQualityFailure>) -> Self {
         let WaterQualityState::Requested { applied, requested } = &self.state else {
             return self.clone();

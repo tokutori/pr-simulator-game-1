@@ -40,11 +40,15 @@ impl Default for NativeSession {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum MenuAction {
+    #[cfg(any(test, feature = "verify-harness"))]
     Start,
+    #[cfg(any(test, feature = "verify-harness"))]
     Prepare,
+    #[cfg(any(test, feature = "verify-harness"))]
     Launch,
     Pause,
     Resume,
+    #[cfg(any(test, feature = "verify-harness"))]
     Abort,
 }
 
@@ -82,11 +86,15 @@ impl NativeSession {
 
     pub(crate) fn action(&mut self, action: MenuAction) -> Result<(), String> {
         let command = match action {
+            #[cfg(any(test, feature = "verify-harness"))]
             MenuAction::Start => SessionCommand::OpenSetup {},
+            #[cfg(any(test, feature = "verify-harness"))]
             MenuAction::Prepare => SessionCommand::Prepare {},
+            #[cfg(any(test, feature = "verify-harness"))]
             MenuAction::Launch => SessionCommand::StartCountdown {},
             MenuAction::Pause => SessionCommand::Pause {},
             MenuAction::Resume => SessionCommand::Resume {},
+            #[cfg(any(test, feature = "verify-harness"))]
             MenuAction::Abort => SessionCommand::Abort {},
         };
         self.execute_ui_command(command)

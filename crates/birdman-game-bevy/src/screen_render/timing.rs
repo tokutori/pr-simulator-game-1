@@ -1,8 +1,10 @@
 use super::NativeScreenRender;
+#[cfg(any(test, feature = "verify-harness"))]
+use bevy::diagnostic::Diagnostic;
 use bevy::ecs as bevy_ecs;
 use bevy::{
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    diagnostic::{Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
+    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
     pbr::{PendingMeshMaterialQueues, Shadow},
     platform::time::Instant,
@@ -30,7 +32,9 @@ use birdman_game_session::{
     screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
-use std::collections::{BTreeMap, BTreeSet};
+#[cfg(any(test, feature = "verify-harness"))]
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 pub(crate) const GPU_WORK: DiagnosticPath =
     DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
@@ -54,6 +58,7 @@ const METADATA_NAMES: [&str; METADATA_WORDS] = [
     "screen_water",
 ];
 
+#[cfg(feature = "verify-harness")]
 pub(crate) fn is_source_metadata(path: &DiagnosticPath) -> bool {
     METADATA.contains(path)
 }
@@ -62,8 +67,23 @@ pub(crate) fn is_source_metadata(path: &DiagnosticPath) -> bool {
 pub(crate) enum TimingMode {
     #[default]
     Automatic,
+    #[cfg(feature = "verify-harness")]
     Root,
+    #[cfg(feature = "verify-harness")]
     Full,
+}
+
+impl TimingMode {
+    fn full_diagnostics(self) -> bool {
+        #[cfg(feature = "verify-harness")]
+        {
+            self == Self::Full
+        }
+        #[cfg(not(feature = "verify-harness"))]
+        {
+            false
+        }
+    }
 }
 
 pub(crate) struct ScreenTimingPlugin {
@@ -217,7 +237,7 @@ fn extract_packet(
 }
 
 fn select_recorder(world: &mut World) {
-    let enabled = *world.resource::<TimingMode>() == TimingMode::Full
+    let enabled = world.resource::<TimingMode>().full_diagnostics()
         || (world.resource::<TimingPacket>().active
             && supported(world.resource::<RenderDevice>().features()));
     if enabled {
@@ -242,7 +262,7 @@ fn begin_work(world: &mut World) {
     }
     packet.preparation = scene_preparation(world);
     if packet.preparation != PipelinePreparation::Ready
-        && *world.resource::<TimingMode>() != TimingMode::Full
+        && !world.resource::<TimingMode>().full_diagnostics()
     {
         packet.active = false;
     }
@@ -287,7 +307,7 @@ fn begin_work(world: &mut World) {
     world
         .resource_mut::<PendingCommandBuffers>()
         .push([encoder.finish()]);
-    if *world.resource::<TimingMode>() != TimingMode::Full {
+    if !world.resource::<TimingMode>().full_diagnostics() {
         world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
     }
 }
@@ -433,6 +453,7 @@ pub(crate) struct SourceWork {
     pub(crate) water_quality: LakeWaterQuality,
 }
 
+#[cfg(any(test, feature = "verify-harness"))]
 pub(crate) fn source_history(
     store: &DiagnosticsStore,
 ) -> impl Iterator<Item = (Instant, Result<SourceWork, TimingFailure>)> + '_ {
@@ -615,7 +636,12 @@ pub(crate) mod tests {
 
     #[test]
     fn production_begin_rejects_an_unprepared_scene_before_using_gpu_resources() {
-        for mode in [TimingMode::Automatic, TimingMode::Root] {
+        let modes = [
+            TimingMode::Automatic,
+            #[cfg(feature = "verify-harness")]
+            TimingMode::Root,
+        ];
+        for mode in modes {
             let mut world = World::new();
             world.insert_resource(TimingPacket {
                 active: true,
@@ -870,7 +896,14 @@ pub(crate) mod tests {
     fn explicit_diagnostics_measure_manual_without_changing_auto_policy_or_safety_gates() {
         use bevy::render::MainWorld;
 
-        for mode in [TimingMode::Automatic, TimingMode::Root, TimingMode::Full] {
+        let modes = [
+            TimingMode::Automatic,
+            #[cfg(feature = "verify-harness")]
+            TimingMode::Root,
+            #[cfg(feature = "verify-harness")]
+            TimingMode::Full,
+        ];
+        for mode in modes {
             for (automatic, focused, visible, area, delta_ms, expected) in [
                 (false, true, true, true, 16, mode != TimingMode::Automatic),
                 (true, true, true, true, 16, true),
@@ -951,6 +984,7 @@ pub(crate) mod tests {
         assert_eq!(render_app.world().resource::<UnrelatedRuns>().0, 2);
     }
 
+    #[cfg(feature = "verify-harness")]
     #[derive(Resource, Default)]
     struct RecorderStages {
         render_present: Option<bool>,
@@ -958,6 +992,7 @@ pub(crate) mod tests {
         fail_render: bool,
     }
 
+    #[cfg(feature = "verify-harness")]
     fn record_probe(
         mut context: bevy::render::renderer::RenderContext,
         mut stages: ResMut<RecorderStages>,
@@ -973,6 +1008,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "verify-harness")]
     fn observe_resolve(
         recorder: Option<Res<DiagnosticsRecorder>>,
         mut stages: ResMut<RecorderStages>,
@@ -980,10 +1016,12 @@ pub(crate) mod tests {
         stages.resolve_present = Some(recorder.is_some());
     }
 
+    #[cfg(feature = "verify-harness")]
     fn submit_probe(mut commands: bevy::render::renderer::FlushCommands) {
         commands.flush();
     }
 
+    #[cfg(feature = "verify-harness")]
     #[test]
     #[ignore = "requires a native GPU with encoder timestamp queries"]
     fn real_recorder_preserves_root_only_full_and_failure_schedule_paths() {

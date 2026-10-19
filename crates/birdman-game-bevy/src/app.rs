@@ -14,6 +14,7 @@ mod mip_filter;
 mod native_assets;
 #[path = "native_session.rs"]
 mod native_session;
+#[cfg(feature = "verify-harness")]
 #[path = "offscreen.rs"]
 mod offscreen;
 #[path = "projection.rs"]
@@ -24,6 +25,7 @@ mod screen_render;
 mod terrain_haze;
 #[path = "ui.rs"]
 mod ui;
+#[cfg(feature = "verify-harness")]
 #[path = "verification.rs"]
 mod verification;
 #[path = "water.rs"]
@@ -37,15 +39,15 @@ mod world;
 
 use bevy::ecs as bevy_ecs;
 use bevy::ecs::system::SystemParam;
+#[cfg(feature = "verify-harness")]
+use bevy::winit::WinitPlugin;
 use bevy::{
-    app::ScheduleRunnerPlugin,
     camera::CameraUpdateSystems,
     ecs::schedule::common_conditions::any_match_filter,
     input::{ButtonState, keyboard::KeyboardInput, mouse::AccumulatedMouseMotion},
     prelude::*,
     render::view::screenshot::{Screenshot, save_to_disk},
-    window::{ExitCondition, PresentMode, PrimaryWindow},
-    winit::WinitPlugin,
+    window::{PresentMode, PrimaryWindow},
 };
 use birdman_game_core::{PHYSICS_HZ, SessionPhase};
 use native_session::{FlightInput, NativeSession};
@@ -67,21 +69,13 @@ struct CameraMode {
 pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args().skip(1);
     let mut font_path = None;
-    let mut verification_directory = None;
-    let mut verification_size = None;
-    let mut water_verification = None;
-    let mut water_auto = false;
-    let mut verification_timing = None;
-    let mut replay_camera_verification = false;
+    #[cfg(feature = "verify-harness")]
+    let mut verification = verification::Options::default();
     let mut no_vsync = false;
-    let mut offscreen = false;
     let mut export_directory = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
-            "--offscreen" => offscreen = true,
-            "--verify-water-auto" => water_auto = true,
-            "--verify-replay-cameras" => replay_camera_verification = true,
             "--font" => {
                 font_path = Some(PathBuf::from(
                     arguments
@@ -96,34 +90,6 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--export-dir requires a directory")?,
                 ));
             }
-            "--verify" => {
-                verification_directory = Some(PathBuf::from(
-                    arguments
-                        .next()
-                        .ok_or("--verify requires an output directory")?,
-                ));
-            }
-            "--verify-size" => {
-                verification_size = Some(parse_verification_size(
-                    &arguments
-                        .next()
-                        .ok_or("--verify-size requires WIDTHxHEIGHT")?,
-                )?);
-            }
-            "--verify-water" => {
-                water_verification = Some(verification::WaterVerificationCase::parse(
-                    &arguments
-                        .next()
-                        .ok_or("--verify-water requires WEATHER-QUALITY")?,
-                )?);
-            }
-            "--verify-timing" => {
-                verification_timing = Some(
-                    arguments
-                        .next()
-                        .ok_or("--verify-timing requires root or full")?,
-                );
-            }
             "--version" => {
                 println!(
                     "birdman-game-bevy {} source {} {} {}",
@@ -136,10 +102,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはManualにもroot-only計測を許可し、fullは従来の全pass診断を使用する。省略時はfull。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
-                );
-                println!(
-                    "--verify-water-auto: --verify-waterの5 motionを通常UIと同じ実Auto policyで観測する。通常起動はAuto、Auto指定のない水面比較はManual100を明示する。"
+                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--export-dir DIR]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。"
                 );
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
@@ -147,29 +110,29 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 println!(
                     "日本語fontは組込M PLUS 1p Regular（OFL-1.1）を使用する。--font PATHでローカルfontへ変更できる。--versionはbuild sourceとOS/architectureを表示する。"
                 );
+                #[cfg(feature = "verify-harness")]
+                verification::Options::print_help();
+                #[cfg(not(feature = "verify-harness"))]
+                println!(
+                    "CUI描画検証: cargo run -p birdman-game-bevy --features verify-harness -- --verify DIR --offscreen"
+                );
                 return Ok(());
             }
-            _ => return Err(format!("Unknown argument: {argument}").into()),
+            _ => {
+                #[cfg(feature = "verify-harness")]
+                if verification.parse_argument(&argument, &mut arguments)? {
+                    continue;
+                }
+                #[cfg(not(feature = "verify-harness"))]
+                if is_verification_argument(&argument) {
+                    return Err(format!("{argument} requires --features verify-harness").into());
+                }
+                return Err(format!("Unknown argument: {argument}").into());
+            }
         }
     }
-    if verification_size.is_some() && verification_directory.is_none() {
-        return Err("--verify-size requires --verify DIR".into());
-    }
-    if water_verification.is_some() && verification_directory.is_none() {
-        return Err("--verify-water requires --verify DIR".into());
-    }
-    if offscreen && verification_directory.is_none() {
-        return Err("--offscreen requires --verify DIR".into());
-    }
-    if replay_camera_verification && verification_directory.is_none() {
-        return Err("--verify-replay-cameras requires --verify DIR".into());
-    }
-    if replay_camera_verification && water_verification.is_some() {
-        return Err("--verify-replay-cameras cannot be combined with --verify-water".into());
-    }
-    let timing_mode =
-        verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
-    water_verification = verification_water_auto(water_verification, water_auto)?;
+    #[cfg(feature = "verify-harness")]
+    verification.validate()?;
     let mut flight_log_export =
         flight_log::FlightLogExport::new(&std::env::current_dir()?, export_directory.as_deref())?;
     let library_notice = match flight_log_export.refresh() {
@@ -189,20 +152,18 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         })?,
         None => native_assets::bundled_font().to_vec(),
     };
-    if verification_directory.is_some() {
-        verification::verify_text_layout(&font_bytes)?;
-    }
+    #[cfg(feature = "verify-harness")]
+    verification.verify_font(&font_bytes)?;
     let mut app = App::new();
-    let plugins = DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(primary_window(verification_size, no_vsync)),
-        exit_condition: if offscreen {
-            ExitCondition::DontExit
-        } else {
-            ExitCondition::OnAllClosed
-        },
+    let window_plugin = WindowPlugin {
+        primary_window: Some(primary_window(None, no_vsync)),
         ..default()
-    });
-    let plugins = if offscreen {
+    };
+    #[cfg(feature = "verify-harness")]
+    let window_plugin = verification.window_plugin(window_plugin);
+    let plugins = DefaultPlugins.set(window_plugin);
+    #[cfg(feature = "verify-harness")]
+    let plugins = if verification.offscreen() {
         plugins.disable::<WinitPlugin>()
     } else {
         plugins
@@ -213,7 +174,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             MaterialPlugin::<clouds::CloudMaterial>::default(),
             MaterialPlugin::<terrain_haze::TerrainMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
-            screen_render::timing::ScreenTimingPlugin { mode: timing_mode },
+            screen_render::timing::ScreenTimingPlugin {
+                #[cfg(feature = "verify-harness")]
+                mode: verification.timing_mode()?,
+                #[cfg(not(feature = "verify-harness"))]
+                mode: screen_render::timing::TimingMode::Automatic,
+            },
         ))
         .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
         .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
@@ -225,15 +191,8 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<CameraMode>();
     app.world_mut().resource_mut::<NativeSession>().notice = library_notice;
     native_assets::register(&mut app);
-    if offscreen {
-        offscreen::configure(&mut app, verification_size.unwrap_or((1280, 720)))?;
-        let runner = offscreen_runner(no_vsync);
-        println!(
-            "Offscreen runner: {:?}; wait=None is unpaced. Logical Window PresentMode does not control Image presentation.",
-            runner.run_mode
-        );
-        app.add_plugins(runner);
-    }
+    #[cfg(feature = "verify-harness")]
+    verification.configure_output(&mut app, no_vsync)?;
     mip_filter::configure(app.world_mut())?;
     app.init_resource::<frame_rate::FrameRate>();
     let render_app = app
@@ -259,7 +218,6 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             Startup,
             (
                 world::setup_world,
-                offscreen::redirect_main_camera,
                 water_reflection::setup_reflection,
                 ui::setup_ui,
             )
@@ -274,6 +232,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 screen_render::synchronize
                     .run_if(any_match_filter::<(With<PrimaryWindow>, Changed<Window>)>),
                 water::apply_environment,
+                #[cfg(feature = "verify-harness")]
                 water::apply_quality,
                 screen_render::observe_auto,
                 advance_presentation,
@@ -296,39 +255,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             .before(bevy::light::SimulationLightSystems::UpdateDirectionalLightCascades)
             .before(bevy::camera::visibility::update_frusta),
     );
-    let mut verification_completion = None;
-    if let Some(directory) = verification_directory {
-        if water_verification.is_some() {
-            app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
-                .add_systems(
-                    Update,
-                    verification::maintain_timing_history
-                        .after(bevy::diagnostic::FrameTimeDiagnosticsPlugin::diagnostic_system)
-                        .before(verification::project_observer),
-                );
-        }
-        let (verification, completion) = verification::Verification::try_new(
-            directory,
-            app.world().resource::<AssetServer>(),
-            water_verification,
-            offscreen::output_target(app.world()),
-            replay_camera_verification,
-        )?;
-        verification_completion = Some(completion);
-        app.insert_resource(verification)
-            .add_plugins(verification::VerificationRenderPlugin)
-            .add_systems(PreUpdate, verification::supply_input.after(read_input))
-            .add_systems(
-                Update,
-                verification::project_observer.before(world::project_world),
-            )
-            .add_systems(Update, verification::advance.after(ui::update_ui))
-            .add_systems(
-                PostUpdate,
-                verification::verify_ui_layout.after(bevy::ui::UiSystems::PostLayout),
-            );
-    }
+    #[cfg(feature = "verify-harness")]
+    let verification_completion = verification.install(&mut app)?;
     let exit = app.run();
+    #[cfg(feature = "verify-harness")]
     if let Some(completion) = verification_completion {
         completion.ensure_completed()?;
     }
@@ -338,37 +268,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn verification_timing_mode(
-    water_verification: bool,
-    value: Option<&str>,
-) -> Result<screen_render::timing::TimingMode, &'static str> {
-    use screen_render::timing::TimingMode;
-    match (water_verification, value) {
-        (false, None) => Ok(TimingMode::Automatic),
-        (false, Some(_)) => Err("--verify-timing requires --verify-water"),
-        (true, None | Some("full")) => Ok(TimingMode::Full),
-        (true, Some("root")) => Ok(TimingMode::Root),
-        (true, Some(_)) => Err("--verify-timing must be root or full"),
-    }
-}
-
-fn verification_water_auto(
-    case: Option<verification::WaterVerificationCase>,
-    enabled: bool,
-) -> Result<Option<verification::WaterVerificationCase>, &'static str> {
-    match (case, enabled) {
-        (None, true) => Err("--verify-water-auto requires --verify-water"),
-        (Some(case), true) => Ok(Some(case.with_auto())),
-        (case, false) => Ok(case),
-    }
-}
-
-fn offscreen_runner(no_vsync: bool) -> ScheduleRunnerPlugin {
-    if no_vsync {
-        ScheduleRunnerPlugin::default()
-    } else {
-        ScheduleRunnerPlugin::run_loop(std::time::Duration::from_secs_f64(1.0 / 60.0))
-    }
+#[cfg(not(feature = "verify-harness"))]
+fn is_verification_argument(argument: &str) -> bool {
+    argument == "--offscreen" || argument.starts_with("--verify")
 }
 
 fn primary_window(verification_size: Option<(u32, u32)>, no_vsync: bool) -> Window {
@@ -381,19 +283,6 @@ fn primary_window(verification_size: Option<(u32, u32)>, no_vsync: bool) -> Wind
             PresentMode::Fifo
         },
         ..default()
-    }
-}
-
-fn parse_verification_size(value: &str) -> Result<(u32, u32), &'static str> {
-    let (width, height) = value
-        .split_once('x')
-        .ok_or("--verify-size requires WIDTHxHEIGHT")?;
-    match (
-        width.parse::<std::num::NonZeroU32>(),
-        height.parse::<std::num::NonZeroU32>(),
-    ) {
-        (Ok(width), Ok(height)) => Ok((width.get(), height.get())),
-        _ => Err("--verify-size dimensions must be positive u32 integers"),
     }
 }
 
@@ -587,48 +476,28 @@ mod tests {
         mouse::{MouseButtonInput, MouseMotion},
     };
 
+    #[cfg(not(feature = "verify-harness"))]
     #[test]
-    fn water_auto_is_explicit_and_requires_a_water_case() {
-        let case = verification::WaterVerificationCase::parse("typical-high").unwrap();
-        assert_eq!(verification_water_auto(None, false), Ok(None));
-        assert!(verification_water_auto(None, true).is_err());
-        assert_eq!(verification_water_auto(Some(case), false), Ok(Some(case)));
-        assert_eq!(
-            verification_water_auto(Some(case), true),
-            Ok(Some(case.with_auto()))
-        );
-        assert_ne!(case, case.with_auto());
-    }
-
-    #[test]
-    fn verification_timing_only_overrides_explicit_water_diagnostics() {
-        use screen_render::timing::TimingMode;
-        for (water, value, expected) in [
-            (false, None, TimingMode::Automatic),
-            (true, None, TimingMode::Full),
-            (true, Some("full"), TimingMode::Full),
-            (true, Some("root"), TimingMode::Root),
+    fn verification_arguments_require_the_explicit_feature() {
+        for argument in [
+            "--verify",
+            "--verify-size",
+            "--verify-water",
+            "--verify-timing",
+            "--verify-water-auto",
+            "--verify-replay-cameras",
+            "--offscreen",
         ] {
-            assert_eq!(verification_timing_mode(water, value), Ok(expected));
+            assert!(is_verification_argument(argument));
         }
-        for value in ["root", "full", "", "automatic", "ROOT"] {
-            assert!(verification_timing_mode(false, Some(value)).is_err());
-        }
-        for value in ["", "automatic", "ROOT"] {
-            assert!(verification_timing_mode(true, Some(value)).is_err());
-        }
-    }
-
-    #[test]
-    fn offscreen_runner_only_removes_wait_when_explicitly_selected() {
-        for (no_vsync, expected_wait) in [
-            (false, Some(std::time::Duration::from_secs_f64(1.0 / 60.0))),
-            (true, None),
+        for argument in [
+            "--version",
+            "--font",
+            "--no-vsync",
+            "--export-dir",
+            "--unknown",
         ] {
-            let bevy::app::RunMode::Loop { wait } = offscreen_runner(no_vsync).run_mode else {
-                panic!("Offscreen verification must retain the continuous runner");
-            };
-            assert_eq!(wait, expected_wait);
+            assert!(!is_verification_argument(argument));
         }
     }
 
@@ -645,29 +514,6 @@ mod tests {
                 assert_eq!(window.resolution.width(), expected_size.0);
                 assert_eq!(window.resolution.height(), expected_size.1);
             }
-        }
-    }
-
-    #[test]
-    fn verification_size_accepts_explicit_positive_dimensions() {
-        assert_eq!(parse_verification_size("800x600"), Ok((800, 600)));
-        assert_eq!(parse_verification_size("1920x1080"), Ok((1920, 1080)));
-    }
-
-    #[test]
-    fn verification_size_rejects_missing_zero_and_non_integer_dimensions() {
-        for value in [
-            "800",
-            "800x",
-            "x600",
-            "0x600",
-            "800x0",
-            "-800x600",
-            "800.5x600",
-            "800x600x1",
-            "4294967296x600",
-        ] {
-            assert!(parse_verification_size(value).is_err(), "{value}");
         }
     }
 

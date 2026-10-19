@@ -41,6 +41,7 @@ mod tests {
     };
     use std::time::{Duration, Instant};
 
+    #[cfg(feature = "verify-harness")]
     #[test]
     fn embedded_japanese_font_preserves_cjk_and_mixed_script_layout() {
         crate::app::verification::verify_text_layout(bundled_font()).unwrap();
