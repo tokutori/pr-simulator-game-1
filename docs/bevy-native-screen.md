@@ -113,7 +113,7 @@ Resultでは選択した操縦支援、記録由来のcontroller version、確�
 
 登録済みの湖岸・地形・会場・環境JSONを再利用する。機体は現行表示の寸法に基づくprocedural meshで表示する。
 出典・加工・利用条件は`assets/manifest.toml`を正本とする。native起動前にTypeScriptでassetを生成する手順は不要である。
-登録構造物の共通三角化には`earcut = 0.4.11`のMIT選択とMapbox由来ISC noticeを使用し、完全な通知を[`assets/earcut.LICENSE.txt`](../assets/earcut.LICENSE.txt)へ保持する。Native単独artifactへの全必要noticeと帰属の配布は、実配布を行う[#385](https://github.com/tokutori/pr-simulator-game-1/issues/385)の受入条件とする。
+登録構造物と島の共通三角化には`earcut = 0.4.10`のMIT選択とMapbox由来ISC noticeを使用し、完全な通知を[`assets/earcut.LICENSE.txt`](../assets/earcut.LICENSE.txt)へ保持する。Native単独artifactへの全必要noticeと帰属の配布は、実配布を行う[#385](https://github.com/tokutori/pr-simulator-game-1/issues/385)の受入条件とする。
 Native runtime assetの入力経路は次のとおりである。
 
 | 入力 | 実行時の取得方法 | 出典・利用条件 |
