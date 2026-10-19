@@ -49,7 +49,7 @@
 - 親への追従: 親の統合後にbaseをmainへ変更する。更新は通常mergeで取り込み、最終的な統合結果をレビュー・必須CIで確認する。
 
 - 統合: FF可能ならfetch後に `git merge --ff-only <reviewed-head-sha>` と通常pushでmainを更新する。分岐している場合は通常のmergeを行う。
-- 履歴と保護: 元のcommitと保護規則を保持する。GitHubの「Rebase and merge」はSHAを変えるため、FF統合には使用しない。
+- 履歴と保護: 元のcommitと保護規則を保持し、force push・rebaseは行わない。GitHubの「Rebase and merge」はSHAを変えるため、FF統合には使用しない。
 - 統合確認: GitHubのMERGED状態とremote mainを確認する。
 
 - build先: 共有targetは使用担当を調整し、workspace内の通常targetかソースの兄弟directoryを使う。
@@ -60,7 +60,7 @@
 
 - 変更箇所のlint・型検査・関連試験を先行し、Rust UI/ABIの生成は必要な範囲でまとめて行う。
 - 検査コマンドは [README](README.md) と[検証仕様](docs/verification.md)を参照する。最終CIのUbuntu・Windows・Verusの3ゲートを確認する。
-- compiler/linter警告を確認する。外部サービスの未解消警告は原因・影響・追跡先を記録する。
+- compiler/linter警告を解消してからmergeする。外部サービスの未解消警告は原因・影響・追跡先を記録する。
 - ソフトウェア試験、GPU描画、物理キー・HMD操作、実機妥当性を区別し、実施済み・失敗・未実施を報告する。
 - UI・描画は可能な範囲を再現可能なCUI/headless/offscreen試験で確認する。
 - mainへのpushではGitHub Pagesを公開しない。明示的な公開指示の後、mainの `Check` を `workflow_dispatch`・`deploy_pages=true` で実行し、そのrunで検査を通過した成果物を公開する。
