@@ -547,6 +547,20 @@ pub enum GameUiScene {
     Replay,
 }
 
+impl GameUiScene {
+    /// Classifies all scenes for the shared Screen rendering policy.
+    pub const fn screen_render_scope(self) -> crate::screen_render_auto::ScreenRenderScope {
+        use crate::screen_render_auto::ScreenRenderScope;
+
+        match self {
+            Self::FlightSetup | Self::Briefing | Self::Countdown | Self::Flight => {
+                ScreenRenderScope::FlightSettings
+            }
+            Self::Boot | Self::Title | Self::Result | Self::Replay => ScreenRenderScope::Background,
+        }
+    }
+}
+
 /// Pure shared scene and menu projection.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
