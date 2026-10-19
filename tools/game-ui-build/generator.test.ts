@@ -15,14 +15,18 @@ function schemaBundle(): string {
     $defs: {
       identifier: { type: "integer", format: "uint32", minimum: 0 },
       coordinates: { type: "array", minItems: 3, maxItems: 3, items: { type: "number", format: "double" } },
+      GameUiStoredRecordPreview: { type: "array", maxItems: 3, items: { type: "string" } },
+      GameUiStoredRecord: { type: "object", properties: { saved_at: { type: "string", maxLength: 256 } } },
       ...Object.fromEntries(schemaEntries.filter((entry) => entry.group === group).map((entry) => [entry.name, {
         type: "object",
+        "x-boundary-bytes": 131072,
         additionalProperties: false,
         required: ["kind", "coordinates", ...(group === "serialize" ? ["id"] : [])],
         properties: {
           kind: { const: "fixture", type: "string" },
           id: { $ref: "#/$defs/identifier" },
-          coordinates: { $ref: "#/$defs/coordinates" }
+          coordinates: { $ref: "#/$defs/coordinates" },
+          notification: { type: "string", maxLength: 2048 }
         }
       }]))
     }
@@ -98,6 +102,7 @@ describe("Rust game UI schema generation", () => {
     const files = await generateGameUiFiles(schemas, root);
     expect(await generateGameUiFiles(schemas, root)).toEqual(files);
     expect(files.filter((file) => file.path.startsWith("web/src/generated/")).map((file) => file.path)).toEqual([
+      "web/src/generated/game-ui-input-query.ts",
       ...schemaEntries.map((entry) => `web/src/generated/${entry.filename}.ts`),
       "web/src/generated/game-ui-validators.js",
       "web/src/generated/game-ui-validators.d.ts"

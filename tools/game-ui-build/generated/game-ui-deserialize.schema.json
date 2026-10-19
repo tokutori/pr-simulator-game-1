@@ -558,6 +558,7 @@
         },
         "notification": {
           "description": "Platform operation feedback.",
+          "maxLength": 2048,
           "type": "string"
         },
         "operation_pending": {
@@ -581,11 +582,8 @@
           "description": "Confirmed Screen selection, applied resources, and stable measurement state."
         },
         "stored_records": {
-          "description": "Persistence results associated with this owner.",
-          "items": {
-            "$ref": "#/$defs/GameUiStoredRecord"
-          },
-          "type": "array"
+          "$ref": "#/$defs/GameUiStoredRecordPreview",
+          "description": "Bounded newest-record preview; the persistence index and PB search remain separate."
         },
         "stored_records_available": {
           "description": "Platform supports persisted record lookup.",
@@ -633,7 +631,8 @@
         "notification",
         "stored_records"
       ],
-      "type": "object"
+      "type": "object",
+      "x-boundary-bytes": 131072
     },
     "GameUiPresentationMode": {
       "description": "Presentation mode supported by a platform adapter.",
@@ -761,6 +760,7 @@
         },
         "saved_at": {
           "description": "Formatted local save timestamp supplied by the platform.",
+          "maxLength": 256,
           "type": "string"
         }
       },
@@ -770,6 +770,14 @@
         "personal_best"
       ],
       "type": "object"
+    },
+    "GameUiStoredRecordPreview": {
+      "description": "Title's bounded metadata query result, independent of all-record PB selection.",
+      "items": {
+        "$ref": "#/$defs/GameUiStoredRecord"
+      },
+      "maxItems": 3,
+      "type": "array"
     },
     "GameUiViewport": {
       "additionalProperties": false,

@@ -745,7 +745,9 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         flight_controller_failure: None,
         head_hud_failure: None,
         notification: notifications.join("\n"),
-        stored_records: flight_log_export.map_or_else(Vec::new, FlightLogExport::stored_records),
+        stored_records: flight_log_export
+            .map_or_else(Vec::new, FlightLogExport::stored_records)
+            .into(),
     }
 }
 

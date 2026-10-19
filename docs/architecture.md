@@ -167,4 +167,5 @@ BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・�
 GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。
 保存schema 6の二系統state・cause・identity・stampを保持する。未対応schemaの既存データは自動削除しない。
 AppModelはbrowser/presentation状態とimmutableな表示snapshotを保持し、domain phase・score・再生clockを独自更新しない。
+Titleの保存記録一覧は共有Rustの有界queryで指定した最新3件のmetadataだけを保持する。WebはIndexedDBの逆順cursorで必要件数だけ読み、全保存索引・Personal Bestの全候補探索と区別する。共有UI入力のschemaから件数・表示timestamp長・通知長・UTF-8 JSON bytesの上限を生成し、adapterは同じ上限を使用する。長い診断は表示投影だけをUnicode scalar単位で短縮し、元のエラーと保存原本を保持する。毎frameのUI同期へ全件metadataを再送しない。
 開発原則は[設計指針](https://zenn.dev/bem130/articles/1b352797de94e7)に基づく。

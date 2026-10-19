@@ -22,6 +22,7 @@ import type {
 } from "./app/app-state.js";
 import type { SessionCommand } from "./app/game-ui-types.js";
 import type { GameUiPlatformInput } from "./generated/game-ui-input.js";
+import { gameUiInputQuery } from "./generated/game-ui-input-query.js";
 import type { GameUiUpdate } from "./generated/game-ui-effects.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
@@ -437,7 +438,7 @@ function runEffect(effect: AppEffect): void {
       return;
     case "load-stored-flight-records": {
       const repository = createFlightRecordRepository();
-      void repository.list().then((records) => {
+      void repository.recent(gameUiInputQuery.storedRecordLimit).then((records) => {
         dispatch({ type: "stored-flight-records-loaded", requestId: effect.requestId, records });
       }, (error: unknown) => {
         dispatch({ type: "stored-flight-records-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -776,7 +777,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
       && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,
     head_hud_failure: headHudResourceFailure,
     stored_records: Object.freeze(recordListEntries(model.recordList).map((record) => Object.freeze({ id: record.id,
-      saved_at: record.savedAt, personal_best: record.personalBest })))
+      saved_at: record.savedAt, personal_best: record.personalBest }))) as GameUiPlatformInput["stored_records"]
   });
 }
 
